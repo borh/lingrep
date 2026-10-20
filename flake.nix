@@ -633,6 +633,7 @@
 
           apps.default = lingrepApp;
           apps.lingrep = lingrepApp;
+          apps.ling = lingrepApp;
           apps.lingrep-web = lingrepWebApp;
           apps.check-spacy-adapter = {
             type = "app";

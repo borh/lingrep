@@ -36,7 +36,7 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 
 ## Install
 
-### Prebuilt binaries
+### Download a release
 
 Each [release](https://github.com/borh/lingrep/releases) has `ling` archives
 for Linux (x86-64 and arm64) and macOS (Apple silicon). An archive unpacks to
@@ -44,45 +44,30 @@ one directory with the binary, shell completions, manual pages, the license,
 and third-party notices. The Linux builds require glibc 2.35 or newer.
 
 ```bash
-tar xzf ling-0.3.0-aarch64-apple-darwin.tar.gz
-./ling-0.3.0-aarch64-apple-darwin/bin/ling --help
+version=0.3.1
+target=aarch64-apple-darwin  # or x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
+base=https://github.com/borh/lingrep/releases/download/v$version
+curl -LO "$base/ling-$version-$target.tar.gz"
+curl -LO "$base/ling-$version-$target.tar.gz.sha256"
+shasum -a 256 -c "ling-$version-$target.tar.gz.sha256"
+tar xzf "ling-$version-$target.tar.gz"
+export PATH="$PWD/ling-$version-$target/bin:$PATH"
+ling --help
 ```
 
-The binaries include no dictionary. To analyze Japanese, build UniDic with Nix
-(below) or download Sudachi's dictionary (see
-[Japanese without Nix](#japanese-without-nix)). CoNLL-U input and
-`ling check` require no dictionary.
+The archives include no dictionary. To analyze Japanese, download Sudachi's
+dictionary ([below](#japanese-with-sudachi)) or build UniDic with Nix.
+CoNLL-U input and `ling check` require no dictionary.
 
-### From source with Nix
+### Try it with Nix
 
 ```bash
-nix build .#lingrep
-./result/bin/ling --help
+nix run github:borh/lingrep#ling -- --help
 ```
-
-`./result` also holds shell completions and manual pages.
 
 ## Quick start
 
-### Japanese
-
-From a checkout, build the default UniDic dictionary, then search a text file:
-
-```bash
-export LINGREP_DICTIONARY_PATH="$(nix build .#vibrato-dict-cwj \
-  --no-link --print-out-paths)/share/vibrato/unidic-cwj-202512.dic"
-
-printf '猫が走る。\n犬が眠る。\n' > sample.txt
-
-nix run .#lingrep -- matches \
-  --pattern '[upos=VERB].' \
-  --context 2 \
-  sample.txt
-```
-
-[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic variants.
-
-### Japanese without Nix
+### Japanese with Sudachi
 
 Download a Sudachi dictionary and the analyzer's resource files, then pass
 them to `ling`:
@@ -95,6 +80,8 @@ for file in char.def unk.def rewrite.def sudachi.json; do
   curl -fsSL -o "sudachi-resources/$file" \
     "https://raw.githubusercontent.com/WorksApplications/sudachi.rs/f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e/resources/$file"
 done
+
+printf '猫が走る。\n犬が眠る。\n' > sample.txt
 
 ling matches \
   --analyzer sudachi \
@@ -109,6 +96,20 @@ ling matches \
 `--sudachi-edition` must match the archive (`small`, `core`, or `full`). ling
 supports SudachiDict releases up to `v20260723`; later releases use an
 unsupported container format.
+
+### Japanese with UniDic
+
+UniDic dictionaries are built with Nix. The conversion needs about 10 GB of
+memory:
+
+```bash
+export LINGREP_DICTIONARY_PATH="$(nix build github:borh/lingrep#vibrato-dict-cwj \
+  --no-link --print-out-paths)/share/vibrato/unidic-cwj-202512.dic"
+
+ling matches --pattern '[upos=VERB].' --context 2 sample.txt
+```
+
+[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic variants.
 
 ### CoNLL-U
 
