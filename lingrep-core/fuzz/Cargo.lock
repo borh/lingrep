@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aho-corasick",
  "blake3",
@@ -1275,6 +1275,7 @@ dependencies = [
  "indexmap",
  "libc",
  "log",
+ "lzma-sys",
  "pulldown-cmark",
  "quick-xml",
  "rand 0.9.5",
