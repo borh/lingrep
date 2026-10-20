@@ -47,6 +47,21 @@ jobs:
             /usr/local/share/powershell
           df -h /
 
+      # Converting the CWJ dictionary peaks at 9.8 GB resident, independent of
+      # core count (measured with 4 and 32 CPUs), which exceeds the RAM of the
+      # standard runner GitHub assigns to private repositories. The kernel
+      # kills the converter with exit 137 unless swap covers the difference.
+      - name: Add swap for the dictionary conversion
+        run: |
+          free -h
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
@@ -113,6 +128,14 @@ jobs:
       # dictionary that still costs 1.31 GB to build on arm64, and what this job
       # proves is that the code and the packaging path work on Apple silicon,
       # not that the corpus lane does. The correctness lane is the one above.
+      # Clippy runs on the nightly that `devShells.nightly` resolves from the
+      # locked rust-overlay, so a lint added in a newer toolchain cannot fail
+      # this job while the Linux lane passes. Update it with `flake.lock`.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-11
+          components: clippy
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -120,7 +143,7 @@ jobs:
           key: macos-ci
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo +nightly-2026-07-11 clippy --workspace --all-targets -- -D warnings
 
       - name: Build
         run: cargo build -p lingrep
