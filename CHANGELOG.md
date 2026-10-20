@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `ling` archive for Intel Macs (`x86_64-apple-darwin`).
+- `install.sh`, published with each release: it installs that release's
+  `ling` for the computer into `~/.local/bin` after checking its SHA-256
+  checksum, and puts the directory on `PATH`.
+
 ## [0.3.1] - 2026-10-20
 
 ### Fixed

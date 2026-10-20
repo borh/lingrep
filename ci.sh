@@ -75,6 +75,9 @@ run_common_checks() {
     uv lock --check --script scripts/huggingface_dataset.py
     python -m unittest scripts/test/test_huggingface_dataset.py
 
+    echo "Checking the release installer"
+    scripts/test/test_install.sh
+
     echo "Checking formatting"
     cargo fmt --check --all 2>&1 | tee /tmp/cargo-fmt.log
 

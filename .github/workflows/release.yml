@@ -47,6 +47,10 @@ jobs:
             os: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
             os: macos-14
+          # Intel Macs. GitHub's Intel macOS image; the linkage check below
+          # applies to it as to the Apple silicon build.
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
     steps:
       - uses: actions/checkout@v7
         with:
@@ -130,11 +134,14 @@ jobs:
           fi
           mkdir -p release
           cp "$notes" release/notes.md
+          # The installer installs this release by default, and SHA256SUMS
+          # lists it with the archives.
+          scripts/render-installer.sh "${tag#v}" dist/install.sh
           cd dist
           if command -v sha256sum > /dev/null; then
-            sha256sum ./*.tar.gz > ../release/SHA256SUMS
+            sha256sum ./*.tar.gz ./install.sh > ../release/SHA256SUMS
           else
-            shasum -a 256 ./*.tar.gz > ../release/SHA256SUMS
+            shasum -a 256 ./*.tar.gz ./install.sh > ../release/SHA256SUMS
           fi
           cat ../release/SHA256SUMS
 
@@ -147,4 +154,4 @@ jobs:
             --title "lingrep ${tag#v}" \
             --notes-file release/notes.md \
             --verify-tag \
-            ./dist/*.tar.gz ./dist/*.sha256 ./release/SHA256SUMS
+            ./dist/*.tar.gz ./dist/*.sha256 ./dist/install.sh ./release/SHA256SUMS

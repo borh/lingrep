@@ -36,16 +36,36 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 
 ## Install
 
+### Install script
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
+sh install.sh
+```
+
+The script installs the release it was published with. It picks the archive
+for the computer, checks the archive's SHA-256 checksum, and copies `ling` to
+`~/.local/bin`. If that directory is not on `PATH`, it adds one marked line to
+the shell's startup file. It needs no administrator rights, and running it again
+updates `ling`. On Windows, run it in WSL. You can read `install.sh` before
+running it; [scripts/install.sh](scripts/install.sh) is the source.
+
+| Variable | Effect |
+|---|---|
+| `LING_VERSION=0.3.2` | Install another release |
+| `LING_INSTALL_DIR=/path/to/bin` | Install somewhere other than `~/.local/bin` |
+| `LING_NO_MODIFY_PATH=1` | Leave shell startup files unchanged |
+
 ### Download a release
 
 Each [release](https://github.com/borh/lingrep/releases) has `ling` archives
-for Linux (x86-64 and arm64) and macOS (Apple silicon). An archive unpacks to
-one directory with the binary, shell completions, manual pages, the license,
-and third-party notices. The Linux builds require glibc 2.35 or newer.
+for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel). An archive
+unpacks to one directory with the binary, shell completions, manual pages, the
+license, and third-party notices. The Linux builds require glibc 2.35 or newer.
 
 ```bash
 version=0.3.1
-target=aarch64-apple-darwin  # or x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
+target=aarch64-apple-darwin  # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 base=https://github.com/borh/lingrep/releases/download/v$version
 curl -LO "$base/ling-$version-$target.tar.gz"
 curl -LO "$base/ling-$version-$target.tar.gz.sha256"
