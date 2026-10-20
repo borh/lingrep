@@ -47,21 +47,6 @@ jobs:
             /usr/local/share/powershell
           df -h /
 
-      # Converting the CWJ dictionary peaks at 9.8 GB resident, independent of
-      # core count (measured with 4 and 32 CPUs), which exceeds the RAM of the
-      # standard runner GitHub assigns to private repositories. The kernel
-      # kills the converter with exit 137 unless swap covers the difference.
-      - name: Add swap for the dictionary conversion
-        run: |
-          free -h
-          sudo swapoff -a
-          sudo rm -f /mnt/swapfile
-          sudo fallocate -l 16G /mnt/swapfile
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          free -h
-
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
@@ -99,6 +84,26 @@ jobs:
           nix copy --no-check-sigs \
             --from "file://${{ runner.temp }}/dictionary-cache" \
             "${{ steps.dictionary.outputs.path }}"
+
+      # Converting the CWJ dictionary peaks at 9.8 GB resident, independent of
+      # core count (measured with 4 and 32 CPUs), which exceeds the RAM of the
+      # standard runner GitHub assigns to private repositories. The swapfile
+      # covers the conversion and is removed afterwards, because the root disk
+      # cannot hold it together with the cargo target directory.
+      - name: Build the dictionary
+        if: steps.dictionary-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 12G /swapfile-dictionary
+          sudo chmod 600 /swapfile-dictionary
+          sudo mkswap /swapfile-dictionary
+          sudo swapon /swapfile-dictionary
+          free -h
+          nix build --no-link .#vibrato-dict-cwj
+          sudo swapoff /swapfile-dictionary
+          sudo rm -f /swapfile-dictionary
+          df -h /
 
       # The lane `.githooks/pre-push` already runs, in the shell the repository
       # documents. A green run here and a green push therefore mean the same
