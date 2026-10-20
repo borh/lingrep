@@ -1,0 +1,63 @@
+# Direct-object realization by verbal lemma and dependent class.
+#
+# This is the tracked research user for anonymous dependency-edge existence:
+# one record per verbal head, even when a head has several matching dependents.
+# The two patterns partition verbs only when the supplied sentence has a
+# complete, usable CoNLL-U basic dependency tree.  Missing or invalid basic
+# edge observations make both patterns fail rather than turning missing
+# evidence into evidence of absence.
+#
+# The dependent-predicate patterns retain that one-record-per-head contract.
+# A negative predicate classifies absence only when every edge-compatible
+# dependent supplies the predicate attributes; unrelated missing values do not
+# invalidate it. The nominal and pronominal classes are not exhaustive.
+#
+# The corpus trigger and independent-oracle validation are recorded in
+# docs/results/2026-08-31-anonymous-dependent-predicate/README.md.
+# Negative-predicate discovery and validation are recorded in
+# docs/results/2026-08-31-negative-dependent-predicate/README.md.
+# The GiNZA evidence there comes from the Markdown corpus, never BCCWJ.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern object_state: string required in {"present", "absent"}
+  pattern object_class: string in {"pronominal", "nominal"}
+  pattern pronominal_state: string in {"present", "absent"}
+  status: string required in {"experimental"}
+end
+
+set NOMINAL_UPOS := {NOUN, PROPN}.
+test PRONOMINAL_UPOS := upos=PRON.
+
+object_state: "present"
+key: [$verb.lemma]
+pattern with_direct_object := (?<verb> [upos=VERB])
+  where $verb -[obj|obj:*]-> _.
+
+object_state: "absent"
+key: [$verb.lemma]
+pattern without_direct_object := (?<verb> [upos=VERB])
+  where not $verb -[obj|obj:*]-> _.
+
+object_state: "present"
+object_class: "pronominal"
+pronominal_state: "present"
+key: [$verb.lemma]
+pattern with_pronominal_direct_object := (?<verb> [upos=VERB])
+  where $verb -[obj|obj:*]-> [@PRONOMINAL_UPOS].
+
+object_state: "present"
+pronominal_state: "absent"
+key: [$verb.lemma]
+pattern without_pronominal_direct_object := (?<verb> [upos=VERB])
+  where $verb -[obj|obj:*]-> _,
+        not $verb -[obj|obj:*]-> [@PRONOMINAL_UPOS].
+
+object_state: "present"
+object_class: "nominal"
+key: [$verb.lemma]
+pattern with_nominal_direct_object := (?<verb> [upos=VERB])
+  where $verb -[obj|obj:*]-> [upos in @NOMINAL_UPOS].

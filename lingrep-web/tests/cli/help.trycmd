@@ -1,0 +1,80 @@
+```
+$ lingrep-web --help
+Web interface for lingrep pattern matching
+
+Usage: lingrep-web [OPTIONS] --dict-path <DICT_PATH>
+
+Options:
+  -d, --dict-path <DICT_PATH>
+          Path to the Vibrato dictionary (.dic.zst or .dic)
+          
+          [env: LINGREP_DICTIONARY_PATH]
+
+  -i, --input <INPUT>
+          Input corpus file or directory; reads from stdin when omitted
+
+      --input-format <INPUT_FORMAT>
+          Override the inferred corpus format (`plain`, `jsonl`, `markdown`, `conllu`, `bccwj`, `soranoha`; consumers may restrict raw formats they do not own)
+          
+          [possible values: plain, jsonl, markdown, conllu, bccwj, soranoha]
+
+      --host <HOST>
+          Address to bind. Loopback by default — change with `LINGREP_WEB_HOST` or `--host` to expose the service to other hosts (typically behind a reverse proxy that adds TLS and access control)
+          
+          [env: LINGREP_WEB_HOST]
+          [default: 127.0.0.1]
+
+  -p, --port <PORT>
+          Port to listen on
+          
+          [env: LINGREP_WEB_PORT]
+          [default: 3000]
+
+      --base-path <BASE_PATH>
+          Optional absolute path prefix used by a reverse proxy mount. Browser links remain relative, so a proxy can also rewrite its own root to this internal path
+          
+          [default: /]
+
+      --max-kwic-lines-per-pattern <MAX_KWIC_LINES_PER_PATTERN>
+          Maximum KWIC lines retained for each pattern
+          
+          [default: 1000]
+
+      --max-active-sessions <MAX_ACTIVE_SESSIONS>
+          Maximum number of concurrently retained workbench sessions
+          
+          [default: 256]
+
+      --max-record-bytes <MAX_RECORD_BYTES>
+          Maximum bytes accepted for one physical input record: a JSONL document, or a plaintext or Markdown line. A record larger than this stops the corpus build, naming the record and its source
+          
+          [default: 1048576]
+
+      --patterns <PATTERNS>
+          lingrep patterns grammar file whose contents seed the pattern editor on the index page. Read once at startup; an unreadable file starts an empty editor
+          
+          [default: patterns/sentence-final.lx]
+
+      --pattern-root <PATTERN_ROOT>
+          Directory searched recursively for `*.lx` catalogs offered in the UI's catalog list. Defaults to the parent directory of `--patterns`, so the stock defaults discover `patterns/`. An unreadable directory yields an empty list rather than a startup failure
+
+      --corpus <NAME=PATH>
+          Additional corpus, as `NAME=PATH`. Repeatable. `NAME` is the URL key used by shareable links and must match `[A-Za-z0-9_-]{1,64}`; `default` is reserved for `--input`. All declared corpora share one dictionary and one reader configuration. `PATH` is a corpus source, or a prepared `.lingcorpus` artifact — read directly, and so unaffected by that shared reader configuration. Preparing one with `ling corpus build` is how lingrep-web serves a format it cannot read itself, such as bccwj
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Markdown input:
+      --md-include-sections <LIST>
+          Include only lines carrying one of these section labels. By default, every label is included; an empty list is an error
+
+      --md-exclude-sections <LIST>
+          Exclude lines carrying one of these section labels. Pass "" to disable exclusions
+
+      --md-self-labels <LIST>
+          Treat these heading classes as labels for the heading line only, not for the section beneath it
+
+      --md-recover-conversion-artifacts
+          Recover the narrow set of artifacts the corpus converter emits: presentational HTML, `<si ...>` notation, and div imbalance at the physical document boundary. ling refuses them unless this is passed; lingrep-web always recovers and ignores it
+
+```

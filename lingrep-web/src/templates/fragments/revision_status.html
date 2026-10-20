@@ -1,0 +1,15 @@
+{% if status.terminal %}
+<div class="revision-status" role="status" aria-live="polite" aria-busy="false">
+{% else %}
+<div class="revision-status progress" aria-live="off" aria-busy="{{ status.busy }}">
+{% endif %}
+  <p{% match status.message_key %}{% when Some with (key) %} data-i18n="{{ key }}"{% when None %}{% endmatch %}{% match status.message_args %}{% when Some with (args) %} data-i18n-args='{{ args }}'{% when None %}{% endmatch %}>{{ status.message }}</p>
+  {% if let Some(notice) = status.omission_notice %}
+  <p class="omission-notice" data-i18n="status.omitted"{% if let Some(args) = status.omission_args %} data-i18n-args='{{ args }}'{% endif %}>{{ notice }}</p>
+  {% endif %}
+</div>
+{% if status.stale && status.terminal %}
+<div id="results-stale" hx-swap-oob="innerHTML">
+  <p class="stale-notice" data-i18n="status.stale">Latest query did not complete; showing previous results.</p>
+</div>
+{% endif %}

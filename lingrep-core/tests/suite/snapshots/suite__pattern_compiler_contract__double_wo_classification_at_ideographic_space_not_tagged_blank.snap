@@ -1,0 +1,25 @@
+---
+source: lingrep-core/tests/suite/pattern_compiler_contract.rs
+expression: "(double_wo_span_multiset(&raw), double_wo_span_multiset(&classified),\nclassified.iter().map(|matched|\n(matched.pattern.to_string(), matched.start,\nmatched.end)).collect::<Vec<_>>(),)"
+---
+(
+    [
+        (
+            0,
+            6,
+        ),
+    ],
+    [
+        (
+            0,
+            6,
+        ),
+    ],
+    [
+        (
+            "double_wo_exclude_fragment_boundary",
+            0,
+            6,
+        ),
+    ],
+)

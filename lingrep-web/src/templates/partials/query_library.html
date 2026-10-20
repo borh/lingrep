@@ -1,0 +1,34 @@
+<details class="query-library" data-query-library>
+  <summary><span data-i18n="library.queries">Queries</span> <span class="query-edited" data-query-edited hidden><span data-i18n="library.edited">Edited</span></span></summary>
+  <div class="query-library-body">
+    <div class="query-tabs" role="tablist" aria-label="Query library" data-i18n-aria-label="library.aria">
+      <button type="button" role="tab" id="query-tab-recent"
+              aria-controls="query-panel" aria-selected="true"
+              data-query-tab="recent"><span data-i18n="library.recent">Recent</span></button>
+      <button type="button" role="tab" id="query-tab-saved"
+              aria-controls="query-panel" aria-selected="false" tabindex="-1"
+              data-query-tab="saved"><span data-i18n="library.saved">Saved</span></button>
+      <button type="button" role="tab" id="query-tab-catalogs"
+              aria-controls="query-panel" aria-selected="false" tabindex="-1"
+              data-query-tab="catalogs"><span data-i18n="library.catalogs">Catalogs</span></button>
+    </div>
+    <div id="query-panel" role="tabpanel" aria-labelledby="query-tab-recent">
+      <div class="query-library-actions">
+        <button type="button" class="btn btn-secondary" data-save-current><span data-i18n="library.save">Save current</span></button>
+        <button type="button" class="btn btn-secondary" data-clear-recent><span data-i18n="library.clear">Clear recent history</span></button>
+      </div>
+      <div class="query-list" data-query-list></div>
+      <div class="catalog-list" data-catalog-list hidden>
+        {% if catalog_keys.is_empty() %}
+        <p class="muted" data-i18n="library.no_catalogs">No catalogs found.</p>
+        {% else %}
+        {% for key in catalog_keys %}
+        <button type="button" class="catalog-entry" data-catalog-key="{{ key }}">{{ key }}</button>
+        {% endfor %}
+        {% endif %}
+      </div>
+      <button type="button" class="btn btn-secondary" data-query-more hidden><span data-i18n="library.more">Show more</span></button>
+    </div>
+    <p class="query-status" role="status" aria-live="polite" data-query-status></p>
+  </div>
+</details>

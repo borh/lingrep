@@ -1,0 +1,26 @@
+{
+  "text": "du pain",
+  "sentences": [
+    {
+      "tokens": [
+        {
+          "text": "du",
+          "start_char": 0,
+          "end_char": 2,
+          "words": [
+            {"text": "de", "lemma": "de", "upos": "ADP", "xpos": "ADP", "feats": null},
+            {"text": "le", "lemma": "le", "upos": "DET", "xpos": "DET", "feats": "Definite=Def|Gender=Masc|Number=Sing"}
+          ]
+        },
+        {
+          "text": "pain",
+          "start_char": 3,
+          "end_char": 7,
+          "words": [
+            {"text": "pain", "lemma": "pain", "upos": "NOUN", "xpos": "NOUN", "feats": "Gender=Masc|Number=Sing"}
+          ]
+        }
+      ]
+    }
+  ]
+}

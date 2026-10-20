@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT k.authored_key AS key,v.type_tag,v.display_value,v.numeric_projection,m.element_ordinal FROM document_metadata m JOIN metadata_keys k ON k.id=m.key_id JOIN metadata_values v ON v.id=m.value_id WHERE m.document_id=? ORDER BY k.authored_key,m.element_ordinal",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "metadata_keys",
+            "name": "authored_key"
+          }
+        }
+      },
+      {
+        "name": "type_tag",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "type_tag"
+          }
+        }
+      },
+      {
+        "name": "display_value",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "display_value"
+          }
+        }
+      },
+      {
+        "name": "numeric_projection",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "numeric_projection"
+          }
+        }
+      },
+      {
+        "name": "element_ordinal",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "document_metadata",
+            "name": "element_ordinal"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "591fb4a631b55f00127f9faadbc2be180b5d6d3d8a171aa062d6c90f5ba668f6"
+}

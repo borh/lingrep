@@ -1,0 +1,958 @@
+defaults
+  status: "experimental"
+end
+
+# The catalog's own key schema. `required` is scoped by visibility because
+# `layer`, `category`, `examples` and `research_classes` sit on all 86 patterns
+# and on none of the
+# 18 fragments; a flat `required` would reject this catalog. Policy keys and
+# the three catalog-level compiler declarations are owned by the compiler and
+# are not declared here.
+schema
+  pattern layer: string required in {"S0", "S1", "S2", "S3"}
+  pattern category: string required
+  pattern examples: list required
+  pattern research_classes: list required
+  pattern mapping_note: string
+  pattern role: string required in {"research"}
+  fragment role: string required in {"helper"}
+  status: string required in {"experimental"}
+end
+
+# Experimental sentence-final patterns.
+#
+# `research_classes` is the research-facing taxonomy: S1A-E are non-modal
+# sentence-final expressions, S2A-J are writer-attitude modalities, and S3A-F
+# are representative morphemes within a final expression. A list is deliberate:
+# a text such as `と言える` is both S2B thought/judgement and S3F restatement.
+# `layer` remains the upstream publication-policy dimension and must not be
+# inferred from, or replaced by, this taxonomy. S2J is intentionally absent:
+# `てしまう` alone also has neutral perfective readings, so the catalog does not
+# label it regret without an overt, reliable marker.
+#
+# Shared definitions are fragments and therefore never emit matches.
+#
+# All eight result policies this catalog was translated with are DECLARED and
+# applied by the engine. They live in the policy block at the end of this file,
+# as eight statements in upstream's stage order — stage 1's four per-layer
+# resolves collapsed into one `resolve all partition: layer` when the language
+# gained its partition-by-dimension operator, while stage 6 remains two rules
+# over one anchor. Each statement carries the upstream function it translates.
+#
+# The block is a publication decision, not a matching one: it changes which
+# records this catalog emits and never which spans it finds. See
+# docs/results/2026-08-07-r1-policy-migration.md for the per-stage differential,
+# and docs/results/2026-08-02-r1-sf-experimental-migration.md and
+# docs/results/2026-08-04-anchor-acceptance.md, which record the first two
+# migrations as they were first measured — under the per-definition keys the
+# block replaced.
+#
+# Three approximations, named rather than hidden:
+#
+#   - Stage 2's negation operand is a fragment, not a token test. Upstream
+#     inspects the token after the match; a fragment operand reaches the same
+#     answer through the synthesized `__policy__` evidence emitter. See the
+#     comment on NEG below for why it is not `NAI`.
+#   - `lemma` stands in for spaCy's `norm_` throughout. They are not the same
+#     normalization, and where they disagree this catalog disagrees with
+#     upstream.
+#   - Stage 5 NARROWS a trailing copula where upstream SPLITS it into two
+#     records. `detach` cannot emit a record, so the copula half is lost rather
+#     than published separately. This is why our record counts entering stage 6
+#     are lower than upstream's by roughly the number of subjects.
+#
+# Three rows of the design's expressibility table
+# (docs/design/2026-08-06-policy-sublanguage-syntax.md) are wrong, and the block
+# follows upstream rather than the table: stage 3 drops the passive and not the
+# aspect; stage 2's subject is @ている alone, since upstream's `_TEIRU_NAMES` is
+# a one-element set; and stage 6 measures against `propositional_end`, the
+# `effective_end` that `filter_pipeline.py:100` passes, not the raw sentence end.
+#
+# Nothing here remains caller-owned. Citation stripping is subsumed by the
+# propositional_end anchor: on this corpus it IS trailing-punctuation stripping
+# — 2 sentences in 545 differ — which is why a punctuation-only anchor
+# suffices. On a corpus with parenthesized citations it would be a different
+# rule, and this catalog would need a wider `exclude` fragment on the anchor.
+# See docs/results/2026-08-04-dm-annotations-parity.md.
+#
+# Documentation-only citation sketches (not executable definitions):
+# citation_note := 注 [upos=NUM] [text=）]?.
+# citation_parenthesized_year := （ [upos in {PROPN, NOUN, X}]+ [upos=NUM] ）.
+
+# Shared executable fragments
+
+# The plain verb and the potential share a lemma in UniDic, so every 言う slot
+# a potential can reach reads orthbase. Naming the two lists is why that is
+# one edit rather than seven.
+set IU := {言う, いう}.
+set IERU := {言える, いえる}.
+set WAKE := {わけ, 訳}.
+set MONO := {物, もの}.
+set TE_DE := {て, で}.
+
+role: "helper"
+fragment NAI := [text in {ない, 無い, ず, ぬ, なかっ, 無かっ, ねえ}] [text=た]?.
+role: "helper"
+fragment MASEN := ([text=ませ] [text=ん] | [text=ませ] [text=ん] [text=でし] [text=た]).
+role: "helper"
+fragment NAIMASEN := (@NAI | @MASEN).
+role: "helper"
+fragment ARU := ([lemma in {ある, 有る} & text not in {あろう, 有ろう, あれ, 有れ}] [text=た]? | [lemma=有る] [text=ます] | [lemma=有る] [text=まし] [text=た]).
+role: "helper"
+fragment DEARU := [text=で] @ARU.
+role: "helper"
+fragment DA := ([text in {だ, です, でし, だっ} & lemma=だ] [text=た]? | @DEARU).
+role: "helper"
+fragment DEWA := ([text=で] [text=は] | [text=じゃ]).
+role: "helper"
+fragment VERB_TE := [text in @TE_DE].
+role: "helper"
+fragment VERB_TEIRU := @VERB_TE [lemma=居る].
+role: "helper"
+fragment DEAROU := [text=で] [text=あろう].
+role: "helper"
+fragment DAROU := ([text in {だろう, でしょう, だろ, たろう}] | @DEAROU).
+role: "helper"
+fragment KOTO := [lemma in {こと, 事}].
+role: "helper"
+fragment RARE := [lemma=られる].
+role: "helper"
+fragment RERU := [lemma=れる].
+role: "helper"
+fragment SURU := [lemma=為る].
+role: "helper"
+fragment NARU := [lemma in {成る, なる} & text != なろう].
+
+# The negation operand of stage 2's `exclude`, and deliberately NOT `NAI`.
+#
+# `NAI` is wider (`ない 無い ず ぬ なかっ 無かっ ねえ`), reads `orth`, and takes an
+# optional trailing `た`. Reusing it would drop more `ている` records than
+# the intended negation inventory, and it reads `lemma` so the inflected
+# `なかっ` is still recognized.
+#
+# It is also the operand of a fragment-operand `exclude`, which is what makes
+# "the token after `ている` is a negation" expressible at all: upstream tests a
+# token, not a match, and a fragment emits through the synthesized
+# `__policy__` evidence emitter at every position it matches.
+role: "helper"
+fragment NEG := [lemma in {ない, 無い, ぬ, ず}].
+
+role: "helper"
+anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
+max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
+fragment TRAILING_APPARATUS := [upos=PUNCT]+.
+
+# _DISCOURSE_ACTIONS definitions
+
+role: "research"
+layer: "S3"
+category: "論文運営・読者誘導"
+examples: ["本稿の結論としておく", "仮説としておく"]
+priority_order: 0
+research_classes: ["S1B"]
+としておく := [text=と] [text=し] @VERB_TE [lemma=置く].
+
+role: "research"
+layer: "S3"
+category: "論文運営・読者誘導"
+examples: ["結論としておきたい"]
+priority_order: 0
+research_classes: ["S1B", "S2I"]
+としておきたい := [text=と] [text=し] @VERB_TE [lemma=置く] [text=たい].
+
+role: "research"
+layer: "S3"
+category: "論文運営・読者誘導"
+examples: ["仮定としておこう"]
+priority_order: 0
+research_classes: ["S1B", "S2I"]
+としておこう := [text=と] [text=し] @VERB_TE [lemma=置く & unidic.cform=意志推量形].
+
+role: "research"
+layer: "S3"
+category: "論文運営・読者誘導"
+examples: ["概説にとどめる", "触れにとどめる"]
+priority_order: 0
+research_classes: ["S1B"]
+にとどめる := [text=に] [lemma=留める].
+
+role: "research"
+layer: "S3"
+category: "論文運営・読者誘導"
+examples: ["言及としておくにとどめる"]
+priority_order: 0
+research_classes: ["S1B"]
+としておくにとどめる := [text=と] [text=し] @VERB_TE [lemma=置く] [text=に] [lemma=留める].
+
+# _S2 definitions
+
+role: "research"
+layer: "S2"
+category: "S2f 志向"
+examples: ["検討したい", "参照されたい"]
+priority_order: 1
+research_classes: ["S2I"]
+たい := [upos in {VERB, AUX}]+ [text=たい & upos=AUX].
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["成功すると信じる", "そうだと信じる"]
+priority_order: 1
+research_classes: ["S2B"]
+と信じる := [text=と] [lemma=信ずる].
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["妥当だと考える"]
+priority_order: 1
+research_classes: ["S2B"]
+と考える := [text=と] [lemma=考える].
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["その効果を意図する"]
+priority_order: 1
+research_classes: ["S2B"]
+意図する := [lemma=意図] @SURU.
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["妥当であると判断できる"]
+priority_order: 1
+research_classes: ["S2B"]
+と判断できる := [text=と] [lemma=判断] [lemma=出来る].
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["その効果があることがわかる"]
+priority_order: 1
+research_classes: ["S2B"]
+ことがわかる := @KOTO [text=が] [lemma=分かる].
+
+role: "research"
+layer: "S2"
+category: "S2e 立場"
+examples: ["実態においては相違ないものと位置づけてよい"]
+priority_order: 1
+research_classes: ["S2B", "S2E"]
+てよい := @VERB_TE [lemma=良い].
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["このように変更がなされたと見られる", "宝珠を失ったと見られる"]
+priority_order: 1
+research_classes: ["S2C"]
+と見られる := [text=と] [lemma=見る] @RARE.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["適切のようだ"]
+groups: ["trailing_copula"]
+priority_order: 1
+research_classes: ["S2C"]
+output_name: "よう"
+ようだ := [text=よう] @DA.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["検討するそうだ"]
+groups: ["trailing_copula"]
+priority_order: 1
+research_classes: ["S2G"]
+output_name: "そう"
+そうだ := not_preceded_by([unidic.cform=連用形-一般]) [text=そう] @DA.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["確かなようである"]
+groups: ["trailing_copula"]
+priority_order: 1
+research_classes: ["S2C"]
+output_name: "よう"
+ようである := [text=よう] [text=で & lemma=だ] [lemma=有る].
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["A社で働いていたという"]
+priority_order: 1
+research_classes: ["S2G"]
+# The 言う family reads `orthbase`, not `lemma`, and this is the pattern that
+# forces it. UniDic's lemma for the potential 言える is 言う — the same lemma
+# the plain 言う carries — so `lemma in {言う, いう}` matches 「と言える」 as
+# readily as 「という」. `orthbase` preserves the distinct dictionary forms and
+# keeps the two kanji / kana spellings separate.
+という := [text=と] [unidic.orthbase in @IU].
+#
+# Seven definitions put this verb in this slot and five now read
+# `unidic.orthbase in @IU`: という, ということだ, とは言い難い, というのである
+# and と言われる. Both spellings, because upstream writes three of them against
+# `NORM="言う"`, which is spelling-normalizing — UniDic's `orthbase` for a kana
+# 「いい」 is いう, so a single-valued `unidic.orthbase=言う` would stop matching
+# 「とはいいがたい」, which is upstream's own example.
+#
+# The other two — という指摘もある, ということである, ということで — keep
+# `[text=いう & lemma=言う]`, and that is not an oversight. Upstream pins those
+# three to `ORTH="いう"` (:223, :345, :356), and a surface pinned to いう cannot
+# be a potential in the first place. Rewriting their second conjunct as
+# `orthbase` would either say nothing new (`unidic.orthbase=いう`) or match no token at
+# all (`unidic.orthbase=言う`, which the surface いう never carries). Uniformity here is
+# in what the predicate means, not in which attribute spells it.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["この傾向にあることが知られている"]
+priority_order: 1
+research_classes: ["S2G"]
+ことが知られている := @KOTO ([text=が] | [text=も]) [lemma=知る] (@RERU | @RARE) @VERB_TEIRU.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["そのことも明らかにされている"]
+priority_order: 1
+research_classes: ["S2G"]
+明らかにされる := [lemma=明らか] [text=に] @SURU (@RERU | @RARE).
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["重要であるという指摘もある"]
+priority_order: 1
+research_classes: ["S2G"]
+という指摘もある := [text=と] [text=いう & lemma=言う] [lemma=指摘] ([text=が] | [text=も]) @ARU.
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["それらの背景には共感覚の素質に他ならない"]
+priority_order: 2
+research_classes: ["S2A", "S3F"]
+に他ならない := [text=に & lemma=に] [lemma=他] [text=なら & lemma=成る] @NAI.
+
+role: "research"
+layer: "S2"
+category: "S2c 確信"
+examples: ["有効な方法に違いない"]
+priority_order: 1
+research_classes: ["S2A"]
+に違いない := [text=に] [lemma=違い] (@NAI | [lemma=有る] @MASEN).
+
+role: "research"
+layer: "S2"
+category: "S2b 可能性"
+examples: ["誤差によるものかもしれない"]
+priority_order: 1
+research_classes: ["S2D"]
+かもしれない := [text=か] [text=も] [lemma=知れる] @NAIMASEN.
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["明日は雨だろう", "対比であろう"]
+priority_order: 1
+research_classes: ["S2C"]
+だろう := @DAROU.
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["そうであろう", "可能性が高いであろう"]
+priority_order: 1
+research_classes: ["S2C"]
+であろう := @DEAROU.
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["彼は来るはずである"]
+groups: ["trailing_copula"]
+priority_order: 1
+research_classes: ["S2C"]
+output_name: "はず"
+はずである := [lemma=筈] [text=で & lemma=だ] [lemma=有る].
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["素質が高い人においては神経科学的構造が発生しやすくなるのであろう", "影響があるのであろう"]
+priority_order: 1
+research_classes: ["S2C"]
+のであろう := [text=の] [text=で] [text=あろう & lemma=有る].
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["影響があるのではないだろうか"]
+priority_order: 1
+research_classes: ["S2C"]
+のではないだろうか := [lemma=の] @DEWA @NAI @DAROU [text=か].
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["影響があるとみられる"]
+priority_order: 1
+research_classes: ["S2C"]
+とみられる := [text=と] [lemma=見る] (@RERU | @RARE).
+
+# _S1 definitions
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["低い結果だということだ", "励起感覚の生起が自動性・非随意性を持つということである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3F"]
+output_name: "ということ"
+ということだ := [text=と] [unidic.orthbase in @IU] @KOTO @DA.
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["励起感覚の生起が自動性・非随意性を持つということである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3F"]
+output_name: "ということ"
+ということである := [text=と] [text=いう & lemma=言う] @KOTO [text=で & lemma=だ] [lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["引き受けてくれるということで帰農した"]
+priority_order: 2
+research_classes: ["S3D"]
+ということで := [text=と] [text=いう & lemma=言う] @KOTO [text=で].
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["努力の結果と言える"]
+priority_order: 2
+research_classes: ["S2B", "S3F"]
+と言える := [text=と] [unidic.orthbase in @IERU].
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["特徴であるともいえる"]
+priority_order: 2
+research_classes: ["S2B", "S3F"]
+ともいえる := [text=と] [text=も] [unidic.orthbase in @IERU].
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["適切であると考えられる"]
+priority_order: 2
+research_classes: ["S2B", "S3F"]
+と考えられる := [text=と] [lemma=考える] @RARE.
+
+role: "research"
+layer: "S1"
+category: "S1f 判断再提示"
+examples: ["適切であると判断される"]
+priority_order: 2
+research_classes: ["S2B", "S3F"]
+と判断される := [text=と] [lemma=判断] @SURU @RERU.
+
+role: "research"
+layer: "S2"
+category: "S2a 推量"
+examples: ["その真相は逆に出来ると思われる", "方向性を捉えることも可能だと思われる"]
+priority_order: 1
+research_classes: ["S2C"]
+と思われる := [text=と] [lemma=思う] @RERU.
+
+role: "research"
+layer: "S1"
+category: "S1e 説明"
+examples: ["私のペンなのだ", "彼の成功は努力の結果なのだ"]
+priority_order: 2
+research_classes: ["S2F", "S3E"]
+のだ := [lemma=の] @DA.
+
+role: "research"
+layer: "S1"
+category: "S1e 説明"
+examples: ["それが結論のである"]
+priority_order: 2
+research_classes: ["S2F", "S3E"]
+のである := [lemma=の] @DEARU.
+
+role: "research"
+layer: "S1"
+category: "S1e 説明"
+examples: ["誘因刺激と励起感覚の組み合わせは共感覚者ごとに異なることを指す"]
+priority_order: 2
+research_classes: ["S1D"]
+指す := [lemma=差す-他動詞].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["創建時の植物系葺材に価値を求めることも可能である"]
+priority_order: 2
+research_classes: ["S3D"]
+ことも := @KOTO [text=も].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["同様の建築形式があることもある"]
+priority_order: 2
+research_classes: ["S3D"]
+こともある := @KOTO [text=も] @ARU.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["現象であると言われることが多い", "reinterpretationされることが多い"]
+priority_order: 2
+research_classes: ["S1C"]
+ことが多い := @KOTO [text=が] [lemma=多い].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["経験されることも多い", "見られることも多い"]
+priority_order: 2
+research_classes: ["S1C"]
+ことも多い := @KOTO [text=も] [lemma=多い].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["そうすることになる"]
+priority_order: 2
+research_classes: ["S3D"]
+ことになる := @KOTO [text=に] @NARU.
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["位置づけをすることとなった"]
+priority_order: 2
+research_classes: ["S3D"]
+こととなる := @KOTO [text=と] @NARU [text=た]?.
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["成功したわけだ"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3D"]
+output_name: "わけ"
+わけだ := [text in @WAKE] @DA.
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["水戸の歴史は、この時期に最初の曲がり角に立ったわけである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3D"]
+output_name: "わけ"
+わけである := [text in @WAKE] [text=で & lemma=だ] [lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["天明以来の暗黒に一筋の光明を投げかけたようなものであった"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3D"]
+output_name: "ようなもの"
+ようなものであった := [text=よう & lemma=様] [text=な] [lemma in @MONO] [text=で & lemma=だ] [text=あっ & lemma=有る] [text=た].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["避けられないものである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3D"]
+output_name: "もの"
+ものである := [lemma in @MONO] [text=で & lemma=だ] [text=ある & lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["ついていないことがある", "経験されることがある", "経験されることもある"]
+priority_order: 2
+research_classes: ["S3D"]
+こと := (@KOTO [text=は] | @KOTO [text=が] | @KOTO [text=も] | @KOTO [text=から] | @KOTO [text=に] | @KOTO [text=を]).
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["重要なことである", "当然のことである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S3D"]
+output_name: "こと"
+ことである := @KOTO @DEARU.
+
+role: "research"
+layer: "S1"
+category: "S1d 名詞形式"
+examples: ["移住するためである"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S2H", "S3D"]
+output_name: "ため"
+ためである := [lemma=為] @DEARU.
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["価値を求めることも可能である"]
+groups: ["trailing_copula"]
+priority_order: 2
+research_classes: ["S2D", "S3C"]
+output_name: "可能"
+可能である := [lemma=可能] @DEARU.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["更に多角的な検証が必要になる"]
+priority_order: 2
+research_classes: ["S2E", "S3C"]
+必要になる := [lemma=必要] [text=に] [lemma=成る].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["この点は重要だ"]
+priority_order: 2
+research_classes: ["S3C"]
+重要だ := [lemma=重要] @DA.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["名称の変更は光圀の存在を遠ざけようとした現象であったことは否めない"]
+priority_order: 2
+research_classes: ["S2A", "S3C"]
+否めない := [lemma=否む] @NAI.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["礼拝する機能を有した建物であったことは想像にかたくない"]
+priority_order: 2
+research_classes: ["S2C", "S3C"]
+想像にかたくない := [lemma=想像] [text=に] [lemma=固い] @NAI.
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["得仁堂が回遊路沿いにあることは確認できる"]
+priority_order: 2
+research_classes: ["S2D", "S3B"]
+確認できる := [lemma=確認] [lemma=出来る].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["その意図は推察できる"]
+priority_order: 2
+research_classes: ["S2D", "S3C"]
+できる := [lemma=出来る].
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["その意図が伺える"]
+priority_order: 2
+research_classes: ["S2D", "S3B"]
+伺える := [lemma=伺う].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["注意が必要がある"]
+priority_order: 2
+research_classes: ["S2E", "S3C"]
+必要がある := [lemma=必要] [text=が] [lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["改革が必要とされた"]
+priority_order: 2
+research_classes: ["S2E", "S3C"]
+必要 := [lemma=必要].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["すべてが正しいとは限らない"]
+priority_order: 2
+research_classes: ["S2D", "S3C"]
+とは限らない := [text=と] [text=は] [lemma=限る] @NAI.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["十分であるとは言い難い", "十分であるとは言いがたい"]
+priority_order: 2
+research_classes: ["S3C"]
+とは言い難い := [text=と] [text=は] [unidic.orthbase in @IU] [lemma=難い].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["大まかに過ぎる感もある"]
+priority_order: 2
+research_classes: ["S3C"]
+感がある := [lemma=感] ([text=が] | [text=も]) @ARU.
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["問題がある可能性がある"]
+mapping_note: "pinned CWJ splits GiNZA NORM=可能性 into 可能 + 性"
+priority_order: 2
+research_classes: ["S2D", "S3C"]
+可能性がある := [lemma=可能] [lemma=性] [text=が] [lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["実行することができる"]
+priority_order: 2
+research_classes: ["S2D", "S3C"]
+ことができる := @KOTO [text=が] [lemma=出来る].
+
+role: "research"
+layer: "S1"
+category: "S1c 評価"
+examples: ["修正しなければならない"]
+priority_order: 2
+research_classes: ["S2E", "S3C"]
+なければならない := [text=なけれ] [text=ば] [text in {なら, なり}] @NAIMASEN.
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["意向があったとされる"]
+priority_order: 2
+research_classes: ["S3B"]
+とされる := [text=と] [text=さ & lemma=為る] [lemma=れる].
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["文字認識時にそれが呼び出される可能性がある"]
+priority_order: 2
+research_classes: ["S3B"]
+される := (@RERU | @RARE).
+
+role: "research"
+layer: "S1"
+category: "S1b 態・可能"
+examples: ["悪い事態を推測させるものがある"]
+priority_order: 2
+research_classes: ["S3B"]
+させる := [unidic.pos1=名詞 & unidic.pos2=普通名詞 & unidic.pos3=サ変可能] @SURU [lemma=せる].
+
+role: "research"
+layer: "S2"
+category: "S2c 確信"
+examples: ["期待を高めさせずにはおかなかった"]
+priority_order: 1
+research_classes: ["S2A"]
+ずにはおかない := [text=ず] [text=に] [text=は] [lemma=置く] @NAI.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["圧倒されてしまうというのである"]
+priority_order: 1
+research_classes: ["S2G"]
+というのである := [text=と] [unidic.orthbase in @IU] [text=の] @DEARU.
+
+role: "research"
+layer: "S2"
+category: "S2d 外部根拠"
+examples: ["攻撃目標となったと言われる"]
+priority_order: 1
+research_classes: ["S2G"]
+と言われる := [text=と] [unidic.orthbase in @IU] (@RERU | @RARE).
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["検討している", "なっている"]
+groups: ["aspect"]
+priority_order: 2
+research_classes: ["S3A"]
+ている := @VERB_TEIRU.
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["準備してある", "決めてある", "済んである"]
+priority_order: 2
+research_classes: ["S3A"]
+てある := [text in @TE_DE & lemma in @TE_DE] [lemma=有る].
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["記録しておく", "確認しておく"]
+priority_order: 2
+research_classes: ["S3A"]
+ておく := @VERB_TE [lemma=置く].
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["変化していくなかで", "進んでいく"]
+priority_order: 2
+research_classes: ["S3A"]
+ていく := @VERB_TE [lemma=行く].
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["明らかになってきた", "増えてくる"]
+groups: ["aspect"]
+priority_order: 2
+research_classes: ["S3A"]
+てくる := @VERB_TE [lemma=来る].
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["失われてしまう", "変わってしまう"]
+priority_order: 2
+research_classes: ["S3A"]
+てしまう := @VERB_TE [lemma=仕舞う].
+
+role: "research"
+layer: "S1"
+category: "S1a 相"
+examples: ["変わりつつある", "進展しつつある"]
+priority_order: 2
+research_classes: ["S3A"]
+つつある := [lemma=つつ] [lemma=有る].
+
+# _S0 definitions
+
+role: "research"
+layer: "S0"
+category: "その他"
+examples: ["問題だ", "重要である", "結果であった"]
+priority_order: 3
+research_classes: ["S1A"]
+だ := @DA.
+
+role: "research"
+layer: "S0"
+category: "命題内容"
+examples: ["問題となる", "大きくなる"]
+groups: ["s0_conditional"]
+priority_order: 3
+research_classes: ["S1A"]
+なる := @NARU.
+
+role: "research"
+layer: "S0"
+category: "命題内容"
+examples: ["可能性がある", "問題がある"]
+groups: ["s0_conditional"]
+priority_order: 3
+research_classes: ["S1A"]
+ある := @ARU.
+
+role: "research"
+layer: "S0"
+category: "命題内容"
+examples: ["分析を行う", "検討を行う"]
+groups: ["s0_conditional"]
+priority_order: 3
+research_classes: ["S1A"]
+行う := [lemma=行う].
+
+# Membership of `%upper_layer` is a function of `layer`, so it is derived by
+# the predicate below rather than restated on 77 definitions. The other three
+# groups stay literal `groups:` lists deliberately: `aspect`,
+# `trailing_copula` and `s0_conditional` are curated memberships — upstream
+# name-lists, not functions of any metadata key — so a list is the honest
+# encoding, and a derived group refuses restatement anyway
+# (`LiteralEntryForDerivedGroup`).
+group upper_layer := layer in {"S1", "S2", "S3"}.
+
+# The publication decisions this catalog declares, in upstream's stage order.
+# Order is semantic here and not presentational: a `resolve` before an `exclude`
+# contests a different field than one after it, and `admit` reads the published
+# end, so standing after the `detach` measures a trimmed record.
+#
+# `detach` selects `%trailing_copula` rather than naming thirteen subjects
+# because the thirteen declare one rule, not thirteen: the copula is
+# inflectional variation (だ / である / であった / でした) and the research unit
+# is the head. `output_name` supplies the name; this supplies the span.
+#
+# `evidence: raw` is forced, not chosen: `DA` is a fragment and never emits, so
+# its records come from the synthesized `__policy__DA` emitter.
+policy
+  # Stage 1 — `deduplicate_longest(group=layer)`. One statement: `partition:
+  # layer` subdivides the selected set by each definition's `layer` metadata
+  # and runs the rank contest independently per class, so the layers never
+  # resolve against each other — that cross-layer contest is stage 4's job.
+  resolve all partition: layer, rank: [longest, start, end, pattern].
+  # Stage 2 — `filter_teiru_negation`. The subject is `@ている` alone, not an
+  # aspect group: upstream's `_TEIRU_NAMES` is a one-element set, and `てくる`
+  # is subject only to stage 3.
+  exclude @ている with: @NEG, relation: after, evidence: raw.
+  # Stage 3 — `filter_passive_before_aspect`. The subject is the *passive*:
+  # upstream drops the `される` that an aspect consumed, not the aspect. The
+  # aspect starts where the passive ends, which is `after`.
+  #
+  # `evidence: current` because upstream computes `aspect_starts` from the set
+  # surviving stages 1-2, not from the raw stream. It is the only `current` in
+  # this block.
+  exclude @される with: %aspect, relation: after, evidence: current.
+  # Stage 4 — `suppress_inner_layers`. The cross-layer contest, and the only
+  # statement that ranks by `priority_order`: within one layer there is no
+  # layer to break a tie. Lower wins, so S3 (0) is outermost, which is
+  # upstream's `_LAYER_PRIORITY` sorted ascending.
+  resolve patterns rank: [longest, priority_order, start, end, pattern].
+  detach %trailing_copula with: @DA, relation: at_end, evidence: raw.
+  # Stage 6 — `filter_sentence_final`. Position is load-bearing: `admit` reads
+  # the *published* end, so standing after the `detach` measures the distance on
+  # the trimmed record, which is what upstream does by running its stage 6 after
+  # its stage 5.
+  #
+  # The anchor is `propositional_end`, not the reserved `sentence_end`.
+  # `filter_pipeline.py:100` passes `effective_end` — the citation- and
+  # attribution-stripped end — to this stage and to the という stage alike, so
+  # both must read one anchor.
+  admit all terminal: {within: 5, anchor: propositional_end}.
+  admit @という terminal: {exact: true, anchor: propositional_end}.
+  # Stage 8 — `filter_s0_requires_upper_layer`. A sentence-wide presence test,
+  # not an overlap contest: any surviving non-S0 record licenses every S0 record
+  # in the sentence, and `relation: in_sentence` is exactly that — the operand's
+  # mere presence decides. `evidence: current` because upstream asks it of the
+  # survivors, and by this point most of them are gone.
+  #
+  # `だ` is absent from `%s0_conditional` and so is never selected. That absence
+  # is the whole of what `s0_always_keep: true` used to say.
+  require %s0_conditional with: %upper_layer, relation: in_sentence, evidence: current.
+end

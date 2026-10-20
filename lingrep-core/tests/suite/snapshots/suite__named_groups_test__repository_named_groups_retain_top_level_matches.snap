@@ -1,0 +1,72 @@
+---
+source: lingrep-core/tests/suite/named_groups_test.rs
+assertion_line: 177
+expression: observed
+---
+[
+    TopLevelMatch {
+        pattern: "恐れがある",
+        start: 0,
+        end: 4,
+    },
+    TopLevelMatch {
+        pattern: "だろう",
+        start: 0,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "であろう",
+        start: 0,
+        end: 3,
+    },
+    TopLevelMatch {
+        pattern: "よう",
+        start: 0,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "かもしれない",
+        start: 0,
+        end: 5,
+    },
+    TopLevelMatch {
+        pattern: "だ",
+        start: 0,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "必要がある",
+        start: 1,
+        end: 4,
+    },
+    TopLevelMatch {
+        pattern: "恐れがある",
+        start: 0,
+        end: 4,
+    },
+    TopLevelMatch {
+        pattern: "だろう",
+        start: 0,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "であろう",
+        start: 0,
+        end: 3,
+    },
+    TopLevelMatch {
+        pattern: "う",
+        start: 1,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "よう",
+        start: 0,
+        end: 2,
+    },
+    TopLevelMatch {
+        pattern: "かもしれない",
+        start: 0,
+        end: 5,
+    },
+]

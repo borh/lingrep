@@ -1,0 +1,42 @@
+[package]
+name = "lingrep-corpus"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Immutable prepared-corpus artifacts with their identity, provenance, and bounded sentence sources"
+
+[dependencies]
+blake3.workspace = true
+compact_str.workspace = true
+futures = "0.3"
+libc = "0.2"
+memmap2 = "0.9.5"
+rayon.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+# The provenance recorder owns its connection end to end, which means owning
+# the runtime it is opened, used and closed on rather than borrowing the
+# caller's. `rt` alone: the recorder thread drives one current-thread runtime.
+tokio = { version = "1", features = ["rt"] }
+lingrep-core.workspace = true
+zstd = "0.13.1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+hegeltest.workspace = true
+rayon.workspace = true
+tempfile.workspace = true
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+lingrep-core = { workspace = true, features = ["testing"] }
+
+[[bench]]
+name = "prepared_tokens"
+harness = false
+
+[lints]
+workspace = true

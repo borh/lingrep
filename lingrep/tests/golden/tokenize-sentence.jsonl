@@ -1,0 +1,1 @@
+{"schema":"lingrep.tokenize/v1","type":"sentence","data":{"corpus_sentence_ordinal":9,"source_name":"a.md","document_ordinal":3,"document_sentence_ordinal":2,"tokens":[{"index":1,"attributes":{"text":"猫"}}]}}

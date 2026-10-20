@@ -1,0 +1,7 @@
+defaults
+  category: "test_category"
+  meidai: "test_meidai"
+  type: "test_type"
+end
+
+pattern test := [upos=NOUN].

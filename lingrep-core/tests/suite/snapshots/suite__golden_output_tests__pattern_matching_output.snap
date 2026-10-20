@@ -1,0 +1,7 @@
+---
+source: lingrep-core/tests/golden_output_tests.rs
+expression: output
+---
+Sentences: 1
+Matches: 2
+Tokens: 8

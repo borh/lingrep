@@ -1,0 +1,147 @@
+name: Release
+
+# Builds the downloadable `ling` archives for one tagged release and publishes
+# them with their checksums. The tag is the release: `v0.3.0` requires
+# docs/release-notes/v0.3.0.md and a binary that reports 0.3.0, and neither is
+# discovered here.
+#
+# No dictionary is built or attached. `ling` tokenizes nothing without one, and
+# a dictionary is licensed data with its own acquisition paths (README,
+# DICTIONARIES.md); the archives carry MIT-licensed code and the generated
+# third-party notices only.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      # One unavailable runner must not hide the other artifacts, so the matrix
+      # reports per target. The publish job still requires every target.
+      fail-fast: false
+      matrix:
+        include:
+          # An older glibc is the floor for the archive, so it is built on the
+          # oldest still-supported Ubuntu runner.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          # GitHub-hosted arm64 Linux runners. If the label moves, this line is
+          # the only one that changes.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # sqlite is linked from the bundled source (`sqlx`'s `sqlite-bundled`), so
+      # no system headers are involved and the runner needs no packages.
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p lingrep
+
+      # The smoke gate needs no dictionary, so it runs on every target before
+      # anything is packaged. A binary that cannot answer `--version` or parse
+      # a tracked catalog fails the release here rather than in a user's shell.
+      - name: Smoke the binary
+        run: |
+          binary="target/${{ matrix.target }}/release/ling"
+          "$binary" --version
+          "$binary" check --patterns patterns/sfe.lx
+
+      - name: Assert the version matches the tag
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          expected="${tag#v}"
+          binary="target/${{ matrix.target }}/release/ling"
+          actual="$("$binary" --version | awk '{print $2}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "error: tag is $tag but the binary reports $actual" >&2
+            exit 1
+          fi
+
+      - name: Package
+        env:
+          PROFILE_DIR: target/${{ matrix.target }}/release
+        run: scripts/package-release.sh "${{ matrix.target }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # The release notes are part of the tree, reviewed with the code, and
+      # named by the tag. A tag without them is refused rather than published
+      # with an empty body.
+      - name: Collect notes and checksums
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          notes="docs/release-notes/$tag.md"
+          if [ ! -s "$notes" ]; then
+            echo "error: $notes is missing or empty" >&2
+            exit 1
+          fi
+          mkdir -p release
+          cp "$notes" release/notes.md
+          cd dist
+          if command -v sha256sum > /dev/null; then
+            sha256sum ./*.tar.gz > ../release/SHA256SUMS
+          else
+            shasum -a 256 ./*.tar.gz > ../release/SHA256SUMS
+          fi
+          cat ../release/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          gh release create "$tag" \
+            --title "lingrep ${tag#v}" \
+            --notes-file release/notes.md \
+            --verify-tag \
+            ./dist/*.tar.gz ./dist/*.sha256 ./release/SHA256SUMS

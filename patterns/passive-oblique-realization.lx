@@ -1,0 +1,85 @@
+# Oblique-candidate realization on passively marked verbal predicates.
+#
+# This catalog keeps candidate multiplicity visible: a predicate with several
+# nominal `obl`/`obl:agent` dependents publishes one assignment per candidate,
+# while a predicate with none publishes its head once. Plain `obl` remains a
+# candidate rather than a semantic-agent assertion; downstream analysis may
+# refine it by case marking or other corpus-specific evidence.
+#
+# The three passive-evidence arms are mutually exclusive. `Voice=Pass` wins,
+# then `aux:pass`, then the Japanese GiNZA/GSD `aux` lemma `れる`/`られる`.
+# This prevents a predicate carrying several markers from being counted twice.
+# Candidate-present and candidate-absent rows deliberately have different key
+# shapes. The corpus screen found that 15–31% of present predicates have more
+# than one candidate, so a scalar optional capture would be the wrong model.
+# See docs/results/2026-08-31-passive-oblique-realization/README.md.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern passive_evidence: string required in {"voice", "aux_pass", "japanese_aux"}
+  status: string required in {"experimental"}
+end
+
+set PASSIVE_AUX := {れる, られる}.
+set OBLIQUE_RELATION := {obl, obl:agent}.
+set NOMINAL := {NOUN, PROPN, PRON}.
+
+test VOICE_PASS := feat.Voice has Pass.
+test VERBAL_PREDICATE := upos=VERB & lemma ~ /./.
+test PASSIVE_AUXILIARY := upos=AUX & lemma in @PASSIVE_AUX.
+test OBLIQUE_CANDIDATE :=
+  upos in @NOMINAL & dep.rel in @OBLIQUE_RELATION & lemma ~ /./.
+
+passive_evidence: "voice"
+output_name: "passive_oblique_present"
+key: [$predicate.lemma, $candidate.lemma, $candidate.dep.rel]
+pattern voice_candidate_present := any_order(
+  (?<predicate> [@VERBAL_PREDICATE & @VOICE_PASS]),
+  (?<candidate> [@OBLIQUE_CANDIDATE])
+)
+  where $predicate -[@OBLIQUE_RELATION]-> $candidate.
+
+passive_evidence: "voice"
+output_name: "passive_oblique_absent"
+key: [$predicate.lemma]
+pattern voice_candidate_absent := (?<predicate> [@VERBAL_PREDICATE & @VOICE_PASS])
+  where not $predicate -[@OBLIQUE_RELATION]-> [@OBLIQUE_CANDIDATE].
+
+passive_evidence: "aux_pass"
+output_name: "passive_oblique_present"
+key: [$predicate.lemma, $candidate.lemma, $candidate.dep.rel]
+pattern aux_pass_candidate_present := any_order(
+  (?<predicate> [@VERBAL_PREDICATE & !@VOICE_PASS]),
+  (?<candidate> [@OBLIQUE_CANDIDATE])
+)
+  where $predicate -[aux:pass]-> _,
+        $predicate -[@OBLIQUE_RELATION]-> $candidate.
+
+passive_evidence: "aux_pass"
+output_name: "passive_oblique_absent"
+key: [$predicate.lemma]
+pattern aux_pass_candidate_absent := (?<predicate> [@VERBAL_PREDICATE & !@VOICE_PASS])
+  where $predicate -[aux:pass]-> _,
+        not $predicate -[@OBLIQUE_RELATION]-> [@OBLIQUE_CANDIDATE].
+
+passive_evidence: "japanese_aux"
+output_name: "passive_oblique_present"
+key: [$predicate.lemma, $candidate.lemma, $candidate.dep.rel]
+pattern japanese_aux_candidate_present := any_order(
+  (?<predicate> [@VERBAL_PREDICATE & !@VOICE_PASS]),
+  (?<candidate> [@OBLIQUE_CANDIDATE])
+)
+  where not $predicate -[aux:pass]-> _,
+        $predicate -[aux]-> [@PASSIVE_AUXILIARY],
+        $predicate -[@OBLIQUE_RELATION]-> $candidate.
+
+passive_evidence: "japanese_aux"
+output_name: "passive_oblique_absent"
+key: [$predicate.lemma]
+pattern japanese_aux_candidate_absent := (?<predicate> [@VERBAL_PREDICATE & !@VOICE_PASS])
+  where not $predicate -[aux:pass]-> _,
+        $predicate -[aux]-> [@PASSIVE_AUXILIARY],
+        not $predicate -[@OBLIQUE_RELATION]-> [@OBLIQUE_CANDIDATE].

@@ -1,0 +1,14 @@
+# Representative cross-analyzer V8 catalog. These patterns intentionally use
+# only portable UPOS semantics: provider morphology remains provider-owned.
+analyzer: { family: "vibrato", resource: "unidic-cwj", segmentation: ["input", "analyzer"] }
+analyzer: { family: "sudachi", resource: "core", split: "C", segmentation: ["input", "analyzer"] }
+analyzer: { family: "spacy", resource: "ja_ginza", segmentation: ["input", "analyzer"] }
+analyzer: { family: "stanza", resource: "fr-gsd-morphology", segmentation: ["input", "analyzer"] }
+
+description: "Portable content nouns"
+key: [upos]
+content_noun := [upos=NOUN].
+
+description: "Portable lexical predicates"
+key: [upos]
+lexical_predicate := [upos in {VERB, ADJ}].

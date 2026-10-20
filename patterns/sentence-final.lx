@@ -1,0 +1,142 @@
+# Compact default catalog for the lingrep-web pattern editor.
+
+set TE_DE := {て, で}.
+
+fragment NAI := [text in {ない, 無い, ず, ぬ, なかっ, 無かっ, ねえ}] [text=た]?.
+fragment ARU := [lemma in {ある, 有る} & text not in {あろう, 有ろう, あれ, 有れ}] [text=た]?.
+fragment DA := ([text in {だ, です, でし, だっ} & lemma=だ] [text=た]? | で @ARU).
+fragment RARE := [lemma=られる].
+fragment RERU := [lemma=れる].
+fragment SURU := [lemma=為る].
+fragment KOTO := [lemma in {こと, 事}].
+fragment VERB_TE := [text in @TE_DE].
+
+anchor: {name: "propositional_end", exclude: "TRAILING_PUNCTUATION"}
+max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
+fragment TRAILING_PUNCTUATION := [upos=PUNCT]+.
+
+category: "S2F 確実性・確信の提示"
+に違いない := に 違い @NAI.
+
+category: "S2D 書き手による判断明示"
+と考える := と [lemma=考える].
+category: "S2D 書き手による判断明示"
+と信じる := (と [lemma=信ずる] | と [lemma=信じ込む] 傾向 に @ARU).
+category: "S2B 志向（欲求・意志）"
+意図する := ((こと を | [unidic.pos1=助詞 & text=と]) 意図 [norm=する] | 意図 を [lemma=感ずる] ざる を [lemma=得る] [lemma=ない]).
+category: "S2D 書き手による判断明示"
+と考えて良い := と 考え て (よい | いい).
+category: "S2C 推量判断の提示"
+と考えられる := と [lemma=考える] @RARE.
+category: "S2D 書き手による判断明示"
+と言える := と [unidic.orthbase in {言える, いえる}].
+category: "S2D 書き手による判断明示"
+と判断できる := と 判断 [lemma=出来る].
+category: "S2F 確実性・確信の提示"
+ことがわかる := @KOTO が [lemma=分かる].
+
+category: "S2C 推量判断の提示"
+だろう := [text in {だろう, でしょう, だろ, たろう}].
+category: "S2C 推量判断の提示"
+であろう := で [text=あろう & lemma=有る].
+category: "S2E 事柄から導かれる判断の提示"
+と思われる := と [lemma=思う] @RERU.
+category: "S2G2 観察・状況に基づく認識"
+とみられる := と [lemma=見る] (@RERU | @RARE).
+category: "S2E 事柄から導かれる判断の提示"
+推察できる := 推察 [lemma=出来る].
+category: "S2F 確実性・確信の提示"
+想像に難くない := 想像 に [lemma in {難い, 固い}] @NAI.
+
+category: "S2A 可能性"
+かもしれない := か も [lemma=知れる] @NAI.
+category: "S1C 評価・義務"
+ことができる := @KOTO が [lemma=出来る].
+
+category: "S1C 評価・義務"
+必要である := 必要 で @ARU.
+
+category: "S2H 強調"
+のである_S2F := の で @ARU.
+category: "S2H 強調"
+なのである := な の で @ARU.
+
+category: "S2G2 観察・状況に基づく認識"
+そうだ := not_preceded_by([unidic.cform=連用形-一般]) そう @DA.
+category: "S2G1 伝聞"
+と言われる := と [lemma=言う] (@RERU | @RARE).
+
+category: "S2E 事柄から導かれる判断の提示"
+ためである := [lemma=為] で @ARU.
+
+category: "S2B 志向（欲求・意志）"
+たい := [] [text=たい & upos=AUX].
+
+category: "S2J 不明"
+てしまう := @VERB_TE [lemma=仕舞う].
+
+category: "S1A アスペクト・状態・内在的必然"
+ている := @ASPECT_TE_IRU.
+category: "S1A アスペクト・状態・内在的必然"
+てある := @ASPECT_TE_ARU.
+category: "S1A アスペクト・状態・内在的必然"
+ておく := @ASPECT_TE_OKU.
+
+category: "S3 談話行為"
+とする := と @SURU.
+category: "S1B 態"
+される := (@RERU | @RARE).
+category: "S1B 態"
+させる := [unidic.pos1=名詞 & unidic.pos2=普通名詞 & unidic.pos3=サ変可能] @SURU [lemma=せる].
+
+category: "S2G2 観察・状況に基づく認識"
+ことが多い := @KOTO が [lemma=多い].
+category: "S2G2 観察・状況に基づく認識"
+傾向がある := 傾向 が @ARU.
+
+category: "S3 談話行為"
+ことを示す := @KOTO を [lemma=示す].
+
+category: "S2G1 伝聞"
+という := と [text=いう & lemma=言う].
+
+category: "S1F 判断の言い換え・再提示"
+ということだ := と [lemma=言う] @KOTO @DA.
+category: "S1F 判断の言い換え・再提示"
+と言える_S1F := と [unidic.orthbase in {言える, いえる}].
+category: "S1F 判断の言い換え・再提示"
+と考えられる_S1F := と [lemma=考える] @RARE.
+category: "S1F 判断の言い換え・再提示"
+と判断される := と 判断 @SURU @RERU.
+
+category: "S1E 説明・提示"
+のだ := の @DA.
+category: "S1E 説明・提示"
+のである_S1E := の で @ARU.
+
+category: "S1D 名詞形式構文"
+ことになる := @KOTO に [lemma=成る].
+
+category: "S1C 評価・義務"
+重要だ := 重要 @DA.
+category: "S1C 評価・義務"
+必要だ := 必要 @DA.
+category: "S1C 評価・義務"
+可能だ := 可能 @DA.
+category: "S1C 評価・義務"
+なければならない_S1C := なけれ ば [text in {なら, なり}] @NAI.
+
+fragment ASPECT_TE_IRU := @VERB_TE [lemma=居る].
+fragment ASPECT_TE_ARU := [text in @TE_DE] [lemma=有る].
+fragment ASPECT_TE_OKU := @VERB_TE [lemma=置く].
+
+category: "S0 命題内容"
+なる := [lemma in {成る, なる} & text != なろう].
+category: "S0 命題内容"
+ある := @ARU.
+category: "S0 命題内容"
+行う := [lemma=行う].
+
+policy
+  admit all terminal: {within: 5, anchor: propositional_end}.
+end

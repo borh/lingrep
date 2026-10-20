@@ -1,0 +1,2 @@
+# Copied into each new worktree. Both gitignored AND listed here.
+target/

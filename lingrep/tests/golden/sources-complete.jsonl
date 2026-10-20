@@ -1,0 +1,1 @@
+{"schema":"lingrep.sources/v1","type":"complete","data":{"coverage":"full","documents":1,"distinct_targets":1,"alias_documents":0,"max_target_multiplicity":1,"external_targets":0,"traversal_high_water":{"max_depth":1,"examined_entries":1,"max_directory_entries":1,"index_bytes":1},"ordered_inventory_digest":"inventory","elapsed_millis":12,"termination":"eof"}}

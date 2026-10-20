@@ -1,0 +1,92 @@
+defaults
+  status: "experimental"
+end
+
+# Counting driver catalog: COST PROBES, NOT RESEARCH CLAIMS.
+#
+# Nine parameterizations of one shape — the multi-を generalization of
+# `double-wo.sgx`'s raw candidate language — spelled by unrolling, because
+# unrolling is the only way SGX compiles a counting constraint today. The
+# parameters are k (number of を occurrences, suffix `_x2`/`_x3`/`_x4`) and
+# n (bounded gap between consecutive occurrences, suffix `_n4`/`_n8`/`_n16`).
+# Each pattern's cost is what the catalog exists to measure: the k×n
+# compile-cost table and the unrolled runtime baseline live in
+# docs/results/2026-08-14-counting-unrolled-baseline/, and the design that is
+# deferred against that table in docs/design/2026-08-14-counting-set-repeats.md.
+#
+# The `examples:` claims verify only that each pattern's language is inhabited
+# by a real tokenization — they are constructed sentences, not corpus
+# attestations, and none of the nine names records a linguistic finding.
+#
+# The fragments restate double-wo's particle/anchor/gap predicates as of
+# 2026-08-14 under this catalog's own names: a set is catalog-scoped, so the
+# copy is forced, and the drift hazard is accepted because these definitions
+# are probes rather than classifier evidence.
+
+set COUNTING_NON_CONTENT := {動詞, 助動詞, 補助記号}.
+
+role: "helper"
+fragment counting_particle :=
+  [unidic.orthbase=を & unidic.pos1=助詞 & unidic.pos2=格助詞].
+
+role: "helper"
+fragment counting_anchor :=
+  [unidic.pos1 not in @COUNTING_NON_CONTENT].
+
+role: "helper"
+fragment counting_gap :=
+  [unidic.orthbase!=を & unidic.pos1 not in @COUNTING_NON_CONTENT].
+
+category: "counting"
+examples: ["氏名を住所を備考に入力した"]
+pattern wo_x2_n4 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,4} @counting_particle @counting_anchor){1}.
+
+category: "counting"
+examples: ["氏名を住所を備考に入力した"]
+pattern wo_x2_n8 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,8} @counting_particle @counting_anchor){1}.
+
+category: "counting"
+examples: ["氏名を住所を備考に入力した"]
+pattern wo_x2_n16 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,16} @counting_particle @counting_anchor){1}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号を備考に入力した"]
+pattern wo_x3_n4 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,4} @counting_particle @counting_anchor){2}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号を備考に入力した"]
+pattern wo_x3_n8 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,8} @counting_particle @counting_anchor){2}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号を備考に入力した"]
+pattern wo_x3_n16 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,16} @counting_particle @counting_anchor){2}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号をメールを備考に入力した"]
+pattern wo_x4_n4 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,4} @counting_particle @counting_anchor){3}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号をメールを備考に入力した"]
+pattern wo_x4_n8 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,8} @counting_particle @counting_anchor){3}.
+
+category: "counting"
+examples: ["氏名を住所を電話番号をメールを備考に入力した"]
+pattern wo_x4_n16 :=
+  @counting_particle @counting_anchor
+  ((@counting_gap){0,16} @counting_particle @counting_anchor){3}.

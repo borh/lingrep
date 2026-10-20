@@ -1,0 +1,203 @@
+:root {
+  --pattern-font-mono: ui-monospace, SFMono-Regular, Consolas, "Noto Sans Mono CJK JP", "Hiragino Kaku Gothic ProN", monospace;
+  --pattern-caret: #111827;
+  --pattern-selection: rgb(37 99 235 / 25%);
+  --pattern-mirror-border: #9ca3af;
+  --pattern-mirror-text: #1f2937;
+  --pattern-status-text: #4b5563;
+  --pattern-tooltip-bg: #ffffff;
+  --pattern-focus: #4b6cb7;
+  --pattern-lint-error: #c00;
+  --pattern-keyword: #7c3aed;
+  --pattern-comment: #64748b;
+  --pattern-string: #047857;
+  --pattern-property: #0369a1;
+  --pattern-definition: #9d174d;
+  --pattern-variable: #1d4ed8;
+  --pattern-punctuation: #475569;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pattern-caret: #e6e6e6;
+    --pattern-selection: rgb(96 165 250 / 35%);
+    --pattern-mirror-border: #4b5563;
+    --pattern-mirror-text: #d1d5db;
+    --pattern-status-text: #9aa0a6;
+    --pattern-tooltip-bg: #23252b;
+    --pattern-focus: #8ab4f8;
+    --pattern-lint-error: #ff9aa2;
+    --pattern-keyword: #c4b5fd;
+    --pattern-comment: #94a3b8;
+    --pattern-string: #6ee7b7;
+    --pattern-property: #7dd3fc;
+    --pattern-definition: #f9a8d4;
+    --pattern-variable: #93c5fd;
+    --pattern-punctuation: #9ca3af;
+  }
+  .pattern-diagnostic-excerpt, .lx-diagnostic-excerpt { background: #3a2a12; color: #fbbf24; }
+}
+
+.pattern-editor {
+  display: grid;
+  position: relative;
+  width: 100%;
+}
+
+/* The source textarea stays in the form so htmx submits it, but CodeMirror is
+   the editing surface; the textarea is only kept in sync programmatically. */
+.pattern-editor-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pattern-editor .cm-editor { min-height: 10lh; }
+.corpus-pattern-editor {
+  --corpus-editor-height: min(24rem, 45vh);
+  block-size: var(--corpus-editor-height);
+  min-block-size: 12rem;
+  max-block-size: 90vh;
+  resize: vertical;
+  overflow: hidden;
+}
+.corpus-pattern-editor[data-editor-expanded="true"] {
+  block-size: 75vh;
+}
+.corpus-pattern-editor .pattern-editor,
+.corpus-pattern-editor .cm-editor,
+.corpus-pattern-editor .cm-scroller {
+  block-size: 100%;
+  min-block-size: 0;
+}
+@media (max-width: 48rem) {
+  .corpus-pattern-editor { --corpus-editor-height: 20rem; }
+}
+
+/* The status line carries a stats tail on success ("… 97 definitions, 84
+   references, depth 5, 547 NFA states."); keep it from crowding the editor on
+   a narrow viewport. */
+.pattern-editor-status { color: var(--pattern-status-text); font-size: 0.8rem; margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+.pattern-diagnostic-excerpt, .lx-diagnostic-excerpt { margin: .25rem 0; padding: .4rem; background: #fff7ed; color: #9a3412; white-space: pre-wrap; }
+.pattern-diagnostic-excerpt:empty, .lx-diagnostic-excerpt:empty { display: none; }
+.pattern-diagnostic-excerpt code, .pattern-diagnostic-caret, .lx-diagnostic-excerpt code, .lx-diagnostic-caret { display: block; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* CodeMirror chrome follows the site palette; the variables above flip in
+   dark mode, so tooltips and panels need no media query of their own. */
+.pattern-editor .cm-editor .cm-tooltip {
+  background: var(--pattern-tooltip-bg);
+  color: var(--pattern-mirror-text);
+  border: 1px solid var(--pattern-mirror-border);
+}
+.pattern-editor .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--pattern-selection);
+  color: var(--pattern-mirror-text);
+}
+.pattern-editor .cm-editor .cm-tooltip .cm-completionInfo {
+  background: var(--pattern-tooltip-bg);
+  color: var(--pattern-mirror-text);
+  border-color: var(--pattern-mirror-border);
+}
+.pattern-editor .cm-editor .cm-panels {
+  background: var(--pattern-tooltip-bg);
+  color: var(--pattern-mirror-text);
+}
+.pattern-editor .cm-editor .cm-panels-top {
+  border-bottom-color: var(--pattern-mirror-border);
+}
+.pattern-editor .cm-editor .cm-panels-bottom {
+  border-top-color: var(--pattern-mirror-border);
+}
+.pattern-editor .cm-editor .cm-panels input,
+.pattern-editor .cm-editor .cm-panels button {
+  color: inherit;
+}
+/* CodeMirror's baseTheme hardcodes the light-scheme search-panel internals
+   (white text inputs, a pale button gradient) regardless of
+   prefers-color-scheme. Everything here rides the --pattern-* variables, which
+   already flip in dark mode. */
+.pattern-editor .cm-editor .cm-panel.cm-search {
+  border-block-start: 1px solid var(--pattern-mirror-border);
+}
+.pattern-editor .cm-editor .cm-panel.cm-search input[type="text"],
+.pattern-editor .cm-editor .cm-panel.cm-search input:not([type]) {
+  background: var(--pattern-tooltip-bg);
+  background-image: none;
+  color: var(--pattern-mirror-text);
+  border: 1px solid var(--pattern-mirror-border);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+}
+.pattern-editor .cm-editor .cm-panel.cm-search input:focus-visible {
+  outline: 2px solid var(--pattern-focus);
+  outline-offset: 0;
+}
+.pattern-editor .cm-editor .cm-panel.cm-search input[type="checkbox"] {
+  accent-color: var(--pattern-focus);
+}
+.pattern-editor .cm-editor .cm-panel.cm-search button {
+  background: var(--pattern-tooltip-bg);
+  background-image: none;
+  color: var(--pattern-mirror-text);
+  border: 1px solid var(--pattern-mirror-border);
+  border-radius: 3px;
+  padding: 0.05rem 0.55rem;
+}
+.pattern-editor .cm-editor .cm-panel.cm-search button:hover {
+  border-color: var(--pattern-focus);
+}
+.pattern-editor .cm-editor .cm-panel.cm-search [name="close"] {
+  background: transparent;
+  background-image: none;
+  border: 0;
+  color: var(--pattern-status-text);
+}
+.pattern-editor .cm-editor .cm-searchMatch {
+  background: var(--pattern-selection);
+  outline: 1px solid var(--pattern-selection);
+}
+.pattern-editor .cm-editor .cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--pattern-focus) 35%, transparent);
+  outline: 1px solid var(--pattern-focus);
+}
+.cm-lintRange-error {
+  background: none;
+  padding-bottom: 0;
+  text-decoration: underline wavy var(--pattern-lint-error) 1px;
+  text-underline-offset: 3px;
+}
+.cm-panel.cm-panel-lint ul [aria-selected] {
+  background: var(--pattern-selection);
+  color: inherit;
+}
+.pattern-editor .cm-editor .cm-pattern-hover,
+.pattern-editor .cm-editor .cm-pattern-signature {
+  background: var(--pattern-tooltip-bg);
+  color: var(--pattern-mirror-text);
+  border-color: var(--pattern-mirror-border);
+  padding: 0.35rem 0.55rem;
+  max-width: 32rem;
+}
+.pattern-editor .cm-editor .cm-pattern-hover strong,
+.pattern-editor .cm-editor .cm-pattern-signature-label {
+  font-family: var(--pattern-font-mono);
+  font-size: 0.85em;
+}
+.pattern-editor .cm-editor .cm-pattern-hover div,
+.pattern-editor .cm-editor .cm-pattern-signature-doc {
+  color: var(--pattern-status-text);
+}
+.pattern-editor .cm-editor .cm-pattern-signature-label strong {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pattern-keyword, .pattern-operator, .lx-keyword, .lx-operator { color: var(--pattern-keyword); font-weight: 600; }
+.pattern-comment, .lx-comment { color: var(--pattern-comment); font-style: italic; }
+.pattern-string, .pattern-regex, .lx-string, .lx-regex { color: var(--pattern-string); }
+.pattern-property, .lx-property { color: var(--pattern-property); }
+.pattern-definition, .lx-definition { color: var(--pattern-definition); font-weight: 600; }
+.pattern-variable, .lx-variable { color: var(--pattern-variable); }
+.pattern-punctuation, .lx-punctuation { color: var(--pattern-punctuation); }

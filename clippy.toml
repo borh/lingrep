@@ -1,0 +1,21 @@
+# clippy.toml — workspace clippy configuration.
+#
+# Test allowances: panics/unwrap/expect/index/dbg are acceptable in test code
+# where failing fast is desired. These keys exempt `#[cfg(test)]` and
+# test-target context only (verified against clippy_config/src/conf.rs on
+# clippy master). Production `src/` is unaffected.
+#
+# Note: there is NO `allow-arithmetic-side-effects-in-tests` key.
+# `arithmetic_side_effects` is absent from the lint toml (Decision 12) and stays
+# at its default `allow`, so test arithmetic is unaffected regardless.
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests            = true
+allow-unwrap-in-tests           = true
+allow-expect-in-tests           = true
+allow-dbg-in-tests              = true
+
+# --- Thresholds carried over from the legacy .clippy.toml (do not regress) ---
+# Complex types are common in generative code and performance-critical paths.
+type-complexity-threshold = 500
+# Complex linguistics-processing functions legitimately exceed the default.
+too-many-arguments-threshold = 15

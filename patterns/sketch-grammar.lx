@@ -1,0 +1,378 @@
+defaults
+  status: "experimental"
+end
+
+analyzer: { family: "vibrato", resource: "unidic-cwj", segmentation: ["input", "analyzer"] }
+analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "analyzer"] }
+
+# Sketch-grammar relations — a UniDic re-derivation of the Japanese word
+# sketch grammar.
+#
+# WHAT THIS IS. A word sketch is a per-headword collocation profile: a set of
+# NAMED grammatical relations, each of which anchors exactly two positions —
+# a head and a collocate — and is then aggregated into "which collocates
+# occur with this head, under this relation, how often". Sketch Engine's
+# Japanese grammar defines ~22 such relations over ChaSen tags; the JpWaC
+# paper (Srdanović Erjavec, Erjavec & Kilgarriff 2008) publishes several
+# verbatim.
+#
+# WHY IT IS HERE. This catalog is a research artifact and, deliberately, an
+# acceptance fixture. Named relational matching is the one matching unidic.type in
+# the Japanese corpus-query literature that no design document in this
+# workspace had specified. It turns out to need almost no new engine: a
+# relation is a pattern with two named captures, and a sketch is that
+# pattern's records grouped by a capture-derived key.
+#
+# WHAT WORKS NOW — UPDATED 2026-08-04.
+#
+# Every relation below declares a `key:`, and `summarize` groups on it rather
+# than on the matched surface. Over the same 500 documents that produced the
+# figures above, `実験を行う` is now ONE row (rank 5, count 246) where it was
+# seven rows ranked 2 through 11,182: 71,354 keyed rows against 91,562
+# distinct spans.
+#
+# Reaching that needed the multi-token components. Both anchors here can cover
+# more than one token — `@sk_nominal` is unbounded because of its suffix tail,
+# `@sk_predicate` is two for a suru compound — and the two want OPPOSITE
+# rules. Compound nominals want concatenation (細胞間, 研究者間, 六角板状晶 —
+# the leftmost token gives 細胞, 研究者, 六角). Suru compounds want the
+# leftmost token (減少し, 加熱する — concatenation gives 減少為る, 加熱為る,
+# which are not words). So `@sk_nominal` takes `{span: …}` and `@sk_predicate`
+# takes `{first: …}`, and single-token anchors keep the bare text. Measured in
+# `docs/results/2026-08-04-multi-token-keys/`; designed in
+# `docs/superpowers/plans/archive/2026-08-23-completed/2026-08-04-multi-token-key-projection.md`.
+#
+# The attribute is `norm` throughout, which resolves the lemma-vs-orthbase
+# question the measurement left open. `orthbase` splits 行う from 行なう;
+# `lemma` merges them but carries UniDic's disambiguator, which concatenation
+# amplifies (パネル中 becomes パネル-panel中). `norm` is lemma with the
+# disambiguator stripped, so it has lemma's merging and orthbase's clean
+# concatenation. It only became available on 2026-08-04.
+#
+# ONE CAVEAT. Key fields are ordered ALPHABETICALLY by capture name, not as
+# authored, so every row below reads (collocate, head) even though `$head` is
+# written first. See `PatternPolicy::key`.
+#
+# Every emitting definition binds exactly two captures, `head` and
+# `collocate`, and nothing else. That is not decoration; it is the
+# `1:` / `2:` mechanism, and it is the contract R7.1 consumes.
+#
+# CAPTURE ORIENTATION. Following JpWaC: for `modifies`, the head is the noun
+# and the collocate is the modifier. For argument relations the head is the
+# predicate and the collocate is the argument. Sketch Engine's `*DUAL` marker
+# — which makes a relation appear in both words' sketches — is a REPORTING
+# choice, not a language feature: one record already carries both anchors, so
+# a dual sketch is the same record keyed the other way round. Nothing here
+# needs to express it.
+#
+# ------------------------------------------------------------------------
+# THE TAG TRANSLATION IS NOT MECHANICAL
+# ------------------------------------------------------------------------
+#
+# JpWaC's rules are written over ChaSen tags in English translation. This
+# catalog re-derives them against UniDic-CWJ 202512. Verified by tokenizing
+# probe sentences, not by table lookup. The rules that do NOT transfer:
+#
+#   ChaSen `N.Ana` (adjectival noun) is THREE UniDic shapes.
+#     形状詞-一般                      簡単, 重要, 可能
+#     名詞-普通名詞-形状詞可能            必要
+#     名詞 + 接尾辞-形状詞的             国際 + 的
+#   A rule written as one predicate silently loses two of the three.
+#
+#   ChaSen `Ai` (i-adjective) carries no conjugation text; UniDic does.
+#     `[unidic.pos1=形容詞]` alone matches 高く and 高かっ, which do not modify a
+#     following noun. `unidic.cform=連体形-一般` is required. UniDic is strictly
+#     more informative here, so the translation is better than its source.
+#
+#   ChaSen `Aux` for な is UniDic `助動詞` with `lemma=だ` and
+#     `unidic.cform=連体形-一般` — the copula's attributive text, not a
+#     part-of-speech class. Same token, entirely different analysis.
+#
+#   ChaSen `N.Vs` + verb (suru-compound) is UniDic
+#     `名詞-普通名詞-サ変可能` + `[lemma=為る]`. Note the LEMMA IS 為る,
+#     not する; `lemma=する` matches nothing. `orthbase` is する.
+#
+#   ChaSen `N.Suff.*` / `N.bnd.*`, which JpWaC excludes from noun anchors,
+#     are UniDic `接尾辞-名詞的-*`. Because UniDic segments finer, the
+#     suffixes are part of the NOMINAL rather than noise: 研究者たち is
+#     研究(名詞) 者(接尾辞) たち(接尾辞). Excluding them, as JpWaC does,
+#     would key this collocate on 研究. The nominal fragment below absorbs
+#     trailing nominal suffixes instead. This is a deliberate divergence
+#     from the source rule, made because the tokenizer changed underneath
+#     it.
+#
+#   は is 係助詞, not 格助詞. JpWaC's `noun_wa+V` and `noun_ga+V` are not
+#     the same rule with a different literal.
+#
+# ------------------------------------------------------------------------
+# THE 可能 TRAP — read before adding an exclusion
+# ------------------------------------------------------------------------
+#
+# UniDic's `非自立可能`, `サ変可能`, `副詞可能`, `形状詞可能`, `助数詞可能`
+# mark what a lexeme CAN be, not what it IS here. `続く` in 議論が続く is
+# tagged 動詞-非自立可能 while heading its own clause; so are 得る, 見る,
+# 切る, ある, いる. Excluding `unidic.pos2=非自立可能` from predicate heads — the
+# obvious analogue of dropping ChaSen auxiliaries — would delete ordinary
+# content verbs. It is not done here, and the cost is that light-verb and
+# aspectual uses land in the same profile as content uses. Distinguishing
+# them needs the head information this catalog does not have.
+#
+# ------------------------------------------------------------------------
+# WHAT THIS APPROXIMATES, AND HOW BADLY
+# ------------------------------------------------------------------------
+#
+# These are LINEAR rules with a bounded, predicate-free gap. They do not
+# know what governs what. JpWaC reports the same limit — some relations
+# "proved too weak" and were left to the concordancer. Known false-positive
+# sources, recorded so they are not rediscovered as bugs:
+#
+#   * Quotative と is 格助詞, so `sketch_to_predicate` is deliberately
+#     ABSENT: と考えられる would swamp it with clause complements.
+#   * An argument governed by an intervening nominal predicate
+#     (Nを対象にVを実施) attaches to the wrong verb. `patterns/double-wo.sgx`
+#     spends 1,080 classified exclusions on exactly this and is the
+#     measured baseline for it.
+#   * 名詞-普通名詞-副詞可能 nominals (結果, 場合, 上) are adverbial as
+#     often as argumental.
+#
+# The gap fragment excludes verbs, auxiliaries, punctuation, and competing
+# case or binding particles. That is a conservative attachment heuristic
+# chosen for precision over recall; it is not a parse.
+#
+# STATUS: no baseline counts recorded. Unlike `double-wo.sgx`, nothing here
+# has been run against a reference corpus and classified. Do not cite these
+# relations as measurements until that happens.
+#
+# DICTIONARY BINDING. `dictionary:` below names every dictionary these
+# predicates are claimed valid for. `unidic-cwj` and `unidic-csj` differ in
+# weights, not in vocabulary or tagset, so the claim covers both; the
+# historical variants (`kinsei-edo`, `kindai-bungo`, `qkana`, `novel`) differ
+# in vocabulary and in closed-class morphology and are deliberately excluded.
+# Measured: under `unidic-kinsei-edo-202512` this catalog returns the same
+# match count while 重要 splits into 形容詞 + 名詞, 実施+し into 実 + 施し, and
+# 者 stops being 接尾辞 — see
+# `docs/results/2026-08-04-catalog-tagset-binding/`. The release version is
+# not part of the comparison.
+
+# Case and binding particles. Written as `orthbase` plus the particle class
+# so that a homographic non-particle token cannot satisfy them.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_ga := [unidic.orthbase=が & unidic.pos1=助詞 & unidic.pos2=格助詞].
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_wo := [unidic.orthbase=を & unidic.pos1=助詞 & unidic.pos2=格助詞].
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_ni := [unidic.orthbase=に & unidic.pos1=助詞 & unidic.pos2=格助詞].
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_de := [unidic.orthbase=で & unidic.pos1=助詞 & unidic.pos2=格助詞].
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_no := [unidic.orthbase=の & unidic.pos1=助詞 & unidic.pos2=格助詞].
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_wa := [unidic.orthbase=は & unidic.pos1=助詞 & unidic.pos2=係助詞].
+
+# A nominal: a noun or pronoun, plus any trailing nominal suffixes. The
+# suffix tail is what keeps 研究者たち from keying on 研究.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_nominal :=
+  [unidic.pos1 in {名詞, 代名詞}]
+  ([unidic.pos1=接尾辞 & unidic.pos2=名詞的])*.
+
+# A predicate head. The suru-compound branch is first so that a サ変可能
+# noun followed by 為る is read as one predicate rather than as a nominal
+# and a separate verb.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_predicate :=
+  ( [unidic.pos1=名詞 & unidic.pos3=サ変可能] [lemma=為る]
+  | [unidic.pos1=動詞] ).
+
+# Attachment gap: no predicate, no clause punctuation, and no competing
+# argument marker. Bounded at five tokens, following JpWaC's `{0,5}`.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_gap :=
+  [unidic.pos1 not in {動詞, 助動詞, 補助記号}
+   & unidic.pos2 not in {格助詞, 係助詞, 接続助詞}].
+
+# An i-adjective in attributive text. `cform` is what ChaSen could not say.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_adjective_attributive :=
+  [unidic.pos1=形容詞 & unidic.cform=連体形-一般].
+
+# The three UniDic realizations of ChaSen's single `N.Ana`, followed by the
+# attributive copula な.
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_na_stem :=
+  ( [unidic.pos1=形状詞 & unidic.pos2!=助動詞語幹]
+  | [unidic.pos1=名詞 & unidic.pos3=形状詞可能]
+  | [unidic.pos1=名詞] [unidic.pos1=接尾辞 & unidic.pos2=形状詞的] ).
+
+role: "helper"
+source: "Srdanović Erjavec, Erjavec & Kilgarriff 2008, A Web Corpus and Word Sketches for Japanese; re-derived against unidic-cwj-202512"
+fragment sk_na :=
+  [lemma=だ & unidic.pos1=助動詞 & unidic.cform=連体形-一般].
+
+# --- Modifier relations -------------------------------------------------
+#
+# Head is the modified noun; collocate is the modifier. JpWaC:
+#   =modifies
+#   2:[xpos="Ai"] 1:[xpos="N.*"]
+
+role: "research"
+relation: "modifies"
+head: "noun"
+collocate: "adjective"
+source: "JpWaC =modifies"
+examples: ["大きい問題", "高い価格"]
+key: [$head.span.norm, $collocate.norm]
+pattern sketch_adjective_modifies_noun :=
+  (?<collocate> @sk_adjective_attributive)
+  (?<head> @sk_nominal).
+
+# JpWaC ships this one as a *DUAL rule:
+#   =modifier_Ana/modifies_N
+#   2:[xpos="N.Ana"] [xpos="Aux"] [xpos="Pref.*"]?
+#   1:[xpos="N.*" & xpos!="N.Suff.*" & xpos!="N.bnd.*"]
+# The prefix slot is kept; the suffix exclusions are dropped for the reason
+# given in the header.
+
+role: "research"
+relation: "modifier_Ana"
+head: "noun"
+collocate: "adjectival_noun"
+source: "JpWaC =modifier_Ana/modifies_N"
+examples: ["簡単な方法", "国際的な協力", "必要な措置"]
+key: [$head.span.norm, $collocate.span.norm]
+pattern sketch_adjectival_noun_modifies_noun :=
+  (?<collocate> @sk_na_stem)
+  @sk_na
+  [unidic.pos1=接頭辞]?
+  (?<head> @sk_nominal).
+
+role: "research"
+relation: "modifies_no"
+head: "noun"
+collocate: "noun"
+source: "JpWaC noun-の-noun"
+examples: ["日本の文化", "研究者たちの議論"]
+key: [$head.span.norm, $collocate.span.norm]
+pattern sketch_noun_no_noun :=
+  (?<collocate> @sk_nominal)
+  @sk_no
+  (?<head> @sk_nominal).
+
+role: "research"
+relation: "modifier_Adv"
+head: "predicate"
+collocate: "adverb"
+source: "JpWaC =modifier_Adv"
+examples: ["ゆっくり歩く", "少し変わっ"]
+key: [$head.first.norm, $collocate.norm]
+pattern sketch_adverb_modifies_predicate :=
+  (?<collocate> [unidic.pos1=副詞])
+  (@sk_gap){0,2}
+  (?<head> @sk_predicate).
+
+# --- Argument relations -------------------------------------------------
+#
+# Head is the predicate; collocate is the case-marked nominal. JpWaC:
+#   *DUAL
+#   =noun で/で verb
+#   2:[xpos="N.*"] [xpos="P.c.g" & word="で"] [ ]{0,5}
+#   1:[xpos="V.*"] | [xpos="N.Vs"] [xpos="V.*"]
+# The unconstrained `[ ]{0,5}` gap is replaced by `sk_gap`; see the header.
+
+role: "research"
+relation: "noun_ga+V"
+head: "predicate"
+collocate: "nominative"
+source: "JpWaC noun-が-verb"
+examples: ["結果が示す", "議論が続く"]
+key: [$head.first.norm, $collocate.span.norm]
+pattern sketch_ga_predicate :=
+  (?<collocate> @sk_nominal)
+  @sk_ga
+  (@sk_gap){0,5}
+  (?<head> @sk_predicate).
+
+role: "research"
+relation: "noun_wo+V"
+head: "predicate"
+collocate: "accusative"
+source: "JpWaC noun-を-verb"
+examples: ["分析を実施し", "原稿を読み直す"]
+key: [$head.first.norm, $collocate.span.norm]
+pattern sketch_wo_predicate :=
+  (?<collocate> @sk_nominal)
+  @sk_wo
+  (@sk_gap){0,5}
+  (?<head> @sk_predicate).
+
+role: "research"
+relation: "noun_ni+V"
+head: "predicate"
+collocate: "dative"
+source: "JpWaC noun-に-verb"
+examples: ["会議に出席し"]
+key: [$head.first.norm, $collocate.span.norm]
+pattern sketch_ni_predicate :=
+  (?<collocate> @sk_nominal)
+  @sk_ni
+  (@sk_gap){0,5}
+  (?<head> @sk_predicate).
+
+role: "research"
+relation: "noun_de+V"
+head: "predicate"
+collocate: "instrumental_locative"
+source: "JpWaC =noun で/で verb"
+examples: ["電子顕微鏡で観察し"]
+key: [$head.first.norm, $collocate.span.norm]
+pattern sketch_de_predicate :=
+  (?<collocate> @sk_nominal)
+  @sk_de
+  (@sk_gap){0,5}
+  (?<head> @sk_predicate).
+
+role: "research"
+relation: "noun_wa+V"
+head: "predicate"
+collocate: "topic"
+source: "JpWaC noun-は-verb; 係助詞, not 格助詞"
+examples: ["議論は続く"]
+key: [$head.first.norm, $collocate.span.norm]
+pattern sketch_wa_predicate :=
+  (?<collocate> @sk_nominal)
+  @sk_wa
+  (@sk_gap){0,5}
+  (?<head> @sk_predicate).
+
+# --- Verb-verb relation -------------------------------------------------
+#
+# JpWaC's `bound_V` / `V_bound` pair covers 閉めきる, 閉め直す,
+# 閉めてくれる/いただく/もらう. UniDic splits that set: 読み直す is ONE
+# token with `lemma=読み直す`, so the relation does not exist for it — the
+# tokenizer lexicalized it away. 閉め切る and 見てもらう remain two and
+# three tokens. Only the て-linked branch is expressed here; the bare
+# compound branch would need `unidic.pos2=非自立可能` as its collocate test, and
+# the 可能 trap above makes that unsafe.
+
+role: "research"
+relation: "V_te_bound"
+head: "verb"
+collocate: "bound_verb"
+source: "JpWaC bound_V/V_bound, て-linked branch only"
+examples: ["見てもらっ", "閉め切ってしまっ"]
+key: [$head.norm, $collocate.norm]
+pattern sketch_te_bound_verb :=
+  (?<head> [unidic.pos1=動詞])
+  [unidic.orthbase in {て, で} & unidic.pos1=助詞 & unidic.pos2=接続助詞]
+  (?<collocate> [unidic.pos1=動詞]).

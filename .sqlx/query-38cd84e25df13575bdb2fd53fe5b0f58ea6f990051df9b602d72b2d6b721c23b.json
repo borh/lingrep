@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH requested(id) AS (\n                   SELECT DISTINCT CAST(value AS INTEGER) FROM json_each(?)\n               )\n               SELECT s.id,s.document_id,s.paragraph_id,s.document_sentence_ordinal,d.source_name\n               FROM requested r JOIN sentences s ON s.id=r.id\n               JOIN documents d ON d.id=s.document_id\n               ORDER BY s.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sentences",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "document_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sentences",
+            "name": "document_id"
+          }
+        }
+      },
+      {
+        "name": "paragraph_id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sentences",
+            "name": "paragraph_id"
+          }
+        }
+      },
+      {
+        "name": "document_sentence_ordinal",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sentences",
+            "name": "document_sentence_ordinal"
+          }
+        }
+      },
+      {
+        "name": "source_name",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "documents",
+            "name": "source_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "38cd84e25df13575bdb2fd53fe5b0f58ea6f990051df9b602d72b2d6b721c23b"
+}

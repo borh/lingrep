@@ -1,0 +1,47 @@
+# Passive-agent candidates by dependency relation.
+#
+# This catalog is the dependency-backed counterpart to surface heuristics for
+# Japanese passives. It asks which nominal fills the passive-subject slot and
+# which oblique nominal is attached to the same predicate. The relation key
+# keeps plain `obl` separate from the more explicit `obl:agent`: treating the
+# former as an agent is a research hypothesis to measure, not an assumption
+# hidden in the pattern.
+#
+# Two definitions cover the Japanese head-final orders in which the subject
+# and oblique may occur. They publish one output name and the same key shape.
+# The query is positive: it establishes two observed edges, but does not claim
+# that the predicate has no other arguments. It requires CoNLL-U-style
+# `dep.head` and `dep.rel` attributes and intentionally has no morphology-only
+# fallback.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern layer: string required in {"dependency"}
+  status: string required in {"experimental"}
+end
+
+set PASSIVE_SUBJECT := {nsubj:pass}.
+set AGENT_CANDIDATE := {obl, obl:agent}.
+
+key: [$predicate.lemma, $patient.lemma, $agent.lemma, $agent.dep.rel]
+layer: "dependency"
+output_name: "passive_agent_candidate"
+pattern patient_agent_predicate :=
+  (?<patient> [upos in {NOUN, PROPN, PRON} & dep.rel in @PASSIVE_SUBJECT]) []*
+  (?<agent> [upos in {NOUN, PROPN, PRON} & dep.rel in @AGENT_CANDIDATE]) []*
+  (?<predicate> [upos in {VERB, AUX}])
+  where $predicate -[@PASSIVE_SUBJECT]-> $patient,
+        $predicate -[@AGENT_CANDIDATE]-> $agent.
+
+key: [$predicate.lemma, $patient.lemma, $agent.lemma, $agent.dep.rel]
+layer: "dependency"
+output_name: "passive_agent_candidate"
+pattern agent_patient_predicate :=
+  (?<agent> [upos in {NOUN, PROPN, PRON} & dep.rel in @AGENT_CANDIDATE]) []*
+  (?<patient> [upos in {NOUN, PROPN, PRON} & dep.rel in @PASSIVE_SUBJECT]) []*
+  (?<predicate> [upos in {VERB, AUX}])
+  where $predicate -[@PASSIVE_SUBJECT]-> $patient,
+        $predicate -[@AGENT_CANDIDATE]-> $agent.

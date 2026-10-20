@@ -1,0 +1,148 @@
+<section class="pattern-detail" data-retained-count="{{ retained_count }}" data-pattern-id="{{ pattern_key }}" data-has-sections="{% if projection.sections.is_empty() %}false{% else %}true{% endif %}">
+    <div class="pattern-detail-summary">
+      <h2>{{ pattern_name }}</h2>
+      {% if self.sampled() %}<p data-i18n="detail.counts_sampled" data-i18n-args='{"exact": {{ exact_total }}, "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} shown, sampled at random</p>{% else %}<p data-i18n="detail.counts" data-i18n-args='{"exact": {{ exact_total }}, "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} retained hits</p>{% endif %}
+    </div>
+  <section class="detail-view definition-band" data-detail-view="definition"
+           data-definition-band aria-labelledby="definition-heading">
+    <h3 id="definition-heading"><span data-i18n="detail.definition">Definition</span></h3>
+    <div class="definition-panes">
+      {% match definition %}{% when Some with (definition) %}
+      <section class="definition-pane" aria-labelledby="definition-authored-heading">
+        <div class="definition-pane-header">
+          <h3 id="definition-authored-heading"><span data-i18n="detail.definition_authored">As written</span></h3>
+          <button type="button" class="btn btn-compact btn-secondary definition-copy" data-copy-definition="declaration"><span data-i18n="detail.copy_definition">Copy</span></button>
+        </div>
+        <pre class="definition-source"><code data-definition-declaration>{{ definition.declaration }}</code></pre>
+      </section>
+      {% match definition.expanded %}{% when Some with (expanded) %}
+      <section class="definition-pane" aria-labelledby="definition-expanded-heading">
+        <div class="definition-pane-header">
+          <h3 id="definition-expanded-heading"><span data-i18n="detail.definition_expanded">Fully expanded</span></h3>
+          <button type="button" class="btn btn-compact btn-secondary definition-copy" data-copy-definition="expanded"><span data-i18n="detail.copy_definition">Copy</span></button>
+        </div>
+        {# Valid lingrep patterns, not a rendering of it: this compiles on its own and can
+           be pasted straight back into the pattern editor. #}
+        <pre class="definition-source"><code data-definition-expanded>{{ expanded }}</code></pre>
+        <p class="definition-references" data-i18n="detail.definition_references" data-i18n-args='{"n": {{ definition.references.len() }}}'>Resolved {{ definition.references.len() }} reference(s):</p>
+        <ul class="definition-reference-list">{% for reference in definition.references %}<li><button type="button" class="definition-reference-chip" data-jump-definition="{{ reference }}"><code>@{{ reference }}</code></button></li>{% endfor %}</ul>
+      </section>
+      {% when None %}
+      <p class="definition-standalone muted" data-i18n="detail.definition_standalone">This definition stands on no fragments, so there is nothing to expand.</p>
+      {% endmatch %}
+      {% match definition.diagram %}{% when Some with (diagram) %}
+      <section class="definition-pane definition-diagram-pane" aria-labelledby="definition-diagram-heading">
+        <h3 id="definition-diagram-heading"><span data-i18n="detail.definition_diagram">Expanded state diagram</span></h3>
+        <div class="definition-diagram-scroll" data-definition-diagram>{{ diagram|safe }}</div>
+      </section>
+      {% when None %}{% endmatch %}
+      {% when None %}{% endmatch %}
+      <section class="definition-pane surface-distribution" aria-labelledby="surface-heading">
+        <div class="definition-pane-header">
+          <h3 id="surface-heading">{% if projection.variations_are_exact %}<span data-i18n="detail.surface_heading_corpus">Surface variations — corpus</span>{% else %}<span data-i18n="detail.surface_heading">Surface variations in retained sample</span>{% endif %}</h3>
+          <button type="button" class="btn btn-compact btn-secondary" data-view-filtered-concordance="surface" hidden></button>
+        </div>
+        {% if projection.hits.is_empty() %}
+        <p class="empty-sampled-distribution" data-i18n="detail.surface_empty">No retained examples are available for this authored pattern, so there is no sampled surface distribution.</p>
+        {% else %}
+        <div class="ranked-filter" data-ranked-list="surface" data-ranked-limit="{{ projection.overview_len }}" data-ranked-expanded="false">
+          {% match projection.tail %}{% when Some with (tail) %}<div class="ranked-tools" data-hidden-count="{{ tail.variation_count }}"><label class="ranked-search-label"><span data-i18n="detail.search_surfaces">Search surfaces</span> <input type="search" data-ranked-search="surface"></label><label class="ranked-order-label"><span data-i18n="detail.order">Order</span> <select data-ranked-order><option value="count-desc" data-i18n="detail.order_freq">Frequency ↓</option><option value="name-asc" data-i18n="detail.order_name">Name ↑</option></select></label></div>{% when None %}{% endmatch %}
+          <ol class="surface-overview">
+          {% for variation in projection.variations %}
+            <li data-ranked-entry="surface" data-ranked-index="{{ loop.index0 }}" data-search-value="{{ variation.form }}" data-count="{{ variation.count }}"{% if loop.index0 >= projection.overview_len %} hidden{% endif %}><button type="button" class="surface-filter" data-variation="{{ variation.index }}" aria-pressed="false"><span lang="ja">{{ variation.form }}</span><span class="surface-bar" aria-hidden="true"><span class="surface-bar-fill" style="inline-size:{{ variation.count * 100 / projection.max_count }}%"></span></span><span class="ranked-count">{{ variation.count }}</span></button></li>
+          {% endfor %}
+          {% match projection.tail %}{% when Some with (tail) %}{% if projection.variations_are_exact %}<li class="surface-tail chart-tail-note" data-ranked-tail="surface" data-i18n="detail.other_surface_corpus" data-i18n-args='{"hits": {{ tail.match_count }}, "kinds": {{ tail.variation_count }}, "pct": {{ tail.share_percentage_tenths / 10 }}.{{ tail.share_percentage_tenths % 10 }}}'>Other: {{ tail.match_count }} sentences across {{ tail.variation_count }} variations ({{ tail.share_percentage_tenths / 10 }}.{{ tail.share_percentage_tenths % 10 }}% of this pattern's total)</li>{% else %}<li class="surface-tail chart-tail-note" data-ranked-tail="surface" data-i18n="detail.other_surface" data-i18n-args='{"hits": {{ tail.match_count }}, "kinds": {{ tail.variation_count }}, "pct": {{ tail.share_percentage_tenths / 10 }}.{{ tail.share_percentage_tenths % 10 }}}'>Other: {{ tail.match_count }} hits across {{ tail.variation_count }} variations ({{ tail.share_percentage_tenths / 10 }}.{{ tail.share_percentage_tenths % 10 }}% of retained hits)</li>{% endif %}{% when None %}{% endmatch %}
+          </ol>
+          {% match projection.tail %}{% when Some with (tail) %}<button type="button" class="btn btn-secondary" data-ranked-toggle="surface" aria-expanded="false" data-i18n="detail.show_remaining" data-i18n-args='{"n": {{ tail.variation_count }}}'>Show remaining {{ tail.variation_count }}</button>{% when None %}{% endmatch %}
+        </div>
+        {% endif %}
+      </section>
+    </div>
+  </section>
+    {% match projection.section_unavailable %}{% when Some with (reason) %}
+    <section class="detail-view section-distribution section-unavailable" data-detail-view="sections" data-section-unavailable aria-labelledby="section-heading">
+      <h3 id="section-heading"><span data-i18n="detail.section_heading">Section distribution — corpus</span></h3>
+      <p class="empty-sampled-distribution" data-i18n="detail.section_unavailable" data-i18n-args='{"labels": {{ reason.labels }}, "patterns": {{ reason.patterns }}}'>This corpus records {{ reason.labels }} section labels, which is more than an exact distribution can hold for {{ reason.patterns }} patterns. Section counts are unavailable for this run.</p>
+    </section>
+    {% when None %}
+    {% if !projection.sections.is_empty() %}
+    <section class="detail-view section-distribution" data-detail-view="sections" aria-labelledby="section-heading">
+      <div class="definition-pane-header">
+        <h3 id="section-heading"><span data-i18n="detail.section_heading">Section distribution — corpus</span></h3>
+        <button type="button" class="btn btn-compact btn-secondary" data-view-filtered-concordance="section" hidden></button>
+      </div>
+      <p class="section-rate-note" data-i18n="detail.section_rate">Ordered by occurrences per million sentences of each section, with the count beside it. A count alone ranks sections by how much corpus each holds.</p>
+      {# Both notes are hidden until a surface filter is pressed, and exactly
+         one of them is shown then: the counts either narrowed to the selection
+         or they did not, and a reader cannot tell which from the numbers.
+         See `vibrato-pipe-9wp`. #}
+      {% match projection.surface_sections %}{% when Some with (matrix) %}
+      <p class="section-scope-note" data-section-scope-note hidden role="status" data-i18n="detail.section_scope_surface">These counts and rates are for the selected surface.</p>
+      {# Corpus-exact sentence counts per surface, positionally aligned with
+         the rows above and the unlabelled row last. Emitted as JSON rather
+         than per-row attributes: a pattern may carry more surfaces than rows,
+         so the transpose is the smaller document. #}
+      <script type="application/json" data-surface-sections>{{ matrix.to_json()|safe }}</script>
+      {% when None %}
+      <p class="section-scope-note" data-section-scope-note hidden role="status" data-i18n="detail.section_scope_all">These counts cover the whole pattern. The surface filter does not narrow them.</p>
+      {% endmatch %}
+      {# The list is never truncated: a section distribution is bounded by the
+         corpus's label inventory, so hiding its tail made a reader click to see
+         a chart that already fitted. The tools remain for a corpus with enough
+         labels to be worth searching. #}
+      <div class="ranked-filter" data-ranked-list="section" data-ranked-limit="{{ projection.sections.len() }}" data-ranked-expanded="true">
+        {% if projection.section_tools() %}<div class="ranked-tools"><label class="ranked-search-label"><span data-i18n="detail.search_sections">Search sections</span> <input type="search" data-ranked-search="section"></label><label class="ranked-order-label"><span data-i18n="detail.order">Order</span> <select data-ranked-order><option value="rate-desc" data-i18n="detail.order_rate">Rate ↓</option><option value="count-desc" data-i18n="detail.order_freq">Frequency ↓</option><option value="name-asc" data-i18n="detail.order_name">Name ↑</option></select></label></div>{% endif %}
+        <ol class="section-overview">
+        {% for section in projection.sections %}
+          <li data-ranked-entry="section" data-ranked-index="{{ loop.index0 }}" data-search-value="{{ section.label }}" data-count="{{ section.count }}" data-full-count="{{ section.count }}" data-universe="{{ section.universe }}" data-rate-tenths="{{ section.rate_tenths }}" data-section-identity="{{ section.index }}" data-matrix-index="{{ section.index }}"><button type="button" class="section-filter" data-section="{{ section.index }}" aria-pressed="false"><span class="section-label">{{ section.label }}</span><span class="surface-bar" aria-hidden="true"><span class="surface-bar-fill" style="inline-size:{{ section.rate_tenths * 100 / projection.max_section_rate_tenths }}%"></span></span><span class="ranked-rate" data-rate-label>{{ section.rate_label }} ppm</span><span class="ranked-count" data-count-label>{{ section.count }}</span></button></li>
+        {% endfor %}
+        {% if projection.no_section.count > 0 %}<li class="section-none" data-matrix-index="{{ projection.sections.len() }}" data-count="{{ projection.no_section.count }}" data-full-count="{{ projection.no_section.count }}" data-universe="{{ projection.no_section.universe }}" data-rate-tenths="{{ projection.no_section.rate_tenths }}"><button type="button" class="section-filter" data-section="none" aria-pressed="false"><span class="section-label" data-i18n="detail.no_section">(no section)</span><span class="surface-bar" aria-hidden="true"><span class="surface-bar-fill" style="inline-size:{{ projection.no_section.rate_tenths * 100 / projection.max_section_rate_tenths }}%"></span></span><span class="ranked-rate" data-rate-label>{{ projection.no_section.rate_label }} ppm</span><span class="ranked-count" data-count-label>{{ projection.no_section.count }}</span></button></li>{% endif %}
+        </ol>
+      </div>
+    </section>
+    {% else %}
+    {# Empty for two unrelated reasons, and a reader cannot act on either
+       without being told which. Silence here is what made the panel read as
+       broken; see `vibrato-pipe-mlo`. #}
+    <section class="detail-view section-distribution section-empty" data-detail-view="sections" data-section-empty aria-labelledby="section-heading">
+      <h3 id="section-heading"><span data-i18n="detail.section_heading">Section distribution — corpus</span></h3>
+      {% if projection.corpus_section_labels == 0 %}
+      <p class="empty-sampled-distribution" data-i18n="detail.section_none_in_corpus">This corpus records no section labels, so there is no section distribution.</p>
+      {% else %}
+      <p class="empty-sampled-distribution" data-i18n="detail.section_none_for_pattern" data-i18n-args='{"labels": {{ projection.corpus_section_labels }}}'>This pattern matched in none of the {{ projection.corpus_section_labels }} sections the corpus records.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% endmatch %}
+  {# The controls stick over the table they operate and no further: their
+     containing block is this region, so the distribution charts above it pass
+     under nothing on their way up. The pattern name rides along in the strip
+     because two hundred rows into a concordance it is the one thing every
+     other figure in the strip is about. #}
+  <div class="detail-view" data-detail-view="concordance">
+  <div class="kwic-region">
+  <header class="kwic-pane-header">
+    <div class="kwic-filter-bar"><span class="kwic-pane-pattern">{{ pattern_name }}</span><p class="kwic-filter-status" role="status" aria-live="polite" data-kwic-status-all data-retained="{{ retained_count }}">{{ retained_count }} retained hits · All surfaces{% if !projection.sections.is_empty() %} · All sections{% endif %}</p><button type="button" class="filter-chip" data-clear-surface-filter hidden><span data-i18n="detail.clear_surface">Clear surface filter</span></button>{% if !projection.sections.is_empty() %}<button type="button" class="filter-chip" data-clear-section-filter hidden><span data-i18n="detail.clear_section">Clear section filter</span></button>{% endif %}{% if !projection.hits.is_empty() %}<button type="button" class="filter-chip" data-clear-kwic-search hidden><span data-i18n="detail.clear_query">Clear sentence filter</span></button><label class="visually-hidden" for="kwic-search-{{ pattern_key }}" data-i18n="detail.search_kwic">Filter concordance sentences</label><input type="search" id="kwic-search-{{ pattern_key }}" class="kwic-search-input" data-kwic-search placeholder="Filter sentences…" data-i18n-placeholder="detail.search_kwic_placeholder" autocomplete="off" spellcheck="false">{% endif %}{% if !projection.variations.is_empty() %}<button type="button" class="btn btn-compact btn-secondary kwic-quick-toggle" data-quick-filter-toggle="surface" aria-expanded="false"><span data-i18n="detail.quick_surfaces">Filter by surface</span> ({{ projection.variations.len() }})</button>{% endif %}{% if !projection.sections.is_empty() %}<button type="button" class="btn btn-compact btn-secondary kwic-quick-toggle" data-quick-filter-toggle="section" aria-expanded="false"><span data-i18n="detail.quick_sections">Filter by section</span> ({{ projection.sections.len() }})</button>{% endif %}</div>
+    {% if !projection.hits.is_empty() %}<nav class="kwic-pager" data-kwic-pager aria-label="Retained hit pages" data-i18n-aria-label="detail.pager"><button type="button" class="btn btn-secondary" data-page-previous disabled><span data-i18n="detail.previous">Previous</span></button><span data-page-status data-i18n="detail.page" data-i18n-args='{"page": 1, "pages": 1}'>Page 1 of 1</span><button type="button" class="btn btn-secondary" data-page-next disabled><span data-i18n="detail.next">Next</span></button><label><span data-i18n="detail.rows_per_page">Rows per page</span> <select data-page-size><option value="50">50</option><option value="100" selected>100</option><option value="250">250</option><option value="500">500</option><option value="1000">1000</option></select></label></nav>{% endif %}
+    {% if !projection.variations.is_empty() %}
+    <div class="kwic-quick-drawer" data-quick-filter-drawer="surface" hidden></div>
+    {% endif %}
+    {% if !projection.sections.is_empty() %}
+    <div class="kwic-quick-drawer" data-quick-filter-drawer="section" hidden></div>
+    {% endif %}
+  </header>
+  {% if projection.hits.is_empty() %}<p class="empty-kwic" data-i18n="detail.no_hits">This authored pattern has no retained hits to display.</p>{% else %}
+  {# The variation list is corpus-exact while the concordance is the bounded
+     retained sample, so a surface with a positive corpus count can have no
+     retained row and empty the table on selection. The note states which
+     population each figure describes; `applyRowFilters` unhides it for that
+     selection and hides it otherwise (`vibrato-pipe-5f4`). #}
+  <p class="empty-kwic" data-kwic-filter-empty hidden data-i18n="detail.no_retained_for_surface">No retained hits carry this surface. The corpus count beside it is exact; the concordance lists only the bounded retained sample.</p>
+  <div class="kwic-container"><table class="kwic-concordance" role="grid" aria-label="Matched sentences in context" data-i18n-aria-label="detail.kwic" data-hit-grid data-kwic-pagination><thead><tr role="row"><th role="columnheader" scope="col" data-i18n="detail.col_index">#</th>{% if projection.has_hit_sections %}<th class="kwic-section" role="columnheader" scope="col" data-i18n="detail.col_section">Section</th>{% endif %}<th role="columnheader" scope="col" data-i18n="detail.col_sentence">Sentence</th></tr></thead><tbody>
+  {% for hit in projection.hits %}<tr class="kwic-row" role="row" aria-selected="false" tabindex="{% if loop.first %}0{% else %}-1{% endif %}" data-hit-ordinal="{{ hit.reference_ordinal }}" data-variation="{{ hit.variation_index }}" data-section-ids="{% for i in hit.section_indices %}{{ i }} {% endfor %}" data-expandable-candidate hx-get="api/hit-detail/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ hit.reference_ordinal }}" hx-trigger="hit-select" hx-target="#inspector-body" hx-swap="innerHTML" hx-sync="#inspector-body:replace"><td class="kwic-ordinal" role="rowheader">{{ hit.reference_ordinal + 1 }}</td>{% if projection.has_hit_sections %}<td class="kwic-section" role="gridcell"{% if !hit.section_labels.is_empty() %} title="{% for label in hit.section_labels %}{{ label }}{% if !loop.last %}, {% endif %}{% endfor %}"{% endif %}>{% for label in hit.section_labels %}<span class="kwic-section-label">{{ label }}</span>{% endfor %}</td>{% endif %}<td class="kwic-sentence-cell" role="gridcell">{% if !hit.section_labels.is_empty() %}<span class="kwic-section-meta" data-section-meta>{% for label in hit.section_labels %}<span>{{ label }}</span>{% endfor %}</span>{% endif %}<span class="kwic-sentence" data-expandable-text lang="ja"><span class="kwic-left"><span class="kwic-left-text">{{ hit.left }}</span></span><mark class="kwic-key">{{ hit.key }}</mark><span class="kwic-right">{{ hit.right }}</span></span><button type="button" class="kwic-expand btn btn-compact" data-expand-sentence hidden aria-expanded="false" aria-label="Show full sentence" title="Show full sentence" data-i18n-aria-label="detail.show_full_sentence" data-i18n-title="detail.show_full_sentence"></button></td></tr>
+  {% endfor %}
+  </tbody></table></div>
+  {% endif %}
+  </div>
+  </div>
+</section>

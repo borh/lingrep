@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT label,first_sentence,end_sentence FROM regions WHERE first_sentence<=? AND end_sentence>? ORDER BY label",
+  "describe": {
+    "columns": [
+      {
+        "name": "label",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "name": "first_sentence",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "first_sentence"
+          }
+        }
+      },
+      {
+        "name": "end_sentence",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "end_sentence"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c7a812bd44ca527adc5eac01f253f48dcad8ffbebef140d158e7517473f2197c"
+}

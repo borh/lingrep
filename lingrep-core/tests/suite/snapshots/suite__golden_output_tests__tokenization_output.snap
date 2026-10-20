@@ -1,0 +1,9 @@
+---
+source: lingrep-core/tests/golden_output_tests.rs
+expression: "formatted.join(\"\\n\")"
+---
+これ:PRON:代名詞
+は:ADP:助詞
+テスト:NOUN:名詞
+です:AUX:助動詞
+。:PUNCT:補助記号

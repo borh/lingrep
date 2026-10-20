@@ -1,0 +1,80 @@
+[
+  {
+    "id": "direct-noun-morphology",
+    "title": "Identify common-noun tokens",
+    "capability": "feature_lookup",
+    "phenomenon": "Find every token used as a common noun (普通名詞). Label it common_noun.",
+    "labels": ["common_noun"],
+    "sentences": ["私は猫を見る。", "静かな庭で鳥が鳴く。"],
+    "oracle_query": "common_noun := [unidic.pos1=名詞 & unidic.pos2=普通名詞].\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 2, "end_char": 3, "surface": "猫", "label": "common_noun"},
+      {"sentence_ordinal": 1, "start_char": 3, "end_char": 4, "surface": "庭", "label": "common_noun"},
+      {"sentence_ordinal": 1, "start_char": 5, "end_char": 6, "surface": "鳥", "label": "common_noun"}
+    ]
+  },
+  {
+    "id": "multi-token-possibility",
+    "title": "Extract possibility expressions",
+    "capability": "sequence_composition",
+    "phenomenon": "Find complete multi-token expressions that mark epistemic possibility. Label them epistemic_possibility.",
+    "labels": ["epistemic_possibility"],
+    "sentences": ["明日は雨かもしれない。", "彼も参加するかもしれません。"],
+    "oracle_query": "epistemic_possibility := [text=か] [text=も] [text=しれ] [upos=AUX]+.\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 4, "end_char": 10, "surface": "かもしれない", "label": "epistemic_possibility"},
+      {"sentence_ordinal": 1, "start_char": 6, "end_char": 13, "surface": "かもしれません", "label": "epistemic_possibility"}
+    ]
+  },
+  {
+    "id": "sentence-final-particles",
+    "title": "Classify sentence-final particles",
+    "capability": "context_disambiguation",
+    "phenomenon": "Find sentence-final particles. Label よ as assertion_particle and ね as confirmation_particle.",
+    "labels": ["assertion_particle", "confirmation_particle"],
+    "sentences": ["彼が来るよ。", "今日は寒いね。", "猫がいる。"],
+    "oracle_query": "assertion_particle := [text=よ] followed_by([upos=PUNCT] $).\nconfirmation_particle := [text=ね] followed_by([upos=PUNCT] $).\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 4, "end_char": 5, "surface": "よ", "label": "assertion_particle"},
+      {"sentence_ordinal": 1, "start_char": 5, "end_char": 6, "surface": "ね", "label": "confirmation_particle"}
+    ]
+  },
+  {
+    "id": "existential-versus-construction",
+    "title": "Distinguish existential and necessity uses",
+    "capability": "context_disambiguation",
+    "phenomenon": "Find いる/ある predicates. Label a living-subject existential as animate_existence and the complete 必要がある construction as necessity_construction. Do not emit the embedded ある separately.",
+    "labels": ["animate_existence", "necessity_construction"],
+    "sentences": ["庭に猫がいる。", "確認する必要がある。"],
+    "oracle_query": "animate_existence := [text=いる & upos=AUX].\nnecessity_construction := [text=必要] [text=が] [lemma=有る].\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 4, "end_char": 6, "surface": "いる", "label": "animate_existence"},
+      {"sentence_ordinal": 1, "start_char": 4, "end_char": 9, "surface": "必要がある", "label": "necessity_construction"}
+    ]
+  },
+  {
+    "id": "passive-construction",
+    "title": "Extract passive predicates",
+    "capability": "sequence_composition",
+    "phenomenon": "Find the complete predicate carrying passive voice, including its inflection. Label it passive_predicate.",
+    "labels": ["passive_predicate"],
+    "sentences": ["その本は学生に読まれた。", "窓が風で開いた。"],
+    "oracle_query": "passive_predicate := [unidic.cform=未然形-一般] [text=れ] [upos=AUX]+.\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 7, "end_char": 11, "surface": "読まれた", "label": "passive_predicate"}
+    ]
+  },
+  {
+    "id": "no-function-ambiguity",
+    "title": "Classify の by grammatical function",
+    "capability": "context_disambiguation",
+    "phenomenon": "Find each の functioning as either a nominalizer or an explanatory construction marker. Label it nominalizer or explanatory_no.",
+    "labels": ["nominalizer", "explanatory_no"],
+    "sentences": ["毎朝走るのが好きだ。", "彼が来るのだ。", "私の本だ。"],
+    "oracle_query": "nominalizer := [text=の & unidic.pos2=準体助詞] followed_by([text in {が, は, を, も, か}]).\nexplanatory_no := [text=の & unidic.pos2=準体助詞] followed_by([upos=AUX]).\n",
+    "targets": [
+      {"sentence_ordinal": 0, "start_char": 4, "end_char": 5, "surface": "の", "label": "nominalizer"},
+      {"sentence_ordinal": 1, "start_char": 4, "end_char": 5, "surface": "の", "label": "explanatory_no"}
+    ]
+  }
+]

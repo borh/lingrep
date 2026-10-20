@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT corpus_identity,reader_tag,schema_version,state,sentence_count FROM provenance_identity WHERE singleton=1",
+  "describe": {
+    "columns": [
+      {
+        "name": "corpus_identity",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "provenance_identity",
+            "name": "corpus_identity"
+          }
+        }
+      },
+      {
+        "name": "reader_tag",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "provenance_identity",
+            "name": "reader_tag"
+          }
+        }
+      },
+      {
+        "name": "schema_version",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "provenance_identity",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "provenance_identity",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "sentence_count",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "provenance_identity",
+            "name": "sentence_count"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "311e6aafbd96a9da168c6c2082c7fcd893df1e56175ffd8ba330226864b1ee03"
+}

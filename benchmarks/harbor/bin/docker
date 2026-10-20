@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1-}" != "compose" ]]; then
+  exec podman "$@"
+fi
+shift
+
+invocation_directory=$PWD
+project_directory=""
+translated=()
+while (($#)); do
+  case "$1" in
+    --project-directory)
+      project_directory=$2
+      shift 2
+      ;;
+    *)
+      translated+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$project_directory" ]]; then
+  cd "$project_directory"
+fi
+
+for index in "${!translated[@]}"; do
+  if [[ "${translated[$index]}" == "cp" ]]; then
+    prefix=("${translated[@]:0:$index}")
+    source=${translated[$((index + 1))]}
+    target=${translated[$((index + 2))]}
+    if [[ "$source" == *:* ]]; then
+      container=$(podman-compose "${prefix[@]}" ps -q | head -n 1)
+      source="$container:${source#*:}"
+    elif [[ "$source" != /* ]]; then
+      source="$invocation_directory/$source"
+    fi
+    if [[ "$target" == *:* ]]; then
+      container=$(podman-compose "${prefix[@]}" ps -q | head -n 1)
+      target="$container:${target#*:}"
+    elif [[ "$target" != /* ]]; then
+      target="$invocation_directory/$target"
+    fi
+    exec podman cp "$source" "$target"
+  fi
+done
+exec podman-compose "${translated[@]}"

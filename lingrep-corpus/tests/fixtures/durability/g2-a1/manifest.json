@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "format_generation": 2,
+  "identity_scheme": "a1",
+  "source_identity": "0c69515329f880d3acc700c370c09af7e34ad4210dad725f2f904786e13bff13",
+  "analysis_identity": "a519701200187a2983101b95193b1302e50e59e7cfc647e1235def07baedef8e",
+  "reader_identity": "c5467f7cd5f7fb3d478b878a52f23626d37e0a5f08fb4d5f6a8fe2e54bec7c31",
+  "admission_identity": "900ce622ce1b0d9584102b32eb82eb916e60785834a97569a7630435ee4bc5e0",
+  "dictionary_fingerprint": "b56324d351dca1c022d4c67daddcd6a7ba7f20fecdce3803b627b959df8f3d14",
+  "token_schema_identity": "0258eb71de9f5983c95b8a9fa9fc4bd23a883f0087a16cf26fd9a6f6b9eda7cc",
+  "physical_token_schema_identity": "0258eb71de9f5983c95b8a9fa9fc4bd23a883f0087a16cf26fd9a6f6b9eda7cc",
+  "logical_token_schema": [
+    {
+      "key": "text",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "lemma",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "norm",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "upos",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "xpos",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.acontype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.amodtype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.atype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.cform",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.ctype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.fcontype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.fform",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.form",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.formbase",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.ftype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.goshu",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.icontype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.iform",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.itype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.kana",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.kanabase",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.lextype",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.lform",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.orthbase",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pos1",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pos2",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pos3",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pos4",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pron",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.pronbase",
+      "kind": "scalar",
+      "provider": "token-column"
+    },
+    {
+      "key": "unidic.type",
+      "kind": "scalar",
+      "provider": "token-column"
+    }
+  ],
+  "enhanced_graph": null,
+  "trust_class": "locally-executed",
+  "analyzer": {
+    "family": "vibrato",
+    "profile": "morphology",
+    "segmentation": "input",
+    "normalization": "nfc",
+    "language_policy": "ja",
+    "boundary_policy": "input-v1",
+    "semantic_identity": "510fa10c9f342b50a9729e3ae34972f9826bd74bc382df0daf05156cc4907c70"
+  },
+  "document_count": 1,
+  "sentence_count": 1,
+  "token_count": 1,
+  "inventory": {
+    "documents": 1,
+    "distinct_targets": 1,
+    "alias_documents": 0,
+    "max_target_multiplicity": 1,
+    "external_targets": 0
+  },
+  "admitted_inventory": {
+    "documents": 1,
+    "distinct_targets": 1,
+    "alias_documents": 0,
+    "max_target_multiplicity": 1,
+    "external_targets": 0
+  },
+  "configured_limits": {
+    "max_depth": 64,
+    "max_source_entries": 100000000,
+    "max_directory_entries": 1000000,
+    "max_documents": 10000000,
+    "max_index_bytes": 536870912
+  },
+  "observed": {
+    "max_depth": 2,
+    "examined_entries": 4,
+    "max_directory_entries": 1,
+    "index_bytes": 128
+  },
+  "sentence_truncation": null,
+  "ordered_inventory_digest": "aa86f04fecec79d45f7f125d429f3bcd52d66f591e9fa996dafe32fa0b22963b",
+  "admitted_inventory_digest": "4db8830fe7e3534b3f2327d180bfd6df7fe466862263656591fe4af8d85a160e",
+  "provenance_schema_version": 4,
+  "components": {
+    "locations.v1": {
+      "length": 274,
+      "blake3": "c1aba3cede18429e0d70a68fc063448b05fb4d4f6b377822222c97e9ac59ae63"
+    },
+    "provenance.sqlite": {
+      "length": 73728,
+      "blake3": "fdf2f86a99ef7a2e1eba2fd31b156886f1095ae57a83ca84d65f38519341420c"
+    },
+    "tokens.v1.zst": {
+      "length": 751,
+      "blake3": "27322216c5d21f624876e28c7afe875c235ed84e835e9736f8afe3f2664cf1e8"
+    }
+  },
+  "producer_version": "0.1.0",
+  "build_timestamp_unix_seconds": 1792328583
+}

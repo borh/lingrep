@@ -1,0 +1,32 @@
+{
+  "input": [
+    {
+      "source_range": [0, 7],
+      "surface_ranges": [[0, 3], [4, 7]],
+      "alignment": {"kind": "identity"},
+      "word_count": 2,
+      "values": [
+        "猫", "猫", "ネコ", "NOUN", "名詞-普通名詞", ["Masc"], ["Plur", "Sing"], ["ネコ"],
+        "が", null, null, "ADP", null, [], [], []
+      ]
+    }
+  ],
+  "analyzer": [
+    {
+      "source_range": [0, 3],
+      "surface_ranges": [[0, 3]],
+      "alignment": {"kind": "identity"},
+      "word_count": 1,
+      "values": [
+        "猫", "猫", "ネコ", "NOUN", "名詞-普通名詞", ["Masc"], ["Plur", "Sing"], ["ネコ"]
+      ]
+    },
+    {
+      "source_range": [4, 7],
+      "surface_ranges": [[4, 7]],
+      "alignment": {"kind": "identity"},
+      "word_count": 1,
+      "values": ["が", null, null, "ADP", null, [], [], []]
+    }
+  ]
+}

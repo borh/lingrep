@@ -1,0 +1,53 @@
+[package]
+name = "lingrep-perf"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Performance campaign tooling for the lingrep optimization loop"
+publish = false
+default-run = "lingrep-perf"
+
+# `lingrep-core` and `lingrep` are optional so that a plain `cargo build --workspace` never pulls
+# `testing` or `bench-instrumentation` into the dependency graph. Cargo unifies
+# features across workspace members in one build, so a non-optional dependency
+# here would compile matcher work counters into the shipping `ling`. Every
+# other crate takes `lingrep-core/testing` as a dev-dependency for the same reason;
+# this crate needs it in a binary, so it gets a feature instead.
+[features]
+default = []
+screen = [
+    "dep:lingrep-core",
+    "lingrep-core/testing",
+    "lingrep-core/bench-instrumentation",
+    "dep:lingrep",
+    "dep:lingrep-corpus",
+]
+analysis = ["dep:lingrep-core", "lingrep-core/external-allocator"]
+
+[dependencies]
+blake3 = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+lingrep-core = { workspace = true, optional = true }
+# The run-variant field list belongs to the crate that owns the schema. A
+# script restating it was wrong twice in one afternoon.
+lingrep = { path = "../lingrep", optional = true }
+# A prepared artifact's recorded identity, read from its manifest. Reading it
+# here rather than shelling out makes it per-run by construction.
+lingrep-corpus = { path = "../lingrep-corpus", optional = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "vibrato-analysis"
+path = "src/bin/vibrato-analysis.rs"
+required-features = ["analysis"]
+
+[[bin]]
+name = "sudachi-analysis"
+path = "src/bin/sudachi-analysis.rs"
+required-features = ["analysis"]

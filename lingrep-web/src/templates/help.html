@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block title %}lingrep patterns syntax help{% endblock %}
+{% block content %}
+<h1><span data-i18n="help.title">lingrep patterns syntax help</span></h1>
+<section class="pattern-help">
+  <p data-i18n="help.p1">lingrep patterns documents contain complete pattern declarations. A bare definition or <code>pattern</code> emits matches; a <code>fragment</code> is reusable but does not emit results; a <code>set</code> is a named value, not a definition, and neither emits nor is directly matched.</p>
+
+  <h2><span data-i18n="help.h_predicates">Token predicates</span></h2>
+  <p data-i18n="help.p2">Use <code>=</code>, <code>!=</code>, <code>in</code>, <code>not in</code>, and <code>/regular expressions/</code>. Combine constraints inside a token with <code>&amp;</code>.</p>
+
+  <h2><span data-i18n="help.h_composition">Composition</span></h2>
+  <p data-i18n="help.p3">Whitespace sequences expressions, <code>|</code> alternates, parentheses group, and <code>@NAME</code> references a fragment, a pattern, or a set. Quantifiers are <code>?</code>, <code>*</code>, <code>+</code>, and <code>{n,m}</code>.</p>
+
+  <h2><span data-i18n="help.h_captures">Captures and comparison</span></h2>
+  <p data-i18n="help.p4"><code>(?&lt;name&gt; ...)</code> creates a named capture. <code>same_as($name, by=unidic.kana)</code> consumes a span equal by <code>text</code>, <code>lemma</code>, <code>unidic.kana</code>, or <code>unidic.pron</code>.</p>
+
+  <h2><span data-i18n="help.h_boundaries">Boundaries and assertions</span></h2>
+  <p data-i18n="help.p5"><code>^</code> and <code>$</code> assert sentence boundaries. <code>preceded_by(E)</code> and <code>followed_by(E)</code> require a regular expression to end or start at the current boundary without consuming it; <code>not_preceded_by(E)</code> and <code>not_followed_by(E)</code> complement those tests. Assertion bodies may be variable-width or nullable, but may not contain captures or <code>same_as</code>.</p>
+
+  <h2><span data-i18n="help.h_graph">Dependency graphs</span></h2>
+  <p data-i18n="help.p_graph">A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]-&gt;, may introduce a word or decimal empty node with (?&lt;name&gt; [test]), and may name the exact edge with as $edge. Every graph component needs a surface capture anchor; each complete assignment is one match.</p>
+
+  <h2><span data-i18n="help.h_editor">Pattern editor</span></h2>
+  <p data-i18n="help.p6">The pattern editor highlights lingrep patterns syntax and checks it as you type. Hover any attribute, value, <code>@reference</code>, or <code>$capture</code> for its documentation; typing <code>same_as(</code> shows the call signature inline with the active argument underlined.</p>
+  <table class="pattern-editor-keys">
+    <thead><tr><th data-i18n="help.col_key">Key</th><th data-i18n="help.col_action">Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Space</kbd></td><td data-i18n="help.k_autocomplete">Autocomplete attributes, POS tags, <code>@references</code>, and <code>$captures</code></td></tr>
+      <tr><td><kbd>F8</kbd> / <kbd>Shift</kbd>+<kbd>F8</kbd></td><td data-i18n="help.k_diag_jump">Jump to the next / previous diagnostic</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></td><td data-i18n="help.k_diag_panel">Open the diagnostics panel; click a row to jump to it</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td data-i18n="help.k_search">Search within the pattern</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td data-i18n="help.k_undo">Undo / redo</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td data-i18n="help.k_esc_editor">Close the autocomplete, search, or diagnostics panel</td></tr>
+    </tbody>
+  </table>
+  <p data-i18n="help.p7">On macOS use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. Moving focus out of the editor formats the pattern and re-checks it against the server.</p>
+
+  <h2><span data-i18n="help.h_workbench">Workbench keys</span></h2>
+  <table class="pattern-editor-keys">
+    <thead><tr><th data-i18n="help.col_key">Key</th><th data-i18n="help.col_action">Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td data-i18n="help.k_run">Run the corpus search from anywhere</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td data-i18n="help.k_fold">Fold / expand the query editor</td></tr>
+      <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td data-i18n="help.k_nav">Move down / up the KWIC list (alias for ↓ / ↑)</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td data-i18n="help.k_open">Open the focused hit in the inspector</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td data-i18n="help.k_close_inspector">Close the inspector</td></tr>
+      <tr><td><kbd>/</kbd></td><td data-i18n="help.k_filter">Focus the pattern filter</td></tr>
+      <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td data-i18n="help.k_cycle_pattern">Select the previous / next pattern</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span data-i18n="help.h_examples">Examples</span></h2>
+  {% for example in examples %}
+  <article>
+    <h3>{{ example.title }}</h3>
+    <pre lang="ja"><code>{{ example.source }}</code></pre>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

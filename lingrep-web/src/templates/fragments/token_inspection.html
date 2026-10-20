@@ -1,0 +1,36 @@
+<section class="token-inspection">
+    <h3><span data-i18n="token_inspection.title">Token inspection</span></h3>
+    <p data-i18n="token_inspection.availability" data-i18n-args='{"available": {{ inspection.available_fields }}, "total": {{ total_fields }}}'>{{ inspection.available_fields }} of {{ total_fields }} fields available</p>
+    <div class="inspection-copy-actions">
+        <button type="button" class="btn btn-secondary" data-copy-text="{{ surface_copy }}"><span data-i18n="token_inspection.copy_surface">Copy surface</span></button>
+        <button type="button" class="btn btn-secondary" data-copy-text="{{ machine_copy }}"><span data-i18n="token_inspection.copy_machine">Copy machine fields</span></button>
+        <span class="copy-status" role="status" aria-live="polite"></span>
+    </div>
+    {% for group in inspection.groups %}
+    <section class="token-field-group">
+        <h4><span data-label-en>{{ group.key.label_en() }}</span><span data-label-ja lang="ja">{{ group.key.label_ja() }}</span></h4>
+        <dl class="token-field-grid">
+        {% for field in group.fields %}
+            {% match field.value %}
+            {% when Some with (value) %}
+            <div class="token-field">
+                <dt data-field-key="{{ field.meta.key }}"><span data-label-en>{{ field.meta.label_en }}</span><span data-label-ja lang="ja">{{ field.meta.label_ja }}</span></dt>
+                <dd>{% if value.is_empty() %}<span class="empty-value" data-i18n="token_inspection.empty_value">Empty value</span>{% else %}{{ value }}{% endif %}</dd>
+            </div>
+            {% when None %}
+            {% endmatch %}
+        {% endfor %}
+        </dl>
+    </section>
+    {% endfor %}
+    <details class="unavailable-fields">
+        <summary><span data-i18n="token_inspection.show_unavailable">Show unavailable fields</span></summary>
+        <dl>
+        {% for group in inspection.groups %}
+            {% for field in group.fields %}
+                {% if field.value.is_none() %}<dt data-field-key="{{ field.meta.key }}"><span data-label-en>{{ field.meta.label_en }}</span><span data-label-ja lang="ja">{{ field.meta.label_ja }}</span></dt><dd data-i18n="token_inspection.unavailable">Unavailable</dd>{% endif %}
+            {% endfor %}
+        {% endfor %}
+        </dl>
+    </details>
+</section>

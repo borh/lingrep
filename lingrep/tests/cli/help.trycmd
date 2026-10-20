@@ -1,0 +1,33 @@
+```
+$ ling --help
+Search, inspect, tokenize, and prepare Japanese corpora
+
+Usage: ling [OPTIONS] <COMMAND>
+
+Commands:
+  matches         Find lingrep patterns matches and stream one record per match
+  summarize       Aggregate matches per pattern into exact group counts
+  tokenize        Tokenize a corpus and stream sentence and token records
+  coverage        Report attribute coverage, and which catalog exclusions absence exposes
+  explore         Browse matches interactively in the terminal
+  sentence-final  Aggregate matches selected by sentence-final policy
+  corpus          Build or inspect artifacts, or inventory corpus sources
+  check           Compile and validate an lingrep patterns catalog without reading a corpus
+  doctor          Probe dictionary, catalog, and prepared-corpus inputs
+  describe        Describe command arguments, examples, and owned contracts
+  contracts       List or describe stable machine-output contracts
+  completions     Generate a shell completion definition
+  manpages        Generate manual pages for every public command
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Output:
+      --json           Write JSONL records and machine-readable JSON diagnostics
+      --color <COLOR>  Control ANSI styling in human output [default: auto] [possible values: auto, always, never]
+
+lingrep patterns syntax: run `ling check --help` or read ling-check(1).
+
+```

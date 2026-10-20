@@ -1,0 +1,9 @@
+<section class="live-results" aria-label="Matches so far" data-i18n-aria-label="results.live_label">
+  <h2 data-i18n="results.live_heading">Matches so far</h2>
+  <p class="muted" data-i18n="results.live_note">Exact for the scanned prefix; counts may increase until the scan completes.</p>
+  <table><thead><tr><th data-i18n="results.col_pattern">Pattern</th><th class="numeric-heading" data-i18n="results.col_matches">Corpus matches</th></tr></thead><tbody>
+  {% for result in results %}
+    <tr data-exact-total="{{ result.count }}"><td>{{ result.pattern_name }}</td><td class="pattern-count">{{ result.count_label }}</td></tr>
+  {% endfor %}
+  </tbody></table>
+</section>

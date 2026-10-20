@@ -1,0 +1,15 @@
+[project]
+name = "lingrep-harbor-eval"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "harbor @ git+https://github.com/harbor-framework/harbor.git@1b1dbc43729edff705071a797bb0f98a90cf62f5",
+  "tree-sitter>=0.25,<0.26",
+  "tree-sitter-bash>=0.25,<0.26",
+]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

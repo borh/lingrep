@@ -1,0 +1,78 @@
+# Sentence-final-expression pattern exercises.
+#
+# This is the retained catalog for the earlier `sfe.sgx` and `new-list.sgx`
+# experiments. Helpers deliberately remain emitting definitions: this is a
+# test catalog, so their individual predicate paths remain useful coverage.
+
+set VERBAL := {VERB, AUX}.
+
+動詞終止形 := [upos in @VERBAL]+ [upos in @VERBAL & unidic.cform~終止形] | [upos=VERB & unidic.cform~終止形].
+形容詞終止形 := [unidic.pos1=形容詞 & unidic.cform~終止形].
+助動詞終止形 := [unidic.pos1=助動詞 & unidic.cform~終止形].
+用言終止形 := @動詞終止形 | @形容詞終止形 | @助動詞終止形.
+終助詞 := [unidic.pos2=終助詞].
+
+動詞連用形 := [upos in @VERBAL]+ [upos in @VERBAL & unidic.cform~連用形] | [upos=VERB & unidic.cform~連用形].
+形容詞連用形 := [unidic.pos1=形容詞 & unidic.cform~連用形].
+形容詞語幹 := [unidic.pos1=形容詞].
+用言連用形 := @動詞連用形 | @形容詞語幹.
+形状詞 := [unidic.pos1=形状詞].
+形容動詞 := @形状詞 | [unidic.pos3=形状詞可能].
+
+ARU := [lemma in {ある, 有る} & text not in {あろう, 有ろう, あれ, 有れ}] まし? た?.
+KAKO := (た | [lemma=だ] た).
+NAI := [text in {ない, 無い, ず, ぬ, なかっ, 無かっ, ねえ}] @KAKO?.
+
+だ := (?<命題> の | [upos~/NOUN|ADJ/]) だ.
+である := で @ARU.
+たい := [lemma=たい & unidic.pos1=助動詞].
+なさい := [upos=VERB & unidic.cform=命令形] なさい.
+のに := の に.
+
+status: "FIXME"
+category: "がある"
+type: "文末尾から"
+meidai: "用言終止形、ただし形容動詞ナ形、助動詞「だ」デアル形、助動詞「だ」デアル形"
+examples: ["必要があった", "必要がある"]
+counterexamples: ["必要があろう", "必要があれば"]
+必要がある := [lemma=必要] が @ARU.
+
+status: "FIXME"
+category: "がある"
+type: "文末尾から"
+meidai: "用言終止形、ただし形容動詞ナ形、助動詞「だ」デアル形、助動詞「だ」デアル形"
+恐れがある := (?<命題> @用言終止形) [lemma=恐れ] が @ARU.
+
+status: "FIXME"
+category: "う"
+subcategory: "う"
+type: "文末尾から"
+meidai: "用言終止形、ただし形容動詞語幹、"
+だろう := (?<命題> @用言終止形) だろう.
+
+status: "FIXME"
+category: "う"
+subcategory: "う"
+type: "文末尾から"
+meidai: "用言終止形、ただし形容動詞語幹、"
+であろう := (?<命題> @用言終止形) で あろう.
+
+status: "FIXME"
+category: "う"
+subcategory: "う"
+type: "文末尾から"
+meidai: "用言終止形、ただし形容動詞語幹、"
+う := [unidic.cform=意志推量形 & text=う].
+
+status: "FIXME"
+category: "う"
+subcategory: "よう"
+type: "文末尾から"
+meidai: "動詞連用形 あるいは 用言1段終止形"
+よう := (?<命題> @動詞連用形) [unidic.cform=意志推量形 & text~/よう$/].
+
+ようだ := よう (だ | で ある).
+
+category: "かもしれない"
+type: "文末尾から"
+かもしれない := (?<命題> @用言終止形 | [upos=NOUN] | @形状詞) か も [lemma=知れる] @NAI.

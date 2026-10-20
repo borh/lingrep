@@ -1,0 +1,8 @@
+<link rel="stylesheet" href="assets/editor/pattern-editor.css">
+<!-- Warm the editor's module/wasm graph so the first interaction does not
+     wait on the dynamic-import waterfall in pattern-editor.js. -->
+<link rel="modulepreload" href="assets/editor/vendor/codemirror.js">
+<link rel="modulepreload" href="assets/editor/vendor/web-tree-sitter.js">
+<link rel="prefetch" href="assets/editor/vendor/web-tree-sitter.wasm">
+<link rel="prefetch" href="assets/editor/vendor/tree-sitter-lingrep.wasm">
+<script type="module" src="assets/editor/pattern-editor.js"></script>

@@ -1,0 +1,33 @@
+#[path = "../support/mod.rs"]
+mod support;
+
+mod annotation_export;
+mod artifact_fingerprint_golden;
+mod attributes;
+mod catalog_input;
+mod cli;
+mod cli_shape;
+mod completions;
+mod corpus_mode;
+mod corpus_sources;
+mod direct_protocol;
+mod examples;
+mod explore_characterization;
+mod external_gravity_example;
+mod introspection;
+mod kwic_characterization;
+mod manpages;
+mod policy_publication;
+mod prepared_protocol;
+mod protocol;
+mod protocol_discovery;
+mod retired_cli_surface;
+mod retired_facade;
+mod sample_protocol;
+mod scope_protocol;
+mod section_protocol;
+mod sentence_final_characterization;
+mod summarize;
+mod terminal_safety;
+mod tokenize_protocol;
+mod variants_protocol;

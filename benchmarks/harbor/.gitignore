@@ -1,0 +1,4 @@
+.generated/
+jobs/
+.linguistic-eval-*.tar.gz
+.linguistic-eval-images*

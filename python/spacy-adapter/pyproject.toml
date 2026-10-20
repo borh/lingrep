@@ -1,0 +1,122 @@
+[project]
+name = "lingrep-spacy-adapter"
+version = "0.1.0"
+description = "Generic spaCy morphology adapter for lingrep"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "blake3>=1.0.8,<2",
+]
+
+[project.scripts]
+lingrep-spacy-adapter = "lingrep_spacy_adapter.__main__:main"
+
+[project.optional-dependencies]
+spacy = [
+    # spaCy imports Click directly; Typer no longer supplies it transitively.
+    "click>=8.4.2,<9",
+    # GiNZA 5.2 model configs use nullable factory values rejected by Confection 1.
+    "confection>=0.1.5,<1",
+    "numpy>=2,<3",
+    "spacy>=3.8.11,<3.8.12",
+]
+ginza = [
+    "ginza==5.2.0",
+    "ja-ginza==5.2.0",
+]
+electra = [
+    "ja-ginza-electra==5.2.0",
+    "tokenizers==0.22.2",
+    "transformers==4.57.6",
+]
+cpu = [
+    # download.pytorch.org publishes the accelerator-suffixed builds for Linux
+    # and Windows only. darwin has a single build, unsuffixed, on PyPI -- so
+    # there the extra names the same torch the default index already serves,
+    # and the `pytorch-cpu` source below is skipped for the same reason.
+    "torch==2.13.0+cpu; sys_platform != 'darwin'",
+    "torch==2.13.0; sys_platform == 'darwin'",
+]
+cuda = [
+    "cupy-cuda12x>=14.1.1,<15; sys_platform != 'darwin'",
+    "torch==2.13.0+cu126; sys_platform != 'darwin'",
+]
+rocm = [
+    "cupy-rocm-7-0==14.1.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch==2.13.0+rocm7.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "triton-rocm==3.7.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+    "ruff>=0.16.2,<1",
+]
+
+[tool.uv]
+# Keep this declared here rather than in a user-global ~/.config/uv/uv.toml:
+# uv.lock records `exclude-newer-span`, and uv re-resolves when the active
+# value does not match what the lock recorded. Untracked, `uv lock --check`
+# passes only on the machine that wrote the lock.
+exclude-newer = "P3D"
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+    ],
+    [
+        { extra = "cpu" },
+        { extra = "rocm" },
+    ],
+    [
+        { extra = "cuda" },
+        { extra = "rocm" },
+    ],
+]
+override-dependencies = ["transformers==4.57.6"]
+
+[tool.uv.extra-build-variables]
+spacy-alignments = { PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1" }
+sudachipy = { PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1" }
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cuda", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+triton-rocm = [
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lingrep_spacy_adapter"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

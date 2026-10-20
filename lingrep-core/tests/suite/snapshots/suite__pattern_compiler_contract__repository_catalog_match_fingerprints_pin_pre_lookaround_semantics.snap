@@ -1,0 +1,46 @@
+---
+source: lingrep-core/tests/suite/pattern_compiler_contract.rs
+expression: fingerprints
+---
+[
+    (
+        "sfe",
+        [
+            MatchFingerprint {
+                pattern: "必要がある",
+                start: 0,
+                end: 3,
+                captures: [],
+            },
+            MatchFingerprint {
+                pattern: "ARU",
+                start: 2,
+                end: 3,
+                captures: [],
+            },
+        ],
+    ),
+    (
+        "sf-experimental",
+        [
+            MatchFingerprint {
+                pattern: "そうだ",
+                start: 1,
+                end: 3,
+                captures: [],
+            },
+            MatchFingerprint {
+                pattern: "__policy__DA",
+                start: 2,
+                end: 3,
+                captures: [],
+            },
+            MatchFingerprint {
+                pattern: "だ",
+                start: 2,
+                end: 3,
+                captures: [],
+            },
+        ],
+    ),
+]

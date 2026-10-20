@@ -1,0 +1,4 @@
+# The true complement holds for a token lacking `pron`, so it cannot be
+# exposed and must not be reported. Narrowed by the same unmatchable `orth`
+# conjunct as pron-exclusion.sgx, for the same reason.
+pattern complemented := [text=zzqqxx & !(unidic.pron=ヨミ)].

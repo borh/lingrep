@@ -1,0 +1,57 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH requested(id) AS (\n                   SELECT DISTINCT CAST(value AS INTEGER) FROM json_each(?)\n               )\n               SELECT r.id AS \"sentence_id!: i64\",\n                      g.label AS \"label!: String\",\n                      g.first_sentence AS \"first_sentence!: i64\",\n                      g.end_sentence AS \"end_sentence!: i64\"\n               FROM requested r\n               JOIN regions g ON g.first_sentence<=r.id AND g.end_sentence>r.id\n               ORDER BY r.id,g.label,g.first_sentence,g.end_sentence",
+  "describe": {
+    "columns": [
+      {
+        "name": "sentence_id!: i64",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "label!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "name": "first_sentence!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "first_sentence"
+          }
+        }
+      },
+      {
+        "name": "end_sentence!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "end_sentence"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a50a72c5de24d243b35e251cb2e6b0b4f91d2e7ee756757f0074053bdaad9cb5"
+}

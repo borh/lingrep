@@ -1,0 +1,63 @@
+[package]
+name = "lingrep-web"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser front end over an immutable prepared corpus"
+
+[features]
+# Test-only public surface. `tests/` is a separate crate, so `#[cfg(test)]`
+# alone cannot reach an item from there; this follows lingrep-core's convention of a
+# `testing` feature enabled through a self dev-dependency.
+testing = []
+
+[dependencies]
+blake3.workspace = true
+lingrep-core.workspace = true
+lingrep-corpus = { path = "../lingrep-corpus" }
+rayon.workspace = true
+vibrato-rkyv.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-br", "compression-gzip"] }
+askama = "0.12"
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
+thiserror.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+http-body-util = "0.1"
+indexmap.workspace = true
+clap.workspace = true
+compact_str.workspace = true
+lingrep-cli-common = { path = "../lingrep-cli-common" }
+rust_xlsxwriter = "0.96.0"
+chrono = "0.4.45"
+flate2 = "1"
+base64 = "0.22"
+
+[dev-dependencies]
+proptest.workspace = true
+sha2 = "0.10"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+serde_urlencoded = "0.7"
+thirtyfour = { version = "0.34", default-features = false, features = ["reqwest"] }
+reqwest = { version = "0.12", features = ["blocking"] }
+tempfile.workspace = true
+hegeltest.workspace = true
+rmp-serde.workspace = true
+trycmd.workspace = true
+lingrep-core = { workspace = true, features = ["testing"] }
+lingrep-web = { path = ".", features = ["testing"] }
+calamine = "0.36.0"
+sqlx.workspace = true
+
+[lints]
+workspace = true

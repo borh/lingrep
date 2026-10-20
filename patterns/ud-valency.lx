@@ -1,0 +1,97 @@
+# Positive UD valency frames for Japanese head-final clauses, including
+# arguments inside adnominal relative and adverbial clauses.
+#
+# These patterns inventory attested argument combinations. They do not infer
+# absence: `subject_predicate` can match a clause that also has an object, and
+# `transitive_frame` can match a clause that also has an oblique. That keeps
+# open-world dependency data separate from a later statistical interpretation
+# of the counts.
+#
+# The two transitive definitions cover SOV and OSV order under one published
+# name. Dependency edges, not an arbitrary token-distance cutoff, define the
+# frame. This catalog requires `dep.head` and `dep.rel` and therefore binds to
+# CoNLL-U-style syntax data only.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern frame: string required in {"subject", "transitive", "oblique", "clausal", "relative", "adverbial"}
+  status: string required in {"experimental"}
+end
+
+set SUBJECT := {nsubj, csubj, nsubj:pass, csubj:pass}.
+set OBJECT := {obj}.
+set OBLIQUE := {iobj, obl, obl:arg}.
+set CLAUSAL_COMPLEMENT := {ccomp, xcomp}.
+
+key: [$predicate.lemma, $subject.dep.rel, $subject.lemma]
+frame: "subject"
+pattern subject_predicate :=
+  (?<subject> [upos in {NOUN, PROPN, PRON, VERB} & dep.rel in @SUBJECT]) []*
+  (?<predicate> [upos in {VERB, ADJ, AUX}])
+  where $predicate -[@SUBJECT]-> $subject.
+
+key: [$predicate.lemma, $subject.lemma, $object.lemma]
+frame: "transitive"
+output_name: "transitive_frame"
+pattern subject_object_predicate :=
+  (?<subject> [upos in {NOUN, PROPN, PRON} & dep.rel in @SUBJECT]) []*
+  (?<object> [upos in {NOUN, PROPN, PRON} & dep.rel in @OBJECT]) []*
+  (?<predicate> [upos in {VERB, AUX}])
+  where $predicate -[@SUBJECT]-> $subject,
+        $predicate -[@OBJECT]-> $object.
+
+key: [$predicate.lemma, $subject.lemma, $object.lemma]
+frame: "transitive"
+output_name: "transitive_frame"
+pattern object_subject_predicate :=
+  (?<object> [upos in {NOUN, PROPN, PRON} & dep.rel in @OBJECT]) []*
+  (?<subject> [upos in {NOUN, PROPN, PRON} & dep.rel in @SUBJECT]) []*
+  (?<predicate> [upos in {VERB, AUX}])
+  where $predicate -[@SUBJECT]-> $subject,
+        $predicate -[@OBJECT]-> $object.
+
+key: [$predicate.lemma, $argument.dep.rel, $argument.lemma]
+frame: "oblique"
+pattern oblique_predicate :=
+  (?<argument> [upos in {NOUN, PROPN, PRON} & dep.rel in @OBLIQUE]) []*
+  (?<predicate> [upos in {VERB, ADJ, AUX}])
+  where $predicate -[@OBLIQUE]-> $argument.
+
+key: [$predicate.lemma, $complement.dep.rel, $complement.lemma]
+frame: "clausal"
+pattern clausal_complement_predicate :=
+  (?<complement> [upos in {VERB, ADJ, AUX} & dep.rel in @CLAUSAL_COMPLEMENT]) []*
+  (?<predicate> [upos in {VERB, ADJ, AUX}])
+  where $predicate -[@CLAUSAL_COMPLEMENT]-> $complement.
+
+# The broad subtree profiler promoted this chain after two independent parses
+# agreed on both its frequency and its sole observed Japanese surface order:
+# argument … relative predicate … modified head. The Markdown/GiNZA prefix
+# produced 1,028 matches and UD Japanese GSD produced 5,256. The role remains
+# a key rather than three definitions so downstream counts retain the corpus's
+# own nsubj/obj/obl distinction.
+key: [$head.lemma, $predicate.lemma, $argument.dep.rel, $argument.lemma]
+frame: "relative"
+pattern relative_clause_argument :=
+  (?<argument> [upos=NOUN & dep.rel in {nsubj, obj, obl}]) []*
+  (?<predicate> [upos=VERB & dep.rel=acl]) []*
+  (?<head> [upos=NOUN])
+  where $head -[acl]-> $predicate,
+        $predicate -[nsubj|obj|obl]-> $argument.
+
+# The next punctuation/function-node-free subtree round selected the parallel
+# adverbial-clause chain. The Markdown/GiNZA prefix produced 879 matches and UD
+# Japanese GSD produced 5,721; every exact-profile match in both corpora used
+# argument … adverbial clause … matrix verb order. The argument relation stays
+# in the key so nsubj, obj, and obl remain independently countable.
+key: [$head.lemma, $clause.lemma, $argument.dep.rel, $argument.lemma]
+frame: "adverbial"
+pattern adverbial_clause_argument :=
+  (?<argument> [upos=NOUN & dep.rel in {nsubj, obj, obl}]) []*
+  (?<clause> [upos=VERB & dep.rel=advcl]) []*
+  (?<head> [upos=VERB])
+  where $head -[advcl]-> $clause,
+        $clause -[nsubj|obj|obl]-> $argument.

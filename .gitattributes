@@ -1,0 +1,3 @@
+# Unified diffs encode unchanged blank context lines as a single leading space.
+nix/patches/*.patch whitespace=-trailing-space
+vp-web/assets/editor/vendor/** whitespace=-trailing-space

@@ -1,0 +1,93 @@
+name: Fuzz Testing
+
+on:
+  # Run on push to main (quick regression)
+  push:
+    branches: [main]
+  # Run on PRs (quick regression)
+  pull_request:
+    branches: [main]
+  # Nightly extended fuzzing
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC every day
+  # Manual trigger
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Quick regression fuzzing for PRs and pushes
+  fuzz-regression:
+    name: Fuzz Regression (30s per fuzzer)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run every discovered fuzz target
+        env:
+          LINGREP_FUZZ_MAX_TOTAL_TIME: 30
+          LINGREP_FUZZ_RUNS: 5000
+          LINGREP_FUZZ_SANITIZER: none
+        run: scripts/run_fuzz_smoke.sh
+
+  # Extended fuzzing for nightly builds
+  fuzz-nightly:
+    name: Fuzz Nightly (10min per fuzzer)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run every discovered fuzz target (extended)
+        env:
+          LINGREP_FUZZ_MAX_TOTAL_TIME: 600
+          LINGREP_FUZZ_RUNS: 0
+          LINGREP_FUZZ_SANITIZER: address
+        run: scripts/run_fuzz_smoke.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: lingrep-core/fuzz/artifacts/**/*
+          retention-days: 7

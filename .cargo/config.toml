@@ -1,0 +1,7 @@
+[env]
+SQLX_OFFLINE = "true"
+# Dictionary-backed integration tests can each retain several GiB. Keep the
+# default harness serial so both `cargo test --workspace` and `./ci.sh` stay
+# below the host earlyoom threshold. Developers may opt into parallelism with
+# an explicit `RUST_TEST_THREADS=<n>` because this value is not forced.
+RUST_TEST_THREADS = { value = "1", force = false }

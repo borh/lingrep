@@ -1,0 +1,12 @@
+<div id="search-stream"
+     sse-connect="api/stream/{{ request_id }}"
+     sse-swap="progress,result,error"
+     hx-swap="innerHTML">
+    {% include "fragments/revision_status.html" %}
+</div>
+<div id="live-results" hx-swap-oob="innerHTML"></div>
+{% if status.stale %}
+<div id="results-stale" hx-swap-oob="innerHTML">
+  <p class="stale-notice" data-i18n="status.stale_running">Showing previous results while the new query runs.</p>
+</div>
+{% endif %}

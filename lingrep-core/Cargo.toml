@@ -1,0 +1,124 @@
+[package]
+name = "lingrep-core"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tokenizer adapters, the lingrep patterns compiler, the NFA matcher, and the sentence scheduler"
+autobenches = false
+autoexamples = false
+
+# Optional features
+[features]
+# Testing utilities (for benchmarks and integration tests)
+testing = ["dep:proptest"]
+# Opt-in matcher work counters for Criterion and measurement tests. Default
+# production builds compile out both the storage and counter updates.
+bench-instrumentation = []
+# Lets a measurement binary install a process-wide counting allocator.
+# Shipping binaries leave this disabled and continue to use jemalloc.
+external-allocator = []
+
+[[example]]
+name = "generate-ndc9-tsv"
+path = "examples/generate-ndc9-tsv.rs"
+
+[[example]]
+name = "bccwj-diff"
+path = "examples/bccwj-diff.rs"
+
+[[example]]
+name = "measure_lx_compile"
+path = "examples/measure_lx_compile.rs"
+
+[[example]]
+name = "measure_lx_assertions"
+path = "examples/measure_lx_assertions.rs"
+required-features = ["bench-instrumentation"]
+
+[[example]]
+name = "measure_matcher_memory"
+path = "examples/measure_matcher_memory.rs"
+
+[[example]]
+name = "measure_external_echo"
+path = "examples/measure_external_echo.rs"
+
+[[example]]
+name = "measure_tagged_projection"
+path = "examples/measure_tagged_projection.rs"
+
+[[example]]
+name = "measure_spacy_process"
+path = "examples/measure_spacy_process.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aho-corasick.workspace = true
+vibrato-rkyv.workspace = true
+zstd = "0.13.1"
+quick-xml = "0.41"
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
+regex.workspace = true
+rustc-hash.workspace = true
+clap.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+tempfile.workspace = true
+indexmap.workspace = true
+xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
+log.workspace = true
+# Unifies Vibrato's archive layout with the existing 64-bit dictionaries.
+rkyv.workspace = true
+blake3.workspace = true
+compact_str.workspace = true
+pulldown-cmark = { version = "0.12", default-features = false }
+tree-sitter = "0.26.11"
+tree-sitter-lingrep.workspace = true
+sudachi.workspace = true
+unicode-width = "0.2"
+unicode-normalization = "0.1.25"
+serde_yaml = "0.9.34"
+serde_regex = "1.1.0"
+rand = "0.9.1"
+thiserror.workspace = true
+roaring = { version = "0.10.6", features = ["serde"] }
+libc = "0.2"
+# Proptest for property-based testing (optional, dev-only)
+proptest = { version = "1.5", optional = true }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6.0"
+tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+hegeltest.workspace = true
+yare = "3.0.0"
+proptest.workspace = true
+proptest-derive.workspace = true
+insta = "1.40"
+lingrep-core = { path = ".", features = ["testing"] }
+
+[[bench]]
+name = "fsm_performance"
+harness = false
+
+[[bench]]
+name = "spill_codec"
+harness = false
+
+[[bench]]
+name = "corpus_discovery"
+harness = false
+
+[[bench]]
+name = "scope_admission"
+harness = false
+
+[lints]
+workspace = true

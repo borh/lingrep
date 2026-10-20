@@ -1,0 +1,1 @@
+{"schema":"lingrep.query/v2","type":"definition","data":{"name":"p","catalog_ordinal":0,"body":{"kind":"pattern","expression":"[text=猫]"},"metadata":{"nested":["x"]},"source_file":"patterns.lx","source_span":{"start":0,"end":8}}}

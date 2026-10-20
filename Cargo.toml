@@ -1,0 +1,254 @@
+[workspace]
+members = [
+    "lingrep-core",
+    "lingrep-corpus",
+    "lingrep-web",
+    "lingrep",
+    "lingrep-cli-common",
+    "lingrep-perf"
+]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.95"
+# One version for every crate. The release tag, `ling --version` and the Nix
+# package all read it from here; keeping a copy per manifest is how the
+# workspace sat at 0.1.0 while the newest tag was v0.2.3.
+version = "0.3.0"
+license = "MIT"
+repository = "https://github.com/borh/lingrep"
+
+[workspace.dependencies]
+aho-corasick = "1.1.4"
+# Internal
+lingrep-core = { path = "lingrep-core" }
+
+# Multi-crate shared dependencies
+anstyle = "1"
+blake3 = { version = "1.8.5", features = ["mmap", "rayon"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+colorgrad = "0.8"
+compact_str = { version = "0.9.0", features = ["serde"] }
+env_logger = "0.11"
+indexmap = "2.7"
+itertools = "0.13"
+log = "0.4"
+lru = "0.13"
+num_cpus = "1.16"
+parking_lot = "0.12"
+rayon = "1.10"
+regex = "1"
+rkyv = { version = "0.8.10", features = ["pointer_width_64"] }
+rustc-hash = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+rmp-serde = "1.3"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "json"] }
+tempfile = "3"
+thiserror = "2"
+
+# Git deps (shared across multiple crates — this is the big win)
+vibrato-rkyv = { git = "https://github.com/o24s/vibrato-rkyv.git", rev = "a6f40fb1830c399f7f6ad9c4cf0efde2611b3bbe" }
+tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "b7ac30d8055e0e4e22ce4e4a34711f27f07712fc" }
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e" }
+
+# Multi-crate dev deps
+hegeltest = "0.27"
+proptest = "1.5"
+proptest-derive = "0.4"
+trycmd = "0.15"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# Dev builds keep file/line for panics, backtraces, perf, and flamegraphs, but
+# drop variable-level debuginfo. Measured: the 105.9 GB target tree was 95.6 GB
+# of >100 MB executables, and linking dominated rebuilds (sys 3m22 > user 2m28).
+# Use the `debug-full` profile when a debugger actually needs locals.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.debug-full]
+inherits = "dev"
+debug = 2
+
+# `inherits = "dev"` carries profile settings, but Cargo does not propagate
+# `[profile.dev.package.*]` overrides through it, so the four hot-path
+# packages below must be mirrored explicitly or `debug-full` silently drops
+# back to opt-level 0 for the dictionary-loading path.
+[profile.debug-full.package.zstd]
+opt-level = 3
+
+[profile.debug-full.package.zstd-safe]
+opt-level = 3
+
+[profile.debug-full.package.zstd-sys]
+opt-level = 3
+
+[profile.debug-full.package.vibrato-rkyv]
+opt-level = 3
+
+# The dictionary hot path, optimized even in the dev profile: zstd
+# decompression and the mapped rkyv loader. Every other dependency and every
+# workspace crate stays at opt-level 0.
+[profile.dev.package.zstd]
+opt-level = 3
+
+[profile.dev.package.zstd-safe]
+opt-level = 3
+
+[profile.dev.package.zstd-sys]
+opt-level = 3
+
+[profile.dev.package.vibrato-rkyv]
+opt-level = 3
+
+# Workspace clippy lint policy: docs/lint-policy.md.
+#
+# Layout: a clean `deny`/`allow` binary for the lints this config names.
+#   * `deny`  — robustness floor: panic-prone constructs whose debt is paid.
+#               A bare `cargo clippy` enforces these without the CI `-D warnings`
+#               flag (Decision 6).
+#   * `allow` — either a deliberate policy exception (Decisions 8 & 9) that
+#               conflicts with the deny floor and must stay visible at the rule
+#               site, or a functional override of the `pedantic` group.
+# No workspace-configured lint is at `warn` steady-state: `warn` + CI's
+# `-D warnings` would block on any lint with pre-existing debt, so `warn` is
+# reserved for the transitional state inside one step that pays a lint's debt
+# and flips it to `deny` in the same commit. Clippy's own retained default-on
+# `warn` lints (the ones OMITTED below — e.g. `let_underscore_future`,
+# `await_holding_lock`, `infallible_try_from`) are NOT mentioned here so they
+# keep their existing `warn`/`deny`; `-D warnings` still promotes them
+# (Decision 7). `allow`-ing a default-on lint would WEAKEN current enforcement.
+#
+# NOTE on `if_let_mutex`: the design spec listed it among the default-on lints
+# to preserve, but clippy disables `if_let_mutex` entirely in Edition 2024,
+# and every workspace crate is Edition 2024, so it is inert here regardless.
+[workspace.lints.clippy]
+# --- Robustness floor: flipped to deny in Tasks 2-4 (transient `allow` here) ---
+string_slice               = "deny"
+panic                      = "deny"
+panic_in_result_fn         = "deny"
+unreachable                = "deny"
+unimplemented              = "deny"
+todo                       = "deny"
+exit                       = "deny"
+unchecked_time_subtraction = "deny"
+unwrap_used                = "deny"    # robustness floor (Task 4: ~7 prod sites paid)
+
+# --- Ratcheted pedantic lints: elevated from the allow-list to deny one at a
+#     time (docs/lint-policy.md follow-up). Debt paid + flipped in one commit.
+redundant_closure_for_method_calls = "deny"   # 89 sites auto-fixed (closure->method)
+# Batch ratchet (2026-08-02): 12 more pedantic lints elevated to deny after
+# `cargo clippy --fix` cleared every site (behavior-preserving machine fixes).
+bool_to_int_with_if = "deny"   # 1 sites auto-fixed (batch ratchet)
+cloned_instead_of_copied = "deny"   # 2 sites auto-fixed (batch ratchet)
+explicit_iter_loop = "deny"   # 24 sites auto-fixed (batch ratchet)
+if_not_else = "deny"   # 10 sites auto-fixed (batch ratchet)
+manual_assert = "deny"   # 8 sites auto-fixed (batch ratchet)
+manual_assert_eq = "deny"   # 1 sites auto-fixed (batch ratchet)
+manual_string_new = "deny"   # 8 sites auto-fixed (batch ratchet)
+map_unwrap_or = "deny"   # 55 sites auto-fixed (batch ratchet)
+range_plus_one = "deny"   # 11 sites auto-fixed (batch ratchet)
+single_match_else = "deny"   # 20 sites auto-fixed (batch ratchet)
+uninlined_format_args = "deny"   # 198 sites auto-fixed (batch ratchet)
+unnested_or_patterns = "deny"   # 9 sites auto-fixed (batch ratchet)
+
+# --- Deliberate policy exceptions (Decision 8 & 9; kept visible at rule site) ---
+expect_used                = "allow"   # Decision 8: ~135 justified-invariant .expect("msg")
+get_unwrap                 = "allow"   # Decision 9: redundant subset of unwrap_used
+unwrap_in_result           = "allow"   # Decision 9: covers .expect(), conflicts with expect_used=allow
+
+# --- Cleanliness floor: pedantic group denied with a measured allow-list (Task 5).
+#     `deny` is the intent; the allow-list below is FINALIZED from measurement
+#     (spec Decision 5). It overrides pedantic=deny for the listed (noisy/grandfathered)
+#     lints; all currently-CLEAN pedantic lints stay denied (regression prevention).
+pedantic = { level = "deny", priority = -1 }
+
+# Deliberate pedantic overrides: policy choices we do NOT want enforced even when
+# clean (kept from the provisional allow-list).
+must_use_candidate          = "allow"
+missing_errors_doc          = "allow"   # docs are a separate concern
+missing_panics_doc          = "allow"
+needless_pass_by_value      = "allow"   # clashes with ergonomics in hot paths
+similar_names               = "allow"
+float_cmp                   = "allow"   # 53 float usages
+cast_sign_loss             = "allow"
+invalid_upcast_comparisons  = "allow"
+large_futures              = "allow"
+iter_not_returning_iterator = "allow"
+expl_impl_clone_on_copy    = "allow"
+# Measured firing pedantic lints (Task 5, 2026-08-02). 1704 findings (1355 prod)
+# across these codes; allowed rather than churned (spec Decision 5). pedantic=deny
+# still enforces every currently-CLEAN pedantic lint going forward (regression
+# prevention on the clean set). Per-lint elevation to warn+fix is a follow-up
+# ratchet; see docs/lint-policy.md.
+assigning_clones = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+checked_conversions = "allow"
+comparison_chain = "allow"
+default_trait_access = "allow"
+doc_markdown = "allow"
+elidable_lifetime_names = "allow"
+enum_glob_use = "allow"
+format_collect = "allow"
+format_push_string = "allow"
+ignored_unit_patterns = "allow"
+implicit_clone = "allow"
+inline_always = "allow"
+items_after_statements = "allow"
+large_stack_arrays = "allow"
+manual_let_else = "allow"
+match_same_arms = "allow"
+match_wildcard_for_single_variants = "allow"
+naive_bytecount = "allow"
+needless_continue = "allow"
+needless_raw_string_hashes = "allow"
+option_option = "allow"
+return_self_not_must_use = "allow"
+semicolon_if_nothing_returned = "allow"
+single_char_pattern = "allow"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow"
+unnecessary_debug_formatting = "allow"
+unnecessary_join = "allow"
+unnecessary_wraps = "allow"
+unreadable_literal = "allow"
+unused_async = "allow"
+unused_self = "allow"
+used_underscore_binding = "allow"
+# Ratcheted 2026-10-19: `duration_suboptimal_units`, `ignore_without_reason`,
+# `iter_without_into_iter`, `no_effect_underscore_binding` and
+# `stable_sort_primitive` measured 0 findings with every workspace target and the
+# feature-gated builds (screen, testing, bench-instrumentation) compiled, so their
+# allow lines were deleted and `pedantic = deny` now holds them. `float_cmp`,
+# `invalid_upcast_comparisons`, `iter_not_returning_iterator` and
+# `expl_impl_clone_on_copy` above are NOT ratchet candidates: they are policy
+# exceptions that stay clean because the code avoids them by choice, not by luck.
+wildcard_imports = "allow"
+
+# Nightly-new pedantic lints (added 2026-08-02): these do NOT fire on the
+# authoritative stable-1.97 CI gate (absent there), but they DO fire on the
+# nightly pre-push fast gate. Allow-listed so the nightly push gate stays green;
+# they become ratchet candidates once stable gains them (then CI enforces).
+redundant_else = "allow"           # 2 sites (nightly-only as of 2026-08)
+unused_async_trait_impl = "allow"  # 4 sites (nightly-only as of 2026-08)
+
+
+# --- Developing lints: ABSENT from this table (Decision 12) ---
+#   `nursery` stays at its default `allow` (not listed); elevation needs a
+#   toolchain pin. Default-on lints are OMITTED (Decision 7). Inert deferred
+#   restriction/nursery lints (indexing_slicing, arithmetic_side_effects,
+#   as_conversions, mem_forget, float_cmp_const, lossy_float_literal, rc_mutex,
+#   dbg_macro, allow_attributes, allow_attributes_without_reason, ...) are
+#   ABSENT and listed in docs/lint-policy.md as deferred-candidate targets;
+#   raising one is a future per-lint debt-paydown task that re-adds it at `warn`
+#   with a measured justification and a ratchet (Decision 10).

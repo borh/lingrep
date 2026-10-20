@@ -1,0 +1,3 @@
+{"text": "猫", "tokens": null, "expected_matches": [{"pattern": "[pos=NOUN]", "start": 0, "end": 1, "capture_groups": {}}]}
+{"text": "犬", "tokens": null, "expected_matches": [{"pattern": "[pos=NOUN]", "start": 0, "end": 1, "capture_groups": {}}]}
+{"text": "食べる", "tokens": null, "expected_matches": [{"pattern": "[pos=VERB]", "start": 0, "end": 1, "capture_groups": {}}]}

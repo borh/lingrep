@@ -1,0 +1,1 @@
+{"schema":"lingrep.sources/v1","type":"run","data":{"run_id":"run-1","source_kind":"live","reader_identity":"reader","admission_policy_identity":"admission/v1","traversal_limits":{"max_depth":64,"max_source_entries":100,"max_directory_entries":10,"max_documents":10,"max_index_bytes":1024},"aggregate_state":{"state":"pending"}}}

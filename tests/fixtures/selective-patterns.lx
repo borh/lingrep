@@ -1,0 +1,43 @@
+# Selective patterns for benchmarking index pre-filtering
+# These patterns should match only a small subset of sentences
+
+# Rare pattern: sentence-final "かもしれない" (might)
+# Matches sentences with "かも" (maybe) + auxiliary verb in shuushikei
+maybe_pattern := [unidic.pos2=終助詞 & text=かも].
+
+# Common pattern for comparison: sentence-final "です" (is)
+# Very common in polite Japanese text
+desu_pattern := [upos=助動詞 & text=です].
+
+# Medium-selectivity: sentence-final "だろう" (probably)
+# Moderately common in casual/academic text
+darou_pattern := [upos=助動詞 & text=だろう].
+
+# Rare pattern: "必要がある" (necessary that)
+# Noun + aux pattern
+hitsuyou_pattern := [lemma=必要] [upos=助詞 & lemma=が].
+
+# Very common pattern: "が" (subject particle)
+# Should match ~30-50% of sentences
+ga_pattern := [upos=助詞 & lemma=が].
+
+category: "Selective Patterns"
+type: "Benchmark testing"
+description: "Patterns with different selectivity levels for testing index pre-filtering"
+selective_maybe := @maybe_pattern.
+category: "Selective Patterns"
+type: "Benchmark testing"
+description: "Patterns with different selectivity levels for testing index pre-filtering"
+common_desu := @desu_pattern.
+category: "Selective Patterns"
+type: "Benchmark testing"
+description: "Patterns with different selectivity levels for testing index pre-filtering"
+selective_darou := @darou_pattern.
+category: "Selective Patterns"
+type: "Benchmark testing"
+description: "Patterns with different selectivity levels for testing index pre-filtering"
+selective_hitsuyou := @hitsuyou_pattern.
+category: "Selective Patterns"
+type: "Benchmark testing"
+description: "Patterns with different selectivity levels for testing index pre-filtering"
+common_ga := @ga_pattern.

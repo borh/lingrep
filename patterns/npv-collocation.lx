@@ -1,0 +1,88 @@
+# Noun-particle-verb collocations, the construction natsume-simple counts.
+#
+# A Japanese NPV collocation is a noun, its case particle, and the verb that
+# governs the noun: 情報に基づく, 必要がある, 談話を理解する. The pair is the
+# unit of a collocation dictionary, so the published record has to carry the
+# verb in a *normalized* form — 理解するために and 理解する are the same entry —
+# while the record's own span stays the text that witnessed it.
+#
+# This catalog requires `dep.head` and `dep.rel` and therefore binds to
+# CoNLL-U-style syntax data only. It is the first tracked catalog to declare a
+# `transform:`, and the reason capture-scoped transforms exist: the normalized
+# verb is a rewrite of one capture, and an unscoped rewrite would narrow the
+# whole record and discard the capture the `key:` projects. See
+# `docs/results/2026-09-07-transform-capture-scope/README.md`.
+#
+# ## What is faithful, and what is an approximation
+#
+# The reference is `npv_matcher` and `normalize_verb_span` in
+# natsume-simple's `src/natsume_simple/pattern_extraction.py`. Three of that
+# implementation's decisions do not survive the port, and each is a fact about
+# SGX rather than a preference:
+#
+#   1. natsume takes the verb complex from `ginza.bunsetu_span(verb)`. A
+#      bunsetu is a GiNZA-specific analysis, published in MISC and absent from
+#      an ordinary CoNLL-U treebank, so `$vc` approximates it as the verb plus
+#      the function words that follow it. That reading starts at the verb,
+#      where a bunsetu can start before it.
+#   2. natsume requires `case_particle.nbor().head != case_particle.head` —
+#      the token after the particle must not be another dependent of the same
+#      noun. SGX has no negative edge between two captures; the negative forms
+#      are anonymous (`not $h -[l]-> _`) or predicate-bounded
+#      (`not $h -[l]-> [test]`), and neither can name the token at a position.
+#      `not_followed_by([upos=ADP & dep.rel=case])` covers the common instance,
+#      a second stacked case particle.
+#   3. natsume's normalizer is a pairwise loop with two escape hatches for
+#      サ変可能 nouns — a contracted する and a synthesized one. Neither is a
+#      span rewrite, so neither is in the `transform:` vocabulary. Rows needing
+#      them keep the surface form of their last token.
+#
+# Measured against natsume's own occurrence table over a 600-sentence GiNZA
+# sample, the two agree on 848 of 922 records (92.0%), and the residual is
+# entirely the third gap: every one of the 74 disagreements is a noun-particle
+# pair this catalog also found, differing only in the normalized verb —
+# 推定される where natsume's サ変 escape hatch writes 推定する. Nothing is
+# missed at the matcher. The 24 records natsume does not carry are the second
+# gap, the neighbour-head condition. See the results record above.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  status: string required in {"experimental"}
+end
+
+# natsume's own inventories, in its own order.
+set CASE_PARTICLE := {が, を, に, で, から, より, と, へ}.
+set NOMINAL := {NOUN, PROPN, PRON, NUM}.
+set NOUN_ROLE := {nsubj, obj, obl}.
+
+# Every step is scoped to `$vc`, so the record keeps the span it was found in
+# while the unit and the key carry the normalized verb.
+#
+# The stop condition is two steps rather than one disjunction because a guard
+# must be a conjunction of attribute tests. Running both takes the earlier of
+# the two cuts, which is what the disjunction meant; the inventories are
+# written inline because a guard cannot reference a `set`.
+#
+# The table is natsume's `simple_lemma`. The LEMMA column here carries GiNZA's
+# `norm_`, so a する shows up as 為る, and the other three entries are the
+# cases where natsume falls back to the surface lemma instead.
+key: [$n.lemma, $p.lemma, $vc.span.text]
+transform: [
+  {op: "truncate_before", scope: "$vc", stop: "[upos in {ADP, SCONJ, PART}]"},
+  {op: "truncate_before", scope: "$vc",
+   stop: "[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]"},
+  {op: "substitute", scope: "$vc", component: "last", attr: "lemma",
+   table: {為る: "する", 居る: "いる", 成る: "なる", 有る: "ある"}},
+  {op: "join", scope: "$vc"}
+]
+pattern npv :=
+  (?<n> [upos in @NOMINAL & dep.rel in @NOUN_ROLE])
+  (?<p> [dep.rel=case & lemma in @CASE_PARTICLE])
+  not_followed_by([dep.rel=fixed])
+  not_followed_by([upos=ADP & dep.rel=case])
+  []*
+  (?<vc> (?<v> [upos=VERB]) [upos in {AUX, SCONJ, PART, ADP, VERB}]*)
+  where $v -[@NOUN_ROLE]-> $n, $n -[case]-> $p.

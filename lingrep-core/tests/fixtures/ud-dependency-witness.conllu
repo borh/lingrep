@@ -1,0 +1,82 @@
+# Synthetic dependency-parsed witnesses for the CoNLL-U-bound catalogs.
+# Hand-annotated in UD Japanese GSD style, committed so the counted-work
+# screen has sentences the relation filter actually runs over. The first
+# four exercise every patterns/ud-dependency.lx pattern, including both
+# argument orders; the fifth is patterns/double-wo-dep.lx's, and carries a
+# competing capture assignment.
+# sent_id = witness-sov
+# text = 猫が魚を食べる。
+1	猫	猫	NOUN	_	_	5	nsubj	_	_
+2	が	が	ADP	_	_	1	case	_	_
+3	魚	魚	NOUN	_	_	5	obj	_	_
+4	を	を	ADP	_	_	3	case	_	_
+5	食べる	食べる	VERB	_	_	0	root	_	_
+6	。	。	PUNCT	_	_	5	punct	_	_
+
+# sent_id = witness-osv
+# text = 魚を猫が食べる。
+1	魚	魚	NOUN	_	_	5	obj	_	_
+2	を	を	ADP	_	_	1	case	_	_
+3	猫	猫	NOUN	_	_	5	nsubj	_	_
+4	が	が	ADP	_	_	3	case	_	_
+5	食べる	食べる	VERB	_	_	0	root	_	_
+6	。	。	PUNCT	_	_	5	punct	_	_
+
+# sent_id = witness-genitive
+# text = 先生の理想は限りなく高い。
+1	先生	先生	NOUN	_	_	3	nmod	_	_
+2	の	の	ADP	_	_	1	case	_	_
+3	理想	理想	NOUN	_	_	6	nsubj	_	_
+4	は	は	ADP	_	_	3	case	_	_
+5	限りなく	限り無い	ADJ	_	_	6	advcl	_	_
+6	高い	高い	ADJ	_	_	0	root	_	_
+7	。	。	PUNCT	_	_	6	punct	_	_
+
+# sent_id = witness-shadow
+# text = 犬が走ると猫が鳴く。
+1	犬	犬	NOUN	_	_	3	nsubj	_	_
+2	が	が	ADP	_	_	1	case	_	_
+3	走る	走る	VERB	_	_	7	advcl	_	_
+4	と	と	SCONJ	_	_	3	mark	_	_
+5	猫	猫	NOUN	_	_	7	nsubj	_	_
+6	が	が	ADP	_	_	5	case	_	_
+7	鳴く	鳴く	VERB	_	_	0	root	_	_
+8	。	。	PUNCT	_	_	7	punct	_	_
+
+# A 二重ヲ格 sentence whose second を-phrase spans two nominal tokens, which
+# is what makes one span admit two capture assignments. From start 0
+# double_wo_dep_skeleton's `[!@DW_DEP_WO]{0,8}` gap may consume 理想 or
+# nothing, so $n2 binds 社会的 or 理想 and both reach 掲げる. Only 社会的
+# satisfies the clause — を's dep.head is 3 — and it is the one the
+# evaluator reaches *second*, because `repeat` yields levels longest-first
+# and the longer gap is the failing binding.
+#
+# That order is why this shape and not a head-final compound. A correct
+# Japanese compound attaches を to its last token, which puts the satisfying
+# assignment first and leaves the defect unobservable; measured, and the
+# discarded 実験機材 witness did exactly that. The annotation here is the
+# analyzer's, not an annotator's: GiNZA parses a 的-nominal head-initial,
+# and this is sentence 329 of the re-validation's parse reduced, the same
+# reduction docs/design/2026-08-29-where-capture-assignment.md reproduces.
+# Committing the parse the corpus produced is the point — the 32 sentences
+# the collapse cost were real parses, not idealized ones.
+#
+# The four sentences above cannot express this: one を-phrase has one
+# assignment. Without it the counted-work screen saw no candidate collapse
+# on either relation-bearing catalog. Narrowing the deduplication key back
+# to the position alone now drops this catalog's record and moves its
+# candidate counters.
+#
+# Degraded for native speakers, deliberately: the 二重ヲ格制約 is what the
+# catalog exists to find, so a witness that satisfied it would be measuring
+# something else. Both を-phrases govern 掲げる, the head-sharing fact the
+# clause tests.
+# sent_id = witness-double-wo
+# text = 政策を社会的理想を掲げる。
+1	政策	政策	NOUN	_	_	6	obj	_	_
+2	を	を	ADP	_	_	1	case	_	_
+3	社会的	社会的	NOUN	_	_	6	obj	_	_
+4	理想	理想	NOUN	_	_	3	compound	_	_
+5	を	を	ADP	_	_	3	case	_	_
+6	掲げる	掲げる	VERB	_	_	0	root	_	_
+7	。	。	PUNCT	_	_	6	punct	_	_

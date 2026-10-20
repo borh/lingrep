@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Run the GiNZA command line on a GPU backend.
+
+Usage: ginza-gpu <rocm|cuda> [ginza arguments...]
+
+The ROCm CuPy wheel resolves its HIP runtime from libraries that the matching
+Torch wheel bundles, so ``import cupy`` fails until Torch has been imported.
+thinc probes CuPy once, at import time, and spaCy's ``require_gpu`` then
+reports "CuPy is not installed" even though the wheel is present. The Rust-owned
+adapter (``lingrep-spacy-adapter``) already imports Torch before CuPy; this launcher
+applies the same order to the stock ``ginza`` entry point so ``ginza -g``
+works.
+
+CuPy compiles its kernels with ``hipcc`` (ROCm) or ``nvcc`` (CUDA) on first use.
+Run this launcher inside ``nix develop``, which puts ``hipcc`` on ``PATH``.
+Outside that shell, GiNZA wraps the compiler failure as spaCy error E050
+("You need to install ja-ginza").
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or argv[1] not in {"rocm", "cuda"}:
+        sys.stderr.write(__doc__.split("\n\n", 1)[0] + "\n\n")
+        sys.stderr.write("usage: ginza-gpu <rocm|cuda> [ginza arguments...]\n")
+        return 2
+    backend = argv[1]
+    torch = importlib.import_module("torch")
+    if backend == "rocm" and not getattr(torch.version, "hip", None):
+        sys.stderr.write(
+            "ginza-gpu: the rocm backend needs a HIP-enabled Torch build "
+            "(sync the `rocm` extra)\n"
+        )
+        return 2
+    if backend == "cuda" and not getattr(torch.version, "cuda", None):
+        sys.stderr.write(
+            "ginza-gpu: the cuda backend needs a CUDA-enabled Torch build "
+            "(sync the `cuda` extra)\n"
+        )
+        return 2
+    if not torch.cuda.is_available():
+        sys.stderr.write(f"ginza-gpu: Torch found no {backend} device\n")
+        return 2
+    cupy = importlib.import_module("cupy")
+    if cupy.cuda.runtime.getDeviceCount() < 1:
+        sys.stderr.write(f"ginza-gpu: CuPy found no {backend} device\n")
+        return 2
+    command_line = importlib.import_module("ginza.command_line")
+    sys.argv = ["ginza", *argv[2:]]
+    return command_line.main_ginza() or 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

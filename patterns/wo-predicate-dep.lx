@@ -1,0 +1,116 @@
+# ヲ格名詞句と述語の共起 — the dependency criterion.
+#
+# The `where` counterpart to `sketch_wo_predicate` in `sketch-grammar.sgx`.
+# That relation is a LINEAR rule — a nominal, を, at most five gap tokens that
+# are not verbs, auxiliaries, punctuation or competing particles, then a
+# predicate — and its header records the false-positive shape it cannot
+# avoid: an argument governed by an intervening predicate (Nを対象にVを実施)
+# attaches to the wrong verb, and anything more than five tokens away is
+# never reached. This catalog states the fact the linear rule approximates:
+# the を-marked nominal is a dependent of the predicate, whatever lies between
+# them. It requires `dep.head` and `dep.rel` (CoNLL-U input or a
+# dependency-parsing analyzer) and is refused at binding otherwise, by name.
+#
+# The two catalogs are the two arms of
+# `docs/results/2026-09-14-wo-predicate-dependency-comparison/README.md`,
+# which joins their records on the character position of the を particle
+# itself — the one token both tokenizations agree on — and classifies every
+# を-phrase as found by both with the same predicate, found by both with
+# different predicates, or found by one arm only.
+#
+# Tagset note (GiNZA 5.2 / UD Japanese). A サ変 stem followed by する is
+# tagged VERB on the stem (勉強/VERB し/AUX), so `[upos=VERB]` reaches the
+# same predicates the linear rule spells as `[unidic.pos1=名詞 &
+# unidic.pos3=サ変可能] [lemma=為る]`. The を particle carries `case` to the
+# nominal it marks; the nominal carries its argument relation to the
+# predicate. `WO_PHRASE_ROLE` is the class of relations a を-marked nominal
+# can bear to its governor, not the inventory this catalog has observed —
+# projecting `$collocate.dep.rel` in the key is what turns that inventory
+# into measured output rather than an authored assumption (the discipline
+# `double-wo-dep.sgx` adopted after its label-set re-validation).
+#
+# `wo_predicate_linear` is the linear rule restated over the same CoNLL-U
+# tokens, so the comparison's primary arm pair differs in exactly one thing —
+# adjacency versus dependency — and joins by token index. GiNZA's XPOS column
+# is the UniDic tag string (`名詞-普通名詞-一般`, `助詞-格助詞`), which lets
+# `sk_nominal`, `sk_wo`, `sk_gap` and `sk_predicate` be spelled as anchored
+# regexes over `xpos`. It is a restatement, not the tracked catalog: GiNZA
+# segments in Sudachi mode C, so a compound the UniDic rule sees as several
+# tokens is one token here, and する after a サ変 stem carries `lemma=する`
+# where UniDic carries 為る. The record measures the tracked Vibrato arm
+# separately, by character alignment, so that difference is reported rather
+# than hidden.
+#
+# Two recorded limits, both language facts rather than choices here. SGX has
+# no negative edge between two named captures, so "no closer predicate
+# governs this nominal" cannot be written and is not needed: a nominal has
+# exactly one `dep.head`, so at most one `$head` assignment passes per
+# を-phrase. And a `where` clause filters the assignments the body admits —
+# `[]*` admits every later verb as a candidate head, the clause keeps the
+# one the parse names, and the per-start selection then publishes it.
+
+defaults
+  source: "research query, ヲ格名詞句と述語の共起 dependency criterion"
+  status: "experimental"
+end
+
+# Nominal heads a を phrase can have. NUM is included because 三つを選ぶ is a
+# を-marked argument like any other.
+set WO_DEP_NOMINAL := {NOUN, PROPN, PRON, NUM}.
+
+# The relations a を-marked nominal can bear to its governor: UD's core
+# arguments, its clausal and nominal dependents, and `dep`.
+set WO_PHRASE_ROLE := {obj, obl, iobj, nsubj, csubj, ccomp, xcomp,
+                       advcl, acl, nmod, dep}.
+
+# The linear rule over CoNLL-U tokens. Fragment names mirror
+# `sketch-grammar.sgx`; every predicate is an XPOS prefix.
+role: "helper"
+fragment wo_lin_nominal :=
+  [xpos ~ /\A(名詞|代名詞)/]
+  ([xpos ~ /\A接尾辞-名詞的/])*.
+
+role: "helper"
+fragment wo_lin_wo := [text=を & xpos ~ /\A助詞-格助詞/].
+
+# The gap also excludes a サ変 stem, as the published query does and
+# `sk_gap` does not: without it 発見した parses as gap 発見 + head し, and the
+# key names する where the reader wants 発見.
+role: "helper"
+fragment wo_lin_gap :=
+  [xpos !~ /\A(動詞|助動詞|補助記号)/
+   & xpos !~ /\A助詞-(格助詞|係助詞|接続助詞)/
+   & xpos !~ /サ変可能/].
+
+role: "helper"
+fragment wo_lin_predicate :=
+  ( [xpos ~ /\A名詞-普通名詞-サ変可能/] [lemma=する]
+  | [xpos ~ /\A動詞/] ).
+
+role: "research"
+category: "ヲ格共起"
+relation: "noun_wo+V"
+head: "predicate"
+collocate: "accusative"
+key: [$head.first.lemma, $collocate.span.lemma]
+pattern wo_predicate_linear :=
+  (?<collocate> @wo_lin_nominal)
+  @wo_lin_wo
+  (@wo_lin_gap){0,5}
+  (?<head> @wo_lin_predicate).
+
+# The pair is a projection, not a declaration: `$collocate.dep.rel` is the
+# label its own edge matched, so `summarize` reports which of
+# `WO_PHRASE_ROLE`'s members held, as data.
+role: "research"
+category: "ヲ格共起"
+relation: "noun_wo+V"
+head: "predicate"
+collocate: "accusative"
+key: [$head.lemma, $collocate.lemma, $collocate.dep.rel]
+pattern wo_predicate_dep :=
+  (?<collocate> [upos in @WO_DEP_NOMINAL])
+  (?<w> [text=を & upos=ADP])
+  []*
+  (?<head> [upos=VERB])
+  where $collocate -[case]-> $w, $head -[@WO_PHRASE_ROLE]-> $collocate.

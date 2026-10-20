@@ -1,0 +1,35 @@
+{% macro capture_lane(lanes, id_prefix, token_count) %}{% for lane in lanes %}
+        <div class="capture-lane" role="group" aria-label="Capture lane" style="grid-template-columns: repeat({{ token_count }}, minmax(0, 1fr))">
+            {% for capture in lane.captures %}
+            <button type="button"
+                    class="capture-selector"
+                    style="grid-column: {{ capture.grid_start }} / span {{ capture.grid_span }}"
+                    data-capture-target="{{ id_prefix }}-{{ capture.ordinal }}"
+                    aria-controls="{{ id_prefix }}-{{ capture.ordinal }}"
+                    aria-pressed="false">{{ capture.name }}<span class="visually-hidden" data-i18n="capture.range" data-i18n-args='{"start": {{ capture.start }}, "end": {{ capture.end }}}'>, tokens {{ capture.start }} through {{ capture.end }}</span></button>
+            {% endfor %}
+        </div>
+        {% endfor %}{% endmacro %}
+
+{# One dendrogram plot. Both orientations draw the same geometry, so the
+   markup is written once; only the surrounding caption and notes differ. A
+   band with no tree still renders, to report why. #}
+{% macro dendrogram_plot(tree, title_id, aria_key, aria_text) %}{% if tree.insufficient_evidence %}{% else %}
+      <div class="section-dendrogram-scroll">
+        <svg class="section-dendrogram" viewBox="0 0 {{ tree.width }} {{ tree.height }}"
+             width="{{ tree.width }}" height="{{ tree.height }}"
+             role="img" aria-labelledby="{{ title_id }}">
+          <title id="{{ title_id }}" data-i18n="{{ aria_key }}">{{ aria_text }}</title>
+          {% for leaf in tree.leaves %}
+          <text class="dendrogram-label" x="{{ leaf.label_x }}" y="{{ leaf.y }}">{{ leaf.label }}<title>{{ leaf.name }}</title></text>
+          {% endfor %}
+          {% for link in tree.links %}
+          <polyline class="dendrogram-link" points="{{ link.points }}"><title>{{ link.leaves }} · {{ link.distance_label }}</title></polyline>
+          {% endfor %}
+          {% for tick in tree.ticks %}
+          <line class="dendrogram-tick" x1="{{ tick.x }}" y1="{{ tree.axis_y }}" x2="{{ tick.x }}" y2="{{ tree.tick_y }}" />
+          <text class="dendrogram-tick-label" x="{{ tick.x }}" y="{{ tree.tick_label_y }}">{{ tick.label }}</text>
+          {% endfor %}
+        </svg>
+      </div>
+{% endif %}{% endmacro %}

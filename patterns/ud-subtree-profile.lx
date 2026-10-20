@@ -1,0 +1,65 @@
+# Bounded three-node UD subtree profiles.
+#
+# Krsnik and Dobrovoljc (2025) demonstrate the value of counting recurring
+# dependency subtrees with STARK; see the bibliography and complete attribution
+# in docs/design/2026-08-30-pattern-repertoire-graph-query-round.md. This catalog
+# takes the smallest useful slice of that idea without importing STARK's query
+# language or statistical implementation: two direct topologies, with the
+# observed POS and relation labels published as keys for downstream
+# frequency/keyness analysis. The chain uses SGX's native order-independent
+# node binding; the fork retains explicit surface roles.
+#
+# `two_dependents` is one head with two children. `dependency_chain` is a
+# length-two directed chain. Every present basic-dependency label participates;
+# the dependent captures publish the labels the corpus actually supplied.
+# Dependency edges, rather than token distance, delimit the topology. CoNLL-U
+# dependency attributes are required.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern topology: string required in {"fork", "chain"}
+  status: string required in {"experimental"}
+end
+
+test DEPENDENCY_RELATION := dep.rel~/.+/.
+
+# One head with two dependents. `left` and `right` name surface order, so the
+# key is stable across all three placements of the head.
+key: [$head.upos, $left.dep.rel, $left.upos, $right.dep.rel, $right.upos]
+topology: "fork"
+output_name: "two_dependents"
+pattern head_left_right :=
+  (?<head> []) []* (?<left> [@DEPENDENCY_RELATION]) []*
+  (?<right> [@DEPENDENCY_RELATION])
+  where $head -[*]-> $left, $head -[*]-> $right.
+
+key: [$head.upos, $left.dep.rel, $left.upos, $right.dep.rel, $right.upos]
+topology: "fork"
+output_name: "two_dependents"
+pattern left_head_right :=
+  (?<left> [@DEPENDENCY_RELATION]) []* (?<head> []) []*
+  (?<right> [@DEPENDENCY_RELATION])
+  where $head -[*]-> $left, $head -[*]-> $right.
+
+key: [$head.upos, $left.dep.rel, $left.upos, $right.dep.rel, $right.upos]
+topology: "fork"
+output_name: "two_dependents"
+pattern left_right_head :=
+  (?<left> [@DEPENDENCY_RELATION]) []*
+  (?<right> [@DEPENDENCY_RELATION]) []* (?<head> [])
+  where $head -[*]-> $left, $head -[*]-> $right.
+
+# A directed head -> middle -> leaf chain. Capture names describe graph roles,
+# so one definition covers every surface linearization and publishes one key
+# shape without a fixed token-distance bound.
+key: [$head.upos, $middle.dep.rel, $middle.upos, $leaf.dep.rel, $leaf.upos]
+topology: "chain"
+pattern dependency_chain := any_order(
+  (?<head> []),
+  (?<middle> [@DEPENDENCY_RELATION]),
+  (?<leaf> [@DEPENDENCY_RELATION])
+)
+  where $head -[*]-> $middle, $middle -[*]-> $leaf.

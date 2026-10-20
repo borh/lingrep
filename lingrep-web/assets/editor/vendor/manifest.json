@@ -1,0 +1,10 @@
+{
+  "grammar_revision": "b7ac30d8055e0e4e22ce4e4a34711f27f07712fc",
+  "runtime_version": "0.26.11",
+  "sha256": {
+    "highlights.scm": "91adaf25ecf66c534b3504ee2977026610fb8baa82c62d93132450c3193c3804",
+    "tree-sitter-lingrep.wasm": "00677c2f00e08661e175b3f4edeeef34aaa2cba6c5857b2373b510ecc866c592",
+    "web-tree-sitter.js": "0c868236a47296b4ff3c1570f20e0899e4a784ff6e5cd7bfc9c3a55225463e4a",
+    "web-tree-sitter.wasm": "715cae35f31b7b03a13592bc5ac9039d5c6d2c2bda9f9e0c2b8abab77b3f64cc"
+  }
+}

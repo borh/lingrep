@@ -1,0 +1,11 @@
+<nav class="site-nav">
+    <a href="./" class="site-nav-brand">lingrep</a>
+    <span class="site-nav-sep">|</span>
+    <a href="./" class="site-nav-link"{% if current_page == "corpus" %} aria-current="page"{% endif %}><span data-i18n="nav.corpus">Corpus Search</span></a>
+    <span class="site-nav-sep">|</span>
+    <a href="sample" class="site-nav-link"{% if current_page == "sample" %} aria-current="page"{% endif %}><span data-i18n="nav.sample">Sample Debugger</span></a>
+    <span class="site-nav-sep">|</span>
+    <a href="help" class="site-nav-link"{% if current_page == "help" %} aria-current="page"{% endif %}><span data-i18n="nav.help">Help</span></a>
+    <span class="site-nav-spacer"></span>
+    <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
+</nav>

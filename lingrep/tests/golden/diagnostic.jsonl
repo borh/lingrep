@@ -1,0 +1,1 @@
+{"schema":"lingrep.diagnostic/v1","type":"diagnostic","data":{"run_id":"run-1","observed_input_digest":null,"stage":"matching","severity":"error","code":"input_failed","message":"could not read","suggestions":["check the input path"],"retry":"after_change","location":{"source_name":"a.md","source_span":{"start":2,"end":3},"corpus_sentence_ordinal":9,"token_index":1}}}

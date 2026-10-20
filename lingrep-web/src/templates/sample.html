@@ -1,0 +1,45 @@
+{% extends "layout.html" %}
+{% block title %}Sample debugger{% endblock %}
+{% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
+{% block content %}
+<h1><span data-i18n="sample.title">Sample debugger</span></h1>
+<p class="muted" data-i18n="sample.blurb">
+    Run a lingrep patterns pattern over text you paste here, and see how it tokenizes and
+    what it matches. Nothing is read from a corpus and nothing is written.
+</p>
+
+{# The pattern box lives INSIDE this form and carries its own draft, keyed by
+   its own id. That is the point of the page: the corpus search's editor is no
+   longer shared with — or re-posted every 400 ms by — a sample run. #}
+<div class="sample-workspace" data-sample-workspace>
+  <div class="query-workspace">
+    <form class="sample-form"
+          hx-post="api/sample" hx-target="#sample-results" hx-swap="innerHTML"
+          hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid from:#sample-pattern, submit"
+          hx-sync="this:replace">
+      <div class="sample-pattern-field">
+        <label for="sample-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>
+        <div id="sample-editor" class="corpus-pattern-editor">
+          <textarea id="sample-pattern" name="pattern" rows="8" data-pattern-editor
+                    spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
+                    placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
+        </div>
+      </div>
+      <div class="sample-text-field">
+        <label for="sample-text"><span data-i18n="sample.label">Sample text</span> <span class="muted"><span data-i18n="sample.hint">(one sentence per line)</span></span></label>
+        <textarea id="sample-text" class="sample-input" name="sample" rows="6" lang="ja"
+                  placeholder="猫が走る。">この結果は重要であると考えられる。
+さらなる検証が必要であると思われる。
+その可能性が高いと言えるのではないだろうか。</textarea>
+      </div>
+      <div class="sample-actions">
+        <button type="submit" class="btn btn-primary"><span data-i18n="sample.run">Run on sample</span></button>
+        <span class="sample-status" role="status" aria-live="polite" data-sample-status></span>
+      </div>
+    </form>
+    {% include "partials/query_library.html" %}
+  </div>
+  <script type="module" src="assets/query-library.js"></script>
+  <div id="sample-results" aria-live="polite"></div>
+</div>
+{% endblock %}

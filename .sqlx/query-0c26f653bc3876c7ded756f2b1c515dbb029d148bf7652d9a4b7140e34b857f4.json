@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT label AS \"label!: String\",\n                      SUM(end_sentence - first_sentence) AS \"coverage!: i64\"\n               FROM regions\n               GROUP BY label\n               ORDER BY 2 DESC, 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "label!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "regions",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "name": "coverage!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "0c26f653bc3876c7ded756f2b1c515dbb029d148bf7652d9a4b7140e34b857f4"
+}

@@ -1,0 +1,93 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH requested(id) AS (\n                   SELECT DISTINCT CAST(value AS INTEGER) FROM json_each(?)\n               ), owners AS (\n                   SELECT DISTINCT s.document_id,s.paragraph_id\n                   FROM requested r JOIN sentences s ON s.id=r.id\n               ), document_owners(document_id) AS (\n                   SELECT DISTINCT document_id FROM owners\n               ), paragraph_owners(paragraph_id) AS (\n                   SELECT DISTINCT paragraph_id FROM owners\n               )\n               SELECT 'document' AS \"owner_kind!: String\",\n                      m.document_id AS \"owner_id!: i64\",\n                      k.authored_key AS \"key!: String\",\n                      v.type_tag AS \"type_tag!: i64\",\n                      v.display_value AS \"display_value!: String\",\n                      v.numeric_projection,\n                      m.element_ordinal AS \"element_ordinal!: i64\"\n               FROM document_owners o\n               JOIN document_metadata m ON m.document_id=o.document_id\n               JOIN metadata_keys k ON k.id=m.key_id\n               JOIN metadata_values v ON v.id=m.value_id\n               UNION ALL\n               SELECT 'paragraph' AS \"owner_kind!: String\",\n                      m.paragraph_id AS \"owner_id!: i64\",\n                      k.authored_key AS \"key!: String\",\n                      v.type_tag AS \"type_tag!: i64\",\n                      v.display_value AS \"display_value!: String\",\n                      v.numeric_projection,\n                      m.element_ordinal AS \"element_ordinal!: i64\"\n               FROM paragraph_owners o\n               JOIN paragraph_metadata m ON m.paragraph_id=o.paragraph_id\n               JOIN metadata_keys k ON k.id=m.key_id\n               JOIN metadata_values v ON v.id=m.value_id\n               ORDER BY 1,2,3,7",
+  "describe": {
+    "columns": [
+      {
+        "name": "owner_kind!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "owner_id!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "document_metadata",
+            "name": "document_id"
+          }
+        }
+      },
+      {
+        "name": "key!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "metadata_keys",
+            "name": "authored_key"
+          }
+        }
+      },
+      {
+        "name": "type_tag!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "type_tag"
+          }
+        }
+      },
+      {
+        "name": "display_value!: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "display_value"
+          }
+        }
+      },
+      {
+        "name": "numeric_projection",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "metadata_values",
+            "name": "numeric_projection"
+          }
+        }
+      },
+      {
+        "name": "element_ordinal!: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "document_metadata",
+            "name": "element_ordinal"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "68dcf298dab9fcd97b40c2f557fceedede8cce35abe65b06651008c1e59fbf9c"
+}

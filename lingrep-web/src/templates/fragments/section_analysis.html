@@ -1,0 +1,67 @@
+{% import "macros.html" as macros %}
+<div id="section-analysis" data-section-analysis>
+<section class="detail-view section-comparison-band" data-detail-view="sections" data-section-comparison aria-labelledby="comparison-heading">
+  <h3 id="comparison-heading"><span data-i18n="results.compare_sections">Section distribution — all patterns</span></h3>
+  {% if !has_selection %}<p class="comparison-note" data-i18n="results.section_selection_empty">Select at least one section in the corpus context to show the comparison and clusterings.</p>{% endif %}
+  {% if has_selection && !has_comparison %}<p class="comparison-note" data-i18n="results.section_selection_unavailable">No comparison is available for the selected sections and patterns.</p>{% endif %}
+  {% match comparison %}{% when Some with (comparison) %}
+    <div class="section-comparison-scroll">
+      <table class="section-comparison">
+        <thead><tr>
+          <th scope="col" data-i18n="results.col_pattern">Pattern</th>
+          {% for column in comparison.columns %}<th scope="col" class="comparison-column"><span class="comparison-label">{{ column.label }}</span><span class="comparison-universe">{{ column.universe }}</span></th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in comparison.rows %}
+          <tr data-pattern-id="{{ row.pattern_key }}"><th scope="row" class="comparison-pattern"><button type="button" class="comparison-pattern-select" data-select-pattern="{{ row.pattern_key }}">{{ row.pattern_name }}</button></th>
+          {% for cell in row.cells %}<td class="comparison-cell" data-count="{{ cell.count }}" data-rate-tenths="{{ cell.rate_tenths }}" title="{{ cell.count }} · {{ cell.rate_label }}"><span class="comparison-fill" aria-hidden="true" style="opacity:{{ cell.intensity }}%"></span><span class="comparison-value">{{ cell.count }}</span></td>{% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="comparison-note" data-i18n="results.compare_scale">Every cell is shaded on one scale across the whole table, so rows are comparable. A cell's tooltip gives its share of that section.</p>
+    {% if comparison.hidden_sections > 0 %}<p class="comparison-note" data-i18n="results.compare_hidden" data-i18n-args='{"n": {{ comparison.hidden_sections }}}'>{{ comparison.hidden_sections }} smaller sections are not shown.</p>{% endif %}
+  {% when None %}{% endmatch %}
+</section>
+{% if has_comparison %}
+<section class="detail-view section-cluster-controls" data-detail-view="clusters" aria-label="Clustering options" data-i18n-aria-label="results.cluster_options_aria">
+  <form class="cluster-controls" id="section-cluster-distance"
+        hx-post="api/section-analysis/{{ workbench_id }}/{{ revision }}"
+        hx-trigger="change" hx-target="#section-analysis" hx-swap="outerHTML">
+    <input type="hidden" name="submitted" value="1">
+    {% for label in selected_labels %}<input type="hidden" name="section" value="{{ label }}">{% endfor %}
+    <label class="section-distance"><span data-i18n="results.cluster_distance_label">Clustering distance</span>
+      <select name="distance" data-cluster-distance>
+        <option value="jensen-shannon"{% if distance_jensen_shannon %} selected{% endif %} data-i18n="results.distance_jensen_shannon">Jensen–Shannon</option>
+        <option value="cosine"{% if distance_cosine %} selected{% endif %} data-i18n="results.distance_cosine">Cosine</option>
+      </select>
+    </label>
+  </form>
+</section>
+{% endif %}
+  {% match dendrogram %}{% when Some with (tree) %}
+  <section class="detail-view section-dendrogram-band" data-detail-view="clusters"
+           data-section-dendrogram aria-labelledby="cluster-patterns-heading">
+    <h3 id="cluster-patterns-heading"><span data-i18n="results.cluster_patterns">Patterns clustered by section profile</span></h3>
+    {% call macros::dendrogram_plot(tree, "dendrogram-patterns-title", "results.cluster_aria", "Dendrogram of patterns clustered by their section profiles (agglomerative, average linkage).") %}
+    {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
+    <p class="comparison-note" data-i18n="results.cluster_scale">Each pattern is profiled by its occurrence rate per million sentences in each section, normalized to unit sum, so a pattern distributed in proportion to section size has a uniform profile. Linkage is average (UPGMA).</p>
+    {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_insufficient">Fewer than two patterns have observed occurrences in the displayed sections, so no clustering is reported.</p>{% endif %}
+    {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
+    {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} patterns with no occurrences in the displayed sections have no profile to cluster and are omitted.</p>{% endif %}
+  </section>
+  {% when None %}{% endmatch %}
+  {% match section_dendrogram %}{% when Some with (tree) %}
+  <section class="detail-view section-dendrogram-band" data-detail-view="clusters"
+           data-section-dendrogram-transposed aria-labelledby="cluster-sections-heading">
+    <h3 id="cluster-sections-heading"><span data-i18n="results.cluster_sections">Sections clustered by pattern profile</span></h3>
+    {% call macros::dendrogram_plot(tree, "dendrogram-sections-title", "results.cluster_sections_aria", "Dendrogram of sections clustered by their pattern profiles (agglomerative, average linkage).") %}
+    {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
+    <p class="comparison-note" data-i18n="results.cluster_sections_scale">Each section is profiled by its composition over patterns: every count is divided by that pattern's total across the displayed sections, so that a frequent pattern does not dominate, and the result is normalized to unit sum. A section whose composition matches the catalog's overall one therefore has a uniform profile.</p>
+    {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_sections_insufficient">Fewer than two sections have observed occurrences, so no clustering is reported.</p>{% endif %}
+    {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_sections_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
+    {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_sections_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} sections with no matching patterns have no profile to cluster and are omitted.</p>{% endif %}
+  </section>
+  {% when None %}{% endmatch %}
+</div>

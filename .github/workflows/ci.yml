@@ -1,0 +1,145 @@
+name: CI
+
+# The lane `.githooks/pre-push` already runs, on a public runner, in the shell
+# the repository documents. A green run here and a green push therefore mean the
+# same thing, which is the property the previous workflows did not have: the one
+# named "Tests" ran no tests at all.
+#
+# No secret is needed. The dictionary is built from its public UniDic archive or
+# restored from `actions/cache`; it is never fetched from a private cache, and
+# nothing here reaches the maintainer's network.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fast:
+    name: Fast lane (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      # `devShells.ci`, the CWJ dictionary it exports (1.31 GB in the store,
+      # built from a 576 MB archive) and a cargo target directory have to fit
+      # on one runner. The image's preinstalled SDKs are the cheapest thing to
+      # give up and nothing in this repository uses them.
+      - name: Reclaim disk space
+        run: |
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell
+          df -h /
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The dictionary is the expensive part of a cold run: a 576 MB UniDic
+      # archive, a full conversion (150 s measured locally with the source
+      # already cached, so more on a fresh runner) and 1.31 GB of store. It is
+      # also content-addressed, so the output path itself is a perfect cache
+      # key — `nix eval` names it without building it.
+      #
+      # The cache is a `nix copy` file store in the runner's temp directory;
+      # `actions/cache` saves it at the end of the job when the key missed. No
+      # secret is involved, which is the difference from the Cachix dependency
+      # this replaced.
+      - name: Resolve the dictionary output path
+        id: dictionary
+        run: |
+          path="$(nix eval --raw .#vibrato-dict-cwj.outPath)"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "key=dictionary-$(basename "$path")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        id: dictionary-cache
+        with:
+          path: ${{ runner.temp }}/dictionary-cache
+          key: ${{ steps.dictionary.outputs.key }}
+
+      # Restoring is a local NAR import, not a rebuild. `--no-check-sigs` is
+      # required because a file store built by `nix copy` carries no
+      # signatures; the NAR hash is still verified against the store path.
+      - name: Import the cached dictionary
+        if: steps.dictionary-cache.outputs.cache-hit == 'true'
+        run: |
+          nix copy --no-check-sigs \
+            --from "file://${{ runner.temp }}/dictionary-cache" \
+            "${{ steps.dictionary.outputs.path }}"
+
+      # The lane `.githooks/pre-push` already runs, in the shell the repository
+      # documents. A green run here and a green push therefore mean the same
+      # thing.
+      - name: Fast lane
+        run: nix develop .#ci --command ./ci.sh --fast
+
+      # Populate the cache for the next run. `actions/cache` is what uploads it,
+      # in its post-job step; this only has to leave the file store in place.
+      # ~500 MB compressed, against 1.31 GB uncompressed in the store.
+      - name: Export the dictionary for the next run
+        if: steps.dictionary-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/dictionary-cache"
+          nix copy \
+            --to "file://${{ runner.temp }}/dictionary-cache?compression=zstd" \
+            "${{ steps.dictionary.outputs.path }}"
+
+  macos:
+    name: Build and package (Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Plain cargo, not the dev shell: the shell exports a Linux-independent
+      # dictionary that still costs 1.31 GB to build on arm64, and what this job
+      # proves is that the code and the packaging path work on Apple silicon,
+      # not that the corpus lane does. The correctness lane is the one above.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-ci
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build -p lingrep
+
+      # `cargo test` is deliberately absent: `lingrep_core::testing::
+      # dictionary_path()` panics when the variable the dev shell exports is
+      # unset, so a dictionary-free run fails three tests for the environment
+      # rather than for the change.
+      #
+      # Packaging is worth running here because it is the only place the shell
+      # script, `ling manpages` and the notices generator execute on a Mac, and
+      # the release workflow would otherwise discover a macOS-only failure at
+      # publication time.
+      - name: Package and smoke the archive
+        env:
+          PROFILE_DIR: target/debug
+        run: |
+          scripts/package-release.sh aarch64-apple-darwin
+          mkdir -p unpacked
+          tar xzf dist/*.tar.gz -C unpacked
+          ./unpacked/ling-*/bin/ling --version
+          ./unpacked/ling-*/bin/ling check --patterns patterns/sfe.lx

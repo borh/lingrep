@@ -1,0 +1,19 @@
+# Overlapping token n-grams for `vp-search summarize`.
+#
+# The key names every token position explicitly so values cannot become
+# ambiguous when token text contains whitespace or punctuation.
+
+key: [text, upos]
+pattern unigram := [].
+
+key: [$t1.text, $t1.upos, $t2.text, $t2.upos]
+pattern bigram := (?<t1> []) (?<t2> []).
+
+key: [$t1.text, $t1.upos, $t2.text, $t2.upos, $t3.text, $t3.upos]
+pattern trigram := (?<t1> []) (?<t2> []) (?<t3> []).
+
+key: [$t1.text, $t1.upos, $t2.text, $t2.upos, $t3.text, $t3.upos, $t4.text, $t4.upos]
+pattern fourgram := (?<t1> []) (?<t2> []) (?<t3> []) (?<t4> []).
+
+key: [$t1.text, $t1.upos, $t2.text, $t2.upos, $t3.text, $t3.upos, $t4.text, $t4.upos, $t5.text, $t5.upos]
+pattern fivegram := (?<t1> []) (?<t2> []) (?<t3> []) (?<t4> []) (?<t5> []).

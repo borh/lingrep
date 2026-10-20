@@ -1,0 +1,355 @@
+defaults
+  status: "experimental"
+  source: "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512"
+end
+
+analyzer: { family: "vibrato", resource: "unidic-cwj", segmentation: ["input", "analyzer"] }
+analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "analyzer"] }
+
+# The catalog's own key schema. `construction`, `frame`, `slot` and `examples`
+# sit on every emitting pattern and on none of the fragments, so `required` is
+# scoped by visibility. Policy keys and the catalog-level compiler declarations
+# are owned by the compiler and are not declared here.
+schema
+  pattern construction: string required
+  pattern frame: string required in {"V-te-AUX", "V-mizen-AUX", "V-rentai-koto-ga-dekiru"}
+  pattern slot: string required in {"main_verb"}
+  pattern examples: list required
+  pattern counterexamples: list
+  pattern discriminator: string
+  fragment role: string required in {"helper"}
+  status: string required in {"experimental"}
+  source: string
+end
+
+# Simple collexeme analysis — one construction, one open slot.
+#
+# WHAT THIS IS. Collostructional analysis (Stefanowitsch & Gries 2003) asks,
+# of a construction with an open slot, which lexemes are attracted to it and
+# which are repelled. The input is a frequency list: for each construction, how
+# often each filler occurs in the slot. The simple-collexeme design needs
+# exactly one construction at a time; the distinctive design needs two or more
+# competing over the same slot and lives in `patterns/alternation.sgx`.
+#
+# The SGX shape is small and uniform. Every pattern below binds ONE capture,
+# `verb`, over the open slot, and declares `key: [$verb.norm]`. `summarize`
+# then groups on the key rather than on the matched surface, so 読ん / 読み /
+# 読む are one row (`読む`) instead of three. That is the whole mechanism: a
+# collexeme list is a keyed record stream, and the engine needed nothing new.
+#
+# WHY `norm`. Following `patterns/sketch-grammar.sgx`: `orthbase` splits 行う
+# from 行なう, `lemma` merges them but carries UniDic's homograph
+# disambiguator, and `norm` is lemma with the disambiguator stripped. A
+# collexeme list wants the merging without the disambiguator.
+#
+# ------------------------------------------------------------------------
+# WHAT UNIDIC ACTUALLY EMITS — verified by tokenizing, not by table lookup
+# ------------------------------------------------------------------------
+#
+# Every predicate below was checked against unidic-cwj-202512 output. The
+# findings that a reader would otherwise get wrong:
+#
+#   THE NINE て-AUXILIARIES ARE ONE PART OF SPEECH. しまう, おく, みる, くる,
+#     いく, いる, あげる, くれる, もらう are all `動詞-非自立可能` — they are
+#     not an auxiliary class in UniDic, and `pos` alone separates none of them
+#     from a content verb. `lemma` is the only discriminator, and it is the
+#     KANJI lemma even when the auxiliary is written in kana: しまっ carries
+#     `lemma=仕舞う`, おく carries `置く`, みる carries `見る`, き carries
+#     `来る`, いく carries `行く`, いる carries `居る`, くれ carries `呉れる`,
+#     もらっ carries `貰う`, あげ carries `上げる`.
+#
+#   `lemma` DOES NOT SEPARATE THE AUXILIARY FROM ITS OWN CONTENT VERB.
+#     In 置いておく the main verb 置い and the auxiliary おく BOTH carry
+#     `lemma=置く`; they differ only in `orthbase` (置く vs おく). This catalog
+#     nevertheless keys on `lemma`-derived `norm` and does not test `orthbase`,
+#     because the て linker already forces the auxiliary reading in the second
+#     slot. The cost is that a kanji-spelled 〜て置く is indistinguishable from
+#     a kana-spelled one, which is the correct answer for a collexeme count and
+#     the wrong one for an orthographic study. `patterns/sf-experimental.sgx`
+#     made the opposite trade for 言う/言える (`f52b7435`), and the reason it
+#     differs is that there the two readings are different constructions.
+#
+#   て AND で ARE ONE TOKEN TYPE. In 読んで the で carries `lemma=て` with
+#     `unidic.pos2=接続助詞`, so one predicate on `lemma` covers both allomorphs.
+#     `patterns/sketch-grammar.sgx` spells the same fact as
+#     `unidic.orthbase in {て, で}`; `lemma=て` is the same set, stated once.
+#
+#   THE CONTRACTIONS ARE NOT THIS CONSTRUCTION. 忘れちゃった tokenizes as
+#     忘れ + ちゃっ where ちゃっ is `助動詞` with `lemma=ちゃう` — a different
+#     part of speech and a different lexeme, with no て in between. 読んでる
+#     likewise gives でる as `助動詞` with `lemma=てる`. Neither reaches these
+#     patterns, and both are declared as counterexamples so that a future
+#     widening has to say so out loud.
+#
+#   れる/られる IS FOUR READINGS UNDER ONE TAG — see the section below.
+#
+#   可能動詞 IS LEXICALIZED AWAY. 読める is ONE token, `動詞-一般`, with
+#     `lemma=読む` and `unidic.orthbase=読める`. The potential is inside the lexeme,
+#     so it has no pattern at all: recovering it would need `orthbase` and
+#     `lemma` to be compared to each other, which no attribute operator does.
+#     `koto_ga_dekiru` below is therefore NOT paired with a morphological
+#     potential here, and `patterns/alternation.sgx` deliberately does not
+#     carry a `potential` family for the same reason.
+#
+# ------------------------------------------------------------------------
+# THE れる/られる PROBLEM, AND WHAT THE TWO PATTERNS ACTUALLY CLAIM
+# ------------------------------------------------------------------------
+#
+# UniDic tags れる/られる as `助動詞` with `lemma=れる` or `lemma=られる` for
+# the direct passive, the adversative passive, the potential, the honorific and
+# the spontaneous alike. The tagset does not disambiguate them, and no
+# attribute on the token or its neighbour does either: 叱られた (passive),
+# 降られた (adversative) and 見られる (potential) are the same two shapes.
+#
+# So these patterns do not claim to detect adversativity. They split on the one
+# thing that IS observable — whether a に-marked nominal stands in the agent
+# position — and say so in `discriminator`:
+#
+#   `rareru_ni_agent`   a に-marked nominal precedes the slot verb. This is a
+#                       passive diagnostic. It does NOT separate direct from
+#                       adversative: 先生に叱られた and 雨に降られた are both
+#                       here, which is correct, because the に-agent is what
+#                       they share.
+#   `rareru_no_agent`   no such nominal. A MIXED BAG, on purpose: agentless
+#                       passives (よく読まれている), potentials (見られる),
+#                       honorifics (話される) and spontaneous readings all land
+#                       here. Its collexeme list is a starting point for
+#                       manual adjudication, not a finding.
+#
+# The two are exhaustive and mutually exclusive over the same span by
+# construction — `preceded_by` and `not_preceded_by` over one body — which is
+# what `collexeme_sgx_test` pins. Together they are exactly the れる/られる
+# records; separately they are a partition of them.
+#
+# ------------------------------------------------------------------------
+# WHAT THIS APPROXIMATES, AND HOW BADLY
+# ------------------------------------------------------------------------
+#
+#   * STACKED AUXILIARIES PRODUCE ONE RECORD PER LINK. 書いてしまっておく
+#     emits `te_shimau` keyed 書く and `te_oku` keyed 仕舞う, because しまっ is
+#     a `連用形` verb and so fills the second construction's slot. That is the
+#     right answer for a per-construction collexeme count and the wrong one for
+#     a study of auxiliary ordering; nothing here aggregates the chain.
+#   * て-くる and て-いく ARE VAGUE IN THE LANGUAGE, not only in the pattern.
+#     持ってくる (go and fetch) and 増えてくる (aspectual) are the same two
+#     tokens. No disambiguation is attempted.
+#   * THE AGENT GAP IS A HEURISTIC. Three tokens, no predicate and no clause
+#     punctuation; it is a linear proximity rule, not a parse, and an に-phrase
+#     belonging to a preceding clause can reach across into it.
+#   * A に-MARKED NOMINAL IS NOT AN AGENT. に also marks containers, locations
+#     and goals, and `rareru_ni_agent` cannot tell them apart. Measured: 含む
+#     is that pattern's SECOND collexeme on the reference corpus at 5,428
+#     occurrences, essentially all of them 「Aに含まれる」, where に marks the
+#     container. The list is "passives with a に-phrase in the agent position",
+#     which includes locatives, and the gap is large enough to matter — see
+#     docs/results/2026-08-17-collostruction-catalogs/.
+#
+# STATUS: inhabited, not measured. Every `examples:` and `counterexamples:`
+# claim below is executed against the real dictionary by
+# `catalog_examples.rs`, and each construction has been confirmed non-empty on
+# the reference corpus (docs/results/2026-08-17-collostruction-catalogs/). No
+# association measure is computed here and none is claimed: this catalog
+# produces the frequency input a collostructional analysis consumes, and the
+# analysis itself is the researcher's.
+#
+# DICTIONARY BINDING. `dictionary:` names every dictionary these predicates are
+# claimed valid for. `unidic-cwj` and `unidic-csj` differ in weights, not in
+# vocabulary or tagset, so the claim covers both; the historical variants
+# differ in closed-class morphology — which is the whole of what this catalog
+# tests — and are excluded.
+
+# --- Shared token predicates --------------------------------------------
+
+# The て/で linker. One predicate over both allomorphs; see the header.
+role: "helper"
+fragment cx_te := [lemma=て & unidic.pos1=助詞 & unidic.pos2=接続助詞].
+
+# A verb in the 連用形 that a て linker attaches to. The regex is anchored
+# because UniDic distinguishes five 連用形 subtypes — 一般, イ音便, 促音便,
+# 撥音便 and サ — and a construction needs all of them: 置い is イ音便, 撮っ is
+# 促音便, 読ん is 撥音便, 貸し is 一般.
+role: "helper"
+fragment cx_renyou_verb := [unidic.pos1=動詞 & unidic.cform ~ /\A連用形/].
+
+# A verb in the 未然形, which is what れる/られる and せる/させる attach to.
+# 未然形-サ is the サ変 branch: 掃除される gives さ with `unidic.cform=未然形-サ`, so
+# an unanchored `unidic.cform=未然形-一般` would silently lose every suru-compound.
+role: "helper"
+fragment cx_mizen_verb := [unidic.pos1=動詞 & unidic.cform ~ /\A未然形/].
+
+role: "helper"
+fragment cx_rareru := [unidic.pos1=助動詞 & lemma in {れる, られる}].
+
+role: "helper"
+fragment cx_ni := [unidic.orthbase=に & unidic.pos1=助詞 & unidic.pos2=格助詞].
+
+# A nominal, with its trailing nominal suffixes, so that 研究者たち keys on the
+# whole nominal rather than on 研究.
+role: "helper"
+fragment cx_nominal :=
+  [unidic.pos1 in {名詞, 代名詞}]
+  ([unidic.pos1=接尾辞 & unidic.pos2=名詞的])*.
+
+# The agent gap: what may stand between a に-marked agent and the passive verb.
+#
+# `!` is a TRUE COMPLEMENT, and it is spelled that way for the semantics
+# rather than for a defect. The two spellings differ only on a token that
+# LACKS `pos1`: such a token satisfies neither polarity of
+# `unidic.pos1 not in {…}`, so `not in` would read it as a wall, while
+# `!(unidic.pos1 in {…})` holds for it — and an unanalyzable token is an unknown,
+# not a clause boundary, which is the reading this gap wants.
+#
+# MEASURED: on the reference corpus that difference is currently empty.
+# `attributes` reports `pos1` present on all 36,306,998 tokens and absent on
+# none, so under unidic-cwj-202512 the two spellings are extensionally
+# identical here. (`pos2` carries 3,191,120 `unspecified` values, but
+# UniDic's `*` is a SUPPLIED value and so is neither present nor absent —
+# `not in` behaves ordinarily on it.) The complement is kept because it is
+# the correct reading of the gap and stays correct if a token ever arrives
+# without the attribute; it is not claimed to recover any match on this
+# corpus. See docs/results/2026-08-17-collostruction-catalogs/.
+test cx_agent_gap := !(unidic.pos1 in {動詞, 助動詞, 補助記号}).
+
+# --- て-auxiliary constructions ------------------------------------------
+#
+# Nine constructions, one shape: (?<verb> V-連用形) て AUX. The slot is the
+# main verb; the auxiliary is fixed and names the construction.
+
+construction: "てしまう"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=仕舞う"
+examples: ["彼は宿題を忘れてしまった。", "資料を無くしてしまう。"]
+counterexamples: ["忘れちゃった。"]
+key: [$verb.norm]
+pattern te_shimau :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=仕舞う].
+
+construction: "ておく"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=置く"
+examples: ["資料を机の上に置いておく。", "先に調べておいた。"]
+key: [$verb.norm]
+pattern te_oku :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=置く].
+
+construction: "てみる"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=見る"
+examples: ["新しい方法を試してみる。", "実際に測ってみた。"]
+key: [$verb.norm]
+pattern te_miru :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=見る].
+
+construction: "てくる"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=来る"
+examples: ["問題が増えてきた。", "だんだん分かってくる。"]
+key: [$verb.norm]
+pattern te_kuru :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=来る].
+
+construction: "ていく"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=行く"
+examples: ["状況は変わっていく。", "少しずつ減っていった。"]
+key: [$verb.norm]
+pattern te_iku :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=行く].
+
+construction: "ている"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=居る"
+examples: ["彼は本を読んでいる。", "資料を検討している。"]
+counterexamples: ["本を読んでる。"]
+key: [$verb.norm]
+pattern te_iru :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=居る].
+
+construction: "てあげる"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=上げる"
+examples: ["私は妹に本を読んであげた。"]
+key: [$verb.norm]
+pattern te_ageru :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=上げる].
+
+construction: "てくれる"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=呉れる"
+examples: ["先生が本を貸してくれた。"]
+key: [$verb.norm]
+pattern te_kureru :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=呉れる].
+
+construction: "てもらう"
+frame: "V-te-AUX"
+slot: "main_verb"
+discriminator: "lemma=貰う"
+examples: ["友人に写真を撮ってもらった。"]
+key: [$verb.norm]
+pattern te_morau :=
+  (?<verb> @cx_renyou_verb) @cx_te [unidic.pos1=動詞 & lemma=貰う].
+
+# --- Voice constructions -------------------------------------------------
+#
+# The two れる/られる patterns partition the same records by whether a
+# に-marked agent precedes the slot verb; see the header for what that does and
+# does not establish. The lookaround bodies are identical and differ only in
+# polarity, which is the property `collexeme_sgx_test` pins.
+
+construction: "Nに-Vられる"
+frame: "V-mizen-AUX"
+slot: "main_verb"
+discriminator: "preceded_by(N に)"
+examples: ["彼は先生に叱られた。", "私は雨に降られた。", "子供に泣かれて困った。"]
+counterexamples: ["この本はよく読まれている。", "ここから富士山が見られる。"]
+key: [$verb.norm]
+pattern rareru_ni_agent :=
+  preceded_by(@cx_nominal @cx_ni ([@cx_agent_gap]){0,3})
+  (?<verb> @cx_mizen_verb) @cx_rareru.
+
+construction: "Vられる（動作主なし）"
+frame: "V-mizen-AUX"
+slot: "main_verb"
+discriminator: "not_preceded_by(N に)"
+examples: ["この本はよく読まれている。", "ここから富士山が見られる。", "先生が話される。"]
+counterexamples: ["彼は先生に叱られた。", "私は雨に降られた。"]
+key: [$verb.norm]
+pattern rareru_no_agent :=
+  not_preceded_by(@cx_nominal @cx_ni ([@cx_agent_gap]){0,3})
+  (?<verb> @cx_mizen_verb) @cx_rareru.
+
+construction: "Vせる/させる"
+frame: "V-mizen-AUX"
+slot: "main_verb"
+discriminator: "lemma in {せる, させる}"
+examples: ["母は弟に部屋を掃除させた。", "学生に発表させる。"]
+key: [$verb.norm]
+pattern saseru :=
+  (?<verb> @cx_mizen_verb) [unidic.pos1=助動詞 & lemma in {せる, させる}].
+
+# --- Analytic potential --------------------------------------------------
+#
+# ことができる is the only potential construction with a stable token shape:
+# こと carries `lemma=事`, できる carries `lemma=出来る`, and the slot verb is
+# in the 連体形. The morphological potential has no pattern for the reason
+# given in the header, so this one stands alone rather than in an alternation.
+
+construction: "Vことができる"
+frame: "V-rentai-koto-ga-dekiru"
+slot: "main_verb"
+examples: ["泳ぐことができる。", "実験を行うことができる。"]
+key: [$verb.norm]
+pattern koto_ga_dekiru :=
+  (?<verb> [unidic.pos1=動詞 & unidic.cform ~ /\A連体形/])
+  [unidic.pos1=名詞 & lemma=事]
+  [unidic.orthbase=が & unidic.pos1=助詞 & unidic.pos2=格助詞]
+  [unidic.pos1=動詞 & lemma=出来る].

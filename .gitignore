@@ -1,0 +1,93 @@
+/target
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+/cache
+/dictionary
+/*.csv
+/*.txt
+.worktrees/
+*.bin.zst
+*.perf
+*.svg
+vgcore.*
+lingrep-core/cache/
+*.jsonl
+*.columnar.bin*
+.aider*
+*.rlib
+perf_warm.data
+profiling-results/
+proptest-regressions
+*.proptest-regressions
+third-party/
+result
+.hegel/
+
+# Superpowers brainstorm server scratch (pids, server state, generated html).
+.superpowers/brainstorm/
+
+# Superpowers SDD workspaces: per-plan ledgers, briefs, reports, and review
+# diffs. These are scratch for one plan's execution — the review diffs
+# regenerate from git, and the reports describe work whose real record is the
+# commits themselves.
+#
+# These used to be tracked "by repo convention", but the convention only ever
+# covered three files at the flat legacy path, while every workspace created
+# since writes its own `*` .gitignore into a per-plan subdirectory. So the
+# convention had already stopped holding in practice; untracking the
+# stragglers makes the rule uniform rather than changing it. History keeps
+# them, and `git rm --cached` leaves them on disk.
+.superpowers/sdd/
+
+# Local research corpus dir (the 1,551-paper superset of sample-markdown-corpus/)
+/markdown-corpus
+
+# npm (lingrep-web/editor vendored bundle build)
+node_modules/
+
+# Python adapter environments and bytecode caches
+.venv/
+__pycache__/
+*.pyc
+
+# lingrep-web derived corpus-cache artifacts (rebuildable; never committed)
+*.provenance.sqlite
+*.provenance.sqlite-wal
+*.provenance.sqlite-shm
+*.provenance.sqlite.building
+*.provenance.manifest.json
+
+# Immutable lingrep V1 corpus artifacts (rebuildable; never committed). The published
+# form is a directory beside the input it was built from,
+# `<input>.g<generation>.<identity>.lingcorpus`, so it lands wherever a corpus
+# lives rather than under a single artifact root. An interrupted build leaves a
+# `.<name>.staging-<pid>-<sequence>` sibling. Both are large — a 162 MB JSONL
+# corpus publishes ~1 GB — and both regenerate from source on demand.
+*.lingcorpus/
+*.lingcorpus.staging-*/
+
+# Raw research corpora are kept on the filesystem beside their prepared
+# artifacts, too large for git; fetched or rebuilt per environment.
+data-archive/bccwj.txt
+data-archive/science-corpus.jsonl
+data-archive/corpus-2000.jsonl
+data-archive/corpus.jsonl
+data-archive/sample-science.jsonl
+data-archive/bench-corpus.jsonl
+# The 100-paper Markdown dialect sample: research text, not redistributable.
+/sample-markdown-corpus/
+
+# insta's pending snapshots. `cargo insta` writes one beside the accepted
+# `.snap` whenever an assertion moves, and `git add -A` then sweeps it into a
+# commit -- which has now happened twice (c2f2942d, 1279a01e), the second time
+# at 7,847 lines. Accepting a snapshot rewrites the `.snap`; the `.new` is
+# never the artifact anyone wants tracked.
+*.snap.new

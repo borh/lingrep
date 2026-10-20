@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — run the fast gate before publishing work.
+#
+# Honest scope: this enforces unit-level --fast only. Run `./ci.sh --full` at
+# branch finish; fuzz and performance are independent opt-in commands.
+set -euo pipefail
+repo_root="$(git rev-parse --show-toplevel)"
+exec nix develop "$repo_root" --command "$repo_root/ci.sh" --fast

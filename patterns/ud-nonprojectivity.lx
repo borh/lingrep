@@ -1,0 +1,59 @@
+# Crossing-edge candidates in UD dependency trees.
+#
+# For token positions a < b < c < d, edges spanning (a,c) and (b,d) cross
+# irrespective of their dependency direction. The four patterns below are
+# exactly those direction combinations. Capture names describe graph roles,
+# while each body fixes one surface ordering; all four therefore publish one
+# result name and one key shape.
+#
+# This detects crossings between explicit basic-dependency edges. It is not a
+# whole-tree projectivity verdict. Every present basic-dependency label,
+# including subtypes, participates and is published from the dependent
+# capture. CoNLL-U dependency attributes are required.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern topology: string required in {"crossing_edges"}
+  status: string required in {"experimental"}
+end
+
+test DEPENDENCY_RELATION := dep.rel~/.+/.
+
+# a=h1, b=h2, c=d1, d=d2
+key: [$d1.dep.rel, $d2.dep.rel, $h1.upos, $h2.upos]
+topology: "crossing_edges"
+output_name: "crossing_edges"
+pattern heads_before_dependents :=
+  (?<h1> []) []* (?<h2> []) []*
+  (?<d1> [@DEPENDENCY_RELATION]) []* (?<d2> [@DEPENDENCY_RELATION])
+  where $h1 -[*]-> $d1, $h2 -[*]-> $d2.
+
+# a=d1, b=h2, c=h1, d=d2
+key: [$d1.dep.rel, $d2.dep.rel, $h1.upos, $h2.upos]
+topology: "crossing_edges"
+output_name: "crossing_edges"
+pattern first_edge_reversed :=
+  (?<d1> [@DEPENDENCY_RELATION]) []* (?<h2> []) []*
+  (?<h1> []) []* (?<d2> [@DEPENDENCY_RELATION])
+  where $h1 -[*]-> $d1, $h2 -[*]-> $d2.
+
+# a=h1, b=d2, c=d1, d=h2
+key: [$d1.dep.rel, $d2.dep.rel, $h1.upos, $h2.upos]
+topology: "crossing_edges"
+output_name: "crossing_edges"
+pattern second_edge_reversed :=
+  (?<h1> []) []* (?<d2> [@DEPENDENCY_RELATION]) []*
+  (?<d1> [@DEPENDENCY_RELATION]) []* (?<h2> [])
+  where $h1 -[*]-> $d1, $h2 -[*]-> $d2.
+
+# a=d1, b=d2, c=h1, d=h2
+key: [$d1.dep.rel, $d2.dep.rel, $h1.upos, $h2.upos]
+topology: "crossing_edges"
+output_name: "crossing_edges"
+pattern dependents_before_heads :=
+  (?<d1> [@DEPENDENCY_RELATION]) []*
+  (?<d2> [@DEPENDENCY_RELATION]) []* (?<h1> []) []* (?<h2> [])
+  where $h1 -[*]-> $d1, $h2 -[*]-> $d2.

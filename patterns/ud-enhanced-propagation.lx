@@ -1,0 +1,141 @@
+# Enhanced dependency propagation and reconstruction motifs.
+#
+# Each pattern publishes one complete graph assignment rather than a surface
+# window. The consuming body supplies one word-node anchor; contextual graph
+# binders may introduce other word or decimal empty nodes independently of
+# surface order. Named edges preserve the exact relation selected at every
+# role in the motif.
+#
+# A complete enhanced graph observation is mandatory. Corpora without DEPS,
+# including the Markdown/GiNZA control, cannot satisfy these patterns.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern phenomenon: string required in {"coordination", "control_raising",
+                                          "relative_clause", "gapping"}
+  status: string required in {"experimental"}
+end
+
+set ARGUMENT := {nsubj, nsubj:*, csubj, csubj:*, obj, obj:*,
+                 iobj, iobj:*, obl, obl:*}.
+
+# One argument is attached to both conjunct heads. One edge is normally
+# basic-tree-preserving and the other propagated, but the query deliberately
+# reads only the complete enhanced graph rather than reconstructing that
+# annotation history.
+phenomenon: "coordination"
+key: [$first.upos, $first.lemma, $coordination.rel, $second.node.kind,
+      $second.node.id, $second.upos,
+      $first_role.rel, $second_role.rel, $argument.node.kind,
+      $argument.node.id, $argument.upos, $argument.lemma]
+pattern coordinated_shared_argument :=
+  (?<first> [])
+  where $first -[enhanced conj|conj:* as $coordination]->
+          (?<second> []),
+        $first -[enhanced @ARGUMENT as $first_role]->
+          (?<argument> []),
+        $second -[enhanced @ARGUMENT as $second_role]-> $argument.
+
+# The same coordination may also preserve a role attached only to the first
+# conjunct. The final constraint is an exact anti-edge to the already-bound
+# private argument: another argument on the second conjunct does not exclude
+# the assignment.
+phenomenon: "coordination"
+key: [$first.upos, $first.lemma, $coordination.rel,
+      $second.node.kind, $second.node.id, $second.upos,
+      $shared_first_role.rel, $shared_second_role.rel,
+      $shared.node.kind, $shared.node.id, $shared.upos, $shared.lemma,
+      $private_role.rel, $private_argument.node.kind, $private_argument.node.id,
+      $private_argument.upos, $private_argument.lemma]
+pattern private_conjunct_argument :=
+  (?<first> [])
+  where $first -[enhanced conj|conj:* as $coordination]->
+          (?<second> []),
+        $first -[enhanced @ARGUMENT as $shared_first_role]->
+          (?<shared> []),
+        $second -[enhanced @ARGUMENT as $shared_second_role]-> $shared,
+        $first -[enhanced @ARGUMENT as $private_role]->
+          (?<private_argument> []),
+        not $second -[enhanced @ARGUMENT]-> $private_argument.
+
+# The matrix predicate supplies the controller as an ordinary argument; the
+# xcomp predicate receives the same node through an :xsubj enhanced edge.
+phenomenon: "control_raising"
+key: [$matrix.upos, $matrix.lemma, $controller_role.rel,
+      $controller.node.kind, $controller.node.id, $controller.upos,
+      $controller.lemma, $complement.rel, $controlled.node.kind,
+      $controlled.node.id, $controlled.upos, $controlled.lemma,
+      $propagated_subject.rel]
+pattern controlled_subject_propagation :=
+  (?<matrix> [])
+  where $matrix -[enhanced @ARGUMENT as $controller_role]->
+          (?<controller> []),
+        $matrix -[enhanced xcomp|xcomp:* as $complement]->
+          (?<controlled> []),
+        $controlled
+          -[enhanced nsubj:xsubj|csubj:xsubj as $propagated_subject]->
+          $controller.
+
+# Enhanced relative clauses add the antecedent as the predicate's missing
+# argument, forming a cycle with the retained acl:relcl edge.
+phenomenon: "relative_clause"
+key: [$antecedent.upos, $antecedent.lemma, $clause.rel,
+      $predicate.node.kind, $predicate.node.id, $predicate.upos,
+      $predicate.lemma, $role.rel]
+pattern relative_antecedent_argument :=
+  (?<antecedent> [])
+  where $antecedent -[enhanced acl:relcl as $clause]->
+          (?<predicate> []),
+        $predicate -[enhanced @ARGUMENT as $role]-> $antecedent.
+
+# The ref edge retains the overt relative expression separately from the
+# antecedent-as-argument analysis. This three-edge motif keeps the relative
+# predicate, propagated role, and overt relative expression in one assignment.
+phenomenon: "relative_clause"
+key: [$antecedent.upos, $antecedent.lemma, $clause.rel,
+      $predicate.node.kind, $predicate.node.id, $predicate.upos,
+      $predicate.lemma, $role.rel,
+      $reference.rel,
+      $relative.node.kind, $relative.node.id, $relative.lemma]
+pattern relative_reference :=
+  (?<antecedent> [])
+  where $antecedent -[enhanced acl:relcl as $clause]->
+          (?<predicate> []),
+        $antecedent -[enhanced ref as $reference]->
+          (?<relative> []),
+        $predicate -[enhanced @ARGUMENT as $role]-> $antecedent.
+
+# A reconstructed decimal predicate is attached to a surface anchor and
+# governs a surface or reconstructed argument. Root-attached empty predicates
+# have no word-node anchor and intentionally remain outside this pattern.
+phenomenon: "gapping"
+key: [$overt.upos, $overt.lemma, $predicate_link.rel,
+      $elided.node.id, $elided.upos, $elided.lemma, $role.rel,
+      $argument.node.kind, $argument.node.id, $argument.upos,
+      $argument.lemma]
+pattern elided_predicate_argument :=
+  (?<overt> [])
+  where $overt -[enhanced * as $predicate_link]->
+          (?<elided> [node.kind=empty]),
+        $elided -[enhanced @ARGUMENT as $role]->
+          (?<argument> []).
+
+# Nested reconstruction introduces a second decimal predicate below the first.
+# The fixed-depth spelling is intentional evidence for deciding whether a
+# future corpus needs bounded enhanced paths rather than another explicit arm.
+phenomenon: "gapping"
+key: [$overt.upos, $overt.lemma, $outer_link.rel, $outer.node.id,
+      $outer.upos, $outer.lemma, $inner_link.rel, $inner.node.id,
+      $inner.upos, $inner.lemma, $role.rel, $argument.node.kind,
+      $argument.node.id, $argument.upos, $argument.lemma]
+pattern nested_elided_predicate_argument :=
+  (?<overt> [])
+  where $overt -[enhanced * as $outer_link]->
+          (?<outer> [node.kind=empty]),
+        $outer -[enhanced * as $inner_link]->
+          (?<inner> [node.kind=empty]),
+        $inner -[enhanced @ARGUMENT as $role]->
+          (?<argument> []).

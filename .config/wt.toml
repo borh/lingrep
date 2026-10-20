@@ -1,0 +1,11 @@
+# Seed a new worktree's build cache from the primary worktree instead of
+# starting cold. `copy-ignored` reflinks per file, so on btrfs the copy shares
+# disk blocks until something writes to them.
+#
+# post-start, not pre-start: from a background hook the copy lowers its own CPU
+# and I/O priority and yields to interactive work. Move it to pre-start only if
+# a later hook or an --execute command needs the copied files already present.
+#
+# What gets copied is bounded by .worktreeinclude at the repository root. A file
+# is copied only if it is BOTH gitignored and matched there.
+post-start = "wt step copy-ignored"

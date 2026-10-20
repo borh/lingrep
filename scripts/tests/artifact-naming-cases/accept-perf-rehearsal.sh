@@ -1,0 +1,1 @@
+artifact="$scratch/rehearsal.lingcorpus"

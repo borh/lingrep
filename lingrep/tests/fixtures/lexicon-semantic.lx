@@ -1,0 +1,9 @@
+lexicon lexical_probe by [text, norm] := {
+  "研究", "研究者", "研究者間", "行う", "行なう",
+  "する", "為る", "大学", "大学院", "取り扱い"
+}.
+
+key: [term, segments(text)]
+lexicon lexical_segments by [text, norm] := {
+  "行う", "大学", "大学院", "取り扱い"
+}.

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT document_id,first_sentence,end_sentence FROM paragraphs WHERE id=?",
+  "describe": {
+    "columns": [
+      {
+        "name": "document_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "paragraphs",
+            "name": "document_id"
+          }
+        }
+      },
+      {
+        "name": "first_sentence",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "paragraphs",
+            "name": "first_sentence"
+          }
+        }
+      },
+      {
+        "name": "end_sentence",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "paragraphs",
+            "name": "end_sentence"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3b24cb0bfcf1e72c931d80a85d4b69aa4536749436dfff104e47f30cd4e9890c"
+}

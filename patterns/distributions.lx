@@ -1,0 +1,7 @@
+# Coarse universal-POS distribution.
+key: [upos]
+pattern pos_distribution := [].
+
+# Full UniDic POS hierarchy. `*` is a real level value and remains distinct.
+key: [unidic.pos1, unidic.pos2, unidic.pos3, unidic.pos4]
+pattern unidic_pos_distribution := [].

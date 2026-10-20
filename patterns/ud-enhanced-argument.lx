@@ -1,0 +1,37 @@
+# Enhanced dependency argument assignments, including elided predicates.
+#
+# Each record is one complete `(predicate node, edge, surface argument)`
+# assignment. A named edge is intentional: CoNLL-U permits parallel enhanced
+# labels between the same nodes, and their labels are distinct measured rows.
+# `node.id` is sentence-local graph identity, not a token boundary; `node.kind`
+# distinguishes integer word nodes from decimal empty nodes.
+#
+# These patterns require a complete enhanced graph observation. A morphology-
+# only corpus cannot bind this catalog, and an incomplete CoNLL-U sentence
+# satisfies neither pattern. The implementation and real-corpus evidence are
+# recorded in docs/results/2026-08-31-enhanced-dependency-query/README.md.
+
+defaults
+  status: "experimental"
+end
+
+schema
+  pattern graph_scope: string required in {"all", "empty_predicate"}
+  status: string required in {"experimental"}
+end
+
+set ARGUMENT := {nsubj, nsubj:*, csubj, csubj:*, obj, obj:*, iobj,
+                 obl, obl:*}.
+
+graph_scope: "all"
+key: [$predicate.node.kind, $predicate.node.id, $role.rel, $argument.lemma]
+pattern enhanced_argument_assignment :=
+  (?<argument> [upos in {NOUN, PROPN, PRON}])
+  where (?<predicate> []) -[enhanced @ARGUMENT as $role]-> $argument.
+
+graph_scope: "empty_predicate"
+key: [$predicate.node.id, $predicate.lemma, $role.rel, $argument.lemma]
+pattern elided_predicate_argument :=
+  (?<argument> [upos in {NOUN, PROPN, PRON}])
+  where (?<predicate> [node.kind=empty])
+          -[enhanced @ARGUMENT as $role]-> $argument.

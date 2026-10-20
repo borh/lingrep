@@ -1,0 +1,47 @@
+{"title":"Golden Test Corpus - Sentence 1","genre":["test","diverse"],"sentences":["これはテストです。"]}
+{"title":"Golden Test Corpus - Sentence 2","genre":["test","edge_case"],"sentences":[""]}
+{"title":"Golden Test Corpus - Sentence 3","genre":["test","long_sentence"],"sentences":["日本語の文章は非常に複雑で、多くの形態素から構成されていますが、このように長い文でも正しく解析できる必要があります。"]}
+{"title":"Golden Test Corpus - Mixed Scripts","genre":["test","mixed_scripts"],"sentences":["日本語とEnglishと漢字とカタカナとひらがなを混ぜるmixed scriptのtestです123。"]}
+{"title":"Golden Test Corpus - Punctuation","genre":["test","punctuation"],"sentences":["！？、。；：「」『』（）］［】"]}
+{"title":"Golden Test Corpus - Numbers","genre":["test","numbers"],"sentences":["2024年1月5日に1234円の商品を買いました。"]}
+{"title":"Golden Test Corpus - Scientific","genre":["test","scientific"],"sentences":["赤血球は酸素を運搬し、二酸化炭素を排出する重要な役割を果たしています。"]}
+{"title":"Golden Test Corpus - Verbs","genre":["test","verbs"],"sentences":["私は昨日、図書館で本を読んで、それから家に帰って、夕食を作りました。"]}
+{"title":"Golden Test Corpus - Adjectives","genre":["test","adjectives"],"sentences":["この美しい花はとても有名で、多くの人々に愛されています。"]}
+{"title":"Golden Test Corpus - Multiple Sentences","genre":["test","multi"],"sentences":["これは一つ目の文です。これは二つ目の文です。これは三つ目の文です。"]}
+{"title":"Test Data 11","genre":["test"],"sentences":["データベースシステムのパフォーマンスを最適化するためには、適切なインデックス設計が重要です。"]}
+{"title":"Test Data 12","genre":["test"],"sentences":["量子力学の基本原理は、粒子と波の二重性を説明するものです。"]}
+{"title":"Test Data 13","genre":["test"],"sentences":["機械学習モデルを訓練するには、大量の高品質なデータセットが必要です。"]}
+{"title":"Test Data 14","genre":["test"],"sentences":["細胞膜は物質の透過性を調節し、細胞内部環境を維持します。"]}
+{"title":"Test Data 15","genre":["test"],"sentences":["アルゴリズムの計算複雑度を解析することは、効率的なプログラムを作成する上で不可欠です。"]}
+{"title":"Test Data 16","genre":["test"],"sentences":["内分泌系はホルモンを分泌し、体内の恒常性を調節しています。"]}
+{"title":"Test Data 17","genre":["test"],"sentences":["分散システムにおける一貫性の維持は、CAP定理の制約下で設計する必要があります。"]}
+{"title":"Test Data 18","genre":["test"],"sentences":["神経伝達物質はシナプス間で信号を伝達し、神経回路の機能を媒介します。"]}
+{"title":"Test Data 19","genre":["test"],"sentences":["暗号技術は情報の機密性を保護し、デジタル通信の安全性を確保します。"]}
+{"title":"Test Data 20","genre":["test"],"sentences":["免疫系は病原体を認識し、生体防御反応を開始します。"]}
+{"title":"Test Edge Case - Empty","genre":["test","edge"],"sentences":[""]}
+{"title":"Test Edge Case - Single Char","genre":["test","edge"],"sentences":["語"]}
+{"title":"Test Edge Case - Repeated","genre":["test","edge"],"sentences":["_test_test_test_"]}
+{"title":"Test Edge Case - Spaces","genre":["test","edge"],"sentences":["  前後スペース  "]}
+{"title":"Test Unicode - Emojis","genre":["test","unicode"],"sentences":["この文章には😀🎉🚀絵文字が含まれています。"]}
+{"title":"Test Scientific - Medical 1","genre":["medical","cardiology"],"sentences":["心房細動では心房収縮能が低下し、心房内血栓のリスクが増加します。"]}
+{"title":"Test Scientific - Medical 2","genre":["medical","endocrinology"],"sentences":["糖尿病は血糖値のコントロールが不十分な場合、多くの合併症を引き起こす可能性があります。"]}
+{"title":"Test Scientific - Medical 3","genre":["medical","neurology"],"sentences":["脳梗塞急性期では、可能な限り早期に再灌流療法を開始することが重要です。"]}
+{"title":"Test Scientific - Medical 4","genre":["medical","oncology"],"sentences":["悪性腫瘍の診断には、画像診断、病理組織検査、腫瘍マーカー測定などを組み合わせます。"]}
+{"title":"Test Scientific - Medical 5","genre":["medical","rheumatology"],"sentences":["関節リウマチの診断基準には、朝のこわばり、関節炎の数、リウマトイド因子などが含まれます。"]}
+{"title":"Test Linguistic - Honorifics","genre":["test","honorifics"],"sentences":["先生、本日はお忙しい中、ご出席いただきありがとうございます。"]}
+{"title":"Test Linguistic - Passive","genre":["test","passive"],"sentences":["その問題は専門家によって注意深く検討されました。"]}
+{"title":"Test Linguistic - Causative","genre":["test","causative"],"sentences":["子供に野菜を食べさせることは親の役割です。"]}
+{"title":"Test Linguistic - Potential","genre":["test","potential"],"sentences":["私は今日中にこの仕事を終えられると思います。"]}
+{"title":"Test Scientific - Physics","genre":["physics"],"sentences":["特殊相対性理論では、光速は不変であり、時間と空間は相対的です。"]}
+{"title":"Test Scientific - Chemistry","genre":["chemistry"],"sentences":["化学平衡は正反応と逆反応の速度が等しくなった状態です。"]}
+{"title":"Test Scientific - Biology","genre":["biology"],"sentences":["DNAの二重らせん構造は、ワトソンとクリックによって発見されました。"]}
+{"title":"Test Pattern Coverage - Verb Aux","genre":["pattern_test"],"sentences":["彼は来るかもしれない。"]}
+{"title":"Test Pattern Coverage - Da Nai","genre":["pattern_test"],"sentences":["それは間違っているではない。"]}
+{"title":"Test Pattern Coverage - Desu","genre":["pattern_test"],"sentences":["これは本です。"]}
+{"title":"Test Pattern Coverage - Masu","genre":["pattern_test"],"sentences":["私は行きます。"]}
+{"title":"Test Pattern Coverage - Tai","genre":["pattern_test"],"sentences":["日本に行きたいです。"]}
+{"title":"Test Pattern Coverage - Te iru","genre":["pattern_test"],"sentences":["彼は本を読んでいる。"]}
+{"title":"Test Pattern Coverage - Te aru","genre":["pattern_test"],"sentences":["ここに名前が書いてあります。"]}
+{"title":"Test Pattern Coverage - Shimau","genre":["pattern_test"],"sentences":["食べてしまった。"]}
+{"title":"Test Pattern Coverage - Serareru","genre":["pattern_test"],"sentences":["それは作られたものです。"]}
+{"title":"Test Pattern Coverage - Saserareru","genre":["pattern_test"],"sentences":["子供に行かせられました。"]}

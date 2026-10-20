@@ -1,0 +1,85 @@
+# Double-を candidate, by dependency criterion.
+#
+# The `where` successor to `double_wo_candidate` in `double-wo.sgx`. The
+# linear catalog approximates "two を-marked phrases governed by the same
+# predicate" with proximity plus hand-built exclusion buckets; this catalog
+# states the head-sharing fact as dependency edges and needs none of the
+# buckets. The validation experiment
+# (docs/results/2026-08-28-double-wo-dependency-validation/README.md)
+# measured the constraint rejecting 90% of the adverbial-anchor bucket for
+# the structural reason — `Nを対象に` attaches its noun to 対象, not to the
+# main predicate — and the reviewed adjudication pass put the linear
+# candidate bucket's over-inclusion at roughly 40% against ~2% parse error.
+# The two instruments are complements, not competitors: `double-wo.sgx`
+# binds any UniDic morphology corpus, while this catalog requires `dep.head`
+# and `dep.rel` (CoNLL-U input or a dependency-parsing analyzer) and is
+# refused at binding otherwise, by name.
+#
+# One semantic query, one pattern. This was eight patterns until 2026-08-29,
+# one per label pair observed in the experiment — results hard-coded as an
+# authored assumption, because slice-1 `where` took exact labels. Label sets
+# express the query directly, and `key:` turns the inventory back into
+# measured output: `summarize` reports the pair distribution as data rather
+# than the catalog asserting it. The re-validation
+# (docs/results/2026-08-29-double-wo-dep-label-set-revalidation/README.md)
+# found the collapse **record-identical** to the enumeration over the
+# experiment's 3,745-sentence parse — same 1,155 records, same spans, same
+# pairs — and about twice as fast, since the eight patterns walked one
+# skeleton eight times.
+#
+# `WO_PHRASE_ROLE` is a linguistic class, not that observed inventory: the
+# relations a を-marked nominal can bear to its governor. Six of its eleven
+# members are attested here; naming the other five is what keeps the catalog
+# from re-encoding its own results.
+#
+# The skeleton stays a fragment. A fragment may not declare a `where` clause,
+# but its captures are legal operands in the including pattern's clause.
+# Bounds, from the experiment: `{0,5}` between a を-noun and its marker
+# admits the quotes and parentheticals GiNZA parses over
+# (福袋（１万７０００円）を); `{0,8}` between the two phrases mirrors the
+# linear catalog's gap; and を is excluded from both gaps so the two markers
+# are consecutive, the same discipline `double-wo.sgx` spells as
+# `unidic.orthbase!=を`.
+#
+# Three recorded limits. An elided shared predicate — 何を青臭いことを(言うか)
+# — has no head token, so no dependency query over overt tokens can select
+# it. Classical concessive を (寄りにしを) can satisfy the skeleton's text
+# test; its absent `case` edge is what rejects it here, where the linear
+# catalog had nothing to consult. And the re-validation measured the
+# dominant one: a `where` clause filters the capture assignment the engine
+# already chose rather than searching for one that satisfies it, which costs
+# 32 of the 39 head-sharing sentences this catalog misses.
+
+defaults
+  source: "research query, 2重を格 dependency criterion"
+  status: "experimental"
+end
+
+# The marker is named once and complemented in both gaps, the same
+# derivation discipline `double_wo_boundary` established.
+test DW_DEP_WO := text=を.
+
+# The relations a を-marked nominal can bear to its governor: UD's core
+# arguments, its clausal and nominal dependents, and `dep`. Attested in the
+# experiment's parse: obj, obl, advcl, acl, dep, ccomp.
+set WO_PHRASE_ROLE := {obj, obl, iobj, nsubj, csubj, ccomp, xcomp,
+                       advcl, acl, nmod, dep}.
+
+role: "helper"
+fragment double_wo_dep_skeleton :=
+  (?<n1> []) [!@DW_DEP_WO]{0,5} (?<w1> [text=を & upos=ADP])
+  [!@DW_DEP_WO]{0,8}
+  (?<n2> []) [!@DW_DEP_WO]{0,5} (?<w2> [text=を & upos=ADP])
+  []*
+  (?<v> []).
+
+# The pair is a projection, not a declaration: `$d.dep.rel` on a dependent
+# capture is the label its own edge matched, so this publishes which of
+# `WO_PHRASE_ROLE`'s members held on each side.
+role: "research"
+category: "重複を格調査"
+key: [$n1.dep.rel, $n2.dep.rel]
+pattern double_wo_dep :=
+  @double_wo_dep_skeleton
+  where $n1 -[case]-> $w1, $n2 -[case]-> $w2,
+        $v -[@WO_PHRASE_ROLE]-> $n1, $v -[@WO_PHRASE_ROLE]-> $n2.

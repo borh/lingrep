@@ -1,0 +1,23 @@
+fragment BRACKET_OPEN  := [unidic.pos1=補助記号 & unidic.pos2=括弧開].
+fragment BRACKET_CLOSE := [unidic.pos1=補助記号 & unidic.pos2=括弧閉].
+fragment BRACKET_FREE  := [unidic.pos2 not in {括弧開, 括弧閉}].
+fragment CITATION_NOTE := [text=注] [unidic.pos1=名詞 & unidic.pos2=数詞].
+fragment PUNCT_NOT_BRACKET := [unidic.pos1=補助記号 & unidic.pos2 not in {括弧開, 括弧閉}].
+
+# depth 1: a bracketed region containing no brackets
+fragment BRACKETED_1 := @BRACKET_OPEN (@BRACKET_FREE)* @BRACKET_CLOSE.
+# depth 2: a bracketed region whose interior may contain depth-1 regions
+fragment BRACKETED_2 := @BRACKET_OPEN (@BRACKET_FREE | @BRACKETED_1)* @BRACKET_CLOSE.
+
+# The anchor block was added on 2026-08-04, after this file was recorded: the
+# surface it declares did not exist when the depth transcript was derived by
+# hand. Depth, witness and divergence are the ones this directory's README
+# already states; `docs/results/2026-08-04-anchor-acceptance.md` records the
+# edit. `every_tracked_catalog_nesting_claim_holds` is what now executes them.
+role: "helper"
+anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
+max_nesting: {depth: 2, witness: ["これは重要である|（田中 2020（改訂））。"], divergence: ["これは重要である|（田中 2020（改訂（第2版）））。"]}
+fragment TRAILING_APPARATUS :=
+  (@PUNCT_NOT_BRACKET | @CITATION_NOTE | @BRACKETED_2)+.
+
+pattern __probe_TRAILING_APPARATUS := @TRAILING_APPARATUS.

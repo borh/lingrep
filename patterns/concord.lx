@@ -1,0 +1,109 @@
+defaults
+  status: "experimental"
+end
+
+# 呼応 (correlative concord): an adverb whose licensing predicate stands at an
+# unbounded distance. The catalog exists twice over — once as a research
+# object, once as the engine's first unbounded-gap benchmark specimen
+# (docs/analysis/2026-08-14-sgx-ergonomics-and-matcher-profile-gaps.md §3.1).
+# The _gap spelling emits the adverb-to-predicate span; the _look spelling
+# emits the adverb token(s) alone and asserts the predicate exists. They are
+# different record shapes on purpose: the comparison is the cost model, and
+# the semantic difference is stated here rather than discovered.
+#
+# Every predicate below was checked against what UniDic-CWJ 202512 actually
+# emits (vp-search tokenize, 2026-08-14):
+#   * 決して, 全然, おそらく, もし, たとえ are single 副詞 tokens.
+#   * 必ずしも splits: 必ず (副詞) + しも (助詞/副助詞). The adverb anchor is
+#     therefore two tokens, and 必ず alone — as in 必ず成功する — is not it.
+#   * だろう and でしょう are single 助動詞 tokens (orth だろう/でしょう,
+#     lemma だ/です). であろう splits: で (助動詞, lemma だ) + あろう (動詞,
+#     lemma 有る). The fragment carries both shapes.
+#   * ぬ carries lemma ず, so the negation set is {ない, 無い, ず}: ない
+#     (助動詞) has lemma ない, the adjectival ない (問題ない) has lemma 無い,
+#     and ず/ぬ share lemma ず. A literal ぬ member would be dead — no token
+#     carries it as a lemma.
+#   * ば is 助詞/接続助詞, but たら and なら are 助動詞 (仮定形-一般 of た
+#     and だ), so a flat `text in {ば, たら, なら} & unidic.pos1=助詞` would miss
+#     two of the three; the conditional fragment splits by part of speech.
+#   * ても/でも surfaces as て or で (助詞/接続助詞) followed by も (助詞/
+#     係助詞). たとえば is a single 副詞 token, so it never carries [text=たとえ].
+
+role: "helper"
+fragment NEG_PRED := [lemma in {ない, 無い, ず}].
+
+role: "helper"
+fragment DAROU_PRED :=
+  [text in {だろう, でしょう}]
+  | [text=で & lemma=だ] [text=あろう].
+
+role: "helper"
+fragment COND_PRED :=
+  [text=ば & unidic.pos1=助詞 & unidic.pos2=接続助詞]
+  | [text in {たら, なら} & unidic.pos1=助動詞 & unidic.cform=仮定形-一般].
+
+role: "helper"
+fragment TEMO_PRED :=
+  [text in {て, で} & unidic.pos2=接続助詞] [text=も & unidic.pos2=係助詞].
+
+category: "呼応・否定"
+examples: ["決してあきらめない", "彼は決して嘘をつかない"]
+counterexamples: ["決して"]
+pattern kesshite_nai_gap := [text=決して] []* @NEG_PRED.
+
+category: "呼応・否定"
+examples: ["決してあきらめない", "彼は決して嘘をつかない"]
+counterexamples: ["決して"]
+pattern kesshite_nai_look := [text=決して] followed_by([]* @NEG_PRED).
+
+category: "呼応・否定"
+examples: ["全然わからない", "全然問題ない"]
+counterexamples: ["全然大丈夫"]
+pattern zenzen_nai_gap := [text=全然] []* @NEG_PRED.
+
+category: "呼応・否定"
+examples: ["全然わからない", "全然問題ない"]
+counterexamples: ["全然大丈夫"]
+pattern zenzen_nai_look := [text=全然] followed_by([]* @NEG_PRED).
+
+category: "呼応・部分否定"
+examples: ["必ずしも正しいとは限らない"]
+counterexamples: ["必ず成功する"]
+pattern kanarazushimo_nai_gap :=
+  [text=必ず] [text=しも & unidic.pos2=副助詞] []* @NEG_PRED.
+
+category: "呼応・部分否定"
+examples: ["必ずしも正しいとは限らない"]
+counterexamples: ["必ず成功する"]
+pattern kanarazushimo_nai_look :=
+  [text=必ず] [text=しも & unidic.pos2=副助詞] followed_by([]* @NEG_PRED).
+
+category: "呼応・推量"
+examples: ["おそらく雨が降るだろう", "おそらく雨でしょう", "おそらく雨であろう"]
+counterexamples: ["おそらく雨だ"]
+pattern osoraku_darou_gap := [text=おそらく] []* @DAROU_PRED.
+
+category: "呼応・推量"
+examples: ["おそらく雨が降るだろう", "おそらく雨でしょう", "おそらく雨であろう"]
+counterexamples: ["おそらく雨だ"]
+pattern osoraku_darou_look := [text=おそらく] followed_by([]* @DAROU_PRED).
+
+category: "呼応・条件"
+examples: ["もし雨が降れば中止する", "もし雨だったら中止する"]
+counterexamples: ["もしもし"]
+pattern moshi_ba_gap := [text=もし] []* @COND_PRED.
+
+category: "呼応・条件"
+examples: ["もし雨が降れば中止する", "もし雨だったら中止する"]
+counterexamples: ["もしもし"]
+pattern moshi_ba_look := [text=もし] followed_by([]* @COND_PRED).
+
+category: "呼応・譲歩"
+examples: ["たとえ失敗しても続ける", "たとえ雨が降っても行く"]
+counterexamples: ["たとえば次の場合"]
+pattern tatoe_temo_gap := [text=たとえ] []* @TEMO_PRED.
+
+category: "呼応・譲歩"
+examples: ["たとえ失敗しても続ける", "たとえ雨が降っても行く"]
+counterexamples: ["たとえば次の場合"]
+pattern tatoe_temo_look := [text=たとえ] followed_by([]* @TEMO_PRED).
