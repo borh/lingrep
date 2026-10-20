@@ -2698,6 +2698,7 @@ dependencies = [
  "libc",
  "lingrep-core",
  "log",
+ "lzma-sys",
  "proptest",
  "proptest-derive",
  "pulldown-cmark",

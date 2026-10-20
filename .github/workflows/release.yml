@@ -74,6 +74,9 @@ jobs:
           "$binary" --version
           "$binary" check --patterns patterns/sfe.lx
 
+      - name: Check the binary loads only system libraries
+        run: scripts/check-release-linkage.sh "target/${{ matrix.target }}/release/ling"
+
       - name: Assert the version matches the tag
         run: |
           tag="${{ inputs.tag || github.ref_name }}"

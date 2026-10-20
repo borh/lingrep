@@ -58,6 +58,10 @@ path = "examples/measure_spacy_process.rs"
 [dependencies]
 aho-corasick.workspace = true
 vibrato-rkyv.workspace = true
+# vibrato-rkyv depends on xz2. Without `static`, lzma-sys links the build
+# host's liblzma when pkg-config finds one (Homebrew on the macOS runners),
+# and the released binary then fails to start on a Mac without Homebrew xz.
+lzma-sys = { version = "0.1.20", features = ["static"] }
 zstd = "0.13.1"
 quick-xml = "0.41"
 zip = { version = "7.2", default-features = false, features = ["deflate"] }

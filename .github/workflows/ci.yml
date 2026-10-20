@@ -153,6 +153,11 @@ jobs:
       - name: Build
         run: cargo build -p lingrep
 
+      # The runner has Homebrew libraries a user's Mac may not; a link
+      # against one passes every other step here.
+      - name: Check the binary loads only system libraries
+        run: scripts/check-release-linkage.sh target/debug/ling
+
       # `cargo test` is deliberately absent: `lingrep_core::testing::
       # dictionary_path()` panics when the variable the dev shell exports is
       # unset, so a dictionary-free run fails three tests for the environment
