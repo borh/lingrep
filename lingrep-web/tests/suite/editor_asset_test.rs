@@ -19,7 +19,7 @@ use tower::ServiceExt;
 
 /// The `tree-sitter-lingrep` revision `Cargo.lock` pins.
 ///
-/// Read rather than hardcoded: the vendored WASM defines what an lingrep patterns
+/// Read rather than hardcoded: the vendored WASM defines what a lingrep patterns
 /// definition and reference *are* for the editor's navigation, so a manifest
 /// that drifts from the compiler's own grammar is a correctness problem, not a
 /// bookkeeping one. Asserting the manifest against a literal copy of itself —

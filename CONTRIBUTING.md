@@ -16,7 +16,7 @@ non-Nix setup is possible but is maintained by the person using it.
 ## Before changing code
 
 Read [AGENTS.md](AGENTS.md) for the architecture, prohibited APIs, and
-repository workflow. It applies to human contributors as well as agents.
+repository workflow. It applies to human contributors and agents.
 
 Then read the guide owned by the affected boundary:
 

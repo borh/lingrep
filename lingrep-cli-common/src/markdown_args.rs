@@ -115,7 +115,7 @@ impl MarkdownReaderArgs {
     /// A self-label describes its own heading; a heading is never emitted as a
     /// sentence; so naming one selects nothing. Checkable without reading a
     /// byte of input, which is why it is a separate question from the
-    /// unused-label report that needs the whole stream.
+    /// unused-label report that requires the whole stream.
     #[must_use]
     pub fn self_label_no_ops(&self) -> Vec<String> {
         let self_labels = self.self_labels();

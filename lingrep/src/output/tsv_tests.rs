@@ -129,7 +129,7 @@ fn new_tsv_contracts_have_fixed_headerless_rows_and_escaping() {
         ["7", "a\tb.md", "2", "true", ""]
     );
 
-    // An lingrep patterns attribute key cannot contain a tab, so this row proves the five
+    // A lingrep patterns attribute key cannot contain a tab, so this row proves the five
     // numeric-and-key columns and their count rather than the escaping the
     // three rows above already cover.
     let mut attributes = Vec::new();

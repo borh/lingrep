@@ -88,7 +88,7 @@ fn human_describe_explains_example_purpose_and_placeholders() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("example — Search a direct corpus with an lingrep patterns catalog."));
+    assert!(stdout.contains("example — Search a direct corpus with a lingrep patterns catalog."));
     assert!(
         stdout.contains("ling matches --patterns '{patterns}' --dict-path '{dictionary}' '{root}'")
     );

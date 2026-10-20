@@ -1,6 +1,6 @@
 //! Diagnostics for the catalog ↔ corpus binding seam.
 //!
-//! Binding an lingrep patterns catalog against a token schema can now end three ways: a
+//! Binding a lingrep patterns catalog against a token schema can now end three ways: a
 //! clean bind, a bind that carries referenced-but-unavailable attributes
 //! ([`lingrep_core::fsm::BoundCatalog::unavailable_attributes`]), or a refusal when a
 //! dependency `where` clause's edge attributes are missing (or a key's value

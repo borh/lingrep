@@ -1214,7 +1214,7 @@ impl PolicyReader<'_> {
             self.error(
                 DiagnosticCode::InvalidPolicyValue,
                 format!(
-                    "`{key}:` on `{}` declares `{op}` whose `{argument}:` is not an lingrep patterns token \
+                    "`{key}:` on `{}` declares `{op}` whose `{argument}:` is not a lingrep patterns token \
                      predicate written as a string, e.g. `{argument}: \"[upos in {{AUX, ADP}}]\"`",
                     self.definition.name
                 ),

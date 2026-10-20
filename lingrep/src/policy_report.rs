@@ -53,7 +53,7 @@ const LABEL_DISPLAY_WIDTH: usize = 88;
 
 /// A label short enough for one trace line.
 ///
-/// Counts characters rather than bytes: an lingrep patterns statement can name a Japanese
+/// Counts characters rather than bytes: a lingrep patterns statement can name a Japanese
 /// definition, and slicing one mid-codepoint would panic.
 fn elided(text: &str, width: usize) -> String {
     let mut characters = text.chars();

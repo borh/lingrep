@@ -565,7 +565,7 @@ export function patternDefinitions(source, { includeDuplicates = false } = {}) {
   return definitions;
 }
 
-/// One-line preview of an lingrep patterns source for folded UI chrome: the first actual
+/// One-line preview of a lingrep patterns source for folded UI chrome: the first actual
 /// pattern name. Grammar-level statements everyone ships (`defaults`,
 /// `set NAME := {…}`, `fragment NAME := …`) explain nothing to a researcher,
 /// so the preview initially prefers kind === "pattern" (bare or explicit)

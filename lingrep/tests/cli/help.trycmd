@@ -1,6 +1,6 @@
 ```
 $ ling --help
-Search, inspect, tokenize, and prepare Japanese corpora
+Japanese corpus search on the command line: morphology, lingrep patterns matching, prepared corpora, and concordance output
 
 Usage: ling [OPTIONS] <COMMAND>
 
@@ -12,7 +12,7 @@ Commands:
   explore         Browse matches interactively in the terminal
   sentence-final  Aggregate matches selected by sentence-final policy
   corpus          Build or inspect artifacts, or inventory corpus sources
-  check           Compile and validate an lingrep patterns catalog without reading a corpus
+  check           Compile and validate a lingrep patterns catalog without reading a corpus
   doctor          Probe dictionary, catalog, and prepared-corpus inputs
   describe        Describe command arguments, examples, and owned contracts
   contracts       List or describe stable machine-output contracts

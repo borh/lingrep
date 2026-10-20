@@ -2,7 +2,7 @@
 
 pub const PATTERN_REFERENCE: &str = r#"lingrep patterns LANGUAGE REFERENCE
 
-An lingrep patterns file contains declarations. Definitions and policy statements end with
+A lingrep patterns file contains declarations. Definitions and policy statements end with
 `.`. Metadata and `analyzer:` lines do not. Blocks close with `end`, and `#`
 starts a line comment.
 
@@ -97,8 +97,8 @@ The bracket holds one or more terms joined by `|`:
 
 `-[*]->` matches any scalar `dep.rel` value present on the dependent token;
 it does not match a missing attribute and cannot be combined with other terms.
-`obl` and `obl:tmod` are different labels, so `-[obl:*]->` deliberately
-excludes the unsubtyped form; write `-[obl|obl:*]->` for either. A `@name`
+`obl` and `obl:tmod` are different labels, so `-[obl:*]->` excludes the
+unsubtyped form; write `-[obl|obl:*]->` for either. A `@name`
 term names a `set` declaration and resolves where `[x in @S]` resolves; a
 member that is not a well-formed relation label is a compile error. A term
 repeated in one bracket, and two constraints sharing a dependent capture with
@@ -111,8 +111,8 @@ capture in an alternation branch binds only when that branch is taken, so
 is the exception, and it is legal — `((?<a> …) | (?<b> …))+` enters the
 alternation once per iteration, so two iterations bind both.
 
-Which member matched needs no new syntax to report — it is the dependent
-capture's own `dep.rel`, so `key: [$d.dep.rel]` publishes it.
+Reporting which member matched requires no new syntax: the dependent
+capture carries its own `dep.rel`, published via `key: [$d.dep.rel]`.
 
 A multi-label bracket is one disjunction, not an independent count per label.
 Its admitted candidates compete in the definition's per-start longest-match
@@ -211,7 +211,7 @@ A bare value ends at whitespace or `&`, but not at `|`: `[text=a|text=b]` is
 refused as `PipeInBareValue`. Write `[text=a | text=b]` for disjunction, or
 `[text=a\u007Cb]` when the literal value contains a pipe.
 Metadata quotes its values and a token test never does, so `[text=\u0022x\u0022]`
-would ask for the literal `\u0022x\u0022`; it is refused as
+would specify the literal `\u0022x\u0022`; it is refused as
 `QuotedAttributeValue`.
 
 METADATA
@@ -224,7 +224,7 @@ Metadata lines immediately before a definition annotate that definition:
   weight: 1.5                     number
   options: {mode: "strict"}       map
 
-`none` is allowed only on a top-level annotation to remove an inherited
+`none` is valid only on a top-level annotation to remove an inherited
 default. There is no `null` value.
 
   defaults
@@ -257,7 +257,7 @@ default key.
 
 COMPILER-OWNED METADATA
 
-These annotations control publication and do not need a `schema` declaration:
+These annotations control publication and require no `schema` declaration:
 
   output_name: "published name"
   groups: ["group-name", "other-group"]

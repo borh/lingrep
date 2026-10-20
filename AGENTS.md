@@ -41,7 +41,7 @@ criterion. Do not add performance numbers to this guide.
   gravity is an external analysis example over `ling` JSONL.
 - `lingrep-cli-common/`: shared clap argument groups reused across the CLI binaries.
 - `lingrep-perf/`: campaign tooling for performance work, not a CI feature. The
-  counted-work screen and the orchestration half need `--features screen`; do
+  counted-work screen and the orchestration half require `--features screen`; do
   not make `lingrep-core`'s `bench-instrumentation` feature unconditional,
   because Cargo would unify it into the shipping binaries.
 - `docs/`: current guides, indexed by [docs/README.md](docs/README.md).

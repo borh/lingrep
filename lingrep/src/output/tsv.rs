@@ -30,7 +30,7 @@ pub(crate) fn attributes_contract() -> crate::protocol::discovery::ContractSpec 
             "admitted_tokens"
         ],
         "TokenAttributeIndex::ALL order.",
-        "Every attribute, always. Exclusions need --json.",
+        "Every attribute, always. Exclusions require --json.",
         &["coverage/direct-root"],
     )
 }

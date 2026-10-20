@@ -119,7 +119,7 @@ unsupported container format.
 
 ### Japanese with UniDic
 
-UniDic dictionaries are built with Nix. The conversion needs about 10 GB of
+UniDic dictionaries are built with Nix. Conversion requires approximately 10 GB of
 memory:
 
 ```bash

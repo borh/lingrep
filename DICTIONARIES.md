@@ -46,14 +46,14 @@ decodes frame-parallel when it contains more than one frame.
 ## Automation and tests
 
 `ling`, the tests, and the scripts take their default dictionary path from
-`LINGREP_DICTIONARY_PATH`, which `nix develop` exports. Inside the dev shell the tests need no extra setup:
+`LINGREP_DICTIONARY_PATH`, exported by `nix develop`. Inside the dev shell, tests require no extra setup:
 
 ```bash
 cargo test -p lingrep --test suite -- sentence_final_characterization::
 scripts/run_test.sh
 ```
 
-For a program that needs a different dictionary, override `LINGREP_DICTIONARY_PATH`
+For a program that requires a different dictionary, override `LINGREP_DICTIONARY_PATH`
 with the corresponding artifact below `$dict_root/share/vibrato/`.
 
 ## Troubleshooting

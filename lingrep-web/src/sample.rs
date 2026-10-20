@@ -152,7 +152,7 @@ pub fn sample_capture_view(
     Ok(SampleCaptureView { captures, lanes })
 }
 
-/// Result of analyzing sample text (or pre-tokenized lines) against an lingrep patterns
+/// Result of analyzing sample text (or pre-tokenized lines) against a lingrep patterns
 /// pattern source. Projection failures surface as `Failed`, never as a
 /// silently-empty `Matched`.
 #[derive(Debug, Clone)]

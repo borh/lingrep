@@ -86,7 +86,7 @@ static DOCTOR_EXAMPLES: &[CommandExample] = &[CommandExample {
 }];
 static MATCHES_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "matches/catalog-file-direct-root",
-    purpose: "Search a direct corpus with an lingrep patterns catalog.",
+    purpose: "Search a direct corpus with a lingrep patterns catalog.",
     argv: &[
         "matches",
         "--patterns",

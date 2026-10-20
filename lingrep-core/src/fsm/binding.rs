@@ -9,7 +9,7 @@ use crate::token_match::{
     BoundTokenSentence, TokenSchema, TokenSchemaDigest, TokenSequence,
 };
 
-/// An lingrep patterns catalog whose symbolic attribute names have been resolved against a
+/// A lingrep patterns catalog whose symbolic attribute names have been resolved against a
 /// concrete token schema.
 #[derive(Clone)]
 pub struct BoundCatalog {

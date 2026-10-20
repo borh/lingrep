@@ -1,6 +1,6 @@
 //! Comparing a catalog's declared dictionaries against the one a run loaded.
 //!
-//! An lingrep patterns catalog's predicates are written against a tagset. Nothing else in
+//! A lingrep patterns catalog's predicates are written against a tagset. Nothing else in
 //! the system records which: `token_schema_identity` digests the structural
 //! attribute names and value kinds, which do not distinguish one dictionary's
 //! tagset from another's, and `dictionary_identity` describes the run rather

@@ -543,7 +543,7 @@ fn resolve_destination(
                 // one should keep it.
                 return Err(CliError::Corpus(format!(
                     "the artifact at {} truncated {} sentence(s) at --max-sentence-bytes {}, \
-                     and this run asks for {}, so it is a different corpus under the same \
+                     and this run specifies {}, so it is a different corpus under the same \
                      identity; rerun with --max-sentence-bytes {}, or remove that artifact, \
                      or pass an explicit --output",
                     path.display(),

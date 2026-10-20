@@ -2242,7 +2242,7 @@ def render_pattern(
     if unrenderable:
         # Say so rather than letting the file read as complete coverage. A
         # finding is unrenderable when its key names no known template, or
-        # when a value cannot be written as an lingrep patterns literal at all -- an empty
+        # when a value cannot be written as a lingrep patterns literal at all -- an empty
         # lemma, or one outside the BMP that the four-digit escape cannot
         # address.
         lines.append(

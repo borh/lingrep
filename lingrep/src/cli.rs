@@ -137,7 +137,7 @@ pub enum Command {
     SentenceFinal(SentenceFinalArgs),
     /// Build or inspect artifacts, or inventory corpus sources.
     Corpus(CorpusArgs),
-    /// Compile and validate an lingrep patterns catalog without reading a corpus.
+    /// Compile and validate a lingrep patterns catalog without reading a corpus.
     #[command(
         after_help = "Run `ling check --help` for the complete lingrep patterns language reference.",
         after_long_help = crate::pattern_reference::PATTERN_REFERENCE
@@ -441,8 +441,8 @@ pub struct CorpusBuildArgs {
     #[command(flatten)]
     pub resources: ResourceArgs,
 
-    /// Section selection for Markdown input. These decide which lines the
-    /// artifact records at all, so they are part of what the artifact *is*.
+    /// Section selection for Markdown input. These determine which lines the
+    /// artifact records, defining the artifact identity.
     #[command(flatten)]
     pub markdown: MarkdownReaderArgs,
 
@@ -706,7 +706,7 @@ pub struct QueryInputArgs {
     )]
     pub corpus: Option<PathBuf>,
 
-    /// Section filters for Markdown input. These filters decide which lines
+    /// Section filters for Markdown input. These filters determine which lines
     /// enter the corpus; `--where '@section …'` filters admitted documents.
     #[command(flatten)]
     pub markdown: MarkdownReaderArgs,
@@ -1113,7 +1113,7 @@ pub struct RuntimeArgs {
     pub progress: ProgressMode,
 }
 
-/// Resource controls honored by the interactive Vibrato workflows.
+/// Resource controls used by interactive Vibrato workflows.
 #[derive(Clone, Debug, Args)]
 pub struct InteractiveResourceArgs {
     /// Normalize direct input text before analysis; `nfc` is the default.

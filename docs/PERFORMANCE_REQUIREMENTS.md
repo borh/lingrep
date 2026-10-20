@@ -41,7 +41,7 @@ Baseline: 200K-300K tokens/sec (single-threaded, no cache)
 **Required patterns:**
 - ✅ Streaming processing (constant memory)
 - ✅ Chunked processing (sub-linear memory)
-- ✅ Lazy loading (only load what's needed)
+- ✅ Lazy loading (load only referenced data)
 - ✅ Memory-mapped files (OS-managed memory)
 
 **Working-set budget:** peak RSS must stay under max(2× the input file

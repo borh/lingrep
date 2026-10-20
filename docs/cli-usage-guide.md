@@ -1246,7 +1246,7 @@ than given the truncated corpus:
 
 ```text
 the artifact at … truncated 2 sentence(s) at --max-sentence-bytes 65536, and
-this run asks for 262144, so it is a different corpus under the same identity;
+this run specifies 262144, so it is a different corpus under the same identity;
 rerun with --max-sentence-bytes 65536, or remove that artifact, or pass an
 explicit --output
 ```

@@ -813,7 +813,7 @@ impl Display for NestingEntry {
 /// it.
 ///
 /// An `exclude` fragment is a **bounded approximation** of something unbounded:
-/// upstream's citation stripper is a scanner with a counter, and an lingrep patterns
+/// upstream's citation stripper is a scanner with a counter, and a lingrep patterns
 /// fragment is a regular expression, so it can only recognize bracket nesting
 /// to a fixed depth. This records where the approximation stops.
 ///
