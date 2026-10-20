@@ -2,10 +2,10 @@
 
 The exact spelling and meaning of every construct the compiler accepts. Read this
 before writing or editing a `.lx` catalog under `patterns/`, or when a pattern
-compiles but does not match what you meant.
+compiles but does not match intended tokens.
 
 For changing the syntax itself — the grammar lives in a second repository and a
-change needs both — see
+change requires both — see
 [pattern-language-co-development.md](pattern-language-co-development.md). For the
 tracked catalogs, which are the worked examples of nearly everything below, see
 `patterns/`.
@@ -240,7 +240,7 @@ The clause's own diagnostics:
   naming the kind found, as in the `in` case.
 - `WhereContradictoryLabels` refuses two constraints sharing a dependent capture
   with disjoint label sets: a token carries one `dep.rel`, so both can never hold.
-  Write `-[a|b]->` when either label will do.
+  Write `-[a|b]->` when either label is acceptable.
 - `WhereContradictoryExistence` refuses a positive and negative anonymous
   constraint on the same head only when the negative label set covers the
   positive set. A positive captured edge counts as positive too. Mere overlap is
@@ -405,7 +405,7 @@ what the tokens carry.
 
 `publish:` lists token attributes every record must carry, without testing them.
 A run publishes only the catalog's tested attributes, `text`, and what its policy
-projects; name any other attribute a consumer needs here instead of writing a
+projects; name any other attribute a consumer requires here instead of writing a
 predicate for it. An attribute the corpus does not supply draws the ordinary
 `warning[attribute_unavailable]`. Like `key:`, it is declared per definition and
 unioned across the catalog.

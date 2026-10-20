@@ -63,7 +63,7 @@ delete its `allow` line in the same commit. Do not delete a policy override
 because it measures clean.
 
 `redundant_else` and `unused_async_trait_impl` fire on the flake's nightly
-Clippy and are allow-listed rather than fixed. Stable Clippy does not know
+Clippy and are allow-listed rather than fixed. Stable Clippy does not recognize
 `unused_async_trait_impl` and reports it as an `unknown_lints` warning.
 
 ## No `warn` level in `Cargo.toml`
@@ -83,7 +83,7 @@ Each file there that trips a deny lint starts with a combined
 files that trip a lint carry it. If a change adds a bare `.unwrap()`, `panic!`,
 `unreachable!` or `&s[a..b]` to a test, benchmark or example file without the
 header, CI fails; add the header, copying a sibling file, or use a
-non-panicking form. `.expect("msg")` needs no header.
+non-panicking form. `.expect("msg")` requires no header.
 
 ## Lints absent from `Cargo.toml`
 

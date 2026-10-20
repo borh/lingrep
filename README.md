@@ -2,10 +2,10 @@
 
 lingrep searches text for linguistic patterns: token sequences described by
 surface form, lemma, part of speech, morphological features, or dependency
-relations. You write patterns once, in a catalog, and reuse them across
+relations. Patterns are authored in catalogs and reused across
 corpora. The command-line tool, `ling`, tokenizes raw text or reads text that
-is already analyzed, then matches patterns, counts matches, and shows each
-match in context.
+is already analyzed, then matches patterns, counts matches, and presents
+matches in context.
 
 Japanese is the main focus, but `ling` also reads CoNLL-U, so Universal
 Dependencies treebanks and other analyzed data can be searched without a
@@ -41,7 +41,7 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 Each [release](https://github.com/borh/lingrep/releases) has `ling` archives
 for Linux (x86-64 and arm64) and macOS (Apple silicon). An archive unpacks to
 one directory with the binary, shell completions, manual pages, the license,
-and third-party notices. The Linux builds need glibc 2.35 or newer.
+and third-party notices. The Linux builds require glibc 2.35 or newer.
 
 ```bash
 tar xzf ling-0.3.0-aarch64-apple-darwin.tar.gz
@@ -51,7 +51,7 @@ tar xzf ling-0.3.0-aarch64-apple-darwin.tar.gz
 The binaries include no dictionary. To analyze Japanese, build UniDic with Nix
 (below) or download Sudachi's dictionary (see
 [Japanese without Nix](#japanese-without-nix)). CoNLL-U input and
-`ling check` need no dictionary.
+`ling check` require no dictionary.
 
 ### From source with Nix
 
@@ -106,15 +106,15 @@ ling matches \
   sample.txt
 ```
 
-`--sudachi-edition` must match the archive (`small`, `core`, or `full`). Use
-SudachiDict `v20260723` or earlier: later releases use a dictionary format this
-build cannot read, and `ling` refuses them with an error that names the format.
+`--sudachi-edition` must match the archive (`small`, `core`, or `full`). ling
+supports SudachiDict releases up to `v20260723`; later releases use an
+unsupported container format.
 
 ### CoNLL-U
 
-CoNLL-U files already carry tokens and annotations, so no dictionary is
-needed. This finds a noun followed by a token whose dependency relation is
-`case`, in any UD treebank file:
+CoNLL-U files already carry tokens and annotations, so matching requires no
+dictionary. This query matches a noun followed by a token whose dependency
+relation is `case`:
 
 ```bash
 ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu

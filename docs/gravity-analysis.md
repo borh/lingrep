@@ -30,7 +30,7 @@ termination, and rejects a failed, cancelled, or limited upstream query.
 ## Scope and resource boundary
 
 The script holds distinct terms and distinct pairs in Python memory, so it
-suits moderate corpora; a large corpus needs a disk-backed implementation
+suits moderate corpora; a large corpus requires a disk-backed implementation
 outside this repository.
 
 A pattern matches bounded token structure within a sentence, while gravity

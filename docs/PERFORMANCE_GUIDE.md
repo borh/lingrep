@@ -115,7 +115,7 @@ prepared-corpus, sink, observer, and temporary-budget failures are terminal and 
 a non-zero CLI exit; malformed input is never converted to EOF. Oversize
 errors identify the limit and ordinal/source context when available. They
 report an exact actual value only when the complete value is already known;
-early bounded readers instead say `at least limit + 1`. V1 decode failures
+early bounded readers report `at least limit + 1`. V1 decode failures
 remain typed source failures through `PreparedSentenceSource`; malformed prepared
 artifacts never become clean EOF.
 

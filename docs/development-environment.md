@@ -63,7 +63,7 @@ already contain analyzed tokens and reject a dictionary override.
 
 `python/spacy-adapter/bin/ginza-gpu rocm <ginza arguments>` runs the stock
 GiNZA command line on an AMD GPU with the `rocm` extra and produces the same
-output as the CPU build. The `lingrep-spacy-adapter` adapter does not need
+output as the CPU build. The `lingrep-spacy-adapter` adapter does not require
 the launcher, because it initializes Torch, CuPy, and spaCy in the order the
 ROCm wheels require. The `cuda` extra is declared but untested with this
 launcher.
@@ -143,7 +143,7 @@ or ChromeDriver is not on `PATH`, so run it inside `nix develop`.
 ## Performance work
 
 Read [PERFORMANCE_REQUIREMENTS.md](PERFORMANCE_REQUIREMENTS.md) before changing
-a performance-sensitive path. It owns the measurement tiers, targets, and
+a performance-sensitive path. It specifies the measurement tiers, targets, and
 campaign workflow.
 
 ## Reclaim disk space

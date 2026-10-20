@@ -116,7 +116,7 @@ Long-running invocations report progress at least every 100K sentences.
 
 ### External gravity example
 
-`examples/gravity.py` demonstrates corpus-global analysis over a complete
+`examples/gravity.py` illustrates corpus-global analysis over a complete
 `ling matches` JSONL stream. It is not a packaged production component
 and has no throughput or memory acceptance bar. Its distinct-term and
 adjacent-pair maps are in memory; use is limited to moderate corpora. See
@@ -135,7 +135,7 @@ bounds.
 ### Risk-adjusted performance evidence
 
 Scale measurement effort to uncertainty and permanent engineering risk. Every
-performance change still needs all of the following:
+performance change still requires all of the following:
 
 1. A representative workload and one primary metric.
 2. A measured bound, or another explicit justification such as a capacity
@@ -239,7 +239,7 @@ move wall by more than any linear projection — but read it before choosing
 `--primary-metric`.
 
 `--corpus` is the prepared-artifact fallback for the suite. Repeat
-`--catalog-corpus CATALOG=ARTIFACT` for a catalog that needs a different stored
+`--catalog-corpus CATALOG=ARTIFACT` for a catalog that requires a different stored
 schema; the two dependency-relation catalogs use a dependency-bearing
 artifact while the remaining catalogs use the morphology fallback. `new`
 fully verifies each distinct artifact once, records every identity, and seals
@@ -252,8 +252,8 @@ state cannot change which corpus an existing campaign measures.
 instead of writing it to a file and hashing that. The digest is identical
 either way, so no baseline moves; the run pays for a hashing consumer, pinned
 to `--digest-affinity` (by default the complement of `--affinity`), instead of
-the writes. The choice is sealed, and `record` refuses a run that disagrees
-with the seal.
+the writes. The choice is sealed, and `record` refuses a run that does not match
+the seal.
 
 `--stream-output` is not the default: the hasher can become the pipeline's rate
 limiter, and a campaign streamed on a high-output catalog then measures
@@ -279,7 +279,7 @@ quantities, so their ratios differ for the same change. Output parity
 is the same check either way, because both emit `lingrep.query/v2`.
 
 `suite` measures every catalog to the coverage its tier requires and continues
-while the verdict names a catalog needing escalation (3 → 8 → 20 blocks).
+while the verdict names a catalog requiring escalation (3 → 8 → 20 blocks).
 `verdict` renders a measurement report for an external evidence archive and
 leaves two sections for the author to fill in: where the bound went, and what
 was ruled out.
@@ -297,7 +297,7 @@ just perf-work --baseline before.json
 ```
 
 If no counter moves, the change reduces cost per unit rather than eliminating
-work, and needs a timing campaign. The per-catalog totals are pinned by the
+work, and requires a timing campaign. The per-catalog totals are pinned by the
 `ci.sh` screen lane, so a work regression fails CI.
 
 The `lingrep-perf.work/v1` screen includes assertion state visits and frontier
@@ -306,7 +306,7 @@ narrowings, and capture drops. It also includes tree-evaluator candidate
 volume, as the pair `candidates_produced` / `candidates_retained` — the
 candidates `evaluate` constructs and those surviving deduplication. It does not label process-global
 allocator traffic, output bytes, or scheduler-dependent queue occupancy as
-deterministic catalog work. V1 decode allocations need a prepared-pipeline
+deterministic catalog work. V1 decode allocations require a prepared-pipeline
 probe; serialization bytes belong at the real `matches`/`summarize` writer;
 and a reorder high-water belongs to the stage that owns that buffer.
 
@@ -326,7 +326,7 @@ actually measured rather than treating weak evidence as a win.
 1. **Check requirements** - Find the relevant section above
 2. **Identify bars** - What minimum/target/excellent metrics apply?
 3. **Measure baseline** - Run current code and record performance
-4. **Set targets** - Know what "done" looks like
+4. **Set targets** - Define completion criteria
 
 ### During Development
 
@@ -438,7 +438,7 @@ workbook buffer. The writer also enforces Excel's 32,767-character per-cell
 limit. The ignored `measure_peak_rss_full_export` harness in
 `lingrep-web/src/export/workbook.rs` measures peak RSS for a full export. The
 scan permit serializes the scan phase, so scans do not stack; an operator who
-needs a tighter bound can lower `MAX_EXPORT_ROWS`.
+requires a tighter bound can lower `MAX_EXPORT_ROWS`.
 
 ### Permalinks
 

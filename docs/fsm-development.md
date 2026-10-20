@@ -98,7 +98,7 @@ independent semantic oracle.
 ## Which executor recognizes a definition
 
 `ExecutionCapability` selects the recognizer, and
-`ExecutionCapability::evaluates_whole_definition` is the single answer to whether
+`ExecutionCapability::evaluates_whole_definition` determines whether
 the tree evaluator recognizes the whole definition. `compiler::nfa` routes such a
 definition around the recognition NFA, and `matcher::compiled` builds the plan
 that recognizes it instead; a capability handled on one side and not the other

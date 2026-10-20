@@ -55,7 +55,7 @@ git push
 ```bash
 cd /path/to/lingrep
 
-# Set `rev` in the root Cargo.toml to the grammar commit you pushed, then:
+# Set `rev` in the root Cargo.toml to the pushed grammar commit, then:
 cargo update -p tree-sitter-lingrep
 
 # Edit lingrep-core/src/fsm/compiler/lower.rs
@@ -95,7 +95,7 @@ semantics are preserved. Before committing the new Cargo pin, verify all of:
    compatibility branch;
 4. the exact pinned-grammar integration test exercises the changed CST shape;
 5. typed catalog/compiler fingerprints remain equal;
-6. complete canonical `Match` values agree with the independent typed-expression
+6. complete canonical `Match` values match the independent typed-expression
    oracle; and
 7. `lingrep/src/pattern_reference.rs` documents the changed syntax in
    `ling check --help` and `ling-check(1)`.

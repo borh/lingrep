@@ -66,7 +66,7 @@ Select a pattern in the Frequencies tab:
 | `Up` / `Down` | Scroll the visible rows |
 | `PageUp` / `PageDown` | Scroll by 20 rows |
 
-The selection remains active when you change tabs. Return to Frequencies with
+The selection remains active when changing tabs. Return to Frequencies with
 `Tab` or `Shift+Tab`; there is no separate back key.
 
 ### Inspect surfaces and contexts

@@ -62,7 +62,7 @@ configuration, with one sentence per claim (`--segmentation input`). The report
 identifies the catalog, analyzer and resource, distinguishes zero checked claims,
 and includes malformed, expected/unexpected-match and post-policy failures.
 Violated claims exit 1; unavailable attributes and analysis failures cannot pass
-counterexamples. Passing examples establishes agreement with authored claims,
+counterexamples. Passing examples confirms consistency with authored claims,
 not linguistic correctness or recall. External adapters are refused by this
 verification path.
 
@@ -232,8 +232,8 @@ not be projected. Both are omitted when zero.
 JSONL match records and surviving captures carry `char_span`: half-open,
 sentence-relative Unicode code-point offsets into the exact analysis text.
 Analyzer paths address text after the declared normalization policy. CoNLL-U
-uses the reconstructed surface text and withdraws offsets when `# text`
-disagrees. Words sharing a multiword surface token each address its whole
+uses the reconstructed surface text and omits offsets when `# text`
+does not match. Words sharing a multiword surface token each address its whole
 surface range; their internal character boundaries are not inferred. A run
 declares `char_offsets`, and `counters.offsets_omitted` counts published
 records whose alignment is unavailable. Token-index `span` and the TSV columns
@@ -385,7 +385,7 @@ captures, graph bindings, lexical identity, keys, tags and character positions.
 Stream sequence and query-dependent token/context projections are excluded from
 identity. Both runs' identities, counts and completion evidence accompany the
 report. Incomplete or failed scans publish no report. Memory use does not grow
-with the corpus. Agreement on one corpus or on the examples does not prove that
+with the corpus. Equal output on one corpus or on the examples does not prove that
 the two catalogs are equivalent or linguistically valid.
 
 ### Attributes the corpus cannot supply
@@ -490,10 +490,10 @@ such registers add up only by inclusion–exclusion. For a partition, state it
 in the clause: `@section = methods & @section != results`.
 
 `--where '@section …'` selects from sentences that have already been read.
-`--md-include-sections` / `--md-exclude-sections` decide at read time which
-lines become sentences, and the default policy excludes `references` and ten
-other labels, so `--where '@section = references'` is empty until you pass
-`--md-exclude-sections ""`. A run whose clause names such a label reports this
+`--md-include-sections` and `--md-exclude-sections` determine at read time which
+lines become sentences. The default policy excludes `references` and ten
+other labels, so `--where '@section = references'` is empty unless
+`--md-exclude-sections ""` is passed. A run whose clause names such a label reports this
 and names the flag. See [the dialect contract](markdown-corpus-dialect.md).
 
 `--md-recover-conversion-artifacts` is also a read-time flag. It admits the
@@ -563,8 +563,8 @@ An unscoped run omits `scope`.
 
 ### What the denominator covers
 
-`basis` states what the counts cover. Only `corpus` allows using them as a
-corpus denominator.
+`basis` identifies the scope of the counts. Only `basis: "corpus"` supports
+use as a corpus denominator.
 
 | Path | `coverage` | `basis` | `scope.sentences.admitted` vs `counters.sentences_admitted` |
 |---|---|---|---|
@@ -876,7 +876,7 @@ included, so its leading zeros survive. An empty field is absent rather than
 an empty string: `@document.subtitle != …` reports a missing field, not an
 empty one. A column outside the pinned set is carried as string metadata. A
 missing pinned column, a row without `identifier`, `filename` or `release`, a
-duplicate filename or identifier, and rows disagreeing about the release are
+duplicate filename or identifier, and rows with conflicting release values are
 refused with the row named.
 
 The text is the plaintext projection: ruby readings and apparatus are absent,
@@ -915,7 +915,7 @@ Sentence and document metadata are independent. In this example,
 `@sentence.speaker = B` selects the first sentence; `@document.speaker = A`
 selects both. `@sentence.speaker = A` selects neither. Objects may put metadata
 keys beside `text`; repeating a key inside `metadata` is refused. Each metadata
-record allows at most 256 fields and 1 MiB of encoded JSON.
+record accepts at most 256 fields and 1 MiB of encoded JSON.
 
 Authored structural metadata uses explicit whole-sentence ranges:
 
@@ -1222,8 +1222,8 @@ component is missing or truncated is not reused. Reuse does not fully hash the
 candidate; that is `corpus inspect --verify`. An unreadable sibling is reported
 and skipped rather than failing the run or hiding the realizations beside it.
 
-A directory at the canonical path whose recorded identity disagrees is a hard
-error naming that path and what disagrees, not a rebuild. An explicit
+A directory at the canonical path whose recorded identity does not match is a hard
+error naming that path and the differing fields, not a rebuild. An explicit
 `--output` is taken as spelled, is never pre-scanned, and uses the same
 no-replace commit.
 
@@ -1234,7 +1234,7 @@ bytes retained of bytes seen. Truncating rather than skipping keeps the
 sentence present, because a prepared artifact addresses sentences by ordinal
 and dropping one would renumber every later sentence.
 
-The bound is the smaller of your limit and the analyzer's. Vibrato has no
+The bound is the smaller of the configured limit and the analyzer's limit. Vibrato has no
 maximum input length, so there `--max-sentence-bytes` applies alone. Sudachi
 accepts at most 49,149 bytes (`u16::MAX / 4 * 3`, because its offset tables
 are `u16`), which is below the 65,536-byte default. A build clamps to whichever
@@ -1311,8 +1311,8 @@ symlink and naming its target name two. A root with no file name of its own
 Because the naming pass and the build pass read the source separately, a source
 edited between them yields an artifact named from the older content while
 recording the newer identity. Nothing is overwritten, and that artifact is
-never reused by mistake: a run that names the same path again finds a recorded
-identity that disagrees and refuses, while a run over the edited source names a
+never reused by mistake: a run that names the same path again detects the
+mismatched recorded identity and fails, while a run over the edited source names a
 fresh sibling.
 
 ## Tokenization and interactive workflows
@@ -1384,7 +1384,7 @@ ling manpages --output ./ling-manpages
 after installation or inside the repository development shell.
 
 `describe [COMMAND]` reports a command's arguments together with examples and
-the contracts that command owns. The contract index does not include every
+the contracts that command exposes. The contract index does not include every
 JSON Schema; selecting one contract returns its record schema together with
 stream ordering, coverage, pipe, and exit semantics.
 
@@ -1464,7 +1464,7 @@ declared `NAME`, whereas `--input` captions a corpus by its file stem, and an
 artifact's stem is the whole content-addressed name.
 
 `NAME` is the key a shareable link carries, so it is constrained to
-`[A-Za-z0-9_-]`, at most 64 characters; it needs no URL escaping and reveals
+`[A-Za-z0-9_-]`, at most 64 characters; it requires no URL escaping and exposes
 nothing about the filesystem. It is not a caption: a corpus file may be called
 `日本語コーパス.jsonl`, which is a valid filename and an invalid key. A
 repeated `NAME`, a missing `=`, and a name outside that alphabet are each
@@ -1495,7 +1495,7 @@ Format inference is per path, so a JSONL corpus and a Markdown corpus can be
 declared together as long as no override is present. With exactly one corpus
 the override is accepted. The Markdown section flags (`--md-include-sections`,
 `--md-exclude-sections`, `--md-self-labels`) and `--max-record-bytes` are also
-global and apply to every declared corpus; the section flags decide what is
+global and apply to every declared corpus; the section flags determine what is
 read, so they are part of each corpus's prepared-artifact identity.
 `--md-recover-conversion-artifacts` is accepted and has no effect, because
 `lingrep-web` always reads with recovery.

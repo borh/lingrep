@@ -86,7 +86,7 @@ cargo test -p lingrep --test suite -- prepared_protocol::
 The matcher correctness gate is `scripts/test_matcher_correctness.sh`. It runs
 the dictionary-free `lingrep-core` tests that pin observable `CompiledCatalog` behavior
 against the independent oracle (`lingrep-core/src/fsm/compiler/oracle.rs`) plus the
-lingrep patterns contract suites. It needs no dictionary. The full `ci.sh`
+lingrep patterns contract suites. It requires no dictionary. The full `ci.sh`
 lane and the GitHub CI workflow both run it.
 
 ## Pre-Commit Validation
@@ -327,7 +327,7 @@ cargo test --lib -- --test-threads=1
 
 ## Best Practices
 
-1. **Test at the owning boundary** - use library tests for library behavior and CLI tests for process contracts
+1. **Test at the owning boundary** — use library tests for library behavior and CLI tests for process contracts
 2. **Use property tests for complex logic**
 3. **Run the matcher correctness gate after performance changes**
 4. **Add golden file tests for output validation**

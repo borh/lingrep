@@ -16,7 +16,7 @@ reader flags:
 | `--md-self-labels` | Declare heading classes that label only their own heading; see [Self-labels](#self-labels). |
 | `--md-recover-conversion-artifacts` | Accept a fixed set of converter artifacts; see [Conversion-artifact recovery](#conversion-artifact-recovery). Off by default in `ling`. `lingrep-web` always recovers, and the flag has no effect there. |
 
-These flags decide what is read. They change which lines become sentences at
+These flags determine what is read. They change which lines become sentences at
 all and are part of the reader configuration (`MarkdownReaderConfig::reader_tag`),
 so two runs that differ in any of them read two different corpora and produce
 two different prepared artifacts. Query-time selection is separate and is
@@ -26,7 +26,7 @@ spelled `--where '@section …'`; see
 The default exclusion list removes `references` and ten other labels before a
 line becomes a sentence, so `--where '@section = references'` over a corpus
 read with the defaults is always empty. A run whose `--where` clause names
-such a label prints a warning that names the flag that admits it.
+such a label prints a warning identifying the admitting flag.
 
 ## Contract
 
@@ -87,8 +87,8 @@ nearest labeled ancestor heading, counting only section labels, never
 Heading resolution skips classless headings: `### (1) 課題` under
 `## 方法 {.methods}` leaves `methods` active. Labels of outer labeled headings
 are not accumulated: a `## 引用文献 {.references}` under `# 5. 結語 {.conclusion}`
-makes `references`, not `conclusion`, active. Heading level is not used to
-interpret labels.
+makes `references`, not `conclusion`, active. Heading level does not affect
+label interpretation.
 
 ### Self-labels
 
@@ -129,13 +129,13 @@ declared.
 A line is emitted when any active label is included and none is excluded.
 Exclusion takes precedence.
 
-An empty list means something different on each side:
+An empty list has different effects for inclusion and exclusion:
 
 - `--md-exclude-sections ""` disables exclusion. Use it to read unfiltered
   text.
 - `--md-include-sections ""` is an error reported before the run starts. An
   empty include list would admit no line and read an empty corpus while
-  exiting successfully, which is easy to reach from an unset variable in
+  exiting successfully, which can occur when an unset variable is passed in
   `--md-include-sections "$SECTIONS"`. Omit the flag to admit every label. A
   list that names no label after trimming (`"  ,  "`) is the same error.
   `SectionPolicy::new` accepts `Some(empty)`, so a library caller that
@@ -161,4 +161,4 @@ defaults explicitly to extend them.
 
 A self-label never labels an emitted line, so naming one on
 `--md-include-sections` or `--md-exclude-sections` matches nothing. The run
-prints a warning that names the labels and points to `--md-self-labels`.
+prints a warning identifying the labels and referencing `--md-self-labels`.

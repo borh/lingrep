@@ -1,7 +1,7 @@
 # lingrep patterns compiler limitations
 
 What the pattern language cannot express, and the budgets compilation enforces.
-[pattern-language-reference.md](pattern-language-reference.md) owns the syntax.
+[pattern-language-reference.md](pattern-language-reference.md) defines the syntax.
 
 ## Regular context only
 

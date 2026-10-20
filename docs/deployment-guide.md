@@ -150,7 +150,7 @@ With several corpora, leave `format` unset and lingrep-web infers each
 corpus's format from its path. The module checks this at evaluation time.
 
 `default` is optional. When only named corpora are declared, the first in
-attribute-set order serves as the default; Nix sorts attribute names, so
+attribute-set order is the default; Nix sorts attribute names, so
 `bccwj` comes before `science` regardless of their order in the file. Only the
 default corpus is prepared at startup; every other corpus is prepared on first
 selection.
@@ -266,7 +266,7 @@ Each option maps to the lingrep-web flag of the same name.
   them at the proxy.
 - State: lingrep-web writes the artifacts it prepares from corpus sources under
   `/var/lib/lingrep-web/corpora/`. They are rebuildable from the sources, and
-  sessions are not persisted, so lingrep-web has no state that needs a backup.
+  sessions are not persisted, so lingrep-web has no state requiring backup.
 
 ## Logs and observability
 
