@@ -14,7 +14,7 @@ rust-version = "1.95"
 # One version for every crate. The release tag, `ling --version` and the Nix
 # package all read it from here; keeping a copy per manifest is how the
 # workspace sat at 0.1.0 while the newest tag was v0.2.3.
-version = "0.3.1"
+version = "0.3.2"
 license = "MIT"
 repository = "https://github.com/borh/lingrep"
 

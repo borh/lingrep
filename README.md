@@ -64,7 +64,7 @@ unpacks to one directory with the binary, shell completions, manual pages, the
 license, and third-party notices. The Linux builds require glibc 2.35 or newer.
 
 ```bash
-version=0.3.1
+version=0.3.2
 target=aarch64-apple-darwin  # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 base=https://github.com/borh/lingrep/releases/download/v$version
 curl -LO "$base/ling-$version-$target.tar.gz"
