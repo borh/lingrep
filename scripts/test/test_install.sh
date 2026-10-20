@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercises the release installer against a local fake release. Stub `curl`,
 # `uname`, `sysctl`, `getconf` and `ldd` stand in for the network and the
-# platform, so the test needs neither a network nor macOS. Runs the rendered
+# platform, so the test requires neither a network nor macOS. Runs the rendered
 # installer under every POSIX shell found (sh, dash).
 
 set -euo pipefail
@@ -46,12 +46,12 @@ done
 cat >"$stubs/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ " $* " == *" --proto =https "* && " $* " == *" --tlsv1.2 "* ]] || { echo "curl stub: missing HTTPS-only flags" >&2; exit 90; }
+[[ " $* " == *" --proto =https "* && " $* " == *" --proto-redir =https "* && " $* " == *" --tlsv1.2 "* ]] || { echo "curl stub: missing HTTPS-only flags" >&2; exit 90; }
 output= url=
 while [[ $# -gt 0 ]]; do
     case $1 in
         --output) output=$2; shift 2 ;;
-        --proto | --retry) shift 2 ;;
+        --proto | --proto-redir | --retry) shift 2 ;;
         -*) shift ;;
         *) url=$1; shift ;;
     esac
@@ -134,7 +134,7 @@ for shell in "${shells[@]}"; do
     run 1 LING_INSTALL_DIR=relative/bin && [[ $out == *absolute* ]] || fail "relative install dir"
     [[ ! -e "$home/.local/bin/ling" ]] || fail "a refusal left a binary behind"
 
-    # LING_NO_MODIFY_PATH leaves startup files alone; a directory on PATH needs no line.
+    # LING_NO_MODIFY_PATH leaves startup files alone; a directory on PATH requires no line.
     run 0 LING_NO_MODIFY_PATH=1 && [[ ! -e "$home/.bashrc" && $out == *"not on PATH"* ]] || fail "LING_NO_MODIFY_PATH"
     run 0 LING_INSTALL_DIR="$temporary/onpath" PATH="$temporary/onpath:$stubs:$PATH" && [[ ! -e "$home/.bashrc" ]] || fail "directory already on PATH"
 

@@ -65,11 +65,11 @@ jobs:
           key: ${{ matrix.target }}
 
       # sqlite is linked from the bundled source (`sqlx`'s `sqlite-bundled`), so
-      # no system headers are involved and the runner needs no packages.
+      # no system headers are involved and the runner requires no packages.
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p lingrep
 
-      # The smoke gate needs no dictionary, so it runs on every target before
+      # The smoke gate requires no dictionary, so it runs on every target before
       # anything is packaged. A binary that cannot answer `--version` or parse
       # a tracked catalog fails the release here rather than in a user's shell.
       - name: Smoke the binary

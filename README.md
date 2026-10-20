@@ -39,16 +39,16 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 ### Install script
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
 sh install.sh
 ```
 
-The script installs the release it was published with. It picks the archive
-for the computer, checks the archive's SHA-256 checksum, and copies `ling` to
-`~/.local/bin`. If that directory is not on `PATH`, it adds one marked line to
-the shell's startup file. It needs no administrator rights, and running it again
-updates `ling`. On Windows, run it in WSL. You can read `install.sh` before
-running it; [scripts/install.sh](scripts/install.sh) is the source.
+The script installs the release it was published with. It selects the archive
+for the host platform, verifies the SHA-256 checksum, and copies `ling` to
+`~/.local/bin`. When that directory is not on `PATH`, it appends one marked line
+to the shell's startup file. Administrator rights are not required; re-running
+updates `ling`. On Windows, run it in WSL. Inspect `install.sh` before
+execution; [scripts/install.sh](scripts/install.sh) is the source.
 
 | Variable | Effect |
 |---|---|

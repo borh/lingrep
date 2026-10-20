@@ -1,14 +1,14 @@
 #!/bin/sh
 # scripts/install.sh — install `ling` from a lingrep release.
 #
-#   curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
+#   curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
 #   sh install.sh
 #
 # Each release publishes this file with its own version filled in (see
 # scripts/render-installer.sh), so the copy from a release installs that
 # release. The script downloads the archive for this computer, checks it
 # against the release's SHA-256 checksum, and copies `ling` into
-# ~/.local/bin. It needs no administrator rights. When that directory is not
+# ~/.local/bin. Requires no administrator rights. When that directory is not
 # on PATH, it adds one marked line to the shell's startup file.
 #
 # Downloads are HTTPS-only, including redirects. The checksum comes from the
@@ -39,7 +39,7 @@ die() {
 }
 
 fetch() { # url output
-    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location \
         --retry 3 --output "$2" "$1" || die "could not download $1"
 }
 
@@ -55,7 +55,7 @@ sha256_of() {
 
 check_glibc() {
     if ldd --version 2>&1 | grep -qi musl; then
-        die "this Linux uses musl; the release builds need glibc 2.35 or newer"
+        die "this Linux uses musl; release builds require glibc 2.35 or newer"
     fi
     glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}') || glibc=
     [ -n "$glibc" ] || return 0
@@ -63,7 +63,7 @@ check_glibc() {
     minor=${glibc#*.}
     minor=${minor%%.*}
     if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 35 ]; }; then
-        die "glibc $glibc is too old; the release builds need glibc 2.35 or newer (Ubuntu 22.04 or newer)"
+        die "glibc $glibc is too old; release builds require glibc 2.35 or newer (Ubuntu 22.04 or newer)"
     fi
 }
 
