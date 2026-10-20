@@ -149,8 +149,8 @@ pub struct PatternDetailProjection {
     /// Whether `variations` counts the corpus or the retained sample.
     ///
     /// The section distribution beside the variation list is corpus-exact, so
-    /// a sampled variation list puts an inexact menu in front of exact rows —
-    /// which is `vibrato-pipe-b8g`. It is `true` whenever the scan
+    /// a sampled variation list would put an inexact menu in front of exact
+    /// rows. It is `true` whenever the scan
     /// cross-tabulated this pattern.
     pub variations_are_exact: bool,
     pub overview_len: usize,
@@ -184,7 +184,7 @@ pub struct PatternDetailProjection {
     /// able to tell them apart: a corpus that records no section labels at all
     /// has nothing to distribute over, while a corpus that records several and
     /// gave this pattern none is a fact about the pattern. Rendering both as an
-    /// absent panel is how the feature reads as broken (`vibrato-pipe-mlo`).
+    /// absent panel is how the feature reads as broken.
     /// Counted from the tally's own slots rather than from `sections`, which is
     /// already filtered to this pattern's nonzero labels.
     pub corpus_section_labels: usize,
@@ -230,9 +230,9 @@ impl PatternDetailProjection {
             *sampled.entry(hit.key.clone()).or_default() += 1;
         }
         // Corpus-exact when the scan cross-tabulated this pattern. Ranking the
-        // menu on a sample while the section rows beside it are exact is what
-        // `vibrato-pipe-b8g` reports: under a low retention cap the two halves
-        // of one panel describe different populations.
+        // menu on a sample while the section rows beside it are exact would,
+        // under a low retention cap, make the two halves of one panel describe
+        // different populations.
         let counted = match availability {
             SectionAvailability::Available(tally) => match tally.surfaces(pattern) {
                 counted @ SurfaceSections::Counted { .. } => {
@@ -991,7 +991,7 @@ mod tests {
         SectionAvailability::Available(builder.finish().expect("the stream ends cleanly"))
     }
 
-    /// `vibrato-pipe-b8g`. Under a retention cap the sample is a small slice of
+    /// Under a retention cap the sample is a small slice of
     /// the corpus, so a list counted from it ranks the menu by something other
     /// than what the exact section rows beside it report.
     #[test]

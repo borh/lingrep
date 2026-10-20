@@ -780,8 +780,7 @@ pub struct RunCounters {
     /// complete.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub records_unkeyed: u64,
-    /// Captures dropped because a span rewrite removed the tokens they covered
-    ///.
+    /// Captures dropped because a span rewrite removed the tokens they covered.
     ///
     /// Additive and skipped when zero. Present because the published `captures`
     /// field is mode-dependent: without a count, a consumer comparing a default

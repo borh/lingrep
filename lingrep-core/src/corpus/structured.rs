@@ -556,7 +556,6 @@ pub struct AdmittedSentence {
 /// deliberate choice. Allowed here rather than raising
 /// `enum-variant-size-threshold` in `clippy.toml`, which would weaken the lint
 /// for every other enum in the workspace to answer a fact about this one.
-/// See `vibrato-pipe-ay7`.
 #[allow(
     clippy::large_enum_variant,
     reason = "moving the sentence inline beats one allocation per sentence on the streaming path"

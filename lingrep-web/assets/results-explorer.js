@@ -114,7 +114,7 @@ export function visibleForQuery(rowText, query = "") {
  * retained row: pressing it empties the table while the count beside it still
  * says otherwise. The note names that population. A section-only selection
  * keeps the ordinary status line and no note of its own, and a surviving row
- * always clears the note (`vibrato-pipe-5f4`).
+ * always clears the note.
  */
 export function applyFilterEmptyNote(
   detail,
@@ -714,8 +714,7 @@ export const DETAIL_VIEWS = ["concordance", "sections", "clusters", "definition"
  *  and the concordance would never become the default it is meant to be.
  *  A choice survives a pattern swap deliberately — switching pattern while
  *  reading the section chart should not throw the reader back to the table —
- *  and is not persisted across runs; see `vibrato-pipe-nca` for what that
- *  costs. */
+ *  and is not persisted across runs. */
 let chosenDetailView = null;
 
 /**
@@ -990,8 +989,7 @@ function applyRowFilters(detail) {
     );
   }
   // The scope note says which population the panel is describing, and the
-  // panel narrows to the selection wherever the run counted it. See
-  // `vibrato-pipe-9wp`.
+  // panel narrows to the selection wherever the run counted it.
   const scopeNote = detail.querySelector("[data-section-scope-note]");
   if (scopeNote) scopeNote.hidden = surfaceSelected === "all";
   narrowSectionsToSurface(detail, surfaceSelected);

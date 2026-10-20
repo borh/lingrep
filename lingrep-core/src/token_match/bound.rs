@@ -85,7 +85,7 @@ pub struct BoundTokenSentence {
     /// `Arc<Vec<_>>` rather than `Arc<[_]>` so the field is one thin pointer
     /// instead of a fat one. Eight bytes matters here because this type is
     /// carried inside `AdmittedCorpusEvent::Sentence`, whose size clippy
-    /// bounds against its sibling variants; see `vibrato-pipe-ay7`.
+    /// bounds against its sibling variants.
     char_offsets: Option<Arc<Vec<CharSpan>>>,
 }
 

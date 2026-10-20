@@ -74,8 +74,7 @@
       <p class="section-rate-note" data-i18n="detail.section_rate">Ordered by occurrences per million sentences of each section, with the count beside it. A count alone ranks sections by how much corpus each holds.</p>
       {# Both notes are hidden until a surface filter is pressed, and exactly
          one of them is shown then: the counts either narrowed to the selection
-         or they did not, and a reader cannot tell which from the numbers.
-         See `vibrato-pipe-9wp`. #}
+         or they did not, and a reader cannot tell which from the numbers. #}
       {% match projection.surface_sections %}{% when Some with (matrix) %}
       <p class="section-scope-note" data-section-scope-note hidden role="status" data-i18n="detail.section_scope_surface">These counts and rates are for the selected surface.</p>
       {# Corpus-exact sentence counts per surface, positionally aligned with
@@ -103,7 +102,7 @@
     {% else %}
     {# Empty for two unrelated reasons, and a reader cannot act on either
        without being told which. Silence here is what made the panel read as
-       broken; see `vibrato-pipe-mlo`. #}
+       broken. #}
     <section class="detail-view section-distribution section-empty" data-detail-view="sections" data-section-empty aria-labelledby="section-heading">
       <h3 id="section-heading"><span data-i18n="detail.section_heading">Section distribution — corpus</span></h3>
       {% if projection.corpus_section_labels == 0 %}
@@ -136,7 +135,7 @@
      retained sample, so a surface with a positive corpus count can have no
      retained row and empty the table on selection. The note states which
      population each figure describes; `applyRowFilters` unhides it for that
-     selection and hides it otherwise (`vibrato-pipe-5f4`). #}
+     selection and hides it otherwise. #}
   <p class="empty-kwic" data-kwic-filter-empty hidden data-i18n="detail.no_retained_for_surface">No retained hits carry this surface. The corpus count beside it is exact; the concordance lists only the bounded retained sample.</p>
   <div class="kwic-container"><table class="kwic-concordance" role="grid" aria-label="Matched sentences in context" data-i18n-aria-label="detail.kwic" data-hit-grid data-kwic-pagination><thead><tr role="row"><th role="columnheader" scope="col" data-i18n="detail.col_index">#</th>{% if projection.has_hit_sections %}<th class="kwic-section" role="columnheader" scope="col" data-i18n="detail.col_section">Section</th>{% endif %}<th role="columnheader" scope="col" data-i18n="detail.col_sentence">Sentence</th></tr></thead><tbody>
   {% for hit in projection.hits %}<tr class="kwic-row" role="row" aria-selected="false" tabindex="{% if loop.first %}0{% else %}-1{% endif %}" data-hit-ordinal="{{ hit.reference_ordinal }}" data-variation="{{ hit.variation_index }}" data-section-ids="{% for i in hit.section_indices %}{{ i }} {% endfor %}" data-expandable-candidate hx-get="api/hit-detail/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ hit.reference_ordinal }}" hx-trigger="hit-select" hx-target="#inspector-body" hx-swap="innerHTML" hx-sync="#inspector-body:replace"><td class="kwic-ordinal" role="rowheader">{{ hit.reference_ordinal + 1 }}</td>{% if projection.has_hit_sections %}<td class="kwic-section" role="gridcell"{% if !hit.section_labels.is_empty() %} title="{% for label in hit.section_labels %}{{ label }}{% if !loop.last %}, {% endif %}{% endfor %}"{% endif %}>{% for label in hit.section_labels %}<span class="kwic-section-label">{{ label }}</span>{% endfor %}</td>{% endif %}<td class="kwic-sentence-cell" role="gridcell">{% if !hit.section_labels.is_empty() %}<span class="kwic-section-meta" data-section-meta>{% for label in hit.section_labels %}<span>{{ label }}</span>{% endfor %}</span>{% endif %}<span class="kwic-sentence" data-expandable-text lang="ja"><span class="kwic-left"><span class="kwic-left-text">{{ hit.left }}</span></span><mark class="kwic-key">{{ hit.key }}</mark><span class="kwic-right">{{ hit.right }}</span></span><button type="button" class="kwic-expand btn btn-compact" data-expand-sentence hidden aria-expanded="false" aria-label="Show full sentence" title="Show full sentence" data-i18n-aria-label="detail.show_full_sentence" data-i18n-title="detail.show_full_sentence"></button></td></tr>

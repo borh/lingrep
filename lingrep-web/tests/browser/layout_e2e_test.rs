@@ -1067,8 +1067,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
     //
     // Scrolled by the region rather than by a fixed offset: the strip's
     // containing block is `.kwic-region`, so it cannot pin before the region
-    // reaches the top — which is the point of `vibrato-pipe-csb`, and at 800px
-    // the region has not.
+    // reaches the top, and at 800px the region has not.
     let pane_header_pin: (String, f64) = driver
         .execute(
             "window.scrollTo(0, window.scrollY + document.querySelector('.kwic-region').getBoundingClientRect().top + 800);const h=document.querySelector('.kwic-pane-header');return [getComputedStyle(h).position,h.getBoundingClientRect().top];",
@@ -1984,7 +1983,7 @@ async fn section_and_surface_filters_compose_and_persist() -> WebDriverResult<()
     assert!(
         !scope_note_hidden(&driver).await?,
         "a surface filter narrows the section counts too, and the panel must \
-         say which population it is describing (vibrato-pipe-9wp)"
+         say which population it is describing"
     );
 
     // 2. Also select section methods (index 0) → only r1 (v1 ∩ methods) remains.
@@ -2674,8 +2673,7 @@ async fn the_query_band_stays_in_view_while_the_results_scroll() -> WebDriverRes
 /// The concordance's controls stick to the concordance and to nothing above
 /// it. They used to be a child of the whole panel, so they pinned across the
 /// definition and distribution bands too — 153px of header over a table a
-/// screen and a half below, and the charts passing underneath it
-/// (`vibrato-pipe-csb`).
+/// screen and a half below, and the charts passing underneath it.
 ///
 /// The pattern's name and counts are its identity rather than a control, so
 /// they stay at the top of the panel and scroll away.

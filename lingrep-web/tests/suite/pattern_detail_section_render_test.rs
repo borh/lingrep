@@ -66,7 +66,7 @@ fn render_with(hits: Vec<RetainedHitText>, sections: &SectionAvailability) -> St
 /// Every other case in this file goes through `sample_sections`, which derives
 /// the tally FROM the hits — so the two agree by construction and the states
 /// where they disagree are unreachable. Those are exactly the states that made
-/// the panel read as broken (`vibrato-pipe-mlo`), so they need a tally the
+/// the panel read as broken, so they need a tally the
 /// hits did not produce.
 ///
 /// `spans` are `(slot, sentence_count)` in slot order; sentences outside every
@@ -105,7 +105,7 @@ fn corpus_tally(labels: &[&str], spans: &[(u32, u64)], sentences: u64) -> Sectio
 
 /// A tally whose surface vocabulary comes from the corpus rather than from the
 /// retained hits, so a surface can carry a positive corpus count and no
-/// retained row — the divergence `vibrato-pipe-5f4` reports.
+/// retained row.
 fn surface_corpus_tally() -> SectionAvailability {
     let mut builder = build(
         &[lingrep_corpus::SectionCoverage {
@@ -145,8 +145,7 @@ fn kwic_row_variations(html: &str) -> Vec<String> {
 /// The variation list is corpus-exact and the concordance is the bounded
 /// retained sample, so a surface can have a positive corpus count and no
 /// retained row. Pressing it empties the table, and the pane must state which
-/// population each figure describes rather than leaving a blank grid
-/// (`vibrato-pipe-5f4`).
+/// population each figure describes rather than leaving a blank grid.
 #[test]
 fn a_surface_with_no_retained_row_states_why_the_table_is_empty() {
     let sections = surface_corpus_tally();
@@ -180,7 +179,7 @@ fn a_surface_with_no_retained_row_states_why_the_table_is_empty() {
 
 /// The panel now narrows to the selected surface, and the note that says which
 /// population it is describing ships hidden; `applyRowFilters` unhides it while
-/// a surface filter is pressed (`vibrato-pipe-9wp`).
+/// a surface filter is pressed.
 #[test]
 fn the_section_panel_carries_a_scope_note_that_starts_hidden() {
     let html = render(vec![hit(0, "α", &["methods"]), hit(1, "β", &["methods"])]);

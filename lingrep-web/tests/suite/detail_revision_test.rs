@@ -176,7 +176,7 @@ async fn pattern_detail_projects_one_ordered_sample_for_distribution_and_kwic() 
     assert!(body.contains("3 retained hits"));
     assert_eq!(body.matches("class=\"kwic-row\"").count(), 3);
     // The wired path cross-tabulates, so the variation list reports the corpus
-    // rather than the retained sample (`vibrato-pipe-b8g`).
+    // rather than the retained sample.
     assert!(body.contains("Surface variations \u{2014} corpus"));
     assert!(!body.contains("Surface variations in retained sample"));
     assert!(

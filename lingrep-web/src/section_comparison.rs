@@ -4,7 +4,7 @@
 //! pattern occur", and answering "does it occur there more than the others do"
 //! meant selecting patterns one at a time and holding bars in memory — bars
 //! that are scaled to each pattern's own maximum, so even a careful reader was
-//! comparing differently-scaled charts. See `vibrato-pipe-0f3`.
+//! comparing differently-scaled charts.
 //!
 //! Nothing new is measured. [`SectionTally`](crate::section_tally::SectionTally)
 //! is already row-major `patterns × slots` over the whole catalog, so every

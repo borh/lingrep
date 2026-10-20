@@ -682,7 +682,7 @@ fn npv_collocation_publishes_a_normalized_verb_over_an_unnarrowed_record() {
     assert_eq!(
         (stats.records_unkeyed, stats.captures_dropped),
         (0, 0),
-        "a scoped transform drops no capture, which is what vibrato-pipe-clx was"
+        "a scoped transform drops no capture"
     );
 }
 

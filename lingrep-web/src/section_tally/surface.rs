@@ -5,7 +5,7 @@
 //! answers "where does this pattern occur" and cannot answer "where does *this
 //! surface of it* occur" — so selecting a surface variation in the detail pane
 //! left the section panel showing the whole pattern. This adds the third axis
-//! the question needs (`vibrato-pipe-9wp`).
+//! the question needs.
 //!
 //! The axis is unbounded where the other two are not. A corpus declares its
 //! section vocabulary before the scan and the catalog declares its patterns,

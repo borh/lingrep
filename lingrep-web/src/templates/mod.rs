@@ -790,8 +790,7 @@ mod tests {
 
     /// The band exists to make rows comparable, so what it must render is one
     /// scale: `intensity` is already relative to the whole table, and the
-    /// template must not reintroduce a per-row denominator. See
-    /// `vibrato-pipe-0f3`.
+    /// template must not reintroduce a per-row denominator.
     #[test]
     fn the_comparison_band_shades_every_row_on_one_scale() {
         use crate::section_comparison::{

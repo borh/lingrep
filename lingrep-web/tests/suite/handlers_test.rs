@@ -533,8 +533,7 @@ mod handlers_test {
     /// `localStorage` key, so a single click hid the surface distribution and
     /// the section bar graph for every pattern in every corpus, permanently
     /// and with nothing on screen to say why. The band is cheap to collapse
-    /// again on any visit; the preference was not worth its worst case. See
-    /// `vibrato-pipe-nca`.
+    /// again on any visit; the preference was not worth its worst case.
     #[test]
     fn the_distribution_band_keeps_no_persisted_open_state() {
         let explorer = include_str!("../../assets/results-explorer.js");

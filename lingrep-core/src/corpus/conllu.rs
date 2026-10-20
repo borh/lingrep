@@ -1219,7 +1219,7 @@ fn split_set(value: &str, separator: char) -> Box<[CompactString]> {
 /// The separator is removed only when one was appended. It used to be an
 /// unconditional `pop`, which silently ate the final character of any sentence
 /// whose last token carried `SpaceAfter=No` — the ordinary shape of Japanese
-/// CoNLL-U without a `# text` comment (`vibrato-pipe-91p`).
+/// CoNLL-U without a `# text` comment.
 fn reconstruct_with_offsets(
     words: &[Word],
     multiword: &[(std::ops::Range<usize>, String, bool)],

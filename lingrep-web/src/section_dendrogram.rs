@@ -14,7 +14,7 @@
 //!
 //! Built **from** the comparison rather than from the tally, so the table and
 //! the trees cannot disagree about which patterns and which sections are in
-//! scope. See `vibrato-pipe-xet`'s sibling request.
+//! scope.
 
 use crate::section_comparison::SectionComparison;
 
