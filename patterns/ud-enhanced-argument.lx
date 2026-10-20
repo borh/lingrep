@@ -8,8 +8,7 @@
 #
 # These patterns require a complete enhanced graph observation. A morphology-
 # only corpus cannot bind this catalog, and an incomplete CoNLL-U sentence
-# satisfies neither pattern. The implementation and real-corpus evidence are
-# recorded in docs/results/2026-08-31-enhanced-dependency-query/README.md.
+# satisfies neither pattern.
 
 defaults
   status: "experimental"

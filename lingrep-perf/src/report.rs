@@ -262,8 +262,7 @@ pub fn render(campaign: &Campaign, adjudication: &Adjudication) -> String {
                 "\nThis campaign declared `--stream-output`, which is the most common cause: \
                  the hasher becomes the pipeline's rate limiter on any catalog that publishes \
                  faster than it can consume. Re-run without it, or adjudicate on `user` with \
-                 `lingrep-perf reselect`. See \
-                 `docs/results/2026-08-18-campaign-digest-streaming`."
+                 `lingrep-perf reselect`."
             );
         }
         if primary_affected && adjudication.primary_metric == crate::campaign::Metric::Wall {
@@ -342,9 +341,9 @@ pub fn render(campaign: &Campaign, adjudication: &Adjudication) -> String {
         let plan = crate::plan::plan(campaign);
         let row_for = |catalog: &str| plan.iter().find(|row| row.catalog == catalog);
         // A catalog at the ladder's end owes nothing further, and the planner
-        // already says so in `Row::reason`. This section used to drop that
-        // field and print "20 blocks owed, 20 complete" beside an instruction
-        // to escalate — advice no run can follow.
+        // already says so in `Row::reason`; without it this section would
+        // print "20 blocks owed, 20 complete" beside an instruction to
+        // escalate — advice no run can follow.
         let any_outstanding = escalate
             .iter()
             .any(|stream| row_for(&stream.catalog).is_some_and(crate::plan::Row::outstanding));

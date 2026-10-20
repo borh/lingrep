@@ -7,7 +7,7 @@ end
 #
 # The classified value is the complete canonical (start, end) match. Each
 # public pattern below adds evidence fixed before the variable gap while
-# retaining the raw suffix language. This keeps independently greedy SGX
+# retaining the raw suffix language. This keeps independently greedy
 # patterns aligned on the same endpoint.
 #
 # These names record evidence for automatic exclusion from the primary
@@ -27,14 +27,14 @@ end
 #   exclude_directional_frame: 29
 #   exclude_malformed_first_anchor: 18
 #   candidate: 2,001
-#   total: 3,186 (former filtered baseline: 2,646)
+#   total: 3,186
 # These are classifier-output counts, not confirmed linguistic constructions.
 
-# Everything the gap and anchor predicates exclude. Nine sites spelled this
-# list before it had a name.
+# Everything the gap and anchor predicates exclude, named once for its nine
+# uses.
 set DOUBLE_WO_NON_CONTENT := {動詞, 助動詞, 補助記号}.
 
-# Characterized BCCWJ anchor counts from the former broad result:
+# Characterized BCCWJ anchor counts:
 #   対象 116; 理由 90; はじめ 78; 基 44; 機 36; 目的 35;
 #   めど/メド/目途 30; 参考 27; 前提 26; 背景 21; 基準 15;
 #   頼り 12; 軸 11; 目標 10; 舞台 7.
@@ -60,13 +60,8 @@ fragment double_wo_gap :=
   [unidic.orthbase!=を & unidic.pos1 not in @DOUBLE_WO_NON_CONTENT].
 
 # The boundary is named once and used twice: as the positive test, and
-# complemented as the gap's exclusion. Before `test` existed these were two
-# independent definitions that had to agree, and they had already stopped
-# agreeing — the boundary tested `orth` while its supposed complement
-# excluded `unidic.orthbase`. Nothing reported the drift, because the relationship
-# between the two was stated only in the prose below. Deriving one from the
-# other is what makes that class of drift unrepresentable rather than merely
-# unobserved.
+# complemented as the gap's exclusion. Deriving one from the other keeps the
+# two from drifting apart.
 test double_wo_boundary := text=\u3000.
 
 role: "helper"
@@ -108,21 +103,18 @@ fragment double_wo_non_boundary_suffix :=
 # classes these predicates distinguish, and keeps the wrong rewrite beside
 # the right one so the check cannot quietly stop discriminating.
 #
-# The boundary tests `orth` alone, for two reasons.
+# The boundary tests `text` alone, for two reasons.
 #   * It is a surface fact. The evidence is that a U+3000 survived in the
-#     text, which is what `orth` records. `unidic.orthbase` is a dictionary base
-#     text; featurization now populates it for every token, but for an
+#     text, which is what `text` records. `unidic.orthbase` is a dictionary base
+#     text; featurization populates it for every token, but for an
 #     unknown word its value is the surface synthesised from the token
 #     rather than a dictionary entry — which is not what this test asks
 #     about.
-#   * Dropping the former `& unidic.pos1=空白` conjunct is what makes the
-#     classification a partition again. While the boundary was a
-#     *conjunction*, its negation was a disjunction, which SGX could not
-#     then express inside `[…]`; a U+3000 tagged as anything but 空白
-#     matched the raw language but no bucket. SGX can express it now:
-#     `!@double_wo_boundary` complements the whole named test whatever
-#     shape it has, so the partition no longer depends on the boundary
-#     staying a single atom. It depends instead on the gap being *derived*
+#   * The boundary has no `& unidic.pos1=空白` conjunct, so the
+#     classification is a partition: a U+3000 tagged as anything but 空白
+#     still lands in a bucket. `!@double_wo_boundary` complements the whole
+#     named test whatever shape it has, so the partition does not depend on
+#     the boundary staying a single atom. It depends instead on the gap being *derived*
 #     from the boundary rather than restating it — which is why
 #     `test double_wo_boundary` above is referenced twice and spelled once.
 #     Pinned by
@@ -221,7 +213,7 @@ fragment double_wo_directional_body :=
   @double_wo_particle
   @double_wo_anchor.
 
-# Structural noise formerly removed silently. Only first-anchor evidence is
+# Structural noise, classified rather than removed. Only first-anchor evidence is
 # endpoint-safe; the same spellings at the second anchor remain candidates.
 role: "helper"
 fragment double_wo_malformed_anchor :=

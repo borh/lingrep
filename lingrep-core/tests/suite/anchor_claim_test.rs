@@ -153,9 +153,8 @@ fn sibling_bracket_groups_nest_to_one() {
 
 /// An unmatched closer clamps at zero rather than going negative.
 ///
-/// A bare `）` is a *different* approximation from the depth bound —
-/// `docs/results/2026-08-04-anchor-nesting-claim/` records it as one this
-/// schema does not express — so it must not be counted as nesting. Without the
+/// A bare `）` is a different approximation from the depth bound, one this
+/// schema does not express, so it must not be counted as nesting. Without the
 /// clamp this entry underflows the depth counter instead of reporting 0.
 #[test]
 fn an_unmatched_closer_does_not_nest() {

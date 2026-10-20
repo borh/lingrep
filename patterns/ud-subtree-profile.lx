@@ -1,12 +1,11 @@
 # Bounded three-node UD subtree profiles.
 #
 # Krsnik and Dobrovoljc (2025) demonstrate the value of counting recurring
-# dependency subtrees with STARK; see the bibliography and complete attribution
-# in docs/design/2026-08-30-pattern-repertoire-graph-query-round.md. This catalog
+# dependency subtrees with STARK. This catalog
 # takes the smallest useful slice of that idea without importing STARK's query
 # language or statistical implementation: two direct topologies, with the
 # observed POS and relation labels published as keys for downstream
-# frequency/keyness analysis. The chain uses SGX's native order-independent
+# frequency/keyness analysis. The chain uses the language's order-independent
 # node binding; the fork retains explicit surface roles.
 #
 # `two_dependents` is one head with two children. `dependency_chain` is a

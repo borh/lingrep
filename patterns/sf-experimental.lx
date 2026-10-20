@@ -40,12 +40,9 @@ end
 # over one anchor. Each statement carries the upstream function it translates.
 #
 # The block is a publication decision, not a matching one: it changes which
-# records this catalog emits and never which spans it finds. See
-# docs/results/2026-08-07-r1-policy-migration.md for the per-stage differential,
-# and docs/results/2026-08-02-r1-sf-experimental-migration.md and
-# docs/results/2026-08-04-anchor-acceptance.md, which record the first two
-# migrations as they were first measured — under the per-definition keys the
-# block replaced.
+# records this catalog emits and never which spans it finds.
+# `scripts/upstream_sf_differential.py` compares it stage by stage with
+# upstream.
 #
 # Three approximations, named rather than hidden:
 #
@@ -61,9 +58,7 @@ end
 #     than published separately. This is why our record counts entering stage 6
 #     are lower than upstream's by roughly the number of subjects.
 #
-# Three rows of the design's expressibility table
-# (docs/design/2026-08-06-policy-sublanguage-syntax.md) are wrong, and the block
-# follows upstream rather than the table: stage 3 drops the passive and not the
+# The block follows upstream: stage 3 drops the passive and not the
 # aspect; stage 2's subject is @ている alone, since upstream's `_TEIRU_NAMES` is
 # a one-element set; and stage 6 measures against `propositional_end`, the
 # `effective_end` that `filter_pipeline.py:100` passes, not the raw sentence end.
@@ -73,7 +68,6 @@ end
 # — 2 sentences in 545 differ — which is why a punctuation-only anchor
 # suffices. On a corpus with parenthesized citations it would be a different
 # rule, and this catalog would need a wider `exclude` fragment on the anchor.
-# See docs/results/2026-08-04-dm-annotations-parity.md.
 #
 # Documentation-only citation sketches (not executable definitions):
 # citation_note := 注 [upos=NUM] [text=）]?.
@@ -125,7 +119,7 @@ fragment NARU := [lemma in {成る, なる} & text != なろう].
 
 # The negation operand of stage 2's `exclude`, and deliberately NOT `NAI`.
 #
-# `NAI` is wider (`ない 無い ず ぬ なかっ 無かっ ねえ`), reads `orth`, and takes an
+# `NAI` is wider (`ない 無い ず ぬ なかっ 無かっ ねえ`), reads `text`, and takes an
 # optional trailing `た`. Reusing it would drop more `ている` records than
 # the intended negation inventory, and it reads `lemma` so the inflected
 # `なかっ` is still recognized.
@@ -952,7 +946,7 @@ policy
   # mere presence decides. `evidence: current` because upstream asks it of the
   # survivors, and by this point most of them are gone.
   #
-  # `だ` is absent from `%s0_conditional` and so is never selected. That absence
-  # is the whole of what `s0_always_keep: true` used to say.
+  # `だ` is absent from `%s0_conditional` and so is never selected, which
+  # keeps it unconditionally.
   require %s0_conditional with: %upper_layer, relation: in_sentence, evidence: current.
 end

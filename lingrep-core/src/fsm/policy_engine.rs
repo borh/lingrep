@@ -4,10 +4,9 @@
 //!
 //! `apply_policy_records` is four steps: synthesized evidence is stripped, the
 //! program runs, spans are shaped, and names are rewritten. The program is the
-//! whole of suppression and admission — the three key-driven passes that used
-//! to precede it retired with the keys that drove them, so its input is the
-//! hidden-stripped canonical set and every ordering argument here reduces to
-//! the authored order alone.
+//! whole of suppression and admission, so its input is the hidden-stripped
+//! canonical set and every ordering argument here reduces to the authored
+//! order alone.
 //!
 //! It runs **before** shaping and relabeling, and that is not an arrangement of
 //! convenience. Every subject, operand and `priority_order` lookup keys on the
@@ -436,8 +435,7 @@ fn decide_associate(
 ///
 /// It is also what makes a single-edge detach total and non-empty by
 /// construction. With `>=` the compiler would need a width proof, and that
-/// proof rejects 11 of the 13 sites the shipped catalog migrates — see
-/// `docs/design/2026-08-06-policy-sublanguage-syntax.md` §3.
+/// proof rejects 11 of the 13 detach sites in `patterns/sf-experimental.lx`.
 ///
 /// The region is located against the **raw** span and then applied to the
 /// **public** one. Those differ once an earlier detach has narrowed the record,
@@ -504,7 +502,7 @@ fn holds(relation: Relation, subject: &Match, operands: &[RawId], raw: &[Match])
 /// snapshot order, which is why the rank never reaches publication order.
 ///
 /// Adjudication is against the **kept** set, not against every loser, matching
-/// what the legacy priority-group pass does: a chain A–B–C where A overlaps B
+/// what the priority-group pass does: a chain A–B–C where A overlaps B
 /// and B overlaps C but A does not overlap C publishes both A and C, because B
 /// loses to A and then shields nothing.
 ///

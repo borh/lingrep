@@ -101,7 +101,7 @@ pub enum DiscoveryError {
 }
 
 impl DiscoveryError {
-    /// Convert a discovery failure for legacy APIs that expose `io::Result`.
+    /// Convert a discovery failure for APIs that expose `io::Result`.
     pub(crate) fn into_io(self) -> std::io::Error {
         let kind = match &self {
             Self::IoAt { source, .. } => source.kind(),

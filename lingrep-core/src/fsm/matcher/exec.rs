@@ -1057,7 +1057,7 @@ impl Matcher {
     /// `entry_position == position` is the same tuple an epsilon hop would
     /// derive, so it claims its id up front; a seed at `entry_position !=
     /// position` does not, because the derived tuple is genuinely distinct and
-    /// the old set kept both. Order does change: seeds are grouped rather than
+    /// both are kept. Order does change: seeds are grouped rather than
     /// visited in hash order. Frontier order is not observable --- successors
     /// land in a deduplicating `next_states`, and matches land in a
     /// `MatchSink` keyed on `(pattern, start, end)`.

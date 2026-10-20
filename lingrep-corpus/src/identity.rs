@@ -61,14 +61,11 @@ const READER_WITH_NORMALIZATION_DOMAIN: &[u8] = b"lingrep/reader-with-normalizat
 impl ReaderIdentity {
     /// Derives the identity of reading `config` under `normalization`.
     ///
-    /// **The only derivation.** It lives here, in the crate both binaries
-    /// depend on, because it used to live as a private helper inside
-    /// `ling`'s command module — where `lingrep-web` could not call it, so
-    /// `lingrep-web` used the unframed
+    /// **The only derivation.** It lives in the crate both binaries depend on
+    /// so that `ling` and `lingrep-web` name one artifact for one JSONL root;
+    /// the unframed
     /// [`reader_identity_digest`](lingrep_core::corpus::reader_identity_digest)
-    /// instead. The two then named two artifacts for one JSONL root, with
-    /// byte-identical decoded content, which is content-addressing that is not.
-    /// Being unreachable was the whole mechanism; being reachable is the fix.
+    /// names a different one.
     ///
     /// Normalization is an input because it decides the bytes a reader admits.
     /// It is also recorded on the analyzer descriptor, so an artifact's address
@@ -478,9 +475,8 @@ mod reader_identity_tests {
     /// somebody typed rather than a consequence somebody discovered. Moving one
     /// is legitimate only as an identity-scheme cutover.
     ///
-    /// The `nfc`/`jsonl` row is the specific value `lingrep-web` failed to produce:
-    /// it derived the unframed digest instead, so one JSONL root got two
-    /// artifacts with byte-identical decoded content.
+    /// The `nfc`/`jsonl` row pins the value both binaries derive for a JSONL
+    /// root, which differs from the unframed digest.
     ///
     /// The Markdown row carries the default [`SectionPolicy`], which is the one
     /// a CLI build with no `--md-*-sections` flags uses. It is not the only

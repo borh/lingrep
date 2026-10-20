@@ -241,7 +241,7 @@ mod index_tests {
     /// `(indexed attributes, distinct indexed values, words, always population)`.
     ///
     /// `double-wo` and `test-simple` have one spawn group each, so they build
-    /// no index at all and keep the historical per-group scan.
+    /// no index at all and keep the per-group scan.
     ///
     /// The attribute and always-population columns are not free parameters:
     /// they must equal the spawn candidate-set census's `A attributes` and
@@ -518,7 +518,7 @@ tail := [unidic.pos1=VERB] $.
 
     /// The trace observable: the emitted entry multiset and `Trace.matches`
     /// must survive dispatch, which is what pins ascending-bit iteration to
-    /// the historical group order.
+    /// group order.
     #[test]
     fn dispatch_preserves_the_trace_entry_multiset() {
         let compiled = compile_catalog(

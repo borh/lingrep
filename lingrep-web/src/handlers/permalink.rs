@@ -53,7 +53,7 @@ async fn create_permalink(
     let Some(slot) = store.corpora.resolve(form.corpus.as_deref()) else {
         return error(StatusCode::NOT_FOUND, "unknown_corpus");
     };
-    // A cold target is no longer an error. `c` is an assertion about which
+    // A cold target is not an error. `c` is an assertion about which
     // content produced a result, so a corpus with no identity yet simply has
     // nothing to assert — emitting `k` alone is the correct answer, and is what
     // lets the selector switch to a corpus that has never been built.

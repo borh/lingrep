@@ -558,21 +558,6 @@ fn analyzer_requires_one_family_and_unique_fields() {
     }
 }
 
-#[test]
-fn retired_dictionary_metadata_is_a_hard_error() {
-    let error = match compile_catalog(
-        PatternSource::named("probe", "dictionary: \"unidic-cwj\"\np := []."),
-        CompileLimits::default(),
-    ) {
-        Ok(_) => panic!("dictionary metadata was removed at the V1 cutover"),
-        Err(error) => error,
-    };
-    assert!(
-        error.to_string().contains("retired `dictionary:`"),
-        "{error}"
-    );
-}
-
 /// `~` and `!~` read whichever kind the schema declares.
 ///
 /// Every other operator names one physical kind, so the schema decides

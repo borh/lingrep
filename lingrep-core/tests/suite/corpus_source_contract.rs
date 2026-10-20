@@ -12,14 +12,13 @@
 )]
 //! Contract tests for `lingrep-core::corpus::source::CorpusSource`.
 //!
-//! These pin the discovery and streaming behavior the web source previously
-//! owned: directory discovery selects Markdown or CoNLL-U documents recursively
-//! (sorted, case-insensitive), unsupported directory formats are rejected,
-//! fresh streams are independent, and per-file failures are qualified with the
-//! offending path.
-//! A boundary assertion also pins that the lingrep-core corpus module never exports
-//! cache (`vp4.zst`) or provenance (`provenance.sqlite`) symbols — those remain
-//! the web's responsibility.
+//! These pin the discovery and streaming behavior: directory discovery selects
+//! Markdown or CoNLL-U documents recursively (sorted, case-insensitive),
+//! unsupported directory formats are rejected, fresh streams are independent,
+//! and per-file failures are qualified with the offending path. A boundary
+//! assertion also pins that the lingrep-core corpus module never references
+//! the prepared-corpus provenance database (`provenance.sqlite`), which
+//! `lingrep-corpus` owns.
 
 use std::fs;
 use std::io;
@@ -32,11 +31,8 @@ use lingrep_core::corpus::source::{
 use lingrep_core::corpus::{AdmittedCorpusEvent, MarkdownReaderConfig, SectionPolicy};
 use tempfile::tempdir;
 
-/// The lingrep-core corpus source must not carry cache-provenance symbols; the web
-/// owns that concern. Grep the file contents at compile time so a future edit
-/// cannot reintroduce them unnoticed.
 #[test]
-fn source_module_does_not_export_cache_or_provenance_symbols() {
+fn source_module_does_not_reference_the_provenance_database() {
     let source_rs = include_str!("../../src/corpus/source.rs");
     let mod_rs = include_str!("../../src/corpus/mod.rs");
     let text_source_rs = include_str!("../../src/corpus/text_source.rs");
@@ -45,10 +41,6 @@ fn source_module_does_not_export_cache_or_provenance_symbols() {
         ("mod.rs", mod_rs),
         ("text_source.rs", text_source_rs),
     ] {
-        assert!(
-            !content.contains(".vp4.zst"),
-            "lingrep-core corpus `{name}` must not reference the `.vp4.zst` cache extension"
-        );
         assert!(
             !content.contains("provenance.sqlite"),
             "lingrep-core corpus `{name}` must not reference the `provenance.sqlite` database"

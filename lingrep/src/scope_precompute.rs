@@ -110,7 +110,7 @@ pub fn resolve_scope(
             DocumentOutcome::RequiresSentences => {
                 // Admitted at document grain: the document was *in scope*,
                 // whether or not any of its sentences turn out to be. The two
-                // grains no longer move together and the report says so.
+                // grains need not move together and the report says so.
                 documents.record(Verdict::Admitted, 1).map_err(overflow)?;
                 for ordinal in row.first_sentence..end {
                     let mut sentence_values = Metadata::default();

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `install.sh` follows the XDG Base Directory Specification: `ling` goes to
+  `$XDG_BIN_HOME` when set, and the manual pages and Bash, fish and zsh
+  completions from the archive are installed under `$XDG_DATA_HOME`
+  (default `~/.local/share`). See [Install ling](docs/installation.md).
+- `ling` and `ling -h` describe what each command produces and end with
+  example invocations.
+
 ## [0.3.2] - 2026-10-20
 
 ### Added

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/check-test-filters.sh — fail if a CI gate filters on a test module
-# that no longer exists.
+# that does not exist.
 #
 # Several gates run `cargo test ... -- <module>:: --quiet` to
 # select one module out of a consolidated suite binary. A libtest name filter

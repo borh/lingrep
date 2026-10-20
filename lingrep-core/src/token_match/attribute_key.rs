@@ -46,8 +46,7 @@ impl AttributeKey {
         self.0.as_bytes()
     }
 
-    /// Returns the source spelling. Kept as a naming bridge for catalog
-    /// inspection APIs while callers migrate from the retired physical enum.
+    /// Returns the source spelling, the same string as [`Self::as_str`].
     #[must_use]
     pub fn pattern_key(&self) -> &str {
         self.as_str()

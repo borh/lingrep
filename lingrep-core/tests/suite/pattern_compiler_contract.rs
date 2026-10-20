@@ -416,14 +416,6 @@ fn double_wo_catalog_partitions_exact_raw_matches() {
         );
         assert_eq!(at_zero[0].pattern.as_str(), expected_at_zero, "{label}");
     }
-
-    assert!(
-        catalog
-            .patterns()
-            .iter()
-            .all(|(name, _)| name != "double_wo格"),
-        "retired broad name must not remain public"
-    );
 }
 
 /// Class S: a U+3000 that the dictionary did NOT tag 空白. It is a
@@ -481,10 +473,10 @@ fn double_wo_classification_at_ideographic_space_not_tagged_blank() {
     ));
 }
 
-/// The fragment boundary reads `orth`, not `orthBase`, and the difference is
-/// observable. `orth` is the token surface; `orth_base` is a dictionary base
-/// form, and on a token that predates the surface fallback in
-/// `token_match::featurize` it can be absent entirely — a missing attribute
+/// The fragment boundary reads `text`, not `unidic.orthbase`, and the
+/// difference is observable. `text` is the token surface; `unidic.orthbase` is
+/// a dictionary base form, and on a token built without the surface fallback
+/// in `token_match::featurize` it can be absent entirely — a missing attribute
 /// satisfies neither polarity, making `[orthBase=…]` match nothing. The token
 /// built below keeps that case reachable as a unit, which is what pins the
 /// catalog's choice of attribute rather than merely its current behaviour.
@@ -1082,11 +1074,6 @@ fn pinned_tree_sitter_parses_repository_catalogs() {
             "pinned lingrep patterns grammar parsed an incomplete definition catalog for {path}"
         );
         quantified_patterns += count_named_nodes(root, "quantified_pattern");
-        assert_eq!(
-            count_named_nodes(root, "atomic_pattern"),
-            0,
-            "legacy CST node remains in {path}"
-        );
     }
     // Catches the stale half: an entry left behind for a catalog that was
     // deleted or renamed. Without this the map only ever grows, and a name
@@ -2273,8 +2260,8 @@ fn where_clause_filters_before_longest_candidate_selection() {
 #[test]
 fn double_wo_dep_candidate_matches_shared_heads_and_rejects_frames() {
     // The dependency successor to double-wo's candidate pattern
-    // (patterns/double-wo-dep.lx). Both witnesses follow parses recorded in
-    // docs/results/2026-08-28-double-wo-dependency-validation: the genuine
+    // (patterns/double-wo-dep.lx). Both witnesses follow recorded parses: the
+    // genuine
     // double-を reading of 氏名を住所を備考に入力した — both nouns obj of
     // 入力, the analysis GiNZA got wrong and a correct parse surfaces as
     // obj+obj — and the をXに frame 生徒を対象にアンケート調査を実施した,
@@ -2360,12 +2347,9 @@ fn double_wo_dep_candidate_matches_shared_heads_and_rejects_frames() {
 /// `$n2 -[case]-> $w2` — を's `dep.head` is 3 — and 理想 is the one the
 /// evaluator reaches first, from the shorter gap.
 ///
-/// This failed until `deduplicate` keyed on the whole slot vector: both
-/// assignments reach position 5, the position-only key kept the first, and
-/// the clause never saw the other. 82% of `patterns/double-wo-dep.lx`'s
-/// misses against a head-sharing oracle were this
-/// (docs/results/2026-08-29-double-wo-dep-label-set-revalidation, §Result 3;
-/// docs/design/2026-08-29-where-capture-assignment.md).
+/// Both assignments reach position 5, so `deduplicate` must key on the whole
+/// slot vector: a position-only key keeps the first and the clause never sees
+/// the other.
 #[test]
 fn a_where_clause_reaches_a_satisfying_assignment_a_failing_one_shadowed() {
     let sentence = "1\tX\tX\tNOUN\t_\t_\t6\tobj\t_\t_\n\
@@ -2545,8 +2529,7 @@ fn where_clause_static_refusals_each_carry_their_own_code() {
 /// The refusal is sound because a single-entry alternation takes one branch,
 /// and deliberately incomplete everywhere else. Each shape here has a live
 /// precedent, so a rule that over-refused would delete a legal query rather
-/// than merely annoy someone
-/// (docs/design/2026-08-29-where-operand-branch-exclusivity.md).
+/// than merely annoy someone.
 #[test]
 fn branch_exclusivity_admits_every_shape_that_can_bind_both() {
     for (source, why) in [
@@ -3202,10 +3185,8 @@ fn tilde_rejects_a_set_operand() {
 /// valid-token set and lex as ordinary identifiers. `end` is safe for the same
 /// reason.
 ///
-/// Measured, not assumed — see
-/// `docs/results/2026-08-05-s2-grammar-prototype.md`, which records one probe
-/// per name because a single `ERROR` cascades and makes an unaffected name
-/// downstream of it look broken.
+/// One probe per name, because a single `ERROR` cascades and makes an
+/// unaffected name downstream of it look broken.
 #[test]
 fn a_definition_may_be_named_after_a_block_scoped_metadata_keyword() {
     for name in ["required", "string", "number", "boolean", "list", "end"] {
@@ -4769,8 +4750,8 @@ fn any_token_predicate_matches_every_token_including_attribute_less_ones() {
 /// and `compile_assertions::collect` therefore registers no occurrence for it.
 /// That specialization is only valid at the top level: inside another
 /// lookaround's body, `AutomatonBuilder::compile` needs an occurrence to build
-/// its `Fact` edge and used to `.expect()` one into existence, aborting the
-/// process with exit 101 instead of returning a diagnostic.
+/// its `Fact` edge, and must not `.expect()` one into existence, which would
+/// abort the process with exit 101 instead of returning a diagnostic.
 ///
 /// `pattern-language-co-development.md` states that nested lookaround is valid,
 /// so these must compile.

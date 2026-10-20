@@ -1,5 +1,4 @@
-# Representative inline-lexicon workload; source terms and evidence:
-# docs/results/2026-08-17-inline-lexicon-evidence/README.md
+# Representative inline-lexicon workload.
 
 lexicon research_overlap by [text, norm] := {
   "研究",

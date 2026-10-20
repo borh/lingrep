@@ -1320,7 +1320,7 @@ impl PredicateEvaluator<'_> {
     ) -> bool {
         let Some(actual) = token.value_locator(&expected.attr) else {
             // The complement of "present and satisfying" is satisfied by
-            // absence. An uncomplemented atom keeps the historical answer.
+            // absence; an uncomplemented atom is not.
             return expected.complement;
         };
         let held = match &expected.value {

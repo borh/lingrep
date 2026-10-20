@@ -3,14 +3,12 @@
 # Complete enhanced graphs may replace rather than repeat a basic endpoint:
 # relative references and empty-node reconstruction are ordinary examples.
 # These patterns therefore publish candidates and named representation classes;
-# they do not call every endpoint absence an annotation error. The complete
-# corpus evidence, citations, and review classifications are recorded in
-# docs/results/2026-08-31-ud-enhanced-consistency/README.md.
+# they do not call every endpoint absence an annotation error.
 #
 # Guillaume's published GREW examples of graph matching for corpus exploration
 # and error mining informed the research question at the requirements level.
 # No GREW source, syntax, grammar, fixture, or algorithm was inspected or reused.
-# The SGX catalog is original.
+# This catalog is original.
 
 defaults
   status: "experimental"

@@ -11,12 +11,6 @@
 # A negative predicate classifies absence only when every edge-compatible
 # dependent supplies the predicate attributes; unrelated missing values do not
 # invalidate it. The nominal and pronominal classes are not exhaustive.
-#
-# The corpus trigger and independent-oracle validation are recorded in
-# docs/results/2026-08-31-anonymous-dependent-predicate/README.md.
-# Negative-predicate discovery and validation are recorded in
-# docs/results/2026-08-31-negative-dependent-predicate/README.md.
-# The GiNZA evidence there comes from the Markdown corpus, never BCCWJ.
 
 defaults
   status: "experimental"

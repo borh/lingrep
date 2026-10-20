@@ -235,11 +235,8 @@ struct ActiveSpan {
 /// empty, and the only way to stop paying it that many times is to cross the
 /// boundary that many times fewer.
 ///
-/// Batching retired that 0.97 s and 0.07% of the build's instructions, and
-/// moved **wall by nothing measurable** (0.9401 to 0.9397 against the same
-/// baseline): when it was made, the caller was not the bound, so caller time
-/// was free. It is kept because it is strictly less work for the same bytes,
-/// and because the caller became the bound shortly afterwards.
+/// Batching removes that 0.97 s and 0.07% of the build's instructions; it is
+/// strictly less work for the same bytes.
 const COMMANDS_PER_SEND: usize = PROVENANCE_BATCH_ROWS * 2;
 
 /// Batches in flight between the builder and its recorder.
@@ -653,18 +650,12 @@ struct StoredAnalysis {
 
 /// One sentence's row, held until that sentence's fate is known.
 ///
-/// A row used to be written twice. [`ProvenanceWriter::push_sentence_with_text`]
-/// inserted a provisional row carrying a surface-less analysis blob, and
-/// [`ProvenanceWriter::attach_analyzed_sentence`] — called for the same
-/// sentence immediately afterwards — rewrote that row with the real blob and
-/// further columns. Every sentence therefore cost two statements and two
-/// trips to the sqlx worker. See
-/// `docs/design/2026-08-23-cold-path-artifact-on-the-query-pass.md`.
-///
-/// Holding the row costs one sentence of lookahead, which this writer already
-/// had — the field this replaces buffered the admitted text over exactly the
-/// same one-sentence window, so that the text check below would not have to
-/// read the blob back out of SQLite. A held row leaves in one of two ways: the
+/// [`ProvenanceWriter::push_sentence_with_text`] holds the row and
+/// [`ProvenanceWriter::attach_analyzed_sentence`], called for the same sentence
+/// immediately afterwards, completes it, so each sentence costs one statement.
+/// Holding the row costs one sentence of lookahead, which also lets the text
+/// check below read the admitted text without reading the blob back out of
+/// SQLite. A held row leaves in one of two ways: the
 /// analysis for that sentence arrives and completes it, or the next sentence
 /// arrives — or the component is finished — and it is written as provisional.
 ///
@@ -959,9 +950,9 @@ impl ProvenanceWriter {
     ///
     /// A sentence can be admitted and never analyzed — `push_tokenized_sentence`
     /// stores tokens without an `AnalyzedInput`, and a run may end between the
-    /// two calls. Such a row keeps exactly the shape the provisional insert
-    /// used to give it: the structural columns, a surface-less analysis blob
-    /// carrying the admitted text, and NULL in every analyzer column.
+    /// two calls. Such a row is written as provisional: the structural
+    /// columns, a surface-less analysis blob carrying the admitted text, and
+    /// NULL in every analyzer column.
     async fn flush_pending_provisional(&mut self) -> Result<(), CorpusError> {
         let Some(pending) = self.pending.take() else {
             return Ok(());

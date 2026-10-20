@@ -822,7 +822,7 @@ impl<I> AdmittedCorpus<I> {
                     self.outcome = scoped.clause.evaluate_document(&metadata);
                     // A document that reaches sentence evaluation is admitted
                     // at document grain: it was *in scope*, whether or not any
-                    // of its sentences turn out to be. The two grains no longer
+                    // of its sentences turn out to be. The two grains need not
                     // move together, and the report says so.
                     scoped.pending.record_document(match self.outcome {
                         DocumentOutcome::Decided(verdict) => verdict,

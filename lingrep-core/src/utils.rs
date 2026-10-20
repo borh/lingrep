@@ -24,9 +24,9 @@ pub fn split_sentence_ja(s: &str) -> Vec<String> {
 
 /// All delimiters must remain NFC starters.
 ///
-/// Streaming callers frame before normalizing each sentence, so adding a
-/// delimiter that can compose with the preceding scalar would change the
-/// legacy whole-input NFC boundaries.
+/// Streaming callers frame before normalizing each sentence, so a delimiter
+/// that can compose with the preceding scalar would make streamed boundaries
+/// differ from whole-input NFC boundaries.
 pub fn is_sentence_delimiter(character: char) -> bool {
     matches!(character, '!' | '?' | '。' | '！' | '？')
 }

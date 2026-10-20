@@ -134,22 +134,6 @@ fn catalog_contains_only_research_patterns() {
     );
 }
 
-#[test]
-fn catalog_carries_no_retired_python_provenance() {
-    let source = include_str!("../../../patterns/sf-experimental.lx");
-    assert!(
-        !source.contains("sf_experimental.py"),
-        "the catalog must not retain pointers to its retired Python source"
-    );
-    assert!(
-        compile_fixture()
-            .matcher
-            .patterns()
-            .values()
-            .all(|pattern| !pattern.metadata.contains_key("source"))
-    );
-}
-
 /// The catalog's `schema` block must refuse what the deleted Rust assertions
 /// refused. Proved before deletion, or the assertions would be removed on
 /// faith.

@@ -156,7 +156,6 @@ pub struct CompiledCatalog {
     anchor_programs: BTreeMap<CompactString, AssertionProgramId>,
     required_attributes: Box<[AttributeKey]>,
     catalog_policy: crate::fsm::policy::CatalogPolicy,
-    declared_dictionaries: Box<[CompactString]>,
     analyzer_constraints: Box<[CatalogAnalyzerConstraint]>,
 }
 
@@ -311,7 +310,6 @@ impl CompiledCatalog {
             anchor_programs: BTreeMap::new(),
             required_attributes: Box::default(),
             catalog_policy: crate::fsm::policy::CatalogPolicy::default(),
-            declared_dictionaries: Box::default(),
             analyzer_constraints: Box::default(),
         }
     }
@@ -361,10 +359,6 @@ impl CompiledCatalog {
         self.catalog_policy = policy;
     }
 
-    pub(crate) fn install_declared_dictionaries(&mut self, dictionaries: Vec<CompactString>) {
-        self.declared_dictionaries = dictionaries.into_boxed_slice();
-    }
-
     pub(crate) fn install_analyzer_constraints(
         &mut self,
         constraints: Vec<CatalogAnalyzerConstraint>,
@@ -394,32 +388,6 @@ impl CompiledCatalog {
         } else {
             AnalyzerCompatibility::Mismatch
         }
-    }
-
-    /// The dictionaries this catalog states its tagset is valid for.
-    ///
-    /// A **set**, because compatibility is not one-to-one: `unidic-cwj` and
-    /// `unidic-csj` differ only in weights and share a vocabulary and tagset,
-    /// so a catalog is genuinely valid for both, while `unidic-kinsei-edo`
-    /// differs in vocabulary and in closed-class morphology and is a different
-    /// claim. The set is authored rather than derived from a compatibility
-    /// table here: which dictionaries a catalog's predicates survive is a
-    /// linguistic judgement belonging to the researcher, and a table in this
-    /// crate would be an unmaintainable claim about dictionaries it does not
-    /// ship.
-    ///
-    /// Empty for a catalog that declares none, including inline `--pattern`
-    /// input, which has no file-level declaration.
-    /// Absence is not reported: a notice that always fires is a notice nobody
-    /// reads.
-    ///
-    /// This is a claim by the catalog about itself, never a constraint on
-    /// matching. Comparing it against the dictionary a run actually loaded is
-    /// the caller's job, and the mismatch is a notice — divergence is legal,
-    /// because running a catalog against a second dictionary is a deliberate
-    /// experiment as often as it is a mistake.
-    pub fn declared_dictionaries(&self) -> &[CompactString] {
-        &self.declared_dictionaries
     }
 
     /// Removes synthesized policy emitters from the *public* catalog.
@@ -1797,9 +1765,7 @@ mod tests {
     ///
     /// The screen counts predicate calls, assertion work and publication, none
     /// of which sees how many candidates the tree evaluator carries between
-    /// them — so widening the deduplication key on 2026-08-29 moved no counter
-    /// on any catalog. These two do see it
-    /// (docs/design/2026-08-29-where-capture-assignment.md).
+    /// them. These two do see it.
     #[cfg(feature = "bench-instrumentation")]
     #[test]
     fn execution_metrics_count_tree_evaluator_candidate_volume() {

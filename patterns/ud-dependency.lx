@@ -1,11 +1,9 @@
 # UD dependency exemplar: the `where` clause.
 #
 # The stress and validation catalog for capture-to-capture relation
-# constraints (docs/design/2026-08-28-dependency-relation-constraint-syntax.md).
-# It exercises every shipped clause shape: a single edge, two edges sharing a
+# constraints. It exercises every shipped clause shape: a single edge, two edges sharing a
 # head, two edges chained through one operand, edges alongside `[]*` gaps, and
-# a label set carrying all three term forms
-# (docs/design/2026-08-29-dependency-label-sets.md).
+# a label set carrying all three term forms.
 #
 # It binds only against a corpus carrying `dep.head` and `dep.rel` — CoNLL-U
 # input or a dependency-parsing analyzer — and is refused at binding

@@ -3,7 +3,6 @@
 //! A `schema` block **closes** the descriptive key set for the catalog that
 //! declares it; a catalog with no block is unconstrained. Compiler-owned keys —
 //! [`POLICY_KEYS`](crate::fsm::policy::POLICY_KEYS) plus
-//! [`DICTIONARY_KEY`](crate::fsm::policy::DICTIONARY_KEY),
 //! [`ANCHOR_KEY`](crate::fsm::policy::ANCHOR_KEY) and
 //! [`MAX_NESTING_KEY`](crate::fsm::policy::MAX_NESTING_KEY) — are admitted
 //! without declaration and are an error to
@@ -351,7 +350,7 @@ mod tests {
 
     #[test]
     fn declaring_a_compiler_owned_key_is_an_error() {
-        for key in ["output_name", "dictionary", "anchor", "max_nesting"] {
+        for key in ["output_name", "anchor", "max_nesting"] {
             let source = format!("schema\n  {key}: string\nend\np := x.\n");
             let message = refuse(&source);
             assert!(

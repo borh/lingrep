@@ -113,7 +113,7 @@ pub fn write_jsonl<W: Write, E: Serialize>(writer: &mut W, event: &E) -> Result<
 ///
 /// Serializing straight into the caller's `BufWriter` did not produce a
 /// measurable improvement and reclassified a closed pipe as a serialization
-/// error. See `docs/results/2026-08-18-publication-buffering/`.
+/// error.
 ///
 /// A caller that needs a single event to be irreversible on return — a run,
 /// definition, diagnostic or complete record — must keep using [`write_jsonl`].

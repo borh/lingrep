@@ -184,8 +184,8 @@ fn collect_zips(
             ));
         }
         // `Path::is_dir()` answers "no" both for a real file and for a stat
-        // that failed, which is how a symlink cycle used to truncate the walk
-        // without saying so. Resolve a link explicitly and let the error out;
+        // that failed, so a symlink cycle would truncate the walk without
+        // saying so. Resolve a link explicitly and let the error out;
         // an ordinary entry keeps the cheap readdir answer and never stats.
         let file_type = entry.file_type()?;
         let is_directory = if file_type.is_symlink() {
@@ -922,12 +922,10 @@ one	bib	題		vol	resp	社	2000	isbn	page					rid	pid	著			LB
         );
     }
 
-    /// A symlink back to an ancestor makes `is_dir()` descend forever. The
-    /// walk used to enumerate the same zip once per level and stop silently
-    /// once resolution failed, admitting one file under dozens of logical
-    /// names. The guarantee is that discovery is *refused*; which mechanism
-    /// refuses it is a property of the platform's symlink budget, so this
-    /// asserts the refusal and admits either.
+    /// A symlink back to an ancestor makes `is_dir()` descend forever, which
+    /// would admit one zip under dozens of logical names. The guarantee is that
+    /// discovery is *refused*; which mechanism refuses it is a property of the
+    /// platform's symlink budget, so this asserts the refusal and admits either.
     ///
     /// Linux permits 40 symlinks per resolution and the bound is 64 levels at
     /// three per cycle, so the depth bound is reached first. macOS stops at

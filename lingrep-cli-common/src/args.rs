@@ -34,8 +34,7 @@ pub struct CorpusInputArgs {
     #[arg(short = 'i', long = "input")]
     pub input: Option<PathBuf>,
     /// Override the inferred corpus format (`plain`, `jsonl`, `markdown`,
-    /// `conllu`, `bccwj`, `soranoha`; consumers may restrict raw formats they
-    /// do not own).
+    /// `conllu`, `bccwj`, `soranoha`; commands may restrict accepted formats).
     #[arg(long = "input-format", value_enum)]
     pub input_format: Option<lingrep_core::corpus::CorpusFormat>,
 }

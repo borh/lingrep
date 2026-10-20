@@ -1,4 +1,4 @@
-# Overlapping token n-grams for `vp-search summarize`.
+# Overlapping token n-grams for `ling summarize`.
 #
 # The key names every token position explicitly so values cannot become
 # ambiguous when token text contains whitespace or punctuation.

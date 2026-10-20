@@ -44,7 +44,7 @@ pub struct SentenceLocation {
 /// `ling`.
 #[derive(Debug, Default)]
 pub enum TokenizedAdmission {
-    /// Fail the run on the first oversized sentence (the historical behavior).
+    /// Fail the run on the first oversized sentence.
     #[default]
     Fail,
     /// Skip oversized sentences and count the omissions instead. The handle is

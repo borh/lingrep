@@ -43,10 +43,9 @@ use super::model::{
 };
 use super::{Diagnostic, DiagnosticCode, DiagnosticSeverity};
 use crate::fsm::policy::{
-    ANCHOR_KEY, AnchorSetDigest, CatalogPolicy, CatalogPolicyBuilder, CompiledGuard,
-    DICTIONARY_KEY, HIDDEN_PREFIX, MAX_NESTING_KEY, NestingClaim, NestingEntry, POLICY_KEYS,
-    PatternPolicy, RENDERER_REGISTRY, SubstituteTarget, TagSource, TransformOp, TransformStep,
-    is_hidden, suggest_policy_key,
+    ANCHOR_KEY, AnchorSetDigest, CatalogPolicy, CatalogPolicyBuilder, CompiledGuard, HIDDEN_PREFIX,
+    MAX_NESTING_KEY, NestingClaim, NestingEntry, POLICY_KEYS, PatternPolicy, RENDERER_REGISTRY,
+    SubstituteTarget, TagSource, TransformOp, TransformStep, is_hidden, suggest_policy_key,
 };
 use crate::fsm::policy_program::{BindError, BindErrorKind, Op, Operand};
 use crate::fsm::types::{AttrValueType, PositionAssertion};
@@ -85,34 +84,13 @@ pub(super) fn quoted_list(names: &[&str]) -> String {
 /// Without this a correct `counterexamples:` would be reported as a near-miss
 /// of some policy key the moment one is added within an edit of it. The list is
 /// every other key the engine recognizes: the claim keys (`CLAIM_KEYS`) and the
-/// three catalog-level ones. Any key outside it is free-form researcher
+/// two catalog-level ones. Any key outside it is free-form researcher
 /// annotation, which the detector already leaves alone unless it is one edit
 /// from a recognized key.
 ///
 /// A key added to [`suggest_policy_key`]'s search must be added here too, or
 /// its own correct spelling reports as a typo of itself.
-const NON_POLICY_KEYS: &[&str] = &[
-    "examples",
-    "counterexamples",
-    DICTIONARY_KEY,
-    ANCHOR_KEY,
-    MAX_NESTING_KEY,
-];
-
-const RETIRED_KEYS: &[(&str, &str)] = &[
-    ("trim_suffix", "use `detach` with `relation: at_end`"),
-    ("trim_prefix", "use `detach` with `relation: at_start`"),
-    (
-        "priority_group",
-        "use `groups:` for membership and a `resolve` statement for adjudication",
-    ),
-    (
-        "longest_in_group",
-        "choose a group-level `resolve` rank after reviewing every member",
-    ),
-    ("suppress_within", "use `exclude` with `relation: within`"),
-    ("terminal", "use an `admit` statement"),
-];
+const NON_POLICY_KEYS: &[&str] = &["examples", "counterexamples", ANCHOR_KEY, MAX_NESTING_KEY];
 
 /// Reads every declared policy decision, reporting what cannot be honored.
 ///
@@ -235,7 +213,7 @@ fn derived_member(declaration: &ParsedGroupDecl, definition: &ParsedDefinition) 
 /// Checks every anchor reference against the declared anchors, and every
 /// declared anchor against the references to it.
 ///
-/// One kind of reference since `terminal:` retired: an `admit` statement. It is
+/// The only statement that references an anchor is `admit`. It is
 /// checked here rather than with the other policy-program rules because an
 /// anchor name is a string the parser already has — binding resolves
 /// definitions and groups, and knows nothing about anchors. Leaving it out made
@@ -310,137 +288,13 @@ fn resolve_anchor_references(
     }
 }
 
-/// Reads the catalog's declared dictionary binding.
-///
-/// A catalog's predicates are written against one dictionary's tagset, and
-/// nothing else in the system records which. `token_schema_identity` digests
-/// the attribute *names*, which every dictionary shares, and
-/// `dictionary_identity` describes the run rather than the catalog — so a
-/// catalog authored for one dictionary and run against another agrees on every
-/// identity while meaning something different. Measured in
-/// `docs/results/2026-08-04-catalog-tagset-binding/`.
-///
-/// The binding is catalog-level, but metadata attaches to definitions, so it is
-/// read as the agreed value across every definition that declares it.
-///
-/// Disagreement is fatal, unlike almost everything else read here. A catalog
-/// bound to two dictionaries has no answer to give the run-side check, and the
-/// run-side check is a notice — so if this were also a notice, the condition
-/// would have nowhere to be reported as the defect it is.
-pub(crate) fn extract_dictionary(program: &ParsedProgram) -> (Vec<CompactString>, Vec<Diagnostic>) {
-    let mut diagnostics = Vec::new();
-    let mut bound: Option<(Vec<CompactString>, &ParsedDefinition)> = None;
-
-    for definition in &program.definitions {
-        let Some(value) = definition
-            .metadata
-            .get(DICTIONARY_KEY)
-            .map(|entry| &entry.value)
-        else {
-            continue;
-        };
-        let Some(names) = read_dictionary_names(value) else {
-            diagnostics.push(dictionary_error(
-                program,
-                definition,
-                format!(
-                    "`{DICTIONARY_KEY}:` on `{}` must be a dictionary name or a non-empty list \
-                     of them; found {value}",
-                    definition.name
-                ),
-            ));
-            continue;
-        };
-        match &bound {
-            Some((existing, first)) if *existing != names => {
-                diagnostics.push(dictionary_error(
-                    program,
-                    definition,
-                    format!(
-                        "catalog declares two different dictionary bindings: {} on `{}` and {} \
-                         on `{}` — write one list naming every compatible dictionary rather \
-                         than disagreeing declarations",
-                        render_names(existing),
-                        first.name,
-                        render_names(&names),
-                        definition.name
-                    ),
-                ));
-            }
-            Some(_) => {}
-            None => bound = Some((names, definition)),
-        }
-    }
-
-    (
-        bound.map(|(names, _)| names).unwrap_or_default(),
-        diagnostics,
-    )
-}
-
-/// Accepts a bare name or a list of them, normalized to a sorted, deduplicated
-/// set so that two spellings of the same claim compare equal.
-fn read_dictionary_names(value: &Value) -> Option<Vec<CompactString>> {
-    let mut names: Vec<CompactString> = match value {
-        Value::String(name) => vec![CompactString::from(name.trim())],
-        Value::Array(entries) => entries
-            .iter()
-            .map(|entry| {
-                entry
-                    .as_str()
-                    .map(|name| CompactString::from(name.trim()))
-                    .filter(|name| !name.is_empty())
-            })
-            .collect::<Option<Vec<_>>>()?,
-        _ => return None,
-    };
-    if names.iter().any(CompactString::is_empty) || names.is_empty() {
-        return None;
-    }
-    names.sort_unstable();
-    names.dedup();
-    Some(names)
-}
-
-fn render_names(names: &[CompactString]) -> String {
-    let rendered = names
-        .iter()
-        .map(|name| format!("`{name}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if names.len() == 1 {
-        rendered
-    } else {
-        format!("[{rendered}]")
-    }
-}
-
-fn dictionary_error(
-    program: &ParsedProgram,
-    definition: &ParsedDefinition,
-    message: String,
-) -> Diagnostic {
-    let span = key_span(definition, DICTIONARY_KEY);
-    let (line, column) = program.sources.line_column(span);
-    let range = span.byte_range();
-    Diagnostic::error_with_source_label(
-        DiagnosticCode::ConflictingDictionary,
-        program.sources.source_label(span.source()),
-        usize::try_from(range.start).expect("source offsets originated as usize")
-            ..usize::try_from(range.end).expect("source offsets originated as usize"),
-        message,
-        line,
-        column,
-    )
-}
-
 /// Collects every catalog-level `anchor:` declaration, returning the span of
 /// the block that declared each.
 ///
 /// An anchor is a property of the *catalog* rather than of the definition whose
 /// metadata block happens to carry it, which is why this is one pass over every
 /// block instead of part of [`PolicyReader`]. The recommended home is the
-/// fragment block holding the `exclude` fragment, exactly as for `dictionary:`.
+/// fragment block holding the `exclude` fragment.
 ///
 /// A metadata block attaches its keys to *every* definition it wraps, so one
 /// `anchor:` line on a two-fragment block arrives here twice. An `anchor:` value
@@ -799,18 +653,7 @@ impl PolicyReader<'_> {
             let entry = &self.definition.metadata[key];
             let value = &entry.value;
             self.key_span = Some(entry.span);
-            if let Some((_, advice)) = RETIRED_KEYS
-                .iter()
-                .find(|(retired, _)| *retired == key.as_str())
-            {
-                self.error(
-                    DiagnosticCode::RetiredPolicyKey,
-                    format!(
-                        "`{key}:` was retired; {advice} in a `policy` block. \
-                         See `ling check --help` for the current policy syntax"
-                    ),
-                );
-            } else if POLICY_KEYS.contains(&key.as_str()) {
+            if POLICY_KEYS.contains(&key.as_str()) {
                 self.read_key(key, value, &mut declared);
             } else if !NON_POLICY_KEYS.contains(&key.as_str())
                 && let Some(suggestion) = suggest_policy_key(key)
@@ -1037,7 +880,7 @@ impl PolicyReader<'_> {
         //
         // Reading `declared.key` here is sound because the caller visits a
         // *sorted* key list, so `key` and `render` are both parsed before
-        // `transform` — the same ordering the retired-key branch relies on.
+        // `transform`.
         let after_last_join = steps
             .iter()
             .rposition(|step| matches!(step.op, TransformOp::Join))
@@ -2689,19 +2532,6 @@ bad := [text=a].
             "{}",
             diagnostics[0].message
         );
-        assert!(!policy.declared(), "{policy:#?}");
-    }
-
-    #[test]
-    fn terminal_false_reports_the_retirement_and_not_a_bad_value() {
-        let (policy, diagnostics) = extract(
-            r#"
-terminal: false
-off := [text=a].
-"#,
-        );
-        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
-        assert_eq!(diagnostics[0].code(), DiagnosticCode::RetiredPolicyKey);
         assert!(!policy.declared(), "{policy:#?}");
     }
 

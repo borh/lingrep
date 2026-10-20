@@ -1,40 +1,18 @@
-//! The premise that made `detach` a safe replacement for `trim_suffix:`.
+//! Checks that `detach` never meets its strict bound in the tracked catalogs.
 //!
-//! Both removed a `DA` region ending at the record's end. The retired
-//! `apply_trim` selected edges with `edge.start >= record.start` and then
-//! clamped — `record.end = new_end.max(record.start + 1)` — so an edge covering
-//! the whole record left one token. `decide_detach` selects with
-//! `operand.start > subject.start` and does not clamp, because
-//! `docs/design/2026-08-06-policy-sublanguage-syntax.md` §3 replaced the clamp
-//! with a strict bound: *a region that is the entire record is not a trailing
-//! region*. Nothing else about the two differed.
-//!
-//! So they disagreed exactly when a `DA` record starts where a subject record
-//! starts. `docs/results/2026-08-02-r1-sf-experimental-migration.md:95` argues
-//! that cannot happen here, because every one of the thirteen copula
-//! definitions opens on a non-copula head token (もの, 可能, はず, ため, わけ,
-//! よう, こと, と). This makes that argument a checked fact.
-//!
-//! **Still live after the retirement**, because it never was a statement about
-//! the old mechanism. It says the catalog's thirteen subjects never meet
-//! `detach`'s strict bound — the condition under which the bound would discard
-//! a record the researcher expects to see. Deleting it with `apply_trim` would
-//! retire the proof along with the thing it justified.
+//! `decide_detach` removes a trailing `DA` region only when
+//! `operand.start > subject.start`: a region that covers the entire record is
+//! not trailing, so the record is kept whole. The catalog's thirteen copula
+//! subjects each open on a non-copula head token (もの, 可能, はず, ため, わけ,
+//! よう, こと, と), so no `DA` record should start where its subject starts.
+//! This test makes that a checked fact over every example sentence and the
+//! committed campaign sentences.
 //!
 //! In `src` rather than `tests/` because it calls the private
-//! [`definition_of`](crate::fsm::policy_engine): an evidence predicate the test
-//! reimplemented would agree with itself rather than with the engine, and the
-//! whole point is to ask the engine's question. That question was
-//! `policy::is_evidence_for` until the last key-driven pass retired; the
-//! program resolves a record's name through the `__policy__` alias table
-//! instead, and this follows it rather than keeping the old predicate alive for
-//! one test.
-//!
-//! **What this is not.** It is not the parity proof.
-//! [`published_baseline`](super::published_baseline) is — this cannot see an
-//! error in group selection, evidence mode, capture handling, or statement
-//! order. It exists so that when the baseline moves, the failure names the
-//! definition instead of showing a snapshot diff.
+//! [`definition_of`](crate::fsm::policy_engine), so the evidence predicate is
+//! the engine's own. [`published_baseline`](super::published_baseline) covers
+//! group selection, evidence mode, capture handling and statement order; this
+//! test names the definition when the bound is met.
 
 #![cfg(test)]
 
@@ -45,11 +23,11 @@ use crate::fsm::policy_engine::definition_of;
 use crate::testing::catalogs::tracked_catalog_sources;
 use crate::testing::tokenize_japanese;
 
-/// The fragment whose records both mechanisms remove.
+/// The fragment whose trailing records `detach` removes.
 const COPULA: &str = "DA";
 
-/// The group the migration puts the thirteen copula definitions in.
-const MIGRATED_GROUP: &str = "trailing_copula";
+/// The group holding the thirteen copula subjects.
+const SUBJECT_GROUP: &str = "trailing_copula";
 
 #[test]
 fn no_copula_evidence_record_starts_where_its_subject_starts() {
@@ -61,10 +39,6 @@ fn no_copula_evidence_record_starts_where_its_subject_starts() {
             .unwrap_or_else(|error| panic!("{name} must compile: {error}"));
         let policy = output.matcher.catalog_policy();
 
-        // Accepted either spelling until the migration landed; `trim_suffix:`
-        // is retired now, so membership is the only selector left. The
-        // `subjects_seen` count below is what keeps that reduction honest --
-        // it was 13 under the old selector and must still be 13 under this one.
         let subjects: Vec<&str> = output
             .matcher
             .patterns()
@@ -73,7 +47,7 @@ fn no_copula_evidence_record_starts_where_its_subject_starts() {
             .filter(|definition| {
                 policy
                     .get(definition)
-                    .is_some_and(|entry| entry.groups.iter().any(|group| group == MIGRATED_GROUP))
+                    .is_some_and(|entry| entry.groups.iter().any(|group| group == SUBJECT_GROUP))
             })
             .collect();
         if subjects.is_empty() {
@@ -129,16 +103,13 @@ fn no_copula_evidence_record_starts_where_its_subject_starts() {
         }
     }
 
-    // A selector that matched nothing would make this vacuously green, and the
-    // migration would lose its only localised diagnostic without anything
-    // saying so.
+    // A selector that matched nothing would make this test pass vacuously.
     assert_eq!(
         subjects_seen, 13,
         "the shipped catalog declares thirteen copula subjects"
     );
     assert!(
         collisions.is_empty(),
-        "a DA record covers a subject whole, so `detach`'s strict bound and \
-         `trim_suffix:`'s clamp disagree here: {collisions:?}"
+        "a DA record covers a subject whole, so `detach` keeps it: {collisions:?}"
     );
 }

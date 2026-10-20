@@ -108,16 +108,6 @@ pub enum DiagnosticCode {
     /// cannot be an error — but a misspelled policy key is inert, and inert
     /// and honored look identical from the catalog.
     SuspiciousPolicyKey,
-    /// A key the engine used to honour and no longer does.
-    ///
-    /// Always an **error**. Accepting a retired key with a warning would
-    /// publish a different answer than the catalog asks for, which is the one
-    /// failure mode a publication policy must not have.
-    ///
-    /// Distinct from [`DiagnosticCode::SuspiciousPolicyKey`] because the answer
-    /// differs in kind: a suspicious key is *probably* a typo and the catalog
-    /// compiles; a retired key is certainly this key and the catalog does not.
-    RetiredPolicyKey,
     /// Result policy declared where it can never apply — on a `fragment`,
     /// which never emits, or a policy statement whose subject selects no
     /// publishable definition. Non-fatal, and the same class as
@@ -189,11 +179,6 @@ pub enum DiagnosticCode {
     /// A whole-match key projection on a definition not proven to consume
     /// exactly one token.
     MultiTokenMatchProjection,
-    /// A catalog bound to two dictionaries, or one whose `dictionary:` value is
-    /// not a usable name. Fatal: the binding exists so a run can be told its
-    /// catalog was authored for a different tagset, and a catalog that names
-    /// two has no answer to give.
-    ConflictingDictionary,
     /// A source-authored definition in a namespace the compiler reserves for
     /// definitions it synthesizes. Fatal: a collision would let a catalog name
     /// silently take over a synthesized emitter's records.
@@ -410,7 +395,6 @@ impl DiagnosticCode {
             Self::UnverifiableExamples => "UnverifiableExamples",
             Self::InvalidPolicyValue => "InvalidPolicyValue",
             Self::SuspiciousPolicyKey => "SuspiciousPolicyKey",
-            Self::RetiredPolicyKey => "RetiredPolicyKey",
             Self::IneffectivePolicy => "IneffectivePolicy",
             Self::ImplausiblePolicyValue => "ImplausiblePolicyValue",
             Self::PartitionOnNonResolve => "PartitionOnNonResolve",
@@ -422,7 +406,6 @@ impl DiagnosticCode {
             Self::AmbiguousCaptureReference => "AmbiguousCaptureReference",
             Self::MultiTokenCaptureProjection => "MultiTokenCaptureProjection",
             Self::MultiTokenMatchProjection => "MultiTokenMatchProjection",
-            Self::ConflictingDictionary => "ConflictingDictionary",
             Self::ReservedName => "ReservedName",
             Self::PipeInBareValue => "PipeInBareValue",
             Self::QuotedAttributeValue => "QuotedAttributeValue",

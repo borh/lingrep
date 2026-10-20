@@ -7,16 +7,7 @@ pub const DEFAULT_MAX_SENTENCE_BYTES: usize = 64 * 1024;
 /// Maximum number of sentences retained in one execution stage by default.
 ///
 /// Chosen so that [`DEFAULT_MAX_TOKENIZED_BYTES`] normally decides retained
-/// batch width before this count does. The value originated with the retired
-/// V6 parallel decoder; V1 decodes blocks serially on the source/lookahead
-/// thread. Keeping the wider count still lets the byte budget form useful
-/// batches without increasing residency beyond that bound.
-///
-/// The historical V6 change measured on the 1,595,008-sentence science corpus:
-/// −25.9% wall on a catalog
-/// that matches nothing, −23.6% on `double-wo`, −5.8% on `sketch-grammar`,
-/// with peak RSS rising from about 620 MiB to about 850 MiB against a 947 MiB
-/// artifact. See `docs/results/2026-08-13-stage-sentence-default/`.
+/// batch width before this count does.
 pub const DEFAULT_MAX_STAGE_SENTENCES: usize = 2048;
 /// Maximum input byte length retained in one execution stage by default.
 pub const DEFAULT_MAX_STAGE_INPUT_BYTES: usize = 128 * 1024;

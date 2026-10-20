@@ -20,11 +20,8 @@
 //! extraction would leave the two halves free to disagree about what
 //! `{op: drop_edge, edge: trailing}` means.
 //!
-//! The six ground-truth rows come from probe P1
-//! (`docs/results/2026-08-01-probe-p1-transform-vocabulary.md`), whose fixture
-//! appendix records real UniDic-CWJ tokenizations. They are transcribed here as
-//! tokens rather than re-tokenized, so the suite needs no dictionary and the
-//! rows stay pinned to the attributes the probe actually measured.
+//! The six ground-truth rows are real UniDic-CWJ tokenizations, transcribed
+//! here as tokens rather than re-tokenized so the suite needs no dictionary.
 
 use compact_str::CompactString;
 use lingrep_core::fsm::{
@@ -689,7 +686,7 @@ fn a_scope_whose_capture_did_not_bind_leaves_the_record_alone() {
     assert_eq!(record.unit.as_deref(), Some("読むです"));
 }
 
-/// A `substitute` with no `join` is no longer provably inert, because a `key:`
+/// A `substitute` with no `join` is not provably inert, because a `key:`
 /// projecting the written form reads the overrides too. The refusal narrows to
 /// the case where nothing reads them at all.
 #[test]

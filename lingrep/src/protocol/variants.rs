@@ -2,7 +2,8 @@
 //!
 //! Current prepared artifacts can differ in analyzer, reader or admission
 //! policy. Each difference is reported as its own named dimension. Discovery
-//! excludes retired product formats, which require rebuilding from source.
+//! reports an artifact of another generation as a diagnostic, not a
+//! realization; it requires rebuilding from source.
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 

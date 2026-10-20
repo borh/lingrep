@@ -8,16 +8,16 @@ evidence):
 cargo test -p lingrep-core --test suite -- pattern_compiler_contract::pinned_tree_sitter_parses_repository_catalogs --exact
 ```
 
-For a CST-node migration, that gate must assert the new node is exercised and
-the retired node is absent. Also run the grammar corpus and queries, compare
+When a CST node is replaced, that gate must assert the new node is exercised
+and the replaced node is absent. Also run the grammar corpus and queries, compare
 the stable catalog/compiler fingerprint snapshot, and compare complete
 canonical matches with the independent typed-expression oracle.
 
 For ordered `key:` changes, tests must prove authored field order survives
 lowering, matching, spill/merge aggregation, JSONL, TSV, formatting, and editor
 tooling. Include compile-fail coverage for empty/duplicate projections, unknown
-attributes/components, retired map syntax, invalid whole-match widths, and
-invalid capture widths. Runtime tests must prove one missing field drops the
+attributes/components, a map in place of the field list, invalid whole-match
+widths, and invalid capture widths. Runtime tests must prove one missing field drops the
 entire key and increments `records_unkeyed`.
 
 ## Table of Contents

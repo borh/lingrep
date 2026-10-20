@@ -21,8 +21,6 @@ mod policy_publication;
 mod prepared_protocol;
 mod protocol;
 mod protocol_discovery;
-mod retired_cli_surface;
-mod retired_facade;
 mod sample_protocol;
 mod scope_protocol;
 mod section_protocol;

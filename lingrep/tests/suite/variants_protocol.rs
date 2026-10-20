@@ -187,10 +187,8 @@ fn a_source_argument_reports_realizations_without_a_reference() {
 ///
 /// `canonical_artifact_path` names every realization with `with_file_name`, so
 /// a directory root's artifacts land in the root's *parent* — never inside it.
-/// The scan used to special-case a directory target and read the target itself,
-/// so every directory root answered zero, which is exactly the answer "none
-/// exist" gives. `corpus variants /data/bccwj` found nothing while
-/// `corpus variants /data` listed the artifact of `/data/bccwj`.
+/// The scan reads the parent, not the target itself, which would answer zero
+/// for every directory root — the same answer "none exist" gives.
 ///
 /// This is not a corner. A BCCWJ distribution is a directory, so is every
 /// Markdown corpus, and every source-argument test above happens to use a file

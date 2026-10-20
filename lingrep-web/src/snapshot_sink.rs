@@ -586,17 +586,15 @@ mod tests {
             .collect()
     }
 
-    /// Below the cap nothing is sampled, so this is the old behaviour exactly:
-    /// every match retained, in corpus order. The property that makes the
-    /// change safe for every corpus small enough not to need it.
+    /// Below the cap nothing is sampled: every match is retained, in corpus
+    /// order.
     #[test]
     fn a_corpus_under_the_cap_retains_every_match_in_corpus_order() {
         assert_eq!(retained_ordinals(10, 6), vec![0, 1, 2, 3, 4, 5]);
     }
 
-    /// The defect this fixes: the pane used to show the first N matches, so a
-    /// reader of a date- or document-ordered corpus was reading its opening
-    /// and could not tell.
+    /// Over the cap the pane does not show only the first N matches, which in a
+    /// date- or document-ordered corpus would be its opening.
     #[test]
     fn a_corpus_over_the_cap_retains_beyond_the_opening_matches() {
         let retained = retained_ordinals(20, 4_000);

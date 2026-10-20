@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 /// key an integer tuple and changed that answer: 16× this buffer buys 13% of
 /// the n-gram run for 35% more peak RSS on the catalog that spills most, which
 /// is 0.72× the prepared artifact it reads. Larger still keeps paying, but
-/// less: see `docs/results/2026-08-27-summary-key-interning/README.md`.
+/// less.
 const DEFAULT_RESIDENT_KEYS: usize = 65_536;
 const DEFAULT_MERGE_FAN_IN: usize = 16;
 
@@ -700,10 +700,10 @@ impl ShardPool {
 /// closes with the canonical identities.
 /// The identity state one shard interns its groups against.
 ///
-/// This is the aggregation front end that used to live on the scan thread:
-/// value interning, key-schema registration, and the per-pattern schema
-/// candidates. Each shard owns one, so its ids are local to the shard and
-/// schedule-dependent — which is fine, because the snapshot handshake maps
+/// The aggregation front end, off the scan thread: value interning,
+/// key-schema registration, and the per-pattern schema candidates. Each
+/// shard owns one, so its ids are local to the shard and schedule-dependent —
+/// which is fine, because the snapshot handshake maps
 /// them all into one canonical global domain before anything is ordered.
 #[derive(Default)]
 struct GroupStore {

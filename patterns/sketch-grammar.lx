@@ -38,9 +38,7 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # the leftmost token gives 細胞, 研究者, 六角). Suru compounds want the
 # leftmost token (減少し, 加熱する — concatenation gives 減少為る, 加熱為る,
 # which are not words). So `@sk_nominal` takes `{span: …}` and `@sk_predicate`
-# takes `{first: …}`, and single-token anchors keep the bare text. Measured in
-# `docs/results/2026-08-04-multi-token-keys/`; designed in
-# `docs/superpowers/plans/archive/2026-08-23-completed/2026-08-04-multi-token-key-projection.md`.
+# takes `{first: …}`, and single-token anchors keep the bare text.
 #
 # The attribute is `norm` throughout, which resolves the lemma-vs-orthbase
 # question the measurement left open. `orthbase` splits 行う from 行なう;
@@ -129,7 +127,7 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 #   * Quotative と is 格助詞, so `sketch_to_predicate` is deliberately
 #     ABSENT: と考えられる would swamp it with clause complements.
 #   * An argument governed by an intervening nominal predicate
-#     (Nを対象にVを実施) attaches to the wrong verb. `patterns/double-wo.sgx`
+#     (Nを対象にVを実施) attaches to the wrong verb. `patterns/double-wo.lx`
 #     spends 1,080 classified exclusions on exactly this and is the
 #     measured baseline for it.
 #   * 名詞-普通名詞-副詞可能 nominals (結果, 場合, 上) are adverbial as
@@ -139,7 +137,7 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # case or binding particles. That is a conservative attachment heuristic
 # chosen for precision over recall; it is not a parse.
 #
-# STATUS: no baseline counts recorded. Unlike `double-wo.sgx`, nothing here
+# STATUS: no baseline counts recorded. Unlike `double-wo.lx`, nothing here
 # has been run against a reference corpus and classified. Do not cite these
 # relations as measurements until that happens.
 #
@@ -150,9 +148,7 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # in vocabulary and in closed-class morphology and are deliberately excluded.
 # Measured: under `unidic-kinsei-edo-202512` this catalog returns the same
 # match count while 重要 splits into 形容詞 + 名詞, 実施+し into 実 + 施し, and
-# 者 stops being 接尾辞 — see
-# `docs/results/2026-08-04-catalog-tagset-binding/`. The release version is
-# not part of the comparison.
+# 者 stops being 接尾辞. The release version is not part of the comparison.
 
 # Case and binding particles. Written as `orthbase` plus the particle class
 # so that a homographic non-particle token cannot satisfy them.

@@ -2463,8 +2463,7 @@ async fn wait_for_settled_check(driver: &WebDriver) -> WebDriverResult<()> {
     ))
 }
 
-/// Format-on-blur and the plain-mode fallback, rehomed from the retired
-/// external-server `e2e_test` module.
+/// Format-on-blur and the plain-mode fallback.
 ///
 /// Neither behavior is covered anywhere else: `pattern-editor-plain` appears in no
 /// other test in this workspace, and the formatter's blur trigger is invisible
@@ -2671,9 +2670,8 @@ async fn the_query_band_stays_in_view_while_the_results_scroll() -> WebDriverRes
 }
 
 /// The concordance's controls stick to the concordance and to nothing above
-/// it. They used to be a child of the whole panel, so they pinned across the
-/// definition and distribution bands too — 153px of header over a table a
-/// screen and a half below, and the charts passing underneath it.
+/// it: as a child of the whole panel they would pin across the definition and
+/// distribution bands too.
 ///
 /// The pattern's name and counts are its identity rather than a control, so
 /// they stay at the top of the panel and scroll away.
@@ -2977,7 +2975,7 @@ async fn every_bar_in_a_ranked_list_shares_one_track() -> WebDriverResult<()> {
     wait_for_selector(&driver, ".section-overview .surface-bar").await?;
 
     // The three rows differ in label length, rate width and count width — the
-    // three things that used to move the track.
+    // three things that could move the track.
     let tracks: String = driver
         .execute(
             r#"return [...document.querySelectorAll('.section-overview .surface-bar')]

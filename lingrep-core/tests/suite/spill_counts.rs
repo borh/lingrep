@@ -296,11 +296,11 @@ fn partial_flush_key(index: usize) -> String {
 
 #[test]
 fn partial_flush_failure_snapshot_precedes_reservation_release() {
-    // Re-characterized when runs became zstd streams. The previous two-record
-    // scenario no longer charges anything before failing: the encoder buffers
-    // both records and emits its whole frame in one write, which the budget
-    // refuses atomically. Pre-drop and post-drop usage would both read zero,
-    // leaving the assertion below nothing to catch.
+    // Runs are zstd streams, so a two-record scenario charges nothing before
+    // failing: the encoder buffers both records and emits its whole frame in
+    // one write, which the budget refuses atomically. Pre-drop and post-drop
+    // usage would both read zero, leaving the assertion below nothing to
+    // catch.
     //
     // This workload is large enough that the encoder emits several blocks, so
     // bytes really are charged before a later block is refused — which is the

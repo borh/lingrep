@@ -5,14 +5,11 @@
 //! distinction was invisible and free; plural, constructing them per corpus
 //! would multiply an 8-thread pool by the number of declared corpora.
 //!
-//! The dictionary itself is deliberately *not* shared as decoded bytes. An
-//! earlier revision memoized the ~1.31 GB decompressed buffer here for the
-//! process lifetime and built the sample tokenizer from it via
-//! [`lingrep_core::dictionary::create_tokenizer`], which parses into anonymous
-//! heap. That produced a ~12x resident-memory regression (see
-//! `docs/results/2026-08-17-lingrep-web-shared-resources/README.md`). What is
-//! genuinely process-wide and cheap to keep is the dictionary's identity —
-//! its blake3 fingerprint, `[u8; 32]` — not its bytes. The tokenizer is
+//! The dictionary itself is not shared as decoded bytes:
+//! [`lingrep_core::dictionary::create_tokenizer`] parses into anonymous heap,
+//! and holding that buffer for the process lifetime multiplies resident
+//! memory about twelvefold. What is process-wide and cheap to keep is the
+//! dictionary's identity — its blake3 fingerprint, `[u8; 32]` — not its bytes. The tokenizer is
 //! rebuilt from [`lingrep_core::dictionary::create_tokenizer_from_path`], which
 //! memory-maps a globally-cached decompressed copy instead of holding a
 //! second anonymous-heap copy live alongside it.

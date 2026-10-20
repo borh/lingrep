@@ -249,7 +249,7 @@ pub struct WorkloadInput {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputCapture {
-    /// Written to a file, then hashed. The historical path.
+    /// Written to a file, then hashed.
     #[default]
     File,
     /// Piped through `lingrep-perf digest-stream`, never materialized.
@@ -1060,8 +1060,7 @@ pub enum Verdict {
 /// It is a **diagnostic, never a verdict**. The observations are valid and the
 /// arms really did take that long; what the flag says is that this catalog's
 /// `wall` is reporting the limiter rather than the change, so reading it as
-/// "neutral" is a mistake. The recorded case is
-/// `docs/results/2026-08-22-decode-owner-cursor`, where a `--stream-output`
+/// "neutral" is a mistake. In one recorded case a `--stream-output`
 /// campaign put four catalogs at `wall` 0.99-1.01 while their `user` sat
 /// between 0.67 and 0.89; re-run without streaming, the same catalogs moved to
 /// 0.65-0.97.

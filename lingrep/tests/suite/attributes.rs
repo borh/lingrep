@@ -217,10 +217,8 @@ fn explain_reports_the_catalog_when_one_is_given() {
     assert!(output.contains("pron-exclusion.lx"), "{output}");
 }
 
-/// The two projections the closed-pipe test below cannot observe. That test
-/// used to prove they published at all, incidentally, by reading a line before
-/// closing the pipe; the reader is now gone before the run starts, so the
-/// claim needs stating on its own rather than disappearing with the race.
+/// The two projections the closed-pipe test below cannot observe: its reader
+/// is gone before the run starts.
 #[test]
 fn the_tsv_and_human_projections_report_every_attribute_too() {
     let tsv = run_on_text(&["--tsv"], OUT_OF_VOCABULARY);

@@ -13,8 +13,8 @@
 //! Acceptance cases for the natsume table, aspect minimal pair, and raw
 //! stream.
 //!
-//! `policy_transform_test.rs` pins the executor's semantics against tokens
-//! transcribed from probe P1's appendix. This suite is the independent check on
+//! `policy_transform_test.rs` pins the executor's semantics against
+//! transcribed tokens. This suite is the independent check on
 //! that transcription: it reads **real UniDic-CWJ tokenizations**, produced by
 //! `ling tokenize` and committed under `tests/fixtures/`, so a transcription
 //! that drifted from what the dictionary actually emits fails here rather than
@@ -31,17 +31,10 @@
 //!   > lingrep-core/tests/fixtures/r7_aspect_tokens.jsonl
 //! ```
 //!
-//! The recipe lives here rather than in
-//! `docs/results/2026-08-04-r7-acceptance.md`, which recorded the six-row
-//! version and is a dated record: a dated record should not silently acquire
-//! a twelve-row input list it never ran.
-//!
 //! Both fixtures are read attribute-by-attribute through
 //! `published_attribute_index`, which is the same mapping
-//! `campaign_sentences` uses. A private copy is what let the `orth` → `text`
-//! rename go unnoticed: the committed transcript predated it, both halves
-//! agreed, and a regenerated fixture would have loaded its surface into a
-//! slot no predicate reads.
+//! `campaign_sentences` uses, so a renamed attribute key cannot leave the
+//! fixture reader and the predicates disagreeing.
 
 use lingrep_core::execution::{
     ExecutionError, MatchSink, PolicySink, SentenceLocation, SinkControl,

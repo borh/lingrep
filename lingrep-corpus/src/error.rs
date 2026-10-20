@@ -38,8 +38,6 @@ pub enum CorpusError {
         "prepared artifact manifest schema {version} is unsupported; rebuild with the current `ling corpus build`"
     )]
     PreparedArtifactRebuildRequired { version: u32 },
-    #[error("pre-lingrep artifact{generation_label} is retired; rebuild from source with `ling corpus build`", generation_label = generation.map(|value| format!(" generation {value}")).unwrap_or_default())]
-    RetiredArtifact { generation: Option<u32> },
     #[error(
         "lingrep artifact generation {generation} is unsupported; rebuild from source with `ling corpus build`"
     )]
@@ -100,7 +98,6 @@ impl CorpusError {
             Self::InvalidFormat { .. } => "invalid_format",
             Self::UnsupportedSchema { .. } => "unsupported_schema",
             Self::PreparedArtifactRebuildRequired { .. }
-            | Self::RetiredArtifact { .. }
             | Self::UnsupportedArtifactGeneration { .. } => "unsupported_schema",
             Self::ExpectedArtifactDirectory { .. } => "expected_artifact_directory",
             Self::SymlinkComponent { .. } => "symlink_component",

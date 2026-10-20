@@ -75,8 +75,8 @@ pub struct Args {
 
     /// Corpus input: a `.jsonl`/`.md` file, a Markdown directory, or a
     /// prepared `.lingcorpus` artifact; stdin is unsupported (the server requires
-    /// a path). `--input-format` overrides the shared format inference, and is
-    /// refused for an artifact, which records its own reader.
+    /// a path). `--input-format` overrides shared format inference and is
+    /// rejected for prepared artifacts, which record their own reader configuration.
     #[command(flatten)]
     pub input: CorpusInputArgs,
 
@@ -121,7 +121,7 @@ pub struct Args {
 
     /// Maximum bytes accepted for one physical input record: a JSONL document,
     /// or a plaintext or Markdown line. A record larger than this stops the
-    /// corpus build, naming the record and its source.
+    /// corpus build, reporting the record and its source.
     #[arg(long, default_value_t = DEFAULT_MAX_INPUT_RECORD_BYTES)]
     pub max_record_bytes: usize,
 
@@ -142,8 +142,8 @@ pub struct Args {
     /// reserved for `--input`. All declared corpora share one dictionary and one
     /// reader configuration. `PATH` is a corpus source, or a prepared
     /// `.lingcorpus` artifact — read directly, and so unaffected by that shared
-    /// reader configuration. Preparing one with `ling corpus build` is how
-    /// lingrep-web serves a format it cannot read itself, such as bccwj.
+    /// reader configuration. Preparing an artifact with `ling corpus build` allows
+    /// lingrep-web to serve formats without direct reader support, such as `bccwj`.
     #[arg(long = "corpus", value_name = "NAME=PATH")]
     pub corpus: Vec<String>,
 }

@@ -10,15 +10,14 @@
 # CoNLL-U-style syntax data only. It is the first tracked catalog to declare a
 # `transform:`, and the reason capture-scoped transforms exist: the normalized
 # verb is a rewrite of one capture, and an unscoped rewrite would narrow the
-# whole record and discard the capture the `key:` projects. See
-# `docs/results/2026-09-07-transform-capture-scope/README.md`.
+# whole record and discard the capture the `key:` projects.
 #
 # ## What is faithful, and what is an approximation
 #
 # The reference is `npv_matcher` and `normalize_verb_span` in
 # natsume-simple's `src/natsume_simple/pattern_extraction.py`. Three of that
 # implementation's decisions do not survive the port, and each is a fact about
-# SGX rather than a preference:
+# the pattern language rather than a preference:
 #
 #   1. natsume takes the verb complex from `ginza.bunsetu_span(verb)`. A
 #      bunsetu is a GiNZA-specific analysis, published in MISC and absent from
@@ -27,7 +26,7 @@
 #      where a bunsetu can start before it.
 #   2. natsume requires `case_particle.nbor().head != case_particle.head` —
 #      the token after the particle must not be another dependent of the same
-#      noun. SGX has no negative edge between two captures; the negative forms
+#      noun. The language has no negative edge between two captures; the negative forms
 #      are anonymous (`not $h -[l]-> _`) or predicate-bounded
 #      (`not $h -[l]-> [test]`), and neither can name the token at a position.
 #      `not_followed_by([upos=ADP & dep.rel=case])` covers the common instance,

@@ -42,23 +42,21 @@ enum Command {
     },
     /// Declare a campaign: seal the manifest and write an empty campaign file.
     ///
-    /// Needs the `screen` feature, because the guardrail suite comes from
+    /// Requires the `screen` feature, because the guardrail suite comes from
     /// `lingrep-core`. Written once and never edited — the digest it returns is what
     /// every appended observation is bound to.
     Declare(Box<DeclareArgs>),
     /// Append one measured run to a campaign file.
     ///
-    /// Refuses anything that would make the appended run incomparable with the
-    /// ones already there: a rebuilt arm, a different machine, a catalog
-    /// outside the suite. This is the only moment the observed world is still
-    /// available.
+    /// Rejects runs incomparable with existing observations: a rebuilt arm, a
+    /// different machine, or a catalog outside the suite.
     Record(Box<RecordArgs>),
     /// Print the BLAKE3 digest of a file.
     ///
     /// Exists because BLAKE3 has no coreutils spelling and the orchestrator
     /// names frozen arms by content. The same function the manifest and the
     /// exec fingerprint use, so a frozen arm's name and its recorded digest
-    /// cannot disagree.
+    /// cannot differ.
     Digest {
         #[arg(value_name = "FILE")]
         file: std::path::PathBuf,
@@ -70,10 +68,10 @@ enum Command {
     /// a parse failure: exiting early would `EPIPE` the process being measured
     /// and turn a correct run into a recorded failure.
     ///
-    /// Needs the `screen` feature, because the field list it neutralizes
+    /// Requires the `screen` feature, because the field list it neutralizes
     /// belongs to `ling`.
     DigestStream,
-    /// Print what each catalog in the campaign's suite still owes.
+    /// Print remaining required runs for each catalog in the campaign suite.
     ///
     /// One TSV row per catalog: path, required coverage, blocks recorded. The
     /// coverage table is the tier rules, and an operator should not have to
@@ -83,7 +81,7 @@ enum Command {
     Plan {
         #[arg(long, value_name = "FILE")]
         campaign: std::path::PathBuf,
-        /// Print only the catalogs that still owe runs.
+        /// Print only catalogs with remaining required runs.
         #[arg(long)]
         outstanding: bool,
     },
@@ -101,9 +99,9 @@ enum Command {
     },
     /// Change which metric a campaign's verdict turns on, after the fact.
     ///
-    /// Appends to an unsealed, append-only log; the manifest still says what
+    /// Appends to an unsealed, append-only log; the manifest records what
     /// was declared and the report names both. It exists because answering
-    /// "what do these observations say on `user`?" once cost a second
+    /// "what do these observations indicate on `user`?" once cost a second
     /// sixty-four-run campaign, when every observation already carried every
     /// metric.
     ///
@@ -121,9 +119,10 @@ enum Command {
     },
     /// Adjudicate a campaign file and render its results document.
     ///
-    /// Pure: needs no dictionary, no corpus, and not the `screen` feature. A
+    /// Pure: requires no dictionary, no corpus, and no `screen` feature. A
     /// campaign carries the guardrail suite it was declared against, so this
-    /// answers the same way on any machine and at any later commit.
+    /// produces the same output on any machine and at any later commit.
+    /// produces the same output on any machine and at any later commit.
     Adjudicate {
         /// The campaign JSON to read.
         #[arg(long, value_name = "FILE")]
@@ -240,8 +239,7 @@ struct DeclareArgs {
     ///
     /// Nothing reads the bytes except the hasher, and one catalog's output is
     /// ~42 GB per run. This trades those writes for a hashing consumer, which
-    /// is a change in what is measured — see the calibration in
-    /// docs/results/2026-08-18-campaign-digest-streaming.
+    /// is a change in what is measured.
     #[arg(long)]
     stream_output: bool,
     /// The command every run executes, after `--`, with `{catalog}` where the

@@ -81,22 +81,15 @@ fn positive_usize(raw: &str) -> Result<usize, String> {
 /// prepared record-emitting — while burning 30–35% more CPU and ~12% more
 /// resident bytes for it. Matching and analysis are both memory-latency bound
 /// and Rayon spin-waits, so an SMT sibling mostly contends with its twin.
-///
-/// The numbers are recorded in
-/// `docs/results/2026-08-22-uncached-analyzer-path/README.md`.
 fn default_workers() -> usize {
     let permitted = std::thread::available_parallelism().map_or(1, usize::from);
     permitted.min(num_cpus::get_physical()).max(1)
 }
 
-/// Search, inspect, tokenize, and prepare Japanese corpora.
+/// Search Japanese text and CoNLL-U treebanks for token patterns over surface
+/// form, lemma, part of speech, morphological features and dependency relations.
 #[derive(Debug, Parser)]
-#[command(
-    name = "ling",
-    version,
-    about,
-    after_help = "lingrep patterns syntax: run `ling check --help` or read ling-check(1)."
-)]
+#[command(name = "ling", version, after_help = ROOT_AFTER_HELP)]
 pub struct Cli {
     /// Write JSONL records and machine-readable JSON diagnostics.
     #[arg(long, global = true, help_heading = "Output")]
@@ -116,43 +109,54 @@ pub struct Cli {
     pub command: Command,
 }
 
+const ROOT_AFTER_HELP: &str = "\
+Examples:
+  ling check --pattern '[upos=VERB].'
+  ling matches --pattern '[lemma=走る].' --dict-path unidic.dic novel.txt
+  ling summarize --patterns catalog.lx --dict-path unidic.dic novel.txt
+  ling matches --pattern '[upos=NOUN] [dep.rel=case].' treebank.conllu
+
+Japanese text is analyzed with a dictionary given by --dict-path or
+LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.";
+
 /// Top-level public operation.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Find lingrep patterns matches and stream one record per match.
+    /// Search a corpus and print each match with its context.
     Matches(MatchesArgs),
-    /// Aggregate matches per pattern into exact group counts.
+    /// Count matches per pattern, grouped by matched surface or declared key.
     ///
     /// If multiple input aliases name the same source, each alias contributes
     /// its own counts.
     Summarize(SummarizeArgs),
-    /// Tokenize a corpus and stream sentence and token records.
+    /// Print each sentence's tokens and their attributes.
     Tokenize(TokenizeArgs),
-    /// Report attribute coverage, and which catalog exclusions absence exposes.
+    /// Count the tokens that carry each attribute.
     #[command(name = "coverage")]
     Attributes(AttributesArgs),
-    /// Browse matches interactively in the terminal.
+    /// Browse pattern counts and matches in an interactive terminal view.
     Explore(ExploreArgs),
-    /// Aggregate matches selected by sentence-final policy.
+    /// Count matches followed only by punctuation to the end of the sentence.
     SentenceFinal(SentenceFinalArgs),
-    /// Build or inspect artifacts, or inventory corpus sources.
+    /// Save analyzed corpora for reuse, inspect them, and list corpus sources.
     Corpus(CorpusArgs),
-    /// Compile and validate a lingrep patterns catalog without reading a corpus.
+    /// Validate patterns without reading a corpus; --help lists the syntax.
     #[command(
         after_help = "Run `ling check --help` for the complete lingrep patterns language reference.",
         after_long_help = crate::pattern_reference::PATTERN_REFERENCE
     )]
     Check(CheckArgs),
-    /// Probe dictionary, catalog, and prepared-corpus inputs.
+    /// Check that a dictionary, catalog and prepared corpus load.
     Doctor(DoctorArgs),
-    /// Describe command arguments, examples, and owned contracts.
+    /// Show a command's arguments, examples and output formats.
     Describe(DescribeArgs),
-    /// List or describe stable machine-output contracts.
+    /// List or show the JSONL and TSV output formats.
     #[command(name = "contracts")]
     Schema(SchemaArgs),
-    /// Generate a shell completion definition.
+    /// Print a shell completion script.
     Completions(CompletionsArgs),
-    /// Generate manual pages for every public command.
+    /// Write a manual page for every command to a directory.
     Manpages(ManpagesArgs),
 }
 
@@ -164,14 +168,14 @@ pub struct DoctorArgs {
     /// lingrep patterns catalog to compile as an independent readiness probe.
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
-    /// Check that this prepared artifact opens; do not hash all stored content.
+    /// Verify that this prepared artifact opens; do not hash stored content.
     #[arg(long, value_name = "ARTIFACT")]
     pub corpus: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct DescribeArgs {
-    /// Command to describe; omit it to describe the complete surface.
+    /// Command to describe; omit to describe the complete command surface.
     #[arg(value_name = "COMMAND", num_args = 0..=2)]
     pub command: Vec<String>,
 }
@@ -192,7 +196,7 @@ pub struct ManpagesArgs {
 
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
-    /// Contract to describe; omit it for the compact index.
+    /// Contract to describe; omit to list the compact index.
     #[arg(value_enum, value_name = "CONTRACT", hide_short_help = true)]
     pub contract: Option<crate::protocol::ContractId>,
 }
@@ -221,7 +225,7 @@ pub struct CheckArgs {
     pub catalog: CatalogArgs,
 
     /// Compare another catalog with the primary catalog. Repeat for more files.
-    /// Differences are reported but do not make the check fail.
+    /// Differences are reported without causing the check to fail.
     #[arg(long = "compare-with", value_name = "FILE", action = clap::ArgAction::Append)]
     pub compare_with: Vec<PathBuf>,
 
@@ -229,10 +233,10 @@ pub struct CheckArgs {
     #[arg(long, requires = "compare_with", help_heading = "Diagnostics")]
     pub fail_on_drift: bool,
 
-    /// Report binding findings against a named token schema, without a
-    /// corpus: referenced attributes it cannot supply are listed, and a
-    /// catalog it cannot bind at all (dependency `where` clauses on a
-    /// schema without `dep.*`) fails the check.
+    /// Report binding findings against a named token schema without reading a
+    /// corpus: referenced attributes absent from the schema are listed, and
+    /// catalogs that require unsupported attributes (such as dependency `where`
+    /// clauses on a schema without `dep.*`) fail the check.
     #[arg(long, value_enum, value_name = "SCHEMA", help_heading = "Diagnostics")]
     pub schema: Option<CheckSchemaArg>,
 }
@@ -474,8 +478,8 @@ pub struct CorpusInspectArgs {
     pub plan: bool,
 }
 
-/// Discovery of prepared artifacts. It reads manifests and reports; it
-/// never builds, selects, or deletes one.
+/// Discovery of prepared artifacts. Reads manifests and reports; never builds,
+/// selects, or deletes artifacts.
 #[derive(Debug, Args)]
 pub struct CorpusVariantsArgs {
     /// Source root or prepared artifact used as the comparison point.
@@ -595,9 +599,9 @@ pub struct CatalogArgs {
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
 
-    /// Compile one inline lingrep patterns expression or document. For syntax, run
+    /// Compile one inline pattern expression or catalog. For syntax, run
     /// `ling check --help`.
-    #[arg(long, value_name = "lingrep patterns", help_heading = "Catalog")]
+    #[arg(long, value_name = "PATTERN", help_heading = "Catalog")]
     pub pattern: Option<String>,
 }
 
@@ -619,10 +623,10 @@ impl CatalogArgs {
 
 /// [`CatalogArgs`] without `required = true`.
 ///
-/// Every other command needs a catalog, so `CatalogArgs` demands one. Here a
-/// bare coverage run is the common case — "which attributes are partial?" is
-/// worth asking before any pattern exists — while the two spellings stay
-/// mutually exclusive.
+/// Other commands require a catalog, so `CatalogArgs` marks the argument
+/// required. Here a bare coverage run is the common case — checking attribute
+/// coverage before writing patterns — while the two options remain mutually
+/// exclusive.
 #[derive(Debug, Args)]
 #[group(required = false, multiple = false)]
 pub struct OptionalCatalogArgs {
@@ -631,9 +635,9 @@ pub struct OptionalCatalogArgs {
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
 
-    /// Compile one inline lingrep patterns expression or document. For syntax, run
+    /// Compile one inline pattern expression or catalog. For syntax, run
     /// `ling check --help`.
-    #[arg(long, value_name = "lingrep patterns", help_heading = "Catalog")]
+    #[arg(long, value_name = "PATTERN", help_heading = "Catalog")]
     pub pattern: Option<String>,
 }
 
@@ -687,7 +691,7 @@ pub struct AttributesArgs {
 #[derive(Debug, Args)]
 pub struct QueryInputArgs {
     /// Vibrato dictionary for direct input; overrides `LINGREP_DICTIONARY_PATH`.
-    /// Prepared artifacts already contain analyzed tokens and reject this option.
+    /// Not accepted with `--corpus`: a prepared artifact already contains analyzed tokens.
     #[arg(
         short = 'd',
         long,
@@ -721,7 +725,7 @@ pub struct QueryInputArgs {
     pub root: Option<PathBuf>,
 
     /// Override the inferred corpus format. Directories default to `markdown`.
-    /// Prepared artifacts record their format and reject this option.
+    /// Not accepted with `--corpus`: a prepared artifact records its own format.
     #[arg(
         long = "input-format",
         value_enum,
@@ -745,8 +749,8 @@ pub struct ScopeArgs {
 /// Sentence subsampling for commands that report over a corpus.
 ///
 /// Separate from [`ScopeArgs`] although both select sentences: a scope clause
-/// asks a question about a named subset and its counts are a census of that
-/// subset, while a sample's counts are estimates of the whole. Sharing a group
+/// restricts counting to a named subset, so its counts are a census of that
+/// subset, while a sample's counts estimate the whole corpus. Sharing a group
 /// would put those two on the same footing.
 #[derive(Clone, Debug, Default, Args)]
 pub struct SampleArgs {
@@ -758,7 +762,8 @@ pub struct SampleArgs {
     /// move it, and two runs at one seed look at the same sentences.
     ///
     /// Match and summary counts describe the sample. The `run`
-    /// record says so; `--tsv` has nowhere to say so and is refused.
+    /// record states the sampling rate and seed. TSV output has no field for
+    /// them, so `--sample` is not accepted with `--tsv`.
     #[arg(long = "sample", value_name = "RATE", help_heading = "Selection")]
     pub rate: Option<f64>,
 
@@ -783,7 +788,7 @@ impl SampleArgs {
     /// The rate arrives as a decimal because that is how a reader writes one,
     /// and is converted here to parts per million — once, at the boundary — so
     /// that nothing downstream does floating-point arithmetic to decide which
-    /// sentences to look at. A rate that rounds to zero is refused rather than
+    /// sentences to look at. A rate that rounds to zero is rejected rather than
     /// silently admitting nothing: the run would read a whole corpus, publish
     /// no matches, and exit `0`.
     ///
@@ -822,8 +827,8 @@ impl SampleArgs {
 pub struct CacheArgs {
     /// Reuse a compatible artifact beside ROOT, or create one when absent.
     ///
-    /// Reuse observes all of ROOT to verify its exact source identity. Address
-    /// a known artifact with `--corpus` to skip that source observation.
+    /// Reusing an artifact scans ROOT to verify its exact source identity.
+    /// Specify a known artifact with `--corpus` to skip source verification.
     ///
     /// By default, ROOT is analyzed directly without reading or writing an
     /// artifact. Stdin cannot be cached.
@@ -833,11 +838,10 @@ pub struct CacheArgs {
 
 /// The two formats whose root shape is part of the format: `bccwj` is a
 /// distribution root (a directory containing `C-XML/` and `DOC/`), and
-/// `soranoha` is one bulk archive file. Refused here — before anything is
-/// opened — at every command position that declares `--input-format`, so a
-/// directory or stdin is named as the mismatch it is rather than reaching a
-/// reader that cannot use it. Returns the refusal message so each site can
-/// wrap it in its own error type.
+/// `soranoha` is one bulk archive file. Every command that declares
+/// `--input-format` calls this before opening any input, so a directory or
+/// stdin given for these formats is reported as a format mismatch. Returns the
+/// message; each caller wraps it in its own error type.
 pub(crate) fn validate_format_root(
     format: CorpusFormat,
     root: Option<&Path>,
@@ -1049,7 +1053,7 @@ pub struct RuntimeArgs {
 
     /// Maximum bytes accepted for one physical input record: a JSONL document,
     /// or a plaintext or Markdown line. Independent of `--batch-raw-bytes`,
-    /// which budgets a batch of admitted sentences rather than a document.
+    /// which limits a batch of admitted sentences rather than a document.
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_INPUT_RECORD_BYTES,
@@ -1500,8 +1504,8 @@ impl Cli {
             max_stage_input_bytes: resources.batch_raw_bytes,
             max_tokenized_bytes: resources.max_tokenized_bytes,
         };
-        // Every rule relating one bound to another belongs to `ExecutionLimits`,
-        // so this command line asks rather than restates.
+        // `ExecutionLimits::validate` checks every rule that relates one bound to
+        // another; this function does not repeat those checks.
         limits
             .validate()
             .map_err(|error| CliError::InvalidArgs(limit_diagnostic(&error)))?;

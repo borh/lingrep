@@ -556,7 +556,7 @@ mod tests {
     }
 
     /// The query band: what a running edit needs is inside one pinnable
-    /// element, and the chrome that used to sit above it is gone.
+    /// element, with no repeated chrome above it.
     #[test]
     fn the_index_page_puts_the_edit_loop_in_one_band_and_drops_the_repeated_chrome() {
         let page = IndexPage {
@@ -613,7 +613,7 @@ mod tests {
         assert!(html.contains("<dialog class=\"editor-help-dialog\""));
         assert!(!html.contains("<details class=\"editor-help\""));
         // The controls row keeps only the opener; the reference text itself
-        // sits after the query library, outside the workspace it used to grow.
+        // sits after the query library, outside the workspace.
         let controls = band
             .split_once("permalink-controls")
             .expect("the controls row")

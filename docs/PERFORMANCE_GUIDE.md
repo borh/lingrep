@@ -121,8 +121,8 @@ artifacts never become clean EOF.
 
 Lingrep artifacts use `tokens.v1.zst` (token schema 2), `locations.v1`,
 `provenance.sqlite` (provenance schema 4), optional `enhanced.v1.zst`,
-manifest schema 1, identity scheme a1, and artifact generation 2. Generation 1
-artifacts require rebuilding from source; there is no
+manifest schema 1, identity scheme a1, and artifact generation 2. An artifact
+of any other generation requires rebuilding from source; there is no
 compatibility reader or in-place converter. Stored component and block
 digests use unkeyed BLAKE3 and are checked before decompression or structural
 use. These digests detect

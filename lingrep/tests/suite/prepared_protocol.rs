@@ -1291,7 +1291,7 @@ fn build_never_replaces_an_existing_root() {
     }
 }
 
-/// The residency limit still refuses; the sentence limit no longer does.
+/// The residency limit refuses; the sentence limit does not.
 ///
 /// The two look symmetric and are not. An oversized *sentence* is bad input,
 /// and a build truncates it and says so rather than losing the corpus around it
@@ -2066,12 +2066,10 @@ fn corpus_build_without_output_refuses_a_corrupt_canonical_artifact() {
 /// ordinary decomposed spelling of `が` — and `--normalization nfc` is the
 /// default precisely so that such a corpus analyzes as the composed text.
 ///
-/// A build used to refuse one outright: the provisional provenance row kept the
-/// *raw* admitted bytes while the analyzer's record carried the text after
-/// normalization, so the writer's equality check compared a pre-NFC string with
-/// a post-NFC one and aborted with "analyzed text differs from admitted
-/// sentence bytes". `data-archive/corpus-2000.jsonl` could not be prepared at
-/// all.
+/// The provenance writer's equality check compares the analyzer's text with
+/// the admitted text after normalization; comparing a pre-NFC string with a
+/// post-NFC one would abort with "analyzed text differs from admitted sentence
+/// bytes".
 ///
 /// The contract this pins is the one `--normalization`'s own help states:
 /// normalization happens once, before analysis, so a decomposed source and its

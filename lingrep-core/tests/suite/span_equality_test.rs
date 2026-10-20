@@ -235,8 +235,7 @@ fn generated_bounded_units_match_exactly_and_mutation_breaks_equality(tc: hegel:
 /// The key is now the whole slot vector, of which that slot is one component,
 /// so this is the same guarantee generalized rather than a behaviour change.
 /// Pinned because deleting a special case should leave visible evidence that
-/// what it protected still holds
-/// (docs/design/2026-08-29-where-capture-assignment.md).
+/// what it protected still holds.
 #[test]
 fn a_span_equality_binding_survives_a_failing_one_at_the_same_position() {
     let matcher = matcher("pattern p := ([]* (?<unit> []{1,2})) same_as($unit).");

@@ -118,10 +118,8 @@ fn every_reported_name_carries_at_least_two_distinct_bodies() {
 #[test]
 fn the_measured_drift_set_matches_the_recorded_baseline() {
     // Nine names, including the two helper definitions above. Pinned so the next catalog
-    // edit that changes the set is visible as a diff against
-    // `docs/results/2026-08-02-r5-drift-baseline.md` rather than sliding
-    // silently. Adjudication of any entry stays with the researcher —
-    // this asserts the measurement, not that the divergences are correct.
+    // edit that changes the set is visible as a diff. Adjudication of any
+    // entry stays with the researcher — this asserts the measurement, not that the divergences are correct.
     let sources = researcher_catalog_sources();
     let report = report(&sources);
     let measured: Vec<(String, usize)> = report

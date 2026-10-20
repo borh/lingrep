@@ -5,14 +5,12 @@ end
 # Counting driver catalog: COST PROBES, NOT RESEARCH CLAIMS.
 #
 # Nine parameterizations of one shape — the multi-を generalization of
-# `double-wo.sgx`'s raw candidate language — spelled by unrolling, because
-# unrolling is the only way SGX compiles a counting constraint today. The
+# `double-wo.lx`'s raw candidate language — spelled by unrolling, because
+# unrolling is the only way the pattern language expresses a counting
+# constraint. The
 # parameters are k (number of を occurrences, suffix `_x2`/`_x3`/`_x4`) and
 # n (bounded gap between consecutive occurrences, suffix `_n4`/`_n8`/`_n16`).
-# Each pattern's cost is what the catalog exists to measure: the k×n
-# compile-cost table and the unrolled runtime baseline live in
-# docs/results/2026-08-14-counting-unrolled-baseline/, and the design that is
-# deferred against that table in docs/design/2026-08-14-counting-set-repeats.md.
+# Each pattern's cost is what the catalog exists to measure.
 #
 # The `examples:` claims verify only that each pattern's language is inhabited
 # by a real tokenization — they are constructed sentences, not corpus

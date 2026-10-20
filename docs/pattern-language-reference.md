@@ -463,12 +463,6 @@ segment lists. `sentence-final` refuses lexicons. `resolve` and `detach` may not
 select one, and lexicons may not declare `transform:` or `render:`. The policy
 subject `patterns` selects ordinary patterns and excludes lexicons.
 
-## Retired policy keys
-
-Six metadata keys are refused, each with a `RetiredPolicyKey` error naming the
-policy statement that replaces it: `terminal`, `trim_suffix`, `trim_prefix`,
-`suppress_within`, `priority_group` and `longest_in_group`.
-
 ## Policy block
 
 One optional `policy … end` block per accumulated catalog holds an ordered

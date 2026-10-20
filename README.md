@@ -9,7 +9,7 @@ matches in context.
 
 Japanese is the main focus, but `ling` also reads CoNLL-U, so Universal
 Dependencies treebanks and other analyzed data can be searched without a
-dictionary.
+parser.
 
 lingrep provides a
 [pattern language](docs/pattern-language-reference.md) with
@@ -36,54 +36,16 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 
 ## Install
 
-### Install script
-
 ```bash
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO https://github.com/borh/lingrep/releases/latest/download/install.sh
 sh install.sh
 ```
 
-The script installs the release it was published with. It selects the archive
-for the host platform, verifies the SHA-256 checksum, and copies `ling` to
-`~/.local/bin`. When that directory is not on `PATH`, it appends one marked line
-to the shell's startup file. Administrator rights are not required; re-running
-updates `ling`. On Windows, run it in WSL. Inspect `install.sh` before
-execution; [scripts/install.sh](scripts/install.sh) is the source.
-
-| Variable | Effect |
-|---|---|
-| `LING_VERSION=0.3.2` | Install another release |
-| `LING_INSTALL_DIR=/path/to/bin` | Install somewhere other than `~/.local/bin` |
-| `LING_NO_MODIFY_PATH=1` | Leave shell startup files unchanged |
-
-### Download a release
-
-Each [release](https://github.com/borh/lingrep/releases) has `ling` archives
-for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel). An archive
-unpacks to one directory with the binary, shell completions, manual pages, the
-license, and third-party notices. The Linux builds require glibc 2.35 or newer.
-
-```bash
-version=0.3.2
-target=aarch64-apple-darwin  # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
-base=https://github.com/borh/lingrep/releases/download/v$version
-curl -LO "$base/ling-$version-$target.tar.gz"
-curl -LO "$base/ling-$version-$target.tar.gz.sha256"
-shasum -a 256 -c "ling-$version-$target.tar.gz.sha256"
-tar xzf "ling-$version-$target.tar.gz"
-export PATH="$PWD/ling-$version-$target/bin:$PATH"
-ling --help
-```
-
-The archives include no dictionary. To analyze Japanese, download Sudachi's
-dictionary ([below](#japanese-with-sudachi)) or build UniDic with Nix.
-CoNLL-U input and `ling check` require no dictionary.
-
-### Try it with Nix
-
-```bash
-nix run github:borh/lingrep#ling -- --help
-```
+The script installs `ling` on Linux and macOS (on Windows, in WSL) into
+`~/.local/bin`, or `$XDG_BIN_HOME` when it is set. With Nix, run
+`nix run github:borh/lingrep#ling -- --help` instead.
+[Install ling](docs/installation.md) lists the installer's options and the
+manual download.
 
 ## Quick start
 
@@ -113,9 +75,9 @@ ling matches \
   sample.txt
 ```
 
-`--sudachi-edition` must match the archive (`small`, `core`, or `full`). ling
-supports SudachiDict releases up to `v20260723`; later releases use an
-unsupported container format.
+`--sudachi-edition` must match the archive (`small`, `core`, or `full`). SudachiDict
+releases up to `v20260723` are supported; later releases use an unsupported
+container format.
 
 ### Japanese with UniDic
 
@@ -171,4 +133,9 @@ workflow and verification.
 
 ## License
 
-lingrep is licensed under the [MIT License](LICENSE).
+lingrep is licensed under the [MIT License](LICENSE), except files that state
+another license, such as the UD Japanese GSD sample in `lingrep/tests/fixtures`
+(CC BY-SA 4.0). Release archives list the Rust crates `ling` links and the NDC9
+data it embeds in `THIRD-PARTY-NOTICES.md`;
+[lingrep-web/assets/THIRD-PARTY-NOTICES.md](lingrep-web/assets/THIRD-PARTY-NOTICES.md)
+lists the bundled browser libraries.

@@ -12,7 +12,6 @@
 # Candidate-present and candidate-absent rows deliberately have different key
 # shapes. The corpus screen found that 15–31% of present predicates have more
 # than one candidate, so a scalar optional capture would be the wrong model.
-# See docs/results/2026-08-31-passive-oblique-realization/README.md.
 
 defaults
   status: "experimental"

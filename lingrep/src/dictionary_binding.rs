@@ -6,10 +6,9 @@
 //! tagset from another's, and `dictionary_identity` describes the run rather
 //! than the catalog. So a catalog authored for one dictionary and run against
 //! another agrees on every recorded identity while meaning
-//! something different — measured in
-//! `docs/results/2026-08-04-catalog-tagset-binding/`, where one catalog over
-//! one set of sentences reports 18 matches under both `unidic-cwj-202512` and
-//! `unidic-kinsei-edo-202512` while 37 token analyses differ underneath.
+//! something different: one catalog over one set of sentences reports 18
+//! matches under both `unidic-cwj-202512` and `unidic-kinsei-edo-202512` while
+//! 37 token analyses differ underneath.
 //!
 //! **This is a notice, never an error.** Running a catalog against a second
 //! dictionary is a deliberate experiment as often as it is a mistake. Report
@@ -88,10 +87,9 @@ pub fn strip_release_version(name: &str) -> &str {
 
 /// The notice to publish, or `None` when there is nothing to say.
 ///
-/// Silent when the catalog declares nothing — every catalog predating the key,
-/// and every inline `--pattern`, which has no file to declare in. A notice that
-/// always fires is a notice nobody reads, so absence is not reported until the
-/// tracked catalogs carry the key.
+/// Silent when the catalog declares nothing, including every inline
+/// `--pattern`, which has no file to declare in. A notice that always fires is
+/// a notice nobody reads, so absence is not reported.
 #[must_use]
 pub fn binding_mismatch(matcher: &CompiledCatalog, dictionary_path: &str) -> Option<String> {
     let loaded = dictionary_name_from_path(dictionary_path)?;

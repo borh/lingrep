@@ -1014,8 +1014,7 @@ impl QueryFixture {
 /// A catalog authored for one dictionary and run against another is reported,
 /// and the run still succeeds.
 ///
-/// The notice exists because this failure is otherwise invisible: measured in
-/// `docs/results/2026-08-04-catalog-tagset-binding/`, one catalog over one set
+/// The notice exists because this failure is otherwise invisible: one catalog over one set
 /// of sentences reports the same match count under `unidic-cwj-202512` and
 /// `unidic-kinsei-edo-202512` while 37 token analyses differ underneath. A
 /// count that stays equal is indistinguishable from a correct one.
@@ -1102,8 +1101,7 @@ fn a_catalog_bound_to_the_loaded_dictionary_is_silent() {
 
 /// Two surface realizations of one collocation become one summary row.
 ///
-/// Measured motivation in `docs/results/2026-08-03-sketch-grammar-catalog/`:
-/// over 500 documents, surface keying yields 91,562 rows where capture keying
+/// Over 500 documents, surface keying yields 91,562 rows where capture keying
 /// yields 71,360 pairs, and 実験を行う alone is published as seven rows ranked
 /// 2 through 11,182.
 #[test]

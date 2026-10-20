@@ -1431,11 +1431,9 @@ impl Mutation {
             }
             // The analyzer's recorded semantics are what the analysis
             // identity is derived from, so tampering with them breaks the
-            // manifest's self-consistency. This replaced a case that mutated
-            // `dictionary_fingerprint`: that field is now an inspection fact
-            // and not an identity input, so changing it changes a reported
-            // value and nothing else. Keeping the old case would have asserted
-            // a rejection the design deliberately no longer makes.
+            // manifest's self-consistency. `dictionary_fingerprint` is an
+            // inspection fact, not an identity input, so changing it changes a
+            // reported value and nothing else.
             Self::WrongAnalyzerSemanticIdentity => {
                 let mut manifest = read_manifest(root);
                 manifest["analyzer"]["semantic_identity"] = "ff".repeat(32).into();
@@ -1742,17 +1740,17 @@ async fn schema_three_artifact_requires_rebuild() {
 }
 
 #[tokio::test]
-async fn schema_four_rejects_retired_encoding_field() {
+async fn a_manifest_with_an_unknown_field_is_invalid() {
     let fixture = ArtifactFixture::new().await;
     let mut manifest = read_manifest(&fixture.root);
     manifest
         .as_object_mut()
         .unwrap()
-        .insert("encoding".into(), serde_json::json!("compressed"));
+        .insert("unknown_field".into(), serde_json::json!("value"));
     write_manifest(&fixture.root, &manifest);
 
     let error = match CorpusArtifact::open(&fixture.root) {
-        Ok(_) => panic!("schema 4 accepted the retired encoding field"),
+        Ok(_) => panic!("the manifest accepted an unknown field"),
         Err(error) => error,
     };
     assert_eq!(error.code(), "invalid_format");

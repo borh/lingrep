@@ -951,8 +951,7 @@ mod tests {
         assert_eq!(dendrogram.max_distance_label, "0.00");
     }
 
-    /// The tree includes every pattern with data, even beyond the former
-    /// forty-leaf display cap.
+    /// The tree includes every pattern with data, beyond forty leaves.
     #[test]
     fn more_than_forty_patterns_are_all_clustered() {
         let rows = (0..43)

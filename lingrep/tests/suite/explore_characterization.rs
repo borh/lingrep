@@ -28,27 +28,6 @@ fn explore_validates_the_catalog_before_terminal_takeover() {
 }
 
 #[test]
-fn explore_rejects_legacy_execution_controls() {
-    let dictionary = MiniDictionary::new();
-    let output = lingrep()
-        .args([
-            "explore",
-            "--patterns",
-            fixture("sentence-final.lx").to_str().unwrap(),
-            "--dict-path",
-            dictionary.path().to_str().unwrap(),
-            "--cache-path",
-            "retired.vp4",
-            fixture("sentence-final.jsonl").to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-}
-
-#[test]
 fn explore_requires_an_interactive_terminal_without_publishing_protocol_output() {
     let dictionary = MiniDictionary::new();
     let output = lingrep()

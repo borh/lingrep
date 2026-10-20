@@ -27,7 +27,7 @@ use crate::direct_source::{OrderedInventoryObservation, identity_io_error};
 
 /// One BCCWJ distribution's zips, walked once in inventory order.
 ///
-/// The cursor owns two invariants the seams used to restate:
+/// The cursor owns two invariants so the seams do not restate them:
 ///
 /// - a handed-out document's `ordinal` indexes [`Self::zip_for`], which is
 ///   what lets a caller recover the zip without the producer stashing it for

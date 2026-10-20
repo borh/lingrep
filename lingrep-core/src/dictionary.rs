@@ -205,13 +205,10 @@ pub fn create_tokenizer_with_identity(
 /// error, as is a path that is not a `.dic`. Every `None` sends the caller to
 /// [`hash_dictionary_stream`], which always works and merely costs more.
 ///
-/// A compressed input used to be answered from the decompressed copy the loader
-/// leaves in the vibrato cache, reached through a fork-only
-/// `Dictionary::cached_decompressed_path` accessor. Every packaged dictionary
-/// ships uncompressed, so that route served only a user-supplied `.zst`, and
-/// holding it meant pinning `vibrato-rkyv` to a private fork that no public
-/// checkout can fetch. The cost of dropping it is one extra decompression per
-/// `.zst`, which the identity memo already pays at most once per file.
+/// A compressed input is always streamed: public `vibrato-rkyv` exposes no
+/// path to the loader's decompressed cache copy. That costs one extra
+/// decompression per `.zst`, which the identity memo pays at most once per
+/// file.
 fn digest_from_dictionary_file(dict_path: &str) -> Option<[u8; 32]> {
     // Restricted to the extension `load_dictionary_data` reads as raw bytes, so
     // this maps exactly what the stream would have hashed and never guesses at
@@ -225,8 +222,7 @@ fn digest_from_dictionary_file(dict_path: &str) -> Option<[u8; 32]> {
 /// BLAKE3 over a mapped file, in parallel, or `None` if it cannot be read.
 ///
 /// BLAKE3's tree structure lets many threads hash one file while producing the
-/// same digest as a serial pass. See
-/// `docs/results/2026-08-24-parallel-dictionary-decompression/`.
+/// same digest as a serial pass.
 fn hash_mapped_file(path: &Path) -> Option<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_mmap_rayon(path).ok()?;
@@ -569,9 +565,8 @@ mod identity_tests {
 
     /// A `.zst` identity must equal a serial stream of the archive itself.
     ///
-    /// Compressed input is no longer answered from the loader's decompressed
-    /// cache copy — that accessor belonged to a fork of `vibrato-rkyv` a public
-    /// build cannot fetch — so [`create_tokenizer_with_identity`] loads the
+    /// Compressed input is not answered from the loader's decompressed cache
+    /// copy, so [`create_tokenizer_with_identity`] loads the
     /// tokenizer and then streams the archive through the hasher. The digest
     /// reaches every prepared artifact's analysis identity, so this pins it
     /// against its definition rather than against the route taken to it.
@@ -609,8 +604,8 @@ mod identity_tests {
     ///
     /// This branch decides whether an identity costs a decompression. A `.dic`
     /// maps the file it already has; a `.zst` must decline so the caller
-    /// streams it, because the loader's decompressed copy is no longer
-    /// reachable from a public `vibrato-rkyv`.
+    /// streams it, because the loader's decompressed copy is not reachable
+    /// from a public `vibrato-rkyv`.
     #[test]
     fn only_an_uncompressed_dictionary_is_answered_from_a_mapped_file() {
         let mini = crate::testing::MiniDictionary::new();

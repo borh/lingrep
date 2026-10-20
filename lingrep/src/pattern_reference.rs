@@ -60,9 +60,9 @@ matches the bracket and its `dep.head` designates the head token. Both
 operands must be captures of statically exactly one token; a fragment may not
 declare a clause, and an operand may not relate a capture to itself. The
 clause filters candidate matches before publication filtering, so a shorter
-passing match survives a longer failing one. A relation-bearing catalog
+passing match survives a longer failing one. Binding a relation-bearing catalog
 requires a corpus that carries `dep.head` and `dep.rel` (CoNLL-U or a
-dependency-parsing analyzer) and is refused at binding otherwise. This form
+dependency-parsing analyzer); binding fails if these attributes are absent. This form
 matches basic edges only; `dep.enhanced` is not consulted.
 
 Use `_` when only existence matters, not the dependent's identity:
@@ -102,10 +102,10 @@ unsubtyped form; write `-[obl|obl:*]->` for either. A `@name`
 term names a `set` declaration and resolves where `[x in @S]` resolves; a
 member that is not a well-formed relation label is a compile error. A term
 repeated in one bracket, and two constraints sharing a dependent capture with
-disjoint label sets, are both refused: a token carries exactly one `dep.rel`,
+disjoint label sets, are both rejected: a token carries exactly one `dep.rel`,
 so the first adds nothing and the second could never match.
 
-Two operands that no single match can bind together are refused as well: a
+Two operands that no single match can bind together are rejected as well: a
 capture in an alternation branch binds only when that branch is taken, so
 `((?<a> …) | (?<b> …)) where $a -[obj]-> $b` could never match. A repetition
 is the exception, and it is legal — `((?<a> …) | (?<b> …))+` enters the
@@ -208,10 +208,10 @@ Token-test values are unquoted. Use `/.../` for a regular expression and
 `\uXXXX` for punctuation or whitespace that cannot appear bare. `=`, `!=`,
 `in`, and `not in` accept literals only; regex operands require `~` or `!~`.
 A bare value ends at whitespace or `&`, but not at `|`: `[text=a|text=b]` is
-refused as `PipeInBareValue`. Write `[text=a | text=b]` for disjunction, or
+rejected as `PipeInBareValue`. Write `[text=a | text=b]` for disjunction, or
 `[text=a\u007Cb]` when the literal value contains a pipe.
 Metadata quotes its values and a token test never does, so `[text=\u0022x\u0022]`
-would specify the literal `\u0022x\u0022`; it is refused as
+would specify the literal `\u0022x\u0022`; it is rejected as
 `QuotedAttributeValue`.
 
 METADATA
@@ -284,9 +284,7 @@ reads what a `substitute` wrote.
 `anchor:` may also be a list of anchor maps. `max_nesting:` belongs on the
 fragment named by an anchor's `exclude`. `render:` is reserved, but this
 release has no registered renderer names; use `transform:` to build a unit.
-`dictionary:` is compiler-owned but retired and always refused; declare
-compatible analyzers with `analyzer:` instead. Compiler-owned keys must not be
-declared in a `schema` block.
+Compiler-owned keys must not be declared in a `schema` block.
 
 POLICY PROGRAMS
 

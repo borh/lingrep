@@ -122,8 +122,7 @@ struct Shared {
 ///
 /// The reader tallies into a plain [`ScopeCounts`] it owns and publishes here
 /// **once per document**, not once per sentence. This keeps locking off the
-/// per-sentence ingestion path. See
-/// `docs/results/2026-08-05-r3b-section-scope-cost.md`.
+/// per-sentence ingestion path.
 #[derive(Clone, Debug, Default)]
 pub struct ScopeObservation {
     state: Arc<Mutex<Shared>>,

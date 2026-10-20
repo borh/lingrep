@@ -18,7 +18,7 @@
   <p data-i18n="help.p5"><code>^</code> and <code>$</code> assert sentence boundaries. <code>preceded_by(E)</code> and <code>followed_by(E)</code> require a regular expression to end or start at the current boundary without consuming it; <code>not_preceded_by(E)</code> and <code>not_followed_by(E)</code> complement those tests. Assertion bodies may be variable-width or nullable, but may not contain captures or <code>same_as</code>.</p>
 
   <h2><span data-i18n="help.h_graph">Dependency graphs</span></h2>
-  <p data-i18n="help.p_graph">A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]-&gt;, may introduce a word or decimal empty node with (?&lt;name&gt; [test]), and may name the exact edge with as $edge. Every graph component needs a surface capture anchor; each complete assignment is one match.</p>
+  <p data-i18n="help.p_graph">A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]-&gt;, may introduce a word or decimal empty node with (?&lt;name&gt; [test]), and may name the exact edge with as $edge. Every graph component requires a surface capture anchor; each complete assignment is one match.</p>
 
   <h2><span data-i18n="help.h_editor">Pattern editor</span></h2>
   <p data-i18n="help.p6">The pattern editor highlights lingrep patterns syntax and checks it as you type. Hover any attribute, value, <code>@reference</code>, or <code>$capture</code> for its documentation; typing <code>same_as(</code> shows the call signature inline with the active argument underlined.</p>

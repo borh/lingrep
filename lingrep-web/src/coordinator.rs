@@ -1409,7 +1409,6 @@ mod tests {
     /// A corpus whose second sentence cannot be materialized under the
     /// default resident bound must not fail the run: the sentence is omitted
     /// and the completed scan carries the omission summary for the banner.
-    /// (Real-world story: `docs/results/2026-08-11-lingrep-web-workbench-robustness/step0.md`.)
     #[test]
     fn run_scan_blocking_omits_oversized_sentences_and_reports_them() {
         let token = TokenInfo::default().with_lemma("x".repeat(600_000));

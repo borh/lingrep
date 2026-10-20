@@ -94,9 +94,8 @@ fn inputs() -> AnalysisInputs {
 
 /// A descriptor differing from the fixture only in the named resource digest.
 ///
-/// Used to prove that a resource change the *old* keying would have caught
-/// still moves the identity, and that changes it would have missed now move it
-/// too.
+/// Proves that a resource change moves the identity, and so does an output
+/// change with identical resources.
 fn descriptor_with(resources: [u8; 32], output: [u8; 32]) -> AnalyzerDescriptor {
     AnalyzerDescriptor::new(
         AnalyzerFamily::Vibrato,
@@ -207,8 +206,8 @@ fn analysis_identity_rows_cover_framing_and_semantic_sensitivity() {
                 &descriptor_with(bytes(9), [0xf6; 32]),
             ),
         ),
-        // The case the old keying could not see: a change to output
-        // configuration alone, with every resource identical. This is the
+        // A change to output configuration alone, with every resource
+        // identical. This is the
         // shape of a Sudachi split mode.
         (
             "analyzer output configuration",
@@ -251,9 +250,8 @@ fn shared_semantic_identity_digests_use_versioned_blake3_framing() {
         *blake3::hash(b"lingrep/sentence-admission/v2").as_bytes()
     );
 
-    // V1 binds the complete ordered symbolic schema, including each value
-    // kind, instead of reconstructing identity from the retired physical
-    // column enum and featurization rules.
+    // The identity binds the complete ordered symbolic schema, including
+    // each value kind.
     assert_eq!(
         token_schema_identity_digest(),
         [

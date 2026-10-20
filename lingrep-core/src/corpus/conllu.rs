@@ -520,7 +520,7 @@ impl EnhancedGraphObservation {
     ///
     /// Empty nodes remain available through [`EnhancedGraph::empty_nodes`]
     /// and graph edges; this projection contains only word dependents because
-    /// it mirrors the historical token attribute.
+    /// it is the per-token attribute.
     ///
     /// # Errors
     ///
@@ -1216,10 +1216,9 @@ fn split_set(value: &str, separator: char) -> Box<[CompactString]> {
 /// apart is how they drift: an offset is only meaningful against the exact
 /// string this returns.
 ///
-/// The separator is removed only when one was appended. It used to be an
-/// unconditional `pop`, which silently ate the final character of any sentence
-/// whose last token carried `SpaceAfter=No` — the ordinary shape of Japanese
-/// CoNLL-U without a `# text` comment.
+/// The separator is removed only when one was appended, so the final
+/// character of a sentence whose last token carries `SpaceAfter=No` — the
+/// ordinary shape of Japanese CoNLL-U without a `# text` comment — is kept.
 fn reconstruct_with_offsets(
     words: &[Word],
     multiword: &[(std::ops::Range<usize>, String, bool)],

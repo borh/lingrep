@@ -80,7 +80,7 @@ pub(crate) struct DirectoryEntry {
 /// Measured on a 36 MB corpus, stage 2 is what made stage 3 the bound once the
 /// caller's own work had been cut: the recorder was the busiest thread in the
 /// build at 4.42 s against the caller's 4.15 s, and moving encoding off it took
-/// it to 0.51 s (`docs/results/2026-08-27-provenance-and-encode-fan-out`).
+/// it to 0.51 s.
 ///
 /// **Ordering is not reconstructed, it is inherent.** The caller sends the
 /// recorder one result channel per block, in block order, over a FIFO queue.
@@ -1426,21 +1426,10 @@ fn decode_schema(bytes: &[u8]) -> Result<TokenSchema, CorpusError> {
                 .ok_or_else(|| invalid("truncated schema key"))?,
         )
         .map_err(|_| invalid("schema key is not UTF-8"))?;
-        attributes.push(SchemaAttribute::new(key, kind).map_err(|_| {
-            // Name the one cause a researcher will actually hit. `form` was
-            // the portable surface key until it was renamed `text`, so an
-            // artifact published before that carries a key this build does
-            // not accept. This does not make it readable — it says why, in
-            // place of a decoder detail that reads like corruption.
-            if key == "form" {
-                invalid(
-                    "artifact stores the retired portable key `form`; it predates the \
-                     `text` rename and must be rebuilt from source",
-                )
-            } else {
-                invalid(format!("invalid schema key `{key}`"))
-            }
-        })?);
+        attributes.push(
+            SchemaAttribute::new(key, kind)
+                .map_err(|_| invalid(format!("invalid schema key `{key}`")))?,
+        );
         cursor += len;
     }
     TokenSchema::new(attributes).map_err(|error| invalid(format!("invalid schema: {error}")))
@@ -1478,8 +1467,8 @@ fn encode_block(
 ) -> Result<Vec<u8>, CorpusError> {
     let token_count = sentences.iter().map(BoundTokenSentence::len).sum::<usize>();
     // Not the default hasher: every token attribute value in the block is
-    // looked up here, which made SipHash 16.5% of a `corpus build` profile
-    // (`docs/results/2026-08-22-uncached-analyzer-path`). The keys are token
+    // looked up here, which made SipHash 16.5% of a `corpus build` profile.
+    // The keys are token
     // values from the corpus being prepared by the same process, so there is
     // no untrusted-input boundary for a hash flood to cross, and the string
     // table's order is insertion order rather than iteration order — the
@@ -2337,11 +2326,10 @@ mod tests {
         assert_eq!(decoded[0], sentence);
     }
 
-    /// Blocks cross a channel to the recorder thread, so the property that
-    /// used to be a consequence of single-threaded control flow — the file
+    /// Blocks cross a channel to the recorder thread, so push order — the file
     /// holds blocks in push order, and each block its sentences in push order
-    /// — is now a consequence of the channel being FIFO with one producer and
-    /// one consumer. This writes **three** blocks rather than one, because a
+    /// — follows from the channel being FIFO with one producer and one
+    /// consumer. This writes **three** blocks rather than one, because a
     /// single-block artifact cannot observe a reordering at all.
     #[test]
     fn typed_multi_block_writes_are_ordered_and_byte_identical() {

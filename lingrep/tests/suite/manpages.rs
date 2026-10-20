@@ -76,7 +76,6 @@ fn check_help_contains_the_pattern_language_reference() {
         "$edge.rel",
         "analyzer: {family:",
         "transform: [{op:",
-        "dictionary:` is compiler-owned but retired",
         "PipeInBareValue",
         "QuotedAttributeValue",
         "resolve SUBJECT partition:",

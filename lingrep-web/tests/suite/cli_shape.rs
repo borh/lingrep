@@ -45,26 +45,6 @@ fn corpus_flag_now_declares_additional_corpora() {
     );
 }
 
-#[test]
-fn legacy_corpus_short_flag_is_rejected() {
-    let result = Args::try_parse_from(["lingrep-web", "-d", "d", "-c", "c.jsonl"]);
-
-    assert!(
-        result.is_err(),
-        "-c should no longer be accepted; use -i/--input"
-    );
-}
-
-#[test]
-fn legacy_dict_flag_is_rejected() {
-    let result = Args::try_parse_from(["lingrep-web", "--dict", "d", "--input", "c.jsonl"]);
-
-    assert!(
-        result.is_err(),
-        "--dict should no longer be accepted; use --dict-path"
-    );
-}
-
 /// A two-file Markdown directory is a first-class corpus input: with no
 /// `--input-format`, the shared resolver infers Markdown and startup
 /// validation accepts it (rather than rejecting the directory as a single

@@ -11,9 +11,8 @@ use std::io::{BufReader, Cursor};
 use lingrep_core::corpus::text_source::{InputFormat, stream_input_reader};
 
 /// Pinned: plain-text reading splits each physical line on Japanese
-/// sentence delimiters (`。！？` plus a following closing quotation),
-/// matching the legacy `SentenceFramer` byte-framing, and the shared admission
-/// layer drops blank lines. A line carrying multiple sentences is admitted as
+/// sentence delimiters (`。！？` plus a following closing quotation), and the
+/// shared admission layer drops blank lines. A line carrying multiple sentences is admitted as
 /// one sentence per delimiter; a line carrying one sentence with no delimiter
 /// is admitted as one sentence. A blank physical line never surfaces.
 #[test]

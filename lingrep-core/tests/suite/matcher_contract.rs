@@ -143,12 +143,9 @@ fn canonicalization_orders_ties_by_start_end_then_pattern() {
 
 /// `Match` equality must stay discriminating over everything it still carries.
 ///
-/// This replaces `canonical_comparison_rejects_context_only_divergence`, which
-/// pinned that two matches differing ONLY in their context windows compared
-/// unequal. `context_before` / `context_after` are gone, so that divergence is
-/// no longer representable — the guarantee was dropped deliberately, not lost.
-/// Nothing is weakened in the oracle differential by it: the windows were a
-/// pure function of `start`, `end`, and sentence length, all of which the
+/// A match carries no context window, so two matches cannot differ in one.
+/// Nothing is weakened in the oracle differential by that: a window is a pure
+/// function of `start`, `end`, and sentence length, all of which the
 /// comparison still covers.
 #[test]
 fn canonical_comparison_rejects_capture_only_divergence() {

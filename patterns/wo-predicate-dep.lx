@@ -1,6 +1,6 @@
 # ヲ格名詞句と述語の共起 — the dependency criterion.
 #
-# The `where` counterpart to `sketch_wo_predicate` in `sketch-grammar.sgx`.
+# The `where` counterpart to `sketch_wo_predicate` in `sketch-grammar.lx`.
 # That relation is a LINEAR rule — a nominal, を, at most five gap tokens that
 # are not verbs, auxiliaries, punctuation or competing particles, then a
 # predicate — and its header records the false-positive shape it cannot
@@ -11,8 +11,7 @@
 # them. It requires `dep.head` and `dep.rel` (CoNLL-U input or a
 # dependency-parsing analyzer) and is refused at binding otherwise, by name.
 #
-# The two catalogs are the two arms of
-# `docs/results/2026-09-14-wo-predicate-dependency-comparison/README.md`,
+# The two patterns are the two arms of `scripts/wo_predicate_compare.py`,
 # which joins their records on the character position of the を particle
 # itself — the one token both tokenizations agree on — and classifies every
 # を-phrase as found by both with the same predicate, found by both with
@@ -27,7 +26,7 @@
 # can bear to its governor, not the inventory this catalog has observed —
 # projecting `$collocate.dep.rel` in the key is what turns that inventory
 # into measured output rather than an authored assumption (the discipline
-# `double-wo-dep.sgx` adopted after its label-set re-validation).
+# `double-wo-dep.lx` adopted after its label-set re-validation).
 #
 # `wo_predicate_linear` is the linear rule restated over the same CoNLL-U
 # tokens, so the comparison's primary arm pair differs in exactly one thing —
@@ -41,8 +40,8 @@
 # separately, by character alignment, so that difference is reported rather
 # than hidden.
 #
-# Two recorded limits, both language facts rather than choices here. SGX has
-# no negative edge between two named captures, so "no closer predicate
+# Two recorded limits, both language facts rather than choices here. The
+# language has no negative edge between two named captures, so "no closer predicate
 # governs this nominal" cannot be written and is not needed: a nominal has
 # exactly one `dep.head`, so at most one `$head` assignment passes per
 # を-phrase. And a `where` clause filters the assignments the body admits —
@@ -64,7 +63,7 @@ set WO_PHRASE_ROLE := {obj, obl, iobj, nsubj, csubj, ccomp, xcomp,
                        advcl, acl, nmod, dep}.
 
 # The linear rule over CoNLL-U tokens. Fragment names mirror
-# `sketch-grammar.sgx`; every predicate is an XPOS prefix.
+# `sketch-grammar.lx`; every predicate is an XPOS prefix.
 role: "helper"
 fragment wo_lin_nominal :=
   [xpos ~ /\A(名詞|代名詞)/]

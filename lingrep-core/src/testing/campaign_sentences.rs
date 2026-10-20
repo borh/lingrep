@@ -165,8 +165,7 @@ fn needs_tokenizing(name: &str, text: &str) -> Vec<LabelledSentence> {
 /// Four hand-annotated sentences exercise every `patterns/ud-dependency.lx`
 /// pattern, including both argument orders, and a fifth carries a competing
 /// capture assignment for `patterns/double-wo-dep.lx` — the shape the other
-/// four cannot express, and which the counted-work screen was blind to until
-/// it had a witness (`docs/design/2026-08-29-where-capture-assignment.md`).
+/// four cannot express.
 pub const COMMITTED_CONLLU_SENTENCES: usize = 5;
 
 const CONLLU_WITNESSES: &str = include_str!("../../tests/fixtures/ud-dependency-witness.conllu");

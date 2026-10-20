@@ -151,6 +151,17 @@ def main() -> int:
         "`scripts/third-party-notices.py`; regenerate it rather than editing "
         "this file."
     )
+    print()
+    print("## Embedded data")
+    print()
+    print(
+        "`ling` embeds a table derived from the NDC9 (日本十進分類法 新訂9版) "
+        "Linked Data,\nby the Japan Library Association Classification "
+        "Committee (日本図書館協会\n分類委員会) and the National Diet Library, "
+        "published under CC BY at\n<https://www.jla.or.jp/committees/bunrui/ndc-data/>. "
+        "The table was converted\nfrom that data to tab-separated notation and "
+        "label rows."
+    )
 
     for index, entry in enumerate(
         sorted(texts.values(), key=lambda entry: sorted(entry["crates"])[0]), start=1

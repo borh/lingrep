@@ -330,7 +330,7 @@ fn section_exclusion_compacts_direct_ordinals() {
     assert_eq!(ordinals, vec![0, 1]);
 }
 
-/// The document grain and the sentence grain no longer move together, and the
+/// The document grain and the sentence grain need not move together, and the
 /// report must show it rather than quietly reconciling them.
 #[test]
 fn a_document_can_be_admitted_with_no_admitted_sentences() {

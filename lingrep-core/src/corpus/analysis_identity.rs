@@ -64,11 +64,10 @@ mod tests {
     /// invalidate artifacts that are already on disk", which is a different
     /// claim and the one a reader of a refactor commit needs.
     ///
-    /// Moving this value is legitimate only with a stored-schema cutover.
-    /// It moved for the `form` -> `text` portable-key rename and again when the
-    /// duplicate `unidic.text` publication was removed. The artifact
-    /// generation is independent of this schema identity; older readable
-    /// schemas remain readable but are not reusable as current analysis.
+    /// Moving this value is legitimate only with a stored-schema change. The
+    /// artifact generation is independent of this schema identity; older
+    /// readable schemas remain readable but are not reusable as current
+    /// analysis.
     #[test]
     fn the_published_token_schema_identity_is_unchanged() {
         assert_eq!(

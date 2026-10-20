@@ -4,15 +4,14 @@ end
 
 # 呼応 (correlative concord): an adverb whose licensing predicate stands at an
 # unbounded distance. The catalog exists twice over — once as a research
-# object, once as the engine's first unbounded-gap benchmark specimen
-# (docs/analysis/2026-08-14-sgx-ergonomics-and-matcher-profile-gaps.md §3.1).
+# object, once as an unbounded-gap benchmark specimen.
 # The _gap spelling emits the adverb-to-predicate span; the _look spelling
 # emits the adverb token(s) alone and asserts the predicate exists. They are
 # different record shapes on purpose: the comparison is the cost model, and
 # the semantic difference is stated here rather than discovered.
 #
 # Every predicate below was checked against what UniDic-CWJ 202512 actually
-# emits (vp-search tokenize, 2026-08-14):
+# emits (`ling tokenize`):
 #   * 決して, 全然, おそらく, もし, たとえ are single 副詞 tokens.
 #   * 必ずしも splits: 必ず (副詞) + しも (助詞/副助詞). The adverb anchor is
 #     therefore two tokens, and 必ず alone — as in 必ず成功する — is not it.

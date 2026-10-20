@@ -1,23 +1,23 @@
 ```
 $ ling --help
-Japanese corpus search on the command line: morphology, lingrep patterns matching, prepared corpora, and concordance output
+Search Japanese text and CoNLL-U treebanks for token patterns over surface form, lemma, part of speech, morphological features and dependency relations
 
 Usage: ling [OPTIONS] <COMMAND>
 
 Commands:
-  matches         Find lingrep patterns matches and stream one record per match
-  summarize       Aggregate matches per pattern into exact group counts
-  tokenize        Tokenize a corpus and stream sentence and token records
-  coverage        Report attribute coverage, and which catalog exclusions absence exposes
-  explore         Browse matches interactively in the terminal
-  sentence-final  Aggregate matches selected by sentence-final policy
-  corpus          Build or inspect artifacts, or inventory corpus sources
-  check           Compile and validate a lingrep patterns catalog without reading a corpus
-  doctor          Probe dictionary, catalog, and prepared-corpus inputs
-  describe        Describe command arguments, examples, and owned contracts
-  contracts       List or describe stable machine-output contracts
-  completions     Generate a shell completion definition
-  manpages        Generate manual pages for every public command
+  matches         Search a corpus and print each match with its context
+  summarize       Count matches per pattern, grouped by matched surface or declared key
+  tokenize        Print each sentence's tokens and their attributes
+  coverage        Count the tokens that carry each attribute
+  explore         Browse pattern counts and matches in an interactive terminal view
+  sentence-final  Count matches followed only by punctuation to the end of the sentence
+  corpus          Save analyzed corpora for reuse, inspect them, and list corpus sources
+  check           Validate patterns without reading a corpus; --help lists the syntax
+  doctor          Check that a dictionary, catalog and prepared corpus load
+  describe        Show a command's arguments, examples and output formats
+  contracts       List or show the JSONL and TSV output formats
+  completions     Print a shell completion script
+  manpages        Write a manual page for every command to a directory
   help            Print this message or the help of the given subcommand(s)
 
 Options:
@@ -28,6 +28,14 @@ Output:
       --json           Write JSONL records and machine-readable JSON diagnostics
       --color <COLOR>  Control ANSI styling in human output [default: auto] [possible values: auto, always, never]
 
-lingrep patterns syntax: run `ling check --help` or read ling-check(1).
+Examples:
+  ling check --pattern '[upos=VERB].'
+  ling matches --pattern '[lemma=走る].' --dict-path unidic.dic novel.txt
+  ling summarize --patterns catalog.lx --dict-path unidic.dic novel.txt
+  ling matches --pattern '[upos=NOUN] [dep.rel=case].' treebank.conllu
+
+Japanese text is analyzed with a dictionary given by --dict-path or
+LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.
 
 ```

@@ -377,8 +377,7 @@
                 # cold load falls from 0.91 s to 0.48 s with the page cache
                 # evicted too. It costs a larger store: 17.3 GB across the
                 # seven against 5.3 GB, which is the wrong trade only for a
-                # dictionary that is built and never loaded. See
-                # docs/results/2026-08-24-parallel-dictionary-decompression.
+                # dictionary that is built and never loaded.
                 #
                 # A NAR is compressed for transfer, so this costs roughly the
                 # archive's bytes to substitute either way; what changes is

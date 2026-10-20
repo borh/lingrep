@@ -993,8 +993,7 @@ where
         // decides whether to flush, and the only honest answer is to serialize
         // it — one encode per distinct key. An uncapped policy cannot act on
         // that number, so it does not pay for it, and one `entry` lookup then
-        // replaces the `contains_key`/`entry` pair. Both halves are measured
-        // in `docs/results/2026-08-27-summary-spill-codec/README.md`.
+        // replaces the `contains_key`/`entry` pair.
         if self.policy.max_pending_bytes == usize::MAX {
             return self.add_key_bounded(key, count);
         }

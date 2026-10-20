@@ -134,9 +134,7 @@ fn an_empty_policy_publishes_the_canonical_stream_unchanged() {
     assert_eq!(stats, PolicyStats::default());
 }
 
-/// Pins the motivating defect: punctuation must not define the sentence end.
-///
-/// See `docs/results/2026-08-04-anchor-acceptance.md`.
+/// Punctuation must not define the sentence end.
 #[test]
 fn an_exact_terminal_admits_a_record_ending_at_the_anchor() {
     // Four tokens: three of content, then the period. The record covers the
@@ -338,12 +336,9 @@ fn an_anchor_free_catalog_yields_an_empty_but_compatible_position_set() {
 
 /// The recorded depth-2 transcript, re-derived by the engine.
 ///
-/// `docs/results/2026-08-04-anchor-nesting-claim/depth-transcript.txt` derived
-/// these three anchors by hand, before the engine could. Reading the committed
-/// catalog rather than inlining it is what keeps the two from drifting apart.
-///
-/// The depth-3 row is the one worth having, and that directory's README
-/// explains why the anchor lands at 17 rather than 5.
+/// The three anchors were derived by hand. Reading the committed catalog
+/// (`lingrep-core/tests/fixtures/catalogs/apparatus-depth2.lx`) rather than
+/// inlining it keeps the two from drifting apart.
 ///
 /// Dictionary-backed and deliberately not `#[ignore]`d, for the reason
 /// `policy_helpers::verify_claims` gives: `nix develop` sets

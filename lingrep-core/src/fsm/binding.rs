@@ -363,10 +363,9 @@ impl TokenSequence for BoundExecutionTokens<'_> {
             AttributeValueRef::Scalar(value) => {
                 let ordinal = self.projection.ordinal_for_key(key)?;
                 self.tokens.token(token)?.get(ordinal)?;
-                // Scalar storage owns CompactString, but the typed read surface
-                // intentionally returns `&str`. Legacy lexicon publication is
-                // scalar-only and is removed with the V7 adapter; until then it
-                // reads through the physical path when present.
+                // Scalar storage owns `CompactString` and the typed read
+                // surface returns `&str`, so no `&CompactString` is lent here;
+                // scalar values are read through `value_key`.
                 let _ = value;
                 None
             }

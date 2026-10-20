@@ -316,11 +316,6 @@ fn compile_program(
     // body error to be seen.
     let mut policy_errors = policy::reserved_name_errors(&program);
     policy_errors.extend(policy::lexicon_definition_policy_errors(&program));
-    // Read alongside policy and for the same reason: it is a statement about
-    // what the catalog *declares*, so it should not queue behind an unrelated
-    // body error.
-    let (declared_dictionaries, dictionary_diagnostics) = policy::extract_dictionary(&program);
-    policy_errors.extend(dictionary_diagnostics);
     let (mut catalog_policy, authored_groups, policy_diagnostics) =
         policy::extract_policy(&program);
     let mut policy_warnings = Vec::new();
@@ -473,9 +468,6 @@ fn compile_program(
         ]));
     }
     lowered.matcher.install_catalog_policy(catalog_policy);
-    lowered
-        .matcher
-        .install_declared_dictionaries(declared_dictionaries);
     lowered
         .matcher
         .install_analyzer_constraints(analyzer_constraints);

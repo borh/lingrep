@@ -103,8 +103,8 @@ async fn kwic_html(source: &str) -> String {
 #[tokio::test]
 async fn kwic_renders_capture_name_path_range_and_text_equivalent() {
     let html = kwic_html("outer := (?<unit> [text=食べる]).").await;
-    // Hit details render inside the dock; the disclosure wrapper and any
-    // per-hit close control are retired — the dock owns close semantics.
+    // Hit details render inside the dock, with no disclosure wrapper or
+    // per-hit close control — the dock owns close semantics.
     assert!(html.contains("class=\"hit-detail\""));
     assert!(!html.contains("class=\"hit-inspector-disclosure\""));
     assert!(!html.contains("data-clear-hit"));

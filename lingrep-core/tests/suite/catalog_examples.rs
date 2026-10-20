@@ -211,9 +211,8 @@ fn both_keys_on_one_definition_are_verified_and_counted_together() {
     assert_eq!(report.checked, 2);
 }
 
-/// Two catalogs declare an anchor, so this is no longer vacuous:
-/// `patterns/sf-experimental.lx` at depth 0 and the depth-2 recognizer in
-/// `docs/results/2026-08-04-anchor-nesting-claim/`.
+/// Two catalogs declare an anchor: `patterns/sf-experimental.lx` at depth 0
+/// and the depth-2 recognizer in `lingrep-core/tests/fixtures/catalogs/apparatus-depth2.lx`.
 /// `the_verified_nesting_claim_counts_are_what_the_catalogs_contain` is what
 /// keeps a third from joining silently.
 #[test]

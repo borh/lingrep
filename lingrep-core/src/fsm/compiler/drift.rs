@@ -2,9 +2,8 @@
 //! reference-closed bodies differ across catalogs.
 //!
 //! Comparison happens on the **bound** IR, the last stage that still retains
-//! fragments, visibility, capture names, and un-inlined references. Probe P2
-//! (`docs/results/2026-08-01-probe-p2-body-identity.md`) fixed the inputs:
-//! attribute order and set-member order are not canonical under raw
+//! fragments, visibility, capture names, and un-inlined references.
+//! Attribute order and set-member order are not canonical under raw
 //! structural equality, so normalization is mandatory; `patterns()` bodies are
 //! already reference-closed but drop fragments and erase captures
 //! (`compiler/nfa.rs`), which is why this does not compare compiled forms; and

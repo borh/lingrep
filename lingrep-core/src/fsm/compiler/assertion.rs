@@ -297,8 +297,7 @@ impl Compiler<'_> {
             // Interned by the definition's *own* expression, not by the
             // reference. `BoundExpr::Definition` carries the span of the site
             // that wrote it and derives `PartialEq`, so `@A` here and `@A` one
-            // line down are unequal and would intern as two programs. See
-            // `docs/results/2026-08-18-lookaround-alternation-union/`.
+            // line down are unequal and would intern as two programs.
             let bound = self.bound;
             let body = match child {
                 BoundExpr::Definition { id, .. } => bound.definitions[id.index()]

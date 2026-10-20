@@ -88,9 +88,8 @@ mod handlers_test {
         );
     }
 
-    /// The sample debugger moved to its own page. What matters here is not
-    /// that the markup left, but that the *coupling* did: the index no longer
-    /// carries a form that re-posts `#corpus-pattern` on a keystroke timer.
+    /// The sample debugger is its own page: the index carries no form that
+    /// re-posts `#corpus-pattern` on a keystroke timer.
     #[tokio::test]
     async fn the_index_page_no_longer_carries_the_sample_debugger() {
         let app = make_app().with_state(RequestStore::default());
@@ -144,7 +143,7 @@ mod handlers_test {
         }
         // Seeded from `--patterns`, exactly as the index is.
         assert!(html.contains("seed := []."));
-        // The two pages no longer share one live textarea.
+        // The two pages do not share one live textarea.
         assert!(!html.contains(r#"id="corpus-pattern""#));
         assert!(!html.contains(r##"hx-include="#corpus-pattern""##));
         // Nothing corpus-bound reaches this page.
@@ -337,9 +336,9 @@ mod handlers_test {
         );
     }
 
-    /// A grammar-file-sized pattern (64 KiB, far over the old 8 KiB cap) is
-    /// accepted and streamed rather than bounced as "too large" — the
-    /// regression that the seeded sf-experimental.lx can actually be scanned.
+    /// A grammar-file-sized pattern (64 KiB) is accepted and streamed rather
+    /// than bounced as "too large", so the seeded sf-experimental.lx can be
+    /// scanned.
     #[tokio::test]
     async fn a_grammar_sized_pattern_is_accepted_not_rejected_as_too_large() {
         let app = lingrep_web::handlers::search::routes().with_state(RequestStore::default());
@@ -529,11 +528,10 @@ mod handlers_test {
         );
     }
 
-    /// A collapsed distribution band used to be remembered in one global
-    /// `localStorage` key, so a single click hid the surface distribution and
-    /// the section bar graph for every pattern in every corpus, permanently
-    /// and with nothing on screen to say why. The band is cheap to collapse
-    /// again on any visit; the preference was not worth its worst case.
+    /// A collapsed distribution band is not remembered: one global
+    /// `localStorage` key would let a single click hide the surface
+    /// distribution and the section bar graph for every pattern in every
+    /// corpus, with nothing on screen to say why.
     #[test]
     fn the_distribution_band_keeps_no_persisted_open_state() {
         let explorer = include_str!("../../assets/results-explorer.js");

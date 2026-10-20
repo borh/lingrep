@@ -305,11 +305,9 @@ ENV
     # The command itself, sealed into the manifest rather than reassembled at
     # `run` time. `{catalog}` is always a hole; a prepared command also carries
     # `{corpus}`, resolved from the default plus the catalog-specific overrides
-    # sealed in the manifest. What used to live here was a
-    # `printf %q`-quoted flag list in `workload.env`, which is a mutable file
-    # the digest does not cover: two campaigns measuring different things
-    # carried the same seal, and one whose flags were mangled by a quoting bug
-    # measured nothing and exited 0.
+    # sealed in the manifest. A flag list in `workload.env` would be a mutable
+    # file the digest does not cover, so two campaigns measuring different
+    # things could carry the same seal.
     #
     # `--template` picks the subcommand. `matches` is the default and is what
     # an end-to-end record-emitting run costs; `summarize` runs the same

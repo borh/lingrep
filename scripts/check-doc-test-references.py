@@ -36,7 +36,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Directories whose contents are dated records, not instructions for today.
 DATED_PREFIXES = (
-    "docs/testing/",
     "third-party/",
 )
 DATED_FILES = {"CHANGELOG.md"}

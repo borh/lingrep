@@ -491,13 +491,11 @@ fn resolve_destination(
     let destination =
         canonical_artifact_path(&named, &analysis_identity, TrustClass::LocallyExecuted);
 
-    // Path existence is no longer the question. Re-keying analysis identity
-    // re-addressed every artifact that already exists, so a corpus prepared
-    // before the cutover — unchanged source, unchanged analyzer — answers to a
-    // name this build would never derive. Asking "does the canonical path
-    // exist" would rebuild it as a duplicate sibling. So the directory beside
-    // the source is scanned once, and each candidate's own recorded identity
-    // decides.
+    // Path existence is not the question: an artifact whose recorded identity
+    // matches can sit under a name this build would not derive, and asking
+    // "does the canonical path exist" would rebuild it as a duplicate sibling.
+    // So the directory beside the source is scanned once, and each candidate's
+    // own recorded identity decides.
     let directory = lingrep_corpus::containing_directory(&destination);
     let report = SiblingScan::scan(directory).map_err(|error| {
         CliError::Corpus(format!("cannot scan for prepared realizations: {error}"))

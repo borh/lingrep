@@ -1,8 +1,7 @@
 //! Behavioral contract for the consolidated sentence-final-expression catalog.
 //!
-//! `patterns/sfe.lx` is the retained test catalog.  These cases pin the
-//! readings incorporated from the retired `patterns/new-list.lx`; removing
-//! any of them would make the retained catalog narrower than its predecessor.
+//! These cases pin readings of `patterns/sfe.lx`; removing any of them makes
+//! the catalog narrower.
 
 use lingrep_core::fsm::{CompileLimits, PatternSource, compile_catalog};
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo, TokenSequence};

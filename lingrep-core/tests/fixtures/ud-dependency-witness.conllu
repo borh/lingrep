@@ -56,8 +56,7 @@
 # assignment first and leaves the defect unobservable; measured, and the
 # discarded 実験機材 witness did exactly that. The annotation here is the
 # analyzer's, not an annotator's: GiNZA parses a 的-nominal head-initial,
-# and this is sentence 329 of the re-validation's parse reduced, the same
-# reduction docs/design/2026-08-29-where-capture-assignment.md reproduces.
+# and this is sentence 329 of the re-validation's parse, reduced.
 # Committing the parse the corpus produced is the point — the 32 sentences
 # the collapse cost were real parses, not idealized ones.
 #

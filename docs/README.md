@@ -9,6 +9,7 @@ authoring reference.
 
 | Guide | Purpose |
 | --- | --- |
+| [Install](installation.md) | Install script, its options and file locations, manual download, and Nix |
 | [CLI usage](cli-usage-guide.md) | Matching, aggregation, corpus preparation, formats, and machine-output contracts |
 | [TUI](tui-guide.md) | Interactive terminal exploration and pattern editing |
 | [Markdown corpus dialect](markdown-corpus-dialect.md) | Markdown admission, section labels, and selection |

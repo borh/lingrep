@@ -52,8 +52,8 @@ pub const POLICY_KEYS: &[&str] = &[
 /// **Adding any entry changes what a `render:` key means, and therefore MUST
 /// bump [`crate::fsm::POLICY_SEMANTICS_IDENTITY`] in the same commit.** An
 /// entry shipped under the old identity would fingerprint new semantics under
-/// a name that promises the old ones. Adding the first entry also relaxes the `substitute`-without-`join`
-/// check in extraction, because a renderer makes
+/// a name that promises the old ones. Adding the first entry also relaxes the
+/// `substitute`-without-`join` check in extraction, because a renderer makes
 /// [`PublishedRecord::overrides`] observable.
 pub const RENDERER_REGISTRY: &[&str] = &[];
 
@@ -276,10 +276,10 @@ impl Terminal {
     /// `end` is exclusive, matching `Match`'s span convention, so a record
     /// ending at the anchor has `end == anchor`.
     ///
-    /// **One-sided** (`policy-sublanguage.md:248`): a record ending *past* the
-    /// anchor is refused under both variants, at any distance. Material after
-    /// the propositional end is citation apparatus, and a record reaching into
-    /// it is not sentence-final in the sense a researcher means.
+    /// **One-sided**: a record ending *past* the anchor is refused under both
+    /// variants, at any distance. Material after the propositional end is
+    /// citation apparatus, and a record reaching into it is not sentence-final
+    /// in the sense a researcher means.
     #[must_use]
     pub fn admits(self, end: usize, anchor: usize) -> bool {
         match self {
@@ -306,12 +306,9 @@ pub struct PatternPolicy {
     /// The groups this definition belongs to, selectable as `%name` from a
     /// `policy` block.
     ///
-    /// Membership alone does nothing. Under the retired `priority_group:` a
-    /// declaration *was* the adjudication — naming a group ran an overlap
-    /// contest — so a catalog could not group definitions for any other
-    /// purpose. A group is inert until a statement names it, which is what lets
-    /// `patterns/sf-experimental.lx` group thirteen definitions as a `detach`
-    /// subject and contest none of them.
+    /// Membership alone does nothing: a group is inert until a statement names
+    /// it, so `patterns/sf-experimental.lx` can group thirteen definitions as a
+    /// `detach` subject without contesting any of them.
     ///
     /// A list rather than one name because the two uses are independent: the
     /// set a `resolve` contests and the set a `detach` shapes have no reason to
@@ -319,11 +316,8 @@ pub struct PatternPolicy {
     pub groups: Vec<CompactString>,
     /// Rank a `resolve` reads through
     /// [`Criterion::PriorityOrder`](crate::fsm::policy_program::Criterion);
-    /// lower wins. Absent means `0`.
-    ///
-    /// **Not retired with the group keys**, because it is not one of them: they
-    /// declared a contest, and this supplies one term of a rank the author
-    /// writes. A `rank: [priority_order, …]` is where it is read now.
+    /// lower wins. Absent means `0`. Read only where a `resolve` lists it in
+    /// `rank: [priority_order, …]`.
     ///
     /// Order dominates length wherever both appear, and the criterion list is
     /// where the author says so. This differs from JAPE's `appelt` and
@@ -374,8 +368,8 @@ pub struct PatternPolicy {
 /// Which tokens of a capture a key field reads.
 ///
 /// There is no default for a capture wider than one token, and that is the
-/// finding rather than an omission. Measured over 500 documents
-/// (`docs/results/2026-08-04-multi-token-keys/`), 93.7% of capture occurrences
+/// finding rather than an omission. Measured over 500 documents, 93.7% of
+/// capture occurrences
 /// are a single token; the remaining 6.3% splits into two populations wanting
 /// **opposite** rules. Compound nominals want concatenation — `細胞間`, where
 /// reading the leftmost token gives `細胞`. Suru compounds want the leftmost
@@ -822,8 +816,6 @@ impl Display for NestingEntry {
 /// sentence exercises no way to be spelled. The refusal lives in
 /// `compiler::policy::read_nesting_claims`, not in this type, which is a parsed
 /// result and constrains nothing on its own.
-/// `docs/results/2026-08-04-anchor-nesting-claim/` records how the schema was
-/// settled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NestingClaim {
     /// The nesting the fragment unrolls.
@@ -999,8 +991,7 @@ impl CatalogPolicy {
     ///
     /// A catalog-wide fact, so a per-sentence caller can decide once whether
     /// anchor resolution has anything to do. An `admit` is the only statement
-    /// that names one, so this answers for one source; it answered for two
-    /// until `terminal:` retired.
+    /// that names one.
     ///
     /// `apply_policy_records` skips its anchor-resolution loop on this, and
     /// that loop is what reports `Unknown`/`CatalogMismatch` **before** any
@@ -1672,8 +1663,8 @@ impl TransformTarget {
 
 /// Applies a span rewrite computed by `drop_edge` or `truncate_before`.
 ///
-/// The record case narrows the record and drops what fell outside, which is
-/// the historical behavior. The capture case narrows only that capture, and
+/// The record case narrows the record and drops what fell outside. The capture
+/// case narrows only that capture, and
 /// discards only the overrides inside the region it removed — a substitution
 /// elsewhere in the record belongs to whatever span produced it and is not
 /// this step's to delete.
@@ -2009,7 +2000,7 @@ pub fn apply_policy_records<S: TokenSequence + ?Sized>(
     // every statement to `continue` on each, once per sentence.
     //
     // This removes work that cannot affect the answer; it is not a measured
-    // speedup claim. See `docs/results/2026-08-04-anchor-performance.md`.
+    // speedup claim.
     let mut resolved: BTreeMap<&str, usize> = BTreeMap::new();
     if policy.program_names_an_anchor() {
         for op in &policy.program().ops {
@@ -2029,10 +2020,8 @@ pub fn apply_policy_records<S: TokenSequence + ?Sized>(
         }
     }
 
-    // The ordered policy program. It is the whole of suppression and
-    // admission now that the key-driven passes have retired: what used to be
-    // passes 2 to 4 ran here, before shaping, and the program runs in their
-    // place. `crate::fsm::policy_engine` documents why *before* shaping: the
+    // The ordered policy program performs all suppression and admission. It
+    // runs before shaping; `crate::fsm::policy_engine` documents why: the
     // program keys on the authored name, which the relabeling pass rewrites.
     //
     // Skipping catalogs with no block makes the mechanism inert for them:
@@ -2297,19 +2286,10 @@ pub(crate) fn levenshtein_at_most_one(a: &str, b: &str) -> bool {
 
 /// The recognized key `key` is at most one edit from, if any.
 ///
-/// The catalog-level key naming the dictionary the catalog's tagset belongs to.
-///
-/// Deliberately outside [`POLICY_KEYS`]: it is not a per-pattern publication
-/// decision, and it must not draw `IneffectivePolicy` on a fragment — a
-/// fragment block is the *recommended* place to declare it, since it is a
-/// property of the whole catalog and fragments are where shared definitions
-/// already live.
-pub const DICTIONARY_KEY: &str = "dictionary";
-
 /// The catalog-level key declaring a derived sentence anchor.
 ///
-/// Deliberately outside [`POLICY_KEYS`], exactly as [`DICTIONARY_KEY`] is: it is
-/// not a per-pattern publication decision, and it must not draw
+/// Outside [`POLICY_KEYS`]: it is not a per-pattern publication decision, and
+/// it must not draw
 /// `IneffectivePolicy` on the fragment block where it naturally lives, beside
 /// the `exclude` fragment it names.
 pub const ANCHOR_KEY: &str = "anchor";
@@ -2321,17 +2301,12 @@ pub const ANCHOR_KEY: &str = "anchor";
 /// one is the token count, so it needs no declaration, consults no
 /// [`AnchorPositions`], and cannot fail to resolve.
 ///
-/// It exists because the retired scalar `terminal: true` and `terminal: <n>`
-/// measured against exactly this, and `admit` must be able to say what they
-/// said. Spelling it as a name rather than as an omitted `anchor:` keeps every
-/// `admit` naming the boundary it measures against. An implicit boundary is
-/// dangerous because nothing
-/// on the line says which one was used.
+/// Spelling it as a name rather than as an omitted `anchor:` keeps every
+/// `admit` naming the boundary it measures against.
 ///
 /// Declaring an anchor by this name is an error rather than a shadow: under
 /// shadowing, which meaning a statement got would depend on declaration order,
-/// which is correct in the compiler and unlearnable at the desk. See
-/// `docs/design/2026-08-06-raw-sentence-end-admission.md`.
+/// which is correct in the compiler and unlearnable at the desk.
 pub const SENTENCE_END_ANCHOR: &str = "sentence_end";
 
 /// The key carrying an `exclude` fragment's [`NestingClaim`].
@@ -2346,7 +2321,7 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 /// Deliberately not the complement of the typo detector's non-policy set: that
 /// answers which spellings the detector must leave alone, and so groups
 /// `examples`/`counterexamples` — authored content that must stay declarable —
-/// with the compiler-owned three.
+/// with the compiler-owned keys.
 ///
 /// Two callers, and they read it for different reasons. The schema checker
 /// refuses a declaration of one of these keys, because the compiler already
@@ -2359,22 +2334,22 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 /// `resolve` statement needed a total order over the same layers.
 #[must_use]
 pub fn compiler_owned_key(key: &str) -> bool {
-    POLICY_KEYS.contains(&key) || matches!(key, DICTIONARY_KEY | ANCHOR_KEY | MAX_NESTING_KEY)
+    POLICY_KEYS.contains(&key) || matches!(key, ANCHOR_KEY | MAX_NESTING_KEY)
 }
 
 /// Returns the first match in [`POLICY_KEYS`] order, which is stable, so a key
 /// equidistant from two recognized keys always reports the same suggestion.
 ///
-/// [`DICTIONARY_KEY`], [`ANCHOR_KEY`] and [`MAX_NESTING_KEY`] are searched too:
-/// all three are engine-recognized, so a misspelling of any is inert, and inert
-/// and honored look identical from the catalog. They are checked last so none
+/// [`ANCHOR_KEY`] and [`MAX_NESTING_KEY`] are searched too: both are
+/// engine-recognized, so a misspelling of either is inert, and inert and
+/// honored look identical from the catalog. They are checked last so neither
 /// can displace a policy-key suggestion.
 #[must_use]
 pub(crate) fn suggest_policy_key(key: &str) -> Option<&'static str> {
     POLICY_KEYS
         .iter()
         .copied()
-        .chain([DICTIONARY_KEY, ANCHOR_KEY, MAX_NESTING_KEY])
+        .chain([ANCHOR_KEY, MAX_NESTING_KEY])
         .find(|candidate| levenshtein_at_most_one(key, candidate))
 }
 
@@ -2464,13 +2439,10 @@ mod tests {
         // correct declarations, which is how a lint gets switched off
         // wholesale.
         //
-        // Four of these no longer appear in any catalog:
-        // `split_trailing_copula` and `terminal_only` were replaced by policy
-        // statements, and `s0_always_keep` and `s0_requires_upper_layer` by
-        // `%s0_conditional` membership. They stay in the list because the
-        // question it asks is about the *shape* of a researcher-authored key,
-        // and a key that was plausible enough to be written here once is
-        // plausible enough to be written again.
+        // `split_trailing_copula`, `terminal_only`, `s0_always_keep` and
+        // `s0_requires_upper_layer` appear in no tracked catalog. They are in
+        // the list because the question it asks is about the *shape* of a
+        // researcher-authored key.
         for key in [
             "status",
             "source",
@@ -2512,13 +2484,12 @@ mod tests {
         assert!(!Terminal::Within(1).admits(3, 5));
     }
 
-    /// `admits` is one-sided (`policy-sublanguage.md:248`).
+    /// `admits` is one-sided.
     ///
     /// Material after the propositional end is citation apparatus, so a record
-    /// ending inside it is not sentence-final at any distance. The previously
-    /// shipped `saturating_sub` form clamped instead, making `Exact` true for
-    /// every record ending past the boundary — the defect that document
-    /// pre-registers.
+    /// ending inside it is not sentence-final at any distance. A
+    /// `saturating_sub` form would clamp instead, making `Exact` true for
+    /// every record ending past the boundary.
     #[test]
     fn admits_refuses_a_record_ending_past_the_anchor() {
         assert!(!Terminal::Exact.admits(5, 3));

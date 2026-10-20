@@ -695,8 +695,7 @@ mod tests {
 
     #[test]
     fn projects_each_hits_section_indices_over_the_whole_list() {
-        // Twenty sections, past what used to be a nineteen-row cap. The
-        // lowest-ranked one is still drawn, and its hit still carries its
+        // Twenty sections. The lowest-ranked one is still drawn, and its hit still carries its
         // full-list index.
         let mut hits = Vec::new();
         for index in 0..19 {

@@ -1146,8 +1146,7 @@ impl CorpusBuilder {
 
     /// Writes one validated native-analysis sentence in its complete typed schema.
     /// Takes the analysis by value: the token writer buffers the sentence
-    /// until its block flushes, and every caller already owns the value it
-    /// used to lend.
+    /// until its block flushes, and every caller already owns the value.
     pub async fn push_analyzed_sentence(
         &mut self,
         location: &SentenceLocation,

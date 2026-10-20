@@ -1781,9 +1781,9 @@ fn soranoha_input_must_be_an_archive_file() {
 
 #[test]
 fn a_directory_without_an_override_still_resolves_to_markdown() {
-    // The cutover contract: an explicit override is required to change what
-    // a directory means. The Run event's reader identity must be the
-    // Markdown-reader identity the golden baseline pins.
+    // An explicit override is required to change what a directory means. The
+    // Run event's reader identity must be the Markdown-reader identity the
+    // golden baseline pins.
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("corpus");
     std::fs::create_dir_all(&root).unwrap();
@@ -1807,9 +1807,8 @@ fn a_directory_without_an_override_still_resolves_to_markdown() {
 }
 #[test]
 fn a_file_root_override_resolves_the_declared_format() {
-    // Pre-cutover semantics, restored: the explicit override wins over the
-    // extension inference, and the declared format is what the reader
-    // identity is derived from.
+    // The explicit override wins over the extension inference, and the declared
+    // format is what the reader identity is derived from.
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("corpus.jsonl");
     std::fs::write(&file, "{\"sentences\":[\"一。\"]}\n").unwrap();

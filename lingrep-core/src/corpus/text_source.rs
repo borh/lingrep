@@ -101,8 +101,8 @@ impl<R: BufRead> Iterator for ConlluEvents<R> {
                     if self.document_open {
                         self.document_open = false;
                     } else {
-                        // An empty stream keeps its historical shape: one
-                        // empty document rather than no events at all.
+                        // An empty stream yields one empty document rather
+                        // than no events at all.
                         self.pending.push_back(self.document_start(None));
                         self.pending.push_back(CorpusEvent::DivisionObservation { kind: "paragraph".into(), observation: super::DivisionObservation::Unavailable { reason: "CoNLL-U paragraph boundaries are not observed by this reader; within-sentence boundaries are unsupported".into() } });
                     }
@@ -171,9 +171,7 @@ struct PlaintextEvents<R> {
     /// Sentence segments produced by splitting the current physical line on
     /// Japanese sentence delimiters (`。！？` and a following closing
     /// quotation), via [`split_sentence_ja`]). Drained one `Sentence` event per
-    /// `next()` call before the next physical line is read. This keeps the
-    /// shared plaintext stream's sentence boundaries aligned with the legacy
-    /// `SentenceFramer` (which frames raw bytes the same way), so a plain
+    /// `next()` call before the next physical line is read, so a plain
     /// corpus whose sentences share a physical line is still split into one
     /// admitted sentence per delimiter, not one per line. Blank segments are
     /// admitted as `Sentence` events and dropped by the admission layer.

@@ -76,11 +76,7 @@ pool and only the current streaming/chunked batch. It preserves sentence order;
 it does not authorize collecting a corpus. `CompiledCatalog` is the only
 compiled matcher, and there is no pattern-level parallelism.
 
-Reusable corpus storage belongs to `lingrep-corpus` V1 artifacts alone. These
-retired surfaces must not return, as compatibility shims or as examples:
-`FSM`, `FSMTrait`, `MatchingStrategy`, dictionary or chunked cache APIs,
-`RawMatcher` and the zero-allocation path, runtime DFA/prefilter/SIMD switches,
-processing modes, and timeout/max-result controls.
+Reusable corpus storage belongs to `lingrep-corpus` V1 artifacts alone.
 
 ## Token attributes
 

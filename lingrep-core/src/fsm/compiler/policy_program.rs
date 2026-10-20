@@ -250,11 +250,6 @@ pub(super) fn check_policy_program(
     // exactly as written, so this is a warning: what is wrong is the magnitude,
     // and refusing it would be the compiler overruling a declaration it can
     // honor.
-    //
-    // Inherited from the retired `terminal:` key, which carried this check on
-    // the same number. The hazard is a property of the distance and not of how
-    // it was spelled, so retiring the key without moving the check would have
-    // dropped a diagnostic silently.
     for op in &program.ops {
         let BoundOp::Admit {
             terminal: Terminal::Within(within),

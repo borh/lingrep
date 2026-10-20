@@ -12,9 +12,9 @@
 //!
 //! A claim is the only executable statement a catalog makes about itself. Left
 //! unchecked it is prose that decays: the definition moves, the example stays,
-//! and the file now documents behaviour that no longer exists. This is
-//! deliberately catalog-independent — the check used to live in one catalog's
-//! own test file, which is why two catalogs went unverified.
+//! and the file documents behaviour that does not exist. The check is
+//! catalog-independent so every catalog is verified, not only one with its own
+//! test file.
 //!
 //! Both take a tokenizer because claim verification needs a dictionary and the
 //! compiler deliberately has none. Consequently, the dictionary-free
@@ -252,9 +252,8 @@ fn check_entry<T: TokenInfoTrait>(
 ///
 /// **A deliberate UniDic tagset coupling in this crate's claim verifier**, and
 /// the only one. UniDic tags brackets structurally — the raw `Pos2` field is
-/// `括弧開` or `括弧閉` — which is what lets the depth-2 recognizer in
-/// `docs/results/2026-08-04-anchor-nesting-claim/` be a plain alternation
-/// rather than a literal bracket list. Reading it here is what makes `depth:`
+/// `括弧開` or `括弧閉` — which is what lets a depth recognizer be a plain
+/// alternation rather than a literal bracket list. Reading it here is what makes `depth:`
 /// load-bearing rather than decorative; the price is that this one function
 /// knows a tagset. It runs only with an injected dictionary.
 ///
@@ -419,9 +418,9 @@ fn verify_post_policy<T: TokenInfoTrait>(
             };
             for entry in entries.iter().filter_map(|entry| entry.as_str()) {
                 let tokens = tokenize(entry);
-                // The matcher's own seam, not a second copy of it: this used to
-                // call `apply_policy` directly, which is the same computation
-                // plus one more place to keep the argument list right.
+                // The matcher's own seam rather than `apply_policy` directly,
+                // which is the same computation with one more argument list to
+                // keep right.
                 //
                 // The `expect` is the invariant this call site *is*: the
                 // positions come from the same `CompiledCatalog` whose policy is

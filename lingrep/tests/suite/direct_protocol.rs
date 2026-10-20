@@ -367,8 +367,7 @@ fn enhanced_graph_assignments_are_identical_direct_and_prepared() {
 #[test]
 fn where_clause_catalog_runs_direct_and_prepared_identically() {
     // The tracked exemplar catalog over the pinned GSD sentence
-    // 先生の理想は限りなく高い。 — the acceptance witnesses from
-    // docs/design/2026-08-28-dependency-relation-constraint-syntax.md.
+    // 先生の理想は限りなく高い。
     let directory = TempDir::new().unwrap();
     let input = directory.path().join("ja_gsd-ud-test.conllu");
     std::fs::copy(
@@ -617,10 +616,9 @@ fn conllu_treebank_directory_is_discovered_recursively_for_direct_and_prepared_q
     assert_eq!(match_events(&prepared), direct_matches);
 }
 
-/// The 2026-08-28 binding relaxation, end to end: a catalog referencing an
-/// attribute this corpus's token schema does not carry used to be refused as
-/// "source failed before sentence 0"; it now runs to completion, publishes
-/// its honest zero matches, and says why on stderr — on both execution paths.
+/// A catalog referencing an attribute this corpus's token schema does not
+/// carry runs to completion, publishes its zero matches, and says why on
+/// stderr — on both execution paths.
 #[test]
 fn an_unavailable_attribute_warns_and_the_run_still_completes() {
     let directory = TempDir::new().unwrap();

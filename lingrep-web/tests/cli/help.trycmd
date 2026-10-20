@@ -14,7 +14,7 @@ Options:
           Input corpus file or directory; reads from stdin when omitted
 
       --input-format <INPUT_FORMAT>
-          Override the inferred corpus format (`plain`, `jsonl`, `markdown`, `conllu`, `bccwj`, `soranoha`; consumers may restrict raw formats they do not own)
+          Override the inferred corpus format (`plain`, `jsonl`, `markdown`, `conllu`, `bccwj`, `soranoha`; commands may restrict accepted formats)
           
           [possible values: plain, jsonl, markdown, conllu, bccwj, soranoha]
 
@@ -46,7 +46,7 @@ Options:
           [default: 256]
 
       --max-record-bytes <MAX_RECORD_BYTES>
-          Maximum bytes accepted for one physical input record: a JSONL document, or a plaintext or Markdown line. A record larger than this stops the corpus build, naming the record and its source
+          Maximum bytes accepted for one physical input record: a JSONL document, or a plaintext or Markdown line. A record larger than this stops the corpus build, reporting the record and its source
           
           [default: 1048576]
 
@@ -59,7 +59,7 @@ Options:
           Directory searched recursively for `*.lx` catalogs offered in the UI's catalog list. Defaults to the parent directory of `--patterns`, so the stock defaults discover `patterns/`. An unreadable directory yields an empty list rather than a startup failure
 
       --corpus <NAME=PATH>
-          Additional corpus, as `NAME=PATH`. Repeatable. `NAME` is the URL key used by shareable links and must match `[A-Za-z0-9_-]{1,64}`; `default` is reserved for `--input`. All declared corpora share one dictionary and one reader configuration. `PATH` is a corpus source, or a prepared `.lingcorpus` artifact — read directly, and so unaffected by that shared reader configuration. Preparing one with `ling corpus build` is how lingrep-web serves a format it cannot read itself, such as bccwj
+          Additional corpus, as `NAME=PATH`. Repeatable. `NAME` is the URL key used by shareable links and must match `[A-Za-z0-9_-]{1,64}`; `default` is reserved for `--input`. All declared corpora share one dictionary and one reader configuration. `PATH` is a corpus source, or a prepared `.lingcorpus` artifact — read directly, and so unaffected by that shared reader configuration. Preparing an artifact with `ling corpus build` allows lingrep-web to serve formats without direct reader support, such as `bccwj`
 
   -h, --help
           Print help (see a summary with '-h')
@@ -75,6 +75,6 @@ Markdown input:
           Treat these heading classes as labels for the heading line only, not for the section beneath it
 
       --md-recover-conversion-artifacts
-          Recover the narrow set of artifacts the corpus converter emits: presentational HTML, `<si ...>` notation, and div imbalance at the physical document boundary. ling refuses them unless this is passed; lingrep-web always recovers and ignores it
+          Recover conversion artifacts emitted by the corpus converter: presentational HTML, `<si ...>` notation, and div imbalance at physical document boundaries. `ling` rejects unrecovered artifacts unless this flag is passed; `lingrep-web` enables recovery unconditionally
 
 ```

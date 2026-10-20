@@ -149,7 +149,7 @@
   "help.p5": "^ and $ assert sentence boundaries. preceded_by(E) and followed_by(E) require a regular expression to end or start at the current boundary without consuming it; not_preceded_by(E) and not_followed_by(E) complement those tests. Assertion bodies may be variable-width or nullable, but may not contain captures or same_as.",
   "help.p6": "The pattern editor highlights lingrep patterns syntax and checks it as you type. Hover any attribute, value, @reference, or $capture for its documentation; typing same_as( shows the call signature inline with the active argument underlined.",
   "help.p7": "On macOS use Cmd instead of Ctrl. Moving focus out of the editor formats the pattern and re-checks it against the server.",
-  "help.p_graph": "A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]->, may introduce a word or decimal empty node with (?<name> [test]), and may name the exact edge with as $edge. Every graph component needs a surface capture anchor; each complete assignment is one match.",
+  "help.p_graph": "A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]->, may introduce a word or decimal empty node with (?<name> [test]), and may name the exact edge with as $edge. Every graph component requires a surface capture anchor; each complete assignment is one match.",
   "help.title": "lingrep patterns syntax help",
   "hit.captures": "Captures",
   "hit.document": "Document",

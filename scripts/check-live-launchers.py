@@ -11,13 +11,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-EXCLUDED = {
-    Path("scripts/audit-matcher-cutover-docs.sh"),
-}
 BENCH_COMMAND = re.compile(r"cargo\s+bench\b(?P<args>.*?)(?=cargo\s+bench\b|$)")
 BENCH_TARGET = re.compile(r"--bench(?:=|\s+)(?P<value>[^\s|;&]+)")
 PACKAGE = re.compile(r"(?:^|\s)(?:-p|--package)(?:=|\s+)(?P<value>[^\s|;&]+)")
-RETIRED_EXECUTABLE = re.compile(r"vp-pattern-matcher|vp_pattern_matcher")
 
 
 def unquote(value: str) -> str:
@@ -29,8 +25,6 @@ def launcher_errors(
 ) -> list[tuple[int, str]]:
     errors: list[tuple[int, str]] = []
     for line_number, line in enumerate(text.splitlines(), 1):
-        if RETIRED_EXECUTABLE.search(line):
-            errors.append((line_number, "retired vp-pattern-matcher executable"))
         for command in BENCH_COMMAND.finditer(line):
             args = command.group("args")
             bench_match = BENCH_TARGET.search(args)
@@ -66,7 +60,6 @@ def self_test() -> None:
     assert launcher_errors("cargo bench -p lingrep-core --bench deleted", valid)
     assert launcher_errors("cargo bench --bench fsm_performance", valid)
     assert launcher_errors('cargo bench -p "$package" --bench "$bench"', valid)
-    assert launcher_errors("vp-pattern-matcher --help", valid)
 
 
 def cargo_benches() -> set[tuple[str, str]]:
@@ -91,11 +84,7 @@ def live_files() -> list[Path]:
         (ROOT / ".github").rglob("*.yaml")
     )
     scripts = list((ROOT / "scripts").rglob("*.sh"))
-    return sorted(
-        path
-        for path in workflows + scripts
-        if path.relative_to(ROOT) not in EXCLUDED
-    )
+    return sorted(workflows + scripts)
 
 
 def main() -> int:

@@ -2,8 +2,7 @@
 //!
 //! This measures [`resolve_scope`] directly so full-run variance and unrelated
 //! decoding work do not obscure the section-resolution cost. Performance bars
-//! and measurements live in `docs/PERFORMANCE_REQUIREMENTS.md` and
-//! `docs/results/2026-08-05-r3b-section-scope-cost.md`.
+//! and measurements live in `docs/PERFORMANCE_REQUIREMENTS.md`.
 //!
 //! # The fixture
 //!

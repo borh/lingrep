@@ -350,10 +350,10 @@ fn the_direct_and_prepared_paths_admit_the_same_sentences() {
 /// The two paths agree on *which* sentences, and differ on what they call them.
 ///
 /// Direct input compacts ordinals over the admitted sentences; a prepared
-/// artifact never renumbers. This predates section scope, but a section clause
-/// is the first way to admit a non-contiguous set of sentences from one
-/// document, which is what makes the difference observable at all. Pinned here
-/// so that a future change to either path is a deliberate one.
+/// artifact never renumbers. A section clause is the first way to admit a
+/// non-contiguous set of sentences from one document, which is what makes the
+/// difference observable at all. Pinned here so that a future change to either
+/// path is a deliberate one.
 #[test]
 fn the_two_paths_number_the_same_sentences_differently() {
     let fixture = AgreementFixture::new();
@@ -516,8 +516,7 @@ fn build_tree(root: &Path, output: &Path, extra: &[&str]) -> Output {
 
 /// A reader knows a line number and nothing else — it was handed one stream,
 /// not a tree. The build path has no execution layer to supply the rest, so
-/// this failure used to arrive as a bare `line 3:` over a corpus of a thousand
-/// documents, locating nothing.
+/// without the document name this failure would arrive as a bare `line 3:`.
 #[test]
 fn a_strict_build_names_the_document_whose_div_never_closed() {
     let directory = TempDir::new().unwrap();

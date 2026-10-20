@@ -149,8 +149,8 @@ enum CacheLifecycle {
 /// [`CorpusArtifact::provenance_view`] does not merely open the database: it
 /// validates every sentence row, decoding each stored analysis blob. That is
 /// O(corpus) work — around 3.3 µs per sentence, so roughly 1.5 s on a
-/// 523 883-sentence corpus — and every request that read provenance used to
-/// pay it in full. The result is a pure function of the artifact, so one open
+/// 523 883-sentence corpus — which every request that reads provenance would
+/// otherwise pay in full. The result is a pure function of the artifact, so one open
 /// per ready corpus is enough.
 ///
 /// The identity key is what makes that safe. `invalidate_corrupt` discards the
@@ -906,8 +906,8 @@ fn prepare_artifact(
         return Ok((identity, artifact, Some(destination)));
     }
     // The permit still bounds concurrent builds, and it is still acquired
-    // before the dictionary is opened. What it no longer has to bound is a
-    // ~1.31 GB decoded buffer per queued build: the tokenizer is built inside
+    // before the dictionary is opened. It does not bound a ~1.31 GB decoded
+    // buffer per queued build: the tokenizer is built inside
     // `build_artifact` from `create_tokenizer_from_path`, which memory-maps a
     // globally-cached decompressed copy. That is the same loader
     // `ServerContext::tokenizer` uses, and for the same reason its

@@ -1,8 +1,7 @@
 # Sentence-final-expression pattern exercises.
 #
-# This is the retained catalog for the earlier `sfe.sgx` and `new-list.sgx`
-# experiments. Helpers deliberately remain emitting definitions: this is a
-# test catalog, so their individual predicate paths remain useful coverage.
+# Helpers remain emitting definitions: this is a test catalog, so their
+# individual predicate paths are useful coverage.
 
 set VERBAL := {VERB, AUX}.
 

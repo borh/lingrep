@@ -13,7 +13,6 @@ documentation|nix/modules/lingrep-web/nixos.nix|module option prose documents th
 explicit-destination|lingrep-corpus/src/publication.rs|test-only fixed destination supplied by the caller
 test-benchmark|lingrep-corpus/benches/prepared_tokens.rs|benchmark fixture destination, not a derived canonical name
 test-benchmark|lingrep-web/src/corpus_runtime.rs|cfg(test) fixture destination, not a derived canonical name
-test-benchmark|lingrep-web/tests/suite/corpus_runtime_test.rs|legacy-upgrade fixtures deliberately assemble retired names
 test-benchmark|lingrep/tests/suite/prepared_protocol.rs|asserts canonical output shape without selecting the production destination
 test-benchmark|lingrep-corpus/tests/suite/artifact.rs|pins the sole owner's public output contract with literal expected paths
 perf-rehearsal|lingrep-perf/src/campaign/tests.rs|campaign fixture name, not corpus canonicalization

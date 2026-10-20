@@ -43,13 +43,11 @@ pub(crate) struct LocationWriter {
     block_count: u64,
     /// The records of the block being filled, held until it is complete.
     ///
-    /// `append` used to hand each 24-byte record straight to the file and to
-    /// an incremental hasher. That is one `write(2)` per sentence — measured
-    /// at 2.65 µs each, which is 1.39 s of a `corpus build` over 523,883
-    /// sentences spent crossing the kernel boundary rather than writing. A
-    /// block is the checksum unit already, so buffering one costs 24 KiB and
-    /// makes both the write and the hash happen once per 1024 records instead
-    /// of once per record. The bytes and the checksum are unchanged: BLAKE3
+    /// Writing each 24-byte record directly costs one `write(2)` per sentence,
+    /// measured at 2.65 µs each: 1.39 s of a `corpus build` over 523,883
+    /// sentences. A block is the checksum unit already, so buffering one
+    /// costs 24 KiB and makes both the write and the hash happen once per 1024
+    /// records instead of once per record. The bytes and the checksum are unchanged: BLAKE3
     /// over a concatenation is the same value as BLAKE3 fed the pieces.
     current_block: Vec<u8>,
 }

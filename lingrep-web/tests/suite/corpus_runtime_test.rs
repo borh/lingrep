@@ -87,21 +87,6 @@ fn artifact_directories(parent: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn retire_manifest(path: &Path) {
-    let manifest_path = path.join("manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-    manifest
-        .as_object_mut()
-        .unwrap()
-        .remove("format_generation");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&manifest).unwrap(),
-    )
-    .unwrap();
-}
-
 /// The analysis inputs a direct run derives, built from the production
 /// digests rather than re-derived here.
 ///
@@ -327,122 +312,6 @@ async fn artifact_reuse_depends_on_content_not_timestamps() {
     assert_eq!(artifact_directories(directory.path()).len(), 2);
 }
 
-#[tokio::test]
-async fn a_retired_artifact_is_preserved_when_the_source_rebuilds() {
-    let directory = tempdir().unwrap();
-    let corpus = directory.path().join("corpus.jsonl");
-    fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
-    let dictionary = MiniDictionary::new();
-    let first = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
-    first.start_or_observe().await;
-    let first_ready = wait_ready(&first).await;
-    let identity = first_ready.identity.clone();
-    drop(first_ready);
-    drop(first);
-
-    let built = artifact_directories(directory.path()).pop().unwrap();
-    let mut legacy_name = corpus.file_name().unwrap().to_os_string();
-    legacy_name.push(format!(".{}.lingcorpus", identity.as_str()));
-    let legacy = corpus.with_file_name(legacy_name);
-    if built != legacy {
-        fs::rename(&built, &legacy).unwrap();
-    }
-    retire_manifest(&legacy);
-    assert!(matches!(
-        lingrep_corpus::CorpusArtifact::open(&legacy),
-        Err(CorpusError::RetiredArtifact { generation: None })
-    ));
-    let legacy_manifest = fs::read(legacy.join("manifest.json")).unwrap();
-
-    let upgraded = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
-    upgraded.start_or_observe().await;
-    let upgraded_ready = wait_ready(&upgraded).await;
-
-    assert_eq!(upgraded_ready.identity, identity);
-    assert_eq!(upgraded_ready.sentence_count().unwrap(), 1);
-    let artifacts = artifact_directories(directory.path());
-    assert_eq!(artifacts.len(), 2);
-    let generation_marker = format!(".g{}.", lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION);
-    assert!(artifacts.iter().any(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(&generation_marker))
-    }));
-    assert_eq!(
-        fs::read(legacy.join("manifest.json")).unwrap(),
-        legacy_manifest,
-        "runtime must not mutate or evict the legacy artifact"
-    );
-}
-
-#[tokio::test]
-async fn a_retired_generation_is_isolated_from_the_current_cache() {
-    let directory = tempdir().unwrap();
-    let corpus = directory.path().join("corpus.jsonl");
-    fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
-    let dictionary = MiniDictionary::new();
-    let first = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
-    first.start_or_observe().await;
-    let first_ready = wait_ready(&first).await;
-    let identity = first_ready.identity.clone();
-    drop(first_ready);
-    drop(first);
-
-    let built = artifact_directories(directory.path()).pop().unwrap();
-    let mut generation_two_name = corpus.file_name().unwrap().to_os_string();
-    generation_two_name.push(format!(".g2.{}.lingcorpus", identity.as_str()));
-    let generation_two = corpus.with_file_name(generation_two_name);
-    fs::rename(&built, &generation_two).unwrap();
-    let manifest_path = generation_two.join("manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-    manifest
-        .as_object_mut()
-        .unwrap()
-        .remove("format_generation");
-    manifest
-        .as_object_mut()
-        .unwrap()
-        .remove("admitted_inventory");
-    manifest
-        .as_object_mut()
-        .unwrap()
-        .remove("admitted_inventory_digest");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&manifest).unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        lingrep_corpus::CorpusArtifact::open(&generation_two),
-        Err(CorpusError::RetiredArtifact {
-            generation: Some(2)
-        })
-    ));
-    let generation_two_manifest = fs::read(&manifest_path).unwrap();
-
-    let upgraded = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
-    upgraded.start_or_observe().await;
-    let upgraded_ready = wait_ready(&upgraded).await;
-
-    assert_eq!(upgraded_ready.identity, identity);
-    let artifacts = artifact_directories(directory.path());
-    assert_eq!(artifacts.len(), 2);
-    assert!(artifacts.contains(&generation_two));
-    let current_generation_marker =
-        format!(".g{}.", lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION);
-    assert!(artifacts.iter().any(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(&current_generation_marker))
-    }));
-    assert_eq!(
-        fs::read(manifest_path).unwrap(),
-        generation_two_manifest,
-        "generation-three rebuild must not mutate or evict generation two"
-    );
-}
-
 fn record_limit_runtime(corpus: &Path, dictionary: &Path, limit: usize) -> CorpusRuntime {
     CorpusRuntime::new_with_override(
         test_context(dictionary),
@@ -524,8 +393,8 @@ async fn a_record_above_the_stage_batch_budget_still_builds() {
         CacheReadiness::Ready { .. }
     ));
 
-    // The same record under the old bound — the stage batch budget — is what
-    // used to stop the build, so the two bounds are demonstrably distinct.
+    // The same record against the stage batch budget, so the two bounds are
+    // demonstrably distinct.
     let at_stage_budget = record_limit_runtime(
         &corpus,
         dictionary.path(),
@@ -790,11 +659,11 @@ async fn readiness_published_before_subscription_is_retained() {
 ///
 /// `CorpusArtifact::provenance_view` validates every sentence row in the
 /// artifact, so it costs O(corpus) — measured at roughly 1.5 s on a
-/// 523 883-sentence corpus. Every handler that reads provenance used to call
-/// it directly, which put that scan on the index page, on every
-/// corpus-context poll, and on every pattern- and hit-detail request.
+/// 523 883-sentence corpus. A handler calling it directly would put that scan
+/// on the index page, on every corpus-context poll, and on every pattern- and
+/// hit-detail request.
 ///
-/// This pins the property that fixed it, and does so by identity rather than
+/// This pins the property that prevents it, and does so by identity rather than
 /// by timing: two `ready()` handles — which is exactly what two requests
 /// get — must hand back the *same* view, not two equal ones. A regression to
 /// per-call opens still returns a valid view and still passes every

@@ -105,7 +105,7 @@ Use a short imperative subject that states the outcome, for example:
 
 ```text
 fix(corpus): reject mismatched analyzer identity
-docs(cli): replace retired cache examples
+docs(cli): describe each command in the default help
 ```
 
 Keep unrelated local changes out of the commit.

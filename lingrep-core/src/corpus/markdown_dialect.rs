@@ -69,8 +69,8 @@ pub fn strip_attribute_spans(line: &str) -> String {
 ///
 /// "Exactly one span" is checked against the whole remainder, not just its
 /// first and last byte. `{.a} {.b}` opens and closes with braces but is two
-/// spans, and `parse_classes` reads only the first — so it used to open with
-/// `{a}` and drop `.b` without a word. It is not valid pandoc; unioning the
+/// spans, and `parse_classes` reads only the first, so accepting it would
+/// open with `{a}` and drop `.b` without a word. It is not valid pandoc; unioning the
 /// two would be a guess, and this dialect refuses rather than guesses.
 pub fn parse_div(line: &str) -> Option<DivLine> {
     let colons = line
@@ -188,9 +188,9 @@ pub fn raw_html_form(line: &str) -> Option<&str> {
 ///
 /// Indentation is the caller's business, and both fence predicates take the
 /// line the same way. They must: an opener that its own closer cannot close
-/// swallows every line between them, and the reader has no way to notice. This
-/// used to be exactly wrong — the opener was handed a trimmed line and the
-/// closer a raw one, so an 8-space fence opened and then could not be closed.
+/// swallows every line between them, and the reader has no way to notice: an
+/// opener given a trimmed line and a closer given a raw one would open an
+/// 8-space fence and never close it.
 ///
 /// A fence is a fence at any indentation. CommonMark stops recognizing one past
 /// 3 spaces because at 4 it becomes an *indented code block*, but this dialect
@@ -319,8 +319,8 @@ impl LabelStacks {
     /// an unreliable section-semantics signal here, so union would hold labels
     /// active together that are not jointly in force. 246 labeled headings
     /// across 42 of the 100 documents sit under another labeled heading, and 7
-    /// of those nest a bibliography under the conclusion, across 6 documents —
-    /// see `sample-markdown-corpus/00083.md:255` and `:265`. A bibliography is
+    /// of those nest a bibliography under the conclusion, across 6 documents.
+    /// A bibliography is
     /// not part of the conclusion, so union would label every bibliography line
     /// `conclusion` and `--md-include-sections conclusion` would pull in the
     /// references.

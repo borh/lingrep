@@ -524,9 +524,8 @@ mod tests {
     #[test]
     fn a_paired_br_never_pops_the_tag_stack() {
         // `<br></br>` (rather than `<br/>`) must leave the stack exactly as
-        // `<br/>` does, in both subcorpora: under OY the end tag used to pop
-        // the enclosing element and strip `speech` from every later
-        // paragraph.
+        // `<br/>` does, in both subcorpora: under OY a popped end tag would
+        // strip `speech` from every later paragraph.
         let xml = "<article><speech><paragraph><br></br><sentence><orth>甲。</orth></sentence></paragraph><paragraph><sentence><orth>乙。</orth></sentence></paragraph></speech></article>";
         for subcorpus in [Subcorpus::OY, Subcorpus::LB] {
             let doc = document(xml, subcorpus);

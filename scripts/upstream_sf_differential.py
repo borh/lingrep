@@ -10,13 +10,8 @@ that checkout and use the interpreter inside it::
         path/to/corpus.jsonl \
         upstream-stage-baseline.json
 
-Why this is retained, when its 2026-08-04 predecessors were not
----------------------------------------------------------------
-`docs/results/2026-08-04-dm-annotations-parity.md` recorded its three driver
-scripts as scratch and discarded them. That was defensible while upstream was
-an advisory reading. It is not defensible now: this script is the acceptance
-evidence for the R1 policy migration, and evidence that cannot be re-run is an
-assertion.
+This script is the acceptance evidence for the policy block in
+``patterns/sf-experimental.lx``.
 
 What it compares, and what it refuses to
 ----------------------------------------

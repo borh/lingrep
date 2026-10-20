@@ -1466,11 +1466,9 @@ fn repeat<
 /// The key is the position **and the whole slot vector**, because a capture
 /// assignment is observable: `same_as` reads one slot mid-expression, and a
 /// `where` clause reads several after the walk. Keying on position alone
-/// discarded a satisfying assignment whenever a failing one reached the same
-/// position first — 82% of `patterns/double-wo-dep.lx`'s misses against a
-/// head-sharing oracle, and the defect `matches_with`'s comment already
-/// guards against one level up, at end position rather than at assignment.
-/// See [the design round](../../../../docs/README.md#historical-evidence).
+/// would discard a satisfying assignment whenever a failing one reached the
+/// same position first — the defect `matches_with`'s comment guards against
+/// one level up, at end position rather than at assignment.
 ///
 /// Widening cannot move what a relation-free definition publishes, which is
 /// why this is not a behaviour change outside `where`. This keeps the *first*

@@ -17,8 +17,7 @@
 //! record covers a subject whole, and refuting that
 //! statically needs a proof that no token satisfies both a subject's
 //! first-token predicate and `DA`'s — a dictionary fact the compiler
-//! deliberately does not depend on
-//! (`docs/design/2026-08-06-policy-sublanguage-syntax.md` §3).
+//! does not depend on.
 //!
 //! Both the published and the authored name are recorded. `output_name` makes
 //! them differ on exactly the definitions the migration touches, so recording

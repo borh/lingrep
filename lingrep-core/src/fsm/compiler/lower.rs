@@ -402,13 +402,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "comment" => {}
                 "metadata_entry" | "key_entry" => {
                     let (key, entry) = self.lower_entry(child)?;
-                    if key == "dictionary" {
-                        return Err(self.error_at_key(
-                            child,
-                            DiagnosticCode::Syntax,
-                            "retired `dictionary:` metadata is not supported; use structured `analyzer:` declarations",
-                        ));
-                    }
                     draft
                         .admit_annotation(key, entry)
                         .map_err(|refusal| self.refuse_draft(refusal))?;

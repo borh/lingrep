@@ -9,11 +9,8 @@ fragment BRACKETED_1 := @BRACKET_OPEN (@BRACKET_FREE)* @BRACKET_CLOSE.
 # depth 2: a bracketed region whose interior may contain depth-1 regions
 fragment BRACKETED_2 := @BRACKET_OPEN (@BRACKET_FREE | @BRACKETED_1)* @BRACKET_CLOSE.
 
-# The anchor block was added on 2026-08-04, after this file was recorded: the
-# surface it declares did not exist when the depth transcript was derived by
-# hand. Depth, witness and divergence are the ones this directory's README
-# already states; `docs/results/2026-08-04-anchor-acceptance.md` records the
-# edit. `every_tracked_catalog_nesting_claim_holds` is what now executes them.
+# `every_tracked_catalog_nesting_claim_holds` executes the depth, witness and
+# divergence below.
 role: "helper"
 anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
 max_nesting: {depth: 2, witness: ["これは重要である|（田中 2020（改訂））。"], divergence: ["これは重要である|（田中 2020（改訂（第2版）））。"]}

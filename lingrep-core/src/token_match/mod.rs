@@ -168,13 +168,13 @@ impl TokenAttributeIndex {
             "unidic.form" => return Some(Self::Form),
             _ => {}
         }
-        let legacy = key
+        let unprefixed = key
             .as_str()
             .strip_prefix("unidic.")
             .unwrap_or_else(|| key.as_str());
         Self::ALL
             .into_iter()
-            .find(|attribute| attribute.pattern_key() == legacy)
+            .find(|attribute| attribute.pattern_key() == unprefixed)
     }
 }
 
@@ -239,11 +239,9 @@ use TokenAttributeIndex::*;
 /// One value per [`TokenAttributeIndex`], stored in `TokenAttributeIndex::ALL`
 /// order.
 ///
-/// The array is the representation on purpose. This was 32 named
-/// `Option<CompactString>` fields, and every indexed access compiled to a
-/// 32-arm jump table on the serial decode path. Array indexing removes that
-/// dispatch; generated accessors keep names and indices in one definition. See
-/// `docs/results/2026-08-12-token-info-flat-representation/`.
+/// An array rather than named fields, so an indexed access on the serial decode
+/// path is not a 32-arm jump table; generated accessors keep names and indices
+/// in one definition.
 ///
 /// `size_of::<TokenInfo>()` is **768** and must stay there:
 /// [`crate::execution::estimate_token_info_bytes`] starts from
@@ -264,8 +262,7 @@ impl Default for TokenInfo {
     /// LLVM then cannot see that every slot is `None`. The decode path allocates
     /// with `vec![TokenInfo::default(); n]`, whose clone of an opaque value
     /// becomes a 32-way branch per token. A const repeat lets the clone fold
-    /// through the value. See
-    /// `docs/results/2026-08-12-token-info-flat-representation/`.
+    /// through the value.
     fn default() -> Self {
         Self {
             values: [const { None }; TokenAttributeIndex::COUNT],
@@ -451,8 +448,7 @@ impl From<String> for TokenInfo {
 /// * **A UniDic lemma is a lexeme identifier, not a form.** Homographs and
 ///   loanwords carry a disambiguator after a hyphen — `システム-system`,
 ///   `我々-代名詞`, `差す-他動詞`. Measured over 500 documents of academic
-///   prose, 7.60% of joined lemma values carry one
-///   (`docs/results/2026-08-04-unidic-lemma-disambiguators/`).
+///   prose, 7.60% of joined lemma values carry one.
 /// * **The light verb lemmatizes to 為る**, an uncommon authored orthography.
 ///   natsume-simple ships the identical mapping as `simple_lemma`.
 ///

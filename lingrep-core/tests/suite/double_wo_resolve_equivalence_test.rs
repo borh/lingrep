@@ -25,8 +25,7 @@
 //! On corpus-2000 the resolve form dropped 7 of the cascade's 626 records; on
 //! the science artifact, 35 of 2,542; on BCCWJ (read as direct plaintext), 41
 //! of 3,203. Every dropped record was a cross-start
-//! overlap loss and none was a same-start case — see
-//! `docs/results/2026-08-14-double-wo-resolve-migration/README.md`. The
+//! overlap loss and none was a same-start case. The
 //! catalog therefore keeps its cascade, and the resolve form is retained
 //! below as a string constant the way `intersection_test.rs` keeps the wrong
 //! rewrite beside the right one: so the non-equivalence stays checkable

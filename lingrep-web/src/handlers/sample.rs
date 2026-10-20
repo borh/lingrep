@@ -3,8 +3,8 @@
 //!
 //! The page is standalone by construction. It reads no corpus, holds no
 //! workbench and takes no revision, so it renders while every declared corpus
-//! is still building — and, being its own page, it no longer re-posts the
-//! corpus search's live pattern every 400 ms.
+//! is still building, and it does not re-post the corpus search's live
+//! pattern.
 //!
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no

@@ -64,8 +64,7 @@ struct LimitValues {
     resolved_test_nodes: usize,
 }
 
-// Supported untrusted-input policy selected from the 2026-07-16 measurements
-// recorded in docs/results/2026-07-16-typed-sgx-compiler-limits.md. The closest
+// Supported untrusted-input policy. The closest
 // stress probes retain 1.33x depth, 4x expansion-work, 7.94x generated-owned-
 // byte, 8x state, and 16x transition headroom; the retained sfe.lx usage has
 // substantially more.

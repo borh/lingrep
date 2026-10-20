@@ -102,7 +102,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<AttributesEnvelope>(
         super::ContractId::Attributes,
         &["coverage"],
-        "Attribute presence over admitted tokens, and the exclusions it exposes.",
+        "Attribute presence over admitted tokens and catalog exclusions affected by attribute absence.",
         StreamShape::Phased {
             phases: &[
                 StreamPhase {

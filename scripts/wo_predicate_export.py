@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Export a Soranoha kernel run as ling JSONL and as sentence lines for GiNZA.
 
-The comparison in ``docs/results/2026-09-14-wo-predicate-dependency-comparison``
-runs one morpheme-adjacency catalog over a Vibrato/UniDic analysis and one
-dependency catalog over a GiNZA parse of the *same sentences*. Both analyses
+The comparison in ``scripts/wo_predicate_compare.py`` runs one
+morpheme-adjacency catalog over a Vibrato/UniDic analysis and one dependency
+catalog over a GiNZA parse of the *same sentences*. Both analyses
 must therefore start from one sentence inventory whose identity (document,
 sentence ordinal) is fixed before either analyzer sees it. This script owns
 that inventory.

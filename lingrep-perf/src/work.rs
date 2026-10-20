@@ -12,7 +12,7 @@
 //! **A green screen is not a null result.** The assertion-frontier bitset change
 //! moved none of these counters but improved measured performance. The screen
 //! says "cost-per-unit change, go measure it", which is the routing it exists
-//! to provide. See `docs/results/2026-08-18-assertion-frontier-bitset/`.
+//! to provide.
 //!
 //! What a delta establishes is **changed measured work on this fixture**. Not
 //! a complexity class, and not by itself the mechanism: these are eighteen
@@ -66,10 +66,7 @@ pub struct CatalogWork {
     /// Candidates the tree evaluator constructed, before deduplication.
     ///
     /// The dense machine does not produce candidates, so this is zero for a
-    /// catalog with no captures, `same_as`, `&` or `where` — and it is exactly
-    /// the quantity the screen was blind to when the deduplication key was
-    /// widened on 2026-08-29
-    /// (`docs/design/2026-08-29-where-capture-assignment.md`).
+    /// catalog with no captures, `same_as`, `&` or `where`.
     pub candidates_produced: u64,
     /// Those surviving deduplication.
     ///
@@ -888,9 +885,7 @@ mod tests {
             // witnesses, every pattern tree-evaluated. 1584 -> 198 calls with
             // the 2026-08-29 label-set collapse: the eight head-sharing
             // patterns each walked one shared skeleton over every sentence,
-            // and one pattern walks it once. This is the pinned counterpart
-            // of the ~2x wall reading in
-            // docs/results/2026-08-29-double-wo-dep-label-set-revalidation.
+            // and one pattern walks it once.
             //
             // 198 -> 267 with the fifth witness, the 二重ヲ格 sentence that
             // gave this catalog its first published record here. Before it,
@@ -939,7 +934,7 @@ mod tests {
             // regression in the mixed dense/tree path still shows up.
             // 449 -> 478 when `dash_aside` gained its two neighbour
             // assertions: the extra walk is the boundary sweep, paid on the
-            // definition that used to be the catalog's cheapest.
+            // catalog's cheapest definition.
             ("patterns/comment-register.lx", (5, 382, 352, 0, 0, 0)),
             ("patterns/ud-dependency.lx", (5, 367, 367, 0, 0, 0)),
             // Enhanced-graph execution uses the same five committed CoNLL-U
@@ -955,9 +950,7 @@ mod tests {
                 (5, 238, 238, 0, 0, 0),
             ),
             // Four surface-order variants expose the current cost of spelling
-            // crossing graph edges through linear capture assignment. The
-            // any-label cutover admits the fixture's formerly omitted edges;
-            // evaluations stay fixed while predicate calls and candidates rise.
+            // crossing graph edges through linear capture assignment.
             ("patterns/ud-nonprojectivity.lx", (5, 2388, 2027, 0, 0, 0)),
             // Two one-token head classifiers over anonymous positive/negative
             // edge existence. The five fixture verbs partition one-for-one.
@@ -1007,10 +1000,7 @@ mod tests {
         // Candidate volume inside the tree evaluator, as (produced, retained).
         // Zero for a catalog the dense machine executes whole; the evaluator
         // runs for captures, `same_as`, `&` and `where`, which is nine of the
-        // sixteen. This is the row a candidate-growth regression moves — the
-        // gap docs/design/2026-08-29-where-capture-assignment.md left open
-        // when the deduplication key was widened with the screen unable to see
-        // it.
+        // sixteen. This is the row a candidate-growth regression moves.
         //
         // The two numbers are **equal on every catalog today**, which is the
         // measurement and not a redundancy: under the wide key deduplication

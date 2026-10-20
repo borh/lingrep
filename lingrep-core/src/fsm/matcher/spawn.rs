@@ -422,7 +422,7 @@ fn inject_group<S: TokenSequence + ?Sized>(
 /// Inject the match attempts starting at `index` into the frontier.
 ///
 /// Semantically this is the epsilon closure of state 0 validated at
-/// `index` — historically recomputed per position. The spawn table
+/// `index`. The spawn table
 /// answers the same question with one predicate evaluation per distinct
 /// entry predicate: an entry state is materialized only when it is
 /// reachable (its assertion conditions hold) and at least one of its
@@ -445,8 +445,8 @@ pub(crate) fn inject_spawns<S: TokenSequence + ?Sized>(
         entry_position: index,
     };
     if dense.spawn_table.fallback {
-        // Historical injection for machines the bounded table
-        // construction declined.
+        // Full epsilon closure for machines the bounded table construction
+        // declined.
         Matcher::epsilon_closure_into(
             dense,
             std::iter::once(spawn),

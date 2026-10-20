@@ -301,11 +301,7 @@ enum WidthRule {
     /// `tags:` form (c), which reads one token and has no spelling for more.
     ///
     /// Deliberately not `Component(KeyComponent::Sole)`: the refusal must not
-    /// offer `{first|last|span}`, because `tags:` does not accept them. The
-    /// measurement behind components (`docs/results/2026-08-04-multi-token-keys/`)
-    /// was about keys, and a second copy of the vocabulary would then need
-    /// keeping in step with `substitute`'s unreconciled `component:` for no
-    /// witnessed demand.
+    /// offer `{first|last|span}`, because `tags:` does not accept them.
     SingleToken,
     /// A `transform:` `scope:`, which names a span to rewrite rather than a
     /// value to read. Any width does, so long as there is something there:

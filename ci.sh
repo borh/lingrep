@@ -58,7 +58,6 @@ run_repository_guards() {
     scripts/check-artifact-naming.sh
     scripts/check-durability-fixtures.sh
     scripts/check-i18n-keys.py
-    scripts/check-harbor-naming.sh
 }
 
 run_common_checks() {
@@ -143,7 +142,7 @@ run_full_tests_and_extras() {
     echo "Running matcher, documentation, and prepared-storage structural checks"
     {
         scripts/test_matcher_correctness.sh
-        scripts/audit-matcher-cutover-docs.sh
+        scripts/check-live-launchers.py
         cargo test --release -p lingrep-corpus --bench prepared_tokens
     } 2>&1 | tee /tmp/cargo-test-matcher-gate.log
 }
@@ -169,10 +168,8 @@ run_screen_lane() {
     # `lingrep-core` is neither compiled nor run — the same target-versus-feature
     # gap as the doc and clippy lanes below, one level further in.
     #
-    # That gap is how five matcher pins sat red on `main`: the `orth` -> `text`
-    # rename (817809b0) moved four shape signatures and the canonical-key
-    # cutover (cad29b50) moved two spawn classifications, each repinning the
-    # lanes CI ran and none of these. The feature set matches the line above,
+    # Without this lane, a change that moves a matcher pin under these features
+    # passes every other lane. The feature set matches the line above,
     # so this reuses that build rather than compiling `lingrep-core` twice.
     cargo test -p lingrep-core --features testing,bench-instrumentation --lib --quiet 2>&1 |
         tee /tmp/cargo-test-lingrep-core-instrumentation.log

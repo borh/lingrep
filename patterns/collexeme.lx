@@ -29,15 +29,15 @@ end
 # which are repelled. The input is a frequency list: for each construction, how
 # often each filler occurs in the slot. The simple-collexeme design needs
 # exactly one construction at a time; the distinctive design needs two or more
-# competing over the same slot and lives in `patterns/alternation.sgx`.
+# competing over the same slot and lives in `patterns/alternation.lx`.
 #
-# The SGX shape is small and uniform. Every pattern below binds ONE capture,
+# The shape is small and uniform. Every pattern below binds ONE capture,
 # `verb`, over the open slot, and declares `key: [$verb.norm]`. `summarize`
 # then groups on the key rather than on the matched surface, so 読ん / 読み /
 # 読む are one row (`読む`) instead of three. That is the whole mechanism: a
 # collexeme list is a keyed record stream, and the engine needed nothing new.
 #
-# WHY `norm`. Following `patterns/sketch-grammar.sgx`: `orthbase` splits 行う
+# WHY `norm`. Following `patterns/sketch-grammar.lx`: `orthbase` splits 行う
 # from 行なう, `lemma` merges them but carries UniDic's homograph
 # disambiguator, and `norm` is lemma with the disambiguator stripped. A
 # collexeme list wants the merging without the disambiguator.
@@ -65,13 +65,13 @@ end
 #     because the て linker already forces the auxiliary reading in the second
 #     slot. The cost is that a kanji-spelled 〜て置く is indistinguishable from
 #     a kana-spelled one, which is the correct answer for a collexeme count and
-#     the wrong one for an orthographic study. `patterns/sf-experimental.sgx`
+#     the wrong one for an orthographic study. `patterns/sf-experimental.lx`
 #     made the opposite trade for 言う/言える (`f52b7435`), and the reason it
 #     differs is that there the two readings are different constructions.
 #
 #   て AND で ARE ONE TOKEN TYPE. In 読んで the で carries `lemma=て` with
 #     `unidic.pos2=接続助詞`, so one predicate on `lemma` covers both allomorphs.
-#     `patterns/sketch-grammar.sgx` spells the same fact as
+#     `patterns/sketch-grammar.lx` spells the same fact as
 #     `unidic.orthbase in {て, で}`; `lemma=て` is the same set, stated once.
 #
 #   THE CONTRACTIONS ARE NOT THIS CONSTRUCTION. 忘れちゃった tokenizes as
@@ -88,7 +88,7 @@ end
 #     so it has no pattern at all: recovering it would need `orthbase` and
 #     `lemma` to be compared to each other, which no attribute operator does.
 #     `koto_ga_dekiru` below is therefore NOT paired with a morphological
-#     potential here, and `patterns/alternation.sgx` deliberately does not
+#     potential here, and `patterns/alternation.lx` deliberately does not
 #     carry a `potential` family for the same reason.
 #
 # ------------------------------------------------------------------------
@@ -118,7 +118,7 @@ end
 #
 # The two are exhaustive and mutually exclusive over the same span by
 # construction — `preceded_by` and `not_preceded_by` over one body — which is
-# what `collexeme_sgx_test` pins. Together they are exactly the れる/られる
+# what `collexeme_lx_test` pins. Together they are exactly the れる/られる
 # records; separately they are a partition of them.
 #
 # ------------------------------------------------------------------------
@@ -141,14 +141,12 @@ end
 #     is that pattern's SECOND collexeme on the reference corpus at 5,428
 #     occurrences, essentially all of them 「Aに含まれる」, where に marks the
 #     container. The list is "passives with a に-phrase in the agent position",
-#     which includes locatives, and the gap is large enough to matter — see
-#     docs/results/2026-08-17-collostruction-catalogs/.
+#     which includes locatives, and the gap is large enough to matter.
 #
 # STATUS: inhabited, not measured. Every `examples:` and `counterexamples:`
 # claim below is executed against the real dictionary by
 # `catalog_examples.rs`, and each construction has been confirmed non-empty on
-# the reference corpus (docs/results/2026-08-17-collostruction-catalogs/). No
-# association measure is computed here and none is claimed: this catalog
+# the reference corpus. No association measure is computed here and none is claimed: this catalog
 # produces the frequency input a collostructional analysis consumes, and the
 # analysis itself is the researcher's.
 #
@@ -207,7 +205,7 @@ fragment cx_nominal :=
 # `not in` behaves ordinarily on it.) The complement is kept because it is
 # the correct reading of the gap and stays correct if a token ever arrives
 # without the attribute; it is not claimed to recover any match on this
-# corpus. See docs/results/2026-08-17-collostruction-catalogs/.
+# corpus.
 test cx_agent_gap := !(unidic.pos1 in {動詞, 助動詞, 補助記号}).
 
 # --- て-auxiliary constructions ------------------------------------------
@@ -303,7 +301,7 @@ pattern te_morau :=
 # The two れる/られる patterns partition the same records by whether a
 # に-marked agent precedes the slot verb; see the header for what that does and
 # does not establish. The lookaround bodies are identical and differ only in
-# polarity, which is the property `collexeme_sgx_test` pins.
+# polarity, which is the property `collexeme_lx_test` pins.
 
 construction: "Nに-Vられる"
 frame: "V-mizen-AUX"

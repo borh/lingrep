@@ -38,7 +38,7 @@ for script in \
     check-i18n-keys.py \
     run_lingrep_web_layout_e2e.sh \
     test_matcher_correctness.sh \
-    audit-matcher-cutover-docs.sh \
+    check-live-launchers.py \
     run_fuzz_smoke.sh \
     measure_sentence_final_profile.sh
 do
@@ -111,7 +111,7 @@ assert_full_contract() {
     [[ $(grep -Fxc "cargo:test --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
     assert_has "script:run_lingrep_web_layout_e2e.sh"
     assert_has "script:test_matcher_correctness.sh"
-    assert_has "script:audit-matcher-cutover-docs.sh"
+    assert_has "script:check-live-launchers.py"
     assert_has "cargo:test --release -p lingrep-corpus --bench prepared_tokens"
     assert_has "cargo:doc --no-deps"
     assert_lacks_prefix "script:run_fuzz_smoke.sh"

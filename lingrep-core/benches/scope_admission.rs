@@ -2,8 +2,7 @@
 //!
 //! This isolates the direct-ingestion path, where metadata-only scope is
 //! evaluated per document and section scope per sentence. Performance bars and
-//! measurements live in `docs/PERFORMANCE_REQUIREMENTS.md` and
-//! `docs/results/2026-08-05-r3b-section-scope-cost.md`.
+//! measurements live in `docs/PERFORMANCE_REQUIREMENTS.md`.
 //!
 //! The metadata-only bar is the load-bearing one. A clause naming no section
 //! takes the same branch it took before section scope existed, so a regression

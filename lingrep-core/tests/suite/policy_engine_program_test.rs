@@ -31,8 +31,7 @@ fn published(source: &str, words: &[&str]) -> Vec<Match> {
 
 // --- the reserved `sentence_end` anchor ---------------------------------------
 //
-// See `docs/design/2026-08-06-raw-sentence-end-admission.md`. This anchor
-// measures the raw sentence end; every other anchor is derived.
+// This anchor measures the raw sentence end; every other anchor is derived.
 
 /// The reserved anchor is the token count.
 #[test]

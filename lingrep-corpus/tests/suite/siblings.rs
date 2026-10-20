@@ -36,8 +36,8 @@ use crate::support::source_document;
 /// A descriptor differing from the fixture only in output configuration.
 ///
 /// Identical resources, different emitted segmentation — the shape of a
-/// Sudachi split mode, and the case the old dictionary-fingerprint keying
-/// could not see.
+/// Sudachi split mode, which a dictionary fingerprint alone cannot
+/// distinguish.
 fn variant_descriptor() -> AnalyzerDescriptor {
     AnalyzerDescriptor::new(
         AnalyzerFamily::Vibrato,

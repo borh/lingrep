@@ -262,8 +262,7 @@ async fn selector_fixture() -> String {
                 .into_response();
         }
         // The codec's own query-only form, which is what the real endpoint
-        // answers with: hand-writing the shape here is what let this fixture
-        // drift behind the subpath-mount cutover.
+        // answers with, so this fixture cannot drift from it.
         match lingrep_web::permalink::encode_query_only(&pattern, &corpus, None) {
             Ok(path) => axum::Json(serde_json::json!({ "path": path })).into_response(),
             Err(_) => (

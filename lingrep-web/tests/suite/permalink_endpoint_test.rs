@@ -299,7 +299,7 @@ async fn a_ready_corpus_yields_both_selector_and_digest() {
 }
 
 /// The case that makes cold selection expressible: no digest exists yet, and
-/// that is a success rather than the old 503.
+/// that is a success rather than a 503.
 #[tokio::test]
 async fn a_cold_corpus_yields_a_selector_with_no_digest() {
     let (status, body) =
@@ -419,10 +419,10 @@ async fn landing_on_a_cold_selection_prepares_without_autorun() {
     // pattern is seeded but not run.
     assert!(!body.contains("data-corpus-digest"));
     assert!(body.contains("permalink-notice"));
-    // The PANEL describes the selected slot, never the (ready) default. B6 adds
-    // a selector that lists every declared corpus by display name, so "names the
-    // default at all" is no longer the discriminator — "is pointed at it" is,
-    // and that is carried by the panel line, the hidden field and `selected`.
+    // The PANEL describes the selected slot, never the (ready) default. The
+    // selector lists every declared corpus by display name, so "names the
+    // default at all" is not the discriminator — "is pointed at it" is, and
+    // that is carried by the panel line, the hidden field and `selected`.
     assert!(body.contains("sci-corpus"));
     assert!(body.contains(r#"<option value="sci" selected>sci-corpus</option>"#));
     assert!(body.contains(r#"<option value="default">default-corpus</option>"#));

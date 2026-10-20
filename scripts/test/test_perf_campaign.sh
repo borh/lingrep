@@ -134,11 +134,9 @@ if grep -qE '^\s*(local )?width=[0-9]' "$script"; then
     exit 1
 fi
 
-# The shell holds no model of the command, for the same reason. It used to
-# assemble argv from a flag list in `workload.env` — a mutable file the
-# manifest digest does not cover, so two campaigns measuring different things
-# carried the same seal, and one whose flags a quoting bug mangled measured
-# nothing and exited 0. Every argument now comes from the sealed template.
+# The shell holds no model of the command, for the same reason: every
+# argument comes from the sealed template, not from a flag list in
+# `workload.env`, which the manifest digest does not cover.
 grep -qF -- 'template --campaign' "$script"
 grep -qF -- 'command_template+=(--corpus "{corpus}")' "$script"
 grep -qF -- '--default-corpus "$corpus"' "$script"

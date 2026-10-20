@@ -535,7 +535,7 @@ fn a_set_sigil_with_no_name_is_refused_by_recovery() {
 /// A set referenced only by an unused fragment is reported in the same run.
 ///
 /// Sets join the reference graph as leaves, so the reachability fixpoint covers them:
-/// the cascade that used to surface on the *next* run surfaces on this one.
+/// the cascade surfaces on this run rather than the next.
 /// This is where a leaf-node mistake in the traversal would show.
 #[test]
 fn an_unused_set_and_the_unused_fragment_holding_it_report_together() {

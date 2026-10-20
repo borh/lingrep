@@ -28,6 +28,13 @@ make_archive() { # target [extra member]
     mkdir -p "$work/$name/bin"
     printf '#!/bin/sh\necho "ling %s"\n' "$version" >"$work/$name/bin/ling"
     chmod 755 "$work/$name/bin/ling"
+    mkdir -p "$work/$name/share/man/man1" "$work/$name/share/bash-completion/completions" \
+        "$work/$name/share/fish/vendor_completions.d" "$work/$name/share/zsh/site-functions"
+    printf '.TH LING 1\n' >"$work/$name/share/man/man1/ling.1"
+    printf '.TH LING-MATCHES 1\n' >"$work/$name/share/man/man1/ling-matches.1"
+    printf '# bash\n' >"$work/$name/share/bash-completion/completions/ling"
+    printf '# fish\n' >"$work/$name/share/fish/vendor_completions.d/ling.fish"
+    printf '#compdef ling\n' >"$work/$name/share/zsh/site-functions/_ling"
     if [[ $# -gt 1 ]]; then
         printf 'x\n' >"$work/$2"
         tar -C "$work" -czf "$release/$name.tar.gz" "$name" "$2"
@@ -118,6 +125,33 @@ for shell in "${shells[@]}"; do
             TEST_UNAME_S=Linux TEST_UNAME_M=x86_64 "$shell" "$installer" >/dev/null 2>&1 || status=$?
         [[ $status == 0 && $(grep -c 'Added by the lingrep installer' "$home/.bashrc") == 1 ]] || fail "rerun duplicated the PATH line"
     fi
+
+    # Manual pages and completions go under the default XDG data directory.
+    if run 0; then
+        for file in man/man1/ling.1 man/man1/ling-matches.1 bash-completion/completions/ling \
+            fish/vendor_completions.d/ling.fish zsh/site-functions/_ling; do
+            [[ -f "$home/.local/share/$file" ]] || fail "default data file $file"
+        done
+        [[ -z $(find "$home" -name '*.install.*') ]] || fail "staged file left behind"
+    fi
+
+    # XDG_BIN_HOME and XDG_DATA_HOME relocate the binary and its data; the PATH
+    # line keeps $HOME unexpanded for a directory inside it.
+    if run 0 XDG_BIN_HOME="$temporary/home/bin" XDG_DATA_HOME="$temporary/home/data"; then
+        [[ -x "$home/bin/ling" && ! -e "$home/.local/bin/ling" ]] || fail "XDG_BIN_HOME"
+        [[ -f "$home/data/man/man1/ling.1" && ! -e "$home/.local/share" ]] || fail "XDG_DATA_HOME"
+        grep -qx 'export PATH="$HOME/bin:$PATH"' "$home/.bashrc" || fail "PATH line under HOME"
+    fi
+    run 0 LING_INSTALL_DIR="$temporary/home/explicit" XDG_BIN_HOME="$temporary/home/bin" \
+        && [[ -x "$home/explicit/ling" && ! -e "$home/bin" ]] || fail "LING_INSTALL_DIR overrides XDG_BIN_HOME"
+
+    # A relative XDG path is invalid under the specification and is ignored.
+    run 0 XDG_BIN_HOME=bin XDG_DATA_HOME=data \
+        && [[ -x "$home/.local/bin/ling" && -f "$home/.local/share/man/man1/ling.1" ]] || fail "relative XDG paths"
+
+    # fish reads its PATH file from XDG_CONFIG_HOME.
+    run 0 SHELL=/usr/bin/fish XDG_CONFIG_HOME="$temporary/home/config" \
+        && grep -qx 'fish_add_path -g "$HOME/.local/bin"' "$home/config/fish/conf.d/lingrep.fish" || fail "fish XDG_CONFIG_HOME"
 
     # Platform detection picks the archive for each supported computer.
     run 0 TEST_UNAME_M=aarch64 && [[ $(requested "ling-$version-aarch64-unknown-linux-gnu") == 1 ]] || fail "Linux arm64"

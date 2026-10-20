@@ -227,11 +227,10 @@ fn a_misspelled_policy_key_warns_through_check_without_failing() {
 /// the attributes they read are cached even though no predicate names them.
 ///
 /// Deliberately over a *prepared* artifact. A prepared run projects only the
-/// attributes the run declares it needs, and that set used to be derived from
-/// the compiled automaton alone — so a catalog matching on `orth` while keying
-/// on `lemma`, guarding on `pos`, and rendering `text` published correct
-/// records from a text corpus and empty ones from an artifact, with no error
-/// either way.
+/// attributes the run declares it needs; deriving that set from the compiled
+/// automaton alone would let a catalog matching on `text` while keying on
+/// `lemma` and guarding on `upos` publish correct records from a text corpus
+/// and empty ones from an artifact, with no error either way.
 const DERIVING_CATALOG: &str = r#"
 key: [$noun.lemma]
 transform: [{op: "drop_edge", edge: "trailing", drop: "[upos=AUX]"}, {op: "join"}]
@@ -434,9 +433,7 @@ fn a_prepared_run_caches_the_attributes_only_the_policy_reads() {
 
 /// The run reports what it knows.
 ///
-/// It no longer counts suppressions by category — nothing suppresses by
-/// category any more — so it no longer prints three zeroes claiming it does.
-/// The per-statement replacement now reaches this same channel, one line per
+/// It counts suppressions per statement, on this same channel, one line per
 /// authored statement; this catalog declares no `policy` block, so the
 /// capture figure is the whole of what it has to say.
 #[test]

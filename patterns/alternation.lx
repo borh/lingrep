@@ -27,7 +27,7 @@ end
 # WHAT THIS IS. The distinctive design (Gries & Stefanowitsch 2004) contrasts
 # two or more near-synonymous constructions and asks which lexemes prefer which
 # member. Its input is not one frequency list but a table: filler × member.
-# `patterns/collexeme.sgx` produces the single-construction lists; this catalog
+# `patterns/collexeme.lx` produces the single-construction lists; this catalog
 # produces the contrast tables, and the two are separate files because the
 # analyses consume them separately.
 #
@@ -58,7 +58,7 @@ end
 # For the 一段 verbs the problem is worse, not better: 食べられる is 食べ +
 # られる, the same two tokens as the passive, so even a token-shape rule would
 # be counting passives. `koto_ga_dekiru` therefore lives in
-# `patterns/collexeme.sgx` as a construction with no partner, and this catalog
+# `patterns/collexeme.lx` as a construction with no partner, and this catalog
 # says why rather than shipping a family that measures the wrong thing.
 #
 # ------------------------------------------------------------------------
@@ -66,13 +66,13 @@ end
 # ------------------------------------------------------------------------
 #
 #   する IS `lemma=為る`. Not する, which matches nothing; `orthbase` is する.
-#     `patterns/sketch-grammar.sgx` records the same trap.
+#     `patterns/sketch-grammar.lx` records the same trap.
 #
 #   たら AND なら ARE `助動詞`, NOT PARTICLES. 帰ったら gives たら with
 #     `lemma=た` and `unidic.cform=仮定形-一般`; 行くなら gives なら with `lemma=だ`
 #     and `unidic.cform=仮定形-一般`. Only と and ば are `助詞`. A conditional family
 #     written as four particles would find two of the four.
-#     `patterns/concord.sgx` hit this first.
+#     `patterns/concord.lx` hit this first.
 #
 #   ぬ CARRIES `lemma=ず`. 及ぼさぬ gives ぬ with `lemma=ず` and
 #     `unidic.orthbase=ぬ`, so one predicate on `lemma` covers both spellings.
@@ -95,7 +95,7 @@ end
 # ------------------------------------------------------------------------
 #
 # Three statements. This is the second tracked catalog to declare a policy
-# block; `patterns/sf-experimental.sgx` is the first, and its eight statements
+# block; `patterns/sf-experimental.lx` is the first, and its eight statements
 # translate an upstream pipeline. These three do not translate anything — they
 # are the publication decisions distinctive collexeme analysis needs in order
 # for its contrast table to be countable.
@@ -116,8 +116,7 @@ end
 #      the tie, and the conditional is deleted — a negation observation would
 #      silently cost a conditional observation. `partition: alternation` runs
 #      the contest once per family, so the nesting is resolved and the
-#      cross-family overlap is left alone. The differential is measured in
-#      docs/results/2026-08-17-collostruction-catalogs/.
+#      cross-family overlap is left alone.
 #
 #   2. `exclude @cond_to with: @al_quotative_verb, relation: after, evidence: raw`
 #
@@ -132,7 +131,7 @@ end
 #      which is the raw match set, and the policy runs at the publication seam
 #      afterwards. The quotative sentence DOES match raw and MUST NOT be
 #      published, and only a test that reads published records can say so —
-#      which is what `alternation_sgx_test` does.
+#      which is what `alternation_lx_test` does.
 #
 #   3. `require %conditional with: @al_final_predicate, relation: in_sentence, evidence: raw`
 #
@@ -160,9 +159,8 @@ end
 #
 # STATUS: inhabited, not measured. Every claim below is executed against the
 # real dictionary by `catalog_examples.rs`; the publication behaviour of the
-# three statements is pinned by `alternation_sgx_test`; and each member has
-# been confirmed non-empty on the reference corpus
-# (docs/results/2026-08-17-collostruction-catalogs/). No association measure is
+# three statements is pinned by `alternation_lx_test`; and each member has
+# been confirmed non-empty on the reference corpus. No association measure is
 # computed here and none is claimed.
 
 # --- Shared token predicates --------------------------------------------

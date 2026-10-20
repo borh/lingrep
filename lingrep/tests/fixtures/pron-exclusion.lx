@@ -1,7 +1,7 @@
 # `pron` is partial: absent on every out-of-vocabulary token, because the
-# surface does not determine a pronunciation (S1.2).
+# surface does not determine a pronunciation.
 #
-# The `orth` conjunct names a string no committed fixture contains, so this
+# The `text` conjunct names a string no committed fixture contains, so this
 # publishes nothing against the repository parity baseline. What the
 # `coverage` command reads is the authored *site*, not what it matches.
 pattern exposed := [text=zzqqxx & unidic.pron!=ヨミ].

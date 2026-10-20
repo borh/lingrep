@@ -13,7 +13,7 @@
 # report is instead "the ADV->VERB advmod slot is filled by `seamlessly` at N
 # times the rate of the comparison corpus, while the NOUN->ADJ amod slot
 # shifts toward `robust`". That is the collostructional method
-# `patterns/sketch-grammar.sgx` and `patterns/collexeme.sgx` already implement
+# `patterns/sketch-grammar.lx` and `patterns/collexeme.lx` already implement
 # for Japanese, and this is its English instance.
 #
 # The slots are DELIBERATELY UNRESTRICTED. `evaluative_amod` captures every
@@ -68,8 +68,8 @@ end
 # `VerbForm=Ger` is the UD spelling stanza emits. spaCy's English models do
 # not use it: an `-ing` form is `VerbForm=Part` with `Tense=Pres`, and over
 # one 1.8 M-token corpus this pattern asked for `Ger` and matched **nothing**
-# -- 0 sentence openings where counting the construction by hand found 2,106
-# (docs/results/2026-09-15-prose-register/README.md). `Tense=Pres` is what
+# -- 0 sentence openings where counting the construction by hand found 2,106.
+# `Tense=Pres` is what
 # keeps the second spelling from also taking a past participle, which is
 # `VerbForm=Part` with `Tense=Past` and is a different construction.
 key: [lemma]
@@ -178,14 +178,13 @@ pattern not_x_but_y :=
 # the literature attributes the em dash to one vendor rather than to machine
 # authorship in general.
 #
-# The ASCII spellings are here because a corpus that writes its asides as `--`
-# was previously scored zero on a construction it uses, which made the
+# The ASCII spellings are here because without them a corpus that writes its
+# asides as `--` scores zero on a construction it uses, which makes the
 # measurement a question about typography rather than about the aside. Both
 # are one PUNCT token under spaCy. `key: [text]` keeps the spellings apart in
 # the report, so a reader can still separate the typographic habit from the
 # construction: over three corpora the typographic gap was 42x and the
-# construction gap 8.7x
-# (docs/results/2026-09-15-prose-register/README.md).
+# construction gap 8.7x.
 #
 # THE NEIGHBOURS ARE THE CONSTRUCTION. An aside interrupts running text, so
 # it has a word on each side; a rule drawn across a file does not. Without
@@ -194,8 +193,7 @@ pattern not_x_but_y :=
 # change in how the corpus writes asides. It was a real finding about the
 # wrong thing: `dash_aside` separated deleted Clojure comments from kept ones
 # at q = 6.7e-06, entirely on `---`, while the em dash -- the construction --
-# moved 3.6% the other way
-# (docs/results/2026-09-15-soranoha-style-intervention/README.md).
+# moved 3.6% the other way.
 #
 # `!(upos=PUNCT)` is the TRUE COMPLEMENT and not `upos!=PUNCT`, which would
 # fail on a token carrying no `upos` and make this pattern match nothing at

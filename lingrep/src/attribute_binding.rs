@@ -7,9 +7,8 @@
 //! kind conflicts). This module turns the second into per-attribute
 //! `warning[attribute_unavailable]` notices naming the referencing
 //! definitions and the token schema, and the third into an invalid-invocation
-//! error that says what to change — instead of the historical
-//! "source failed before sentence 0", which framed a setup refusal as a read
-//! failure.
+//! error that says what to change, rather than reporting a setup refusal as
+//! a read failure.
 
 use std::io::{self, Write};
 

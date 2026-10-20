@@ -13,7 +13,7 @@
 //! A published record can be keyed by a projection of its captures.
 //!
 //! Grouping on the whole matched surface is not grouping on a collocation.
-//! Measured in `docs/results/2026-08-03-sketch-grammar-catalog/`: over 500
+//! Over 500
 //! documents `patterns/sketch-grammar.lx` yields 71,360 distinct
 //! (head, collocate) lemma pairs and 91,562 distinct surfaces, and
 //! `実験を行う` alone is published as seven rows ranked 2 through 11,182.
@@ -247,8 +247,8 @@ fn a_key_on_a_fragment_is_reported_as_ineffective() {
 //
 // The bare form above stays sugar for a capture the compiler *proves* covers
 // one token. These three waive that proof and say which reading is meant,
-// because the measurement in `docs/results/2026-08-04-multi-token-keys/` found
-// two populations wanting opposite rules and so no safe default.
+// because multi-token captures split into two populations wanting opposite
+// rules, so there is no safe default.
 // ---------------------------------------------------------------------------
 
 /// The minimal pair the measurement produced, as one test: the same two-token

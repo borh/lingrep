@@ -151,8 +151,8 @@ fn progress_event_body(status: &str, live_results: Option<&str>) -> String {
 /// Render the completed results explorer for `snapshot` (or the empty explorer
 /// when there is none). Pure: this is the projection half of the completed SSE
 /// event, lifted out of the stream `map` closure so the closure only wires
-/// transport. `displayed_snapshot()` is a pure getter, so taking the value once
-/// here is equivalent to the two calls the closure made previously.
+/// transport. `displayed_snapshot()` is a pure getter, so the value is taken
+/// once.
 fn render_completed_results(snapshot: Option<&CompletedSnapshot>, workbench_id: &str) -> String {
     let projection = snapshot
         .map(|snapshot| {

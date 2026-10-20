@@ -1317,9 +1317,8 @@ fn two_declarations_of_one_anchor_name_must_agree() {
     );
     // The repetition case: the identical `anchor:` declaration written twice
     // says one thing, so it is one anchor rather than a conflict. Only `F`
-    // carries the claim, because only `F` is excluded — under flat annotations
-    // an author writes `max_nesting:` on the definition it is about, and the
-    // block that used to replicate it onto every wrapped definition is gone.
+    // carries the claim, because only `F` is excluded — an author writes
+    // `max_nesting:` on the definition it is about.
     let replicated = r#"
 anchor: {name: "a", exclude: "F"}
 max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
@@ -1338,11 +1337,9 @@ end
 
 /// A disagreement written inside one `anchor:` list is a disagreement.
 ///
-/// It used to fall into the uniqueness branch and be told the second entry
-/// "says nothing the first does not" — advice that, followed, silently changes
-/// which fragment the anchor strips. The same mistake spelled as two blocks got
-/// the right message, so one mistake had two answers and the worse one was
-/// wrong.
+/// It must not be told the second entry "says nothing the first does not" —
+/// advice that, followed, silently changes which fragment the anchor strips.
+/// The same mistake spelled as two blocks gets the same message.
 #[test]
 fn a_conflict_inside_one_anchor_list_is_reported_as_a_conflict() {
     let source = "anchor: [{name: \"a\", exclude: \"F\"}, {name: \"a\", exclude: \"G\"}]\nfragment F := [text=x].\nanchor: [{name: \"a\", exclude: \"F\"}, {name: \"a\", exclude: \"G\"}]\nfragment G := [text=y].\n";
@@ -1486,10 +1483,8 @@ fn an_anchor_measured_against_only_by_an_admit_is_referenced() {
 /// declarations before binding precisely so one does not wait behind a body
 /// error to be seen.
 ///
-/// Resolution used to run post-bind, where `find_definition` was a convenient
-/// span source. The result was that `anchor: 7` — refused at the surface — was
-/// reported beside an unrelated nullable pattern while `anchor: nowhere` was
-/// swallowed by it. Same key, adjacent checks, opposite behaviour.
+/// `anchor: 7` is refused at the surface, and `anchor: nowhere` must be
+/// reported beside it rather than swallowed by an unrelated nullable pattern.
 #[test]
 fn an_unresolvable_anchor_does_not_queue_behind_a_body_error() {
     let source = "pattern p := [text=x].\n\npattern always_empty := [text=y]*.\n\
@@ -1914,40 +1909,6 @@ fn a_nullable_exclude_without_a_claim_still_names_nullable_pattern() {
             .any(|d| d.code() == DiagnosticCode::InvalidNestingClaim),
         "the missing claim must not displace it; got {errors:?}"
     );
-}
-
-#[test]
-fn retired_policy_keys_are_errors_at_the_key_without_typo_warnings() {
-    for (key, value) in [
-        ("trim_suffix", "\"DA\""),
-        ("trim_prefix", "\"Q\""),
-        ("priority_group", "\"g\""),
-        ("longest_in_group", "true"),
-        ("suppress_within", "[\"Q\", \"R\"]"),
-        ("terminal", "false"),
-    ] {
-        let source = format!("{key}: {value}\np := [upos=NOUN].\n");
-        let diagnostics = compile_errors(&source);
-        let retired = diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code() == DiagnosticCode::RetiredPolicyKey)
-            .collect::<Vec<_>>();
-        assert_eq!(retired.len(), 1, "{key}: {diagnostics:?}");
-        let diagnostic = retired[0];
-        assert_eq!(diagnostic.severity(), DiagnosticSeverity::Error);
-        assert_eq!(diagnostic.location().byte_range(), 0..key.len());
-        assert!(diagnostic.message.contains("ling check --help"));
-        assert!(
-            diagnostic
-                .message
-                .contains(&format!("`{key}:` was retired"))
-        );
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| { diagnostic.code() != DiagnosticCode::SuspiciousPolicyKey })
-        );
-    }
 }
 
 /// A statement's label is the researcher's own text, not a re-rendering.

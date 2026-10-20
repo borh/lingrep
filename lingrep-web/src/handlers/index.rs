@@ -455,8 +455,8 @@ mod tests {
         );
     }
 
-    /// The parked B5 finding: an undeclared `k` used to discard a pattern the
-    /// server had already decoded. The selector is what makes keeping it
+    /// An undeclared `k` keeps the pattern the server already decoded. The
+    /// selector is what makes keeping it
     /// actionable — the query is seeded, unrun, and retargetable.
     #[tokio::test]
     async fn an_undeclared_corpus_keeps_the_decoded_pattern_and_offers_the_selector() {

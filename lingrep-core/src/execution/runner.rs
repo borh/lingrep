@@ -163,10 +163,8 @@ impl ExecutionReport {
     /// The `Copy` scalar projection, for a progress observer.
     ///
     /// Borrows rather than consuming: the accumulator this reads is the run's
-    /// live one and is read once per finalized batch. It reached here by value
-    /// while the whole report was `Copy`, which is no longer true and was never
-    /// what this needed — it copies five integers and leaves the per-statement
-    /// counters where they are.
+    /// live one and is read once per finalized batch. It copies five integers
+    /// and leaves the per-statement counters where they are.
     fn progress(&self) -> ExecutionProgress {
         ExecutionProgress {
             sentences_admitted: self.sentences_admitted,
@@ -255,8 +253,7 @@ impl SinkControl {
 /// default. Each parallel stage at the seam therefore splits its partition
 /// into at most this many tasks — bounding concurrency without a second
 /// pool — leaving the remaining workers to matching. The width matches the
-/// counting-shard clamp, and the choice is measured, not derived; see
-/// `docs/results/2026-08-28-shard-local-summary-lowering/README.md`.
+/// counting-shard clamp, and the choice is measured, not derived.
 pub const PARTITION_PUBLICATION_WIDTH: usize = 8;
 
 /// Receives complete canonical matches for one ordered sentence.
@@ -310,7 +307,7 @@ pub trait MatchSink {
     /// independent sentences in parallel without constructing another pool.
     /// The default deliberately ignores it and retains the sentence-at-a-time
     /// behavior of [`Self::push`]. Cancellation is checked at the same
-    /// boundaries as that historical loop, and a stopping sink is never
+    /// boundaries as [`Self::push`], and a stopping sink is never
     /// offered a later sentence.
     fn push_partition<V: TokenSequence + Sync>(
         &mut self,

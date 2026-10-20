@@ -56,10 +56,11 @@ pub struct MarkdownReaderArgs {
         hide_short_help = true
     )]
     pub md_self_labels: Option<String>,
-    /// Recover the narrow set of artifacts the corpus converter emits:
-    /// presentational HTML, `<si ...>` notation, and div imbalance at the
-    /// physical document boundary. ling refuses them unless this is
-    /// passed; lingrep-web always recovers and ignores it.
+    /// Recover conversion artifacts emitted by the corpus converter:
+    /// presentational HTML, `<si ...>` notation, and div imbalance at
+    /// physical document boundaries. `ling` rejects unrecovered artifacts
+    /// unless this flag is passed; `lingrep-web` enables recovery
+    /// unconditionally.
     #[arg(
         long = "md-recover-conversion-artifacts",
         help_heading = "Markdown input",

@@ -261,7 +261,7 @@ pub fn run(
     // projection, so the filter is a no-op there; a direct token carries the
     // whole schema, so the filter is what narrows it to the same set.
     // Context rendering reads the same portable `text` values that
-    // `cached_run_attributes` always includes. Requiring UniDic's historical
+    // `cached_run_attributes` always includes. Requiring a UniDic-specific
     // raw-text field here would make an otherwise portable catalog impossible
     // to bind to Sudachi or an external analyzer.
     let projected_attributes = cached_run_attributes(&compiled.matcher);
@@ -421,10 +421,10 @@ pub fn run(
         let mut sink = direct;
         let progress_mode = config.progress;
         let presentation_progress = PresentationProgress::stderr();
-        // The run record's declaration makes an old file diagnosable. This
+        // The run record's declaration makes a saved file diagnosable. This
         // makes a live run *loud*, at the one moment a researcher can still
         // act on it — a `jq` script reading an attribute this catalog never
-        // names now gets nothing, silently, where it used to get a value.
+        // names gets nothing, silently.
         if progress_mode == ProgressMode::Always {
             presentation_progress.write_line(&format!(
                 "publishing token attributes: {}",
@@ -480,9 +480,7 @@ pub fn run(
         // applied and actually removed something — a line of zeroes on every
         // policy-free run is noise that trains the reader to skip it.
         //
-        // One figure for the run, since the three per-category suppression
-        // counters retired with the passes that incremented them. What replaced
-        // them is per *statement*, and follows below.
+        // One figure for the run; the per-*statement* counts follow below.
         let policy_stats = report.policy_stats;
         let reporting_policy =
             selection == PolicySelection::Apply && progress_mode == ProgressMode::Always;
@@ -964,9 +962,8 @@ impl<W: Write> DirectMatchSink<'_, W> {
                     renderer
                         .match_row(&mut *self.writer, &row)
                         .map_err(execution_output_io)?;
-                    // Human output is watched as it arrives, so it keeps the
-                    // per-row flush the line-buffered `StdoutLock` used to
-                    // supply before this sink wrote through a `BufWriter`.
+                    // Human output is watched as it arrives, so it flushes per
+                    // row even though this sink writes through a `BufWriter`.
                     // The machine formats above deliberately do not: their
                     // durability boundary is `finish_batch`.
                     self.writer.flush().map_err(execution_output_io)?;
@@ -1118,8 +1115,7 @@ mod tests {
     /// per-record flush turns every record into its own `write(2)` and defeats
     /// the writer's buffer. Measured on `patterns/distributions.lx` over the
     /// tracked corpus, per-record flushing cost 5.6s of the run's 6.0s of
-    /// system time and 38% of its wall clock
-    /// (`docs/results/2026-08-18-publication-buffering/`).
+    /// system time and 38% of its wall clock.
     ///
     /// Byte-for-byte, the stream is the one `write_jsonl` produced; only the
     /// flush cadence differs. `matches_jsonl_bytes_are_unchanged_by_buffering`
@@ -1148,9 +1144,8 @@ mod tests {
         );
     }
 
-    /// Human output is watched as it is drawn, so it keeps flushing per row —
-    /// the line-buffered `StdoutLock` used to supply that and a `BufWriter`
-    /// does not. This is the exception the machine formats deliberately do not
+    /// Human output is watched as it is drawn, so it flushes per row, which a
+    /// `BufWriter` does not. This is the exception the machine formats deliberately do not
     /// share.
     #[test]
     fn matches_human_rows_still_flush_per_row() {

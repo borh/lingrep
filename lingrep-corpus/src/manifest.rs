@@ -306,27 +306,10 @@ impl Manifest {
         #[derive(Deserialize)]
         struct ManifestVersion {
             schema_version: u32,
-            format_generation: Option<u32>,
+            format_generation: u32,
         }
         let version: ManifestVersion = serde_json::from_slice(&bytes).map_err(json)?;
-        let Some(generation) = version.format_generation else {
-            let generation = path
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str())
-                .and_then(|name| {
-                    name.rsplit_once(".g")
-                        .and_then(|(_, suffix)| suffix.split('.').next()?.parse::<u32>().ok())
-                        .or_else(|| {
-                            name.strip_prefix('g')?
-                                .split_once('-')?
-                                .0
-                                .parse::<u32>()
-                                .ok()
-                        })
-                });
-            return Err(CorpusError::RetiredArtifact { generation });
-        };
+        let generation = version.format_generation;
         if generation != crate::CORPUS_ARTIFACT_FORMAT_GENERATION {
             return Err(CorpusError::UnsupportedArtifactGeneration { generation });
         }
