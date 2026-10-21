@@ -155,8 +155,9 @@ decompressed bytes, so compression does not change `dictionary_identity`. Do not
 reintroduce multi-frame `.zst` encoding for the packaged dictionaries.
 
 Adding a dictionary requires a fixed-input `vibrato-dict-*` package in
-`flake.nix`, an entry in `DICTIONARIES.md`, and a tokenization check against its
-`share/vibrato/*.dic` output.
+`flake.nix`, an entry in `DICTIONARIES.md`, a tokenization check against its
+`share/vibrato/*.dic` output, and its BLAKE3 in
+`nix build .#vibrato-dictionaries.tests.digests`.
 
 ## Development workflow
 

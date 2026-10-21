@@ -43,7 +43,9 @@ pub use examples::{
     verify_anchor_claims, verify_examples,
 };
 pub use explanation::{ExplainedMatch, SentenceExplanation};
-pub use identity::{COMPILER_SCHEMA_IDENTITY, GRAMMAR_REVISION, POLICY_SEMANTICS_IDENTITY};
+pub use identity::{
+    COMPILER_SCHEMA_IDENTITY, GRAMMAR_SEMANTICS_REVISION, POLICY_SEMANTICS_IDENTITY,
+};
 pub use inline::normalize_inline_pattern;
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,

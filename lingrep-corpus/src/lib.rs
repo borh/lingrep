@@ -69,7 +69,7 @@ pub use provenance::{
 };
 pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
-    containing_directory,
+    artifact_bytes, containing_directory, is_superseded, remove_superseded,
 };
 pub use tokens::PreparedSentenceSource;
 pub use verify::{ComponentVerification, VerificationReport};

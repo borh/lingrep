@@ -146,6 +146,7 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
                     "prepared".into(),
                     serde_json::json!({
                         "limit": args.limit.and_then(ExplicitLimit::resolve),
+                        "prune": args.prune,
                     }),
                 ))
             }

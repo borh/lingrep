@@ -113,6 +113,8 @@ pub fn canonical_artifact_path(
 /// Facts a canonical artifact file name carries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParsedArtifactName {
+    /// File name of the source this artifact realizes.
+    pub source_name: String,
     pub format_generation: u32,
     pub scheme: IdentityScheme,
     pub analysis_identity: AnalysisIdentity,
@@ -133,9 +135,10 @@ pub fn parse_artifact_name(name: &str) -> Option<ParsedArtifactName> {
     let analysis_identity = AnalysisIdentity::from_bytes(decode_hex_identity(identity)?);
     let (rest, scheme) = rest.rsplit_once('.')?;
     let scheme = IdentityScheme::parse(scheme).ok()?;
-    let (_, generation) = rest.rsplit_once(".g")?;
+    let (source_name, generation) = rest.rsplit_once(".g")?;
     let format_generation = generation.parse().ok()?;
     Some(ParsedArtifactName {
+        source_name: source_name.to_owned(),
         format_generation,
         scheme,
         analysis_identity,

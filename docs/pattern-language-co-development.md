@@ -94,7 +94,8 @@ semantics are preserved. Before committing the new Cargo pin, verify all of:
 3. the strict lowerer consumes the new node names without an old-CST
    compatibility branch;
 4. the exact pinned-grammar integration test exercises the changed CST shape;
-5. typed catalog/compiler fingerprints remain equal;
+5. typed catalog/compiler fingerprints remain equal, or the same commit
+   advances `GRAMMAR_SEMANTICS_REVISION` in `lingrep-core/src/fsm/identity.rs`;
 6. complete canonical `Match` values match the independent typed-expression
    oracle; and
 7. `lingrep/src/pattern_reference.rs` documents the changed syntax in

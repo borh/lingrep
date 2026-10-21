@@ -62,9 +62,8 @@ machine-applicable suggestions, then `cargo fmt` and the affected tests) and
 delete its `allow` line in the same commit. Do not delete a policy override
 because it measures clean.
 
-`redundant_else` and `unused_async_trait_impl` fire on the flake's nightly
-Clippy and are allow-listed rather than fixed. Stable Clippy does not recognize
-`unused_async_trait_impl` and reports it as an `unknown_lints` warning.
+Lints are checked on the toolchain `rust-toolchain.toml` pins; an entry for a
+lint that toolchain does not recognize fails as `unknown_lints`.
 
 ## No `warn` level in `Cargo.toml`
 
@@ -98,16 +97,14 @@ same change.
 ## Enforcement and toolchains
 
 The enforcing gate is the `fast` job in `.github/workflows/ci.yml`, which runs
-the lane on the flake's nightly toolchain (`rust-overlay`'s `nightly.latest`,
-pinned by `flake.lock`). Run the same command locally:
+the lane on the toolchain `rust-toolchain.toml` pins. Run the same command
+locally:
 
 ```bash
 nix develop .#ci -c ./ci.sh --fast
 ```
 
 `.githooks/pre-push` runs the same lane through the default shell, which uses
-the same toolchain. The lane cannot run on stable, because
-`scripts/check-test-thread-default.sh` uses `cargo config get`, which is
-nightly-only. The `macos` CI job also runs stable Clippy with `-D warnings`.
+the same toolchain, as does the `macos` CI job's Clippy with `-D warnings`.
 `.#stable` and `.#msrv` are compatibility shells for checking that the code
 builds on those toolchains.

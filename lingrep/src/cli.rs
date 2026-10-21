@@ -495,6 +495,16 @@ pub struct CorpusVariantsArgs {
     #[arg(long, value_name = "N|all")]
     pub limit: Option<ExplicitLimit<u64>>,
 
+    /// Delete the artifacts of this source that are marked prunable.
+    ///
+    /// Prunable artifacts were written in an earlier format than this build
+    /// reads, so only a rebuild from source can replace them. Every artifact
+    /// this build can open is kept, as are newer formats, damaged artifacts,
+    /// other sources and symbolic links. Run without `--prune` first to see
+    /// what would be deleted.
+    #[arg(long)]
+    pub prune: bool,
+
     /// Validate inputs and print the execution plan without scanning artifacts.
     #[arg(long)]
     pub plan: bool,

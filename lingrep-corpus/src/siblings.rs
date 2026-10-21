@@ -150,6 +150,81 @@ impl SiblingScan {
     }
 }
 
+/// Whether a scan diagnostic records an artifact written in an earlier format
+/// than this build reads: an earlier artifact generation, manifest schema or
+/// provenance schema.
+///
+/// Such an artifact can only be rebuilt from source. A newer format, which a
+/// newer build reads, and a damaged manifest are not superseded.
+#[must_use]
+pub fn is_superseded(error: &CorpusError) -> bool {
+    match error {
+        CorpusError::UnsupportedArtifactGeneration { generation } => {
+            *generation < crate::CORPUS_ARTIFACT_FORMAT_GENERATION
+        }
+        CorpusError::PreparedArtifactRebuildRequired { version } => {
+            *version < crate::manifest::MANIFEST_SCHEMA_VERSION
+        }
+        CorpusError::UnsupportedSchema { component, version } => {
+            *component == crate::manifest::PROVENANCE_NAME
+                && *version < crate::provenance::SCHEMA_VERSION
+        }
+        _ => false,
+    }
+}
+
+/// Total size in bytes of the files under `path`, without following symbolic
+/// links.
+pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() {
+        return Ok(metadata.len());
+    }
+    let mut total = 0;
+    for entry in fs::read_dir(path)? {
+        total += artifact_bytes(&entry?.path())?;
+    }
+    Ok(total)
+}
+
+/// Deletes the superseded realization of `source_name` at `path` and returns
+/// the bytes freed.
+///
+/// Refuses, deleting nothing, unless `path` is a directory rather than a
+/// symbolic link, its name is a canonical artifact name for exactly
+/// `source_name`, and it holds a regular `manifest.json` that fails to open
+/// with an error [`is_superseded`] accepts. Symbolic links inside it are
+/// removed, not followed.
+pub fn remove_superseded(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
+    let refuse = |reason: &str| {
+        Err(crate::artifact::invalid_artifact(format!(
+            "refusing to delete {}: {reason}",
+            path.display()
+        )))
+    };
+    let name = path.file_name().and_then(|name| name.to_str());
+    if name
+        .and_then(parse_artifact_name)
+        .is_none_or(|parsed| parsed.source_name != source_name)
+    {
+        return refuse("not a canonical artifact name for this source");
+    }
+    if !fs::symlink_metadata(path)?.is_dir() {
+        return refuse("not a directory");
+    }
+    let manifest = path.join(MANIFEST_NAME);
+    if !fs::symlink_metadata(&manifest)?.is_file() {
+        return refuse("manifest is not a regular file");
+    }
+    match Manifest::open(&manifest) {
+        Err(error) if is_superseded(&error) => {}
+        _ => return refuse("not written in a superseded format"),
+    }
+    let bytes = artifact_bytes(path)?;
+    fs::remove_dir_all(path)?;
+    Ok(bytes)
+}
+
 fn realization(path: PathBuf, manifest: &Manifest) -> Result<SiblingRealization, CorpusError> {
     let inputs = manifest.analysis_inputs()?;
     Ok(SiblingRealization {

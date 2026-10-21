@@ -305,6 +305,10 @@
                 ++ lib.optionals isLinux [ pkgs.valgrind ];
             };
 
+          # `rust-toolchain.toml` is the one toolchain for development, CI and
+          # release builds; rustup reads the same file outside Nix.
+          pinnedToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
           # `devShells.ci` exists because a GitHub runner has to hold the shell,
           # the 1.31 GB CWJ dictionary and a cargo target directory at the same
           # time, and the full shell does not fit. Chromium and chromedriver
@@ -447,6 +451,32 @@
               vibratoDictKinseiEdo
               vibratoDictKinseiBungo
             ];
+            # A dictionary's BLAKE3 is part of every Vibrato analysis identity,
+            # so a converter or input change that alters these bytes makes
+            # every corpus prepared with that dictionary unreadable. Run with
+            # `nix build .#vibrato-dictionaries.tests.digests` after a
+            # flake.lock update; replace a digest only together with a
+            # CHANGELOG entry saying which corpora must be rebuilt.
+            passthru.tests.digests =
+              pkgs.runCommand "vibrato-dictionary-digests"
+                {
+                  nativeBuildInputs = [ pkgs.b3sum ];
+                  digests = ''
+                    80aeaf4225676386368932b1f632d71e05d81b4be185e0b786c360656944abbf  unidic-cwj-202512.dic
+                    80c6e211be770d4e8ee0e2443584f285818e508acea84f21ea03d5eb47afe37f  unidic-csj-202512.dic
+                    20ff3deb8b988e345e78af3079a61a023ceaa974151988046931c94894d66348  unidic-novel-202512.dic
+                    c15e76a03d56bceec589da2ac6b93c7491b5f01bf1be8b8b5c1ae1075490f955  unidic-qkana-202512.dic
+                    a12b36972086e170e428eef56b53d8eafe8b24d16628c9edf7370a87b804bb8b  unidic-kindai-bungo-202512.dic
+                    9aa4a90441d4209b2b59d9eee2609be79f3307df56083c5d618afd00d458604b  unidic-kinsei-edo-202512.dic
+                    8fbb017faaff3d2ab412a6d23195b51b5adf412c1742d14c8da039623bb52ea9  unidic-kinsei-bungo-202512.dic
+                  '';
+                  passAsFile = [ "digests" ];
+                }
+                ''
+                  cd ${vibratoDictionaries}/share/vibrato
+                  b3sum --check "$digestsPath"
+                  touch "$out"
+                '';
           };
 
           sudachiRs = pkgs.runCommand "sudachi-rs-0.7.0-resources" { } ''
@@ -722,15 +752,11 @@
             linguistic-eval-mecab-image = linguisticEvalImages.mecab;
           };
 
-          devShells.default = self'.devShells.nightly;
+          devShells.default = mkDevShell pinnedToolchain;
 
-          # What CI enters. See `ciDevDeps` for what it leaves out and why. The
-          # toolchain is the default shell's, not stable: `./ci.sh --fast` runs
-          # `cargo config get`, which cargo still gates behind nightly, so the
-          # lane a developer runs through `.githooks/pre-push` and the lane CI
-          # runs are the same lane on the same toolchain.
+          # What CI enters. See `ciDevDeps` for what it leaves out and why.
           devShells.ci = mkDevShellWith {
-            rustToolchain = pkgs.rust-bin.nightly.latest.default;
+            rustToolchain = pinnedToolchain;
             packages = ciDevDeps;
             profilingExtras = false;
           };

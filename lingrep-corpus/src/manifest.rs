@@ -41,7 +41,7 @@ pub fn is_prepared_artifact(path: &Path) -> bool {
 pub(crate) const LOCATIONS_NAME: &str = "locations.v1";
 pub(crate) const PROVENANCE_NAME: &str = "provenance.sqlite";
 pub(crate) const TOKENS_NAME: &str = "tokens.v1.zst";
-const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub(crate) const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 /// Schema of the lingrep provenance sidecar.
 const PROVENANCE_SCHEMA_VERSION: u32 = crate::provenance::SCHEMA_VERSION;

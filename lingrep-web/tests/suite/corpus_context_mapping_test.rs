@@ -33,7 +33,7 @@ fn display_name_of(path: &std::path::Path) -> String {
 /// Copied from `provenance_runtime_test.rs` so this test needs no shared harness.
 async fn wait_ready(runtime: &CorpusRuntime) -> ReadyCorpus {
     let mut readiness = runtime.readiness();
-    tokio::time::timeout(Duration::from_secs(180), async {
+    tokio::time::timeout(Duration::from_mins(3), async {
         loop {
             let state = readiness.borrow_and_update().clone();
             match state {

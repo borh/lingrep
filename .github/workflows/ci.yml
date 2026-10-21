@@ -133,22 +133,17 @@ jobs:
       # dictionary that still costs 1.31 GB to build on arm64, and what this job
       # proves is that the code and the packaging path work on Apple silicon,
       # not that the corpus lane does. The correctness lane is the one above.
-      # Clippy runs on the nightly that `devShells.nightly` resolves from the
-      # locked rust-overlay, so a lint added in a newer toolchain cannot fail
-      # this job while the Linux lane passes. Update it with `flake.lock`.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-07-11
-          components: clippy
-
-      - uses: dtolnay/rust-toolchain@stable
+      # rustup installs the toolchain `rust-toolchain.toml` names, the same one
+      # the dev shells use, so a newer release cannot change this job's lints.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-ci
 
       - name: Clippy
-        run: cargo +nightly-2026-07-11 clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build
         run: cargo build -p lingrep

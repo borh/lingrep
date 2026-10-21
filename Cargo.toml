@@ -235,14 +235,6 @@ used_underscore_binding = "allow"
 # exceptions that stay clean because the code avoids them by choice, not by luck.
 wildcard_imports = "allow"
 
-# Nightly-new pedantic lints (added 2026-08-02): these do NOT fire on the
-# authoritative stable-1.97 CI gate (absent there), but they DO fire on the
-# nightly pre-push fast gate. Allow-listed so the nightly push gate stays green;
-# they become ratchet candidates once stable gains them (then CI enforces).
-redundant_else = "allow"           # 2 sites (nightly-only as of 2026-08)
-unused_async_trait_impl = "allow"  # 4 sites (nightly-only as of 2026-08)
-
-
 # --- Developing lints: ABSENT from this table (Decision 12) ---
 #   `nursery` stays at its default `allow` (not listed); elevation needs a
 #   toolchain pin. Default-on lints are OMITTED (Decision 7). Inert deferred

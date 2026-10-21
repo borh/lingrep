@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ling corpus variants` lists each unreadable artifact with its size and
+  marks it prunable when it belongs to the target's source and was written in
+  an earlier format than this build reads. `--prune` deletes those artifacts,
+  printing each path and the bytes freed, and nothing else. The
+  `lingrep.variants/v1` records gain the optional `bytes`, `prunable`,
+  `pruned` and `freed_bytes` fields. See
+  [Discovering realizations](docs/cli-usage-guide.md#discovering-realizations).
+
 ### Changed
 
 - A prepared corpus whose manifest has a field this `ling` does not read is
   refused with `unknown_manifest_field`, naming the field, the `ling` version
   that wrote it, and this version, instead of a generic JSON error.
-
 - `install.sh` follows the XDG Base Directory Specification: `ling` goes to
   `$XDG_BIN_HOME` when set, and the manual pages and Bash, fish and zsh
   completions from the archive are installed under `$XDG_DATA_HOME`

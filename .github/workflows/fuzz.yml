@@ -27,10 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -69,10 +67,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # AddressSanitizer is enabled with `-Zsanitizer`, which only nightly
+      # accepts, so this lane overrides `rust-toolchain.toml`.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: |
+          rustup toolchain install nightly --profile minimal
+          echo RUSTUP_TOOLCHAIN=nightly >> "$GITHUB_ENV"
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz

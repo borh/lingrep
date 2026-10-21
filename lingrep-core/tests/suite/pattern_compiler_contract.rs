@@ -14,7 +14,7 @@ use lingrep_core::execution::{BoundSentenceInput, EnhancedGraphInput};
 use lingrep_core::fsm::policy_program::BoundOp;
 use lingrep_core::fsm::{
     COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, DiagnosticCode, FsmBuilder,
-    GRAMMAR_REVISION, Match, POLICY_SEMANTICS_IDENTITY, PatternSource, PredicateDigest,
+    GRAMMAR_SEMANTICS_REVISION, Match, POLICY_SEMANTICS_IDENTITY, PatternSource, PredicateDigest,
     compile_catalog, report_catalog_drift,
 };
 use lingrep_core::testing::catalogs::tracked_catalog_sources;
@@ -122,17 +122,11 @@ fn match_fingerprints(matches: &[Match]) -> Vec<MatchFingerprint> {
 }
 
 #[test]
-fn public_pattern_identity_constants_track_the_workspace_grammar_pin() {
-    let workspace_manifest = include_str!("../../../Cargo.toml");
-    assert!(
-        workspace_manifest.contains(&format!(
-            "tree-sitter-lingrep = {{ git = \
-             \"https://github.com/borh/tree-sitter-lingrep.git\", rev = \
-             \"{GRAMMAR_REVISION}\" }}"
-        )),
-        "GRAMMAR_REVISION must move with the workspace dependency pin"
+fn public_pattern_identity_constants_are_pinned() {
+    assert_eq!(
+        GRAMMAR_SEMANTICS_REVISION,
+        "b7ac30d8055e0e4e22ce4e4a34711f27f07712fc"
     );
-    assert_eq!(GRAMMAR_REVISION.len(), 40);
     assert_eq!(COMPILER_SCHEMA_IDENTITY, "lingrep-core-compiler/v1");
     // Pinned for the same reason as its sibling: these constants are the only
     // thing distinguishing two runs over identical source that publish

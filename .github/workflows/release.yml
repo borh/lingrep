@@ -56,9 +56,9 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # The toolchain is the one `rust-toolchain.toml` names.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:

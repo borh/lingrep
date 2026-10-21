@@ -3,7 +3,9 @@
 //! Current prepared artifacts can differ in analyzer, reader or admission
 //! policy. Each difference is reported as its own named dimension. Discovery
 //! reports an artifact of another generation as a diagnostic, not a
-//! realization; it requires rebuilding from source.
+//! realization; it requires rebuilding from source. A diagnostic of the
+//! target's own source in an earlier format is `prunable`, and `--prune`
+//! deletes exactly those.
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -199,10 +201,26 @@ pub struct VariantsComplete {
     pub unreadable: u64,
     /// One entry per unreadable candidate, in bytewise path order.
     pub diagnostics: Vec<VariantDiagnostic>,
+    /// Diagnostics deleted by `--prune`.
+    #[serde(default)]
+    pub pruned: u64,
+    /// Bytes those deletions freed.
+    #[serde(default)]
+    pub freed_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct VariantDiagnostic {
     pub path: String,
     pub message: String,
+    /// Size of the files under `path`; absent when it could not be measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Written for the target's source in a format older than this build
+    /// reads, so only a rebuild from source can replace it.
+    #[serde(default)]
+    pub prunable: bool,
+    /// Deleted by this run.
+    #[serde(default)]
+    pub pruned: bool,
 }

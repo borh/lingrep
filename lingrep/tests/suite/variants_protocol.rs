@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lingrep_core::testing::MiniDictionary;
-use lingrep_corpus::{CorpusArtifact, TrustClass, canonical_artifact_path};
+use lingrep_corpus::{AnalysisIdentity, CorpusArtifact, TrustClass, canonical_artifact_path};
 
 use crate::support::{lingrep, lingrep_without_dictionary, parse_jsonl};
 
@@ -430,4 +430,185 @@ fn the_variants_contract_appears_in_schema_discovery() {
         "{}",
         String::from_utf8_lossy(&detail.stderr)
     );
+}
+
+/// Copies `from` to the canonical-looking `name` beside it, applying `edit` to
+/// the copied manifest.
+fn sibling_with_manifest(
+    from: &Path,
+    name: &str,
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> PathBuf {
+    let path = from.with_file_name(name);
+    copy_tree(from, &path);
+    let manifest_path = path.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    edit(&mut manifest);
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    path
+}
+
+/// `--prune` deletes only artifacts of this source written in an earlier
+/// format than this build reads. Every artifact this build opens survives,
+/// whatever its identity or name generation, and so do newer formats, other
+/// sources, non-canonical names and symlinks.
+#[cfg(unix)]
+#[test]
+fn prune_deletes_only_superseded_artifacts_of_the_source() {
+    let current_segment = format!(".g{}.", lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION);
+    let name = |source: &str, generation: u32, byte: u8| {
+        let path = canonical_artifact_path(
+            Path::new(source),
+            &AnalysisIdentity::from_bytes([byte; 32]),
+            TrustClass::LocallyExecuted,
+        );
+        let name = path.file_name().unwrap().to_str().unwrap();
+        name.replacen(&current_segment, &format!(".g{generation}."), 1)
+    };
+    let current = lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION;
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.md");
+    fs::write(&source, "猫。\n").unwrap();
+    let good = build(&dictionary, &source);
+
+    let old_generation = sibling_with_manifest(&good, &name("source.md", 1, 0xa1), |m| {
+        m["format_generation"] = 1.into();
+    });
+    let old_schema = sibling_with_manifest(&good, &name("source.md", current, 0xa2), |m| {
+        m["schema_version"] = 0.into();
+    });
+    let newer_schema = sibling_with_manifest(&good, &name("source.md", current, 0xa3), |m| {
+        m["schema_version"] = 2.into();
+    });
+    let other_identity = sibling_with_manifest(&good, &name("source.md", current, 0xa4), |_| {});
+    let renamed_only = sibling_with_manifest(&good, &name("source.md", 1, 0xa5), |_| {});
+    let other_source = sibling_with_manifest(&good, &name("other.md", current, 0xa6), |m| {
+        m["schema_version"] = 0.into();
+    });
+    let decoy = sibling_with_manifest(
+        &good,
+        "source.md.g1.a1.not-hex.locally-executed.lingcorpus",
+        |m| m["format_generation"] = 1.into(),
+    );
+    let outside = tempfile::tempdir().unwrap();
+    let linked = sibling_with_manifest(&good, "linked", |m| m["format_generation"] = 1.into());
+    let linked_target = outside.path().join("linked");
+    fs::rename(&linked, &linked_target).unwrap();
+    let symlink = directory.path().join(name("source.md", 1, 0xa7));
+    std::os::unix::fs::symlink(&linked_target, &symlink).unwrap();
+
+    let records = variants_json(&source);
+    let complete = &records.iter().find(|r| r["type"] == "complete").unwrap()["data"];
+    let diagnostics = complete["diagnostics"].as_array().unwrap();
+    let prunable = diagnostics
+        .iter()
+        .filter(|d| d["prunable"] == true)
+        .map(|d| {
+            (
+                d["path"].as_str().unwrap().to_owned(),
+                d["bytes"].as_u64().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        prunable
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            old_generation.display().to_string(),
+            old_schema.display().to_string(),
+        ],
+        "only superseded artifacts of this source are prunable: {diagnostics:?}"
+    );
+    assert!(prunable.iter().all(|(_, bytes)| *bytes > 0));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d["bytes"].as_u64().is_some_and(|bytes| bytes > 0)),
+        "every unreadable artifact reports its size: {diagnostics:?}"
+    );
+    assert_eq!(diagnostics.len(), 4, "{diagnostics:?}");
+    assert!(
+        old_generation.exists() && old_schema.exists(),
+        "listing deletes nothing"
+    );
+
+    let from_artifact = variants_json(&good);
+    let complete = &from_artifact
+        .iter()
+        .find(|r| r["type"] == "complete")
+        .unwrap()["data"];
+    assert_eq!(
+        complete["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["prunable"] == true)
+            .count(),
+        2,
+        "an artifact target selects the same source as its source"
+    );
+
+    let output = lingrep_without_dictionary()
+        .args(["corpus", "variants", "--prune"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    for (path, bytes) in &prunable {
+        assert!(
+            text.contains(&format!("pruned {path} ({bytes} bytes)")),
+            "each deletion is printed with its size: {text}"
+        );
+    }
+    let freed: u64 = prunable.iter().map(|(_, bytes)| bytes).sum();
+    assert!(
+        text.contains(&format!("2 pruned, {freed} bytes freed")),
+        "the total is printed: {text}"
+    );
+
+    assert!(!old_generation.exists() && !old_schema.exists());
+    for refused in [
+        &good,
+        &newer_schema,
+        &other_identity,
+        &renamed_only,
+        &other_source,
+        &decoy,
+        &symlink,
+    ] {
+        assert!(
+            lingrep_corpus::remove_superseded(refused, "source.md").is_err(),
+            "{} is not a superseded artifact of source.md",
+            refused.display()
+        );
+    }
+    for kept in [
+        &source,
+        &good,
+        &newer_schema,
+        &other_identity,
+        &renamed_only,
+        &other_source,
+        &decoy,
+        &linked_target,
+    ] {
+        assert!(kept.exists(), "{} must survive --prune", kept.display());
+    }
+    assert!(
+        fs::symlink_metadata(&symlink)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(CorpusArtifact::open(&other_identity).is_ok());
+    assert!(CorpusArtifact::open(&renamed_only).is_ok());
 }

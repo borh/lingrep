@@ -42,7 +42,7 @@ use crate::v6_support::{build_artifact, open_artifact};
 
 async fn wait_ready(runtime: &CorpusRuntime) -> ReadyCorpus {
     let mut readiness = runtime.readiness();
-    tokio::time::timeout(Duration::from_secs(180), async {
+    tokio::time::timeout(Duration::from_mins(3), async {
         loop {
             let state = readiness.borrow_and_update().clone();
             match state {
@@ -280,7 +280,7 @@ async fn artifact_reuse_depends_on_content_not_timestamps() {
         .write(true)
         .open(&corpus)
         .unwrap()
-        .set_times(FileTimes::new().set_modified(original_modified + Duration::from_secs(60)))
+        .set_times(FileTimes::new().set_modified(original_modified + Duration::from_mins(1)))
         .unwrap();
     let touched_runtime = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
     touched_runtime.start_or_observe().await;
@@ -328,7 +328,7 @@ fn record_limit_runtime(corpus: &Path, dictionary: &Path, limit: usize) -> Corpu
 async fn terminal_readiness(runtime: &CorpusRuntime) -> CacheReadiness {
     let mut readiness = runtime.readiness();
     runtime.start_or_observe().await;
-    tokio::time::timeout(Duration::from_secs(180), async {
+    tokio::time::timeout(Duration::from_mins(3), async {
         loop {
             let state = readiness.borrow_and_update().clone();
             if matches!(
@@ -630,7 +630,7 @@ async fn readiness_published_before_subscription_is_retained() {
     .unwrap();
 
     runtime.start_or_observe().await;
-    tokio::time::timeout(Duration::from_secs(180), async {
+    tokio::time::timeout(Duration::from_mins(3), async {
         loop {
             let settled = matches!(
                 runtime.readiness().borrow().clone(),

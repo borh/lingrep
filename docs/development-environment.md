@@ -10,14 +10,18 @@ Chromium/ChromeDriver, and the utilities used by repository scripts.
 nix develop
 ```
 
-The default shell is nightly Rust. Four shells are available:
+The default shell uses the Rust toolchain that `rust-toolchain.toml` pins,
+which is also the toolchain CI and release builds use; rustup reads the same
+file outside Nix. Raising the pin is a commit that fixes any new lints with it.
+Five shells are available:
 
 | Shell | Purpose |
 | --- | --- |
-| `nix develop` or `nix develop .#nightly` | Daily development, fuzzing, and repository gates |
-| `nix develop .#stable` | Current stable-toolchain compatibility |
+| `nix develop` | Daily development and repository gates, on the pinned toolchain |
+| `nix develop .#nightly` | Sanitizer fuzzing (`LINGREP_FUZZ_SANITIZER=address`) |
+| `nix develop .#stable` | The newest stable in the locked `rust-overlay` |
 | `nix develop .#msrv` | Workspace MSRV compatibility |
-| `nix develop .#ci` | The GitHub workflow's shell: nightly Rust and only what `./ci.sh --fast` invokes |
+| `nix develop .#ci` | The GitHub workflow's shell: the pinned toolchain and only what `./ci.sh --fast` invokes |
 
 `.#ci` omits Chromium and ChromeDriver, `perf`, `gdb`, `valgrind`, and the
 ROCm stack so that it fits on a CI runner alongside the CWJ dictionary and a

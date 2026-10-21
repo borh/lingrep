@@ -2673,6 +2673,7 @@ dependencies = [
  "unicode-width",
  "vibrato-rkyv",
  "zip 7.4.0",
+ "zstd 0.13.3",
 ]
 
 [[package]]

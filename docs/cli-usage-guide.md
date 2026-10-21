@@ -1270,8 +1270,8 @@ ling corpus variants --json --limit all corpus/
 `corpus variants` reports every prepared realization beside one source. Given
 an artifact, every difference is expressed relative to it; given a source,
 realizations are reported on their own terms and grouped by the source content
-each records. It only reports: it never builds, selects, or deletes a
-realization.
+each records. It never builds or selects a realization, and it deletes only
+with `--prune`.
 
 "Beside" means the target's parent directory, for every kind of target. A
 realization is named with the source's own file name plus a suffix, so
@@ -1287,6 +1287,22 @@ policies can produce two valid artifacts without an analyzer difference.
 `--limit N` caps how much detail is shown, never what is counted: the
 completion record always carries the complete total. The stream contract is
 `lingrep.variants/v1`.
+
+An artifact this build cannot open is listed as unreadable, with its size. It
+is also marked prunable when it belongs to the target's source and was written
+in an earlier artifact generation, manifest schema or provenance schema than
+this build reads, so only a rebuild from source can replace it:
+
+```bash
+ling corpus variants corpus.md            # lists what --prune would delete
+ling corpus variants --prune corpus.md    # deletes it, printing each path and size
+```
+
+`--prune` deletes nothing else: not an artifact this build can open, whatever
+its identity; not one in a newer format, which a newer `ling` reads; not a
+damaged one; not another source's; and not a symbolic link or a directory
+whose name is not a canonical artifact name. `lingrep-web` never deletes
+artifacts.
 
 Whether an artifact built by `ling` is also the one `lingrep-web` prepares
 depends on the input format, because the name includes the reader identity. For

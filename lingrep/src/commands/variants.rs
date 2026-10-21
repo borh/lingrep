@@ -1,9 +1,10 @@
 //! `corpus variants` — what prepared realizations exist beside one source.
 //!
-//! This command reports; it never builds, selects, or deletes a realization.
-//! It reuses `SiblingScan` verbatim rather than growing a second scanner, so
-//! what `corpus build` decides on and what this command shows can never
-//! disagree.
+//! This command reports; it never builds or selects a realization, and it
+//! deletes only with `--prune`, and only artifacts of the target's source that
+//! [`lingrep_corpus::is_superseded`] classifies. It reuses `SiblingScan`
+//! verbatim rather than growing a second scanner, so what `corpus build`
+//! decides on and what this command shows can never disagree.
 //!
 //! There is deliberately no `corpus compare`. Comparison is what this command
 //! does when handed an artifact: differences are then expressed relative to
@@ -12,7 +13,10 @@
 
 use std::io::{self, Write};
 
-use lingrep_corpus::{CorpusArtifact, SiblingRealization, SiblingScan};
+use lingrep_corpus::{
+    CorpusArtifact, SiblingRealization, SiblingScan, artifact_bytes, is_superseded,
+    parse_artifact_name, remove_superseded,
+};
 
 use super::CommandOutcome;
 use crate::cli::CorpusVariantsArgs;
@@ -109,6 +113,35 @@ pub(crate) fn run_to<W: Write>(
         reported += 1;
     }
 
+    let source_name = source_name(&args.target);
+    let mut diagnostics = Vec::with_capacity(report.diagnostics.len());
+    let (mut pruned, mut freed_bytes) = (0_u64, 0_u64);
+    for (path, error) in &report.diagnostics {
+        let prunable = is_superseded(error)
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(parse_artifact_name)
+                .is_some_and(|parsed| parsed.source_name == source_name);
+        let mut diagnostic = VariantDiagnostic {
+            path: path.display().to_string(),
+            message: error.to_string(),
+            bytes: artifact_bytes(path).ok(),
+            prunable,
+            pruned: false,
+        };
+        if prunable && args.prune {
+            let bytes = remove_superseded(path, &source_name).map_err(|error| {
+                CliError::Corpus(format!("cannot prune {}: {error}", path.display()))
+            })?;
+            diagnostic.bytes = Some(bytes);
+            diagnostic.pruned = true;
+            pruned += 1;
+            freed_bytes += bytes;
+        }
+        diagnostics.push(diagnostic);
+    }
+
     publish(
         writer,
         output,
@@ -117,17 +150,22 @@ pub(crate) fn run_to<W: Write>(
             realizations: report.realizations.len() as u64,
             reported,
             unreadable: report.diagnostics.len() as u64,
-            diagnostics: report
-                .diagnostics
-                .iter()
-                .map(|(path, error)| VariantDiagnostic {
-                    path: path.display().to_string(),
-                    message: error.to_string(),
-                })
-                .collect(),
+            diagnostics,
+            pruned,
+            freed_bytes,
         })),
     )?;
     Ok(CommandOutcome::Success)
+}
+
+/// File name of the source whose realizations `target` names: the target's own
+/// name, or the source part of a canonical artifact name.
+fn source_name(target: &std::path::Path) -> String {
+    let name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    parse_artifact_name(name).map_or_else(|| name.to_owned(), |parsed| parsed.source_name)
 }
 
 /// Names every dimension on which `realization` differs from `anchor`.
@@ -243,13 +281,56 @@ fn publish<W: Write>(
         }
         // Human output caps detail, never the count: a run that showed three
         // of forty says forty.
-        VariantsEvent::Complete(complete) => writeln!(
-            writer,
-            "complete: {} realization(s), {} reported, {} unreadable",
-            complete.realizations, complete.reported, complete.unreadable
-        ),
+        VariantsEvent::Complete(complete) => write_complete(writer, complete),
     }
     .map_err(CliError::Io)
+}
+
+fn write_complete<W: Write>(writer: &mut W, complete: &VariantsComplete) -> io::Result<()> {
+    let mut prunable = (0_u64, 0_u64);
+    for diagnostic in &complete.diagnostics {
+        let size = diagnostic.bytes.map_or_else(
+            || "size unknown".to_owned(),
+            |bytes| format!("{bytes} bytes"),
+        );
+        if diagnostic.pruned {
+            writeln!(writer, "  pruned {} ({size})", diagnostic.path)?;
+            continue;
+        }
+        let mark = if diagnostic.prunable {
+            prunable.0 += 1;
+            prunable.1 += diagnostic.bytes.unwrap_or_default();
+            "unreadable, prunable"
+        } else {
+            "unreadable"
+        };
+        writeln!(
+            writer,
+            "  {}\n    {mark} ({size}) — {}",
+            diagnostic.path, diagnostic.message
+        )?;
+    }
+    write!(
+        writer,
+        "complete: {} realization(s), {} reported, {} unreadable",
+        complete.realizations, complete.reported, complete.unreadable
+    )?;
+    if complete.pruned > 0 {
+        write!(
+            writer,
+            ", {} pruned, {} bytes freed",
+            complete.pruned, complete.freed_bytes
+        )?;
+    }
+    writeln!(writer)?;
+    if prunable.0 > 0 {
+        writeln!(
+            writer,
+            "--prune deletes the {} prunable artifact(s), {} bytes",
+            prunable.0, prunable.1
+        )?;
+    }
+    Ok(())
 }
 
 const fn human_difference(difference: &VariantDifference) -> &'static str {

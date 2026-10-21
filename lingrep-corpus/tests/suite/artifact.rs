@@ -2119,6 +2119,7 @@ fn artifact_names_parse_back_to_the_scheme_that_wrote_them() {
     );
     let name = path.file_name().unwrap().to_str().unwrap();
     let parsed = parse_artifact_name(name).expect("a canonical name parses");
+    assert_eq!(parsed.source_name, "corpus.jsonl");
     assert_eq!(parsed.scheme, IdentityScheme::CURRENT);
     assert_eq!(parsed.analysis_identity, identity);
     assert_eq!(parsed.trust, TrustClass::ExternallyAttested);

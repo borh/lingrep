@@ -5,7 +5,9 @@ use std::io::{self, Write};
 use blake3::Hasher;
 use lingrep_cli_common::SafeText;
 #[cfg(test)]
-use lingrep_core::fsm::{COMPILER_SCHEMA_IDENTITY, GRAMMAR_REVISION, POLICY_SEMANTICS_IDENTITY};
+use lingrep_core::fsm::{
+    COMPILER_SCHEMA_IDENTITY, GRAMMAR_SEMANTICS_REVISION, POLICY_SEMANTICS_IDENTITY,
+};
 use lingrep_core::fsm::{
     DiagnosticSeverity as CompilerSeverity, DriftDefinitionKind, PatternSource,
     report_catalog_drift,
@@ -582,7 +584,7 @@ mod tests {
             let mut digest = Hasher::new();
             digest.update(b"lingrep/catalog/v1");
             digest.update(b"tree-sitter-lingrep/");
-            digest.update(GRAMMAR_REVISION.as_bytes());
+            digest.update(GRAMMAR_SEMANTICS_REVISION.as_bytes());
             digest.update(COMPILER_SCHEMA_IDENTITY.as_bytes());
             digest.update(POLICY_SEMANTICS_IDENTITY.as_bytes());
             digest.update(&(source.len() as u64).to_le_bytes());
@@ -598,6 +600,15 @@ mod tests {
         assert_eq!(
             catalog_fingerprint("p := [text=a]."),
             catalog_fingerprint("\n  p := [text=a].\n\n")
+        );
+    }
+
+    /// The value `ling check` 0.3.2 prints for this catalog.
+    #[test]
+    fn the_fingerprint_keeps_the_value_0_3_2_printed() {
+        assert_eq!(
+            catalog_fingerprint("p := [text=a]."),
+            "a795b107e076ffa0a5d6d17bff4f116ff5e2cc6304e76a0304c5b39fd30d9f50"
         );
     }
 

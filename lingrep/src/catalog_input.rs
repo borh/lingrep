@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use blake3::Hasher;
 use lingrep_core::fsm::{
-    COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, CompiledCatalog, GRAMMAR_REVISION,
-    POLICY_SEMANTICS_IDENTITY, PatternSource, compile_catalog, normalize_inline_pattern,
+    COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, CompiledCatalog,
+    GRAMMAR_SEMANTICS_REVISION, POLICY_SEMANTICS_IDENTITY, PatternSource, compile_catalog,
+    normalize_inline_pattern,
 };
 use tree_sitter::{Node, Parser};
 use tree_sitter_lingrep::LANGUAGE;
@@ -131,7 +132,7 @@ pub(crate) fn catalog_fingerprint(source: &str) -> String {
     let mut digest = Hasher::new();
     digest.update(b"lingrep/catalog/v1");
     digest.update(b"tree-sitter-lingrep/");
-    digest.update(GRAMMAR_REVISION.as_bytes());
+    digest.update(GRAMMAR_SEMANTICS_REVISION.as_bytes());
     digest.update(COMPILER_SCHEMA_IDENTITY.as_bytes());
     digest.update(POLICY_SEMANTICS_IDENTITY.as_bytes());
     digest.update(&(normalized.len() as u64).to_le_bytes());
