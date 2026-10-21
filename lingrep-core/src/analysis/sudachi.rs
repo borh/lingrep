@@ -41,9 +41,9 @@ const SUDACHI_HEADER_VERSION_WORDS: [u64; 2] = [0x7366_d3f1_8bd1_11e7, 0xce9f_01
 
 /// Which on-disk container a Sudachi dictionary is written in.
 ///
-/// A reader knows exactly one of the two. The pinned `sudachi` revision reads
+/// A reader supports only one of the two containers. The pinned `sudachi` revision reads
 /// the block-description container that starts with the ASCII magic
-/// `SudachiBinaryDic`, and refuses the earlier version-header container with
+/// `SudachiBinaryDic`, and rejects the earlier version-header container with
 /// `V0 version`, which names neither container. The load error therefore
 /// names the container found.
 enum DictionaryContainer {
@@ -761,7 +761,7 @@ mod tests {
 
     /// A truncated dictionary is an error, not a panic.
     #[test]
-    fn a_truncated_dictionary_is_refused_rather_than_panicking() {
+    fn a_truncated_dictionary_is_rejected_rather_than_panicking() {
         let mut header = SUDACHI_BINARY_DESCRIPTION_MAGIC.to_vec();
         header.extend_from_slice(&1u64.to_le_bytes());
         for length in 0..=header.len() {

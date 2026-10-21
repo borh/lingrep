@@ -7,9 +7,9 @@ corpora. The command-line tool, `ling`, tokenizes raw text or reads text that
 is already analyzed, then matches patterns, counts matches, and presents
 matches in context.
 
-Japanese is the main focus, but `ling` also reads CoNLL-U, so Universal
-Dependencies treebanks and other analyzed data can be searched without a
-parser.
+Japanese is currently the main focus, but `ling` also reads CoNLL-U, so
+Universal Dependencies treebanks and other analyzed data can be searched
+without a parser.
 
 lingrep provides a
 [pattern language](docs/pattern-language-reference.md) with
@@ -52,7 +52,7 @@ manual download.
 Patterns are written in the lingrep pattern language. Each bracket matches one
 token by its attributes, and a pattern ends with `.`: `[upos=VERB].` matches
 any verb, and `[upos=NOUN] [text=が].` matches a noun followed by が. A catalog
-is a `.lx` file of named patterns, reused across corpora.
+is a `.lx` file consisting of one or more patterns, reused across corpora.
 
 ### CoNLL-U
 
@@ -65,7 +65,8 @@ curl -LO https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-GSD
 ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu
 ```
 
-Each match is printed in its context, with the match in brackets:
+Each match is printed in its context, with the match either in bold font, or
+for terminals not set to output in color, in brackets:
 
 ```text
 これに不快 ⟦感を⟧ 示す住民はいまし
@@ -120,18 +121,22 @@ split modes and the other Sudachi options.
 
 ### Japanese with UniDic
 
-`ling` uses UniDic through Vibrato by default. The UniDic dictionaries are built
-with Nix, which requires approximately 10 GB of memory; without Nix, use Sudachi.
+`ling` analyzes Japanese with UniDic by default. Install the dictionary once,
+a 412 MB download:
 
 ```bash
-export LINGREP_DICTIONARY_PATH="$(nix build github:borh/lingrep#vibrato-dict-cwj \
-  --no-link --print-out-paths)/share/vibrato/unidic-cwj-202512.dic"
-
+ling dictionary install
 printf '猫が走る。\n犬が眠る。\n' > sample.txt
-ling matches --pattern '[upos=VERB].' --context 2 sample.txt
+ling matches --pattern '[upos=VERB].' sample.txt
 ```
 
-[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic variants.
+```text
+猫が ⟦走る⟧ 。
+犬が ⟦眠る⟧ 。
+```
+
+[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic dictionaries, for
+spoken, literary and historical Japanese, and their licenses.
 
 ## Documentation
 
@@ -165,7 +170,7 @@ workflow and verification.
 
 lingrep is licensed under the [MIT License](LICENSE), except files that state
 another license, such as the UD Japanese GSD sample in `lingrep/tests/fixtures`
-(CC BY-SA 4.0). Release archives list the Rust crates `ling` links and the NDC9
-data it embeds in `THIRD-PARTY-NOTICES.md`;
+(CC BY-SA 4.0). In release archives, `THIRD-PARTY-NOTICES.md` lists the
+licenses of the Rust crates compiled into `ling` and of the NDC9 data it embeds;
 [lingrep-web/assets/THIRD-PARTY-NOTICES.md](lingrep-web/assets/THIRD-PARTY-NOTICES.md)
 lists the bundled browser libraries.

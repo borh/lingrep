@@ -238,6 +238,7 @@ main() {
     if [ -n "$found" ] && [ "$found" != "$dir/ling" ]; then
         say "note: another ling at $found comes first on PATH"
     fi
+    say "to analyze Japanese text, install a dictionary: ling dictionary install"
 }
 
 main "$@"

@@ -712,7 +712,8 @@ explicitly; it never changes stdout or identity. Select machine-readable errors
 independently with `--json`.
 
 Direct commands resolve their dictionary from an explicit `--dict-path` first,
-then from `LINGREP_DICTIONARY_PATH`. If neither is present, invocation fails with
+then from `LINGREP_DICTIONARY_PATH`, then from the `cwj` dictionary that
+`ling dictionary install` installs. If none is present, invocation fails with
 exit status 2 before publishing stdout. Prepared commands never consult that
 environment variable.
 
@@ -1033,12 +1034,16 @@ fixed.
 
 ### Use Vibrato with UniDic
 
-Vibrato requires `--dict-path` or `LINGREP_DICTIONARY_PATH`:
+Vibrato, the default analyzer, loads a UniDic dictionary. Install the default
+`cwj` once, or another edition and pass it with `--dict-path`:
 
 ```bash
+ling dictionary install
+ling tokenize corpus.txt
+
+ling dictionary install kindai-bungo
 ling tokenize \
-  --analyzer vibrato \
-  --dict-path "$LINGREP_DICTIONARY_PATH" \
+  --dict-path ~/.local/share/lingrep/dictionaries/unidic-kindai-bungo-202512.dic \
   corpus.txt
 ```
 
@@ -1068,7 +1073,7 @@ The dictionary must be in the `SudachiBinaryDic` container, which SudachiDict
 publishes from v20261015 on its
 [GitHub releases page](https://github.com/WorksApplications/SudachiDict/releases).
 Earlier releases, and the 20261015 archive on SudachiDict's CloudFront mirror,
-use the earlier version-header container, which `ling` refuses with an error
+use the earlier version-header container, which `ling` rejects with an error
 naming the container.
 
 Inside `nix develop`, `$LINGREP_SUDACHI_DICT_SMALL`, `$LINGREP_SUDACHI_DICT_CORE`

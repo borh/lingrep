@@ -190,15 +190,15 @@ pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
 /// Deletes the superseded realization of `source_name` at `path` and returns
 /// the bytes freed.
 ///
-/// Refuses, deleting nothing, unless `path` is a directory rather than a
+/// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
 /// `source_name`, and it holds a regular `manifest.json` that fails to open
 /// with an error [`is_superseded`] accepts. Symbolic links inside it are
 /// removed, not followed.
 pub fn remove_superseded(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
-    let refuse = |reason: &str| {
+    let reject = |reason: &str| {
         Err(crate::artifact::invalid_artifact(format!(
-            "refusing to delete {}: {reason}",
+            "cannot delete {}: {reason}",
             path.display()
         )))
     };
@@ -207,18 +207,18 @@ pub fn remove_superseded(path: &Path, source_name: &str) -> Result<u64, CorpusEr
         .and_then(parse_artifact_name)
         .is_none_or(|parsed| parsed.source_name != source_name)
     {
-        return refuse("not a canonical artifact name for this source");
+        return reject("not a canonical artifact name for this source");
     }
     if !fs::symlink_metadata(path)?.is_dir() {
-        return refuse("not a directory");
+        return reject("not a directory");
     }
     let manifest = path.join(MANIFEST_NAME);
     if !fs::symlink_metadata(&manifest)?.is_file() {
-        return refuse("manifest is not a regular file");
+        return reject("manifest is not a regular file");
     }
     match Manifest::open(&manifest) {
         Err(error) if is_superseded(&error) => {}
-        _ => return refuse("not written in a superseded format"),
+        _ => return reject("not written in a superseded format"),
     }
     let bytes = artifact_bytes(path)?;
     fs::remove_dir_all(path)?;

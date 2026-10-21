@@ -12,7 +12,8 @@ nix develop
 
 The default shell uses the Rust toolchain that `rust-toolchain.toml` pins,
 which is also the toolchain CI and release builds use; rustup reads the same
-file outside Nix. Raising the pin is a commit that fixes any new lints with it.
+file outside Nix. A commit that updates the pin also fixes the new compiler
+and Clippy warnings the updated toolchain reports.
 Five shells are available:
 
 | Shell | Purpose |

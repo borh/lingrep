@@ -13,18 +13,18 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
         TOKENIZE_CONTRACT,
     };
     use lingrep::protocol::{
-        ContractId, capabilities, check, completions, diagnostic, doctor, invocation, query,
-        sentence_final, sources, status, tokenize, variants,
+        ContractId, capabilities, check, completions, diagnostic, dictionary, doctor, invocation,
+        query, sentence_final, sources, status, tokenize, variants,
     };
 
-    assert_eq!(ContractId::ALL.len(), 21);
+    assert_eq!(ContractId::ALL.len(), 22);
     let mut ids = ContractId::ALL
         .iter()
         .map(|id| id.as_str())
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 21);
+    assert_eq!(ids.len(), 22);
     assert_eq!(query::SCHEMA, ContractId::Query.as_str());
     assert_eq!(check::SCHEMA, ContractId::Check.as_str());
     assert_eq!(tokenize::SCHEMA, ContractId::Tokenize.as_str());
@@ -34,6 +34,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
     assert_eq!(capabilities::SCHEMA, ContractId::Capabilities.as_str());
     assert_eq!(invocation::SCHEMA, ContractId::Invocation.as_str());
     assert_eq!(doctor::SCHEMA, ContractId::Doctor.as_str());
+    assert_eq!(dictionary::SCHEMA, ContractId::Dictionary.as_str());
     assert_eq!(completions::SCHEMA, ContractId::Completions.as_str());
     assert_eq!(sentence_final::SCHEMA, ContractId::SentenceFinal.as_str());
     assert_eq!(MATCHES_CONTRACT, ContractId::MatchesTsv.as_str());
@@ -50,7 +51,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
 #[test]
 fn registry_is_complete_unique_and_summary_sorted() {
     let summaries = lingrep::protocol::registry::summaries();
-    assert_eq!(summaries.len(), 21);
+    assert_eq!(summaries.len(), 22);
     assert!(
         summaries
             .windows(2)
@@ -542,7 +543,7 @@ fn schema_json_distinguishes_compact_index_from_one_detail() {
     assert_eq!(records[0]["schema"], "lingrep.protocol-contract/v1");
     assert_eq!(records[0]["type"], "contract_index");
     let summaries = records[0]["data"]["contracts"].as_array().unwrap();
-    assert_eq!(summaries.len(), 21);
+    assert_eq!(summaries.len(), 22);
     assert!(
         summaries
             .iter()

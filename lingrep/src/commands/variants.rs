@@ -2,14 +2,12 @@
 //!
 //! This command reports; it never builds or selects a realization, and it
 //! deletes only with `--prune`, and only artifacts of the target's source that
-//! [`lingrep_corpus::is_superseded`] classifies. It reuses `SiblingScan`
-//! verbatim rather than growing a second scanner, so what `corpus build`
-//! decides on and what this command shows can never disagree.
+//! [`lingrep_corpus::is_superseded`] classifies. It scans with the same
+//! `SiblingScan` as `corpus build`, so it lists exactly the realizations that
+//! `corpus build` selects from.
 //!
-//! There is deliberately no `corpus compare`. Comparison is what this command
-//! does when handed an artifact: differences are then expressed relative to
-//! that artifact, and a second surface would be the same scan under a second
-//! name.
+//! Given an artifact instead of a source, it reports each realization's
+//! differences from that artifact.
 
 use std::io::{self, Write};
 

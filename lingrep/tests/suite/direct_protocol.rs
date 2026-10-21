@@ -1365,7 +1365,7 @@ fn aligned_human_matches_share_one_hit_column() {
 }
 
 #[test]
-fn direct_dictionary_environment_is_fallback_with_explicit_override_and_typed_missing_error() {
+fn direct_dictionary_falls_back_to_the_environment_then_the_installed_default() {
     let directory = tempfile::tempdir().unwrap();
     let corpus = directory.path().join("one.txt");
     std::fs::write(&corpus, "猫。\n").unwrap();
@@ -1401,18 +1401,46 @@ fn direct_dictionary_environment_is_fallback_with_explicit_override_and_typed_mi
         String::from_utf8_lossy(&explicit.stderr)
     );
 
+    let data_home = directory.path().join("data");
     let missing = lingrep()
         .env_remove("LINGREP_DICTIONARY_PATH")
+        .env("XDG_DATA_HOME", &data_home)
         .args(["--json", "matches", "--pattern", "[]."])
         .arg(&corpus)
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty());
-    assert_eq!(
-        parse_jsonl(&missing.stderr)[0]["data"]["code"],
-        "invalid_invocation"
+    let diagnostic = &parse_jsonl(&missing.stderr)[0]["data"];
+    assert_eq!(diagnostic["code"], "invalid_invocation");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("ling dictionary install"),
+        "{diagnostic}"
     );
+
+    let installed_directory = data_home.join("lingrep/dictionaries");
+    std::fs::create_dir_all(&installed_directory).unwrap();
+    std::fs::copy(
+        fallback_dictionary.path(),
+        installed_directory.join("unidic-cwj-202512.dic"),
+    )
+    .unwrap();
+    let installed = lingrep()
+        .env_remove("LINGREP_DICTIONARY_PATH")
+        .env("XDG_DATA_HOME", &data_home)
+        .args(["matches", "--pattern", "[]."])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    assert_eq!(installed.stdout, fallback.stdout);
 }
 
 #[test]

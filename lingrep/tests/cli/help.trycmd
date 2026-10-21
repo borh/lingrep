@@ -13,6 +13,7 @@ Commands:
   sentence-final  Count matches followed only by punctuation to the end of the sentence
   corpus          Save analyzed corpora for reuse, inspect them, and list corpus sources
   check           Validate patterns without reading a corpus; --help lists the syntax
+  dictionary      Download a UniDic dictionary for Japanese analysis
   doctor          Check that a dictionary, catalog and prepared corpus load
   describe        Show a command's arguments, examples and output formats
   contracts       List or show the JSONL and TSV output formats
@@ -30,12 +31,14 @@ Output:
 
 Examples:
   ling check --pattern '[upos=VERB].'
-  ling matches --pattern '[lemma=走る].' --dict-path unidic.dic novel.txt
-  ling summarize --patterns catalog.lx --dict-path unidic.dic novel.txt
+  ling dictionary install
+  ling matches --pattern '[lemma=走る].' novel.txt
+  ling summarize --patterns catalog.lx novel.txt
   ling matches --pattern '[upos=NOUN] [dep.rel=case].' treebank.conllu
 
-Japanese text is analyzed with a dictionary given by --dict-path or
-LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+Japanese text is analyzed with the dictionary `ling dictionary install` installs,
+or one given by --dict-path or LINGREP_DICTIONARY_PATH; CoNLL-U input is
+already analyzed.
 Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.
 
 ```

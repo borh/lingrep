@@ -154,8 +154,10 @@ fn explain_reports_the_default_cache_without_traversing_the_root() {
 
 #[test]
 fn doctor_probe_failure_is_runtime_failure_not_usage() {
+    let data_home = tempfile::tempdir().unwrap();
     let output = lingrep_without_dictionary()
         .env_remove("LINGREP_DICTIONARY_PATH")
+        .env("XDG_DATA_HOME", data_home.path())
         .args(["doctor", "--json"])
         .output()
         .unwrap();

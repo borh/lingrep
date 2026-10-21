@@ -7,7 +7,7 @@
 /// fingerprint. Advance it when a bump changes the compiled program of existing
 /// source, which `repository_catalog_fingerprints_are_stable_across_cst_normalization`
 /// reports for the tracked catalogs. The value is the grammar revision lingrep
-/// 0.3.0 shipped, so fingerprints recorded since then stay equal.
+/// 0.3.0 shipped, so fingerprints recorded since 0.3.0 remain unchanged.
 pub const GRAMMAR_SEMANTICS_REVISION: &str = "b7ac30d8055e0e4e22ce4e4a34711f27f07712fc";
 
 /// Versions catalog lowering and compilation semantics.

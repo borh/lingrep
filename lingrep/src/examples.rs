@@ -268,6 +268,20 @@ static SEMANTICS: &[CommandSemantics] = &[
         examples: ExamplePublication::Published(SENTENCE_FINAL_EXAMPLES),
     },
     CommandSemantics {
+        command: "dictionary",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "examples belong to the dictionary leaf commands",
+        },
+    },
+    CommandSemantics {
+        command: "dictionary install",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "installing downloads a dictionary of 400 MB or more",
+        },
+    },
+    CommandSemantics {
         command: "describe",
         input_modes: &[],
         examples: ExamplePublication::Published(DESCRIBE_EXAMPLES),

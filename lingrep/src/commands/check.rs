@@ -478,7 +478,7 @@ fn verify_examples(
     let dictionary = args
         .dict_path
         .clone()
-        .or_else(|| std::env::var_os("LINGREP_DICTIONARY_PATH").map(Into::into));
+        .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
     let resolved = crate::analyzer_selection::resolve_native(config, dictionary.as_deref())?;
     let plan = resolved.plan;
     let bound = matcher

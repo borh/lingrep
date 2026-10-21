@@ -404,59 +404,86 @@
                 fi
               '';
 
-          vibratoDictCwj = buildUnidicVibratoDict {
-            name = "unidic-cwj";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-cwj-202512.zip";
-            hash = "sha256-lNvcTlhqSWoLPF104eS7r08Dw5SQYRwzTQXy6DxdfjM=";
+          # UniDic 202512 sources, converted by `buildUnidicVibratoDict`.
+          unidicSources = {
+            cwj = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-cwj-202512.zip";
+              hash = "sha256-lNvcTlhqSWoLPF104eS7r08Dw5SQYRwzTQXy6DxdfjM=";
+            };
+            csj = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-csj-202512.zip";
+              hash = "sha256-W0toSrgD8R+KLWos1XuaR3qJhiiYLXtwyd1sUvuYFAM=";
+            };
+            novel = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-novel-v202512.zip";
+              hash = "sha256-19wqA64F2CJFYaHzZTMCxOcwYoOTd6C98GHa5b/RUH8=";
+            };
+            qkana = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-qkana-v202512.zip";
+              hash = "sha256-bzlybu2NBEFCsfTjU05LIke3wxS6Lfm4HJoS8EOrv2U=";
+            };
+            kindai-bungo = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kindai-bungo-v202512.zip";
+              hash = "sha256-92+UbTLIuatnm65S+528yK+4A3T93ZFlOQ5+1C71D0c=";
+            };
+            kinsei-edo = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kinsei-edo-v202512.zip";
+              hash = "sha256-5mrD9DjCadBDzC01zPpY9dkz1xOQkJsiUZCBmEaYvdQ=";
+            };
+            kinsei-bungo = {
+              url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kinsei-bungo-v202512.zip";
+              hash = "sha256-0kw9488O5+61/hI5DIPmmv+tL960e1vrs+20XT8oFjU=";
+            };
           };
-          vibratoDictCsj = buildUnidicVibratoDict {
-            name = "unidic-csj";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-csj-202512.zip";
-            hash = "sha256-W0toSrgD8R+KLWos1XuaR3qJhiiYLXtwyd1sUvuYFAM=";
+
+          # SHA-256 of each `.dic.zst` attached to the `unidic-202512` release,
+          # which holds the zstd-compressed output of `buildUnidicVibratoDict`.
+          unidicReleaseHashes = {
+            cwj = "sha256-lBmNq0SkSZzWNC9ZyfEVoY1dLCYuFCZbbOhGmHgOL0o=";
+            csj = "sha256-gJoQH3Ei+uxQ3hb9uJxLkvAXdc5Tz4NtVBzO45AZSIg=";
+            novel = "sha256-q53G/z3iXHuyAA/0mdL73A/S7zwampEj7EK97JhuRPo=";
+            qkana = "sha256-6CyHMaWOwCebNgzXu96uCQ+xfJdKd0qMxFT1abNKqMo=";
+            kindai-bungo = "sha256-5eZOpmPRo/dffFuCke0yKaclvzVZMJ/r66LUAPQyW4A=";
+            kinsei-edo = "sha256-mY7G9V2SPAFwULMW5jn6lG4ecQb0y/AZJGPaVbUNzP4=";
+            kinsei-bungo = "sha256-xGNfY02brVkK4a1xot4BSCVjKxylWkR0hZWcO5RBigk=";
           };
-          vibratoDictNovel = buildUnidicVibratoDict {
-            name = "unidic-novel";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-novel-v202512.zip";
-            hash = "sha256-19wqA64F2CJFYaHzZTMCxOcwYoOTd6C98GHa5b/RUH8=";
-          };
-          vibratoDictQkana = buildUnidicVibratoDict {
-            name = "unidic-qkana";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-qkana-v202512.zip";
-            hash = "sha256-bzlybu2NBEFCsfTjU05LIke3wxS6Lfm4HJoS8EOrv2U=";
-          };
-          vibratoDictKindaiBungo = buildUnidicVibratoDict {
-            name = "unidic-kindai-bungo";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kindai-bungo-v202512.zip";
-            hash = "sha256-92+UbTLIuatnm65S+528yK+4A3T93ZFlOQ5+1C71D0c=";
-          };
-          vibratoDictKinseiEdo = buildUnidicVibratoDict {
-            name = "unidic-kinsei-edo";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kinsei-edo-v202512.zip";
-            hash = "sha256-5mrD9DjCadBDzC01zPpY9dkz1xOQkJsiUZCBmEaYvdQ=";
-          };
-          vibratoDictKinseiBungo = buildUnidicVibratoDict {
-            name = "unidic-kinsei-bungo";
-            url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-kinsei-bungo-v202512.zip";
-            hash = "sha256-0kw9488O5+61/hI5DIPmmv+tL960e1vrs+20XT8oFjU=";
+
+          fetchUnidicVibratoDict =
+            name: hash:
+            pkgs.runCommand "vibrato-dict-unidic-${name}-202512"
+              {
+                nativeBuildInputs = [ pkgs.zstd ];
+                archive = pkgs.fetchurl {
+                  url = "https://github.com/borh/lingrep/releases/download/unidic-202512/unidic-${name}-202512.dic.zst";
+                  inherit hash;
+                };
+              }
+              ''
+                mkdir -p "$out/share/vibrato"
+                zstd -q -d "$archive" -o "$out/share/vibrato/unidic-${name}-202512.dic"
+              '';
+
+          vibratoDicts = lib.mapAttrs fetchUnidicVibratoDict unidicReleaseHashes;
+          vibratoDictCwj = vibratoDicts.cwj;
+
+          vibratoDictionariesFromSource = pkgs.symlinkJoin {
+            name = "vibrato-dictionaries-from-source";
+            paths = lib.mapAttrsToList (
+              name: source: buildUnidicVibratoDict ({ name = "unidic-${name}"; } // source)
+            ) unidicSources;
           };
 
           vibratoDictionaries = pkgs.symlinkJoin {
             name = "vibrato-dictionaries";
-            paths = [
-              vibratoDictCwj
-              vibratoDictCsj
-              vibratoDictNovel
-              vibratoDictQkana
-              vibratoDictKindaiBungo
-              vibratoDictKinseiEdo
-              vibratoDictKinseiBungo
-            ];
+            paths = lib.attrValues vibratoDicts;
             # A dictionary's BLAKE3 is part of every Vibrato analysis identity,
             # so a converter or input change that alters these bytes makes
-            # every corpus prepared with that dictionary unreadable. Run with
+            # every corpus prepared with that dictionary unreadable. This test
+            # checks the released files and a conversion from source against
+            # the same digests; run it with
             # `nix build .#vibrato-dictionaries.tests.digests` after a
-            # flake.lock update; replace a digest only together with a
-            # CHANGELOG entry saying which corpora must be rebuilt.
+            # flake.lock update. Replace a digest only together with a new
+            # release and a CHANGELOG entry saying which corpora must be rebuilt.
             passthru.tests.digests =
               pkgs.runCommand "vibrato-dictionary-digests"
                 {
@@ -473,8 +500,9 @@
                   passAsFile = [ "digests" ];
                 }
                 ''
-                  cd ${vibratoDictionaries}/share/vibrato
-                  b3sum --check "$digestsPath"
+                  for dictionaries in ${vibratoDictionaries} ${vibratoDictionariesFromSource}; do
+                    (cd "$dictionaries/share/vibrato" && b3sum --check "$digestsPath")
+                  done
                   touch "$out"
                 '';
           };
@@ -730,14 +758,15 @@
                 });
 
             mecab-dic-converter = mecabDicConverter;
-            vibrato-dict-cwj = vibratoDictCwj;
-            vibrato-dict-csj = vibratoDictCsj;
-            vibrato-dict-novel = vibratoDictNovel;
-            vibrato-dict-qkana = vibratoDictQkana;
-            vibrato-dict-kindai-bungo = vibratoDictKindaiBungo;
-            vibrato-dict-kinsei-edo = vibratoDictKinseiEdo;
-            vibrato-dict-kinsei-bungo = vibratoDictKinseiBungo;
+            vibrato-dict-cwj = vibratoDicts.cwj;
+            vibrato-dict-csj = vibratoDicts.csj;
+            vibrato-dict-novel = vibratoDicts.novel;
+            vibrato-dict-qkana = vibratoDicts.qkana;
+            vibrato-dict-kindai-bungo = vibratoDicts.kindai-bungo;
+            vibrato-dict-kinsei-edo = vibratoDicts.kinsei-edo;
+            vibrato-dict-kinsei-bungo = vibratoDicts.kinsei-bungo;
             vibrato-dictionaries = vibratoDictionaries;
+            vibrato-dictionaries-from-source = vibratoDictionariesFromSource;
             sudachi-rs = sudachiRs;
             sudachidict-small = sudachiDictSmall;
             sudachidict-core = sudachiDictCore;

@@ -5,9 +5,8 @@ name: CI
 # same thing, which is the property the previous workflows did not have: the one
 # named "Tests" ran no tests at all.
 #
-# No secret is needed. The dictionary is built from its public UniDic archive or
-# restored from `actions/cache`; it is never fetched from a private cache, and
-# nothing here reaches the maintainer's network.
+# No secret is needed. The dictionary is downloaded from the public
+# `unidic-202512` release, and nothing here reaches the maintainer's network.
 
 on:
   push:
@@ -33,9 +32,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # `devShells.ci`, the CWJ dictionary it exports (1.31 GB in the store,
-      # built from a 576 MB archive) and a cargo target directory have to fit
-      # on one runner. The image's preinstalled SDKs are the cheapest thing to
+      # `devShells.ci`, the CWJ dictionary it exports (1.31 GB in the store) and
+      # a cargo target directory have to fit on one runner. The image's preinstalled SDKs are the cheapest thing to
       # give up and nothing in this repository uses them.
       - name: Reclaim disk space
         run: |
@@ -52,75 +50,14 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      # The dictionary is the expensive part of a cold run: a 576 MB UniDic
-      # archive, a full conversion (150 s measured locally with the source
-      # already cached, so more on a fresh runner) and 1.31 GB of store. It is
-      # also content-addressed, so the output path itself is a perfect cache
-      # key — `nix eval` names it without building it.
-      #
-      # The cache is a `nix copy` file store in the runner's temp directory;
-      # `actions/cache` saves it at the end of the job when the key missed. No
-      # secret is involved, which is the difference from the Cachix dependency
-      # this replaced.
-      - name: Resolve the dictionary output path
-        id: dictionary
-        run: |
-          path="$(nix eval --raw .#vibrato-dict-cwj.outPath)"
-          echo "path=$path" >> "$GITHUB_OUTPUT"
-          echo "key=dictionary-$(basename "$path")" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v6
-        id: dictionary-cache
-        with:
-          path: ${{ runner.temp }}/dictionary-cache
-          key: ${{ steps.dictionary.outputs.key }}
-
-      # Restoring is a local NAR import, not a rebuild. `--no-check-sigs` is
-      # required because a file store built by `nix copy` carries no
-      # signatures; the NAR hash is still verified against the store path.
-      - name: Import the cached dictionary
-        if: steps.dictionary-cache.outputs.cache-hit == 'true'
-        run: |
-          nix copy --no-check-sigs \
-            --from "file://${{ runner.temp }}/dictionary-cache" \
-            "${{ steps.dictionary.outputs.path }}"
-
-      # Converting the CWJ dictionary peaks at 9.8 GB resident, independent of
-      # core count (measured with 4 and 32 CPUs), which exceeds the RAM of the
-      # standard runner GitHub assigns to private repositories. The swapfile
-      # covers the conversion and is removed afterwards, because the root disk
-      # cannot hold it together with the cargo target directory.
-      - name: Build the dictionary
-        if: steps.dictionary-cache.outputs.cache-hit != 'true'
-        run: |
-          sudo swapoff -a
-          sudo rm -f /mnt/swapfile
-          sudo fallocate -l 12G /swapfile-dictionary
-          sudo chmod 600 /swapfile-dictionary
-          sudo mkswap /swapfile-dictionary
-          sudo swapon /swapfile-dictionary
-          free -h
-          nix build --no-link .#vibrato-dict-cwj
-          sudo swapoff /swapfile-dictionary
-          sudo rm -f /swapfile-dictionary
-          df -h /
+      - name: Fetch the dictionary
+        run: nix build --no-link .#vibrato-dict-cwj
 
       # The lane `.githooks/pre-push` already runs, in the shell the repository
       # documents. A green run here and a green push therefore mean the same
       # thing.
       - name: Fast lane
         run: nix develop .#ci --command ./ci.sh --fast
-
-      # Populate the cache for the next run. `actions/cache` is what uploads it,
-      # in its post-job step; this only has to leave the file store in place.
-      # ~500 MB compressed, against 1.31 GB uncompressed in the store.
-      - name: Export the dictionary for the next run
-        if: steps.dictionary-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "${{ runner.temp }}/dictionary-cache"
-          nix copy \
-            --to "file://${{ runner.temp }}/dictionary-cache?compression=zstd" \
-            "${{ steps.dictionary.outputs.path }}"
 
   macos:
     name: Build and package (Apple silicon)
@@ -129,10 +66,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Plain cargo, not the dev shell: the shell exports a Linux-independent
-      # dictionary that still costs 1.31 GB to build on arm64, and what this job
-      # proves is that the code and the packaging path work on Apple silicon,
-      # not that the corpus lane does. The correctness lane is the one above.
+      # Plain cargo, not the dev shell: this job proves that the code and the
+      # packaging path work on Apple silicon, not the corpus lane, which runs
+      # in the job above.
       # rustup installs the toolchain `rust-toolchain.toml` names, the same one
       # the dev shells use, so a newer release cannot change this job's lints.
       - name: Install the pinned toolchain

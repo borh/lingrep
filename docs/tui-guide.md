@@ -12,9 +12,7 @@ root is required unless `--corpus` names a prepared artifact. Unlike the batch
 commands, `explore` rejects stdin because Surface and Context rescan the input.
 
 ```bash
-export LINGREP_DICTIONARY_PATH="$(nix build .#vibrato-dict-cwj \
-  --no-link --print-out-paths)/share/vibrato/unidic-cwj-202512.dic"
-
+ling dictionary install
 ling explore --patterns patterns/sfe.lx corpus.txt
 ```
 

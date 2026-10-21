@@ -24,6 +24,7 @@ pub fn requested(cli: &Cli) -> bool {
             CorpusCommand::Variants(args) => args.plan,
         },
         Command::Doctor(_)
+        | Command::Dictionary(_)
         | Command::Check(_)
         | Command::Explore(_)
         | Command::Describe(_)
@@ -230,8 +231,11 @@ fn resolve_dictionary(cli: &Cli) -> Result<(Option<String>, Option<String>), Cli
         }
         let source = if input.dict_path.is_some() {
             "argument"
-        } else {
+        } else if std::env::var_os("LINGREP_DICTIONARY_PATH").is_some_and(|value| !value.is_empty())
+        {
             "environment"
+        } else {
+            "installed"
         };
         let path = input.direct_dictionary_path()?;
         Ok((Some(path.display().to_string()), Some(source.into())))

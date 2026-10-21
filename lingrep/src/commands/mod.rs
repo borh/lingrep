@@ -6,6 +6,7 @@ pub mod completions;
 pub mod corpus;
 mod corpus_metadata;
 pub mod describe;
+pub mod dictionary;
 pub mod doctor;
 pub mod explain;
 pub mod explore;
@@ -26,7 +27,7 @@ pub mod variants;
 use lingrep_core::corpus::admission_identity_digest;
 use lingrep_corpus::AdmissionIdentity;
 
-use crate::cli::{Cli, Command, CorpusCommand, ExecutionCliConfig};
+use crate::cli::{Cli, Command, CorpusCommand, DictionaryCommand, ExecutionCliConfig};
 use crate::error::CliError;
 use crate::terminal::TerminalArbiter;
 
@@ -49,6 +50,9 @@ pub fn dispatch(
     }
     match &cli.command {
         Command::Doctor(args) => doctor::run(args, output),
+        Command::Dictionary(args) => match &args.command {
+            DictionaryCommand::Install(args) => dictionary::run_install(args, output),
+        },
         Command::Check(args) => check::run(args, config, terminal, output),
         Command::Matches(args) => matches::run(args, config, terminal, output, cli.color),
         Command::Summarize(args) => summarize::run(args, config, terminal, output),

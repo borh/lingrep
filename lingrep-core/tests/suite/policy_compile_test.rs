@@ -819,11 +819,11 @@ fn group_membership_alone_adjudicates_nothing() {
     assert_eq!(records.len(), 2, "overlapping group members both publish");
 }
 
-/// An empty list says nothing, so it is refused. Writing no key is how a
+/// An empty list provides no groups, so it is rejected. Writing no key is how a
 /// definition joins no group; an empty list is a value the author did not
 /// finish.
 #[test]
-fn an_empty_groups_list_is_refused() {
+fn an_empty_groups_list_is_rejected() {
     let diagnostics = compile_errors("groups: []\np := [upos=NOUN].\n");
     assert!(
         diagnostics

@@ -112,12 +112,14 @@ pub struct Cli {
 const ROOT_AFTER_HELP: &str = "\
 Examples:
   ling check --pattern '[upos=VERB].'
-  ling matches --pattern '[lemma=走る].' --dict-path unidic.dic novel.txt
-  ling summarize --patterns catalog.lx --dict-path unidic.dic novel.txt
+  ling dictionary install
+  ling matches --pattern '[lemma=走る].' novel.txt
+  ling summarize --patterns catalog.lx novel.txt
   ling matches --pattern '[upos=NOUN] [dep.rel=case].' treebank.conllu
 
-Japanese text is analyzed with a dictionary given by --dict-path or
-LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+Japanese text is analyzed with the dictionary `ling dictionary install` installs,
+or one given by --dict-path or LINGREP_DICTIONARY_PATH; CoNLL-U input is
+already analyzed.
 Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.";
 
 /// Top-level public operation.
@@ -147,6 +149,8 @@ pub enum Command {
         after_long_help = crate::pattern_reference::PATTERN_REFERENCE
     )]
     Check(CheckArgs),
+    /// Download a UniDic dictionary for Japanese analysis.
+    Dictionary(DictionaryArgs),
     /// Check that a dictionary, catalog and prepared corpus load.
     Doctor(DoctorArgs),
     /// Show a command's arguments, examples and output formats.
@@ -185,6 +189,30 @@ pub struct CompletionsArgs {
     /// Shell for which to generate a completion definition.
     #[arg(value_enum)]
     pub shell: CompletionShell,
+}
+
+#[derive(Debug, Args)]
+pub struct DictionaryArgs {
+    #[command(subcommand)]
+    pub command: DictionaryCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DictionaryCommand {
+    /// Download a UniDic dictionary, check its digest, and install it.
+    ///
+    /// Dictionaries are installed in `$XDG_DATA_HOME/lingrep/dictionaries`
+    /// (`~/.local/share/lingrep/dictionaries` when `XDG_DATA_HOME` is unset).
+    /// The installed `cwj` dictionary is used when neither `--dict-path` nor
+    /// `LINGREP_DICTIONARY_PATH` names one; pass any other with `--dict-path`.
+    Install(DictionaryInstallArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DictionaryInstallArgs {
+    /// Dictionary to install.
+    #[arg(value_enum, default_value = "cwj")]
+    pub name: crate::packaged_dictionaries::DictionaryName,
 }
 
 #[derive(Debug, Args)]
@@ -879,15 +907,12 @@ impl QueryInputArgs {
     pub fn direct_dictionary_path(&self) -> Result<PathBuf, CliError> {
         self.dict_path
             .clone()
-            .or_else(|| {
-                std::env::var_os("LINGREP_DICTIONARY_PATH")
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from)
-            })
+            .or_else(crate::packaged_dictionaries::fallback_dictionary_path)
             .ok_or_else(|| {
-                CliError::InvalidArgs(
-                    "--dict-path or LINGREP_DICTIONARY_PATH is required for direct input".into(),
-                )
+                CliError::InvalidArgs(format!(
+                    "direct input requires a dictionary: {}",
+                    crate::packaged_dictionaries::MISSING_DICTIONARY_HINT
+                ))
             })
     }
 }
@@ -1433,6 +1458,7 @@ impl Cli {
             Command::Attributes(args) => args.tsv,
             Command::SentenceFinal(args) => args.tsv,
             Command::Doctor(_)
+            | Command::Dictionary(_)
             | Command::Check(_)
             | Command::Corpus(_)
             | Command::Explore(_)
@@ -1458,6 +1484,7 @@ impl Cli {
             Command::Attributes(args) if args.tsv => OutputMode::Tsv,
             Command::SentenceFinal(args) if args.tsv => OutputMode::Tsv,
             Command::Doctor(_)
+            | Command::Dictionary(_)
             | Command::Check(_)
             | Command::Matches(_)
             | Command::Summarize(_)
@@ -1511,6 +1538,7 @@ impl Cli {
                 command: CorpusCommand::Sources(args),
             }) => ResourceArgs::with_traversal(args.traversal.clone(), args.progress),
             Command::Doctor(_)
+            | Command::Dictionary(_)
             | Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Inspect(_) | CorpusCommand::Variants(_),
             })

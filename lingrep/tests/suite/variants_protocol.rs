@@ -576,7 +576,7 @@ fn prune_deletes_only_superseded_artifacts_of_the_source() {
     );
 
     assert!(!old_generation.exists() && !old_schema.exists());
-    for refused in [
+    for protected in [
         &good,
         &newer_schema,
         &other_identity,
@@ -586,9 +586,9 @@ fn prune_deletes_only_superseded_artifacts_of_the_source() {
         &symlink,
     ] {
         assert!(
-            lingrep_corpus::remove_superseded(refused, "source.md").is_err(),
+            lingrep_corpus::remove_superseded(protected, "source.md").is_err(),
             "{} is not a superseded artifact of source.md",
-            refused.display()
+            protected.display()
         );
     }
     for kept in [

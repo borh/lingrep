@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use lingrep_cli_common::SafeText;
 use lingrep_core::dictionary::load_dictionary_data;
@@ -19,17 +19,19 @@ use super::CommandOutcome;
 
 pub fn run(args: &DoctorArgs, output: OutputMode) -> Result<CommandOutcome, CliError> {
     let mut probes = Vec::with_capacity(3);
-    let dictionary = args.dict_path.clone().or_else(|| {
-        std::env::var_os("LINGREP_DICTIONARY_PATH")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    });
+    let dictionary = args
+        .dict_path
+        .clone()
+        .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
     probes.push(match dictionary {
         Some(path) => probe_dictionary(&path),
         None => ProbeData {
             name: "dictionary".into(),
             ok: false,
-            message: "LINGREP_DICTIONARY_PATH is not set and --dict-path was not supplied".into(),
+            message: format!(
+                "no dictionary: {}",
+                crate::packaged_dictionaries::MISSING_DICTIONARY_HINT
+            ),
             kind: Some(ProbeKind::Dictionary),
             target: None,
             code: Some("dictionary".into()),

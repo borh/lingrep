@@ -80,10 +80,10 @@ pub(crate) fn resolve_native(
     match &config.analyzer {
         AnalyzerCliConfig::Vibrato => {
             let path = vibrato_dictionary.ok_or_else(|| {
-                CliError::InvalidArgs(
-                    "--dict-path or LINGREP_DICTIONARY_PATH is required with --analyzer vibrato"
-                        .into(),
-                )
+                CliError::InvalidArgs(format!(
+                    "--analyzer vibrato requires a dictionary: {}",
+                    crate::packaged_dictionaries::MISSING_DICTIONARY_HINT
+                ))
             })?;
             let path_text = path
                 .to_str()

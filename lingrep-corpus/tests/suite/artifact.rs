@@ -1739,10 +1739,10 @@ async fn schema_three_artifact_requires_rebuild() {
     ));
 }
 
-/// A manifest field this build does not know is refused, and the error names
+/// A manifest field unrecognized by this build is rejected, and the error names
 /// the field, the version that wrote the artifact, and this version.
 #[tokio::test]
-async fn an_unknown_manifest_field_is_refused_with_both_versions_named() {
+async fn an_unknown_manifest_field_is_rejected_with_both_versions_named() {
     for (field, insert) in [
         (
             "added_later",

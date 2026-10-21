@@ -2655,6 +2655,7 @@ dependencies = [
  "rand 0.9.5",
  "ratatui",
  "rayon",
+ "reqwest 0.13.5",
  "roaring",
  "roff",
  "rustc-hash",

@@ -142,22 +142,30 @@ dictionary and reports a mismatch as a notice, never an error.
 
 ## Dictionaries
 
-`DICTIONARIES.md` catalogs the seven packaged UniDic 202512 dictionaries,
-`.#vibrato-dict-cwj` (the default) through `.#vibrato-dict-kinsei-bungo`, with
-`.#vibrato-dictionaries` as the aggregate. Each builds on its own. The dev
-shell exports `LINGREP_DICTIONARY_PATH`, which every binary reads as the default
-for `--dict-path`.
+`DICTIONARIES.md` catalogs the seven UniDic 202512 dictionaries. Each is a
+`.dic.zst` on the `unidic-202512` GitHub release, which both
+`ling dictionary install` (`lingrep/src/packaged_dictionaries.rs`) and the
+`.#vibrato-dict-*` packages download; `.#vibrato-dictionaries-from-source`
+converts the NINJAL archives. Every binary resolves `--dict-path`, then
+`LINGREP_DICTIONARY_PATH` (which the dev shell exports), then the installed
+`cwj`.
 
-Packaged dictionaries ship uncompressed, as rkyv-serialized memory-mapped `.dic`
-files. The loader expands a user-supplied `.zst` archive into
-`~/.cache/vibrato-rkyv/` and maps that copy; the identity digest is over the
-decompressed bytes, so compression does not change `dictionary_identity`. Do not
-reintroduce multi-frame `.zst` encoding for the packaged dictionaries.
+The BLAKE3 of each decompressed `.dic` is pinned twice: in `DICTIONARIES` in
+`packaged_dictionaries.rs`, which `ling dictionary install` checks, and in
+`vibrato-dictionaries.tests.digests` in `flake.nix`, which checks the release
+and the conversion from source. A unit test keeps the two equal. A dictionary
+whose bytes change is a new release tag with new digests, never a replaced
+asset, because the digest is part of every analysis identity.
 
-Adding a dictionary requires a fixed-input `vibrato-dict-*` package in
-`flake.nix`, an entry in `DICTIONARIES.md`, a tokenization check against its
-`share/vibrato/*.dic` output, and its BLAKE3 in
-`nix build .#vibrato-dictionaries.tests.digests`.
+The installed and packaged dictionaries are uncompressed, rkyv-serialized,
+memory-mapped `.dic` files. The loader expands a user-supplied `.zst` archive
+into `~/.cache/vibrato-rkyv/` and maps that copy; the identity digest is over
+the decompressed bytes, so compression does not change `dictionary_identity`.
+
+Adding a dictionary requires its source in `unidicSources` and its asset hash in
+`unidicReleaseHashes` in `flake.nix`, its BLAKE3 in both pins, an entry in
+`DICTIONARIES.md`, and a tokenization check against its `share/vibrato/*.dic`
+output.
 
 ## Development workflow
 

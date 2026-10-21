@@ -2,8 +2,8 @@
 
 `ling` is published for Linux (x86-64 and arm64, glibc 2.35 or newer) and
 macOS (Apple silicon and Intel). On Windows, install it in WSL. Release
-archives contain no dictionary; the [README](../README.md#quick-start) shows how
-to obtain one.
+archives contain no dictionary; `ling dictionary install` downloads one (see
+[DICTIONARIES.md](../DICTIONARIES.md)).
 
 ## Install script
 

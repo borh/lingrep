@@ -14,6 +14,7 @@ pub mod examples;
 mod interactive_execution;
 pub mod manpages;
 pub mod output;
+pub mod packaged_dictionaries;
 pub mod pattern_reference;
 pub(crate) mod policy_report;
 mod prepared_source;

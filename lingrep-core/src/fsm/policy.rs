@@ -2441,7 +2441,7 @@ mod tests {
         //
         // `split_trailing_copula`, `terminal_only`, `s0_always_keep` and
         // `s0_requires_upper_layer` appear in no tracked catalog. They are in
-        // the list because the question it asks is about the *shape* of a
+        // the list because the test evaluates the *shape* of a
         // researcher-authored key.
         for key in [
             "status",

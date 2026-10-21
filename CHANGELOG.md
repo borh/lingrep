@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ling dictionary install [NAME]` downloads one of the seven UniDic 202512
+  dictionaries from the `unidic-202512` release, checks its BLAKE3 digest, and
+  installs it under `$XDG_DATA_HOME/lingrep/dictionaries`. When neither
+  `--dict-path` nor `LINGREP_DICTIONARY_PATH` names a dictionary, `ling` uses
+  the installed `cwj`. The `vibrato-dict-*` Nix packages download the same
+  files instead of converting UniDic, which needed about 10 GB of memory;
+  `vibrato-dictionaries-from-source` still converts them. See
+  [DICTIONARIES.md](DICTIONARIES.md), which also states each dictionary's
+  license.
 - `ling corpus variants` lists each unreadable artifact with its size and
   marks it prunable when it belongs to the target's source and was written in
   an earlier format than this build reads. `--prune` deletes those artifacts,
@@ -19,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A prepared corpus whose manifest has a field this `ling` does not read is
-  refused with `unknown_manifest_field`, naming the field, the `ling` version
+- A prepared corpus whose manifest has a field this `ling` does not read
+  fails validation with `unknown_manifest_field`, naming the field, the `ling` version
   that wrote it, and this version, instead of a generic JSON error.
 - `install.sh` follows the XDG Base Directory Specification: `ling` goes to
   `$XDG_BIN_HOME` when set, and the manual pages and Bash, fish and zsh
@@ -31,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sudachi analysis uses sudachi.rs 0.7.0, which reads only the
   `SudachiBinaryDic` dictionary container. Use SudachiDict v20261015 or later
   from its GitHub releases page; earlier releases and the 20261015 archive on
-  the CloudFront mirror are refused with an error naming the container. The
+  the CloudFront mirror are rejected with an error naming the container. The
   Nix packages pin SudachiDict v20261015. Sudachi analysis identity changes,
   so Sudachi corpora prepared with 0.3.x must be rebuilt. On an 8.5 MB
   scientific-text corpus, 130 of 103,007 sentences tokenize differently, all

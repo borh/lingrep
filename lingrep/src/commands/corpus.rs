@@ -157,11 +157,10 @@ pub(crate) async fn ensure_artifact(
     let reader_config = CorpusReadConfig::new(format, markdown);
     let reader = ReaderIdentity::derive(&reader_config, config.normalization);
 
-    let vibrato_dictionary = request.dict_path.clone().or_else(|| {
-        std::env::var_os("LINGREP_DICTIONARY_PATH")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    });
+    let vibrato_dictionary = request
+        .dict_path
+        .clone()
+        .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
     let resolved_analyzer = resolve_input(format, config, vibrato_dictionary.as_deref())?;
     let schema = resolved_analyzer.schema().clone();
     let descriptor = resolved_analyzer.descriptor().clone();
