@@ -49,59 +49,89 @@ manual download.
 
 ## Quick start
 
-### Japanese with Sudachi
+Patterns are written in the lingrep pattern language. Each bracket matches one
+token by its attributes, and a pattern ends with `.`: `[upos=VERB].` matches
+any verb, and `[upos=NOUN] [text=が].` matches a noun followed by が. A catalog
+is a `.lx` file of named patterns, reused across corpora.
 
-Download a Sudachi dictionary and the analyzer's resource files, then pass
-them to `ling`:
+### CoNLL-U
+
+CoNLL-U files already carry tokens and annotations, so matching requires no
+dictionary. This query over the UD Japanese GSD test set matches a noun
+followed by a token whose dependency relation is `case`:
 
 ```bash
-curl -LO https://d2ej7fkh96fzlu.cloudfront.net/sudachidict/sudachi-dictionary-20260723-core.zip
-unzip -q sudachi-dictionary-20260723-core.zip
-mkdir -p sudachi-resources
-for file in char.def unk.def rewrite.def sudachi.json; do
-  curl -fsSL -o "sudachi-resources/$file" \
-    "https://raw.githubusercontent.com/WorksApplications/sudachi.rs/f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e/resources/$file"
-done
-
-printf '猫が走る。\n犬が眠る。\n' > sample.txt
-
-ling matches \
-  --analyzer sudachi \
-  --sudachi-dict sudachi-dictionary-20260723/system_core.dic \
-  --sudachi-resources sudachi-resources \
-  --sudachi-edition core \
-  --sudachi-split c \
-  --pattern '[upos=VERB].' \
-  sample.txt
+curl -LO https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-GSD/master/ja_gsd-ud-test.conllu
+ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu
 ```
 
-`--sudachi-edition` must match the archive (`small`, `core`, or `full`). SudachiDict
-releases up to `v20260723` are supported; later releases use an unsupported
-container format.
+Each match is printed in its context, with the match in brackets:
+
+```text
+これに不快 ⟦感を⟧ 示す住民はいまし
+に不快感を示す ⟦住民は⟧ いましたが,
+```
+
+### Japanese with Sudachi
+
+Download a [SudachiDict](https://github.com/WorksApplications/SudachiDict/releases)
+dictionary (v20261015 or later), then pass it to `ling`:
+
+```bash
+curl -LO https://github.com/WorksApplications/SudachiDict/releases/download/v20261015/sudachi-dictionary-20261015-core.zip
+unzip -q sudachi-dictionary-20261015-core.zip
+printf '猫が走る。\n犬が眠る。\n' > sample.txt
+
+ling matches --analyzer sudachi \
+  --sudachi-dict sudachi-dictionary-20261015/system_core.dic \
+  --pattern '[upos=VERB].' sample.txt
+```
+
+```text
+猫が ⟦走る⟧ 。
+犬が ⟦眠る⟧ 。
+```
+
+To count matches for every pattern in a catalog, save two patterns as
+`patterns.lx`:
+
+```text
+verb := [upos=VERB].
+subject := [upos=NOUN] [text=が].
+```
+
+and summarize them:
+
+```bash
+ling summarize --analyzer sudachi \
+  --sudachi-dict sudachi-dictionary-20261015/system_core.dic \
+  --patterns patterns.lx sample.txt
+```
+
+```text
+       1  verb  眠る
+       1  verb  走る
+       1  subject  犬が
+       1  subject  猫が
+```
+
+The [CLI usage guide](docs/cli-usage-guide.md#use-native-sudachi) describes the
+split modes and the other Sudachi options.
 
 ### Japanese with UniDic
 
-UniDic dictionaries are built with Nix. Conversion requires approximately 10 GB of
-memory:
+`ling` uses UniDic through Vibrato by default. The UniDic dictionaries are built
+with Nix, which requires approximately 10 GB of memory; without Nix, use Sudachi.
 
 ```bash
 export LINGREP_DICTIONARY_PATH="$(nix build github:borh/lingrep#vibrato-dict-cwj \
   --no-link --print-out-paths)/share/vibrato/unidic-cwj-202512.dic"
 
+printf '猫が走る。\n犬が眠る。\n' > sample.txt
 ling matches --pattern '[upos=VERB].' --context 2 sample.txt
 ```
 
 [DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic variants.
-
-### CoNLL-U
-
-CoNLL-U files already carry tokens and annotations, so matching requires no
-dictionary. This query matches a noun followed by a token whose dependency
-relation is `case`:
-
-```bash
-ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu
-```
 
 ## Documentation
 
@@ -114,8 +144,8 @@ ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu
   its NixOS module
 - [N-gram analysis](docs/ngram-analysis.md) and
   [gravity analysis](docs/gravity-analysis.md) — worked corpus analyses
-- [Documentation index](docs/README.md) — developer, design, testing, and
-  performance references
+- [Documentation index](docs/README.md) — developer, testing, and performance
+  references
 
 `ling check --help` and `ling-check(1)` are the complete reference for the
 pattern language.

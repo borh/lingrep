@@ -984,7 +984,8 @@ pub struct ResourceArgs {
     )]
     pub sudachi_dict: Option<PathBuf>,
 
-    /// Sudachi resource directory containing `char.def`.
+    /// Sudachi resource directory holding `char.def`, `unk.def`, `rewrite.def`
+    /// and `sudachi.json`; without it, the copies built into `ling` are used.
     #[arg(
         long,
         value_name = "DIRECTORY",
@@ -993,7 +994,7 @@ pub struct ResourceArgs {
     )]
     pub sudachi_resources: Option<PathBuf>,
 
-    /// Sudachi split mode; required with `--analyzer sudachi`.
+    /// Sudachi split mode; `c` when omitted.
     #[arg(
         long,
         value_enum,
@@ -1002,15 +1003,16 @@ pub struct ResourceArgs {
     )]
     pub sudachi_split: Option<SudachiSplitArg>,
 
-    /// Record which Sudachi dictionary edition supplies the dictionary file; `core` is the default.
+    /// Sudachi dictionary edition, recorded in the analysis identity; read
+    /// from a `system_small.dic`, `system_core.dic` or `system_full.dic` file
+    /// name when omitted.
     #[arg(
         long,
         value_enum,
-        default_value_t,
         help_heading = "Analyzer-specific",
         hide_short_help = true
     )]
-    pub sudachi_edition: SudachiEditionArg,
+    pub sudachi_edition: Option<SudachiEditionArg>,
 
     /// External adapter executable; valid only with `--analyzer external`.
     #[arg(
@@ -1225,12 +1227,23 @@ impl From<SudachiSplitArg> for lingrep_core::analysis::SudachiSplit {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum SudachiEditionArg {
     Small,
-    #[default]
     Core,
     Full,
+}
+
+impl SudachiEditionArg {
+    /// Reads the edition from SudachiDict's file names, `system_<edition>.dic`.
+    fn from_dictionary_file_name(dictionary: &std::path::Path) -> Option<Self> {
+        match dictionary.file_name()?.to_str()? {
+            "system_small.dic" => Some(Self::Small),
+            "system_core.dic" => Some(Self::Core),
+            "system_full.dic" => Some(Self::Full),
+            _ => None,
+        }
+    }
 }
 
 impl From<SudachiEditionArg> for lingrep_core::analysis::SudachiEdition {
@@ -1248,7 +1261,7 @@ pub enum AnalyzerCliConfig {
     Vibrato,
     Sudachi {
         dictionary: PathBuf,
-        resources: PathBuf,
+        resources: Option<PathBuf>,
         split: lingrep_core::analysis::SudachiSplit,
         edition: lingrep_core::analysis::SudachiEdition,
     },
@@ -1512,7 +1525,8 @@ impl Cli {
 
         let has_sudachi_options = resources.sudachi_dict.is_some()
             || resources.sudachi_resources.is_some()
-            || resources.sudachi_split.is_some();
+            || resources.sudachi_split.is_some()
+            || resources.sudachi_edition.is_some();
         let has_external_options =
             resources.external_executable.is_some() || !resources.external_args.is_empty();
         let analyzer = match resources.analyzer {
@@ -1530,26 +1544,26 @@ impl Cli {
                         "external adapter options are invalid with --analyzer sudachi".into(),
                     ));
                 }
+                let dictionary = resources.sudachi_dict.clone().ok_or_else(|| {
+                    CliError::InvalidArgs(
+                        "--sudachi-dict is required with --analyzer sudachi".into(),
+                    )
+                })?;
+                let edition = resources
+                    .sudachi_edition
+                    .or_else(|| SudachiEditionArg::from_dictionary_file_name(&dictionary))
+                    .ok_or_else(|| {
+                        CliError::InvalidArgs(format!(
+                            "the Sudachi edition cannot be read from the file name {}; \
+                             pass --sudachi-edition small, core or full",
+                            dictionary.display()
+                        ))
+                    })?;
                 AnalyzerCliConfig::Sudachi {
-                    dictionary: resources.sudachi_dict.clone().ok_or_else(|| {
-                        CliError::InvalidArgs(
-                            "--sudachi-dict is required with --analyzer sudachi".into(),
-                        )
-                    })?,
-                    resources: resources.sudachi_resources.clone().ok_or_else(|| {
-                        CliError::InvalidArgs(
-                            "--sudachi-resources is required with --analyzer sudachi".into(),
-                        )
-                    })?,
-                    split: resources
-                        .sudachi_split
-                        .ok_or_else(|| {
-                            CliError::InvalidArgs(
-                                "--sudachi-split is required with --analyzer sudachi".into(),
-                            )
-                        })?
-                        .into(),
-                    edition: resources.sudachi_edition.into(),
+                    dictionary,
+                    resources: resources.sudachi_resources.clone(),
+                    split: resources.sudachi_split.unwrap_or(SudachiSplitArg::C).into(),
+                    edition: edition.into(),
                 }
             }
             AnalyzerArg::External => {
@@ -1648,7 +1662,7 @@ impl Default for ResourceArgs {
             sudachi_dict: None,
             sudachi_resources: None,
             sudachi_split: None,
-            sudachi_edition: SudachiEditionArg::Core,
+            sudachi_edition: None,
             external_executable: None,
             external_args: Vec::new(),
             runtime: RuntimeArgs::default(),
@@ -1701,7 +1715,7 @@ mod analyzer_selection_tests {
             "--analyzer",
             "sudachi",
             "--sudachi-dict",
-            "system.dic",
+            "system_core.dic",
             "--sudachi-resources",
             "resources",
             "--sudachi-split",
@@ -1712,6 +1726,105 @@ mod analyzer_selection_tests {
         ])
         .unwrap();
         assert!(conflicting.execution_config().is_err());
+    }
+
+    #[test]
+    fn sudachi_defaults_split_c_built_in_resources_and_the_file_name_edition() {
+        use lingrep_core::analysis::{SudachiEdition, SudachiSplit};
+        let select = |extra: &[&str]| {
+            let mut args = vec![
+                "ling",
+                "matches",
+                "--pattern",
+                "[]",
+                "--analyzer",
+                "sudachi",
+            ];
+            args.extend_from_slice(extra);
+            args.push("input.txt");
+            Cli::try_parse_from(args)
+                .unwrap()
+                .execution_config()
+                .map(|config| config.analyzer)
+        };
+        let sudachi = |dictionary: &str, edition, split, resources: Option<&str>| {
+            AnalyzerCliConfig::Sudachi {
+                dictionary: dictionary.into(),
+                resources: resources.map(PathBuf::from),
+                split,
+                edition,
+            }
+        };
+        for (args, expected) in [
+            (
+                vec!["--sudachi-dict", "d/system_small.dic"],
+                sudachi(
+                    "d/system_small.dic",
+                    SudachiEdition::Small,
+                    SudachiSplit::C,
+                    None,
+                ),
+            ),
+            (
+                vec!["--sudachi-dict", "system_full.dic", "--sudachi-split", "a"],
+                sudachi(
+                    "system_full.dic",
+                    SudachiEdition::Full,
+                    SudachiSplit::A,
+                    None,
+                ),
+            ),
+            (
+                vec![
+                    "--sudachi-dict",
+                    "custom.dic",
+                    "--sudachi-edition",
+                    "core",
+                    "--sudachi-resources",
+                    "r",
+                ],
+                sudachi(
+                    "custom.dic",
+                    SudachiEdition::Core,
+                    SudachiSplit::C,
+                    Some("r"),
+                ),
+            ),
+            (
+                vec![
+                    "--sudachi-dict",
+                    "system_full.dic",
+                    "--sudachi-edition",
+                    "small",
+                ],
+                sudachi(
+                    "system_full.dic",
+                    SudachiEdition::Small,
+                    SudachiSplit::C,
+                    None,
+                ),
+            ),
+        ] {
+            assert_eq!(select(&args).unwrap(), expected, "{args:?}");
+        }
+
+        let unnamed = select(&["--sudachi-dict", "custom.dic"]).unwrap_err();
+        assert!(
+            unnamed.to_string().contains("--sudachi-edition"),
+            "{unnamed}"
+        );
+
+        let edition_without_sudachi = Cli::try_parse_from([
+            "ling",
+            "matches",
+            "--pattern",
+            "[]",
+            "--sudachi-edition",
+            "core",
+            "input.txt",
+        ])
+        .unwrap();
+        assert!(edition_without_sudachi.execution_config().is_err());
     }
 
     #[test]

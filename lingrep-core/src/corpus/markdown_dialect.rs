@@ -70,8 +70,8 @@ pub fn strip_attribute_spans(line: &str) -> String {
 /// "Exactly one span" is checked against the whole remainder, not just its
 /// first and last byte. `{.a} {.b}` opens and closes with braces but is two
 /// spans, and `parse_classes` reads only the first, so accepting it would
-/// open with `{a}` and drop `.b` without a word. It is not valid pandoc; unioning the
-/// two would be a guess, and this dialect refuses rather than guesses.
+/// open with `{a}` and drop `.b` silently. It is not valid pandoc; unioning the
+/// two would be a guess, and this dialect rejects rather than guesses.
 pub fn parse_div(line: &str) -> Option<DivLine> {
     let colons = line
         .chars()
@@ -1326,10 +1326,10 @@ mod primitive_tests {
 
     #[test]
     fn a_div_fence_with_several_attribute_spans_is_malformed_not_half_read() {
-        // `parse_classes` reads only the FIRST span, so `::: {.a} {.b}` opened
-        // with {a} and dropped `.b` without a word. It is not valid pandoc, so
-        // it is refused; unioning the classes would be a guess, and guessing is
-        // what this dialect exists not to do.
+        // `parse_classes` reads only the first span, so `::: {.a} {.b}` opened
+        // with `{a}` and dropped `.b` silently. It is not valid pandoc, so
+        // it is rejected; unioning the classes would be a guess, and this
+        // parser avoids guessing.
         assert!(matches!(
             parse_div("::: {.a} {.b}"),
             Some(DivLine::Malformed)

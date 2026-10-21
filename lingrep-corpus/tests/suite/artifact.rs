@@ -1739,21 +1739,40 @@ async fn schema_three_artifact_requires_rebuild() {
     ));
 }
 
+/// A manifest field this build does not know is refused, and the error names
+/// the field, the version that wrote the artifact, and this version.
 #[tokio::test]
-async fn a_manifest_with_an_unknown_field_is_invalid() {
-    let fixture = ArtifactFixture::new().await;
-    let mut manifest = read_manifest(&fixture.root);
-    manifest
-        .as_object_mut()
-        .unwrap()
-        .insert("unknown_field".into(), serde_json::json!("value"));
-    write_manifest(&fixture.root, &manifest);
+async fn an_unknown_manifest_field_is_refused_with_both_versions_named() {
+    for (field, insert) in [
+        (
+            "added_later",
+            (|manifest: &mut serde_json::Value| {
+                manifest["added_later"] = serde_json::json!("value");
+            }) as fn(&mut serde_json::Value),
+        ),
+        ("nested_later", |manifest: &mut serde_json::Value| {
+            manifest["analyzer"]["nested_later"] = serde_json::json!(1);
+        }),
+    ] {
+        let fixture = ArtifactFixture::new().await;
+        let mut manifest = read_manifest(&fixture.root);
+        manifest["producer_version"] = serde_json::json!("9.9.9");
+        insert(&mut manifest);
+        write_manifest(&fixture.root, &manifest);
 
-    let error = match CorpusArtifact::open(&fixture.root) {
-        Ok(_) => panic!("the manifest accepted an unknown field"),
-        Err(error) => error,
-    };
-    assert_eq!(error.code(), "invalid_format");
+        let error = match CorpusArtifact::open(&fixture.root) {
+            Ok(_) => panic!("the manifest accepted the unknown field {field}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "unknown_manifest_field", "{error}");
+        let message = error.to_string();
+        assert!(message.contains(&format!("`{field}`")), "{message}");
+        assert!(message.contains("ling 9.9.9"), "{message}");
+        assert!(
+            message.contains(&format!("ling {}", env!("CARGO_PKG_VERSION"))),
+            "{message}"
+        );
+    }
 }
 
 async fn open_or_verify(root: &Path) -> Result<(), CorpusError> {

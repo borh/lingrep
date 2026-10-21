@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use lingrep_core::analysis::{
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, InputUnitId, NormalizationPolicy,
-    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiSplit, TextUnit,
-    TextUnitKind,
+    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiResources, SudachiSplit,
+    TextUnit, TextUnitKind,
 };
 
 use super::candidate::{CandidateSentence, CandidateSurface, decode, encode, from_analysis_batch};
@@ -86,14 +86,15 @@ fn canonical_sudachi_batches_round_trip_through_candidate_provenance() {
     ] {
         let dictionary = PathBuf::from(std::env::var_os(dictionary_variable).unwrap());
         let (dictionary_digest, resource_digest) =
-            SudachiConfig::content_digests(&dictionary, &resources).unwrap();
+            SudachiConfig::content_digests(&dictionary, &SudachiResources::directory(&resources))
+                .unwrap();
         for split in [SudachiSplit::A, SudachiSplit::B, SudachiSplit::C] {
             for profile in [ExtractionProfile::Tokenize, ExtractionProfile::Morphology] {
                 for segmentation in [SegmentationMode::Input, SegmentationMode::Analyzer] {
                     let plan = SudachiPlan::load(
                         SudachiConfig::new(
                             &dictionary,
-                            &resources,
+                            SudachiResources::directory(&resources),
                             dictionary_digest,
                             resource_digest,
                             edition,

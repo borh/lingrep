@@ -67,7 +67,7 @@ end
 # propositional_end anchor: on this corpus it IS trailing-punctuation stripping
 # — 2 sentences in 545 differ — which is why a punctuation-only anchor
 # suffices. On a corpus with parenthesized citations it would be a different
-# rule, and this catalog would need a wider `exclude` fragment on the anchor.
+# rule, and this catalog would require a wider `exclude` fragment on the anchor.
 #
 # Documentation-only citation sketches (not executable definitions):
 # citation_note := 注 [upos=NUM] [text=）]?.
@@ -117,7 +117,7 @@ fragment SURU := [lemma=為る].
 role: "helper"
 fragment NARU := [lemma in {成る, なる} & text != なろう].
 
-# The negation operand of stage 2's `exclude`, and deliberately NOT `NAI`.
+# The negation operand of stage 2's `exclude`, distinct from `NAI`.
 #
 # `NAI` is wider (`ない 無い ず ぬ なかっ 無かっ ねえ`), reads `text`, and takes an
 # optional trailing `た`. Reusing it would drop more `ている` records than
@@ -943,8 +943,8 @@ policy
   # Stage 8 — `filter_s0_requires_upper_layer`. A sentence-wide presence test,
   # not an overlap contest: any surviving non-S0 record licenses every S0 record
   # in the sentence, and `relation: in_sentence` is exactly that — the operand's
-  # mere presence decides. `evidence: current` because upstream asks it of the
-  # survivors, and by this point most of them are gone.
+  # mere presence decides. `evidence: current` because upstream evaluates this over
+  # surviving records, and by this point most of them are gone.
   #
   # `だ` is absent from `%s0_conditional` and so is never selected, which
   # keeps it unconditionally.

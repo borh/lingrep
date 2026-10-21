@@ -28,7 +28,8 @@ pub use native::{NativeAnalyzerPlan, NativeAnalyzerSession};
 pub use provenance::TextUnitProvenance;
 pub use segmentation::JapaneseSegmentationPolicy;
 pub use sudachi::{
-    SudachiConfig, SudachiEdition, SudachiLoadError, SudachiPlan, SudachiSession, SudachiSplit,
+    SudachiConfig, SudachiEdition, SudachiLoadError, SudachiPlan, SudachiResources, SudachiSession,
+    SudachiSplit,
 };
 pub use text::{
     InputUnitId, NormalizationPolicy, SourceRange, TextUnit, TextUnitError, TextUnitIdentity,

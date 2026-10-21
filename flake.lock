@@ -129,17 +129,17 @@
     "sudachi-rs-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1780443470,
-        "narHash": "sha256-I59fOrRW1Q/LwldQigbEy4eoY0CEMVfqiibYzQg0AgQ=",
+        "lastModified": 1790212679,
+        "narHash": "sha256-V8PEsM5phVthphH9LnibQRn1G9n/26gRvOi57UhbaUc=",
         "owner": "WorksApplications",
         "repo": "sudachi.rs",
-        "rev": "f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e",
+        "rev": "5de0410b6edfd428fc510cc9763440772e9619d5",
         "type": "github"
       },
       "original": {
         "owner": "WorksApplications",
         "repo": "sudachi.rs",
-        "rev": "f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e",
+        "rev": "5de0410b6edfd428fc510cc9763440772e9619d5",
         "type": "github"
       }
     }

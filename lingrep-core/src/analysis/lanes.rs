@@ -153,7 +153,7 @@ fn partition_by_bytes(inputs: Vec<TextUnit>, parts: usize) -> Vec<Vec<TextUnit>>
 mod tests {
     use crate::analysis::{
         ExtractionProfile, InputUnitId, NormalizationPolicy, SegmentationMode, SudachiConfig,
-        SudachiEdition, SudachiPlan, SudachiSplit, TextUnitKind, VibratoPlan,
+        SudachiEdition, SudachiPlan, SudachiResources, SudachiSplit, TextUnitKind, VibratoPlan,
     };
     use crate::token_match::AttributeKey;
 
@@ -302,10 +302,11 @@ mod tests {
         let dictionary = fixed_resource("LINGREP_SUDACHI_DICT_CORE")?;
         let resources = fixed_resource("LINGREP_SUDACHI_RESOURCES")?;
         let (dictionary_digest, resource_digest) =
-            SudachiConfig::content_digests(&dictionary, &resources).ok()?;
+            SudachiConfig::content_digests(&dictionary, &SudachiResources::directory(&resources))
+                .ok()?;
         let config = SudachiConfig::new(
             dictionary,
-            resources,
+            SudachiResources::directory(resources),
             dictionary_digest,
             resource_digest,
             SudachiEdition::Core,

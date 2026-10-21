@@ -216,7 +216,7 @@ fn derived_member(declaration: &ParsedGroupDecl, definition: &ParsedDefinition) 
 /// The only statement that references an anchor is `admit`. It is
 /// checked here rather than with the other policy-program rules because an
 /// anchor name is a string the parser already has — binding resolves
-/// definitions and groups, and knows nothing about anchors. Leaving it out made
+/// definitions and groups, and does not process anchors. Leaving it out made
 /// a catalog whose only reference was an `admit` report its anchor as
 /// unreferenced *and* left the reference itself unchecked, so the runtime
 /// `AnchorError::Unknown` that

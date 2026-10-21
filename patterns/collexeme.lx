@@ -27,20 +27,20 @@ end
 # WHAT THIS IS. Collostructional analysis (Stefanowitsch & Gries 2003) asks,
 # of a construction with an open slot, which lexemes are attracted to it and
 # which are repelled. The input is a frequency list: for each construction, how
-# often each filler occurs in the slot. The simple-collexeme design needs
-# exactly one construction at a time; the distinctive design needs two or more
-# competing over the same slot and lives in `patterns/alternation.lx`.
+# often each filler occurs in the slot. The simple-collexeme design
+# analyzes exactly one construction at a time; the distinctive design analyzes two or more
+# competing over the same slot and is located in `patterns/alternation.lx`.
 #
 # The shape is small and uniform. Every pattern below binds ONE capture,
 # `verb`, over the open slot, and declares `key: [$verb.norm]`. `summarize`
 # then groups on the key rather than on the matched surface, so 読ん / 読み /
 # 読む are one row (`読む`) instead of three. That is the whole mechanism: a
-# collexeme list is a keyed record stream, and the engine needed nothing new.
+# collexeme list is a keyed record stream, and the engine required no additional features.
 #
 # WHY `norm`. Following `patterns/sketch-grammar.lx`: `orthbase` splits 行う
 # from 行なう, `lemma` merges them but carries UniDic's homograph
-# disambiguator, and `norm` is lemma with the disambiguator stripped. A
-# collexeme list wants the merging without the disambiguator.
+# disambiguator, and `norm` is lemma with the disambiguator stripped. Collexeme
+# analysis requires merging variants without the disambiguator.
 #
 # ------------------------------------------------------------------------
 # WHAT UNIDIC ACTUALLY EMITS — verified by tokenizing, not by table lookup
@@ -87,9 +87,9 @@ end
 #     `lemma=読む` and `unidic.orthbase=読める`. The potential is inside the lexeme,
 #     so it has no pattern at all: recovering it would need `orthbase` and
 #     `lemma` to be compared to each other, which no attribute operator does.
-#     `koto_ga_dekiru` below is therefore NOT paired with a morphological
-#     potential here, and `patterns/alternation.lx` deliberately does not
-#     carry a `potential` family for the same reason.
+#     `koto_ga_dekiru` below is therefore not paired with a morphological
+#     potential here, and `patterns/alternation.lx` omits a `potential` family
+#     for the same reason.
 #
 # ------------------------------------------------------------------------
 # THE れる/られる PROBLEM, AND WHAT THE TWO PATTERNS ACTUALLY CLAIM

@@ -298,13 +298,13 @@ fn partial_flush_key(index: usize) -> String {
 fn partial_flush_failure_snapshot_precedes_reservation_release() {
     // Runs are zstd streams, so a two-record scenario charges nothing before
     // failing: the encoder buffers both records and emits its whole frame in
-    // one write, which the budget refuses atomically. Pre-drop and post-drop
+    // one write, which the budget rejects atomically. Pre-drop and post-drop
     // usage would both read zero, leaving the assertion below nothing to
     // catch.
     //
     // This workload is large enough that the encoder emits several blocks, so
-    // bytes really are charged before a later block is refused — which is the
-    // partial-flush state this test exists to pin.
+    // bytes are charged before a later block is rejected — which is the
+    // partial-flush state this test pins.
     let measurement_budget = Arc::new(TempBudget::new(u64::MAX));
     let mut measured =
         SortedRunCounts::new_budgeted(PARTIAL_FLUSH_KEYS, 8, measurement_budget.clone()).unwrap();

@@ -61,17 +61,16 @@ const READER_WITH_NORMALIZATION_DOMAIN: &[u8] = b"lingrep/reader-with-normalizat
 impl ReaderIdentity {
     /// Derives the identity of reading `config` under `normalization`.
     ///
-    /// **The only derivation.** It lives in the crate both binaries depend on
+    /// **The only derivation.** It is defined in the crate both binaries depend on
     /// so that `ling` and `lingrep-web` name one artifact for one JSONL root;
     /// the unframed
     /// [`reader_identity_digest`](lingrep_core::corpus::reader_identity_digest)
     /// names a different one.
     ///
-    /// Normalization is an input because it decides the bytes a reader admits.
+    /// Normalization is an input because it determines the bytes a reader admits.
     /// It is also recorded on the analyzer descriptor, so an artifact's address
     /// distinguishes `nfc` from `none` twice over; that redundancy is retained
-    /// deliberately, since removing it would move every existing artifact's
-    /// identity for no gain in what the address distinguishes.
+    /// to preserve stored artifact identities across versions.
     ///
     /// The domain string keeps `ling`'s original spelling. It names the
     /// derivation, not the crate that hosts it, and rewording it would move

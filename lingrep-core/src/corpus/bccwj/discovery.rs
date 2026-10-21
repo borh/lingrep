@@ -183,9 +183,9 @@ fn collect_zips(
                 dir,
             ));
         }
-        // `Path::is_dir()` answers "no" both for a real file and for a stat
-        // that failed, so a symlink cycle would truncate the walk without
-        // saying so. Resolve a link explicitly and let the error out;
+        // `Path::is_dir()` returns `false` both for a regular file and for a
+        // failed stat call, so a symlink cycle would truncate the walk without
+        // reporting an error. Resolve a link explicitly and let the error propagate;
         // an ordinary entry keeps the cheap readdir answer and never stats.
         let file_type = entry.file_type()?;
         let is_directory = if file_type.is_symlink() {
@@ -922,10 +922,11 @@ one	bib	題		vol	resp	社	2000	isbn	page					rid	pid	著			LB
         );
     }
 
-    /// A symlink back to an ancestor makes `is_dir()` descend forever, which
-    /// would admit one zip under dozens of logical names. The guarantee is that
-    /// discovery is *refused*; which mechanism refuses it is a property of the
-    /// platform's symlink budget, so this asserts the refusal and admits either.
+    /// A symlink back to an ancestor makes `is_dir()` descend indefinitely,
+    /// which would admit one zip file under many logical names. The guarantee
+    /// is that discovery is *rejected*; which mechanism rejects it is a
+    /// property of the platform's symlink budget, so this asserts rejection
+    /// and admits either mechanism.
     ///
     /// Linux permits 40 symlinks per resolution and the bound is 64 levels at
     /// three per cycle, so the depth bound is reached first. macOS stops at
@@ -934,7 +935,7 @@ one	bib	題		vol	resp	社	2000	isbn	page					rid	pid	著			LB
     /// why the walk must propagate the resolution error rather than read it
     /// as "not a directory".
     #[test]
-    fn a_symlink_cycle_is_refused_rather_than_silently_truncated() {
+    fn a_symlink_cycle_is_rejected_rather_than_silently_truncated() {
         let dist = distribution(
             &[("C-XML/FIXED/LB/LB.zip", &[("LBa/one.xml", "<article/>")])],
             JOINED,

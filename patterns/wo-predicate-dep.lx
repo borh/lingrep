@@ -9,7 +9,7 @@
 # never reached. This catalog states the fact the linear rule approximates:
 # the を-marked nominal is a dependent of the predicate, whatever lies between
 # them. It requires `dep.head` and `dep.rel` (CoNLL-U input or a
-# dependency-parsing analyzer) and is refused at binding otherwise, by name.
+# dependency-parsing analyzer) and fails binding otherwise, reporting missing attributes by name.
 #
 # The two patterns are the two arms of `scripts/wo_predicate_compare.py`,
 # which joins their records on the character position of the を particle
@@ -42,7 +42,7 @@
 #
 # Two recorded limits, both language facts rather than choices here. The
 # language has no negative edge between two named captures, so "no closer predicate
-# governs this nominal" cannot be written and is not needed: a nominal has
+# governs this nominal" cannot be written and is unnecessary: a nominal has
 # exactly one `dep.head`, so at most one `$head` assignment passes per
 # を-phrase. And a `where` clause filters the assignments the body admits —
 # `[]*` admits every later verb as a candidate head, the clause keeps the

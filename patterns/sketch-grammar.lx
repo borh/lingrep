@@ -33,9 +33,9 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 #
 # Reaching that needed the multi-token components. Both anchors here can cover
 # more than one token — `@sk_nominal` is unbounded because of its suffix tail,
-# `@sk_predicate` is two for a suru compound — and the two want OPPOSITE
-# rules. Compound nominals want concatenation (細胞間, 研究者間, 六角板状晶 —
-# the leftmost token gives 細胞, 研究者, 六角). Suru compounds want the
+# `@sk_predicate` is two for a suru compound — and the two require opposite
+# rules. Compound nominals require concatenation (細胞間, 研究者間, 六角板状晶 —
+# the leftmost token gives 細胞, 研究者, 六角). Suru compounds require the
 # leftmost token (減少し, 加熱する — concatenation gives 減少為る, 加熱為る,
 # which are not words). So `@sk_nominal` takes `{span: …}` and `@sk_predicate`
 # takes `{first: …}`, and single-token anchors keep the bare text.
@@ -124,8 +124,8 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # "proved too weak" and were left to the concordancer. Known false-positive
 # sources, recorded so they are not rediscovered as bugs:
 #
-#   * Quotative と is 格助詞, so `sketch_to_predicate` is deliberately
-#     ABSENT: と考えられる would swamp it with clause complements.
+#   * Quotative と is 格助詞, so `sketch_to_predicate` is omitted:
+#     と考えられる would produce excess clause complements.
 #   * An argument governed by an intervening nominal predicate
 #     (Nを対象にVを実施) attaches to the wrong verb. `patterns/double-wo.lx`
 #     spends 1,080 classified exclusions on exactly this and is the
@@ -145,7 +145,7 @@ analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "
 # predicates are claimed valid for. `unidic-cwj` and `unidic-csj` differ in
 # weights, not in vocabulary or tagset, so the claim covers both; the
 # historical variants (`kinsei-edo`, `kindai-bungo`, `qkana`, `novel`) differ
-# in vocabulary and in closed-class morphology and are deliberately excluded.
+# in vocabulary and in closed-class morphology and are excluded.
 # Measured: under `unidic-kinsei-edo-202512` this catalog returns the same
 # match count while 重要 splits into 形容詞 + 名詞, 実施+し into 実 + 施し, and
 # 者 stops being 接尾辞. The release version is not part of the comparison.

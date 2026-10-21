@@ -3,7 +3,7 @@ use std::path::Path;
 use lingrep_core::{
     analysis::{
         AnalyzerDescriptor, AnalyzerPlan, NativeAnalyzerPlan, SudachiConfig, SudachiPlan,
-        VibratoPlan,
+        SudachiResources, VibratoPlan,
     },
     corpus::{CorpusFormat, conllu},
     dictionary::create_tokenizer_with_identity,
@@ -107,8 +107,11 @@ pub(crate) fn resolve_native(
             split,
             edition,
         } => {
+            let resources = resources
+                .as_ref()
+                .map_or(SudachiResources::BuiltIn, SudachiResources::directory);
             let (dictionary_digest, resource_digest) =
-                SudachiConfig::content_digests(dictionary, resources)
+                SudachiConfig::content_digests(dictionary, &resources)
                     .map_err(|error| CliError::Dictionary(error.to_string()))?;
             let config = SudachiConfig::new(
                 dictionary,

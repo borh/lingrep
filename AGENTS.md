@@ -97,6 +97,11 @@ Attribute keys are hashed into the token-schema digest and from there into
 analysis identity, so renaming a key changes every prepared artifact's identity
 and makes artifacts written before the rename unreadable.
 
+Analyzer identities are built from explicit revision constants, never from
+source bytes, so that editing a comment does not invalidate prepared corpora.
+Replace a revision when output changes; the pinned identity literals in
+`artifact_fingerprint_golden.rs` and `sudachi_contract.rs` fail until then.
+
 Pretokenized CoNLL-U adds analyzer-neutral dependency keys `dep.head`,
 `dep.rel`, and `dep.enhanced`. Integer word `ID` is not a separate attribute:
 matcher index plus one is the same sentence-local identity. Known UD FEATS use

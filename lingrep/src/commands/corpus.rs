@@ -492,16 +492,16 @@ fn resolve_destination(
         canonical_artifact_path(&named, &analysis_identity, TrustClass::LocallyExecuted);
 
     // Path existence is not the question: an artifact whose recorded identity
-    // matches can sit under a name this build would not derive, and asking
-    // "does the canonical path exist" would rebuild it as a duplicate sibling.
-    // So the directory beside the source is scanned once, and each candidate's
-    // own recorded identity decides.
+    // matches can sit under a name this build would not derive, and checking
+    // whether the canonical path exists would rebuild it as a duplicate sibling.
+    // So the directory beside the source is scanned once, matching each candidate
+    // by its own recorded identity.
     let directory = lingrep_corpus::containing_directory(&destination);
     let report = SiblingScan::scan(directory).map_err(|error| {
         CliError::Corpus(format!("cannot scan for prepared realizations: {error}"))
     })?;
     for (path, error) in &report.diagnostics {
-        // A damaged sibling is reported and stepped over. It must not decide
+        // A damaged sibling is reported and stepped over. It must not fail
         // this build, and it must not hide the realizations beside it.
         writeln!(
             progress,

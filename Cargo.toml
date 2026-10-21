@@ -51,7 +51,7 @@ thiserror = "2"
 # Git deps (shared across multiple crates — this is the big win)
 vibrato-rkyv = { git = "https://github.com/o24s/vibrato-rkyv.git", rev = "a6f40fb1830c399f7f6ad9c4cf0efde2611b3bbe" }
 tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "b7ac30d8055e0e4e22ce4e4a34711f27f07712fc" }
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e" }
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "5de0410b6edfd428fc510cc9763440772e9619d5" }
 
 # Multi-crate dev deps
 hegeltest = "0.27"

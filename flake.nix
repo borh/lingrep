@@ -11,7 +11,7 @@
       flake = false;
     };
     sudachi-rs-src = {
-      url = "github:WorksApplications/sudachi.rs/f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e";
+      url = "github:WorksApplications/sudachi.rs/5de0410b6edfd428fc510cc9763440772e9619d5";
       flake = false;
     };
   };
@@ -449,7 +449,7 @@
             ];
           };
 
-          sudachiRs = pkgs.runCommand "sudachi-rs-f4dd8f20-resources" { } ''
+          sudachiRs = pkgs.runCommand "sudachi-rs-0.7.0-resources" { } ''
             mkdir -p "$out/share/sudachi/resources"
             cp -R ${inputs.sudachi-rs-src}/resources/. "$out/share/sudachi/resources/"
             test -s "$out/share/sudachi/resources/char.def"
@@ -462,11 +462,11 @@
             }:
             let
               archive = pkgs.fetchurl {
-                url = "https://d2ej7fkh96fzlu.cloudfront.net/sudachidict/sudachi-dictionary-20260723-${edition}.zip";
+                url = "https://github.com/WorksApplications/SudachiDict/releases/download/v20261015/sudachi-dictionary-20261015-${edition}.zip";
                 inherit hash;
               };
             in
-            pkgs.runCommand "sudachidict-${edition}-20260723"
+            pkgs.runCommand "sudachidict-${edition}-20261015"
               {
                 nativeBuildInputs = [ pkgs.unzip ];
               }
@@ -475,6 +475,7 @@
                 unzip -q ${archive} -d "$unpacked"
                 dictionary="$(find "$unpacked" -type f -name 'system_${edition}.dic' -print -quit)"
                 test -n "$dictionary"
+                test "$(head -c 16 "$dictionary")" = SudachiBinaryDic
                 mkdir -p "$out/share/sudachi" "$out/share/licenses/sudachidict-${edition}"
                 cp "$dictionary" "$out/share/sudachi/system_${edition}.dic"
                 license="$(find "$unpacked" -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' \) -print -quit)"
@@ -485,18 +486,18 @@
 
           sudachiDictSmall = buildSudachiDictionary {
             edition = "small";
-            hash = "sha256-RynRNP0LmFLazInFkilmT+5AZCu1K6/PTvtDLO6bsiw=";
+            hash = "sha256-kRNDc63ZJoAngoG2S9kpUvrypoXI0F235yfQ+f+9CfU=";
           };
           sudachiDictCore = buildSudachiDictionary {
             edition = "core";
-            hash = "sha256-tug19jRA+XR0wtpF2AlQ9zdG5jLkC7/BaLQEFykTXh8=";
+            hash = "sha256-XPXLfx6pQ6mI4vtdKFqaizU4hh+u+nomBMLNGMOH9QM=";
           };
           sudachiDictFull = buildSudachiDictionary {
             edition = "full";
-            hash = "sha256-/IdSWkx2OepG2Bo+Tjl2hTJA7Afj2zmRGQySCgLv4Qc=";
+            hash = "sha256-s4MYyiakRM1xOlo3ejUzCO84xzPGTMC+kFEiUnUWx5M=";
           };
           sudachiDictionaries = pkgs.symlinkJoin {
-            name = "sudachidictionaries-20260723";
+            name = "sudachidictionaries-20261015";
             paths = [
               sudachiDictSmall
               sudachiDictCore

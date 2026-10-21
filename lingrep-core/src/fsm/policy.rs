@@ -312,7 +312,7 @@ pub struct PatternPolicy {
     ///
     /// A list rather than one name because the two uses are independent: the
     /// set a `resolve` contests and the set a `detach` shapes have no reason to
-    /// coincide, and one string forced a catalog to choose.
+    /// coincide, and a single string would force a catalog to select only one.
     pub groups: Vec<CompactString>,
     /// Rank a `resolve` reads through
     /// [`Criterion::PriorityOrder`](crate::fsm::policy_program::Criterion);
@@ -320,7 +320,7 @@ pub struct PatternPolicy {
     /// `rank: [priority_order, …]`.
     ///
     /// Order dominates length wherever both appear, and the criterion list is
-    /// where the author says so. This differs from JAPE's `appelt` and
+    /// where the author specifies this ordering. This differs from JAPE's `appelt` and
     /// dm-annotations' `suppress_inner_layers`, which put length first.
     pub priority_order: Option<i64>,
     /// Group and count this record by an ordered projection.

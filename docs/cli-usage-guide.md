@@ -1048,28 +1048,34 @@ analyzers.
 
 ### Use native Sudachi
 
-Sudachi requires a dictionary, its resource directory, and an explicit split
-mode. Inside `nix develop`, the shell exports paths for the pinned resources:
+Sudachi requires a SudachiDict dictionary file:
 
 ```bash
-ling tokenize \
-  --analyzer sudachi \
-  --sudachi-dict "$LINGREP_SUDACHI_DICT_CORE" \
-  --sudachi-resources "$LINGREP_SUDACHI_RESOURCES" \
-  --sudachi-split c \
-  --sudachi-edition core \
-  corpus.txt
+ling tokenize --analyzer sudachi --sudachi-dict system_core.dic corpus.txt
 ```
 
-The split mode (`a`, `b`, or `c`) changes token boundaries. Keep
-`--sudachi-edition` aligned with the selected small, core, or full dictionary;
-the edition is recorded as part of the analyzer identity.
+Without further options, `ling` uses:
 
-Outside the development shell, build the resources explicitly:
+- split mode `c`; `--sudachi-split a` or `b` gives shorter units;
+- the edition named by a `system_small.dic`, `system_core.dic` or
+  `system_full.dic` file name; for a renamed file, pass `--sudachi-edition`;
+- the `char.def`, `unk.def`, `rewrite.def` and `sudachi.json` built into `ling`;
+  `--sudachi-resources DIRECTORY` replaces them.
+
+The split mode and edition are part of the analysis identity.
+
+The dictionary must be in the `SudachiBinaryDic` container, which SudachiDict
+publishes from v20261015 on its
+[GitHub releases page](https://github.com/WorksApplications/SudachiDict/releases).
+Earlier releases, and the 20261015 archive on SudachiDict's CloudFront mirror,
+use the earlier version-header container, which `ling` refuses with an error
+naming the container.
+
+Inside `nix develop`, `$LINGREP_SUDACHI_DICT_SMALL`, `$LINGREP_SUDACHI_DICT_CORE`
+and `$LINGREP_SUDACHI_DICT_FULL` name the pinned dictionaries. Outside it, build
+one:
 
 ```bash
-sudachi_resources="$(nix build .#sudachi-rs \
-  --no-link --print-out-paths)/share/sudachi/resources"
 sudachi_dictionary="$(nix build .#sudachidict-core \
   --no-link --print-out-paths)/share/sudachi/system_core.dic"
 ```

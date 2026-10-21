@@ -964,8 +964,7 @@ impl<W: Write> DirectMatchSink<'_, W> {
                         .map_err(execution_output_io)?;
                     // Human output is watched as it arrives, so it flushes per
                     // row even though this sink writes through a `BufWriter`.
-                    // The machine formats above deliberately do not: their
-                    // durability boundary is `finish_batch`.
+                    // The machine formats above flush at `finish_batch` boundaries instead.
                     self.writer.flush().map_err(execution_output_io)?;
                 }
             }
@@ -1145,8 +1144,7 @@ mod tests {
     }
 
     /// Human output is watched as it is drawn, so it flushes per row, which a
-    /// `BufWriter` does not. This is the exception the machine formats deliberately do not
-    /// share.
+    /// `BufWriter` does not. Machine formats flush at batch boundaries instead.
     #[test]
     fn matches_human_rows_still_flush_per_row() {
         let location = sink_test_location();

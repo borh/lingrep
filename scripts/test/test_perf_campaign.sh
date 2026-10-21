@@ -134,7 +134,7 @@ if grep -qE '^\s*(local )?width=[0-9]' "$script"; then
     exit 1
 fi
 
-# The shell holds no model of the command, for the same reason: every
+# The shell script does not construct or model the command, for the same reason: every
 # argument comes from the sealed template, not from a flag list in
 # `workload.env`, which the manifest digest does not cover.
 grep -qF -- 'template --campaign' "$script"

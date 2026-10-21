@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use lingrep_core::analysis::{
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, InputUnitId, NormalizationPolicy,
-    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiSplit, TextUnit,
-    VibratoPlan,
+    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiResources, SudachiSplit,
+    TextUnit, VibratoPlan,
 };
 use lingrep_core::fsm::{
     AnalyzerCompatibility, BoundCatalog, CompileLimits, PatternSource, compile_catalog,
@@ -28,7 +28,7 @@ fn compiled_catalog() -> lingrep_core::fsm::CompiledCatalog {
 fn sudachi_schema() -> TokenSchema {
     SudachiConfig::new(
         "/immutable/system.dic",
-        "/immutable/resources",
+        SudachiResources::directory("/immutable/resources"),
         [1; 32],
         [2; 32],
         SudachiEdition::Core,
@@ -186,12 +186,15 @@ fn real_vibrato_and_sudachi_realize_the_same_portable_catalog() {
 
     let sudachi_dictionary = PathBuf::from(std::env::var_os("LINGREP_SUDACHI_DICT_CORE").unwrap());
     let sudachi_resources = PathBuf::from(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());
-    let (dictionary_digest, resource_digest) =
-        SudachiConfig::content_digests(&sudachi_dictionary, &sudachi_resources).unwrap();
+    let (dictionary_digest, resource_digest) = SudachiConfig::content_digests(
+        &sudachi_dictionary,
+        &SudachiResources::directory(&sudachi_resources),
+    )
+    .unwrap();
     let sudachi = SudachiPlan::load(
         SudachiConfig::new(
             sudachi_dictionary,
-            sudachi_resources,
+            SudachiResources::directory(sudachi_resources),
             dictionary_digest,
             resource_digest,
             SudachiEdition::Core,

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use lingrep_core::analysis::{
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, InputUnitId, NormalizationPolicy,
-    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiSplit, TextUnit,
-    TextUnitKind,
+    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiResources, SudachiSplit,
+    TextUnit, TextUnitKind,
 };
 use lingrep_core::token_match::{AttributeKind, DenseStorageKind};
 
@@ -17,7 +17,7 @@ fn config(
 ) -> SudachiConfig {
     SudachiConfig::new(
         PathBuf::from("/immutable/system.dic"),
-        PathBuf::from("/immutable/resources"),
+        SudachiResources::directory(PathBuf::from("/immutable/resources")),
         [1; 32],
         [2; 32],
         edition,
@@ -85,6 +85,29 @@ fn sudachi_profile_schemas_are_canonical_and_closed() {
     );
 }
 
+/// Sudachi analysis identity moves only by a deliberate edit: a new
+/// `SUDACHI_REVISION`, adapter or mapping revision, or edition label. When
+/// that edit is intended, replace this literal.
+#[test]
+fn sudachi_semantic_identity_is_pinned() {
+    let identity = config(
+        SudachiEdition::Core,
+        SudachiSplit::C,
+        ExtractionProfile::Morphology,
+        SegmentationMode::Input,
+    )
+    .semantic_identity();
+    let hex: String = identity
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        hex,
+        "72d8da56a358ca9a66eb5205442e6c08de84415a133d868247a78e1c74bb4cbd"
+    );
+}
+
 #[test]
 fn sudachi_semantic_identity_covers_configuration_but_not_paths() {
     let base = config(
@@ -124,7 +147,7 @@ fn sudachi_semantic_identity_covers_configuration_but_not_paths() {
 
     let relocated = SudachiConfig::new(
         "/elsewhere/system.dic",
-        "/elsewhere/resources",
+        SudachiResources::directory("/elsewhere/resources"),
         [1; 32],
         [2; 32],
         SudachiEdition::Core,
@@ -138,7 +161,7 @@ fn sudachi_semantic_identity_covers_configuration_but_not_paths() {
 
     let changed_dictionary = SudachiConfig::new(
         "/immutable/system.dic",
-        "/immutable/resources",
+        SudachiResources::directory("/immutable/resources"),
         [9; 32],
         [2; 32],
         SudachiEdition::Core,
@@ -162,10 +185,12 @@ fn sudachi_load_rejects_a_claimed_digest_before_opening_the_dictionary() {
     std::fs::create_dir(&resources).unwrap();
     std::fs::write(&dictionary, b"not a dictionary").unwrap();
     std::fs::write(resources.join("char.def"), b"DEFAULT 0 1 0").unwrap();
-    let (_, resource_digest) = SudachiConfig::content_digests(&dictionary, &resources).unwrap();
+    let (_, resource_digest) =
+        SudachiConfig::content_digests(&dictionary, &SudachiResources::directory(&resources))
+            .unwrap();
     let config = SudachiConfig::new(
         dictionary,
-        resources,
+        SudachiResources::directory(resources),
         [9; 32],
         resource_digest,
         SudachiEdition::Core,
@@ -197,8 +222,19 @@ fn load_plan(
     profile: ExtractionProfile,
     segmentation: SegmentationMode,
 ) -> SudachiPlan {
+    let resources =
+        SudachiResources::directory(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());
+    load_plan_with(edition, split, profile, segmentation, resources)
+}
+
+fn load_plan_with(
+    edition: SudachiEdition,
+    split: SudachiSplit,
+    profile: ExtractionProfile,
+    segmentation: SegmentationMode,
+    resources: SudachiResources,
+) -> SudachiPlan {
     let dictionary = PathBuf::from(std::env::var_os(dictionary_env(edition)).unwrap());
-    let resources = PathBuf::from(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());
     let (dictionary_digest, resource_digest) =
         SudachiConfig::content_digests(&dictionary, &resources).unwrap();
     SudachiPlan::load(
@@ -251,6 +287,36 @@ fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<
                 .collect()
         })
         .collect()
+}
+
+/// The resource files compiled into `sudachi` and the pinned resource
+/// directory give one analysis identity and the same tokens.
+#[test]
+#[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
+fn built_in_resources_match_the_pinned_resource_directory() {
+    let directory =
+        SudachiResources::directory(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());
+    let text = "ｱｲｳ　国家公務員が𠮷野家で働いた。";
+    for split in [SudachiSplit::A, SudachiSplit::C] {
+        let [from_directory, built_in] =
+            [directory.clone(), SudachiResources::BuiltIn].map(|resources| {
+                load_plan_with(
+                    SudachiEdition::Core,
+                    split,
+                    ExtractionProfile::Morphology,
+                    SegmentationMode::Input,
+                    resources,
+                )
+            });
+        assert_eq!(
+            from_directory.descriptor().semantic_identity(),
+            built_in.descriptor().semantic_identity()
+        );
+        assert_eq!(
+            analyze_forms(&from_directory, TextUnitKind::Sentence, text),
+            analyze_forms(&built_in, TextUnitKind::Sentence, text)
+        );
+    }
 }
 
 #[test]

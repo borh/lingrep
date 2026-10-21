@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use lingrep_core::analysis::{
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, InputUnitId, NormalizationPolicy,
-    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiSession, SudachiSplit,
-    TextUnit, TextUnitKind,
+    SegmentationMode, SudachiConfig, SudachiEdition, SudachiPlan, SudachiResources, SudachiSession,
+    SudachiSplit, TextUnit, TextUnitKind,
 };
 use lingrep_core::token_match::{AttributeKey, AttributeOrdinal, BoundProjection};
 use serde::Serialize;
@@ -142,13 +142,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let startup = Instant::now();
-    let (dictionary_digest, resource_digest) =
-        SudachiConfig::content_digests(&args.dictionary, &args.resources)?;
+    let (dictionary_digest, resource_digest) = SudachiConfig::content_digests(
+        &args.dictionary,
+        &SudachiResources::directory(&args.resources),
+    )?;
     let profile = ExtractionProfile::from(args.profile);
     let segmentation = SegmentationMode::from(args.segmentation);
     let plan = SudachiPlan::load(SudachiConfig::new(
         &args.dictionary,
-        &args.resources,
+        SudachiResources::directory(&args.resources),
         dictionary_digest,
         resource_digest,
         SudachiEdition::from(args.edition),

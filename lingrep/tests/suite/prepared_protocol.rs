@@ -1291,14 +1291,14 @@ fn build_never_replaces_an_existing_root() {
     }
 }
 
-/// The residency limit refuses; the sentence limit does not.
+/// Exceeding the residency limit terminates with an error; exceeding the sentence character limit truncates.
 ///
-/// The two look symmetric and are not. An oversized *sentence* is bad input,
-/// and a build truncates it and says so rather than losing the corpus around it
+/// The two look symmetric and are not. An oversized *sentence* is invalid input,
+/// and a build truncates it and reports the truncation rather than losing the corpus around it
 /// — see `an_oversized_sentence_is_truncated_and_named_rather_than_refused`.
 /// An oversized *tokenized* sentence is a resource bound on this process, and
 /// there is nothing to truncate: the sentence already fits its own limit, and
-/// what exceeded is what analyzing it costs. Refusing stays correct there.
+/// what exceeded is what analyzing it costs. Rejecting the build remains correct there.
 #[test]
 fn build_enforces_tokenized_residency_before_publication() {
     let dictionary = MiniDictionary::new();

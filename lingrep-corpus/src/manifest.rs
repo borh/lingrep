@@ -307,6 +307,8 @@ impl Manifest {
         struct ManifestVersion {
             schema_version: u32,
             format_generation: u32,
+            #[serde(default)]
+            producer_version: Option<String>,
         }
         let version: ManifestVersion = serde_json::from_slice(&bytes).map_err(json)?;
         let generation = version.format_generation;
@@ -318,7 +320,16 @@ impl Manifest {
                 version: version.schema_version,
             });
         }
-        let manifest: Self = serde_json::from_slice(&bytes).map_err(json)?;
+        let manifest: Self = serde_json::from_slice(&bytes).map_err(|error| {
+            match (unknown_field(&error), version.producer_version.clone()) {
+                (Some(field), Some(producer_version)) => CorpusError::UnknownManifestField {
+                    field,
+                    producer_version,
+                    reader_version: env!("CARGO_PKG_VERSION"),
+                },
+                _ => json(error),
+            }
+        })?;
         if manifest.provenance_schema_version != PROVENANCE_SCHEMA_VERSION {
             return Err(CorpusError::UnsupportedSchema {
                 component: "provenance.sqlite",
@@ -675,6 +686,14 @@ pub(crate) fn decode_digest(value: &str, field: &str) -> Result<[u8; 32], Corpus
             .map_err(|_| invalid(format!("{field} is not hexadecimal")))?;
     }
     Ok(bytes)
+}
+
+/// The field named by serde's `unknown field` error, which
+/// `#[serde(deny_unknown_fields)]` raises at any depth of the manifest.
+fn unknown_field(error: &serde_json::Error) -> Option<String> {
+    let message = error.to_string();
+    let rest = message.strip_prefix("unknown field `")?;
+    rest.split_once('`').map(|(field, _)| field.to_owned())
 }
 
 fn json(error: serde_json::Error) -> CorpusError {

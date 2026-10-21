@@ -39,7 +39,7 @@ end
 #   negation     Vない / Vず                    slot: the verb
 #
 # `member` names the competing text; `alternation` names the family. Both are
-# metadata, and `alternation` is load-bearing twice over — it is the policy
+# metadata, and `alternation` serves two required roles — it is the policy
 # block's `partition:` dimension and the derivation predicate of `%conditional`
 # — which is why the schema closes it to exactly three values.
 #
@@ -126,12 +126,12 @@ end
 #      ことができると言った is dropped while 進めると分かる is kept. The
 #      operand is a fragment and therefore forces `evidence: raw`.
 #
-#      This exclusion is NOT expressible as a counterexample on `cond_to`:
+#      This exclusion cannot be expressed as a counterexample on `cond_to`:
 #      `examples:` and `counterexamples:` are claims about `find_matches`,
 #      which is the raw match set, and the policy runs at the publication seam
-#      afterwards. The quotative sentence DOES match raw and MUST NOT be
-#      published, and only a test that reads published records can say so —
-#      which is what `alternation_lx_test` does.
+#      afterwards. The quotative sentence matches raw and must not be
+#      published, and only a test that evaluates published records can verify this —
+#      which is what `alternation_lx_test` tests.
 #
 #   3. `require %conditional with: @al_final_predicate, relation: in_sentence, evidence: raw`
 #

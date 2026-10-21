@@ -66,10 +66,9 @@ end
 #
 # TWO SPELLINGS, for the same reason the dependency labels below carry two.
 # `VerbForm=Ger` is the UD spelling stanza emits. spaCy's English models do
-# not use it: an `-ing` form is `VerbForm=Part` with `Tense=Pres`, and over
-# one 1.8 M-token corpus this pattern asked for `Ger` and matched **nothing**
-# -- 0 sentence openings where counting the construction by hand found 2,106.
-# `Tense=Pres` is what
+# not use it: an `-ing` form is `VerbForm=Part` with `Tense=Pres`. Over
+# one 1.8 M-token corpus, matching on `Ger` alone matched 0 occurrences
+# where counting the construction by hand found 2,106. `Tense=Pres` is what
 # keeps the second spelling from also taking a past participle, which is
 # `VerbForm=Part` with `Tense=Past` and is a different construction.
 key: [lemma]
@@ -124,7 +123,7 @@ pattern evaluative_amod :=
 # ("seamlessly handles" and "handles it seamlessly"). These are ONE relation
 # written twice, not two findings: a capture inside an alternation branch
 # binds only when that branch is taken, so `(A | B)` carrying captures on both
-# sides is refused as `WhereExclusiveCaptures`. Their shared `output_name`
+# sides is rejected as `WhereExclusiveCaptures`. Their shared `output_name`
 # makes `summarize` aggregate them as one relation.
 key: [$adv.lemma, $verb.lemma]
 layer: "evaluation"

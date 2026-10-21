@@ -110,6 +110,14 @@ pub fn token_schema() -> TokenSchema {
         .expect("canonical CoNLL-U schema must be valid")
 }
 
+/// Implementation component of the CoNLL-U analyzer identity. Replace it only
+/// when decoded tokens change. The value is the BLAKE3 of this file as released
+/// in 0.3.2, so artifacts prepared by 0.3.x keep their identity.
+const DECODER_REVISION: [u8; 32] = [
+    0x9c, 0x2a, 0x93, 0xee, 0xa5, 0x83, 0x93, 0xeb, 0xc8, 0xde, 0xd0, 0x64, 0xde, 0x43, 0xec, 0xff,
+    0x4e, 0xa0, 0x62, 0x1f, 0x13, 0x61, 0xbf, 0x2e, 0xda, 0x8a, 0x87, 0xe9, 0xe5, 0x48, 0xb3, 0x3f,
+];
+
 /// Semantic identity of canonical CoNLL-U decoding. The format supplies the
 /// analysis, so this describes decoding rather than an NLP model invocation.
 pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
@@ -119,7 +127,6 @@ pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
     };
 
     let schema = token_schema();
-    let implementation = *blake3::hash(include_bytes!("conllu.rs")).as_bytes();
     AnalyzerDescriptor::new(
         AnalyzerFamily::Pretokenized,
         ExtractionProfile::Syntax,
@@ -127,7 +134,7 @@ pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
         NormalizationPolicy::None,
         "und",
         "conllu-sentence-v1",
-        implementation,
+        DECODER_REVISION,
         [0; 32],
         *blake3::hash(b"lingrep.conllu-projection/v1").as_bytes(),
         *blake3::hash(b"lingrep.conllu-word-alignment/v1").as_bytes(),

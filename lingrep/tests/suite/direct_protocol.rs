@@ -617,7 +617,7 @@ fn conllu_treebank_directory_is_discovered_recursively_for_direct_and_prepared_q
 }
 
 /// A catalog referencing an attribute this corpus's token schema does not
-/// carry runs to completion, publishes its zero matches, and says why on
+/// carry runs to completion, publishes its zero matches, and outputs a warning to
 /// stderr — on both execution paths.
 #[test]
 fn an_unavailable_attribute_warns_and_the_run_still_completes() {

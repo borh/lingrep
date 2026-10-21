@@ -21,7 +21,7 @@
 //! `{op: drop_edge, edge: trailing}` means.
 //!
 //! The six ground-truth rows are real UniDic-CWJ tokenizations, transcribed
-//! here as tokens rather than re-tokenized so the suite needs no dictionary.
+//! here as tokens rather than re-tokenized so running the suite requires no dictionary.
 
 use compact_str::CompactString;
 use lingrep_core::fsm::{

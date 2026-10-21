@@ -226,8 +226,8 @@ fn a_misspelled_policy_key_warns_through_check_without_failing() {
 /// A transform's unit, key, and tags reach JSONL, and
 /// the attributes they read are cached even though no predicate names them.
 ///
-/// Deliberately over a *prepared* artifact. A prepared run projects only the
-/// attributes the run declares it needs; deriving that set from the compiled
+/// Tested over a *prepared* artifact. A prepared run projects only the
+/// attributes required by the run; deriving that set from the compiled
 /// automaton alone would let a catalog matching on `text` while keying on
 /// `lemma` and guarding on `upos` publish correct records from a text corpus
 /// and empty ones from an artifact, with no error either way.

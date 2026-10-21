@@ -108,6 +108,7 @@ run_full_tests_and_extras() {
     cargo test -p lingrep --test suite -- \
         direct_protocol::sudachi_portable_catalog_publishes_nonzero_context_without_unidic_fields \
         --exact --ignored
+    cargo test -p lingrep-core --test suite -- sudachi_contract:: --ignored
 
     echo "Running the locked spaCy adapter suite"
     scripts/check-spacy-adapter.sh full

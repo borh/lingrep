@@ -5166,8 +5166,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sudachi"
-version = "0.6.12-a1"
-source = "git+https://github.com/WorksApplications/sudachi.rs.git?rev=f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e#f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e"
+version = "0.7.0"
+source = "git+https://github.com/WorksApplications/sudachi.rs.git?rev=5de0410b6edfd428fc510cc9763440772e9619d5#5de0410b6edfd428fc510cc9763440772e9619d5"
 dependencies = [
  "aho-corasick",
  "bitflags 2.13.2",
@@ -5176,6 +5176,7 @@ dependencies = [
  "indexmap",
  "itertools 0.13.0",
  "lazy_static",
+ "libc",
  "libloading",
  "memmap2",
  "nom",

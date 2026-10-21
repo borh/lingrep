@@ -174,3 +174,45 @@ fn the_baseline_is_deterministic_across_builds() {
         "identity fields are build-stable"
     );
 }
+
+/// The literals are what `ling` 0.3.2 records for this fixture, so a CoNLL-U
+/// artifact prepared by 0.3.2 is found and read by this build. A change to
+/// CoNLL-U decoding replaces `DECODER_REVISION` in `lingrep-core`'s
+/// `corpus/conllu.rs`, and then these literals.
+#[test]
+fn a_conllu_artifact_keeps_the_identity_0_3_2_recorded() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("s.conllu");
+    fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ud-ja-gsd-sample.conllu"),
+        &source,
+    )
+    .unwrap();
+    let artifact = directory.path().join("s.lingcorpus");
+    let build = lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(artifact.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["source_identity"],
+        "3fd391bb40e8065f0e96107b6b5768a5f92009056c8559c8fb7534e6c08179a6"
+    );
+    assert_eq!(
+        manifest["token_schema_identity"],
+        "61e60e9b20279b5e569551d399baf301721974b22ec6213d1403abebb37a6250"
+    );
+    assert_eq!(
+        manifest["analysis_identity"],
+        "59c0a3711d4b4669b19310dc3e44c418d76bd009d755ad0fbd422dc1617e9779"
+    );
+}

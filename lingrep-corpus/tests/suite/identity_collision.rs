@@ -24,7 +24,7 @@
 
 use lingrep_core::analysis::{
     ExtractionProfile, NormalizationPolicy, SegmentationMode, SudachiConfig, SudachiEdition,
-    SudachiSplit,
+    SudachiResources, SudachiSplit,
 };
 use lingrep_corpus::{
     AdmissionIdentity, AnalysisIdentity, AnalysisInputs, AnalyzerRecord, ReaderIdentity,
@@ -35,7 +35,7 @@ use lingrep_corpus::{
 fn config(split: SudachiSplit, segmentation: SegmentationMode) -> SudachiConfig {
     SudachiConfig::new(
         "/dictionaries/system.dic",
-        "/dictionaries/resources",
+        SudachiResources::directory("/dictionaries/resources"),
         [11; 32],
         [12; 32],
         SudachiEdition::Core,

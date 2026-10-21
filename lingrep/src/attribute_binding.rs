@@ -1,13 +1,13 @@
 //! Diagnostics for the catalog ↔ corpus binding seam.
 //!
-//! Binding a lingrep patterns catalog against a token schema can now end three ways: a
+//! Binding a lingrep patterns catalog against a token schema can end three ways: a
 //! clean bind, a bind that carries referenced-but-unavailable attributes
-//! ([`lingrep_core::fsm::BoundCatalog::unavailable_attributes`]), or a refusal when a
+//! ([`lingrep_core::fsm::BoundCatalog::unavailable_attributes`]), or an error when a
 //! dependency `where` clause's edge attributes are missing (or a key's value
 //! kind conflicts). This module turns the second into per-attribute
 //! `warning[attribute_unavailable]` notices naming the referencing
 //! definitions and the token schema, and the third into an invalid-invocation
-//! error that says what to change, rather than reporting a setup refusal as
+//! error explaining what to change, rather than reporting a setup failure as
 //! a read failure.
 
 use std::io::{self, Write};
@@ -21,13 +21,13 @@ use crate::output::sanitize_terminal;
 /// How many referencing definitions one notice names before eliding.
 const NAMED_REFERRERS: usize = 3;
 
-/// Wraps a bind refusal as the invalid-invocation it is.
+/// Wraps a bind error as an invalid invocation.
 ///
 /// `schema` is the human name of the token schema, e.g. `"vibrato
 /// morphology"` or `"pretokenized syntax"` — the recorded analyzer family and
 /// extraction profile, which is what
-/// [`analyzer_name`] builds. The messages below blame the **schema** and not
-/// "the analyzer": which attributes a morphology schema carries is decided by
+/// [`analyzer_name`] builds. The messages attribute the error to the **schema** and not
+/// "the analyzer": which attributes a morphology schema carries is determined by
 /// the dictionary supplying the feature columns, so a tokenizer that reads a
 /// different dictionary is a different schema and the same analyzer.
 pub(crate) fn bind_refusal(error: &SchemaBindError, schema: &str) -> CliError {

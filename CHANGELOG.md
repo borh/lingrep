@@ -9,12 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A prepared corpus whose manifest has a field this `ling` does not read is
+  refused with `unknown_manifest_field`, naming the field, the `ling` version
+  that wrote it, and this version, instead of a generic JSON error.
+
 - `install.sh` follows the XDG Base Directory Specification: `ling` goes to
   `$XDG_BIN_HOME` when set, and the manual pages and Bash, fish and zsh
   completions from the archive are installed under `$XDG_DATA_HOME`
   (default `~/.local/share`). See [Install ling](docs/installation.md).
 - `ling` and `ling -h` describe what each command produces and end with
   example invocations.
+- Sudachi analysis uses sudachi.rs 0.7.0, which reads only the
+  `SudachiBinaryDic` dictionary container. Use SudachiDict v20261015 or later
+  from its GitHub releases page; earlier releases and the 20261015 archive on
+  the CloudFront mirror are refused with an error naming the container. The
+  Nix packages pin SudachiDict v20261015. Sudachi analysis identity changes,
+  so Sudachi corpora prepared with 0.3.x must be rebuilt. On an 8.5 MB
+  scientific-text corpus, 130 of 103,007 sentences tokenize differently, all
+  at out-of-vocabulary katakana boundaries, from sudachi.rs's lattice and
+  character-category fixes (#323, #325, #326).
+- CoNLL-U corpora prepared with 0.3.x keep their analysis identity and are
+  read without a rebuild. Sudachi corpora must still be rebuilt, as above.
+- `--analyzer sudachi` requires only `--sudachi-dict`. `--sudachi-resources`
+  defaults to the resource files built into `ling`, `--sudachi-split` to `c`,
+  and `--sudachi-edition` to the edition in a `system_<edition>.dic` file
+  name; for any other file name, `--sudachi-edition` is required.
 
 ## [0.3.2] - 2026-10-20
 

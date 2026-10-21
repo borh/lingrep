@@ -3,15 +3,15 @@
 # The `where` successor to `double_wo_candidate` in `double-wo.lx`. The
 # linear catalog approximates "two を-marked phrases governed by the same
 # predicate" with proximity plus hand-built exclusion buckets; this catalog
-# states the head-sharing fact as dependency edges and needs none of the
-# buckets. A validation experiment measured the constraint rejecting 90% of the adverbial-anchor bucket for
+# states the head-sharing fact as dependency edges and eliminates the need for
+# exclusion buckets. A validation experiment measured the constraint rejecting 90% of the adverbial-anchor bucket for
 # the structural reason — `Nを対象に` attaches its noun to 対象, not to the
 # main predicate — and the reviewed adjudication pass put the linear
 # candidate bucket's over-inclusion at roughly 40% against ~2% parse error.
 # The two instruments are complements, not competitors: `double-wo.lx`
 # binds any UniDic morphology corpus, while this catalog requires `dep.head`
-# and `dep.rel` (CoNLL-U input or a dependency-parsing analyzer) and is
-# refused at binding otherwise, by name.
+# and `dep.rel` (CoNLL-U input or a dependency-parsing analyzer) and
+# fails binding otherwise, reporting the missing attributes by name.
 #
 # One semantic query, one pattern. A label set expresses the query directly,
 # and `key:` turns the label pairs into measured output: `summarize` reports

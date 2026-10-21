@@ -337,11 +337,11 @@ pub fn render(campaign: &Campaign, adjudication: &Adjudication) -> String {
     if !escalate.is_empty() {
         // The count, not only the name. "Escalate this catalog" without a
         // number leaves the operator to rederive the ladder by hand, which is
-        // the knowledge the planner exists to hold.
+        // what the planner computes.
         let plan = crate::plan::plan(campaign);
         let row_for = |catalog: &str| plan.iter().find(|row| row.catalog == catalog);
-        // A catalog at the ladder's end owes nothing further, and the planner
-        // already says so in `Row::reason`; without it this section would
+        // A catalog at the ladder's end requires no further blocks, and
+        // `Row::reason` already indicates this; without it this section would
         // print "20 blocks owed, 20 complete" beside an instruction to
         // escalate — advice no run can follow.
         let any_outstanding = escalate

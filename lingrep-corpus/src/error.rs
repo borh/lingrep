@@ -42,6 +42,14 @@ pub enum CorpusError {
         "lingrep artifact generation {generation} is unsupported; rebuild from source with `ling corpus build`"
     )]
     UnsupportedArtifactGeneration { generation: u32 },
+    #[error(
+        "prepared artifact manifest has the field `{field}`, which ling {reader_version} does not read; the artifact was written by ling {producer_version}. Open it with that version or later, or rebuild it with `ling corpus build`"
+    )]
+    UnknownManifestField {
+        field: String,
+        producer_version: String,
+        reader_version: &'static str,
+    },
     #[error("expected artifact directory at {path}")]
     ExpectedArtifactDirectory { path: PathBuf },
     #[error("artifact component {component} is a symbolic link")]
@@ -99,6 +107,7 @@ impl CorpusError {
             Self::UnsupportedSchema { .. } => "unsupported_schema",
             Self::PreparedArtifactRebuildRequired { .. }
             | Self::UnsupportedArtifactGeneration { .. } => "unsupported_schema",
+            Self::UnknownManifestField { .. } => "unknown_manifest_field",
             Self::ExpectedArtifactDirectory { .. } => "expected_artifact_directory",
             Self::SymlinkComponent { .. } => "symlink_component",
             Self::ComponentLengthMismatch { .. } => "component_length_mismatch",

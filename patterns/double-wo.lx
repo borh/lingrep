@@ -101,15 +101,15 @@ fragment double_wo_non_boundary_suffix :=
 # tokens long and would very likely never have appeared in a corpus test.
 # `intersection_test.rs` checks both languages exhaustively over the three
 # classes these predicates distinguish, and keeps the wrong rewrite beside
-# the right one so the check cannot quietly stop discriminating.
+# the right one so the check ensures continued discrimination between both classes.
 #
 # The boundary tests `text` alone, for two reasons.
 #   * It is a surface fact. The evidence is that a U+3000 survived in the
 #     text, which is what `text` records. `unidic.orthbase` is a dictionary base
 #     text; featurization populates it for every token, but for an
 #     unknown word its value is the surface synthesised from the token
-#     rather than a dictionary entry — which is not what this test asks
-#     about.
+#     rather than a dictionary entry — which is not what this test
+#     evaluates.
 #   * The boundary has no `& unidic.pos1=空白` conjunct, so the
 #     classification is a partition: a U+3000 tagged as anything but 空白
 #     still lands in a bucket. `!@double_wo_boundary` complements the whole

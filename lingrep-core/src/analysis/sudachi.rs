@@ -8,8 +8,8 @@ use std::{
 use compact_str::CompactString;
 use sudachi::{
     analysis::{Mode, mlist::MorphemeList, stateful_tokenizer::StatefulTokenizer},
-    config::Config,
-    dic::{dictionary::JapaneseDictionary, header::Header},
+    config::{Config, PathResolver},
+    dic::dictionary::JapaneseDictionary,
 };
 
 use crate::token_match::{BoundProjection, BoundTokenSentence, TokenSchema};
@@ -21,33 +21,35 @@ use super::{
     TextUnitKind, ValidatedAnalysisBatch, analyzer::sealed, declared_token_schema,
 };
 
-const SUDACHI_REVISION: &[u8] = b"f4dd8f20a774bd71d34a7d4ffa00d987b8946f9e";
+const SUDACHI_REVISION: &[u8] = b"5de0410b6edfd428fc510cc9763440772e9619d5";
 
-/// Leading bytes of the block-description container, introduced after this
-/// build's pinned `sudachi` revision.
+/// BLAKE3 of `resources/char.def` at [`SUDACHI_REVISION`], the copy compiled
+/// into `sudachi`. A resource directory holding that file has the same digest,
+/// so it produces the same analysis identity as [`SudachiResources::BuiltIn`].
+const BUILT_IN_CHAR_DEF_DIGEST: [u8; 32] = [
+    0x3f, 0x62, 0xc5, 0xa5, 0xdc, 0x26, 0x66, 0xc2, 0x96, 0xaa, 0x77, 0xc1, 0x55, 0x05, 0x40, 0x1f,
+    0xce, 0x7e, 0xe5, 0xdc, 0x21, 0xcf, 0xe2, 0xa7, 0xda, 0x8d, 0x79, 0xf9, 0x8b, 0x64, 0x64, 0xa2,
+];
+
+/// Leading bytes of the block-description container, the one the pinned
+/// `sudachi` revision reads.
 const SUDACHI_BINARY_DESCRIPTION_MAGIC: &[u8] = b"SudachiBinaryDic";
 
-/// Little-endian version words of the container the pinned revision reads.
-/// These are the two system-dictionary versions it knows; the dictionary's
-/// release date follows at offset 16 in the same container.
+/// Little-endian version words that open the earlier version-header container.
+/// The dictionary's release date follows at offset 16.
 const SUDACHI_HEADER_VERSION_WORDS: [u64; 2] = [0x7366_d3f1_8bd1_11e7, 0xce9f_011a_9239_4434];
 
 /// Which on-disk container a Sudachi dictionary is written in.
 ///
-/// Sudachi's dictionary container changed once and the two are not
-/// interchangeable: a reader knows exactly one. Releases up to SudachiDict
-/// `v20260723` write a version word followed by the release date; later
-/// releases write a block-description container that starts with the ASCII
-/// magic `SudachiBinaryDic`.
-///
-/// The pinned `sudachi` revision parses only the first, and reports the second
-/// from inside that parser as `Invalid header version` — an error that names
-/// neither the container that was found nor the one that is readable. So the
-/// container is identified here, and the load error says which one it is.
+/// A reader knows exactly one of the two. The pinned `sudachi` revision reads
+/// the block-description container that starts with the ASCII magic
+/// `SudachiBinaryDic`, and refuses the earlier version-header container with
+/// `V0 version`, which names neither container. The load error therefore
+/// names the container found.
 enum DictionaryContainer {
-    /// The version-word container the pinned revision reads.
+    /// The version-header container the pinned revision cannot read.
     HeaderVersioned,
-    /// The block-description container it cannot read.
+    /// The block-description container it reads.
     BinaryDescription,
 }
 
@@ -69,20 +71,7 @@ fn dictionary_container(path: &Path) -> Option<DictionaryContainer> {
         .then_some(DictionaryContainer::HeaderVersioned)
 }
 
-/// A dictionary shorter than its own fixed header, which cannot be one.
-///
-/// The loader slices the mapped bytes to `Header::STORAGE_SIZE` before it
-/// validates anything, so a truncated file **panics** there instead of
-/// returning an error — and this crate's trust boundary promises errors for
-/// on-disk failures. The bound is the loader's own constant rather than a
-/// guess: anything shorter cannot hold the header it is about to read.
-fn truncated_dictionary_length(path: &Path) -> Option<u64> {
-    let length = std::fs::metadata(path).ok()?.len();
-    (length < Header::STORAGE_SIZE as u64).then_some(length)
-}
-
 const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v1";
-const ADAPTER_SOURCE: &[u8] = include_bytes!("sudachi.rs");
 const MAPPING_REVISION: &[u8] = b"lingrep.sudachi-pos-mapping/v1";
 const ALIGNMENT_REVISION: &[u8] = b"lingrep.sudachi-byte-alignment/v1";
 
@@ -137,9 +126,39 @@ pub enum SudachiEdition {
 impl SudachiEdition {
     const fn identity(self) -> &'static [u8] {
         match self {
-            Self::Small => b"small-20260723",
-            Self::Core => b"core-20260723",
-            Self::Full => b"full-20260723",
+            Self::Small => b"small",
+            Self::Core => b"core",
+            Self::Full => b"full",
+        }
+    }
+}
+
+/// Where Sudachi's `char.def`, `unk.def`, `rewrite.def` and `sudachi.json`
+/// come from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SudachiResources {
+    /// The copies compiled into the pinned `sudachi` revision.
+    BuiltIn,
+    /// A directory holding the four files.
+    Directory(PathBuf),
+}
+
+impl SudachiResources {
+    pub fn directory(directory: impl Into<PathBuf>) -> Self {
+        Self::Directory(directory.into())
+    }
+
+    fn char_def_digest(&self) -> Result<[u8; 32], SudachiLoadError> {
+        match self {
+            Self::BuiltIn => Ok(BUILT_IN_CHAR_DEF_DIGEST),
+            Self::Directory(directory) => file_digest(&directory.join("char.def")),
+        }
+    }
+
+    fn resolver(&self) -> PathResolver {
+        match self {
+            Self::BuiltIn => PathResolver::from_embedded(),
+            Self::Directory(directory) => PathResolver::from_path(directory),
         }
     }
 }
@@ -147,7 +166,7 @@ impl SudachiEdition {
 #[derive(Clone, Debug)]
 pub struct SudachiConfig {
     dictionary_path: PathBuf,
-    resource_directory: PathBuf,
+    resources: SudachiResources,
     dictionary_digest: [u8; 32],
     resource_digest: [u8; 32],
     split: SudachiSplit,
@@ -161,7 +180,7 @@ impl SudachiConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dictionary_path: impl Into<PathBuf>,
-        resource_directory: impl Into<PathBuf>,
+        resources: SudachiResources,
         dictionary_digest: [u8; 32],
         resource_digest: [u8; 32],
         edition: SudachiEdition,
@@ -171,9 +190,8 @@ impl SudachiConfig {
         normalization: NormalizationPolicy,
     ) -> Result<Self, SudachiLoadError> {
         let dictionary_path = dictionary_path.into();
-        let resource_directory = resource_directory.into();
         if dictionary_path.as_os_str().is_empty()
-            || resource_directory.as_os_str().is_empty()
+            || matches!(&resources, SudachiResources::Directory(directory) if directory.as_os_str().is_empty())
             || dictionary_digest == [0; 32]
             || resource_digest == [0; 32]
         {
@@ -182,10 +200,7 @@ impl SudachiConfig {
         let schema = declared_token_schema(AnalyzerFamily::Sudachi, profile)
             .ok_or_else(|| SudachiLoadError::Schema("Sudachi declares no such profile".into()))?;
 
-        let implementation_digest = digest(
-            b"implementation",
-            [SUDACHI_REVISION, ADAPTER_REVISION, ADAPTER_SOURCE],
-        );
+        let implementation_digest = digest(b"implementation", [SUDACHI_REVISION, ADAPTER_REVISION]);
         let resource_manifest_digest = digest(
             b"resources",
             [edition.identity(), &dictionary_digest, &resource_digest],
@@ -217,7 +232,7 @@ impl SudachiConfig {
         .map_err(|_| SudachiLoadError::InvalidConfig)?;
         Ok(Self {
             dictionary_path,
-            resource_directory,
+            resources,
             dictionary_digest,
             resource_digest,
             split,
@@ -250,11 +265,11 @@ impl SudachiConfig {
     /// Hashes the exact dictionary and `char.def` consumed by the minimal config.
     pub fn content_digests(
         dictionary_path: impl AsRef<Path>,
-        resource_directory: impl AsRef<Path>,
+        resources: &SudachiResources,
     ) -> Result<([u8; 32], [u8; 32]), SudachiLoadError> {
         Ok((
             file_digest(dictionary_path.as_ref())?,
-            file_digest(&resource_directory.as_ref().join("char.def"))?,
+            resources.char_def_digest()?,
         ))
     }
 }
@@ -286,31 +301,22 @@ pub struct SudachiPlan {
 impl SudachiPlan {
     pub fn load(config: SudachiConfig) -> Result<Self, SudachiLoadError> {
         let (dictionary_digest, resource_digest) =
-            SudachiConfig::content_digests(&config.dictionary_path, &config.resource_directory)?;
+            SudachiConfig::content_digests(&config.dictionary_path, &config.resources)?;
         if dictionary_digest != config.dictionary_digest {
             return Err(SudachiLoadError::ContentMismatch("dictionary"));
         }
         if resource_digest != config.resource_digest {
             return Err(SudachiLoadError::ContentMismatch("resource"));
         }
-        let dictionary_config =
-            Config::minimal_at(&config.resource_directory).with_system_dic(&config.dictionary_path);
-        if let Some(length) = truncated_dictionary_length(&config.dictionary_path) {
-            return Err(SudachiLoadError::Dictionary(format!(
-                "{} is {length} bytes, shorter than the {}-byte header a Sudachi dictionary \
-                 starts with, so it is truncated or not a dictionary",
-                config.dictionary_path.display(),
-                Header::STORAGE_SIZE
-            )));
-        }
+        let dictionary_config = Config::minimal_at(config.resources.resolver())
+            .with_system_dic(&config.dictionary_path);
         let dictionary = JapaneseDictionary::from_cfg(&dictionary_config).map_err(|error| {
             SudachiLoadError::Dictionary(match dictionary_container(&config.dictionary_path) {
-                Some(DictionaryContainer::BinaryDescription) => format!(
-                    "{error}; {} is in the `SudachiBinaryDic` container that Sudachi \
-                     introduced after SudachiDict v20260723, and the `sudachi` revision this \
-                     build pins reads only the earlier version-header container. Use a \
-                     SudachiDict release up to v20260723, or rebuild against a `sudachi` \
-                     revision that reads the new container.",
+                Some(DictionaryContainer::HeaderVersioned) => format!(
+                    "{error}; {} is in the version-header container, and this build reads \
+                     only the `SudachiBinaryDic` container. Download the SudachiDict \
+                     v20261015 or later archive from \
+                     https://github.com/WorksApplications/SudachiDict/releases",
                     config.dictionary_path.display()
                 ),
                 _ => error.to_string(),
@@ -697,6 +703,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_identity_revision_is_the_locked_sudachi_revision() {
+        let revision = std::str::from_utf8(SUDACHI_REVISION).expect("ASCII revision");
+        let locked = format!("sudachi.rs.git?rev={revision}");
+        assert!(
+            include_str!("../../../Cargo.lock").contains(&locked),
+            "Cargo.lock does not pin {locked}"
+        );
+        let flake_input = format!("github:WorksApplications/sudachi.rs/{revision}");
+        assert!(
+            include_str!("../../../flake.nix").contains(&flake_input),
+            "flake.nix does not pin {flake_input}"
+        );
+    }
+
     /// Builds a config whose digests match the given files, so that the
     /// dictionary load itself is what the test observes.
     fn config_for(directory: &Path, dictionary: &Path) -> SudachiConfig {
@@ -704,10 +725,11 @@ mod tests {
         fs::create_dir(&resources).expect("create the resource directory");
         fs::write(resources.join("char.def"), b"\n").expect("write char.def");
         let (dictionary_digest, resource_digest) =
-            SudachiConfig::content_digests(dictionary, &resources).expect("content digests");
+            SudachiConfig::content_digests(dictionary, &SudachiResources::directory(&resources))
+                .expect("content digests");
         SudachiConfig::new(
             dictionary,
-            &resources,
+            SudachiResources::directory(&resources),
             dictionary_digest,
             resource_digest,
             SudachiEdition::Core,
@@ -720,46 +742,37 @@ mod tests {
     }
 
     /// A container this build cannot read is named, with its recovery.
-    ///
-    /// `sudachi` reports it as `Invalid header version` from inside its
-    /// version-word parser, which names neither the container found nor what
-    /// the pinned revision does read.
     #[test]
-    fn a_newer_dictionary_container_is_named_in_the_load_error() {
+    fn an_older_dictionary_container_is_named_in_the_load_error() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let dictionary = directory.path().join("system_core.dic");
-        let mut bytes = SUDACHI_BINARY_DESCRIPTION_MAGIC.to_vec();
-        bytes.extend_from_slice(&1u64.to_le_bytes());
-        // Long enough to be past the loader's fixed header, since a file
-        // shorter than that is refused before it is parsed.
-        bytes.resize(Header::STORAGE_SIZE, 0);
+        let mut bytes = SUDACHI_HEADER_VERSION_WORDS[1].to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(b"20261015");
         fs::write(&dictionary, &bytes).expect("write the dictionary");
 
         let message = SudachiPlan::load(config_for(directory.path(), &dictionary))
             .err()
             .expect("the container is unreadable")
             .to_string();
-        assert!(message.contains("SudachiBinaryDic"), "{message}");
-        assert!(message.contains("v20260723"), "{message}");
+        assert!(message.contains("version-header container"), "{message}");
+        assert!(message.contains("v20261015"), "{message}");
     }
 
     /// A truncated dictionary is an error, not a panic.
-    ///
-    /// The loader slices the mapped bytes to its fixed header size before it
-    /// validates anything, so a short file aborts the process from inside
-    /// third-party code; this crate's trust boundary promises an error for
-    /// every on-disk failure instead.
     #[test]
     fn a_truncated_dictionary_is_refused_rather_than_panicking() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let dictionary = directory.path().join("system_core.dic");
-        fs::write(&dictionary, b"SudachiBinaryDic\0\0\0\0\0\0\0\0").expect("write");
-
-        let message = SudachiPlan::load(config_for(directory.path(), &dictionary))
-            .err()
-            .expect("a truncated dictionary is refused")
-            .to_string();
-        assert!(message.contains("shorter than the"), "{message}");
+        let mut header = SUDACHI_BINARY_DESCRIPTION_MAGIC.to_vec();
+        header.extend_from_slice(&1u64.to_le_bytes());
+        for length in 0..=header.len() {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let dictionary = directory.path().join("system_core.dic");
+            fs::write(&dictionary, &header[..length]).expect("write");
+            assert!(
+                SudachiPlan::load(config_for(directory.path(), &dictionary)).is_err(),
+                "a {length}-byte dictionary loaded"
+            );
+        }
     }
 
     /// Identification is by first bytes only; anything else stays the loader's

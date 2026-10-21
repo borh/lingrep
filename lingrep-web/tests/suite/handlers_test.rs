@@ -528,10 +528,10 @@ mod handlers_test {
         );
     }
 
-    /// A collapsed distribution band is not remembered: one global
+    /// A collapsed distribution band is not persisted across sessions: one global
     /// `localStorage` key would let a single click hide the surface
     /// distribution and the section bar graph for every pattern in every
-    /// corpus, with nothing on screen to say why.
+    /// corpus, with no on-screen explanation.
     #[test]
     fn the_distribution_band_keeps_no_persisted_open_state() {
         let explorer = include_str!("../../assets/results-explorer.js");
