@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installs it under `$XDG_DATA_HOME/lingrep/dictionaries`. When neither
   `--dict-path` nor `LINGREP_DICTIONARY_PATH` names a dictionary, `ling` uses
   the installed `cwj`. The `vibrato-dict-*` Nix packages download the same
-  files instead of converting UniDic, which needed about 10 GB of memory;
+  files instead of converting UniDic, which required about 10 GB of memory;
   `vibrato-dictionaries-from-source` still converts them. See
   [DICTIONARIES.md](DICTIONARIES.md), which also states each dictionary's
   license.

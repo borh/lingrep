@@ -483,7 +483,7 @@
             # the same digests; run it with
             # `nix build .#vibrato-dictionaries.tests.digests` after a
             # flake.lock update. Replace a digest only together with a new
-            # release and a CHANGELOG entry saying which corpora must be rebuilt.
+            # release and a CHANGELOG entry stating which corpora must be rebuilt.
             passthru.tests.digests =
               pkgs.runCommand "vibrato-dictionary-digests"
                 {

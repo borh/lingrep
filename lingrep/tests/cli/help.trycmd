@@ -36,9 +36,9 @@ Examples:
   ling summarize --patterns catalog.lx novel.txt
   ling matches --pattern '[upos=NOUN] [dep.rel=case].' treebank.conllu
 
-Japanese text is analyzed with the dictionary `ling dictionary install` installs,
-or one given by --dict-path or LINGREP_DICTIONARY_PATH; CoNLL-U input is
-already analyzed.
+Japanese text is analyzed with the dictionary installed by
+`ling dictionary install`, or one specified by --dict-path or
+LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
 Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.
 
 ```

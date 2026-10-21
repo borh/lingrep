@@ -47,17 +47,14 @@ writes. `nix develop` exports the CWJ path as `LINGREP_DICTIONARY_PATH`.
 ## Building from source
 
 `nix build .#vibrato-dictionaries-from-source` converts each UniDic archive
-from NINJAL with `mecab-dic-converter`. The conversion of CWJ needs about
-10 GB of memory, and the larger dictionaries more.
+from NINJAL with `mecab-dic-converter`. Converting CWJ requires about
+10 GB of memory; larger dictionaries require more.
 
-```bash
-nix build .#vibrato-dictionaries.tests.digests
-```
-
-checks the released files and the conversion from source against the BLAKE3
-digests pinned in `flake.nix`, which `ling dictionary install` also checks.
-Run it after a `flake.lock` update: a dictionary's digest is part of the
-analysis identity of every corpus prepared with it.
+`nix build .#vibrato-dictionaries.tests.digests` verifies the released files
+and the conversion from source against the BLAKE3 digests pinned in `flake.nix`,
+the same digests `ling dictionary install` checks. Run this check after updating
+`flake.lock`: a dictionary digest is part of the analysis identity of every
+corpus prepared with it.
 
 ## Compressed dictionaries
 

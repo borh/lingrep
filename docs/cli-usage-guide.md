@@ -1035,7 +1035,7 @@ fixed.
 ### Use Vibrato with UniDic
 
 Vibrato, the default analyzer, loads a UniDic dictionary. Install the default
-`cwj` once, or another edition and pass it with `--dict-path`:
+`cwj` once, or install another edition and pass its path to `--dict-path`:
 
 ```bash
 ling dictionary install

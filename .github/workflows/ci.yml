@@ -5,7 +5,7 @@ name: CI
 # same thing, which is the property the previous workflows did not have: the one
 # named "Tests" ran no tests at all.
 #
-# No secret is needed. The dictionary is downloaded from the public
+# The workflow requires no secrets. The dictionary is downloaded from the public
 # `unidic-202512` release, and nothing here reaches the maintainer's network.
 
 on:

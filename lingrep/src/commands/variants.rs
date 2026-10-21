@@ -38,21 +38,8 @@ pub(crate) fn run_to<W: Write>(
     writer: &mut W,
 ) -> Result<CommandOutcome, CliError> {
     let reference = CorpusArtifact::open(&args.target).ok();
-    // One rule for every target, because there is only one rule:
-    // `canonical_artifact_path` names a realization with `with_file_name`, so a
-    // realization *always* sits in the target's parent, and whether the target
-    // is a file, a directory or an artifact never enters into it.
-    //
-    // This used to special-case a directory source root and scan the root
-    // itself, on the reasoning that "a source's realizations sit beside it,
-    // which is the same directory". That holds for a file — `a.jsonl` and
-    // `a.jsonl.g6.….lingcorpus` really are siblings — and reads across to a
-    // directory as "inside it", which is where no realization has ever been
-    // written. Every directory root therefore reported zero, which is the one
-    // answer indistinguishable from "none exist": `corpus variants /data/bccwj`
-    // found nothing while `corpus variants /data` listed the artifact of
-    // `/data/bccwj`. Directory roots are not a corner — a BCCWJ distribution is
-    // one, and so is every Markdown corpus.
+    // Realizations sit in the target's parent directory: `canonical_artifact_path`
+    // names every realization with `with_file_name`.
     let directory = lingrep_corpus::containing_directory(&args.target);
 
     let report = SiblingScan::scan(directory).map_err(|error| {

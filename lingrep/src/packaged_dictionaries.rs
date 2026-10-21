@@ -9,7 +9,7 @@ use clap::ValueEnum;
 
 use crate::error::CliError;
 
-/// Release that holds every dictionary as `<file_name>.zst`.
+/// Base URL for `<file_name>.zst` release assets.
 const RELEASE_URL: &str = "https://github.com/borh/lingrep/releases/download/unidic-202512";
 
 /// A dictionary built by the flake's `vibrato-dict-*` package.
@@ -127,7 +127,7 @@ pub fn fallback_dictionary_path() -> Option<PathBuf> {
         })
 }
 
-/// What `install` did.
+/// Result of [`install`].
 #[derive(Debug, PartialEq, Eq)]
 pub struct Installed {
     pub path: PathBuf,

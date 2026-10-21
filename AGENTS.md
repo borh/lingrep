@@ -153,9 +153,9 @@ converts the NINJAL archives. Every binary resolves `--dict-path`, then
 The BLAKE3 of each decompressed `.dic` is pinned twice: in `DICTIONARIES` in
 `packaged_dictionaries.rs`, which `ling dictionary install` checks, and in
 `vibrato-dictionaries.tests.digests` in `flake.nix`, which checks the release
-and the conversion from source. A unit test keeps the two equal. A dictionary
-whose bytes change is a new release tag with new digests, never a replaced
-asset, because the digest is part of every analysis identity.
+and the conversion from source. A unit test asserts that both pins match. A
+dictionary whose bytes change is a new release tag with new digests, never a
+replaced asset, because the digest is part of every analysis identity.
 
 The installed and packaged dictionaries are uncompressed, rkyv-serialized,
 memory-mapped `.dic` files. The loader expands a user-supplied `.zst` archive

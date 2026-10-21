@@ -1,13 +1,15 @@
 # lingrep
 
-lingrep searches text for linguistic patterns: token sequences described by
-surface form, lemma, part of speech, morphological features, or dependency
-relations. Patterns are authored in catalogs and reused across
-corpora. The command-line tool, `ling`, tokenizes raw text or reads text that
-is already analyzed, then matches patterns, counts matches, and presents
-matches in context.
+lingrep is a linguistic `grep`: where standard grep matches characters and
+regular expressions across plain text lines, `lingrep` searches token
+sequences described by surface form, lemma, part of speech, morphological
+features, or dependency relations. Like `grep`, patterns can be passed
+directly on the command line; they can also be explored interactively or
+organized into catalogs for reuse across corpora. The command-line tool,
+`ling`, tokenizes raw text or reads text that is already analyzed, then
+matches patterns, counts matches, and presents matches in context.
 
-Japanese is currently the main focus, but `ling` also reads CoNLL-U, so
+Japanese is the main focus, but `ling` also reads CoNLL-U, so
 Universal Dependencies treebanks and other analyzed data can be searched
 without a parser.
 
@@ -34,6 +36,10 @@ reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
 [terminal explorer](docs/tui-guide.md); and a
 [web interface](docs/deployment-guide.md).
 
+> [!NOTE]
+> lingrep is experimental software under active development. Pattern syntax and
+> command-line interfaces *will* evolve between releases.
+
 ## Install
 
 ```bash
@@ -57,7 +63,7 @@ is a `.lx` file consisting of one or more patterns, reused across corpora.
 ### CoNLL-U
 
 CoNLL-U files already carry tokens and annotations, so matching requires no
-dictionary. This query over the UD Japanese GSD test set matches a noun
+dictionary download. This query over the UD Japanese GSD test set matches a noun
 followed by a token whose dependency relation is `case`:
 
 ```bash
@@ -65,27 +71,23 @@ curl -LO https://raw.githubusercontent.com/UniversalDependencies/UD_Japanese-GSD
 ling matches --pattern '[upos=NOUN] [dep.rel=case].' ja_gsd-ud-test.conllu
 ```
 
-Each match is printed in its context, with the match either in bold font, or
-for terminals not set to output in color, in brackets:
+Each match is printed in context: in bold font, or in brackets when color is
+disabled:
 
 ```text
 これに不快 ⟦感を⟧ 示す住民はいまし
 に不快感を示す ⟦住民は⟧ いましたが,
 ```
 
-### Japanese with Sudachi
+### Japanese with UniDic
 
-Download a [SudachiDict](https://github.com/WorksApplications/SudachiDict/releases)
-dictionary (v20261015 or later), then pass it to `ling`:
+`ling` analyzes Japanese with UniDic by default. Install the dictionary once
+(a 412 MB download):
 
 ```bash
-curl -LO https://github.com/WorksApplications/SudachiDict/releases/download/v20261015/sudachi-dictionary-20261015-core.zip
-unzip -q sudachi-dictionary-20261015-core.zip
+ling dictionary install
 printf '猫が走る。\n犬が眠る。\n' > sample.txt
-
-ling matches --analyzer sudachi \
-  --sudachi-dict sudachi-dictionary-20261015/system_core.dic \
-  --pattern '[upos=VERB].' sample.txt
+ling matches --pattern '[upos=VERB].' sample.txt
 ```
 
 ```text
@@ -104,9 +106,7 @@ subject := [upos=NOUN] [text=が].
 and summarize them:
 
 ```bash
-ling summarize --analyzer sudachi \
-  --sudachi-dict sudachi-dictionary-20261015/system_core.dic \
-  --patterns patterns.lx sample.txt
+ling summarize --patterns patterns.lx sample.txt
 ```
 
 ```text
@@ -116,18 +116,22 @@ ling summarize --analyzer sudachi \
        1  subject  猫が
 ```
 
-The [CLI usage guide](docs/cli-usage-guide.md#use-native-sudachi) describes the
-split modes and the other Sudachi options.
+[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic dictionaries, for
+spoken, literary and historical Japanese, and their licenses.
 
-### Japanese with UniDic
+### Japanese with Sudachi
 
-`ling` analyzes Japanese with UniDic by default. Install the dictionary once,
-a 412 MB download:
+`ling` also supports Sudachi. Download a
+[SudachiDict](https://github.com/WorksApplications/SudachiDict/releases)
+dictionary (v20261015 or later), then pass `--analyzer sudachi`:
 
 ```bash
-ling dictionary install
-printf '猫が走る。\n犬が眠る。\n' > sample.txt
-ling matches --pattern '[upos=VERB].' sample.txt
+curl -LO https://github.com/WorksApplications/SudachiDict/releases/download/v20261015/sudachi-dictionary-20261015-core.zip
+unzip -q sudachi-dictionary-20261015-core.zip
+
+ling matches --analyzer sudachi \
+  --sudachi-dict sudachi-dictionary-20261015/system_core.dic \
+  --pattern '[upos=VERB].' sample.txt
 ```
 
 ```text
@@ -135,8 +139,8 @@ ling matches --pattern '[upos=VERB].' sample.txt
 犬が ⟦眠る⟧ 。
 ```
 
-[DICTIONARIES.md](DICTIONARIES.md) lists the other UniDic dictionaries, for
-spoken, literary and historical Japanese, and their licenses.
+The [CLI usage guide](docs/cli-usage-guide.md#use-native-sudachi) describes the
+split modes and the other Sudachi options.
 
 ## Documentation
 
