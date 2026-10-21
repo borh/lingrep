@@ -2629,7 +2629,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anstyle",
  "assert_cmd",
@@ -2679,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-cli-common"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "clap",
  "lingrep-core",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "aho-corasick",
  "blake3",
@@ -2734,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-corpus"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "compact_str",
@@ -2757,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-perf"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "clap",
@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-web"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "askama",
  "axum",
