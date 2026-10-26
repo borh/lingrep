@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use askama::Template;
 use axum::{Router, body::Body, http::Request};
 use http_body_util::BodyExt;
@@ -30,14 +31,24 @@ use crate::render_security_support::{
 use crate::v6_support::runtime_fixture;
 
 async fn kwic_html(source: &str) -> String {
-    let (_fixture, runtime) = runtime_fixture(
-        "capture-handler",
-        vec![vec![
+    detail_html(source, "/hit-detail/capture-handler/1/0/0").await
+}
+
+async fn detail_html(source: &str, path: &str) -> String {
+    detail_html_with_tokens(
+        source,
+        path,
+        vec![
             TokenInfo::default()
                 .with_orth("食べる")
                 .with_lemma("食べる"),
-        ]],
-    );
+        ],
+    )
+    .await
+}
+
+async fn detail_html_with_tokens(source: &str, path: &str, tokens: Vec<TokenInfo>) -> String {
+    let (_fixture, runtime) = runtime_fixture("capture-handler", vec![tokens]);
     let store = RequestStore::with_runtime(
         Config {
             dict_path: String::new(),
@@ -79,12 +90,7 @@ async fn kwic_html(source: &str) -> String {
     let response = Router::new()
         .merge(lingrep_web::handlers::pattern_detail::routes())
         .with_state(store)
-        .oneshot(
-            Request::builder()
-                .uri("/hit-detail/capture-handler/1/0/0")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert!(response.status().is_success());
@@ -98,6 +104,71 @@ async fn kwic_html(source: &str) -> String {
             .to_vec(),
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn retained_hit_opens_its_document_and_paragraph_with_the_occurrence_highlighted() {
+    for scope in ["paragraph", "document"] {
+        let html = detail_html(
+            "a := [text=食べる].",
+            &format!("/hit-context/capture-handler/1/0/0/{scope}"),
+        )
+        .await;
+        assert!(html.contains("<mark>食べる</mark>"), "{html}");
+        assert!(html.contains("data-reading-page"), "{html}");
+    }
+}
+
+#[tokio::test]
+async fn hit_inspector_shows_overlapping_candidates_suppressed_by_policy() {
+    let html = kwic_html("a := [text=食べる]. b := [text=食べる]. policy resolve patterns rank: [longest, start, end, pattern]. end").await;
+    assert!(html.contains("data-overlap-warning"), "{html}");
+    assert!(html.contains("<code>b</code>"), "{html}");
+    assert!(html.contains("Suppressed"), "{html}");
+    assert!(html.contains("0..1"), "{html}");
+    assert!(
+        !kwic_html("a := [text=食べる].")
+            .await
+            .contains("data-overlap-warning")
+    );
+}
+
+#[tokio::test]
+async fn pattern_detail_flags_sample_overlaps_before_policy() {
+    let html = detail_html("a := [text=食べる]. b := [text=食べる]. policy resolve patterns rank: [longest, start, end, pattern]. end", "/pattern-detail/capture-handler/1/0").await;
+    assert!(html.contains("data-overlap-warning"), "{html}");
+    assert!(html.contains("1 of 1 shown hits"), "{html}");
+    assert!(html.contains("<code>b</code>"), "{html}");
+    assert!(html.contains("class=\"overlap-marker\""), "{html}");
+}
+
+#[tokio::test]
+async fn repeated_sentence_hits_keep_their_own_overlap_spans() {
+    let source = "a := [text=食べる]. b := [text=食べる].";
+    let tokens = vec![TokenInfo::default().with_orth("食べる"); 2];
+    let html = detail_html_with_tokens(
+        source,
+        "/pattern-detail/capture-handler/1/0",
+        tokens.clone(),
+    )
+    .await;
+    assert!(html.contains("2 of 2 shown hits"), "{html}");
+    assert_eq!(
+        html.matches("class=\"overlap-marker\"").count(),
+        2,
+        "{html}"
+    );
+    for (ordinal, span) in [(0, "0..1"), (1, "1..2")] {
+        let html = detail_html_with_tokens(
+            source,
+            &format!("/hit-detail/capture-handler/1/0/{ordinal}"),
+            tokens.clone(),
+        )
+        .await;
+        assert!(html.contains("<code>b</code>"), "{html}");
+        assert!(html.contains(span), "{html}");
+        assert!(!html.contains("Suppressed"), "{html}");
+    }
 }
 
 #[tokio::test]
@@ -209,6 +280,7 @@ fn outer_capture_fragment(site: OuterCaptureSite, payload: &str) -> String {
         OuterCaptureSite::Text => capture.text = payload.into(),
     }
     HitDetailFragment {
+        overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "wb",
         revision: 1,
@@ -229,6 +301,7 @@ fn outer_capture_fragment(site: OuterCaptureSite, payload: &str) -> String {
 #[test]
 fn hit_detail_renders_typed_graph_bindings() {
     let html = HitDetailFragment {
+        overlaps: Vec::new(),
         reference_ordinal: 0,
         workbench_id: "wb",
         revision: 1,

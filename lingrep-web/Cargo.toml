@@ -14,6 +14,7 @@ description = "Browser front end over an immutable prepared corpus"
 testing = []
 
 [dependencies]
+serde_urlencoded = "0.7"
 blake3.workspace = true
 lingrep-core.workspace = true
 lingrep-corpus = { path = "../lingrep-corpus" }
@@ -24,7 +25,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["compression-br", "compression-gzip"] }
-askama = "0.12"
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std", "urlencode"] }
 serde.workspace = true
 serde_json.workspace = true
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -37,7 +38,7 @@ indexmap.workspace = true
 clap.workspace = true
 compact_str.workspace = true
 lingrep-cli-common = { path = "../lingrep-cli-common" }
-rust_xlsxwriter = "0.96.0"
+rust_xlsxwriter = "0.101"
 chrono = "0.4.45"
 flate2 = "1"
 base64 = "0.22"
@@ -47,8 +48,7 @@ proptest.workspace = true
 sha2 = "0.10"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-serde_urlencoded = "0.7"
-thirtyfour = { version = "0.34", default-features = false, features = ["reqwest"] }
+thirtyfour = { version = "0.38.1", default-features = false, features = ["reqwest", "cdp"] }
 reqwest = { version = "0.12", features = ["blocking"] }
 tempfile.workspace = true
 hegeltest.workspace = true
@@ -56,8 +56,11 @@ rmp-serde.workspace = true
 trycmd.workspace = true
 lingrep-core = { workspace = true, features = ["testing"] }
 lingrep-web = { path = ".", features = ["testing"] }
-calamine = "0.36.0"
+calamine = "0.37"
 sqlx.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator.workspace = true

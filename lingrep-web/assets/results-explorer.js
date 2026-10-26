@@ -13,6 +13,30 @@ export function parseKwicPageSize(value) {
   return KWIC_PAGE_SIZES.includes(parsed) ? parsed : DEFAULT_KWIC_PAGE_SIZE;
 }
 
+const kwicCollator = new Intl.Collator("ja");
+const kwicCharacters = new Intl.Segmenter("ja", { granularity: "grapheme" });
+
+export function sortKwicRows(rows, field, descending = false) {
+  const keyed = rows.map(row => {
+    let key = "";
+    if (field === "section") {
+      key = [...row.querySelectorAll(".kwic-section-label")]
+        .map(label => label.textContent).sort(kwicCollator.compare).join(" / ");
+    } else {
+      const selector = { match: ".kwic-key", left: ".kwic-left-text", right: ".kwic-right" }[field];
+      if (selector) key = row.querySelector(selector)?.textContent ?? "";
+      if (field === "left") key = [...kwicCharacters.segment(key)].map(part => part.segment).reverse().join("");
+    }
+    return { row, key, ordinal: Number(row.dataset.hitOrdinal) };
+  });
+  keyed.sort((a, b) => {
+    if (field === "section" && (!a.key !== !b.key)) return a.key ? -1 : 1;
+    const order = field === "original" ? a.ordinal - b.ordinal : kwicCollator.compare(a.key, b.key);
+    return (descending ? -order : order) || a.ordinal - b.ordinal;
+  });
+  return keyed.map(item => item.row);
+}
+
 export function pageProjection(rows, requestedPageIndex, pageSize) {
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const pageIndex = Math.min(
@@ -37,15 +61,19 @@ export function pageRangeLabel(
   surface = null,
   section,
   query = "",
+  occurrence = "all",
 ) {
   const range = filteredCount === 0
     ? t("detail.hits_range_zero")
     : t("detail.hits_range", { start: start + 1, end, total: filteredCount });
-  const scopes = [
+  const scopes = [];
+  if (occurrence === "standalone") scopes.push(t("detail.occurrence_scope_standalone"));
+  if (occurrence === "chained") scopes.push(t("detail.occurrence_scope_chained"));
+  scopes.push(
     surface === null
       ? t("detail.all_surfaces")
       : t("detail.surface", { name: surface }),
-  ];
+  );
   if (section !== undefined) {
     scopes.push(
       section === null
@@ -101,6 +129,13 @@ export function visibleForVariation(rowVariation, selectedVariation) {
   return selectedVariation === "all" || rowVariation === selectedVariation;
 }
 
+/** `rowInChain` is the row's `data-in-chain` text; `selected` is
+ *  `standalone`, `chained`, or `all`. */
+export function visibleForOccurrence(rowInChain, selected) {
+  if (selected === "all") return true;
+  return (rowInChain === "true") === (selected === "chained");
+}
+
 export function visibleForQuery(rowText, query = "") {
   const trimmed = query.trim();
   return trimmed === "" || searchMatches(rowText, trimmed);
@@ -128,6 +163,30 @@ export function applyFilterEmptyNote(
   note.hidden = !(
     visibleCount === 0
     && surfaceSelected !== "all"
+    && sectionSelected === "all"
+    && query.trim() === ""
+  );
+}
+
+/**
+ * The occurrence counts on the selector are corpus-exact while the rows are
+ * the retained sample, so a kind with a positive count can have no retained
+ * row. Shown only when the occurrence selection alone emptied the table.
+ */
+export function applyOccurrenceEmptyNote(
+  detail,
+  visibleCount,
+  occurrenceSelected,
+  surfaceSelected,
+  sectionSelected,
+  query = "",
+) {
+  const note = detail?.querySelector("[data-kwic-occurrence-empty]");
+  if (!note) return;
+  note.hidden = !(
+    visibleCount === 0
+    && occurrenceSelected !== "all"
+    && surfaceSelected === "all"
     && sectionSelected === "all"
     && query.trim() === ""
   );
@@ -399,6 +458,21 @@ function renderGroupedCatalog(tbody, field) {
 }
 
 const hitControllers = new WeakMap();
+const FILTER_GROUPS = {
+  surface: {
+    source: ".surface-filter", controls: ".surface-filter, [data-quick-variation]",
+    value: "variation", quickValue: "quickVariation", label: "[lang=ja]",
+  },
+  section: {
+    source: ".section-filter", controls: ".section-filter, [data-quick-section]",
+    value: "section", quickValue: "quickSection", label: ".section-label",
+  },
+  occurrence: { source: ".occurrence-filter", controls: ".occurrence-filter", value: "occurrence" },
+};
+
+function filterValue(button, group) {
+  return button.dataset[group.value] ?? button.dataset[group.quickValue];
+}
 const rowInteractiveSelector = [
   "button",
   "a",
@@ -444,81 +518,257 @@ export function isFinishedSseEvent(eventName) {
   return FINISHED_SSE_EVENTS.has(eventName);
 }
 
-// Narrow viewports mount the hit detail in an inline row directly below the
-// tapped KWIC row. The single #inspector-body element moves between mounts,
-// so htmx targeting and request bookkeeping stay mode-independent.
-function ensureInlineRow(grid) {
-  const controller = controllerFor(grid);
-  if (controller.inlineRow) return controller.inlineRow;
-  const row = document.createElement("tr");
-  row.className = "kwic-inspector-row";
-  row.hidden = true;
-  row.setAttribute("role", "row");
-  const cell = document.createElement("td");
-  cell.setAttribute("role", "gridcell");
-  cell.colSpan = grid.tHead?.rows[0]?.cells.length ?? 1;
-  const header = document.createElement("header");
-  header.className = "kwic-inspector-header";
-  const title = document.createElement("h3");
-  title.className = "kwic-inspector-title";
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "inspector-dock-close";
-  close.dataset.inspectorClose = "";
-  close.setAttribute("aria-label", "Close inspector");
-  close.textContent = "×";
-  header.append(title, close);
-  cell.append(header);
-  row.append(cell);
-  controller.inlineRow = { row, cell, title };
-  return controller.inlineRow;
-}
+class HitRequest {
+  #state = emptyHitState();
+  #committedState = emptyHitState();
+  #pendingOrdinal = null;
 
-function setInspectorTitle(controller, parts, ordinal) {
-  const label = inspectorTitle(ordinal);
-  if (parts.title) parts.title.textContent = label;
-  if (controller?.inlineRow) controller.inlineRow.title.textContent = label;
-}
+  get state() { return this.#state; }
+  get pendingOrdinal() { return this.#pendingOrdinal; }
 
-function openInspector(controller, selectedRow) {
-  const parts = inspectorDock(selectedRow);
-  if (!parts) return;
-  const ordinal = selectedRow.dataset.hitOrdinal;
-  if (window.matchMedia(WIDE_QUERY).matches) {
-    controller.inlineRow?.row.remove();
-    if (parts.body.parentElement !== parts.dock) parts.dock.append(parts.body);
-    parts.dock.hidden = false;
-    parts.explorer.classList.add("inspector-open");
-  } else {
-    parts.dock.hidden = true;
-    parts.explorer.classList.remove("inspector-open");
-    const inline = ensureInlineRow(controller.grid);
-    selectedRow.after(inline.row);
-    inline.row.hidden = false;
-    if (parts.body.parentElement !== inline.cell) inline.cell.append(parts.body);
+  transition(action) {
+    const result = transitionHitState(this.#state, action);
+    this.#state = result.state;
   }
-  setInspectorTitle(controller, parts, ordinal);
-  parts.body.setAttribute("aria-label", `${inspectorTitle(ordinal)} details`);
+
+  select(ordinal) {
+    this.transition({ type: "select", ordinal });
+    this.#pendingOrdinal = ordinal;
+  }
+
+  close() {
+    this.transition({ type: "close-inspector" });
+    this.#committedState = this.#state;
+    this.#pendingOrdinal = null;
+  }
+
+  commit(ordinal) {
+    if (ordinal !== this.#pendingOrdinal) return false;
+    this.transition({ type: "inspector-loaded", ordinal });
+    this.#committedState = this.#state;
+    this.#pendingOrdinal = null;
+    return true;
+  }
+
+  rollback(ordinal) {
+    if (ordinal !== this.#pendingOrdinal) return false;
+    this.#state = this.#committedState;
+    this.#pendingOrdinal = null;
+    return true;
+  }
+
+  showFailure(ordinal) { this.#state = { ...this.#state, selectedOrdinal: ordinal }; }
 }
 
-function closeInspector(controller) {
-  const parts = inspectorDock(controller.grid);
-  if (parts) {
-    // The body lives inside the inline mount on narrow viewports; return it
-    // to the persistent dock shell first, or removing the row would take
-    // #inspector-body out of the document and the inspector could never
-    // reopen.
-    if (parts.body.parentElement !== parts.dock) {
-      parts.dock.append(parts.body);
+class KwicProjection {
+  #grid;
+  #filters;
+  #pageIndex = 0;
+  #pageSize;
+  #filteredRows = [];
+
+  constructor(grid) {
+    this.#grid = grid;
+    this.#pageSize = grid.matches("[data-kwic-pagination]")
+      ? loadKwicPageSize()
+      : Math.max(1, grid.querySelectorAll(".kwic-row").length);
+    this.#filters = Object.fromEntries(Object.entries(FILTER_GROUPS).map(([kind, group]) => [
+      kind,
+      grid.closest(".pattern-detail")?.querySelector(`${group.source}[aria-pressed="true"]`)
+        ?.dataset[group.value] ?? "all",
+    ]));
+  }
+
+  get filters() { return this.#filters; }
+  get pageIndex() { return this.#pageIndex; }
+  get pageSize() { return this.#pageSize; }
+
+  setFilter(kind, value) {
+    this.#filters = { ...this.#filters, [kind]: value };
+    this.resetPage();
+  }
+
+  resetPage() { this.#pageIndex = 0; }
+
+  restore(filters, pageIndex) {
+    this.#filters = { ...filters };
+    this.#pageIndex = pageIndex;
+  }
+
+  changePage(action) {
+    const pageCount = Math.max(1, Math.ceil(this.#filteredRows.length / this.#pageSize));
+    const next = transitionPageState(
+      { pageIndex: this.#pageIndex, pageSize: this.#pageSize },
+      { pageCount, ...action },
+    );
+    this.#pageIndex = next.pageIndex;
+    this.#pageSize = next.pageSize;
+  }
+
+  firstRow() { return this.#filteredRows[this.#pageIndex * this.#pageSize]; }
+
+  project() {
+    const grid = this.#grid;
+    const detail = grid.closest(".pattern-detail");
+    const { surface, section, occurrence } = this.#filters;
+    const query = detail.querySelector("[data-kwic-search]")?.value.trim() ?? "";
+    const originalRows = [...detail.querySelectorAll(".kwic-row")];
+    const rows = sortKwicRows(originalRows,
+      detail.querySelector("[data-kwic-sort]")?.value ?? "original",
+      detail.querySelector("[data-kwic-sort-direction]")?.value === "descending");
+    if (rows.some((row, index) => row !== originalRows[index])) grid.tBodies[0].append(...rows);
+    this.#filteredRows = rows.filter(row => {
+      const sectionIds = (row.dataset.sectionIds ?? "").split(" ").filter(Boolean);
+      const text = query === "" ? "" : (row.querySelector(".kwic-sentence")?.textContent ?? "");
+      return visibleForVariation(row.dataset.variation, surface)
+        && visibleForSection(sectionIds, section)
+        && visibleForOccurrence(row.dataset.inChain, occurrence)
+        && visibleForQuery(text, query);
+    });
+    const page = pageProjection(this.#filteredRows, this.#pageIndex, this.#pageSize);
+    this.#pageIndex = page.pageIndex;
+    return { rows, filteredRows: this.#filteredRows, page, textQuery: query };
+  }
+}
+
+class InspectorMount {
+  #grid;
+  #inlineRow = null;
+  #committedContent = null;
+
+  constructor(grid) { this.#grid = grid; }
+
+  ensureInlineRow() {
+    if (this.#inlineRow) return this.#inlineRow;
+    const row = document.createElement("tr");
+    row.className = "kwic-inspector-row";
+    row.hidden = true;
+    row.setAttribute("role", "row");
+    const cell = document.createElement("td");
+    cell.setAttribute("role", "gridcell");
+    cell.colSpan = this.#grid.tHead?.rows[0]?.cells.length ?? 1;
+    const header = document.createElement("header");
+    header.className = "kwic-inspector-header";
+    const title = document.createElement("h3");
+    title.className = "kwic-inspector-title";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "inspector-dock-close";
+    close.dataset.inspectorClose = "";
+    close.setAttribute("aria-label", "Close inspector");
+    close.textContent = "×";
+    header.append(title, close);
+    cell.append(header);
+    row.append(cell);
+    this.#inlineRow = { row, cell, title };
+    return this.#inlineRow;
+  }
+
+  title(ordinal) {
+    const parts = inspectorDock(this.#grid);
+    if (!parts) return;
+    const label = inspectorTitle(ordinal);
+    if (parts.title) parts.title.textContent = label;
+    if (this.#inlineRow) this.#inlineRow.title.textContent = label;
+  }
+
+  open(selectedRow) {
+    const parts = inspectorDock(selectedRow);
+    if (!parts) return;
+    const ordinal = selectedRow.dataset.hitOrdinal;
+    if (window.matchMedia(WIDE_QUERY).matches) {
+      this.#inlineRow?.row.remove();
+      if (parts.body.parentElement !== parts.dock) parts.dock.append(parts.body);
+      parts.dock.hidden = false;
+      parts.explorer.classList.add("inspector-open");
+    } else {
+      parts.dock.hidden = true;
+      parts.explorer.classList.remove("inspector-open");
+      const inline = this.ensureInlineRow();
+      selectedRow.after(inline.row);
+      inline.row.hidden = false;
+      if (parts.body.parentElement !== inline.cell) inline.cell.append(parts.body);
     }
-    parts.dock.hidden = true;
-    parts.explorer.classList.remove("inspector-open");
-    parts.body.setAttribute("aria-busy", "false");
+    this.title(ordinal);
+    parts.body.setAttribute("aria-label", `${inspectorTitle(ordinal)} details`);
   }
-  controller.inlineRow?.row.remove();
+
+  close() {
+    const parts = inspectorDock(this.#grid);
+    if (parts) {
+      if (parts.body.parentElement !== parts.dock) parts.dock.append(parts.body);
+      parts.dock.hidden = true;
+      parts.explorer.classList.remove("inspector-open");
+      parts.body.setAttribute("aria-busy", "false");
+    }
+    this.#inlineRow?.row.remove();
+  }
+
+  clear() {
+    this.#committedContent = null;
+    this.close();
+  }
+
+  busy(selectedRow) {
+    const parts = inspectorDock(selectedRow);
+    if (!parts) return;
+    if (!this.#committedContent && parts.body.querySelector(".hit-detail")) {
+      this.#committedContent = document.createDocumentFragment();
+      this.#committedContent.append(...parts.body.childNodes);
+    }
+    this.open(selectedRow);
+    const loading = document.createElement("p");
+    loading.className = "inspector-loading";
+    loading.textContent = t("inspector.loading_hit");
+    parts.body.replaceChildren(loading);
+    parts.body.setAttribute("aria-busy", "true");
+    parts.body.scrollTop = 0;
+  }
+
+  commit(target) {
+    this.#committedContent = null;
+    target.setAttribute("aria-busy", "false");
+    for (const child of target.children) child.inert = false;
+  }
+
+  rollback(ordinal, failedRow) {
+    const parts = inspectorDock(this.#grid);
+    const committedRow = ordinal === null
+      ? null
+      : this.#grid.querySelector(`.kwic-row[data-hit-ordinal="${ordinal}"]`);
+    const restored = committedRow && this.#committedContent;
+    if (restored) {
+      parts.body.replaceChildren(this.#committedContent);
+      this.#committedContent = null;
+      this.title(ordinal);
+    } else {
+      const message = document.createElement("p");
+      message.className = "inline-inspector-error";
+      message.textContent = t("inspector.load_failed");
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "btn btn-secondary";
+      retry.dataset.retryHit = failedRow.dataset.hitOrdinal;
+      retry.textContent = t("inspector.retry_hit");
+      parts.body.replaceChildren(message, retry);
+      this.title(failedRow.dataset.hitOrdinal);
+    }
+    parts.body.setAttribute("aria-busy", "false");
+    return Boolean(restored);
+  }
+
+  follow(row) {
+    if (this.#inlineRow && !this.#inlineRow.row.hidden) row.after(this.#inlineRow.row);
+  }
+
+  dispose() {
+    this.#committedContent = null;
+    const parts = inspectorDock(this.#grid);
+    if (parts && parts.body.parentElement !== parts.dock) parts.dock.append(parts.body);
+    this.#inlineRow?.row.remove();
+  }
 }
 
-// Crossing the wide/narrow boundary with an open inspector re-homes it.
 function remountOpenInspectors() {
   for (const explorer of document.querySelectorAll(".results-explorer")) {
     const selectedRow = explorer.querySelector(
@@ -527,12 +777,10 @@ function remountOpenInspectors() {
     if (!selectedRow) continue;
     const grid = selectedRow.closest("[data-hit-grid]");
     const controller = grid ? hitControllers.get(grid) : null;
-    if (controller) openInspector(controller, selectedRow);
+    if (controller) controller.mount.open(selectedRow);
   }
 }
 
-// Hide any visible inspector chrome when no grid controller is available
-// (e.g. a pattern swap raced disposal).
 function hideInspectorChrome(root) {
   const parts = inspectorDock(root);
   if (!parts) return;
@@ -622,20 +870,14 @@ function controllerFor(grid) {
   if (controller) return controller;
   controller = {
     grid,
-    state: emptyHitState(),
-    committedState: emptyHitState(),
-    pendingOrdinal: null,
-    committedContent: null,
+    selection: new HitRequest(),
+    projection: new KwicProjection(grid),
+    mount: new InspectorMount(grid),
     observer: null,
     resizeObserver: null,
     nearRows: new Set(),
     measureQueue: new Set(),
     measureFrame: null,
-    pageIndex: 0,
-    pageSize: grid.matches("[data-kwic-pagination]")
-      ? loadKwicPageSize()
-      : Math.max(1, grid.querySelectorAll(".kwic-row").length),
-    filteredRows: [],
   };
   hitControllers.set(grid, controller);
   grid.closest(".pattern-detail")?.classList.add("results-enhanced");
@@ -704,7 +946,7 @@ function trackKwicHeader(root = document) {
  * run, and stacking them above the table put ~600px of them between the editor
  * and the first hit.
  */
-export const DETAIL_VIEWS = ["concordance", "sections", "clusters", "definition"];
+export const DETAIL_VIEWS = ["concordance", "sections", "clusters", "definition", "chains"];
 
 /** What the reader chose, or `null` while they have chosen nothing.
  *
@@ -793,27 +1035,6 @@ function initializeHitGrids(root = document) {
   }
 }
 
-function detachCommittedContent(controller) {
-  const parts = inspectorDock(controller.grid);
-  if (!parts || !parts.body.querySelector(".hit-detail")) return null;
-  const fragment = document.createDocumentFragment();
-  fragment.append(...parts.body.childNodes);
-  return fragment;
-}
-
-function showInspectorBusy(controller, selectedRow) {
-  controller.committedContent ??= detachCommittedContent(controller);
-  const parts = inspectorDock(selectedRow);
-  if (!parts) return;
-  openInspector(controller, selectedRow);
-  const loading = document.createElement("p");
-  loading.className = "inspector-loading";
-  loading.textContent = t("inspector.loading_hit");
-  parts.body.replaceChildren(loading);
-  parts.body.setAttribute("aria-busy", "true");
-  parts.body.scrollTop = 0;
-}
-
 function activateRow(row, { forceRequest = false } = {}) {
   if (row.closest("[inert]")) return;
   const grid = row.closest("[data-hit-grid]");
@@ -821,47 +1042,33 @@ function activateRow(row, { forceRequest = false } = {}) {
   const controller = controllerFor(grid);
   if (
     !forceRequest
-    && controller.state.selectedOrdinal === row.dataset.hitOrdinal
+    && controller.selection.state.selectedOrdinal === row.dataset.hitOrdinal
   ) {
     clearHitSelection(row.closest(".pattern-detail"));
     return;
   }
-  const transition = transitionHitState(controller.state, {
-    type: "select",
-    ordinal: row.dataset.hitOrdinal,
-  });
-  controller.state = transition.state;
-  applyHitState(grid, controller.state);
-  if (transition.requestOrdinal !== null || forceRequest) {
-    controller.pendingOrdinal = row.dataset.hitOrdinal;
-    showInspectorBusy(controller, row);
-    row.dispatchEvent(new CustomEvent("hit-select"));
-  }
+  controller.selection.select(row.dataset.hitOrdinal);
+  applyHitState(grid, controller.selection.state);
+  controller.mount.busy(row);
+  row.dispatchEvent(new CustomEvent("hit-select"));
 }
 
 function clearHitSelection(detail) {
   const grid = detail?.querySelector("[data-hit-grid]");
   if (!grid) {
-    // No KWIC grid (e.g. empty detail); still hide visible inspector chrome.
     hideInspectorChrome(detail);
     return;
   }
   const controller = controllerFor(grid);
-  if (controller.pendingOrdinal !== null) {
-    grid.querySelector(`.kwic-row[data-hit-ordinal="${controller.pendingOrdinal}"]`)
+  if (controller.selection.pendingOrdinal !== null) {
+    grid.querySelector(`.kwic-row[data-hit-ordinal="${controller.selection.pendingOrdinal}"]`)
       ?.dispatchEvent(new Event("htmx:abort"));
   }
-  controller.state = transitionHitState(controller.state, {
-    type: "close-inspector",
-  }).state;
-  controller.committedState = controller.state;
-  controller.pendingOrdinal = null;
-  applyHitState(grid, controller.state);
-  controller.committedContent = null;
-  closeInspector(controller);
+  controller.selection.close();
+  applyHitState(grid, controller.selection.state);
+  controller.mount.clear();
 }
 
-/** The pattern detail a control belongs to. */
 function detailOf(node) {
   return (
     node.closest(".pattern-detail")
@@ -869,42 +1076,28 @@ function detailOf(node) {
   );
 }
 
-function pressWithinGroup(detail, selector, button) {
-  detail.querySelectorAll(selector).forEach((item) =>
-    item.setAttribute("aria-pressed", String(item === button)));
-}
-
-function clearFilterGroup(detail, selector) {
+function setFilter(detail, kind, value) {
   if (!detail) return;
-  detail.querySelectorAll(selector).forEach((item) =>
-    item.setAttribute("aria-pressed", "false"));
-  controllerFor(detail.querySelector("[data-hit-grid]")).pageIndex = 0;
+  const controller = controllerFor(detail.querySelector("[data-hit-grid]"));
+  controller.projection.setFilter(kind, value);
   applyRowFilters(detail);
 }
 
 function applyRowFilters(detail) {
   if (!detail) return;
-  const surfaceButton = detail.querySelector('.surface-filter[aria-pressed="true"]');
-  const sectionButton = detail.querySelector('.section-filter[aria-pressed="true"]');
-  const searchInput = detail.querySelector("[data-kwic-search]");
-  const surfaceSelected = surfaceButton?.dataset.variation ?? "all";
-  const sectionSelected = sectionButton?.dataset.section ?? "all";
-  const textQuery = searchInput?.value.trim() ?? "";
-  const hasSectionDimension = detail.querySelector(".section-distribution") !== null;
   const grid = detail.querySelector("[data-hit-grid]");
   if (!grid) return;
   const controller = controllerFor(grid);
-  const rows = [...detail.querySelectorAll(".kwic-row")];
-  const filteredRows = rows.filter((row) => {
-    const sectionIds = (row.dataset.sectionIds ?? "").split(" ").filter(Boolean);
-    const sentenceText = textQuery === ""
-      ? ""
-      : (row.querySelector(".kwic-sentence")?.textContent ?? "");
-    return visibleForVariation(row.dataset.variation, surfaceSelected)
-      && visibleForSection(sectionIds, sectionSelected)
-      && visibleForQuery(sentenceText, textQuery);
-  });
-  controller.filteredRows = filteredRows;
+  const { surface: surfaceSelected, section: sectionSelected, occurrence: occurrenceSelected } = controller.projection.filters;
+  for (const [kind, group] of Object.entries(FILTER_GROUPS)) {
+    for (const button of detail.querySelectorAll(group.controls)) {
+      button.setAttribute("aria-pressed", String(filterValue(button, group) === controller.projection.filters[kind]));
+    }
+  }
+  const surfaceButton = detail.querySelector('.surface-filter[aria-pressed="true"]');
+  const sectionButton = detail.querySelector('.section-filter[aria-pressed="true"]');
+  const hasSectionDimension = detail.querySelector(".section-distribution") !== null;
+  const { rows, filteredRows, page, textQuery } = controller.projection.project();
   applyFilterEmptyNote(
     detail,
     filteredRows.length,
@@ -912,20 +1105,23 @@ function applyRowFilters(detail) {
     sectionSelected,
     textQuery,
   );
-  const page = pageProjection(
-    filteredRows,
-    controller.pageIndex,
-    controller.pageSize,
+  applyOccurrenceEmptyNote(
+    detail,
+    filteredRows.length,
+    occurrenceSelected,
+    surfaceSelected,
+    sectionSelected,
+    textQuery,
   );
-  controller.pageIndex = page.pageIndex;
   const visibleSet = new Set(page.rows);
   for (const row of rows) row.hidden = !visibleSet.has(row);
-  const selectedRow = controller.state.selectedOrdinal === null
+  const selectedRow = controller.selection.state.selectedOrdinal === null
     ? null
     : grid.querySelector(
-      `.kwic-row[data-hit-ordinal="${controller.state.selectedOrdinal}"]`,
+      `.kwic-row[data-hit-ordinal="${controller.selection.state.selectedOrdinal}"]`,
     );
   if (selectedRow && !visibleSet.has(selectedRow)) clearHitSelection(detail);
+  else if (selectedRow) controller.mount.follow(selectedRow);
   rows.forEach((row) => { row.tabIndex = -1; });
   if (page.rows[0]) page.rows[0].tabIndex = 0;
   for (const pager of detail.querySelectorAll("[data-kwic-pager]")) {
@@ -934,7 +1130,7 @@ function applyRowFilters(detail) {
       page.pageIndex + 1 >= page.pageCount;
     pager.querySelector("[data-page-status]").textContent =
       t("detail.page", { page: page.pageIndex + 1, pages: page.pageCount });
-    pager.querySelector("[data-page-size]").value = String(controller.pageSize);
+    pager.querySelector("[data-page-size]").value = String(controller.projection.pageSize);
   }
   const surfaceLabel = surfaceSelected === "all"
     ? null
@@ -953,6 +1149,7 @@ function applyRowFilters(detail) {
       surfaceLabel,
       sectionLabel,
       textQuery,
+      occurrenceSelected,
     );
   }
   const clearSurface = detail.querySelector("[data-clear-surface-filter]");
@@ -975,18 +1172,6 @@ function applyRowFilters(detail) {
     clearQuery.textContent = clearQuery.hidden
       ? t("detail.clear_query")
       : t("detail.clear_query_value", { query: textQuery });
-  }
-  for (const chip of detail.querySelectorAll("[data-quick-variation]")) {
-    chip.setAttribute(
-      "aria-pressed",
-      String(chip.dataset.quickVariation === surfaceSelected),
-    );
-  }
-  for (const chip of detail.querySelectorAll("[data-quick-section]")) {
-    chip.setAttribute(
-      "aria-pressed",
-      String(chip.dataset.quickSection === sectionSelected),
-    );
   }
   // The scope note says which population the panel is describing, and the
   // panel narrows to the selection wherever the run counted it.
@@ -1062,22 +1247,13 @@ function narrowSectionsToSurface(detail, surfaceSelected) {
   reorderRankedList(list, rankedOrder(list));
 }
 
-function applyVariationFilter(button) {
+function applyFilter(button, kind) {
   const detail = detailOf(button);
   if (!detail) return;
-  const pressed = button.getAttribute("aria-pressed") !== "true";
-  pressWithinGroup(detail, ".surface-filter", pressed ? button : null);
-  controllerFor(detail.querySelector("[data-hit-grid]")).pageIndex = 0;
-  applyRowFilters(detail);
-}
-
-function applySectionFilter(button) {
-  const detail = detailOf(button);
-  if (!detail) return;
-  const pressed = button.getAttribute("aria-pressed") !== "true";
-  pressWithinGroup(detail, ".section-filter", pressed ? button : null);
-  controllerFor(detail.querySelector("[data-hit-grid]")).pageIndex = 0;
-  applyRowFilters(detail);
+  const value = filterValue(button, FILTER_GROUPS[kind]);
+  const selected = controllerFor(detail.querySelector("[data-hit-grid]")).projection.filters[kind];
+  if (kind === "occurrence" && selected === value) return;
+  setFilter(detail, kind, kind !== "occurrence" && selected === value ? "all" : value);
 }
 
 function applyRankedList(list) {
@@ -1198,16 +1374,8 @@ function finishHitRequest(target) {
   if (!grid || !rendered) return;
   const controller = controllerFor(grid);
   const ordinal = rendered.dataset.referenceOrdinal;
-  if (ordinal !== controller.pendingOrdinal) return;
-  controller.state = transitionHitState(controller.state, {
-    type: "inspector-loaded",
-    ordinal,
-  }).state;
-  controller.committedState = controller.state;
-  controller.pendingOrdinal = null;
-  controller.committedContent = null;
-  target.setAttribute("aria-busy", "false");
-  for (const child of target.children) child.inert = false;
+  if (!controller.selection.commit(ordinal)) return;
+  controller.mount.commit(target);
   const firstMatchToken =
     rendered.querySelector(".kwic-token-ribbon .kwic-token-match")
     ?? rendered.querySelector(".kwic-token-ribbon .kwic-token");
@@ -1224,73 +1392,40 @@ function failHitRequest(row) {
   const parts = inspectorDock(row);
   if (!grid || !parts) return;
   const controller = controllerFor(grid);
-  if (row.dataset.hitOrdinal !== controller.pendingOrdinal) return;
-  controller.state = controller.committedState;
-  controller.pendingOrdinal = null;
-  applyHitState(grid, controller.state);
-  const ordinal = controller.committedState.inspectorOrdinal;
-  const committedRow = ordinal === null
-    ? null
-    : grid.querySelector(`.kwic-row[data-hit-ordinal="${ordinal}"]`);
-  if (committedRow && controller.committedContent) {
-    parts.body.replaceChildren(controller.committedContent);
-    controller.committedContent = null;
-    setInspectorTitle(controller, parts, ordinal);
-  } else {
-    const message = document.createElement("p");
-    message.className = "inline-inspector-error";
-    message.textContent = t("inspector.load_failed");
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.className = "btn btn-secondary";
-    retry.dataset.retryHit = row.dataset.hitOrdinal;
-    retry.textContent = t("inspector.retry_hit");
-    parts.body.replaceChildren(message, retry);
-    setInspectorTitle(controller, parts, row.dataset.hitOrdinal);
-    controller.state = { ...controller.state, selectedOrdinal: row.dataset.hitOrdinal };
-    applyHitState(grid, controller.state);
+  if (!controller.selection.rollback(row.dataset.hitOrdinal)) return;
+  applyHitState(grid, controller.selection.state);
+  if (!controller.mount.rollback(controller.selection.state.inspectorOrdinal, row)) {
+    controller.selection.showFailure(row.dataset.hitOrdinal);
+    applyHitState(grid, controller.selection.state);
   }
-  parts.body.setAttribute("aria-busy", "false");
 }
 
 function disposeHitGrid(grid) {
   const controller = hitControllers.get(grid);
   if (!controller) return;
-  if (controller.pendingOrdinal !== null) {
-    grid.querySelector(`.kwic-row[data-hit-ordinal="${controller.pendingOrdinal}"]`)
+  if (controller.selection.pendingOrdinal !== null) {
+    grid.querySelector(`.kwic-row[data-hit-ordinal="${controller.selection.pendingOrdinal}"]`)
       ?.dispatchEvent(new Event("htmx:abort"));
   }
   controller.observer?.disconnect();
   controller.resizeObserver?.disconnect();
   if (controller.measureFrame !== null) cancelAnimationFrame(controller.measureFrame);
-  controller.committedContent = null;
-  // Keep #inspector-body inside the persistent dock shell (see closeInspector
-  // for why), even though the whole detail is about to be replaced.
-  const parts = inspectorDock(grid);
-  if (parts && parts.body.parentElement !== parts.dock) {
-    parts.dock.append(parts.body);
-  }
-  controller.inlineRow?.row.remove();
+  controller.mount.dispose();
   hitControllers.delete(grid);
 }
 
-// Snapshot the visible UI state of the current pattern detail so switching
-// to another pattern and back restores filters, page, scroll, and selection.
 function capturePatternUi(detailBody) {
   const detail = detailBody?.querySelector(".pattern-detail[data-pattern-id]");
   if (!detail) return;
   const grid = detail.querySelector("[data-hit-grid]");
   const controller = grid ? hitControllers.get(grid) : null;
   patternUiState.set(detail.dataset.patternId, {
-    surface:
-      detail.querySelector('.surface-filter[aria-pressed="true"]')?.dataset
-        .variation ?? null,
-    section:
-      detail.querySelector('.section-filter[aria-pressed="true"]')?.dataset
-        .section ?? null,
+    filters: { ...controller?.projection.filters },
     query: detail.querySelector("[data-kwic-search]")?.value ?? "",
-    pageIndex: controller?.pageIndex ?? 0,
-    selectedOrdinal: controller?.state.selectedOrdinal ?? null,
+    sort: detail.querySelector("[data-kwic-sort]")?.value ?? "original",
+    sortDirection: detail.querySelector("[data-kwic-sort-direction]")?.value ?? "ascending",
+    pageIndex: controller?.projection.pageIndex ?? 0,
+    selectedOrdinal: controller?.selection.state.selectedOrdinal ?? null,
     scrollY: window.scrollY,
   });
 }
@@ -1300,14 +1435,6 @@ function restorePatternUi(detailBody) {
   if (!detail) return;
   const saved = patternUiState.get(detail.dataset.patternId);
   if (!saved) {
-    // First visit in this revision: bring the fresh detail into view.
-    //
-    // The panel rather than the pattern's own header, because the
-    // catalog-level bands -- the all-patterns section table and the pattern
-    // dendrogram -- sit above `#detail-body` inside it. Scrolling to the KWIC
-    // header landed exactly past them, so a run's two catalog-level answers
-    // were pushed off the top of the viewport the moment its results arrived
-    // and nobody ever saw them.
     requestAnimationFrame(() =>
       (detail.closest(".detail-panel") ?? detail.querySelector(".kwic-pane-header"))
         ?.scrollIntoView({ block: "start" }),
@@ -1317,27 +1444,13 @@ function restorePatternUi(detailBody) {
   const grid = detail.querySelector("[data-hit-grid]");
   if (!grid) return;
   const controller = controllerFor(grid);
-  pressWithinGroup(
-    detail,
-    ".surface-filter",
-    saved.surface === null
-      ? null
-      : detail.querySelector(
-          `.surface-filter[data-variation="${CSS.escape(saved.surface)}"]`,
-        ),
-  );
-  pressWithinGroup(
-    detail,
-    ".section-filter",
-    saved.section === null
-      ? null
-      : detail.querySelector(
-          `.section-filter[data-section="${CSS.escape(saved.section)}"]`,
-        ),
-  );
+  controller.projection.restore(saved.filters, saved.pageIndex);
   const searchInput = detail.querySelector("[data-kwic-search]");
   if (searchInput) searchInput.value = saved.query ?? "";
-  controller.pageIndex = saved.pageIndex;
+  const sort = detail.querySelector("[data-kwic-sort]");
+  const direction = detail.querySelector("[data-kwic-sort-direction]");
+  if (sort) sort.value = saved.sort ?? "original";
+  if (direction) direction.value = saved.sortDirection ?? "ascending";
   applyRowFilters(detail);
   requestAnimationFrame(() => window.scrollTo({ top: saved.scrollY }));
   if (saved.selectedOrdinal !== null) {
@@ -1348,6 +1461,18 @@ function restorePatternUi(detailBody) {
   }
 }
 
+function orientDendrogram(view, orientation) {
+  const svg = view.querySelector(".section-dendrogram");
+  const { width, height } = svg.dataset;
+  const vertical = orientation === "vertical";
+  svg.setAttribute("viewBox", `0 0 ${vertical ? height : width} ${vertical ? width : height}`);
+  svg.setAttribute("width", vertical ? height : width);
+  svg.setAttribute("height", vertical ? width : height);
+  const geometry = svg.querySelector("[data-dendrogram-geometry]");
+  if (vertical) geometry.setAttribute("transform", `translate(0 ${width}) rotate(-90)`);
+  else geometry.removeAttribute("transform");
+}
+
 if (typeof document !== "undefined") {
   // Locale flip: re-render the strings this module owns (pager, filter
   // status, clear-filter chips, controller-driven inspector titles).
@@ -1355,9 +1480,9 @@ if (typeof document !== "undefined") {
     for (const grid of document.querySelectorAll("[data-hit-grid]")) {
       applyRowFilters(grid.closest(".pattern-detail"));
       const controller = hitControllers.get(grid);
-      const ordinal = controller?.state?.selectedOrdinal;
+      const ordinal = controller?.selection.state?.selectedOrdinal;
       if (ordinal !== null && ordinal !== undefined) {
-        setInspectorTitle(controller, inspectorDock(grid), ordinal);
+        controller.mount.title(ordinal);
       }
     }
   });
@@ -1385,10 +1510,22 @@ if (typeof document !== "undefined") {
       hideInspectorChrome(detailBody);
       detailBody?.querySelectorAll("[data-hit-grid]").forEach((grid) => {
         const controller = hitControllers.get(grid);
-        if (controller) closeInspector(controller);
+        if (controller) controller.mount.close();
         disposeHitGrid(grid);
       });
       if (detailBody) beginDetailRequest(detailBody);
+    }
+  });
+
+  document.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.target?.matches?.(".reading-body") && event.detail.xhr?.status >= 400) {
+      event.detail.shouldSwap = true;
+    }
+  });
+
+  document.addEventListener("htmx:sendError", (event) => {
+    if (event.detail.target?.matches?.(".reading-body")) {
+      event.detail.target.textContent = t("reading.failed");
     }
   });
 
@@ -1428,7 +1565,42 @@ if (typeof document !== "undefined") {
     });
   }
 
+  document.addEventListener("change", (event) => {
+    if (event.target.matches("[data-dendrogram-orientation]")) {
+      orientDendrogram(event.target.closest("[data-dendrogram-view]"), event.target.value);
+    }
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    for (const button of document.querySelectorAll("[data-dendrogram-fullscreen]")) {
+      button.setAttribute("aria-pressed", String(
+        document.fullscreenElement === button.closest("[data-dendrogram-view]"),
+      ));
+    }
+  });
+
   document.addEventListener("click", (event) => {
+    const fullscreen = event.target.closest("[data-dendrogram-fullscreen]");
+    if (fullscreen) {
+      const view = fullscreen.closest("[data-dendrogram-view]");
+      const status = view.querySelector("[data-dendrogram-status]");
+      status.textContent = "";
+      (async () => {
+        try {
+          if (document.fullscreenElement === view) await document.exitFullscreen();
+          else await view.requestFullscreen();
+        } catch (_error) {
+          status.textContent = t("results.cluster_fullscreen_unavailable");
+        }
+      })();
+      return;
+    }
+    const reading = event.target.closest("[data-reading-open]");
+    if (reading) {
+      const dialog = reading.closest(".hit-detail")?.querySelector(".reading-dialog");
+      if (dialog && !dialog.open) dialog.showModal();
+      return;
+    }
     const tab = event.target.closest("[data-detail-tab]");
     if (tab) {
       selectDetailView(tab.dataset.detailTab);
@@ -1521,21 +1693,10 @@ if (typeof document !== "undefined") {
       const grid = detail?.querySelector("[data-hit-grid]");
       if (!detail || !grid) return;
       const controller = controllerFor(grid);
-      const pageCount = Math.max(
-        1,
-        Math.ceil(controller.filteredRows.length / controller.pageSize),
-      );
-      const action = pageButton.matches("[data-page-next]")
-        ? "next"
-        : "previous";
-      Object.assign(
-        controller,
-        transitionPageState(controller, { type: action, pageCount }),
-      );
+      const action = pageButton.matches("[data-page-next]") ? "next" : "previous";
+      controller.projection.changePage({ type: action });
       applyRowFilters(detail);
-      controller.filteredRows[
-        controller.pageIndex * controller.pageSize
-      ]?.focus();
+      controller.projection.firstRow()?.focus();
       return;
     }
 
@@ -1578,23 +1739,23 @@ if (typeof document !== "undefined") {
       const row = expansion.closest(".kwic-row");
       const grid = row.closest("[data-hit-grid]");
       const controller = controllerFor(grid);
-      controller.state = transitionHitState(controller.state, {
+      controller.selection.transition({
         type: "toggle-expansion",
         ordinal: row.dataset.hitOrdinal,
-      }).state;
-      applyHitState(grid, controller.state);
+      });
+      applyHitState(grid, controller.selection.state);
       expansion.focus();
       return;
     }
 
     const clearSurface = event.target.closest("[data-clear-surface-filter]");
     if (clearSurface) {
-      clearFilterGroup(detailOf(clearSurface), ".surface-filter");
+      setFilter(detailOf(clearSurface), "surface", "all");
       return;
     }
     const clearSection = event.target.closest("[data-clear-section-filter]");
     if (clearSection) {
-      clearFilterGroup(clearSection.closest(".pattern-detail"), ".section-filter");
+      setFilter(detailOf(clearSection), "section", "all");
       return;
     }
     const clearKwicSearch = event.target.closest("[data-clear-kwic-search]");
@@ -1603,7 +1764,7 @@ if (typeof document !== "undefined") {
       const input = detail?.querySelector("[data-kwic-search]");
       if (input) input.value = "";
       const grid = detail?.querySelector("[data-hit-grid]");
-      if (grid) controllerFor(grid).pageIndex = 0;
+      if (grid) controllerFor(grid).projection.resetPage();
       applyRowFilters(detail);
       input?.focus();
       return;
@@ -1621,35 +1782,21 @@ if (typeof document !== "undefined") {
         if (opening && !drawer.querySelector(".kwic-quick-chips")) {
           const wrap = document.createElement("div");
           wrap.className = "kwic-quick-chips";
-          if (kind === "surface") {
-            for (const btn of detail.querySelectorAll(".surface-filter")) {
-              const chip = document.createElement("button");
-              chip.type = "button";
-              chip.className = "kwic-quick-chip";
-              chip.dataset.quickVariation = btn.dataset.variation;
-              chip.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") ?? "false");
-              const label = document.createElement("span");
-              label.lang = "ja";
-              label.textContent = btn.querySelector("[lang=ja]")?.textContent ?? "";
-              const count = document.createElement("small");
-              count.textContent = btn.querySelector(".ranked-count")?.textContent ?? "";
-              chip.append(label, " ", count);
-              wrap.append(chip);
-            }
-          } else {
-            for (const btn of detail.querySelectorAll(".section-filter")) {
-              const chip = document.createElement("button");
-              chip.type = "button";
-              chip.className = "kwic-quick-chip";
-              chip.dataset.quickSection = btn.dataset.section;
-              chip.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") ?? "false");
-              const label = document.createElement("span");
-              label.textContent = btn.querySelector(".section-label")?.textContent ?? "";
-              const count = document.createElement("small");
-              count.textContent = btn.querySelector(".ranked-count")?.textContent ?? "";
-              chip.append(label, " ", count);
-              wrap.append(chip);
-            }
+          const group = FILTER_GROUPS[kind];
+          const selected = controllerFor(detail.querySelector("[data-hit-grid]")).projection.filters[kind];
+          for (const button of detail.querySelectorAll(group.source)) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "kwic-quick-chip";
+            chip.dataset[group.quickValue] = button.dataset[group.value];
+            chip.setAttribute("aria-pressed", String(button.dataset[group.value] === selected));
+            const label = document.createElement("span");
+            if (kind === "surface") label.lang = "ja";
+            label.textContent = button.querySelector(group.label)?.textContent ?? "";
+            const count = document.createElement("small");
+            count.textContent = button.querySelector(".ranked-count")?.textContent ?? "";
+            chip.append(label, " ", count);
+            wrap.append(chip);
           }
           drawer.replaceChildren(wrap);
         }
@@ -1665,30 +1812,13 @@ if (typeof document !== "undefined") {
       return;
     }
 
-    const quickVariation = event.target.closest("[data-quick-variation]");
-    if (quickVariation) {
-      const detail = detailOf(quickVariation);
-      const target = detail?.querySelector(
-        `.surface-filter[data-variation="${CSS.escape(quickVariation.dataset.quickVariation)}"]`,
-      );
-      if (target) applyVariationFilter(target);
-      return;
+    for (const [kind, group] of Object.entries(FILTER_GROUPS)) {
+      const button = event.target.closest(group.controls);
+      if (button) {
+        applyFilter(button, kind);
+        return;
+      }
     }
-
-    const quickSection = event.target.closest("[data-quick-section]");
-    if (quickSection) {
-      const detail = detailOf(quickSection);
-      const target = detail?.querySelector(
-        `.section-filter[data-section="${CSS.escape(quickSection.dataset.quickSection)}"]`,
-      );
-      if (target) applySectionFilter(target);
-      return;
-    }
-
-    const filter = event.target.closest(".surface-filter");
-    if (filter) applyVariationFilter(filter);
-    const sectionFilter = event.target.closest(".section-filter");
-    if (sectionFilter) applySectionFilter(sectionFilter);
     const rankedToggle = event.target.closest("[data-ranked-toggle]");
     if (rankedToggle) {
       const list = rankedToggle.closest("[data-ranked-list]");
@@ -1734,13 +1864,19 @@ if (typeof document !== "undefined") {
       const detail = detailOf(event.target);
       const grid = detail?.querySelector("[data-hit-grid]");
       if (detail && grid) {
-        controllerFor(grid).pageIndex = 0;
+        controllerFor(grid).projection.resetPage();
         applyRowFilters(detail);
       }
     }
   });
 
   document.addEventListener("change", (event) => {
+    if (event.target.matches("[data-kwic-sort], [data-kwic-sort-direction]")) {
+      const detail = detailOf(event.target);
+      const grid = detail?.querySelector("[data-hit-grid]");
+      if (grid) { controllerFor(grid).projection.resetPage(); applyRowFilters(detail); }
+      return;
+    }
     if (event.target.matches("[data-ranked-order]")) {
       sortRankedList(event.target);
       return;
@@ -1751,19 +1887,14 @@ if (typeof document !== "undefined") {
       if (!detail || !grid) return;
       const controller = controllerFor(grid);
       const pageSize = parseKwicPageSize(event.target.value);
-      Object.assign(
-        controller,
-        transitionPageState(controller, {
-          type: "page-size",
-          value: pageSize,
-        }),
-      );
+      controller.projection.changePage({ type: "page-size", value: pageSize });
       saveKwicPageSize(pageSize);
       applyRowFilters(detail);
     }
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.target.closest?.("[data-site-help]")) return;
     const token = event.target.closest?.(".kwic-token");
     if (token && (event.key === "ArrowRight" || event.key === "ArrowLeft" || event.key === "Home" || event.key === "End")) {
       const ribbon = token.closest(".kwic-token-ribbon");
@@ -1808,12 +1939,12 @@ if (typeof document !== "undefined") {
         event.preventDefault();
         const grid = row.closest("[data-hit-grid]");
         const controller = controllerFor(grid);
-        controller.state = transitionHitState(controller.state, {
+        controller.selection.transition({
           type: "escape",
           ordinal: row.dataset.hitOrdinal,
           focusedOnExpansion: true,
-        }).state;
-        applyHitState(grid, controller.state);
+        });
+        applyHitState(grid, controller.selection.state);
         expansion.focus();
         return;
       }
@@ -1826,12 +1957,12 @@ if (typeof document !== "undefined") {
       if (event.key === "Escape") {
         const grid = row.closest("[data-hit-grid]");
         const controller = controllerFor(grid);
-        controller.state = transitionHitState(controller.state, {
+        controller.selection.transition({
           type: "escape",
           ordinal: row.dataset.hitOrdinal,
           focusedOnExpansion: false,
-        }).state;
-        applyHitState(grid, controller.state);
+        });
+        applyHitState(grid, controller.selection.state);
         clearHitSelection(row.closest(".pattern-detail"));
         return;
       }

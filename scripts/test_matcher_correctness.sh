@@ -12,11 +12,11 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$repo_root"
 
 echo "▶ matcher correctness gate"
-cargo test -p lingrep-core --lib fsm::compiler::oracle --quiet
-cargo test -p lingrep-core --test suite -- matcher_contract:: --quiet
-cargo test -p lingrep-core --test suite -- span_equality_test:: --quiet
-cargo test -p lingrep-core --test suite -- pattern_compiler_contract:: --quiet
-cargo test -p lingrep-core --test suite -- matcher_property_tests:: --quiet
-cargo test -p lingrep-core --test suite -- named_groups_test:: --quiet
-cargo test -p lingrep-core --test suite -- fsm_kernel_characterization:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --lib fsm::compiler::oracle --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- matcher_contract:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- span_equality_test:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- pattern_compiler_contract:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- matcher_property_tests:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- named_groups_test:: --quiet
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test suite -- fsm_kernel_characterization:: --quiet
 echo "✓ matcher correctness gate passed"

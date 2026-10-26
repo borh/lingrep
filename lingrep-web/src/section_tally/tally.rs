@@ -7,9 +7,8 @@ use crate::section_tally::span_events::{SpanEvents, SpanStreamError};
 use crate::section_tally::surface::{SurfaceSections, SurfaceTally, SurfaceTallyBuilder};
 use crate::snapshot::PatternKey;
 
-/// Bytes this feature may retain per workbench. Multiplied by
-/// `DEFAULT_MAX_ENTRIES = 256`, so 64 KB is 16 MB across a full registry.
-pub const RETAINED_CEILING_BYTES: usize = 65_536;
+/// Maximum retained matrix bytes per workbench; registry size bounds the aggregate.
+pub const RETAINED_CEILING_BYTES: usize = 256 * 1024;
 
 /// A column of the count table. Explicit rather than positional, so `None`
 /// cannot be mistaken for a label slot by a consumer reading an index.
@@ -702,7 +701,7 @@ mod tests {
 
     #[test]
     fn a_vocabulary_past_the_ceiling_is_refused_on_label_count() {
-        let labels = (0..200)
+        let labels = (0..400)
             .map(|index| format!("s{index:03}"))
             .collect::<Vec<_>>();
         let refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
@@ -711,10 +710,7 @@ mod tests {
 
     #[test]
     fn a_vocabulary_past_the_ceiling_is_refused_on_label_bytes_alone() {
-        // Two labels and one pattern: admitted on count many times over, and
-        // refused on size alone. 40_000 bytes — the figure the plan carried —
-        // would have fitted: the ceiling is 65_536.
-        let long = "x".repeat(70_000);
+        let long = "x".repeat(RETAINED_CEILING_BYTES + 1);
         assert!(
             SectionTallyBuilder::fits(&coverage(&["short", "methods"]), 1),
             "the same shape with short labels is admitted"
@@ -732,12 +728,12 @@ mod tests {
     #[test]
     fn a_refused_vocabulary_never_starts_the_stream() {
         let started = std::cell::Cell::new(false);
-        let long = "x".repeat(70_000);
+        let long = "x".repeat(RETAINED_CEILING_BYTES + 1);
         let refusal = admit(&coverage(&[&long]), 1, || {
             started.set(true);
             SpanEvents::from_events(vec![])
         })
-        .expect_err("70_000 label bytes exceed the 65_536 ceiling");
+        .expect_err("label bytes exceed the retained ceiling");
         assert_eq!(
             refusal,
             SectionRefusal {
@@ -798,10 +794,35 @@ mod tests {
     }
 
     #[test]
+    fn section_counts_cover_296_patterns_and_26_labels() {
+        let labels = (0..26)
+            .map(|index| format!("section-{index}"))
+            .collect::<Vec<_>>();
+        let vocabulary = coverage(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+        let events = (0..26)
+            .map(|slot| SpanEvent {
+                slot,
+                first: 0,
+                end: 1,
+            })
+            .collect();
+        let mut builder = build(&vocabulary, 296, SpanEvents::from_events(events))
+            .expect("ordinary section matrix fits");
+        builder.observe(0, &[key(0), key(295)], &[]).unwrap();
+        let result = builder.finish().unwrap();
+        for slot in 0..26 {
+            assert_eq!(result.universe(slot), 1);
+            assert_eq!(result.count(key(0), slot), 1);
+            assert_eq!(result.count(key(295), slot), 1);
+            assert_eq!(result.count(key(1), slot), 0);
+        }
+        assert_eq!(result.count(key(0), 26), 0);
+    }
+
+    #[test]
     fn retained_bytes_is_checked_at_its_boundary() {
-        // 100 patterns, S slots, B = 32·L: 872·S + 96 ≤ 65_536 admits S = 75.
-        let at = retained_bytes(100, 75, 32 * 74).expect("no overflow");
-        let past = retained_bytes(100, 76, 32 * 75).expect("no overflow");
+        let at = retained_bytes(100, 300, 32 * 299).expect("no overflow");
+        let past = retained_bytes(100, 301, 32 * 300).expect("no overflow");
         assert!(at <= RETAINED_CEILING_BYTES, "{at} must fit");
         assert!(past > RETAINED_CEILING_BYTES, "{past} must not");
         // Overflow is a refusal, not a wrap that admits.

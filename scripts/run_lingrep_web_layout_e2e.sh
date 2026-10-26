@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
 if ! command -v chromium >/dev/null || ! command -v chromedriver >/dev/null; then
-    echo "SKIP: Chromium or Chromedriver is unavailable"
-    exit 0
+    echo "browser checks require chromium and chromedriver" >&2
+    exit 2
 fi
 
 layout_log="$(mktemp)"
-TMPDIR=/tmp chromedriver --port=9516 --log-path="$layout_log" &
+TMPDIR="${TMPDIR:-/tmp}" chromedriver --port=9516 --log-path="$layout_log" &
 driver_pid=$!
 cleanup() {
     kill "$driver_pid" 2>/dev/null || true
@@ -30,6 +33,5 @@ if [ "$driver_ready" != true ]; then
 fi
 
 export LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL="http://127.0.0.1:9516"
-cargo test -p lingrep-web --test browser -- layout_e2e_test:: --test-threads=1 --nocapture
-cargo test -p lingrep-web --test browser -- query_library_e2e_test:: --test-threads=1 --nocapture
-cargo test -p lingrep-web --test browser -- corpus_context_e2e_test:: --test-threads=1 --nocapture
+export LINGREP_WEB_LAYOUT_REQUIRE_DRIVER=1
+"$repo_root/scripts/cargo-test-selected.py" -p lingrep-web --test browser -- --test-threads=1 --nocapture

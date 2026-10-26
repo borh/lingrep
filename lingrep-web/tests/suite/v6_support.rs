@@ -47,6 +47,13 @@ pub fn corrupt_first_token_block(path: &Path) {
 }
 
 pub fn build_artifact(documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>) -> ArtifactFixture {
+    build_artifact_with_sections(documents, Vec::new())
+}
+
+pub fn build_artifact_with_sections(
+    documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>,
+    sections: Vec<Vec<String>>,
+) -> ArtifactFixture {
     let documents = documents
         .into_iter()
         .map(|(name, group, external, sentences)| (name.to_owned(), group, external, sentences))
@@ -123,6 +130,7 @@ pub fn build_artifact(documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>) ->
                     for (local_ordinal, tokens) in sentences.iter().enumerate() {
                         let location = builder
                             .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                                annotations: Box::new([]),
                                 structure: Default::default(),
                                 id: lingrep_core::corpus::SentenceId::new(sentence_ordinal),
                                 document_id: DocumentId::new(source.ordinal),
@@ -130,7 +138,11 @@ pub fn build_artifact(documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>) ->
                                 text: String::new(),
                                 words: None,
                                 enhanced_graph: None,
-                                active_labels: Box::new([]),
+                                active_labels: sections
+                                    .get(sentence_ordinal as usize)
+                                    .cloned()
+                                    .unwrap_or_default()
+                                    .into_boxed_slice(),
                                 metadata: Box::new([]),
                             }))
                             .await
@@ -207,7 +219,7 @@ pub fn default_slot(runtime: Arc<CorpusRuntime>) -> CorpusSlot {
     CorpusSlot::new(CorpusName::default_key(), runtime, "test-corpus".into())
 }
 
-fn discovery_report(documents: &[SourceDocument]) -> DiscoveryReport {
+pub(crate) fn discovery_report(documents: &[SourceDocument]) -> DiscoveryReport {
     let mut groups = HashMap::<u64, u64>::new();
     let mut external_targets = 0_u64;
     let mut digest = blake3::Hasher::new();
@@ -235,5 +247,34 @@ fn discovery_report(documents: &[SourceDocument]) -> DiscoveryReport {
             index_bytes: 0,
         },
         ordered_inventory_digest: *digest.finalize().as_bytes(),
+    }
+}
+
+pub trait RevisionTestExt {
+    fn accept_next_revision(
+        &self,
+        workbench: lingrep_web::revision::WorkbenchId,
+        slot: &lingrep_web::corpus_set::CorpusSlot,
+        source: String,
+    ) -> impl std::future::Future<Output = lingrep_web::revision::RevisionId> + Send;
+}
+
+impl RevisionTestExt for lingrep_web::coordinator::CoordinatorRegistry {
+    async fn accept_next_revision(
+        &self,
+        workbench: lingrep_web::revision::WorkbenchId,
+        slot: &lingrep_web::corpus_set::CorpusSlot,
+        source: String,
+    ) -> lingrep_web::revision::RevisionId {
+        self.accept_revision(
+            workbench,
+            slot,
+            lingrep_web::coordinator::RevisionRequest {
+                source,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("test revision admission")
     }
 }

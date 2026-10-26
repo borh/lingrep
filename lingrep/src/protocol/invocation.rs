@@ -10,7 +10,6 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             "matches",
             "summarize",
             "tokenize",
-            "sentence-final",
             "corpus build",
             "corpus inventory",
         ],

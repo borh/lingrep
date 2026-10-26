@@ -14,8 +14,8 @@ use rayon::ThreadPoolBuilder;
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
 use super::query_projection::token_evidence;
-use super::query_resolution::{QueryScope, ResolvedMatchingQuery, resolve_matching_query};
-use super::query_scope::{build_scope_report, parse_scope};
+use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
+use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
     random_id,
@@ -37,9 +37,6 @@ use crate::protocol::query::{
     MatchData, MatchOrder, ProtocolKeyField, PublishedProjection, QueryComplete, QueryEnvelope,
     QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters, SourceSpan, SpanConvention,
     TagField, TemporaryStorageLimits, Termination,
-};
-use crate::section_diagnostics::{
-    warn_read_time_excluded, warn_self_label_no_ops, warn_unused_labels,
 };
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
@@ -133,7 +130,19 @@ pub fn run(
         return Err(CliError::InvalidArgs("--retain requires --json".into()));
     }
     let context = resolve_match_context(output, args.context);
-    let limit = resolve_match_limit(output, args.limit);
+    let limit = if args.ending_report.is_some() {
+        None
+    } else {
+        resolve_match_limit(output, args.limit)
+    };
+    if let Some(path) = &args.ending_report
+        && path.try_exists()?
+    {
+        return Err(CliError::InvalidArgs(format!(
+            "ending report already exists: {}",
+            path.display()
+        )));
+    }
     let sink_output = match format {
         MatchFormat::Jsonl => MatchSinkOutput::Jsonl,
         MatchFormat::Tsv => MatchSinkOutput::Tsv,
@@ -192,39 +201,13 @@ pub fn run(
     // one is a usage error rather than a run that reads a corpus and then
     // fails.
     let scope_clause = parse_scope(args.selection.clause.as_deref())?;
-    // Resolved before anything is read: an unusable rate must not surface
-    // after a corpus has been scanned.
-    let sample = args.sample.resolve().map_err(CliError::InvalidArgs)?;
-    if args.sample.blocks && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--sample-blocks requires --json so the run declares its correlated sample unit".into(),
-        ));
-    }
-    if sample.is_some() && args.cache.cache {
-        // `--cache` publishes an artifact, and an artifact built from a sample
-        // is a corpus of a fraction of the sentences wearing the identity of
-        // the whole. Every later run against it would be silently sampled with
-        // no record saying so.
-        return Err(CliError::InvalidArgs(
-            "--sample cannot be combined with --cache: the artifact would name a \
-             fraction of the corpus as the whole of it. Sample a direct run, or \
-             build the artifact first and sample the query against it."
-                .to_owned(),
-        ));
-    }
-    if sample.is_some() && args.tsv {
-        // `lingrep.matches-tsv/v1` is headerless rows and nothing else, so a
-        // sampled run would publish a fraction of the matches with nowhere to
-        // say the fraction — and a consumer counting rows would read an
-        // estimate as a census. The same argument as `summarize --tsv`.
-        return Err(CliError::InvalidArgs(
-            "--sample cannot be combined with --tsv: `lingrep.matches-tsv/v1` \
-             has no run record, so a sampled run would publish a fraction of \
-             the matches as if it were all of them. Use JSONL, whose `run` \
-             record declares the sample."
-                .to_owned(),
-        ));
-    }
+    let sample = super::query_support::resolve_query_sample(
+        &args.sample,
+        args.cache.cache,
+        args.tsv,
+        output,
+        QueryMode::Matches,
+    )?;
 
     // Before query execution: direct execution is the default; `--cache`
     // observes ROOT, then reuses or creates a compatible artifact beside it.
@@ -237,7 +220,7 @@ pub fn run(
         &mut io::stderr(),
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
-    let char_offsets_available = output == OutputMode::Jsonl;
+    let char_offsets_available = output != OutputMode::Tsv;
     // Built here rather than at its use site so a prepared source can borrow it
     // for deferred completion. Matching a partition finishes before that
     // partition's completion begins, both on the one consumer thread, so the
@@ -264,7 +247,21 @@ pub fn run(
     // `cached_run_attributes` always includes. Requiring a UniDic-specific
     // raw-text field here would make an otherwise portable catalog impossible
     // to bind to Sudachi or an external analyzer.
-    let projected_attributes = cached_run_attributes(&compiled.matcher);
+    let mut projected_attributes = cached_run_attributes(&compiled.matcher);
+    if output == OutputMode::Human {
+        projected_attributes.push(
+            lingrep_core::token_match::AttributeKey::new("conllu.misc")
+                .expect("conllu.misc is a canonical attribute"),
+        );
+        projected_attributes.sort_unstable();
+        projected_attributes.dedup();
+    }
+    if args.ending_report.is_some() {
+        projected_attributes
+            .push(lingrep_core::token_match::AttributeKey::new("upos").expect("canonical key"));
+        projected_attributes.sort_unstable();
+        projected_attributes.dedup();
+    }
     let published_projection = PublishedProjection::new(&projected_attributes);
     let ResolvedMatchingQuery {
         source,
@@ -273,14 +270,7 @@ pub fn run(
         analysis,
         bound,
         run: run_facts,
-        scope:
-            QueryScope {
-                scope_observation,
-                prepared_scope,
-                section_labels,
-                markdown_diagnostics,
-                read_time_policy,
-            },
+        scope,
     } = resolve_matching_query(
         &args.input,
         selected_corpus,
@@ -293,28 +283,20 @@ pub fn run(
         char_offsets_available,
         metadata_projection.clone(),
         sample.filter(|_| args.sample.blocks),
-        limit.is_none() && sample.is_none() && scope_clause.is_none(),
+        args.ending_report.is_none()
+            && limit.is_none()
+            && sample.is_none()
+            && scope_clause.is_none(),
     )?;
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
     let run_id = random_id();
-    // Checkable without reading input, so it is reported before the run rather
-    // than beside its results.
-    warn_self_label_no_ops(
+    scope.warn_before_run(
+        scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
         config.diagnostic_format,
         &run_id,
     )?;
-    if let Some(clause) = scope_clause.as_ref() {
-        if let Some(policy) = read_time_policy.as_ref() {
-            warn_read_time_excluded(clause, policy, config.diagnostic_format, &run_id)?;
-        }
-        // A prepared artifact's label set is complete here. A Markdown stream's
-        // is not — its sink is read after the run, below.
-        if markdown_diagnostics.is_none() {
-            warn_unused_labels(clause, &section_labels, config.diagnostic_format, &run_id)?;
-        }
-    }
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
         run_id: run_id.clone(),
         mode: QueryMode::Matches,
@@ -396,11 +378,16 @@ pub fn run(
             limit,
             projection: published_projection.clone(),
             char_offsets: char_offsets_available,
+            conllu_spacing: bound.projection().ordinal_key("conllu.misc").is_some(),
             offsets_omitted: 0,
             sequence: 0,
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            endings: args
+                .ending_report
+                .as_ref()
+                .map(|_| super::ending_report::EndingReport::default()),
             retention: args
                 .retain
                 .map(|capacity| MatchRetention::new(capacity, args.retain_seed)),
@@ -467,7 +454,8 @@ pub fn run(
             &mut progress,
             &mut observer,
             publication,
-            prepared_scope
+            scope
+                .prepared_scope
                 .as_ref()
                 .map_or(&SentenceAdmission::All, |resolved| &resolved.admission),
         )?;
@@ -492,7 +480,7 @@ pub fn run(
             ));
         }
         // Per statement, in authored order, named by the text the researcher
-        // wrote. Shared with `summarize` and `sentence-final`, which publish
+        // wrote. Shared with `summarize`, which publishes
         // through the same block and had no way to say what it did.
         if reporting_policy {
             crate::policy_report::write_per_statement(
@@ -516,25 +504,11 @@ pub fn run(
         }
         presentation_progress.finish().map_err(CliError::Io)?;
         let limited = limit.is_some_and(|limit| sink.emitted == limit);
-        // A Markdown stream only knows which labels it saw once it has finished
-        // reading, so the unused-label report waits for the sink. On a limited
-        // run this reports what the *prefix* observed, which is the honest
-        // answer to "did this run see the label you named".
-        if let (Some(clause), Some(diagnostics)) =
-            (scope_clause.as_ref(), markdown_diagnostics.as_ref())
-        {
-            warn_unused_labels(
-                clause,
-                &diagnostics.observed_labels(),
-                config.diagnostic_format,
-                &run_id,
-            )?;
-        }
-        let scope_report = build_scope_report(
+        let scope_report = scope.report_after_run(
             scope_clause.as_ref(),
-            prepared_scope.as_ref(),
-            &scope_observation,
             limited,
+            config.diagnostic_format,
+            &run_id,
         )?;
         let coverage = if limited {
             Coverage::Prefix
@@ -561,6 +535,7 @@ pub fn run(
             ValidatedCompletion::Cancelled => return Ok(CommandOutcome::Cancelled),
             ValidatedCompletion::Publish(completed) => completed,
         };
+        let ending_corpus = complete_corpus.clone();
         if format == MatchFormat::Jsonl {
             let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
                 0,
@@ -621,6 +596,10 @@ pub fn run(
                 })),
             )?;
         }
+        sink.writer.flush()?;
+        if let (Some(path), Some(endings)) = (&args.ending_report, &sink.endings) {
+            endings.write(path, &run, &ending_corpus, scope_report.as_ref())?;
+        }
         Ok(CommandOutcome::Success)
     })();
     post_run.map_err(|error| error.with_run_id(run_id, None))
@@ -630,6 +609,36 @@ enum MatchSinkOutput {
     Jsonl,
     Tsv,
     Human(HumanRenderer),
+}
+
+fn human_tokens(
+    sentence: &dyn lingrep_core::token_match::TokenSequence,
+    span: std::ops::Range<usize>,
+    location: &lingrep_core::execution::SentenceLocation,
+    conllu_spacing: bool,
+) -> Result<Vec<String>, crate::direct_source::MissingRequiredAttribute> {
+    use lingrep_core::token_match::{AttributeKey, AttributeValueRef};
+    let mut tokens = matched_orth_tokens(sentence, span.clone(), location)?;
+    let boundaries = tokens.len().saturating_sub(1);
+    let misc = AttributeKey::new("conllu.misc").expect("conllu.misc is canonical");
+    for (offset, token) in tokens.iter_mut().take(boundaries).enumerate() {
+        let index = span.start + offset;
+        let spaced = match (sentence.char_span(index), sentence.char_span(index + 1)) {
+            (Some(left), Some(right)) => left.end < right.start,
+            _ => {
+                conllu_spacing
+                    && !matches!(
+                        sentence.value_key(index, &misc),
+                        Some(AttributeValueRef::StringSet(values))
+                            if values.iter().any(|value| value == "SpaceAfter=No")
+                    )
+            }
+        };
+        if spaced {
+            token.push(' ');
+        }
+    }
+    Ok(tokens)
 }
 
 /// A token span's code-point range, or `None` when the sentence cannot place
@@ -665,6 +674,7 @@ struct DirectMatchSink<'a, W> {
     /// never had any: only the first is worth counting, and counting the second
     /// would report every record of a Markdown run as an omission.
     char_offsets: bool,
+    conllu_spacing: bool,
     offsets_omitted: u64,
     last_committed: Option<CommittedPrefix>,
     /// Reused serialization scratch for the JSONL record stream.
@@ -672,6 +682,7 @@ struct DirectMatchSink<'a, W> {
     /// One buffer for the whole run rather than one allocation per record;
     /// see [`crate::protocol::write_jsonl_buffered`].
     scratch: Vec<u8>,
+    endings: Option<super::ending_report::EndingReport>,
     retention: Option<MatchRetention>,
 }
 
@@ -952,11 +963,16 @@ impl<W: Write> DirectMatchSink<'_, W> {
                         .map_err(execution_output_io)?;
                     }
                     let row = HumanKwicRow {
-                        left: matched_orth_tokens(sentence, left.clone(), location)
+                        left: human_tokens(sentence, left.clone(), location, self.conllu_spacing)
                             .map_err(ExecutionError::from)?,
-                        keyword: matched_orth_tokens(sentence, record.start..record.end, location)
-                            .map_err(ExecutionError::from)?,
-                        right: matched_orth_tokens(sentence, right.clone(), location)
+                        keyword: human_tokens(
+                            sentence,
+                            record.start..record.end,
+                            location,
+                            self.conllu_spacing,
+                        )
+                        .map_err(ExecutionError::from)?,
+                        right: human_tokens(sentence, right.clone(), location, self.conllu_spacing)
                             .map_err(ExecutionError::from)?,
                     };
                     renderer
@@ -998,6 +1014,9 @@ impl<W: Write> MatchSink for DirectMatchSink<'_, W> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         matches: &[Match],
     ) -> Result<SinkControl, ExecutionError> {
+        if let Some(endings) = &mut self.endings {
+            endings.observe(location, sentence, matches)?;
+        }
         self.publish(location, sentence, matches.iter().map(RecordView::raw))
     }
 
@@ -1007,6 +1026,14 @@ impl<W: Write> MatchSink for DirectMatchSink<'_, W> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: Vec<PublishedRecord>,
     ) -> Result<SinkControl, ExecutionError> {
+        if let Some(endings) = &mut self.endings {
+            let matches = records
+                .iter()
+                .cloned()
+                .map(PublishedRecord::into_match)
+                .collect::<Vec<_>>();
+            endings.observe(location, sentence, &matches)?;
+        }
         self.publish(
             location,
             sentence,
@@ -1100,11 +1127,13 @@ mod tests {
             limit: None,
             projection: PublishedProjection::everything(),
             char_offsets: false,
+            conllu_spacing: false,
             offsets_omitted: 0,
             sequence: 0,
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            endings: None,
             retention: None,
         }
     }

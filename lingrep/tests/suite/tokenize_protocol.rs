@@ -40,6 +40,107 @@ fn sentence_events(bytes: &[u8]) -> Vec<Value> {
 }
 
 #[test]
+fn tokenize_limits_whole_sentences_and_reports_prefix_coverage() {
+    let directory = TempDir::new().unwrap();
+    let dictionary = MiniDictionary::new();
+    let text = "猫。\n犬。\n鳥。\n";
+    let plain = directory.path().join("sentences.txt");
+    let markdown = directory.path().join("sentences.md");
+    let artifact = directory.path().join("sentences.lingcorpus");
+    std::fs::write(&plain, text).unwrap();
+    std::fs::write(&markdown, text).unwrap();
+    lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&plain)
+        .assert()
+        .success();
+
+    for (name, path) in [
+        ("plain", plain.as_path()),
+        ("markdown", markdown.as_path()),
+        ("stdin", std::path::Path::new("-")),
+        ("prepared", artifact.as_path()),
+    ] {
+        let run = |limit: &str| {
+            let mut command = lingrep();
+            command.args(["tokenize", "--json", "--limit", limit]);
+            if name == "prepared" {
+                command.arg("--corpus").arg(path);
+            } else {
+                command.arg("--dict-path").arg(dictionary.path()).arg(path);
+                if name == "stdin" {
+                    command.write_stdin(text);
+                }
+            }
+            command.output().unwrap()
+        };
+        let unlimited = run("all");
+        assert!(unlimited.status.success(), "{name}");
+        validate_tokenize_jsonl(&unlimited.stdout).unwrap();
+        let all_sentences = sentence_events(&unlimited.stdout);
+        assert_eq!(all_sentences.len(), 3, "{name}");
+        for (limit, expected, coverage, termination) in [
+            ("2", 2, "prefix", "result_limit"),
+            ("3", 3, "prefix", "result_limit"),
+            ("4", 3, "full", "eof"),
+        ] {
+            let output = run(limit);
+            assert!(
+                output.status.success(),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            validate_tokenize_jsonl(&output.stdout).unwrap();
+            let mut actual = sentence_events(&output.stdout);
+            let mut expected_sentences = all_sentences[..expected].to_vec();
+            if name == "stdin" {
+                for event in actual.iter_mut().chain(&mut expected_sentences) {
+                    event["data"].as_object_mut().unwrap().remove("stream_id");
+                }
+            }
+            assert_eq!(actual, expected_sentences, "{name}, limit {limit}");
+            let events = parse_jsonl(&output.stdout);
+            let complete = &events.last().unwrap()["data"];
+            assert_eq!(complete["coverage"], coverage, "{name}, limit {limit}");
+            assert_eq!(
+                complete["termination"], termination,
+                "{name}, limit {limit}"
+            );
+            assert_eq!(complete["sentences_emitted"], expected, "{name}");
+        }
+    }
+}
+
+#[test]
+fn human_tokenize_defaults_to_one_hundred_sentences_and_all_removes_the_cap() {
+    let directory = TempDir::new().unwrap();
+    let dictionary = MiniDictionary::new();
+    let corpus = directory.path().join("sentences.txt");
+    std::fs::write(&corpus, "猫。\n".repeat(101)).unwrap();
+    for (extra, expected) in [(vec![], 100), (vec!["--limit", "all"], 101)] {
+        let output = lingrep()
+            .args(["tokenize", "--dict-path"])
+            .arg(dictionary.path())
+            .args(extra)
+            .arg(&corpus)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("sentence "))
+                .count(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn tokenize_tsv_process_smoke_emits_escaped_fixed_rows() {
     let dictionary = MiniDictionary::new();
     let directory = TempDir::new().unwrap();

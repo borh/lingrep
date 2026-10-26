@@ -37,7 +37,7 @@ use super::metadata::{BccwjBuildNotes, BccwjMetadata, Sampling, Subcorpus};
 use super::xml::parse_entry;
 use crate::corpus::TraversalLimits;
 use crate::corpus::structured::{CorpusEvent, metadata_from_json};
-use crate::corpus::zip::{ZipFileStat, zip_entry_names, zip_file_stat_from_metadata};
+use crate::corpus::zip::{ZipFileStat, zip_entries, zip_file_stat_from_metadata};
 
 /// The `DOC/` context tables, byte-sorted (the order they enter the
 /// inventory digest).
@@ -325,8 +325,8 @@ impl BccwEvents {
     ///
     /// # Errors
     ///
-    /// A zip that does not parse as a zip container (naming nothing — the
-    /// seam supplies the path in its per-file error wrapping).
+    /// An unreadable ZIP container, undecodable entry names, or duplicate
+    /// decoded entry names.
     pub fn new(
         file: File,
         entry: &BccwjZip,
@@ -342,27 +342,7 @@ impl BccwEvents {
                 format!("bccwj zip {zip_name}: {err}"),
             )
         })?;
-        let entries: Vec<(String, usize)> = zip_entry_names(&zip)
-            .into_iter()
-            .map(|name| {
-                let index = zip
-                    .index_for_name(&name)
-                    .expect("the name came from this archive");
-                (name, index)
-            })
-            .collect();
-        // Sorted by construction, and unique because `ZipArchive` keys its
-        // entries in an `IndexMap<Box<str>, _>` — an archive carrying one
-        // name twice is collapsed to one entry before this sees it, so a
-        // duplicate cannot reach `index_for_name` and emit one document
-        // under two ordinals. Asserted rather than checked: there is no
-        // input that reaches the false branch.
-        debug_assert!(
-            entries
-                .windows(2)
-                .all(|pair| pair[0].0.as_bytes() < pair[1].0.as_bytes()),
-            "entry names are unique and byte-sorted"
-        );
+        let entries = zip_entries(&zip)?;
         Ok(Self {
             zip,
             entries,

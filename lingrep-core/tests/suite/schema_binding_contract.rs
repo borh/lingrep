@@ -701,3 +701,78 @@ fn the_scalar_only_operators_still_refuse_a_set_schema_key() {
         assert!(error.to_string().contains("scalar"), "{source}: {error}");
     }
 }
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn set_intersection_results_are_independent_of_authored_operand_order(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let mut values = tc
+        .draw(g::vecs(g::integers::<u64>()).min_size(2).max_size(12))
+        .into_iter()
+        .map(|n| format!("v{n}"))
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    let target = values[tc.draw(g::integers::<usize>().max_value(values.len() - 1))].clone();
+    let target = if tc.draw(g::booleans()) {
+        target
+    } else {
+        format!("absent{}", tc.draw(g::integers::<u64>()))
+    };
+    let intersects = values.contains(&target);
+    let mut authored = values.clone();
+    authored.reverse();
+    let schema =
+        TokenSchema::new([SchemaAttribute::new("feat.Number", AttributeKind::StringSet).unwrap()])
+            .unwrap();
+    for operator in ["has any", "not has any"] {
+        let canonical = format!(
+            "p := (?<item> [feat.Number {operator} {{{}}}]).",
+            values.join(",")
+        );
+        let compiled = compile_catalog(
+            PatternSource::named("probe", &canonical),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let bound = compiled.bind(&schema).unwrap();
+        let words = BoundTokenSentence::from_projected_attribute_values(
+            bound.projection(),
+            1,
+            vec![ProjectedAttributeValue::string_set([target.clone()])],
+        )
+        .unwrap();
+        let expected = bound.find_matches(&words).unwrap();
+        assert_eq!(
+            expected.len(),
+            usize::from(if operator == "has any" {
+                intersects
+            } else {
+                !intersects
+            })
+        );
+        for source in [
+            format!(
+                "p := (?<item> [feat.Number {operator} {{{}}}]).",
+                authored.join(",")
+            ),
+            format!(
+                "set S := {{{}}}. p := (?<item> [feat.Number {operator} @S]).",
+                authored.join(",")
+            ),
+        ] {
+            let compiled = compile_catalog(
+                PatternSource::named("probe", &source),
+                CompileLimits::default(),
+            )
+            .unwrap()
+            .matcher;
+            let bound = compiled.bind(&schema).unwrap();
+            assert_eq!(
+                bound.find_matches(&words).unwrap(),
+                expected,
+                "{source}, actual={target}"
+            );
+        }
+    }
+}

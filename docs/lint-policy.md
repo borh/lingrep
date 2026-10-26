@@ -8,15 +8,8 @@ test allowances and thresholds. Test, benchmark and example files outside inline
 
 ## The `deny` set is not a panic-free guarantee
 
-These lints are `deny`, so a bare `cargo clippy` fails on them without CI's
-`-D warnings`:
-
-- `string_slice`
-- `panic`, `panic_in_result_fn`, `unreachable`, `unimplemented`, `todo`,
-  `exit`, `unchecked_time_subtraction`
-- `unwrap_used`
-- the `pedantic` group, minus the allow-list in `Cargo.toml`
-- the pedantic lints listed individually as `deny` in `Cargo.toml`
+The `deny` entries in [Cargo.toml](../Cargo.toml) fail a bare `cargo clippy`,
+independently of CI's `-D warnings`.
 
 A production site that must trip one of them carries a reasoned `#[expect]`
 stating the invariant.
@@ -62,14 +55,14 @@ machine-applicable suggestions, then `cargo fmt` and the affected tests) and
 delete its `allow` line in the same commit. Do not delete a policy override
 because it measures clean.
 
-Lints are checked on the toolchain `rust-toolchain.toml` pins; an entry for a
-lint that toolchain does not recognize fails as `unknown_lints`.
+Lints are checked on the toolchain pinned in `rust-toolchain.toml`. An entry for
+a lint that this toolchain does not recognize fails as `unknown_lints`.
 
 ## No `warn` level in `Cargo.toml`
 
 With CI's `-D warnings`, a `warn` entry behaves as `deny` in CI but not locally.
-`Cargo.toml` therefore lists each lint as `deny` or `allow` only. A commit that
-elevates a lint fixes its sites and sets `deny` in the same commit.
+`Cargo.toml` therefore lists each lint as `deny` or `allow` only. To change a lint
+to `deny`, fix its sites and change its level in the same commit.
 
 ## Test-target exemption
 
@@ -81,8 +74,8 @@ Each file there that trips a deny lint starts with a combined
 `#![allow(clippy::string_slice, clippy::panic, …, clippy::unwrap_used)]`. Only
 files that trip a lint carry it. If a change adds a bare `.unwrap()`, `panic!`,
 `unreachable!` or `&s[a..b]` to a test, benchmark or example file without the
-header, CI fails; add the header, copying a sibling file, or use a
-non-panicking form. `.expect("msg")` requires no header.
+header, CI fails. Add allowances for the triggered lints to the file header, or
+use a non-panicking form. `.expect("msg")` requires no header.
 
 ## Lints absent from `Cargo.toml`
 

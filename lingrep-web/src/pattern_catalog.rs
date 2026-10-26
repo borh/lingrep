@@ -1,6 +1,35 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::snapshot::{PatternDescriptor, PatternMetadataValue};
+use crate::snapshot::{CompletedSnapshot, PatternDescriptor, PatternMetadataValue, PatternOrigin};
+
+/// Scanned sentences with at least one published match, over every scanned
+/// sentence. Omitted oversized sentences are in neither figure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentenceCoverage {
+    pub matched: u64,
+    pub scanned: u64,
+    pub matched_label: String,
+    pub scanned_label: String,
+    /// `matched / scanned` in percent with one decimal.
+    pub percent_label: String,
+}
+
+/// `None` before any sentence was scanned.
+pub fn sentence_coverage(snapshot: &CompletedSnapshot) -> Option<SentenceCoverage> {
+    let scanned = snapshot.observed_sentences;
+    if scanned == 0 {
+        return None;
+    }
+    let matched = snapshot.matched_sentences.min(scanned);
+    let tenths = matched * 1000 / scanned;
+    Some(SentenceCoverage {
+        matched,
+        scanned,
+        matched_label: crate::templates::format_count(matched),
+        scanned_label: crate::templates::format_count(scanned),
+        percent_label: format!("{}.{}", tenths / 10, tenths % 10),
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupingField {
@@ -16,6 +45,14 @@ pub struct MetadataGroup {
     pub label: String,
 }
 
+/// The authored pattern most of a compound's occurrences coincide with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoincidenceBadge {
+    pub pattern_name: String,
+    pub coincident: u64,
+    pub total: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogPattern {
     pub pattern_key: usize,
@@ -24,6 +61,27 @@ pub struct CatalogPattern {
     pub exact_total: u64,
     pub groups: Box<[MetadataGroup]>,
     pub auto_load: bool,
+    pub coincident: Option<CoincidenceBadge>,
+}
+
+fn coincidence_badge(
+    patterns: &[PatternDescriptor],
+    pattern: &PatternDescriptor,
+) -> Option<CoincidenceBadge> {
+    let PatternOrigin::Compound { coincident, .. } = &pattern.origin else {
+        return None;
+    };
+    let (authored, count) = coincident.first()?;
+    let name = patterns
+        .get(authored.index())
+        .filter(|candidate| candidate.key == *authored)?
+        .name
+        .clone();
+    Some(CoincidenceBadge {
+        pattern_name: name,
+        coincident: *count,
+        total: pattern.exact_total,
+    })
 }
 
 pub struct PatternCatalogProjection {
@@ -150,6 +208,7 @@ pub fn project_pattern_catalog(patterns: &[PatternDescriptor]) -> PatternCatalog
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             auto_load: false,
+            coincident: coincidence_badge(patterns, pattern),
         })
         .collect::<Vec<_>>();
     projected.sort_by(|a, b| {
@@ -170,7 +229,7 @@ pub fn project_pattern_catalog(patterns: &[PatternDescriptor]) -> PatternCatalog
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::PatternKey;
+    use crate::snapshot::{PatternKey, PatternOrigin};
     fn pattern(index: usize, name: &str, total: u64, category: Option<&str>) -> PatternDescriptor {
         PatternDescriptor {
             key: PatternKey::new(index).unwrap(),
@@ -185,8 +244,48 @@ mod tests {
                     .into_boxed_slice()
                 })
                 .unwrap_or_default(),
+            origin: PatternOrigin::Authored { chained_total: 0 },
         }
     }
+    #[test]
+    fn a_compound_is_badged_with_its_most_coincident_authored_pattern() {
+        let mut compound = pattern(2, "複合項目〔こと ＋ できる〕", 412, None);
+        compound.origin = PatternOrigin::Compound {
+            components: Box::from([PatternKey::new(0).unwrap(), PatternKey::new(1).unwrap()]),
+            coincident: Box::from([
+                (PatternKey::new(3).unwrap(), 400),
+                (PatternKey::new(0).unwrap(), 12),
+            ]),
+        };
+        let projection = project_pattern_catalog(&[
+            pattern(0, "こと", 500, None),
+            pattern(1, "できる", 450, None),
+            compound,
+            pattern(3, "ことができる", 400, None),
+        ]);
+        let badges = projection
+            .patterns
+            .iter()
+            .map(|pattern| (pattern.name.as_str(), pattern.coincident.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            badges,
+            vec![
+                ("こと", None),
+                ("できる", None),
+                (
+                    "複合項目〔こと ＋ できる〕",
+                    Some(CoincidenceBadge {
+                        pattern_name: "ことができる".into(),
+                        coincident: 400,
+                        total: 412,
+                    })
+                ),
+                ("ことができる", None),
+            ]
+        );
+    }
+
     #[test]
     fn orders_by_frequency_and_projects_candidates() {
         let projection = project_pattern_catalog(&[
@@ -249,6 +348,7 @@ mod tests {
                 ),
             ]
             .into_boxed_slice(),
+            origin: PatternOrigin::Authored { chained_total: 0 },
         };
         let projection = project_pattern_catalog(&[
             with_both(0, "S1", 2),
@@ -281,6 +381,57 @@ mod tests {
             }),
             "{:?}",
             projection.patterns
+        );
+    }
+
+    fn coverage_snapshot(matched: u64, scanned: u64) -> CompletedSnapshot {
+        CompletedSnapshot {
+            search_scope: Default::default(),
+            excluded_sentences: 0,
+            revision: crate::revision::RevisionId(1),
+            corpus_identity: crate::corpus_runtime::CorpusIdentity::new(""),
+            source: "".into(),
+            derive_compounds: false,
+            compound_category: crate::snapshot::CompoundCategory::Compound,
+            patterns: Box::default(),
+            match_refs: Box::default(),
+            capture_catalog: Box::default(),
+            sections: crate::section_tally::SectionAvailability::Available(
+                crate::section_tally::SectionTally::unlabelled(),
+            ),
+            observed_sentences: scanned,
+            matched_sentences: matched,
+            documents: None,
+            sentences_matched: scanned,
+            oversized_omissions: None,
+        }
+    }
+
+    #[test]
+    fn coverage_is_absent_before_any_sentence_and_truncates_to_tenths() {
+        assert!(sentence_coverage(&coverage_snapshot(0, 0)).is_none());
+        let third = sentence_coverage(&coverage_snapshot(1, 3)).unwrap();
+        assert_eq!(
+            (third.matched, third.scanned, third.percent_label.as_str()),
+            (1, 3, "33.3")
+        );
+        assert_eq!(
+            sentence_coverage(&coverage_snapshot(2, 3))
+                .unwrap()
+                .percent_label,
+            "66.6"
+        );
+        assert_eq!(
+            sentence_coverage(&coverage_snapshot(0, 7))
+                .unwrap()
+                .percent_label,
+            "0.0"
+        );
+        assert_eq!(
+            sentence_coverage(&coverage_snapshot(7, 7))
+                .unwrap()
+                .percent_label,
+            "100.0"
         );
     }
 }

@@ -83,12 +83,17 @@ pub(crate) fn protocol_traversal_limits_from_report(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn token_schema_mismatch(
     analyzer: &lingrep_corpus::AnalyzerRecord,
     recorded: &[u8; 32],
 ) -> Option<String> {
     let current = *analyzer.declared_token_schema()?.digest().as_bytes();
-    if *recorded == current {
+    token_schema_digest_mismatch(recorded, &current)
+}
+
+fn token_schema_digest_mismatch(recorded: &[u8; 32], current: &[u8; 32]) -> Option<String> {
+    if recorded == current {
         return None;
     }
     Some(format!(
@@ -103,9 +108,31 @@ pub(crate) fn token_schema_mismatch(
 
 pub(crate) fn write_token_schema_notice(
     analyzer: &lingrep_corpus::AnalyzerRecord,
-    recorded: &[u8; 32],
+    inputs: &lingrep_corpus::AnalysisInputs,
 ) -> Result<(), CliError> {
-    let Some(message) = token_schema_mismatch(analyzer, recorded) else {
+    let mut expected = analyzer.declared_token_schema();
+    let normalization = match analyzer.normalization.as_str() {
+        "none" => Some(lingrep_core::analysis::NormalizationPolicy::None),
+        "nfc" => Some(lingrep_core::analysis::NormalizationPolicy::Nfc),
+        _ => None,
+    };
+    if let Some(normalization) = normalization {
+        let is_tei = [
+            lingrep_core::corpus::CorpusReadConfig::Tei,
+            lingrep_core::corpus::CorpusReadConfig::SoranohaTei,
+        ]
+        .iter()
+        .any(|reader| {
+            lingrep_corpus::ReaderIdentity::derive(reader, normalization) == inputs.reader()
+        });
+        if is_tei {
+            expected = expected
+                .and_then(|schema| lingrep_core::corpus::tei::annotated_schema(&schema).ok());
+        }
+    }
+    let Some(message) = expected.and_then(|schema| {
+        token_schema_digest_mismatch(inputs.token_schema().as_bytes(), schema.digest().as_bytes())
+    }) else {
         return Ok(());
     };
     writeln!(
@@ -136,4 +163,48 @@ pub(crate) fn write_binding_notice(
 
 pub(crate) fn random_id() -> String {
     format!("{:032x}", random::<u128>())
+}
+
+pub(crate) fn resolve_query_sample(
+    sample_args: &crate::cli::SampleArgs,
+    cache: bool,
+    tsv: bool,
+    output: crate::presentation::OutputMode,
+    mode: crate::protocol::query::QueryMode,
+) -> Result<Option<lingrep_core::execution::CorpusSample>, CliError> {
+    use crate::presentation::OutputMode;
+    use crate::protocol::query::QueryMode;
+    let sample = sample_args.resolve().map_err(CliError::InvalidArgs)?;
+    if sample_args.blocks && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "--sample-blocks requires --json so the run declares its correlated sample unit".into(),
+        ));
+    }
+    if sample.is_some() && cache {
+        return Err(CliError::InvalidArgs(
+            "--sample cannot be combined with --cache: the artifact would name a \
+             fraction of the corpus as the whole of it. Sample a direct run, or \
+             build the artifact first and sample the query against it."
+                .to_owned(),
+        ));
+    }
+    if sample.is_some() && tsv {
+        let message = match mode {
+            QueryMode::Matches => {
+                "--sample cannot be combined with --tsv: `lingrep.matches-tsv/v1` \
+             has no run record, so a sampled run would publish a fraction of \
+             the matches as if it were all of them. Use JSONL, whose `run` \
+             record declares the sample."
+                    .to_owned()
+            }
+            QueryMode::Summarize => {
+                "--sample cannot be combined with --tsv: `lingrep.summarize-tsv/v1` \
+             has no run record, so a sampled count would be published as if it \
+             were a census. Use JSONL, whose `run` record declares the sample."
+                    .to_owned()
+            }
+        };
+        return Err(CliError::InvalidArgs(message));
+    }
+    Ok(sample)
 }

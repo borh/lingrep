@@ -7,17 +7,24 @@
     "labels": [
       "adverb"
     ],
-    "sentences": [
-      "彼はおよそ三時間待った。",
-      "彼は一層慎重になった。",
-      "結果はかなり良かった。",
-      "相当な負担だった。",
-      "静かな部屋だった。",
-      "朝、結果を確認した。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "彼はおよそ三時間待った。",
+          "彼は一層慎重になった。",
+          "結果はかなり良かった。",
+          "相当な負担だった。",
+          "静かな部屋だった。",
+          "朝、結果を確認した。"
+        ]
+      }
     ],
     "oracle_query": "adverb := [unidic.pos1=副詞].\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens):\n        if token.pos1 == \"副詞\":\n            yield index, index + 1, \"adverb\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 2,
         "end_char": 5,
@@ -25,6 +32,7 @@
         "label": "adverb"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 2,
         "end_char": 4,
@@ -32,6 +40,7 @@
         "label": "adverb"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 2,
         "start_char": 3,
         "end_char": 6,
@@ -48,18 +57,25 @@
     "labels": [
       "ga_marked_subject"
     ],
-    "sentences": [
-      "猫と猫が眠っている。",
-      "犬を見た犬が吠えた。",
-      "申し込みが始まった。",
-      "取り扱いが難しい。",
-      "研究者が研究を続けた。",
-      "副委員長が説明した。",
-      "鳥を見ながら歩いた。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "猫と猫が眠っている。",
+          "犬を見た犬が吠えた。",
+          "申し込みが始まった。",
+          "取り扱いが難しい。",
+          "研究者が研究を続けた。",
+          "副委員長が説明した。",
+          "鳥を見ながら歩いた。"
+        ]
+      }
     ],
     "oracle_query": "ga_marked_subject := [unidic.pos1=名詞 & unidic.pos2=普通名詞] followed_by([text=が]).\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if token.pos1 == \"名詞\" and token.pos2 == \"普通名詞\" and tokens[index + 1].surface == \"が\":\n            yield index, index + 1, \"ga_marked_subject\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 2,
         "end_char": 3,
@@ -67,6 +83,7 @@
         "label": "ga_marked_subject"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 4,
         "end_char": 5,
@@ -74,6 +91,7 @@
         "label": "ga_marked_subject"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 2,
         "start_char": 0,
         "end_char": 4,
@@ -81,6 +99,7 @@
         "label": "ga_marked_subject"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 3,
         "start_char": 0,
         "end_char": 4,
@@ -97,14 +116,21 @@
     "labels": [
       "obligation_predicate"
     ],
-    "sentences": [
-      "申請書を提出しなければならない。",
-      "今すぐ帰らなければなりません。",
-      "許可を得る必要がある。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "申請書を提出しなければならない。",
+          "今すぐ帰らなければなりません。",
+          "許可を得る必要がある。"
+        ]
+      }
     ],
     "oracle_query": "obligation_predicate := [upos=VERB] []* [text=なけれ] [text=ば] [lemma=成る] [upos=AUX]+.\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens):\n        if (\n            token.pos1 == \"動詞\"\n            and index + 3 < len(tokens)\n            and tokens[index + 1].surface == \"なけれ\"\n            and tokens[index + 2].surface == \"ば\"\n            and tokens[index + 3].lemma == \"成る\"\n        ):\n            end = auxiliary_run(tokens, index + 4)\n            if end > index + 4:\n                yield predicate_start(tokens, index), end, \"obligation_predicate\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 4,
         "end_char": 15,
@@ -112,6 +138,7 @@
         "label": "obligation_predicate"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 3,
         "end_char": 14,
@@ -129,14 +156,21 @@
       "nominalizer",
       "explanatory_no"
     ],
-    "sentences": [
-      "料理を作るのは楽しい。",
-      "遅れたのです。",
-      "兄の車を借りた。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "料理を作るのは楽しい。",
+          "遅れたのです。",
+          "兄の車を借りた。"
+        ]
+      }
     ],
     "oracle_query": "nominalizer := [text=の & unidic.pos2=準体助詞] followed_by([text in {は, が, を, も, か}]).\nexplanatory_no := [text=の & unidic.pos2=準体助詞] followed_by([unidic.pos1=助動詞]).\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if token.surface == \"の\" and token.pos2 == \"準体助詞\":\n            if tokens[index + 1].pos1 == \"助詞\":\n                yield index, index + 1, \"nominalizer\"\n            elif tokens[index + 1].pos1 == \"助動詞\":\n                yield index, index + 1, \"explanatory_no\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 5,
         "end_char": 6,
@@ -144,6 +178,7 @@
         "label": "nominalizer"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 3,
         "end_char": 4,
@@ -160,16 +195,23 @@
     "labels": [
       "passive_predicate"
     ],
-    "sentences": [
-      "計画は委員会で承認された。",
-      "彼は先生に褒められた。",
-      "委員会が計画を承認した。",
-      "窓が突然割れた。",
-      "目覚ましのおかげで、私は今朝六時に起きられた。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "計画は委員会で承認された。",
+          "彼は先生に褒められた。",
+          "委員会が計画を承認した。",
+          "窓が突然割れた。",
+          "目覚ましのおかげで、私は今朝六時に起きられた。"
+        ]
+      }
     ],
     "oracle_query": "lexicon passive_predicate by [text] := {\"承認された\", \"褒められた\", \"斬られた\", \"奪われた\", \"投げられた\", \"遭わされる\", \"取られぬ\", \"接収された\", \"追いやられてしまった\", \"返還される\"}.\n",
+    "oracle_mecab": "POTENTIAL = {\"起きる\"}\n\n\ndef select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if (\n            token.pos1 == \"動詞\"\n            and token.lemma not in POTENTIAL\n            and tokens[index + 1].ctype == \"助動詞-レル\"\n        ):\n            yield predicate_start(tokens, index), auxiliary_run(tokens, index + 1), \"passive_predicate\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 7,
         "end_char": 12,
@@ -177,6 +219,7 @@
         "label": "passive_predicate"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 5,
         "end_char": 10,
@@ -195,16 +238,23 @@
       "possibility",
       "strong_inference"
     ],
-    "sentences": [
-      "明日は晴れるだろう。",
-      "結果は同じかもしれない。",
-      "彼は来るに違いない。",
-      "彼が来るだろうと私は考えた。",
-      "報告書を提出した。"
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "明日は晴れるだろう。",
+          "結果は同じかもしれない。",
+          "彼は来るに違いない。",
+          "彼が来るだろうと私は考えた。",
+          "報告書を提出した。"
+        ]
+      }
     ],
     "oracle_query": "conjecture := [text=だろう] followed_by([upos=PUNCT] $).\npossibility := [text=か] [text=も] [text=しれ] [text=ない] followed_by([upos=PUNCT] $).\nstrong_inference := [text=に] [text=違い] [text=ない] followed_by([upos=PUNCT] $).\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens):\n        surfaces = [token.surface for token in tokens[index:index + 4]]\n        if token.surface == \"だろう\" and sentence_final(tokens, index):\n            yield index, index + 1, \"conjecture\"\n        if surfaces == [\"か\", \"も\", \"しれ\", \"ない\"] and sentence_final(tokens, index + 3):\n            yield index, index + 4, \"possibility\"\n        if surfaces[:3] == [\"に\", \"違い\", \"ない\"] and sentence_final(tokens, index + 2):\n            yield index, index + 3, \"strong_inference\"\n",
     "targets": [
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 0,
         "start_char": 6,
         "end_char": 9,
@@ -212,6 +262,7 @@
         "label": "conjecture"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 1,
         "start_char": 5,
         "end_char": 11,
@@ -219,6 +270,7 @@
         "label": "possibility"
       },
       {
+        "eval_document_id": "doc-001",
         "sentence_ordinal": 2,
         "start_char": 4,
         "end_char": 9,
@@ -227,15 +279,21 @@
       }
     ],
     "driver": {
-      "sentences": [
-        "雨になるだろう。",
-        "彼は来るかもしれないと述べた。",
-        "成功するに違いない！",
-        "たぶん彼も来るだろう。",
-        "中止かもしれない。"
+      "documents": [
+        {
+          "eval_document_id": "hidden-001",
+          "sentences": [
+            "雨になるだろう。",
+            "彼は来るかもしれないと述べた。",
+            "成功するに違いない！",
+            "たぶん彼も来るだろう。",
+            "中止かもしれない。"
+          ]
+        }
       ],
       "targets": [
         {
+          "eval_document_id": "hidden-001",
           "sentence_ordinal": 0,
           "start_char": 4,
           "end_char": 7,
@@ -243,6 +301,7 @@
           "label": "conjecture"
         },
         {
+          "eval_document_id": "hidden-001",
           "sentence_ordinal": 2,
           "start_char": 4,
           "end_char": 9,
@@ -250,6 +309,7 @@
           "label": "strong_inference"
         },
         {
+          "eval_document_id": "hidden-001",
           "sentence_ordinal": 3,
           "start_char": 7,
           "end_char": 10,
@@ -257,6 +317,7 @@
           "label": "conjecture"
         },
         {
+          "eval_document_id": "hidden-001",
           "sentence_ordinal": 4,
           "start_char": 2,
           "end_char": 8,

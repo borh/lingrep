@@ -64,34 +64,48 @@ export LINGREP_DICTIONARY_PATH="$dict_root/share/vibrato/unidic-cwj-202512.dic"
 Direct corpus commands require a dictionary. Prepared `.lingcorpus` artifacts
 already contain analyzed tokens and reject a dictionary override.
 
-## Run the GiNZA command line on a ROCm GPU
+## Run the GiNZA command line on a GPU
 
-`python/spacy-adapter/bin/ginza-gpu rocm <ginza arguments>` runs the stock
-GiNZA command line on an AMD GPU with the `rocm` extra and produces the same
-output as the CPU build. The `lingrep-spacy-adapter` adapter does not require
-the launcher, because it initializes Torch, CuPy, and spaCy in the order the
-ROCm wheels require. The `cuda` extra is declared but untested with this
-launcher.
+`python/spacy-adapter/bin/ginza-gpu <rocm|cuda> <ginza arguments>` runs the
+stock GiNZA command line on an AMD or NVIDIA GPU. Both backends have been
+verified against CPU output. The `lingrep-spacy-adapter` adapter initializes
+the GPU libraries itself and does not require this launcher.
 
-1. Sync the `rocm` extra into its own environment. It pins a different Torch
-   build from the `cpu` extra, so the two cannot share `.venv`:
+1. Select `rocm` for AMD or `cuda` for NVIDIA and sync its extra into a
+   separate environment. The GPU and CPU extras select different Torch builds
+   and cannot be installed together:
 
    ```bash
-   UV_PROJECT_ENVIRONMENT=/path/to/venv-rocm \
+   backend=rocm
+   gpu_env=/path/to/venv-gpu
+   UV_PROJECT_ENVIRONMENT="$gpu_env" \
      uv sync --project python/spacy-adapter --frozen \
-     --extra rocm --extra spacy --extra ginza
+     --extra "$backend" --extra spacy --extra ginza
    ```
 
-2. Run the launcher inside `nix develop`, which puts `hipcc` on `PATH` for
-   CuPy's kernel compilation, and select the device with GiNZA's `-g` flag:
+2. Run the launcher inside `nix develop`, which supplies `hipcc` for ROCm
+   kernel compilation, and select the device with GiNZA's `-g` flag:
+
+   For CUDA on NixOS, include the installed NVIDIA driver in the library
+   search path before running the launcher:
 
    ```bash
-   nix develop -c /path/to/venv-rocm/bin/python \
-     python/spacy-adapter/bin/ginza-gpu rocm \
+   export LD_LIBRARY_PATH=/run/opengl-driver/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+   ```
+
+   ```bash
+   nix develop -c "$gpu_env/bin/python" \
+     python/spacy-adapter/bin/ginza-gpu "$backend" \
      -g 0 -d -c print -f conllu sentences.txt > sentences.conllu
    ```
 
-Two failures have a known cause. `ValueError: Cannot use GPU, CuPy is not
+`LINGREP_SPACY_RUN_CUDA=1 scripts/check-spacy-adapter.sh full` compares the
+launcher's complete CoNLL-U output with CPU execution on a Japanese fixture.
+For ROCm, set `LINGREP_SPACY_RUN_ROCM=1` and
+`LINGREP_SPACY_GINZA_MODEL=ja_ginza`; that lane also checks the Rust-owned
+adapter's CPU/GPU parity.
+
+Two ROCm failures have a known cause. `ValueError: Cannot use GPU, CuPy is not
 installed` means CuPy was imported before Torch: the ROCm CuPy wheel loads its
 HIP runtime from libraries bundled with the Torch wheel, and thinc probes CuPy
 once at import time, so plain `ginza -g 0` fails. spaCy error E050 (`You need to install "ja-ginza"`) with `ja-ginza`
@@ -150,15 +164,3 @@ or ChromeDriver is not on `PATH`, so run it inside `nix develop`.
 Read [PERFORMANCE_REQUIREMENTS.md](PERFORMANCE_REQUIREMENTS.md) before changing
 a performance-sensitive path. It specifies the measurement tiers, targets, and
 campaign workflow.
-
-## Reclaim disk space
-
-Cargo and Nix build outputs can be large. Inspect before deleting:
-
-```bash
-du -sh target result 2>/dev/null
-nix path-info -Sh .#lingrep
-```
-
-`target/` is rebuildable Cargo output. `result` is normally a symlink created
-by `nix build`; removing that symlink does not delete its Nix store target.

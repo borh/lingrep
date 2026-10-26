@@ -1,0 +1,36 @@
+<article class="hit-detail" data-reference-ordinal="{{ reference_ordinal }}">
+  <div class="hit-reading-controls">
+    <button type="button" class="btn btn-secondary" data-reading-open hx-get="api/hit-context/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ reference_ordinal }}/paragraph" hx-target="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}" hx-swap="innerHTML" hx-sync="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}:replace" data-i18n="reading.show_paragraph">Show paragraph</button>
+    <button type="button" class="btn btn-secondary" data-reading-open hx-get="api/hit-context/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ reference_ordinal }}/document" hx-target="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}" hx-swap="innerHTML" hx-sync="#reading-body-{{ pattern_key }}-{{ reference_ordinal }}:replace" data-i18n="reading.open_document">Open document</button>
+  </div>
+  <dialog class="reading-dialog" aria-labelledby="reading-title-{{ pattern_key }}-{{ reference_ordinal }}">
+    <header class="reading-dialog-header"><h2 id="reading-title-{{ pattern_key }}-{{ reference_ordinal }}" data-i18n="reading.title">Read match context</h2><form method="dialog"><button type="submit" class="btn btn-secondary" aria-label="Close reader" data-i18n-aria-label="reading.close"><span aria-hidden="true">×</span></button></form></header>
+    <div id="reading-body-{{ pattern_key }}-{{ reference_ordinal }}" class="reading-body" aria-live="polite"><p data-i18n="reading.loading">Loading context…</p></div>
+  </dialog>
+  {% if !overlaps.is_empty() %}<section class="alert alert-error overlap-warning" data-overlap-warning>
+    <h3 data-i18n="detail.overlaps_title">Overlapping pattern candidates</h3>
+    <p data-i18n="hit.overlaps_note">Candidates before overlap resolution. Check definitions for unintended overlap or ambiguity.</p>
+    <ul>{% for candidate in overlaps %}<li><button type="button" class="chain-link" data-jump-definition="{{ candidate.name }}"><code>{{ candidate.name }}</code></button> <span>{{ candidate.span.start }}..{{ candidate.span.end }}</span> {% if candidate.published %}<span data-i18n="sample.published">Published</span>{% else %}<span data-i18n="sample.suppressed">Suppressed</span>{% endif %}</li>{% endfor %}</ul>
+  </section>{% endif %}
+  {% match provenance %}{% when Some with (prov) %}<section class="provenance-panel" aria-label="Hit provenance" data-i18n-aria-label="hit.provenance">
+    <p class="provenance-source"><span class="provenance-key"><span data-i18n="hit.source">Source</span></span> <span>{{ prov.source }}</span></p>
+    {% if !prov.sections.is_empty() %}<p class="provenance-sections">{% for label in prov.sections %}<span class="provenance-chip">{{ label }}</span>{% endfor %}</p>{% endif %}
+    {% if !prov.document.is_empty() %}<div class="provenance-group"><span class="provenance-group-label"><span data-i18n="hit.document">Document</span></span><dl>{% for field in prov.document %}<div class="provenance-field"><dt>{{ field.key }}</dt><dd><ul class="provenance-values">{% for value in field.values %}<li>{{ value }}</li>{% endfor %}</ul></dd></div>{% endfor %}</dl></div>{% endif %}
+    {% for division in prov.divisions %}<div class="provenance-group" data-division-id="{{ division.id }}"><span class="provenance-group-label"><span data-i18n="hit.division">Division</span> <span>{{ division.kind }}</span> <code>#{{ division.id }}</code>{% match division.source_id %}{% when Some with (source_id) %} <code>{{ source_id }}</code>{% when None %}{% endmatch %}{% match division.parent_id %}{% when Some with (parent) %} <span data-i18n="hit.parent">parent</span> <code>#{{ parent }}</code>{% when None %}{% endmatch %}</span><dl>{% for field in division.fields %}<div class="provenance-field"><dt>{{ field.key }}</dt><dd><ul class="provenance-values">{% for value in field.values %}<li>{{ value }}</li>{% endfor %}</ul></dd></div>{% endfor %}</dl></div>{% endfor %}
+    {% if !prov.sentence.is_empty() %}<div class="provenance-group"><span class="provenance-group-label"><span data-i18n="hit.sentence">Sentence</span></span><dl>{% for field in prov.sentence %}<div class="provenance-field"><dt>{{ field.key }}</dt><dd><ul class="provenance-values">{% for value in field.values %}<li>{{ value }}</li>{% endfor %}</ul></dd></div>{% endfor %}</dl></div>{% endif %}
+  </section>{% when None %}{% endmatch %}
+  <div class="kwic-token-ribbon" role="group" aria-label="Tokens in retained hit context">
+  {% for token in tokens %}<button type="button" class="kwic-token{% if token.is_match %} kwic-token-match{% endif %}" lang="ja"{% if !token.pos.is_empty() || !token.lemma.is_empty() %} title="{{ token.pos }}{% if !token.pos.is_empty() && !token.lemma.is_empty() %} · {% endif %}{{ token.lemma }}{% if !token.cform.is_empty() %} · {{ token.cform }}{% endif %}"{% endif %} hx-get="api/inspect/{{ workbench_id }}/{{ revision }}/{{ pattern_key }}/{{ reference_ordinal }}/{{ token.index }}" hx-target="#token-inspection">{{ token.orth }}</button>{% endfor %}
+  </div>
+  {% if !capture_lanes.is_empty() %}<div class="hit-capture-list" aria-label="Captures" data-i18n-aria-label="hit.captures">
+  {% for lane in capture_lanes %}<div class="hit-capture-group" role="group" aria-label="Capture lane">
+    {% for capture in lane.captures %}<button type="button" class="capture-selector hit-capture-item" data-capture-target="{{ id_prefix }}-{{ capture.ordinal }}" aria-controls="{{ id_prefix }}-{{ capture.ordinal }}" aria-pressed="false"><span>{{ capture.name }}</span><span lang="ja">{{ capture.text }}</span><span>tokens {{ capture.start }}..{{ capture.end }}</span></button>{% endfor %}
+  </div>{% endfor %}
+  </div>{% endif %}
+  {% for capture in captures %}<div id="{{ id_prefix }}-{{ capture.ordinal }}">{{ capture.detail_html|safe }}</div>{% endfor %}
+  {% if !graph_bindings.is_empty() %}<section class="hit-graph-bindings" aria-label="Graph bindings" data-i18n-aria-label="hit.graph_bindings">
+    <h3 data-i18n="hit.graph_bindings">Graph bindings</h3>
+    <dl>{% for binding in graph_bindings %}<div class="hit-graph-binding"><dt>{{ binding.name }}</dt><dd>{% if binding.is_node %}<span data-i18n="hit.graph_node">Node</span>{% else %}<span data-i18n="hit.graph_edge">Edge</span>{% endif %} <code>{{ binding.identity }}</code>{% match binding.relation %}{% when Some with (relation) %} <span data-i18n="hit.graph_relation">relation</span> <code>{{ relation }}</code>{% when None %}{% endmatch %}{% if !binding.attributes.is_empty() %}<ul>{% for attribute in binding.attributes %}<li><code>{{ attribute.name }}</code>: <span>{{ attribute.value }}</span></li>{% endfor %}</ul>{% endif %}</dd></div>{% endfor %}</dl>
+  </section>{% endif %}
+  <div id="token-inspection" class="inspection-target" aria-live="polite"></div>
+</article>

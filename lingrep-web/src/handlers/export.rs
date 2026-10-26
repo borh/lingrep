@@ -96,7 +96,7 @@ fn run_export_scan(
     pool: &rayon::ThreadPool,
     cancel: &CancellationFlag,
 ) -> Result<ExportScanData, ExportScanError> {
-    run_export_scan_with_compounds(source, artifact, pool, cancel, false)
+    run_export_scan_with_compounds(source, artifact, pool, cancel, false, Default::default())
 }
 
 fn run_export_scan_with_compounds(
@@ -105,6 +105,7 @@ fn run_export_scan_with_compounds(
     pool: &rayon::ThreadPool,
     cancel: &CancellationFlag,
     derive_compounds: bool,
+    scope: crate::search_scope::BoundScope,
 ) -> Result<ExportScanData, ExportScanError> {
     let output = compile_web_pattern(source)
         .map_err(|error| ExportScanError::Compile(format!("{error}")))?;
@@ -135,9 +136,10 @@ fn run_export_scan_with_compounds(
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())
         .map_err(|_| ExportScanError::CacheCorruption)?;
-    let source = artifact
-        .bound_sentence_source(bound.projection())
+    let source = scope
+        .open_source(artifact, bound.projection())
         .map_err(|_| ExportScanError::CacheCorruption)?;
+    let source = source.with_cancellation(cancel.clone());
     let mut progress = |_, _: &ExportSink| {};
     let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
     let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
@@ -233,9 +235,20 @@ async fn export(
     let artifact = Arc::clone(&ready.artifact);
     let pool = Arc::clone(&ready.pool);
     let scan_cancel = cancel.clone();
+    let scope = match ready.provenance().await {
+        Ok(view) => crate::search_scope::BoundScope::new(snapshot.search_scope.clone(), view),
+        Err(_) => return inspection_response(EndpointInspectionError::CacheCorruption),
+    };
     let scan = tokio::task::spawn_blocking(move || {
         let _permit = permit; // released when the scan ends, not when the future drops
-        run_export_scan_with_compounds(&source, &artifact, &pool, &scan_cancel, derive_compounds)
+        run_export_scan_with_compounds(
+            &source,
+            &artifact,
+            &pool,
+            &scan_cancel,
+            derive_compounds,
+            scope,
+        )
     })
     .await;
     guard.armed = false; // await returned; disarm the cancel-on-drop guard
@@ -294,6 +307,12 @@ async fn export(
             |slot| slot.display_name.clone(),
         );
     let about = AboutMeta {
+        scan_scope: if snapshot.search_scope.is_unrestricted() {
+            "complete unfiltered corpus".into()
+        } else {
+            "accepted search scope".into()
+        },
+        filters: serde_json::to_string(&snapshot.search_scope).unwrap_or_default(),
         corpus: corpus_name,
         corpus_id: identity_digest(&snapshot.corpus_identity),
         dictionary: corpus_display_name(&store.config.dict_path),

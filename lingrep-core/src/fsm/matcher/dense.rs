@@ -1,12 +1,7 @@
 //! Dense, state-id-indexed view of an immutable NFA.
-//!
-//! The builder's `HashMap` representation is convenient during construction,
-//! but the executor visits states millions of times per corpus; direct slice
-//! indexing removes per-visit hashing entirely. Built once per compiled
-//! matcher (or per call through the map-based compatibility entry points).
 
-use super::nfa_matcher::{SpawnDecline, SpawnTable};
 use super::predicate::{CompiledPositionAssertion, PredicateCatalog, PredicateId};
+use super::spawn::{SpawnDecline, SpawnTable};
 use crate::fsm::types::{FinalState, TransitionKind, TransitionLabel};
 use crate::token_match::AttributeKey;
 use compact_str::CompactString;

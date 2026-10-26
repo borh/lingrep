@@ -15,11 +15,17 @@ use crate::{
 
 #[derive(Deserialize)]
 struct PermalinkForm {
+    #[serde(default)]
+    search_scope: Option<String>,
     pattern: String,
     /// Target corpus key. Absent means the default, which is what a
     /// single-corpus client (and every pre-existing caller) sends.
     #[serde(default)]
     corpus: Option<String>,
+    /// The retention the sender's page is set to. Absent from a client
+    /// predating the control; the link then leaves retention to the recipient.
+    #[serde(default)]
+    retained: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -43,6 +49,10 @@ async fn create_permalink(
     if form.pattern.len() > MAX_PATTERN_BYTES {
         return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large");
     }
+    let scope = match crate::search_scope::SearchScope::parse(form.search_scope.as_deref()) {
+        Ok(scope) => scope,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "invalid_scope"),
+    };
     // The request's selected corpus, named by the client.
     //
     // The lookup must stay FALLIBLE. `resolve(None)` cannot miss for a validated
@@ -71,8 +81,32 @@ async fn create_permalink(
     // root target, while this HTTP surface has enough context to promise a
     // same-document navigation. The conversion belongs to the codec so that no
     // second producer of this response has to re-derive it.
-    match permalink::encode_query_only(&form.pattern, slot.name.as_str(), digest.as_deref()) {
-        Ok(path) => (StatusCode::OK, Json(PathResponse { path })).into_response(),
+    // Clamped as admission clamps a run, so a link never names a retention
+    // this server would not itself have run.
+    let retained = form
+        .retained
+        .map(|asked| asked.clamp(1, store.config.detail_limits.max_kwic));
+    match permalink::encode_query_only(
+        &form.pattern,
+        slot.name.as_str(),
+        digest.as_deref(),
+        retained,
+    ) {
+        Ok(mut path) => {
+            if form.search_scope.is_some() {
+                let encoded = serde_urlencoded::to_string([(
+                    "s",
+                    serde_json::to_string(&scope).unwrap_or_default(),
+                )])
+                .unwrap_or_default();
+                path.push('&');
+                path.push_str(&encoded);
+            }
+            if path.len().saturating_add(1) > crate::permalink::MAX_REQUEST_TARGET_LEN {
+                return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large");
+            }
+            (StatusCode::OK, Json(PathResponse { path })).into_response()
+        }
         Err(PermalinkError::TooLarge) => error(StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
         Err(PermalinkError::Malformed) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

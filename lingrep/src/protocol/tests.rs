@@ -33,10 +33,6 @@ use crate::{
             SummaryGroupData, TagField, TemporaryStorageLimits, Termination, TokenEvidence,
             TraversalLimits,
         },
-        sentence_final::{
-            CompleteData as SentenceFinalComplete, RowData as SentenceFinalRow,
-            RunData as SentenceFinalRun, SentenceFinalEnvelope, SentenceFinalEvent,
-        },
         sources::{
             AggregateState, SourceData, SourcesComplete, SourcesEnvelope, SourcesEvent,
             SourcesKind, SourcesRun, TraversalHighWater,
@@ -44,8 +40,7 @@ use crate::{
         status,
         tokenize::{SentenceData, TokenizeComplete, TokenizeEnvelope, TokenizeEvent, TokenizeRun},
         validate_check_jsonl, validate_diagnostic_jsonl, validate_query_jsonl,
-        validate_query_stream, validate_sentence_final_stream, validate_sources_jsonl,
-        validate_tokenize_jsonl,
+        validate_query_stream, validate_sources_jsonl, validate_tokenize_jsonl,
     },
     write_jsonl,
 };
@@ -62,58 +57,6 @@ fn progressive_contract_schema_names_are_pinned() {
     assert_eq!(invocation::SCHEMA, "lingrep.invocation/v1");
     assert_eq!(doctor::SCHEMA, "lingrep.doctor/v1");
     assert_eq!(completions::SCHEMA, "lingrep.completions/v1");
-    assert_eq!(
-        crate::protocol::sentence_final::SCHEMA,
-        "lingrep.sentence-final/v1"
-    );
-}
-
-fn sentence_final_run() -> SentenceFinalEnvelope {
-    SentenceFinalEnvelope::new(SentenceFinalEvent::Run(SentenceFinalRun {
-        run_id: "run-1".into(),
-        dictionary_identity: "dict".into(),
-        catalog_fingerprint: "catalog".into(),
-        input_kind: "direct".into(),
-        limits: serde_json::json!({"workers": 8}),
-    }))
-}
-
-fn sentence_final_row() -> SentenceFinalEnvelope {
-    SentenceFinalEnvelope::new(SentenceFinalEvent::Row(SentenceFinalRow {
-        pattern: "p".into(),
-        surface: "猫".into(),
-        count: 2,
-    }))
-}
-
-fn sentence_final_complete() -> SentenceFinalEnvelope {
-    SentenceFinalEnvelope::new(SentenceFinalEvent::Complete(SentenceFinalComplete {
-        coverage: "full".into(),
-        rows: 1,
-        matches_found: 2,
-        elapsed_millis: 3,
-        resources: serde_json::json!({"temporary_storage_bytes": 0}),
-    }))
-}
-
-#[test]
-fn sentence_final_v1_requires_run_rows_then_complete() {
-    validate_sentence_final_stream([
-        sentence_final_run(),
-        sentence_final_row(),
-        sentence_final_complete(),
-    ])
-    .unwrap();
-    assert!(validate_sentence_final_stream([sentence_final_row()]).is_err());
-    assert!(validate_sentence_final_stream([sentence_final_run(), sentence_final_run()]).is_err());
-    assert!(
-        validate_sentence_final_stream([
-            sentence_final_run(),
-            sentence_final_complete(),
-            sentence_final_row(),
-        ])
-        .is_err()
-    );
 }
 
 #[test]
@@ -572,7 +515,7 @@ fn tokenize_runs_do_not_expose_query_inventory() {
 }
 
 #[test]
-fn tokenize_validator_requires_full_eof_and_honest_completion_inventory() {
+fn tokenize_validator_requires_inventory_only_for_complete_direct_input() {
     let run = std::fs::read("tests/golden/tokenize-run.jsonl").unwrap();
     let mut complete = serde_json::from_slice::<serde_json::Value>(
         &std::fs::read("tests/golden/tokenize-complete.jsonl").unwrap(),
@@ -590,6 +533,16 @@ fn tokenize_validator_requires_full_eof_and_honest_completion_inventory() {
     .unwrap();
     prefix["data"]["coverage"] = "prefix".into();
     prefix["data"]["termination"] = "result_limit".into();
+    assert!(validate_tokenize_jsonl(&[run.clone(), jsonl(&prefix)].concat()).is_err());
+    prefix["data"]["state"] = "prefix_unavailable".into();
+    for field in ["source_identity", "analysis_identity", "inventory"] {
+        prefix["data"].as_object_mut().unwrap().remove(field);
+    }
+    assert!(validate_tokenize_jsonl(&[run.clone(), jsonl(&prefix)].concat()).is_ok());
+    prefix["data"]["inventory"] = serde_json::json!({
+        "documents": 1, "distinct_targets": 1, "alias_documents": 0,
+        "max_target_multiplicity": 1, "external_targets": 0,
+    });
     assert!(validate_tokenize_jsonl(&[run, jsonl(prefix)].concat()).is_err());
 }
 

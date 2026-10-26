@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,6 +70,20 @@ def write_resources(root: Path) -> None:
 class BundleTests(unittest.TestCase):
     def setUp(self) -> None:
         FakePipeline.calls.clear()
+
+    def test_profile_rejects_duplicate_keys_at_each_depth(self) -> None:
+        for source in (
+            '{"format": "a", "format": "b"}',
+            '{"selections": {"x": {"schema": [{"key": "text", "key": "lemma"}]}}}',
+        ):
+            with (
+                self.subTest(source=source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / PROFILE_FILE).write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                    load_profile(root)
 
     def test_profile_binds_language_processors_boundary_schema_and_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -220,6 +235,41 @@ class BundleTests(unittest.TestCase):
             link.symlink_to("large.pt")
             with self.assertRaisesRegex(ValueError, "symlink"):
                 resource_manifest_digest(Path("model"), manifest_root)
+
+    def test_resource_manifest_rejects_files_changed_during_hashing(self) -> None:
+        original_open = Path.open
+
+        @contextmanager
+        def changing_open(path, *args, **kwargs):
+            with original_open(path, *args, **kwargs) as stream:
+                yield stream
+            with original_open(path, "ab") as stream:
+                stream.write(b"changed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "model").mkdir()
+            (root / "model/weights.bin").write_bytes(b"weights")
+            with (
+                patch.object(Path, "open", changing_open),
+                self.assertRaisesRegex(ValueError, "changed while it was hashed"),
+            ):
+                resource_manifest_digest(Path("model"), root)
+
+    def test_resource_and_selection_identity_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "model/nested").mkdir(parents=True)
+            (root / "model/weights.bin").write_bytes(b"x" * ((1 << 20) + 17))
+            (root / "model/nested/日本語.json").write_bytes(b'{"x":1}\n')
+            self.assertEqual(
+                resource_manifest_digest(Path("model"), root),
+                "86557e8354c78a05fcbdebf75b98245b325f795377cb73af83ac30fae68a5892",
+            )
+        self.assertEqual(
+            selection_digest({"z": ["日本語", 1], "a": True}),
+            "1a7fe031c4aa6b8e40a1c6bdea47c10a34a0a3ae5aa241449ec24ef2c0414f51",
+        )
 
     def test_profile_json_and_selection_digest_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

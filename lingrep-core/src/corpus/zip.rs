@@ -48,17 +48,88 @@ pub fn zip_file_stat(file: &File) -> io::Result<ZipFileStat> {
     Ok(zip_file_stat_from_metadata(&file.metadata()?))
 }
 
-/// The file entries of one ZIP as byte-sorted names (directory entries
-/// dropped). The one derivation of entry order, so the event stream and the
-/// differential harness cannot disagree about which entry is which.
-#[must_use]
-pub fn zip_entry_names(zip: &ZipArchive<impl Read + Seek>) -> Vec<String> {
-    let mut names: Vec<String> = (0..zip.len())
-        .filter_map(|index| zip.name_for_index(index).map(str::to_owned))
-        // Directory entries (present in the BCCWJ VARIABLE zips) are skipped;
-        // a file entry never ends with a separator.
-        .filter(|name| !name.ends_with('/'))
-        .collect();
-    names.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-    names
+/// File entry names in byte-sorted order, excluding directory entries.
+///
+/// # Errors
+///
+/// Returns invalid data when names cannot be decoded or decoded names collide.
+pub fn zip_entry_names(zip: &ZipArchive<impl Read + Seek>) -> io::Result<Vec<String>> {
+    Ok(zip_entries(zip)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
+}
+
+/// File entry names with their archive indices, sorted by name bytes.
+/// Directory entries are excluded.
+///
+/// # Errors
+///
+/// Returns invalid data when names cannot be decoded or decoded names collide.
+pub fn zip_entries(zip: &ZipArchive<impl Read + Seek>) -> io::Result<Vec<(String, usize)>> {
+    let mut entries = Vec::new();
+    for index in 0..zip.len() {
+        let name = zip
+            .name_for_index(index)
+            .expect("index is within archive bounds")
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if !name.ends_with('/') {
+            entries.push((name.into_owned(), index));
+        }
+    }
+    entries.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ZIP entries have duplicate decoded names",
+        ));
+    }
+    Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+
+    fn legacy_archive(duplicate: bool) -> ZipArchive<Cursor<Vec<u8>>> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        if duplicate {
+            writer
+                .start_file("é.txt", SimpleFileOptions::default())
+                .expect("UTF-8 name");
+        }
+        writer
+            .start_file("x.txt", SimpleFileOptions::default())
+            .expect("legacy name");
+        writer.write_all(b"entry").expect("entry bytes");
+        let mut bytes = writer.finish().expect("archive").into_inner();
+        for index in 0..=bytes.len() - b"x.txt".len() {
+            if bytes[index..].starts_with(b"x.txt") {
+                bytes[index] = 0x82;
+            }
+        }
+        ZipArchive::new(Cursor::new(bytes)).expect("read archive")
+    }
+
+    #[test]
+    fn legacy_encoded_entries_preserve_names_and_indices() {
+        let mut archive = legacy_archive(false);
+        let entries = zip_entries(&archive).expect("decoded entry");
+        assert_eq!(entries, [("é.txt".to_owned(), 0)]);
+        let mut text = String::new();
+        archive
+            .by_index(entries[0].1)
+            .expect("entry index")
+            .read_to_string(&mut text)
+            .expect("entry text");
+        assert_eq!(text, "entry");
+    }
+
+    #[test]
+    fn decoded_entry_name_collision_returns_invalid_data() {
+        let error = zip_entries(&legacy_archive(true)).expect_err("ambiguous decoded names");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
 }

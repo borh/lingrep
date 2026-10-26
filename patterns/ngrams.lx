@@ -1,8 +1,3 @@
-# Overlapping token n-grams for `ling summarize`.
-#
-# The key names every token position explicitly so values cannot become
-# ambiguous when token text contains whitespace or punctuation.
-
 key: [text, upos]
 pattern unigram := [].
 

@@ -686,6 +686,48 @@ fn npv_collocation_publishes_a_normalized_verb_over_an_unnarrowed_record() {
     );
 }
 
+#[test]
+fn npv_collocation_excludes_a_non_particle_neighbor_with_the_same_head() {
+    let sentence = dependency_sentence(&[
+        DependencyNode {
+            name: "対象",
+            lemma: "対象",
+            upos: "NOUN",
+            head: Some("調べる"),
+            relation: "obj",
+        },
+        DependencyNode {
+            name: "を",
+            lemma: "を",
+            upos: "ADP",
+            head: Some("対象"),
+            relation: "case",
+        },
+        DependencyNode {
+            name: "詳しく",
+            lemma: "詳しい",
+            upos: "ADV",
+            head: Some("対象"),
+            relation: "advmod",
+        },
+        DependencyNode {
+            name: "調べる",
+            lemma: "調べる",
+            upos: "VERB",
+            head: None,
+            relation: "root",
+        },
+    ]);
+    assert_eq!(
+        match_catalog(
+            "npv-collocation.lx",
+            include_str!("../../../patterns/npv-collocation.lx"),
+            &sentence
+        ),
+        Vec::<Match>::new(),
+    );
+}
+
 fn crossing_topology_oracle(heads: &[usize]) -> Vec<Match> {
     let orientations = [
         ("heads_before_dependents", ["h1", "h2", "d1", "d2"]),

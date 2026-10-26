@@ -19,7 +19,7 @@
 use lingrep_core::testing::catalogs::tracked_catalog_sources;
 use lingrep_web::pattern_catalog::{pattern_metadata_pairs, project_pattern_catalog};
 use lingrep_web::patterns::compile_web_pattern;
-use lingrep_web::snapshot::{PatternDescriptor, PatternKey};
+use lingrep_web::snapshot::{PatternDescriptor, PatternKey, PatternOrigin};
 
 /// One catalog's metadata-derived projection, as `(default field, candidate
 /// fields with their populated counts)`.
@@ -40,6 +40,7 @@ fn projection_for(source: &str) -> Projection {
             name,
             exact_total: 0,
             metadata,
+            origin: PatternOrigin::Authored { chained_total: 0 },
         })
         .collect::<Vec<_>>();
 
@@ -137,7 +138,6 @@ fn expected_projection(catalog: &str) -> Option<Projection> {
         "patterns/distributions.lx" => (None, vec![]),
         // Five emitting patterns carry only compiler-owned ordered keys.
         "patterns/ngrams.lx" => (None, vec![]),
-        // One emitting pattern carrying only a compiler-owned ordered key.
         "patterns/npv-collocation.lx" => (None, vec![]),
         // Two surface orders collapse to one published passive-agent relation;
         // one descriptor cannot form a grouping candidate.

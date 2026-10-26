@@ -1,48 +1,6 @@
-# Code-comment register: an English CoNLL-U catalog.
-#
-# WHAT THIS IS. A register profile for code comments and doc comments. The
-# question it answers is not "was this comment written by an LLM?" -- a 5-20
-# word span carries far too little signal for that, and the answer would be
-# unfalsifiable anyway -- but "is this comment written in the register this
-# codebase expects?". Register is a property of the text, so it can be
-# measured, cited, and disagreed with.
-#
-# WHY IT IS HERE. Published slop detectors (EQ-Bench's Slop Score,
-# slop-forensics) score a bag of words: they report that some corpus overuses
-# `seamlessly`. This catalog conditions the same counts on GRAMMAR, so the
-# report is instead "the ADV->VERB advmod slot is filled by `seamlessly` at N
-# times the rate of the comparison corpus, while the NOUN->ADJ amod slot
-# shifts toward `robust`". That is the collostructional method
-# `patterns/sketch-grammar.lx` and `patterns/collexeme.lx` already implement
-# for Japanese, and this is its English instance.
-#
-# The slots are DELIBERATELY UNRESTRICTED. `evaluative_amod` captures every
-# adjective, not a hand-written list of marketing adjectives, because a baked
-# lexicon assumes the conclusion -- and a fixed word list is the one part of
-# this a plain regex already does. Which lemmas are distinctive is the
-# measurement, not the input. `examples/comment_register.py` runs the keyness.
-#
-# BINDING. This catalog requires `dep.head` and `dep.rel`, so it binds against
-# CoNLL-U input only and is refused by name against a morphology-only corpus.
-# It declares no `analyzer:` block: the CoNLL-U reader's family is
-# `pretokenized`, so a `vibrato` requirement would refuse every corpus this
-# catalog exists to read.
-#
-# It declares no `examples:` either, and that is not an oversight.
-# `lingrep-core/tests/suite/catalog_examples.rs` verifies every claim with
-# `tokenize_japanese`; an English example would be tokenized as Japanese and
-# the claim would fail for a reason that has nothing to do with the pattern.
-# Executable claims for this catalog live in the harness that runs it.
-#
-# DEPENDENCY LABEL PORTABILITY. Two English parsers produce two label sets.
-# stanza emits Universal Dependencies (`obj`, `obl`, `case`); spaCy's English
-# models emit ClearNLP (`dobj`, `pobj`, `prep`). The patterns below are built
-# on the labels the two schemes SHARE -- `amod`, `advmod`, `conj`, `nsubj` --
-# which is where the register signal sits anyway. Where a divergent label is
-# genuinely wanted, spell both terms in one bracket (`-[obj|dobj]->`) rather
-# than assuming a parser; a constraint naming one scheme's label silently
-# matches nothing under the other, which reads as a null result rather than as
-# a configuration error.
+# Register profile for English code comments over CoNLL-U (`dep.head`, `dep.rel`).
+# `examples:` are omitted because `catalog_examples.rs` tokenizes examples as
+# Japanese.
 
 defaults
   status: "experimental"
@@ -53,24 +11,8 @@ schema
   status: string required in {"experimental"}
 end
 
-# --------------------------------------------------------------------------
-# Narration: comments that tell a story about the code instead of stating a
-# constraint on it. These are shapes, not words, which is why they survive a
-# model upgrade that retires any particular adjective.
-# --------------------------------------------------------------------------
-
-# "Ensuring that every cached entry is invalidated." A comment opening on a
-# gerund narrates an activity; the engineering register opens on the thing
-# being constrained. `^` anchors to the sentence start, so this fires on the
-# opening of a comment rather than anywhere a gerund appears.
-#
-# TWO SPELLINGS, for the same reason the dependency labels below carry two.
-# `VerbForm=Ger` is the UD spelling stanza emits. spaCy's English models do
-# not use it: an `-ing` form is `VerbForm=Part` with `Tense=Pres`. Over
-# one 1.8 M-token corpus, matching on `Ger` alone matched 0 occurrences
-# where counting the construction by hand found 2,106. `Tense=Pres` is what
-# keeps the second spelling from also taking a past participle, which is
-# `VerbForm=Part` with `Tense=Past` and is a different construction.
+# stanza marks a gerund `VerbForm=Ger`; spaCy marks it `VerbForm=Part` with
+# `Tense=Pres`.
 key: [lemma]
 layer: "narration"
 pattern gerund_opening :=
@@ -78,18 +20,12 @@ pattern gerund_opening :=
      & (feat.VerbForm has Ger
         | (feat.VerbForm has Part & feat.Tense has Pres))].
 
-# "A class that represents a bounded queue." The definitional copula opening,
-# which restates the declaration the reader is already looking at. Keyed on
-# the nominal the copula predicates over, because the bare surface of a
-# multi-token match is a concatenation and reads as noise in a ranked table.
 key: [$head.lemma]
 layer: "narration"
 pattern copular_definition :=
   ^ [upos=DET] [upos in {NOUN, PROPN, ADJ}]{0,2}
   (?<head> [upos in {NOUN, PROPN, ADJ}]) [lemma=be].
 
-# "This method is responsible for validating the input." A docstring-generator
-# template, and the highest-precision single string in the whole catalog.
 key: [$frame.lemma]
 layer: "narration"
 pattern responsible_template :=
@@ -97,34 +33,17 @@ pattern responsible_template :=
   (?<frame> [lemma in {responsible, intended, designed, meant, used}])
   [lemma in {for, to}].
 
-# "This allows you to configure the retry budget." Second person addresses a
-# reader being taught; a code comment is written for a maintainer who is
-# already here. Keyed so the report names which verb carried it.
 key: [$verb.lemma]
 layer: "narration"
 pattern reader_address :=
   (?<verb> [lemma in {allow, enable, let, help, permit}]) [lemma=you].
 
-# --------------------------------------------------------------------------
-# Evaluation: word sketches over the two modifier slots. Both are keyed, so
-# `summarize` returns a collocation profile rather than a count, and both
-# leave the modifier unconstrained so the distinctive fillers are discovered.
-# --------------------------------------------------------------------------
-
-# The adjective-noun sketch. English adjectival modifiers overwhelmingly
-# precede their head, so one linear order covers the relation.
 key: [$adj.lemma, $noun.lemma]
 layer: "evaluation"
 pattern evaluative_amod :=
   (?<adj> [upos=ADJ]) []{0,3} (?<noun> [upos in {NOUN, PROPN}])
   where $noun -[amod]-> $adj.
 
-# The adverb-verb sketch, in the two linear orders English allows
-# ("seamlessly handles" and "handles it seamlessly"). These are ONE relation
-# written twice, not two findings: a capture inside an alternation branch
-# binds only when that branch is taken, so `(A | B)` carrying captures on both
-# sides is rejected as `WhereExclusiveCaptures`. Their shared `output_name`
-# makes `summarize` aggregate them as one relation.
 key: [$adv.lemma, $verb.lemma]
 layer: "evaluation"
 output_name: "softener_predicate"
@@ -139,9 +58,6 @@ pattern softener_after_predicate :=
   (?<verb> [upos in {VERB, AUX}]) []{0,3} (?<adv> [upos=ADV])
   where $verb -[advmod]-> $adv.
 
-# "Handles all edge cases." Scope inflation: a universal quantifier claims a
-# generality the annotated code rarely has, and unlike an adjective it is a
-# checkable claim.
 key: [$quantifier.lemma, $scope.lemma]
 layer: "evaluation"
 pattern universal_scope :=
@@ -149,13 +65,6 @@ pattern universal_scope :=
   [upos in {ADJ, VERB, NOUN}]{0,3}
   (?<scope> [upos in {NOUN, PROPN}]).
 
-# --------------------------------------------------------------------------
-# Structure: cadence rather than vocabulary.
-# --------------------------------------------------------------------------
-
-# The rule of three -- "fast, reliable, and scalable". In UD and ClearNLP
-# alike the first conjunct heads the later ones, so one capture governing two
-# `conj` dependents is the whole tricolon regardless of where the commas fall.
 key: [$first.lemma, $second.lemma, $third.lemma]
 layer: "structure"
 pattern tricolon :=
@@ -164,50 +73,10 @@ pattern tricolon :=
   (?<third> [upos in {ADJ, NOUN, VERB, ADV}])
   where $first -[conj]-> $second, $first -[conj]-> $third.
 
-# "Not a cache, but an index." Bounded by intersection rather than by
-# enumerating the gap widths: a length bound does not distribute over a
-# concatenation containing a variable-length part, so `& []{3,12}` imposes it
-# once instead of multiplying the alternatives out by hand.
 layer: "structure"
 pattern not_x_but_y :=
   ([lemma in {not, no, never}] []+ [lemma=but]) & []{3,12}.
 
-# Dash asides, counted rather than judged. This is the weakest signal here
-# and is reported as such -- it is a house-style tell, not a quality one, and
-# the literature attributes the em dash to one vendor rather than to machine
-# authorship in general.
-#
-# The ASCII spellings are here because without them a corpus that writes its
-# asides as `--` scores zero on a construction it uses, which makes the
-# measurement a question about typography rather than about the aside. Both
-# are one PUNCT token under spaCy. `key: [text]` keeps the spellings apart in
-# the report, so a reader can still separate the typographic habit from the
-# construction: over three corpora the typographic gap was 42x and the
-# construction gap 8.7x.
-#
-# THE NEIGHBOURS ARE THE CONSTRUCTION. An aside interrupts running text, so
-# it has a word on each side; a rule drawn across a file does not. Without
-# that constraint this pattern counted `;; --- hex helpers ----------` as
-# thirteen asides, and a cleanup that deleted such banners registered as a
-# change in how the corpus writes asides. It was a real finding about the
-# wrong thing: `dash_aside` separated deleted Clojure comments from kept ones
-# at q = 6.7e-06, entirely on `---`, while the em dash -- the construction --
-# moved 3.6% the other way.
-#
-# `!(upos=PUNCT)` is the TRUE COMPLEMENT and not `upos!=PUNCT`, which would
-# fail on a token carrying no `upos` and make this pattern match nothing at
-# all against a corpus without part-of-speech annotation. Silently matching
-# nothing is the failure mode `gerund_opening` already cost this catalog one
-# whole finding to; over-counting is visible and a null result is not. The
-# lookarounds are zero-width, so the definition stays exactly one token wide
-# and `key: [text]` still projects the match's own spelling.
-#
-# Two narrowings follow and are intended. A dash opening a sentence has no
-# left neighbour, so `preceded_by` fails and it is not counted. A dash beside
-# other punctuation -- after a closing parenthesis, before a quotation mark --
-# is not counted either; that costs about 5% of em-dash matches in this
-# repository's prose and is the price of the rule being about neighbours
-# rather than about a list of punctuation that may abut an aside.
 key: [text]
 layer: "structure"
 pattern dash_aside :=
@@ -215,19 +84,10 @@ pattern dash_aside :=
   [upos=PUNCT & text in {—, –, --, ---}]
   followed_by([!(upos=PUNCT)]).
 
-# Nominalization density: a verbosity proxy that needs no reference text. A
-# clause rewritten as a noun phrase says the same thing in more words.
 key: [lemma]
 layer: "structure"
 pattern nominalization :=
   [upos in {NOUN, PROPN} & text ~ /(?:tion|ment|ity|ness|ance|ence)s?\z/].
-
-# --------------------------------------------------------------------------
-# Denominator. Every rate above is per token, and this supplies the count.
-# Keyed on lemma and part of speech it is also the plain unigram profile --
-# the bag-of-words control that shows what the grammatical conditioning above
-# actually buys over a slop word list.
-# --------------------------------------------------------------------------
 
 key: [lemma, upos]
 layer: "denominator"

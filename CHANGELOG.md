@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+### Added
+
+- TEI P5 input through `--input-format tei`, and Soranoha TEI archives through
+  `--input-format soranoha-tei`. Soranoha TEI preserves the paired plaintext
+  edition's principal text and sentence boundaries. Query inline readings,
+  elements, rendering labels and source references through `tei.ruby`,
+  `tei.element`, `tei.rend` and `tei.source`; prepared corpora retain them.
+- Reusable external-analyzer configurations and verified spaCy and Stanza
+  bundles, with setup entry points in the adapter wheels. Nix also packages
+  a sealed English spaCy CPU model and analyzer configuration.
+- Web corpus scoping, compound-chain and overlap inspection, document counts,
+  section comparisons, KWIC sorting, and bounded paragraph/document reading.
+  Scope and filters apply to comparisons, exports and shared links.
+
+### Changed
+
+- Long sentences use singleton batches automatically within the documented
+  resource limits. Sudachi processes long input in chunks and restores the
+  original sentence offsets. Soranoha plaintext record limits apply per line,
+  with a separate bound on each inflated work.
+- Common CLI help and terminal reports show routine options and readable
+  summaries; `--help-all` retains advanced controls. Resource validation applies
+  to the selected analyzer.
+- NFC normalization uses Unicode 18 tables, and identities and manifests record
+  the table version. NFC prepared corpora with a missing or different
+  normalization-table version must be rebuilt.
+- Markdown front matter uses a parser that rejects duplicate keys. The Markdown
+  reader identity changes; rebuild from source to use the revised reader.
+- Prepared-corpus builds collect postings while writing tokens, preserving
+  artifact bytes and identities while avoiding a second reconstruction pass.
+
+### Fixed
+
+- `tokenize --limit` caps direct, stdin and prepared sentence output, including
+  the bounded human-output default, and reports prefix completion accurately.
+- Dependency-pattern exclusions check captured negative edges against final
+  capture assignments. Inline and named set operands produce the same
+  `has-any` results regardless of authored operand order.
+- Human concordances preserve source spacing, and terminal progress is enabled
+  automatically when stderr is a terminal.
+- Dictionary installations and Nix packages include upstream license notices.
+- Dependency updates address RustSec findings and remove unmaintained packages.
+  All locked Rust graphs use patched `zstd 0.14.3` and `zstd-safe 8.2.0`, removing
+  dependencies affected by memory-disclosure and soundness advisories. Runtime
+  analyzer revisions stay pinned; the source dictionary converter uses the same
+  public Vibrato 0.7.18 revision as the runtime, with dictionary digests unchanged.
+- Dictionary identity documentation describes memoization of both `.dic` and
+  `.zst` files and its metadata-key freshness limit.
+
+### Removed
+
+- The dedicated sentence-final command; use `matches` or `summarize` with the
+  sentence-final pattern catalog.
+- Raw-map matcher compatibility APIs and public mutable NFA construction;
+  compile definitions through `FsmBuilder` and use `CompiledCatalog`.
+- Execution and reuse of artifacts with a nonzero recorded truncation count;
+  rebuild them from source.
+
 ## [0.4.0] - 2026-10-21
 
 ### Added

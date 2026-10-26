@@ -1,7 +1,5 @@
-# Sentence-final-expression pattern exercises.
-#
-# Helpers remain emitting definitions: this is a test catalog, so their
-# individual predicate paths are useful coverage.
+# Sentence-final-expression test catalog; helpers remain emitting definitions
+# so tests exercise their individual predicate paths.
 
 set VERBAL := {VERB, AUX}.
 

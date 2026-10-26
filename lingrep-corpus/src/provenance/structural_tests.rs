@@ -27,6 +27,40 @@ fn analysis_identity() -> AnalysisIdentity {
     AnalysisIdentity::from_bytes([42; 32])
 }
 
+#[tokio::test]
+async fn paragraph_reading_uses_primary_key_lookups_from_bounded_membership() {
+    let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    sqlx::raw_sql(super::SCHEMA)
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let plan = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "EXPLAIN QUERY PLAN {}",
+        super::READING_PARAGRAPHS_QUERY
+    )))
+    .bind(0_i64)
+    .bind(257_i64)
+    .fetch_all(&mut connection)
+    .await
+    .unwrap();
+    let steps = plan
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>();
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("SEARCH d USING INTEGER PRIMARY KEY")),
+        "{steps:?}"
+    );
+    assert!(
+        !steps
+            .iter()
+            .any(|step| step.contains("division_kind") || step.contains("SCAN d")),
+        "{steps:?}"
+    );
+}
+
 fn location(
     sentence: u64,
     source_name: &str,
@@ -1189,4 +1223,41 @@ async fn derived_labels_participate_in_recorded_row_byte_bounds() {
             .to_string()
             .contains("byte budget")
     );
+}
+
+#[tokio::test]
+async fn span_stream_releases_the_connection_before_the_consumer_reads_sentence_scope() {
+    use futures::StreamExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("interleaved-spans.sqlite");
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    for ordinal in 0..257 {
+        let mut metadata = rich();
+        metadata.region_labels = vec![format!("section-{}", ordinal % 2)].into_boxed_slice();
+        writer
+            .push_sentence(&location(ordinal, "paper.md", 0, ordinal), &metadata)
+            .await
+            .unwrap();
+    }
+    writer.finish(analysis_identity()).await.unwrap();
+    let view = ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+    let mut spans = view.region_spans_in_span_order();
+    assert_eq!(spans.next().await.unwrap().unwrap().first_sentence, 0);
+    let admitted = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        view.section_admissions(&[SentenceId::new(0)], Some(&["section-1".into()]), true),
+    )
+    .await
+    .expect("a paused span consumer must release the connection for scope reads")
+    .unwrap();
+    assert_eq!(admitted, [false]);
+    for ordinal in 1..257 {
+        let span = spans.next().await.unwrap().unwrap();
+        assert_eq!(span.first_sentence, ordinal);
+        assert_eq!(span.end_sentence, ordinal + 1);
+        assert_eq!(span.label, format!("section-{}", ordinal % 2));
+    }
+    assert!(spans.next().await.is_none());
 }

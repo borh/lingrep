@@ -35,12 +35,21 @@ pub enum PermalinkError {
 /// the selector must be expressible without it. An absent `c` means "no
 /// assertion", not "no corpus".
 ///
+/// `retained` is the per-pattern retention the sender was reading (`r`),
+/// emitted when the sender's page had one. The recipient maps it onto its
+/// own offers; see [`crate::state::link_retention`].
+///
 /// `corpus` must already be a validated [`crate::corpus_set::CorpusName`]
 /// (`[A-Za-z0-9_-]`), which is what makes the concatenation below safe without
 /// URL escaping. Both it and the digest are charged against
 /// [`MAX_REQUEST_TARGET_LEN`], so no name length can smuggle a target past the
 /// transport limit.
-pub fn encode(pattern: &str, corpus: &str, digest: Option<&str>) -> Result<String, PermalinkError> {
+pub fn encode(
+    pattern: &str,
+    corpus: &str,
+    digest: Option<&str>,
+    retained: Option<usize>,
+) -> Result<String, PermalinkError> {
     if pattern.len() > MAX_PATTERN_BYTES {
         return Err(PermalinkError::TooLarge);
     }
@@ -54,6 +63,10 @@ pub fn encode(pattern: &str, corpus: &str, digest: Option<&str>) -> Result<Strin
     if let Some(digest) = digest {
         target.push_str("&c=");
         target.push_str(digest);
+    }
+    if let Some(retained) = retained {
+        target.push_str("&r=");
+        target.push_str(&retained.to_string());
     }
     if target.len() > MAX_REQUEST_TARGET_LEN {
         return Err(PermalinkError::TooLarge);
@@ -75,10 +88,11 @@ pub fn encode_query_only(
     pattern: &str,
     corpus: &str,
     digest: Option<&str>,
+    retained: Option<usize>,
 ) -> Result<String, PermalinkError> {
     // Deriving from `encode` charges the query against the same
     // `MAX_REQUEST_TARGET_LEN` budget as the target it resolves back into.
-    let target = encode(pattern, corpus, digest)?;
+    let target = encode(pattern, corpus, digest, retained)?;
     Ok(target.trim_start_matches('/').to_owned())
 }
 
@@ -116,7 +130,7 @@ mod tests {
     #[test]
     fn roundtrip_ascii() {
         let pattern = "verb := [upos=VERB].";
-        let target = encode(pattern, "default", Some("abcdef012345")).unwrap();
+        let target = encode(pattern, "default", Some("abcdef012345"), None).unwrap();
         assert!(target.starts_with("/?v=1&"));
         assert_eq!(decode(q_of(&target)).unwrap(), pattern);
     }
@@ -124,15 +138,15 @@ mod tests {
     #[test]
     fn roundtrip_japanese_multibyte() {
         let pattern = "result := [text=そう] followed_by([lemma=だ] $).";
-        let target = encode(pattern, "default", Some("abcdef012345")).unwrap();
+        let target = encode(pattern, "default", Some("abcdef012345"), None).unwrap();
         assert_eq!(decode(q_of(&target)).unwrap(), pattern);
     }
 
     #[test]
     fn query_only_is_the_encoded_target_without_its_root_slash() {
         let pattern = "verb := [upos=VERB].";
-        let target = encode(pattern, "sci", Some("abcdef012345")).unwrap();
-        let query_only = encode_query_only(pattern, "sci", Some("abcdef012345")).unwrap();
+        let target = encode(pattern, "sci", Some("abcdef012345"), None).unwrap();
+        let query_only = encode_query_only(pattern, "sci", Some("abcdef012345"), None).unwrap();
 
         assert!(query_only.starts_with("?v=1&"));
         assert_eq!(target, format!("/{query_only}"));
@@ -142,7 +156,7 @@ mod tests {
     #[test]
     fn query_only_is_charged_against_the_same_target_limit() {
         assert_eq!(
-            encode_query_only(&noisy(40_000), "default", Some("abcdef012345")),
+            encode_query_only(&noisy(40_000), "default", Some("abcdef012345"), None),
             Err(PermalinkError::TooLarge)
         );
     }
@@ -150,7 +164,7 @@ mod tests {
     #[test]
     fn encode_refuses_when_target_too_large() {
         assert_eq!(
-            encode(&noisy(40_000), "default", Some("abcdef012345")),
+            encode(&noisy(40_000), "default", Some("abcdef012345"), None),
             Err(PermalinkError::TooLarge)
         );
     }
@@ -159,7 +173,7 @@ mod tests {
     fn encode_rejects_pattern_over_decompressed_cap_even_when_compressible() {
         let compressible = "a".repeat(MAX_PATTERN_BYTES + 1);
         assert_eq!(
-            encode(&compressible, "default", Some("abcdef012345")),
+            encode(&compressible, "default", Some("abcdef012345"), None),
             Err(PermalinkError::TooLarge)
         );
     }
@@ -206,7 +220,7 @@ mod tests {
 
     #[test]
     fn v1_carries_a_selector_without_a_digest() {
-        let target = encode("p := [].", "sci", None).unwrap();
+        let target = encode("p := [].", "sci", None, None).unwrap();
         assert!(target.starts_with("/?v=1&"));
         assert!(target.contains("&k=sci"));
         assert!(!target.contains("&c="));
@@ -214,8 +228,17 @@ mod tests {
     }
 
     #[test]
+    fn v1_carries_the_retention_after_the_digest() {
+        let target = encode("p := [].", "sci", Some("abcdef012345"), Some(50)).unwrap();
+        assert!(target.ends_with("&k=sci&c=abcdef012345&r=50"), "{target}");
+        let target = encode("p := [].", "sci", None, Some(50)).unwrap();
+        assert!(target.ends_with("&k=sci&r=50"), "{target}");
+        assert_eq!(decode(q_of(&target)).unwrap(), "p := [].");
+    }
+
+    #[test]
     fn v1_carries_both_when_a_digest_is_known() {
-        let target = encode("p := [].", "sci", Some("abcdef012345")).unwrap();
+        let target = encode("p := [].", "sci", Some("abcdef012345"), None).unwrap();
         assert!(target.contains("&k=sci"));
         assert!(target.contains("&c=abcdef012345"));
     }
@@ -256,7 +279,7 @@ mod tests {
         let noisy: Vec<char> = noisy(MAX_REQUEST_TARGET_LEN * 3 / 2).chars().collect();
         let prefix = |n: usize| noisy[..n].iter().collect::<String>();
         assert!(
-            encode(&prefix(noisy.len()), "s", None).is_err(),
+            encode(&prefix(noisy.len()), "s", None, None).is_err(),
             "the search needs an upper bound that already fails"
         );
 
@@ -264,7 +287,7 @@ mod tests {
         let (mut fits, mut over) = (0_usize, noisy.len());
         while over - fits > 1 {
             let mid = fits + (over - fits) / 2;
-            if encode(&prefix(mid), "s", None).is_ok() {
+            if encode(&prefix(mid), "s", None, None).is_ok() {
                 fits = mid;
             } else {
                 over = mid;
@@ -274,7 +297,8 @@ mod tests {
 
         // The precondition. A future change that makes this `Err` fails loudly
         // instead of passing vacuously.
-        let short = encode(&boundary, "s", None).expect("the one-character name must still fit");
+        let short =
+            encode(&boundary, "s", None, None).expect("the one-character name must still fit");
         assert!(
             short.len() + (long_name.len() - 1) > MAX_REQUEST_TARGET_LEN,
             "the search must land near the limit for the name to be able to push \
@@ -282,7 +306,7 @@ mod tests {
             short.len()
         );
         assert_eq!(
-            encode(&boundary, &long_name, None),
+            encode(&boundary, &long_name, None, None),
             Err(PermalinkError::TooLarge)
         );
     }

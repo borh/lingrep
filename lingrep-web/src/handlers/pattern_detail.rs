@@ -11,7 +11,7 @@ use crate::pattern_detail::{PatternDetailProjection, RetainedHitText};
 use crate::provenance_view::HitProvenance;
 use crate::provenance_view::section_labels;
 use crate::revision::{RevisionId, WorkbenchId};
-use crate::snapshot::PatternKey;
+use crate::snapshot::{CompletedSnapshot, PatternDescriptor, PatternKey};
 use crate::state::RequestStore;
 use crate::templates::{
     CaptureInspectionFragment, GraphBindingAttributeData, GraphBindingData, HitDetailFragment,
@@ -25,6 +25,7 @@ use super::EndpointInspectionError;
 
 pub fn routes() -> Router<RequestStore> {
     Router::new()
+        .merge(super::reading::routes())
         .route(
             "/pattern-detail/{workbench_id}/{revision}/{pattern_key}",
             get(pattern_detail),
@@ -45,11 +46,12 @@ async fn hit_detail(
     )>,
 ) -> Response {
     let workbench = WorkbenchId::new(&workbench_id);
-    let (snapshot, inspector, provenance, runtime) =
+    let (snapshot, inspector, ready, runtime) =
         match super::bound_inspector(&store, &workbench, RevisionId(revision)).await {
             Ok(bound) => bound,
             Err(error) => return super::inspection_response(error),
         };
+    let provenance = super::BoundProvenance::open_or_degrade(&ready).await;
     let Some(key) = PatternKey::new(pattern_key) else {
         return super::inspection_response(EndpointInspectionError::UnknownPattern);
     };
@@ -82,6 +84,18 @@ async fn hit_detail(
     .next()
     .flatten()
     .map(|sentence| HitProvenance::from_sentence(&sentence));
+    let overlaps = match super::overlaps::inspect(
+        &store,
+        std::sync::Arc::clone(&snapshot),
+        key,
+        &refs,
+        sentences,
+    )
+    .await
+    {
+        Ok(mut overlaps) => overlaps.pop().unwrap_or_default(),
+        Err(response) => return response,
+    };
     render_hit_detail(
         &workbench_id,
         revision,
@@ -90,6 +104,7 @@ async fn hit_detail(
         &view,
         &reference.graph_bindings,
         provenance_view,
+        overlaps,
     )
 }
 
@@ -101,6 +116,7 @@ fn render_hit_detail(
     inspection: &MatchInspection,
     graph_bindings: &[GraphBinding],
     provenance: Option<HitProvenance>,
+    overlaps: Vec<crate::inspection::OverlapCandidate>,
 ) -> Response {
     let captures = inspection
         .captures
@@ -141,6 +157,7 @@ fn render_hit_detail(
         })
         .collect();
     let fragment = HitDetailFragment {
+        overlaps,
         reference_ordinal,
         workbench_id,
         revision,
@@ -215,11 +232,12 @@ async fn pattern_detail(
     Path((workbench_id, revision, pattern_key)): Path<(String, u64, usize)>,
 ) -> Response {
     let workbench = WorkbenchId::new(&workbench_id);
-    let (snapshot, inspector, provenance, runtime) =
+    let (snapshot, inspector, ready, runtime) =
         match super::bound_inspector(&store, &workbench, RevisionId(revision)).await {
             Ok(bound) => bound,
             Err(error) => return super::inspection_response(error),
         };
+    let provenance = super::BoundProvenance::open_or_degrade(&ready).await;
     let Some(key) = PatternKey::new(pattern_key) else {
         return super::inspection_response(EndpointInspectionError::UnknownPattern);
     };
@@ -267,12 +285,35 @@ async fn pattern_detail(
             reference_ordinal,
             &view,
             labels_by_ref[reference_ordinal].clone(),
+            reference.in_chain,
         ));
     }
-    let projection = PatternDetailProjection::new(hits, &snapshot.sections, key);
+    let mut projection = PatternDetailProjection::new(hits, &snapshot.sections, key);
+    let overlaps = match super::overlaps::inspect(
+        &store,
+        std::sync::Arc::clone(&snapshot),
+        key,
+        &refs,
+        sentences,
+    )
+    .await
+    {
+        Ok(overlaps) => overlaps,
+        Err(response) => return response,
+    };
+    let mut names = std::collections::BTreeSet::new();
+    for (hit, overlaps) in projection.hits.iter_mut().zip(overlaps) {
+        hit.has_overlaps = !overlaps.is_empty();
+        projection.overlap_hits += usize::from(hit.has_overlaps);
+        names.extend(overlaps.into_iter().map(|candidate| candidate.name));
+    }
+    projection.overlap_names = names.into_iter().collect();
     let fragment = PatternDetailFragment {
         pattern_name: &pattern.name,
-        definition: definition_view(&snapshot.source, &pattern.name),
+        definition: definition_view(&snapshot, pattern),
+        chains: crate::compound_chains::chain_panel(&snapshot, key),
+        chained: crate::compound_chains::chain_share(&snapshot, key),
+        documents: crate::document_reach::document_share(&snapshot, key),
         exact_total: pattern.exact_total,
         exact_total_label: format_count(pattern.exact_total),
         retained_count: refs.len(),
@@ -291,8 +332,25 @@ async fn pattern_detail(
 /// whatever the editor holds now. An expansion failure yields no band at all —
 /// the run compiled, so this can only fail on a defect here, and a reader of
 /// finished results has nothing to do with the message either way.
-fn definition_view(source: &str, name: &str) -> Option<PatternDefinitionView> {
-    let expansion = crate::patterns::expand_web_pattern(source, name).ok()??;
+fn definition_view(
+    snapshot: &CompletedSnapshot,
+    pattern: &PatternDescriptor,
+) -> Option<PatternDefinitionView> {
+    let expansion = match pattern.components() {
+        None => crate::patterns::expand_web_pattern(&snapshot.source, &pattern.name),
+        Some(components) => {
+            let names = components
+                .iter()
+                .map(|key| {
+                    snapshot
+                        .pattern(*key)
+                        .map(|component| component.name.as_str())
+                })
+                .collect::<Option<Vec<_>>>()?;
+            crate::patterns::expand_compound_pattern(&snapshot.source, &pattern.name, &names)
+        }
+    }
+    .ok()??;
     Some(PatternDefinitionView {
         declaration: expansion.declaration,
         expanded: expansion.expanded,
@@ -307,6 +365,7 @@ fn retained_hit_text(
     reference_ordinal: usize,
     inspection: &MatchInspection,
     section_labels: Box<[String]>,
+    in_chain: bool,
 ) -> RetainedHitText {
     let (left, key, right) = crate::inspection::kwic_orth_split(inspection);
     RetainedHitText {
@@ -315,5 +374,6 @@ fn retained_hit_text(
         key,
         right,
         section_labels,
+        in_chain,
     }
 }

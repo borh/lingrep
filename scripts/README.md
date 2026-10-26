@@ -88,6 +88,6 @@ published corpus file nor a partial sidecar. Run the script with `--help` for
 nested-field selection and other bounds.
 
 On NixOS, run these commands inside `nix develop` (or prefix the script with
-`nix develop -c`). The locked PyPI Arrow/NumPy wheels need the C++ runtime path
+`nix develop -c`). The locked PyPI Arrow/NumPy wheels require the C++ runtime path
 that the project shell supplies. Conventional Linux, macOS, and Windows Python
 installations do not use that Nix-specific wrapper.

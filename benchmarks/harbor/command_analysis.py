@@ -14,20 +14,14 @@ from typing import Any
 import tree_sitter_bash
 from tree_sitter import Language, Node, Parser
 
+from experiment import sha256_file as sha256
+
 SCHEMA = "lingrep-linguistic-eval.command-analysis/v1"
 RUNTIME_SCHEMA = "lingrep-linguistic-eval.tool-invocation/v1"
 MAX_RUNTIME_RECORD_BYTES = 1024 * 1024
 _BASH = Language(tree_sitter_bash.language())
 _PARSER = Parser(_BASH)
 INSTRUMENTED_TOOLS = ("mecab", "ling")
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def walk(node: Node):

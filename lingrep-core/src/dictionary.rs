@@ -105,35 +105,14 @@ pub fn create_tokenizer_from_path(dict_path: &str) -> Result<Tokenizer, Pipeline
 ///
 /// [`AnalyzerDescriptor`]: crate::analysis::AnalyzerDescriptor
 ///
-/// What is *not* fixed is how often that cost is paid. For a **`.zst`**
-/// dictionary the answer is memoized in the user cache directory
-/// (`~/.cache/lingrep/dictionary-identity/<metadata-key>`) under the same
-/// `(dev, ino, size, mtime, mtime_nsec)` key
-/// [`create_tokenizer_from_path`] already relies on for the decompressed
-/// dictionary itself. A hit costs one 64-byte read; a miss streams the file
-/// through the hasher without materializing 1.31 GB and then records the
-/// answer.
+/// On Unix, digests for `.dic` and `.zst` files are memoized under their
+/// `(dev, ino, size, mtime, mtime_nsec)` metadata in the user cache directory.
+/// Dictionary files must remain immutable: replacing bytes while preserving this
+/// tuple can return a stale identity, just as it can bypass the loader's validation
+/// cache. Packaged dictionaries are read-only files in the Nix store.
 ///
-/// The `.zst` restriction is the whole soundness argument, not an
-/// optimization detail. Memoizing an identity input is safe only where a stale
-/// memo cannot *disagree* with the dictionary the run loads, and that holds
-/// exactly once: a `.zst` replaced in place with identical metadata serves a
-/// stale memoized digest **and** a stale decompressed dictionary, because both
-/// caches key on the same metadata and live in the same directory, so the
-/// digest still names the bytes the run actually tokenized with. The staleness
-/// exposure is then the one [`create_tokenizer_from_path`] already documents,
-/// and no wider.
-///
-/// An **uncompressed** dictionary is memory-mapped directly, so it is always
-/// fresh. A memo there would pair fresh tokenization with a stale identity, and
-/// every artifact built afterwards would be addressed under a dictionary the
-/// run did not use — the identity collision the `a1` scheme exists to prevent,
-/// reintroduced through a cache. That branch is therefore not memoized and
-/// pays the hash, which is memory-speed on a mapped file.
-///
-/// A memo that cannot be read or written — no `HOME`, a read-only cache
-/// directory, a truncated file — is not an error; the digest is recomputed and
-/// the run proceeds.
+/// An unavailable, unreadable or incomplete memo is a cache miss.
+/// Memo-write failures do not fail the run.
 ///
 /// # Errors
 ///
@@ -157,16 +136,10 @@ pub fn dictionary_identity(dict_path: &str) -> Result<[u8; 32], PipelineError> {
     Ok(digest)
 }
 
-/// Builds a tokenizer and its identity digest in one pass.
+/// Constructs a tokenizer and its dictionary identity.
 ///
-/// The pairing avoids retaining a 1.31 GB decompressed buffer solely to hash
-/// it after constructing the tokenizer. An uncompressed dictionary is mapped
-/// once for the tokenizer and hashed out of the same page cache; a `.zst` is
-/// decompressed for the tokenizer and streamed once more for the digest. See
-/// [`create_tokenizer_from_path`] and [`dictionary_identity`] for what each
-/// half trades.
-///
-/// A *memoized* digest is one 64-byte read and short-circuits all of it.
+/// Uses the metadata-keyed memo described in [`dictionary_identity`]; a hit skips
+/// hashing but still loads the tokenizer.
 ///
 /// # Errors
 ///
@@ -479,21 +452,6 @@ mod identity_tests {
         );
     }
 
-    /// The memo is offered only where a stale answer stays *consistent*.
-    ///
-    /// The soundness argument for memoizing an identity input is that a `.zst`
-    /// replaced in place with identical metadata serves a stale memoized digest
-    /// **and** a stale decompressed dictionary — same key, same cache
-    /// directory, so they go stale together and the digest still names the
-    /// bytes the run tokenized with.
-    ///
-    /// That argument does not survive the other branch.
-    /// [`create_tokenizer_from_path`] maps an uncompressed dictionary directly,
-    /// so it serves *fresh* bytes; a memo there would pair fresh tokenization
-    /// with a stale identity, and every artifact built from it would be
-    /// addressed under a dictionary the run did not use. That is the collision
-    /// the `a1` identity scheme exists to prevent, reintroduced through a
-    /// cache. So the uncompressed branch gets no memo and pays the hash.
     #[test]
     fn both_dictionary_encodings_are_memoized_and_nothing_else_is() {
         let directory = tempfile::tempdir().expect("temporary directory");

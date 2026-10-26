@@ -155,9 +155,16 @@ pub fn report_catalog_drift(
                                 head: relation.head.clone(),
                                 labels,
                                 target: match &relation.target {
-                                    super::model::RelationTarget::Captured { capture, .. } => {
-                                        CanonicalRelationTarget::Captured(capture.clone())
-                                    }
+                                    super::model::RelationTarget::Captured {
+                                        capture,
+                                        polarity: super::model::RelationPolarity::Positive,
+                                        ..
+                                    } => CanonicalRelationTarget::Captured(capture.clone()),
+                                    super::model::RelationTarget::Captured {
+                                        capture,
+                                        polarity: super::model::RelationPolarity::Negative,
+                                        ..
+                                    } => CanonicalRelationTarget::CapturedNegative(capture.clone()),
                                     super::model::RelationTarget::Anonymous {
                                         polarity, ..
                                     } => CanonicalRelationTarget::Anonymous(*polarity),
@@ -382,6 +389,7 @@ enum CanonicalRelationTarget {
         super::model::RelationPolarity,
         Box<[super::model::TokenPredicate]>,
     ),
+    CapturedNegative(CompactString),
 }
 
 /// `PositionAssertion` normalized the same way a token predicate is.

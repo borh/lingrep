@@ -1,14 +1,6 @@
 # Enhanced dependency argument assignments, including elided predicates.
-#
-# Each record is one complete `(predicate node, edge, surface argument)`
-# assignment. A named edge is intentional: CoNLL-U permits parallel enhanced
-# labels between the same nodes, and their labels are distinct measured rows.
-# `node.id` is sentence-local graph identity, not a token boundary; `node.kind`
-# distinguishes integer word nodes from decimal empty nodes.
-#
-# These patterns require a complete enhanced graph observation. A morphology-
-# only corpus cannot bind this catalog, and an incomplete CoNLL-U sentence
-# satisfies neither pattern.
+# CoNLL-U permits parallel enhanced labels between the same nodes, so the edge
+# is bound as `$role` to keep each label as a distinct row.
 
 defaults
   status: "experimental"

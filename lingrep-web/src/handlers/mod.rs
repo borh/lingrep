@@ -6,9 +6,11 @@ pub mod export;
 pub mod help;
 pub mod index;
 pub mod inspect;
+mod overlaps;
 pub mod pattern_detail;
 pub mod pattern_editor;
 pub mod permalink;
+mod reading;
 pub mod results_assets;
 pub mod sample;
 pub mod search;
@@ -42,17 +44,21 @@ pub(crate) struct BoundProvenance {
 }
 
 impl BoundProvenance {
-    /// Binds the ready corpus's **cached** provenance view.
-    ///
-    /// Deliberately takes the `ReadyCorpus` rather than its artifact: the
-    /// artifact-only call opens a fresh view, which revalidates every sentence
-    /// row, and this runs on every pattern-detail and hit-detail request.
     async fn open(ready: &ReadyCorpus) -> Result<Self, CorpusError> {
         let view = ready.provenance().await?;
         Ok(Self {
             artifact: Arc::clone(&ready.artifact),
             view,
         })
+    }
+
+    async fn open_or_degrade(ready: &ReadyCorpus) -> Option<Self> {
+        Self::open(ready)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "provenance view unavailable; rendering without it");
+            })
+            .ok()
     }
 }
 
@@ -156,7 +162,7 @@ pub(crate) async fn bound_inspector(
     (
         Arc<CompletedSnapshot>,
         SnapshotInspector,
-        Option<BoundProvenance>,
+        ReadyCorpus,
         Arc<CorpusRuntime>,
     ),
     EndpointInspectionError,
@@ -181,17 +187,11 @@ pub(crate) async fn bound_inspector(
         .ready()
         .await
         .ok_or(EndpointInspectionError::StaleCorpus)?;
-    let provenance = BoundProvenance::open(&ready)
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "provenance view unavailable; rendering without it");
-        })
-        .ok();
     let reader = ready
         .reader()
         .map_err(|_| EndpointInspectionError::CacheCorruption)?;
     let inspector = SnapshotInspector::bind(Arc::clone(&snapshot), reader)?;
-    Ok((snapshot, inspector, provenance, runtime))
+    Ok((snapshot, inspector, ready, runtime))
 }
 
 /// Read provenance for `ids`, aligned to input order. Provenance is an

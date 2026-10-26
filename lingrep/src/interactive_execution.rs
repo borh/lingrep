@@ -19,7 +19,7 @@ use lingrep_core::dictionary::{create_tokenizer, load_dictionary_data};
 #[cfg(test)]
 use lingrep_core::execution::ExecutionLimits;
 use lingrep_core::execution::{
-    AnalysisBinding, CancellationFlag, ExecutionProgress, MatchSink, Publication, RunOutcome,
+    AnalysisBinding, CancellationFlag, ExecutionProgress, MatchSink, PolicySelection, RunOutcome,
     SentenceAdmission, execute_analyzed,
 };
 use lingrep_core::fsm::CompiledCatalog;
@@ -48,7 +48,7 @@ enum InputSpec {
 }
 
 /// Reopenable execution inputs and immutable resource bounds for TUI and
-/// sentence-final workers. Stdin is intentionally single-use.
+/// TUI workers. Stdin is single-use.
 pub(crate) struct InteractiveExecution {
     input: InputSpec,
     config: ExecutionCliConfig,
@@ -151,10 +151,6 @@ impl InteractiveExecution {
         }
     }
 
-    /// Runs, publishing through the catalog's policy and explaining nothing.
-    ///
-    /// The TUI's shape: it owns the screen, so a per-record trace written to
-    /// stderr underneath it would be invisible or would corrupt the display.
     pub(crate) fn execute<S>(
         &self,
         matcher: &CompiledCatalog,
@@ -164,56 +160,6 @@ impl InteractiveExecution {
     ) -> Result<RunOutcome, CliError>
     where
         S: MatchSink,
-    {
-        self.execute_publishing(
-            matcher,
-            cancellation,
-            sink,
-            progress,
-            lingrep_core::execution::PolicySelection::Apply,
-        )
-    }
-
-    /// Runs under a caller-chosen [`Publication`], so a line-oriented surface
-    /// can ask policy to record what it did.
-    ///
-    /// Separate from [`Self::execute`] rather than a parameter on it, because
-    /// the two callers differ in what they can *display*, not in what they want
-    /// executed. A default argument would put the choice at every call site
-    /// including the one that has no answer for it.
-    pub(crate) fn execute_publishing<S>(
-        &self,
-        matcher: &CompiledCatalog,
-        cancellation: &CancellationFlag,
-        sink: &mut S,
-        progress: &mut impl FnMut(ExecutionProgress, &S),
-        publication: impl Into<Publication>,
-    ) -> Result<RunOutcome, CliError>
-    where
-        S: MatchSink,
-    {
-        self.execute_publishing_with_attributes(
-            matcher,
-            std::iter::empty(),
-            cancellation,
-            sink,
-            progress,
-            publication,
-        )
-    }
-
-    pub(crate) fn execute_publishing_with_attributes<S, I>(
-        &self,
-        matcher: &CompiledCatalog,
-        additional_attributes: I,
-        cancellation: &CancellationFlag,
-        sink: &mut S,
-        progress: &mut impl FnMut(ExecutionProgress, &S),
-        publication: impl Into<Publication>,
-    ) -> Result<RunOutcome, CliError>
-    where
-        S: MatchSink,
-        I: IntoIterator<Item = lingrep_core::token_match::AttributeKey>,
     {
         let (source, tokenizer) = self.open_source()?;
         let pool = ThreadPoolBuilder::new()
@@ -235,13 +181,7 @@ impl InteractiveExecution {
         // and this surface's schema is that one constant anyway. A refusal
         // (dependency `where` clauses on a morphology schema) still reports.
         let bound = matcher
-            .bind_with_projection(
-                &schema,
-                matcher
-                    .execution_attributes()
-                    .into_iter()
-                    .chain(additional_attributes),
-            )
+            .bind_with_projection(&schema, matcher.execution_attributes())
             .map_err(|error| {
                 crate::attribute_binding::bind_refusal(&error, "vibrato morphology")
             })?;
@@ -266,8 +206,7 @@ impl InteractiveExecution {
             sink,
             progress,
             &mut |_observation: lingrep_core::execution::TokenizedBatchObservation| Ok(()),
-            // Every interactive surface publishes; none offers `--raw-matches`.
-            publication,
+            PolicySelection::Apply,
             &SentenceAdmission::All,
         )
         .map_err(CliError::from)

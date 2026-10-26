@@ -1,18 +1,7 @@
-# Bounded three-node UD subtree profiles.
-#
-# Krsnik and Dobrovoljc (2025) demonstrate the value of counting recurring
-# dependency subtrees with STARK. This catalog
-# takes the smallest useful slice of that idea without importing STARK's query
-# language or statistical implementation: two direct topologies, with the
-# observed POS and relation labels published as keys for downstream
-# frequency/keyness analysis. The chain uses the language's order-independent
-# node binding; the fork retains explicit surface roles.
-#
-# `two_dependents` is one head with two children. `dependency_chain` is a
-# length-two directed chain. Every present basic-dependency label participates;
-# the dependent captures publish the labels the corpus actually supplied.
-# Dependency edges, rather than token distance, delimit the topology. CoNLL-U
-# dependency attributes are required.
+# Three-node UD basic-dependency subtree profiles (`dep.head`, `dep.rel`),
+# after Krsnik & Dobrovoljc 2025: `two_dependents` (one head with two
+# dependents across all three surface placements of the head) and
+# `dependency_chain` (a directed head -> middle -> leaf chain).
 
 defaults
   status: "experimental"
@@ -25,8 +14,6 @@ end
 
 test DEPENDENCY_RELATION := dep.rel~/.+/.
 
-# One head with two dependents. `left` and `right` name surface order, so the
-# key is stable across all three placements of the head.
 key: [$head.upos, $left.dep.rel, $left.upos, $right.dep.rel, $right.upos]
 topology: "fork"
 output_name: "two_dependents"
@@ -51,9 +38,6 @@ pattern left_right_head :=
   (?<right> [@DEPENDENCY_RELATION]) []* (?<head> [])
   where $head -[*]-> $left, $head -[*]-> $right.
 
-# A directed head -> middle -> leaf chain. Capture names describe graph roles,
-# so one definition covers every surface linearization and publishes one key
-# shape without a fixed token-distance bound.
 key: [$head.upos, $middle.dep.rel, $middle.upos, $leaf.dep.rel, $leaf.upos]
 topology: "chain"
 pattern dependency_chain := any_order(

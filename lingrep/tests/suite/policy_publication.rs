@@ -63,6 +63,7 @@ impl PreparedPolicyFixture {
         copula.set(TokenAttributeIndex::Orth, "だ".into());
         copula.set(TokenAttributeIndex::Lemma, "だ".into());
         let mut punctuation = TokenInfo::default();
+        punctuation.set(TokenAttributeIndex::Pos, "PUNCT".into());
         punctuation.set(TokenAttributeIndex::Orth, "。".into());
         punctuation.set(TokenAttributeIndex::Lemma, "。".into());
 
@@ -164,17 +165,6 @@ fn publication_surfaces_share_one_policy_projection() {
     let mut summarized = summary_names(&summarize);
     summarized.sort();
     assert_eq!(summarized, ["plain", "published"]);
-
-    let sentence_final = fixture.run(&["sentence-final"]);
-    assert_success(&sentence_final, "sentence-final");
-    assert!(
-        !sentence_final
-            .stdout
-            .windows(b"__policy__".len())
-            .any(|window| window == b"__policy__"),
-        "synthesized evidence reached sentence-final: {}",
-        String::from_utf8_lossy(&sentence_final.stdout)
-    );
 }
 
 #[test]
@@ -649,25 +639,11 @@ fn a_truncated_trace_says_so() {
     );
 }
 
-/// Every command that publishes through the block can say what the block did.
-///
-/// `matches` could from the start; `summarize` and `sentence-final` could not,
-/// and they are the two that need it most. Both aggregate — into per-pattern
-/// counts and into pattern × surface counts — so a total that came out lower
-/// than expected has no visible cause in the output itself. The reasoning that
-/// deferred them (`matches` publishes records one at a time, which is the
-/// granularity a per-record trace reports at) turned out to be an argument
-/// about where the trace is *easiest* to read, not where it is needed.
-///
-/// Driven over all three surfaces from one table rather than three near-copies,
-/// because the claim is about the set: a fourth publishing command added
-/// without a report is the failure this is guarding, and three separate tests
-/// would each pass while it happened.
 #[test]
 fn every_publishing_surface_reports_what_policy_did() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
-    for surface in ["matches", "summarize", "sentence-final"] {
+    for surface in ["matches", "summarize"] {
         let counters = fixture.run(&[surface, "--progress", "always"]);
         assert_success(&counters, &format!("{surface} --progress always"));
         let progress = String::from_utf8_lossy(&counters.stderr);
@@ -695,19 +671,11 @@ fn every_publishing_surface_reports_what_policy_did() {
     }
 }
 
-/// The trace is printed without `--progress always`, on every surface.
-///
-/// The per-statement counters are unrequested run facts and stay behind that
-/// flag. `--trace-policy` was typed out loud, and a flag that answered nothing
-/// unless a second flag agreed would be a flag that looks broken. Asserted per
-/// surface because each wires its own progress gate, and `summarize` and
-/// `sentence-final` gate their counters on `ProgressMode::Always` a few lines
-/// from where they print the trace unconditionally.
 #[test]
 fn the_trace_does_not_wait_for_progress_always() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
-    for surface in ["matches", "summarize", "sentence-final"] {
+    for surface in ["matches", "summarize"] {
         let output = fixture.run(&[surface, "--trace-policy", "10"]);
         assert_success(&output, &format!("{surface} --trace-policy 10"));
         let progress = String::from_utf8_lossy(&output.stderr);
@@ -722,4 +690,45 @@ fn the_trace_does_not_wait_for_progress_always() {
             "{surface} must not print unrequested run facts: {progress}"
         );
     }
+}
+
+#[test]
+fn exact_terminal_policy_supplies_sentence_final_matches_and_counts() {
+    let fixture = PreparedPolicyFixture::new();
+    std::fs::write(
+        &fixture.patterns,
+        r#"
+anchor: {name: "content_end", exclude: "TRAILING_PUNCTUATION"}
+max_nesting: {depth: 0, witness: ["研究だ|。"], divergence: ["研究だ|（田中）。"]}
+fragment TRAILING_PUNCTUATION := [upos=PUNCT]+.
+internal := [text=研究].
+tail := [text=だ].
+full := [text=研究] [text=だ].
+policy
+  admit all terminal: {exact: true, anchor: content_end}.
+end
+"#,
+    )
+    .unwrap();
+    let matches = fixture.run(&["matches"]);
+    assert_success(&matches, "matches");
+    let mut records = match_records(&matches);
+    records.sort();
+    assert_eq!(records, [("full".into(), 0, 2), ("tail".into(), 1, 2)]);
+    let summary = fixture.run(&["summarize"]);
+    assert_success(&summary, "summarize");
+    let mut names = summary_names(&summary);
+    names.sort();
+    assert_eq!(names, ["full", "tail"]);
+    let rows = parse_jsonl(&summary.stdout)
+        .into_iter()
+        .filter(|row| row["type"] == "summary")
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["data"]["count"] == 1));
+}
+
+#[test]
+fn sentence_final_command_is_not_part_of_the_cli() {
+    assert!(lingrep::cli::Cli::try_parse_from(["ling", "sentence-final"]).is_err());
 }

@@ -229,7 +229,12 @@ impl Materializer<'_> {
             let head =
                 self.resolve_relation_operand(&by_name, &relation.head, relation.head_span)?;
             let target = match &relation.target {
-                RelationTarget::Captured { capture, span } => RelationTarget::Captured {
+                RelationTarget::Captured {
+                    polarity,
+                    capture,
+                    span,
+                } => RelationTarget::Captured {
+                    polarity: *polarity,
                     capture: self.resolve_relation_operand(&by_name, capture, *span)?,
                     span: *span,
                 },

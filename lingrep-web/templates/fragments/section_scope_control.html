@@ -1,0 +1,38 @@
+<div id="comparison-section-control" class="corpus-context-sections"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  {% if !options.is_empty() %}
+  <details class="corpus-analysis-scope">
+    <summary><span data-i18n="results.analysis_scope">Compare sections</span>
+      <span class="scope-count">{{ selected_count }} / {{ total_count }}</span>
+      <span class="scope-summary"{% if summary_empty %} data-i18n="results.scope_empty">None selected{% else %}>{{ summary }}{% endif %}</span>
+    </summary>
+    <form class="section-scope-form" hx-post="api/section-analysis/{{ workbench_id }}/{{ revision }}"
+          hx-target="#section-analysis" hx-swap="outerHTML">
+      <fieldset aria-describedby="analysis-scope-help">
+        <legend data-i18n="results.analysis_scope_legend">Sections shown in comparisons</legend>
+        <p class="scope-help" id="analysis-scope-help" data-i18n="results.analysis_scope_help">Choose sections for comparison and clustering within the current search scope.</p>
+        <div class="scope-presets">
+          <button type="submit" name="selection_action" value="imrad" data-i18n="results.scope_imrad">IMRAD + related</button>
+          <button type="submit" name="selection_action" value="all" data-i18n="results.scope_all">Select all</button>
+          <button type="submit" name="selection_action" value="none" data-i18n="results.scope_none">Clear</button>
+        </div>
+        <div class="scope-options">
+          {% for option in options %}
+          <label class="section-scope-option">
+            <input type="checkbox" name="section" value="{{ option.label }}"{% if option.selected %} checked{% endif %}>
+            <span>{{ option.label }}</span><small>{{ option.count_label }}</small>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="scope-actions">
+          <button type="submit" data-i18n="results.scope_apply">Apply</button>
+        </div>
+      </fieldset>
+      <input type="hidden" name="submitted" value="1">
+      <input type="hidden" name="distance" value="{{ distance_value }}">
+      <input type="hidden" name="contrast_reference" value="{{ contrast.reference_label() }}">
+      <input type="hidden" name="contrast_comparison" value="{{ contrast.comparison_label() }}">
+      <input type="hidden" name="contrast_order" value="{{ contrast.order.form_value() }}">
+    </form>
+  </details>
+  {% endif %}
+</div>

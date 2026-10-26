@@ -42,7 +42,10 @@ struct RuntimeRelation {
 
 #[derive(Clone)]
 enum RuntimeRelationTarget {
-    Captured(CaptureId),
+    Captured {
+        capture: CaptureId,
+        polarity: RelationPolarity,
+    },
     Anonymous(RelationPolarity),
     Predicate {
         polarity: RelationPolarity,
@@ -166,9 +169,12 @@ impl Program {
             .map(|relation| RuntimeRelation {
                 head: relation.head,
                 target: match &relation.target {
-                    RelationTarget::Captured { capture, .. } => {
-                        RuntimeRelationTarget::Captured(*capture)
-                    }
+                    RelationTarget::Captured {
+                        capture, polarity, ..
+                    } => RuntimeRelationTarget::Captured {
+                        capture: *capture,
+                        polarity: *polarity,
+                    },
                     RelationTarget::Anonymous { polarity, .. } => {
                         RuntimeRelationTarget::Anonymous(*polarity)
                     }
@@ -338,6 +344,7 @@ impl Program {
         enhanced_graph: Option<&EnhancedGraph>,
     ) -> Vec<ProgramMatch> {
         let mut matches = Vec::new();
+        let mut captured_negative_observation = None;
         for start in 0..tokens.len() {
             let mut accepted = self
                 .candidates::<
@@ -352,7 +359,14 @@ impl Program {
                 // filtering after it would let a failing longer candidate
                 // shadow a passing shorter one at the same start, and the
                 // shadow would be unobservable.
-                .filter(|candidate| self.relations_hold(predicates, candidate, tokens))
+                .filter(|candidate| {
+                    self.relations_hold(
+                        predicates,
+                        candidate,
+                        tokens,
+                        &mut captured_negative_observation,
+                    )
+                })
                 .filter_map(|candidate| {
                     let assignments = self.enhanced_assignments(
                         &candidate,
@@ -405,17 +419,33 @@ impl Program {
         predicates: &PredicateSession<'_>,
         candidate: &Candidate,
         tokens: &S,
+        captured_negative_observation: &mut Option<bool>,
     ) -> bool {
         self.relations.iter().all(|relation| {
             let Some((head_start, _)) = candidate.slots[relation.head.index()] else {
                 return false;
             };
             match &relation.target {
-                RuntimeRelationTarget::Captured(dependent) => {
+                RuntimeRelationTarget::Captured {
+                    capture: dependent,
+                    polarity,
+                } => {
                     let Some((dependent_start, _)) = candidate.slots[dependent.index()] else {
                         return false;
                     };
-                    relation_matches_token(relation, tokens, dependent_start, head_start)
+                    if *polarity == RelationPolarity::Negative
+                        && !*captured_negative_observation.get_or_insert_with(|| {
+                            dependency_observation_is_usable(relation, tokens)
+                        })
+                    {
+                        return false;
+                    }
+                    let exists =
+                        relation_matches_token(relation, tokens, dependent_start, head_start);
+                    match polarity {
+                        RelationPolarity::Positive => exists,
+                        RelationPolarity::Negative => !exists,
+                    }
                 }
                 RuntimeRelationTarget::Anonymous(polarity) => {
                     if !dependency_observation_is_usable(relation, tokens) {
@@ -1140,7 +1170,11 @@ fn compile_runtime(
             relations: relations
                 .iter()
                 .filter(|relation| {
-                    let RuntimeRelationTarget::Captured(dependent) = &relation.target else {
+                    let RuntimeRelationTarget::Captured {
+                        capture: dependent,
+                        polarity: RelationPolarity::Positive,
+                    } = &relation.target
+                    else {
                         return false;
                     };
                     (relation.head == *id || *dependent == *id)
@@ -1302,7 +1336,11 @@ fn evaluate<
             })
             .filter(|candidate| {
                 relations.iter().all(|relation| {
-                    let RuntimeRelationTarget::Captured(dependent) = &relation.target else {
+                    let RuntimeRelationTarget::Captured {
+                        capture: dependent,
+                        polarity: RelationPolarity::Positive,
+                    } = &relation.target
+                    else {
                         return true;
                     };
                     match (

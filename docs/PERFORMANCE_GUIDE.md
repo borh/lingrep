@@ -24,12 +24,6 @@ tiers rather than applying the longest campaign to every change:
 6. Run full CI once on the integrated commit. Rerun performance after
    integration only when that integration changed the measured path.
 
-```bash
-cargo test --workspace
-cargo bench
-./ci.sh
-```
-
 For a simplifying primitive substitution, a microbenchmark can establish that
 the candidate is plausible, but it cannot establish end-to-end impact. Tier 1
 still requires a fresh-process comparison for each materially different
@@ -61,10 +55,10 @@ The production defaults are:
 
 | Limit | Default | Meaning |
 |---|---:|---|
-| `max_sentence_bytes` | 64 KiB | decoded UTF-8 bytes in one raw sentence |
+| `max_sentence_bytes` | 1 MiB in the library; automatic in the CLI | decoded UTF-8 bytes in one raw sentence; CLI defaults to the input-record memory bound |
 | `max_input_record_bytes` | 1 MiB | bytes in one physical input record — a JSONL document, or a plaintext or Markdown line |
 | `max_stage_sentences` | 2048 | sentences retained for one tokenization stage |
-| `max_stage_input_bytes` | 128 KiB | total decoded raw UTF-8 in that stage |
+| `max_stage_input_bytes` | 128 KiB | target decoded raw UTF-8 in a stage; a larger accepted sentence runs alone |
 | `max_tokenized_bytes` | 32 MiB | estimated `TokenInfo` inline storage plus owned string capacity in one sentence or physical match batch |
 
 A pretokenized JSONL reader applies `max_tokenized_bytes` first to the encoded
@@ -83,8 +77,8 @@ progress boundaries.
 
 `--max-record-bytes` bounds one input record and is independent of
 `--batch-raw-bytes`: a record larger than one execution batch feeds several
-batches, and raising one bound never enlarges the other. `--max-record-bytes` must be at least
-`--max-sentence-bytes`, because a record holds at least one sentence.
+batches, or one larger sentence runs alone. The batch target stays unchanged
+when the record bound changes. An explicit sentence bound is independent.
 `lingrep-web` exposes the same flag, applied while its corpus artifact is staged.
 
 Tune the batch bounds and `--workers` from measurements of the actual corpus.
@@ -100,15 +94,15 @@ The following paths pull bounded input and do not collect a corpus:
 - `ling tokenize`, `explore`, and `sentence-final`;
 - `ling corpus build`, with bounded tokenization and explicit immutable
   publication;
-- `lingrep-web` V1 artifact execution through the generic executor.
+- `lingrep-web` queries over V1 artifacts through the generic executor.
 
 Direct `ling` commands accept `--max-sentence-bytes` and
 `--max-tokenized-bytes`; prepared artifacts are already tokenized and are not
 rebuilt to apply direct-input bounds. Traversal has separate explicit bounds.
 
-`--batch-raw-bytes` must be at least `--max-sentence-bytes`, so that one
-accepted sentence fits in a stage. Library callers construct
-`ExecutionLimits` directly and may override every field.
+`--batch-raw-bytes` is a batching target, so it may be smaller than an accepted
+sentence. Library callers construct `ExecutionLimits` directly and may override
+every field.
 
 Within paths routed through the unified executor, limit, source, tokenization,
 prepared-corpus, sink, observer, and temporary-budget failures are terminal and produce
@@ -141,27 +135,9 @@ aggregate output or newly completed artifact after cancellation. SIGINT exits
 Artifact creation publishes its private temporary directory only after a completed
 run.
 
-`RunOutcome::Cancelled(ExecutionReport)` retains the last fully published
-report. Exhaustive matches must bind the report or use `Cancelled(_)`.
-
-## Prepared-token format
-
-The CLI supports one compressed V1 prepared-token format. Physical readers and
-writers are private; execution consumers obtain `PreparedSentenceSource` from
-`CorpusArtifact`. Direct/live input consumes caller-owned bounded Vibrato
-output without storage. Validate reload, throughput, file-size, and memory bars
-against the requirements document.
-
-## Useful commands
+## Profile CPU time
 
 ```bash
-# Supported workspace validation
-cargo test --workspace
-
-# Benchmark after recording a baseline
-cargo bench
-
-# Inspect a suspected CPU bottleneck
 perf record -g cargo bench
 perf script | flamegraph-rs > flamegraph.svg
 ```

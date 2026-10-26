@@ -51,13 +51,21 @@ pub fn routes() -> Router<RequestStore> {
 /// saw. They are independent because a lazily built corpus has no identity yet —
 /// an absent `c` means "no assertion", not "no corpus".
 pub struct WireParams<'a> {
+    pub search_scope: Option<crate::search_scope::SearchScope>,
     pub version: &'a str,
     pub query: &'a str,
     /// The mandatory corpus selector.
     pub corpus_key: &'a str,
     /// Optional content identity assertion.
     pub corpus: Option<&'a str>,
+    /// The per-pattern retention the sender was reading, mapped onto this
+    /// server's offers at landing.
+    pub retained: Option<usize>,
 }
+
+/// `r` is at most this many decimal digits, so it parses without overflow and
+/// a huge value cannot pad the target.
+const MAX_RETAINED_DIGITS: usize = 7;
 
 fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
     if raw.len().checked_add(2)? > MAX_REQUEST_TARGET_LEN {
@@ -67,6 +75,8 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
     let mut query = None;
     let mut corpus_key = None;
     let mut corpus = None;
+    let mut retained = None;
+    let mut search_scope = None;
     for pair in raw.split('&') {
         let (key, value) = pair.split_once('=')?;
         let slot = match key {
@@ -74,17 +84,45 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
             "q" => &mut query,
             "k" => &mut corpus_key,
             "c" => &mut corpus,
+            "r" => &mut retained,
+            "s" => &mut search_scope,
             _ => return None,
         };
         if value.is_empty() || slot.replace(value).is_some() {
             return None;
         }
     }
+    let retained = match retained {
+        None => None,
+        Some(digits) => {
+            if digits.len() > MAX_RETAINED_DIGITS
+                || !digits.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return None;
+            }
+            let value = digits.parse::<usize>().ok()?;
+            if value == 0 {
+                return None;
+            }
+            Some(value)
+        }
+    };
+    let search_scope = match search_scope {
+        None => None,
+        Some(encoded) => {
+            let values =
+                serde_urlencoded::from_str::<Vec<(String, String)>>(&format!("s={encoded}"))
+                    .ok()?;
+            Some(crate::search_scope::SearchScope::parse(Some(values.first()?.1.as_str())).ok()?)
+        }
+    };
     let params = WireParams {
+        search_scope,
         version: version?,
         query: query?,
         corpus_key: corpus_key?,
         corpus,
+        retained,
     };
     if params.version != WIRE_VERSION {
         return None;
@@ -139,6 +177,7 @@ fn parse_target(raw: Option<&str>) -> Target<'_> {
 }
 
 struct Landing {
+    search_scope: Option<crate::search_scope::SearchScope>,
     seed_pattern: String,
     auto_run: bool,
     /// Queue the seeded query instead of abandoning it: the corpus is preparing,
@@ -148,6 +187,8 @@ struct Landing {
     run_when_ready: bool,
     link_banner: Option<LinkBanner>,
     link_notice: Option<LinkNotice>,
+    /// The link's retention, when it carried one.
+    retained: Option<usize>,
 }
 
 /// What the selected corpus can currently say about itself.
@@ -183,11 +224,13 @@ impl<'a> Readiness<'a> {
 /// A link with no `c` asserts nothing, so a ready corpus simply runs it.
 fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'_>) -> Landing {
     let fallback = |link_notice| Landing {
+        search_scope: Default::default(),
         seed_pattern: default_pattern.to_string(),
         auto_run: false,
         run_when_ready: false,
         link_banner: None,
         link_notice,
+        retained: None,
     };
 
     let params = match target {
@@ -199,11 +242,13 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
         return fallback(Some(NOTICE_UNREADABLE));
     };
     let run = Landing {
+        search_scope: params.search_scope.clone(),
         seed_pattern,
         auto_run: true,
         run_when_ready: false,
         link_banner: None,
         link_notice: None,
+        retained: params.retained,
     };
     match (readiness, params.corpus) {
         // Ready, and the link asserts nothing about which content it saw.
@@ -276,23 +321,28 @@ pub async fn index_page(
 /// guessed key reveals nothing about the server's configuration — least of all a
 /// filesystem path.
 fn unknown_corpus_page(store: &RequestStore, target: &Target<'_>) -> Html<String> {
-    let decoded = match target {
-        Target::Link(params) => permalink::decode(params.query).ok(),
+    let (decoded, retained) = match target {
+        Target::Link(params) => (permalink::decode(params.query).ok(), params.retained),
         // Unreachable for a validated configuration — a target naming no corpus
         // resolves to the default slot — but the default pattern is the honest
         // answer if it ever is reached.
-        Target::Bare | Target::Unreadable => None,
+        Target::Bare | Target::Unreadable => (None, None),
     };
     let (seed_pattern, link_notice) = decoded.map_or_else(
         || (store.default_pattern.to_string(), NOTICE_UNREADABLE),
         |pattern| (pattern, NOTICE_UNKNOWN_CORPUS),
     );
     let landing = Landing {
+        search_scope: match target {
+            Target::Link(params) => params.search_scope.clone(),
+            _ => Default::default(),
+        },
         seed_pattern,
         auto_run: false,
         run_when_ready: false,
         link_banner: None,
         link_notice: Some(link_notice),
+        retained,
     };
     render_index(
         store,
@@ -306,7 +356,9 @@ fn render_index(
     landing: Landing,
     corpus_context: CorpusContextView,
 ) -> Html<String> {
+    let retained_options = crate::state::retention_offers(store.config.detail_limits.max_kwic);
     IndexPage {
+        search_scope: landing.search_scope,
         workbench_id: WorkbenchId::random().as_str().to_owned(),
         current_page: "corpus",
         seed_pattern: landing.seed_pattern,
@@ -319,8 +371,8 @@ fn render_index(
         corpora: CorpusOption::list(&store.corpora, &corpus_context.corpus_key),
         corpus_context,
         catalog_keys: store.catalogs.keys().map(str::to_owned).collect(),
-        retained_options: crate::state::retention_offers(store.config.detail_limits.max_kwic),
-        retained_default: store.config.detail_limits.max_kwic,
+        retained_default: crate::state::link_retention(&retained_options, landing.retained),
+        retained_options,
     }
     .render().map_or_else(|_| {
         Html(
@@ -348,13 +400,27 @@ mod tests {
     #[test]
     fn strict_parser_accepts_only_the_emitted_shape() {
         let target =
-            permalink::encode("p := [upos=VERB].", "default", Some("abcdef012345")).unwrap();
+            permalink::encode("p := [upos=VERB].", "default", Some("abcdef012345"), None).unwrap();
         let raw = target.strip_prefix("/?").unwrap();
         let params = parse_wire(raw).unwrap();
         assert_eq!(params.version, WIRE_VERSION);
         assert_eq!(params.corpus, Some("abcdef012345"));
         assert!(parse_wire(&format!("{raw}&q={}", params.query)).is_none());
         assert!(parse_wire(&format!("{raw}&extra=x")).is_none());
+    }
+
+    #[test]
+    fn the_retention_is_a_positive_decimal_or_the_target_is_unreadable() {
+        let target = permalink::encode("p := [].", "sci", None, Some(50)).unwrap();
+        let raw = target.strip_prefix("/?").unwrap();
+        assert_eq!(parse_wire(raw).unwrap().retained, Some(50));
+        assert_eq!(parse_wire("v=1&q=AAAA&k=sci").unwrap().retained, None);
+        for bad in ["r=0", "r=-1", "r=5x", "r=12345678", "r=50&r=50"] {
+            assert!(
+                parse_wire(&format!("v=1&q=AAAA&k=sci&{bad}")).is_none(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -365,7 +431,7 @@ mod tests {
 
     #[test]
     fn v1_accepts_a_selector_with_no_digest() {
-        let target = permalink::encode("p := [].", "sci", None).unwrap();
+        let target = permalink::encode("p := [].", "sci", None, None).unwrap();
         let params = parse_wire(target.strip_prefix("/?").unwrap()).unwrap();
         assert_eq!(params.corpus_key, "sci");
         assert_eq!(params.corpus, None);
@@ -461,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn an_undeclared_corpus_keeps_the_decoded_pattern_and_offers_the_selector() {
         let store = two_corpus_store("/private/corpora/secret-a.jsonl").await;
-        let target = permalink::encode("kept := [upos=VERB].", "gone", None).unwrap();
+        let target = permalink::encode("kept := [upos=VERB].", "gone", None, None).unwrap();
         let raw = target.strip_prefix("/?").unwrap().to_owned();
         let html = super::index_page(
             axum::extract::State(store),

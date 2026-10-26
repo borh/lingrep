@@ -19,30 +19,14 @@ const context = (digest) => ({
   getAttribute: (name) => (name === "data-corpus-digest" ? digest : null),
 });
 
-test("runs once when a pending form meets a ready context", () => {
-  assert.equal(
-    shouldRunOnReady(form({ "data-run-when-ready": "" }), context("abcdef012345")),
-    true,
-  );
-});
-
-test("does not run while the corpus is still preparing", () => {
-  assert.equal(
-    shouldRunOnReady(form({ "data-run-when-ready": "" }), context(null)),
-    false,
-  );
-});
-
-test("does not run when no rerun is pending", () => {
-  assert.equal(shouldRunOnReady(form({}), context("abcdef012345")), false);
-});
-
-test("tolerates a missing form or context", () => {
-  assert.equal(shouldRunOnReady(null, context("abcdef012345")), false);
-  assert.equal(
-    shouldRunOnReady(form({ "data-run-when-ready": "" }), null),
-    false,
-  );
+test("deferred submission requires both a pending form and a ready corpus", () => {
+  for (const [name, input, corpus, expected] of [
+    ["pending and ready", form({ "data-run-when-ready": "" }), context("abcdef"), true],
+    ["preparing", form({ "data-run-when-ready": "" }), context(null), false],
+    ["no pending submission", form({}), context("abcdef"), false],
+    ["missing form", null, context("abcdef"), false],
+    ["missing context", form({ "data-run-when-ready": "" }), null, false],
+  ]) assert.equal(shouldRunOnReady(input, corpus), expected, name);
 });
 
 test("the sticky offset is the band's height only while the band is pinned", () => {

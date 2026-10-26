@@ -19,6 +19,10 @@
 //! Each benchmark below forces many level-0 runs, multi-level compaction,
 //! finalization, and a full decode of the merged run.
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::sync::Arc;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};

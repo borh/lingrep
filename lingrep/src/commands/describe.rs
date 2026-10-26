@@ -40,25 +40,12 @@ pub fn run(args: &DescribeArgs, output: OutputMode) -> Result<CommandOutcome, Cl
             OutputMode::Human => {
                 writeln!(
                     writer,
-                    "{} — {}\n  output: {}\n  schemas: {}",
+                    "{} — {}\n  output: {}\n  options: ling {} --help-all",
                     SafeText::from_untrusted(&entry.command),
                     SafeText::from_untrusted(&entry.purpose),
                     entry.output_modes.join(", "),
-                    if entry.schemas.is_empty() {
-                        "none".into()
-                    } else {
-                        entry.schemas.join(", ")
-                    }
-                )
-                .map_err(CliError::Io)?;
-                if !entry.tsv_contracts.is_empty() {
-                    writeln!(
-                        writer,
-                        "  tsv contracts: {}",
-                        entry.tsv_contracts.join(", ")
-                    )
-                    .map_err(CliError::Io)?;
-                }
+                    SafeText::from_untrusted(&entry.command)
+                )?;
                 for example in examples_for(&entry.command) {
                     writeln!(
                         writer,

@@ -28,6 +28,14 @@ fn config_rejects_empty_or_missing_paths() {
         detail_limits: DetailLimits { max_kwic: 10 },
     };
     assert!(valid.validate().is_ok());
+    assert!(
+        Config {
+            max_record_bytes: 1,
+            ..valid.clone()
+        }
+        .validate()
+        .is_ok()
+    );
 
     for config in [
         Config {
@@ -57,13 +65,6 @@ fn config_rejects_empty_or_missing_paths() {
         },
         Config {
             max_record_bytes: 0,
-            ..valid.clone()
-        },
-        // A record holds at least one sentence. lingrep-web executes on the default
-        // sentence bound, so a record bound below it is refused at startup
-        // rather than refusing every record at read time.
-        Config {
-            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_SENTENCE_BYTES - 1,
             ..valid.clone()
         },
     ] {
@@ -175,6 +176,6 @@ fn error_fragment_escapes_dynamic_message() {
     .render()
     .unwrap();
 
-    assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
     assert!(!html.contains("<script>"));
 }

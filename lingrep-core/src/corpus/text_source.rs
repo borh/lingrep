@@ -14,6 +14,7 @@ pub enum InputFormat {
     Plaintext,
     Markdown(MarkdownReaderConfig),
     Conllu,
+    Tei,
 }
 
 struct ConlluEvents<R> {
@@ -431,6 +432,10 @@ where
     R: BufRead + Send + 'static,
 {
     match format {
+        InputFormat::Tei => match super::tei::TeiEvents::new(reader, source_name, 1024 * 1024) {
+            Ok(events) => Box::new(events),
+            Err(error) => Box::new(std::iter::once(Err(error))),
+        },
         InputFormat::Jsonl => Box::new(JsonlEvents {
             lines: JsonLines {
                 reader,

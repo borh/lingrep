@@ -96,7 +96,12 @@ impl PreparedBuildEvents {
         ),
         DiscoveryError,
     > {
-        if validated.is_directory() && matches!(config, CorpusReadConfig::Soranoha) {
+        if validated.is_directory()
+            && matches!(
+                config,
+                CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei
+            )
+        {
             return Err(DiscoveryError::IoAt {
                 logical_path: ".".into(),
                 source: io::Error::new(
@@ -108,14 +113,17 @@ impl PreparedBuildEvents {
         if validated.is_directory()
             && !matches!(
                 config,
-                CorpusReadConfig::Markdown(_) | CorpusReadConfig::Conllu | CorpusReadConfig::Bccwj
+                CorpusReadConfig::Markdown(_)
+                    | CorpusReadConfig::Conllu
+                    | CorpusReadConfig::Bccwj
+                    | CorpusReadConfig::Tei
             )
         {
             return Err(DiscoveryError::IoAt {
                 logical_path: ".".into(),
                 source: io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires the Markdown, CoNLL-U, or BCCWJ reader",
+                    "a directory corpus requires the Markdown, CoNLL-U, TEI, or BCCWJ reader",
                 ),
             });
         }

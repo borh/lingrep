@@ -22,7 +22,7 @@ pub mod discovery;
 pub mod metadata;
 pub mod xml;
 
-pub use crate::corpus::zip::{zip_entry_names, zip_file_stat};
+pub use crate::corpus::zip::{zip_entries, zip_entry_names, zip_file_stat};
 
 /// The seam-facing reader values, re-exported so a consumer never reaches
 /// into the module layout.

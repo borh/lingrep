@@ -16,25 +16,7 @@ pub trait AnalyzerPlan: sealed::Plan {
     fn schema(&self) -> &TokenSchema;
     fn create_session(&self) -> Self::Session;
 
-    /// The longest single input, in UTF-8 bytes, this analyzer can accept —
-    /// `None` when it has no such bound.
-    ///
-    /// **This is a property of the tokenizer, not a configured limit.** It is
-    /// not negotiable and not a resource guard the caller chose: exceeding it
-    /// is a hard failure inside the analyzer, so a caller that bounds sentences
-    /// only by its own `max_sentence_bytes` can still hand over text that
-    /// cannot be analyzed at all.
-    ///
-    /// The two families genuinely differ, which is why this cannot be one
-    /// constant. Vibrato has no such limit, as MeCab did not. Sudachi does, and
-    /// it is *smaller than this workspace's default* `max_sentence_bytes`, so
-    /// the gap between them is reachable rather than theoretical.
-    ///
-    /// It does not reach identity on its own: the analyzer's semantic identity
-    /// already distinguishes the families, so two artifacts truncated at two
-    /// analyzers' limits already carry two identities. What must be recorded is
-    /// the *effective* limit a build truncated at, which is the minimum of this
-    /// and the caller's.
+    /// Longest admitted UTF-8 input accepted by this adapter, or `None` without a fixed ceiling.
     fn max_input_bytes(&self) -> Option<usize> {
         None
     }
@@ -42,6 +24,11 @@ pub trait AnalyzerPlan: sealed::Plan {
 
 /// Mutable analyzer state owned by exactly one tokenization lane.
 pub trait AnalyzerSession: sealed::Session {
+    /// Complete analyzer-owned I/O before the caller reports success.
+    fn finish(&mut self) -> Result<(), AnalysisError> {
+        Ok(())
+    }
+
     fn schema(&self) -> &TokenSchema;
 
     fn analyze_bounded_batch(
@@ -82,3 +69,20 @@ impl fmt::Display for AnalysisError {
 }
 
 impl std::error::Error for AnalysisError {}
+
+impl<T: AnalyzerSession + ?Sized> sealed::Session for Box<T> {}
+impl<T: AnalyzerSession + ?Sized> AnalyzerSession for Box<T> {
+    fn schema(&self) -> &TokenSchema {
+        (**self).schema()
+    }
+    fn analyze_bounded_batch(
+        &mut self,
+        inputs: Vec<TextUnit>,
+        projection: &BoundProjection,
+    ) -> Result<ValidatedAnalysisBatch, AnalysisError> {
+        (**self).analyze_bounded_batch(inputs, projection)
+    }
+    fn finish(&mut self) -> Result<(), AnalysisError> {
+        (**self).finish()
+    }
+}

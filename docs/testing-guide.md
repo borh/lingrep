@@ -20,29 +20,10 @@ attributes/components, a map in place of the field list, invalid whole-match
 widths, and invalid capture widths. Runtime tests must prove one missing field drops the
 entire key and increments `records_unkeyed`.
 
-## Table of Contents
-
-- [Quick Tests During Development](#quick-tests-during-development)
-- [Pre-Commit Validation](#pre-commit-validation)
-- [Edge Case Testing](#edge-case-testing)
-- [Performance Benchmarking](#performance-benchmarking)
-- [OOC Execution Validation](#ooc-execution-validation)
-- [Writing Tests](#writing-tests)
-- [Advanced Testing Techniques](#advanced-testing-techniques)
-- [Test Categories](#test-categories)
-
 ## Quick Tests During Development
 
-Choose the narrowest command that observes the changed boundary.
-
-The `nix develop` shell exports `LINGREP_DICTIONARY_PATH` (the pinned CWJ
-artifact), which every tool, test, and benchmark reads. Only set it yourself to
-run against a different dictionary:
-
-```bash
-dict_root="$(nix build .#vibrato-dictionaries --no-link --print-out-paths)"
-export LINGREP_DICTIONARY_PATH="$dict_root/share/vibrato/unidic-cwj-202512.dic"
-```
+Choose the narrowest command that observes the changed boundary. Run inside
+[`nix develop`](development-environment.md#start-a-shell), which supplies the dictionary.
 
 ```bash
 # Unit tests - fast, direct library access
@@ -58,9 +39,6 @@ cargo test -p lingrep tui
 cargo test -p lingrep --test suite -- cli_shape::
 cargo test -p lingrep --test suite -- explore_characterization::
 
-# Prepared V1 corpus benchmark (optional)
-cargo bench -p lingrep-corpus --bench prepared_tokens
-
 # Interactive testing (manual validation)
 ling explore --dict-path "$LINGREP_DICTIONARY_PATH" \
   --patterns patterns/sfe.lx data-archive/test-corpus.jsonl
@@ -70,16 +48,6 @@ cargo test -p lingrep-core --test suite -- matcher_contract::
 cargo test -p lingrep-corpus --test suite -- prepared_tokens
 cargo test -p lingrep --test suite -- prepared_protocol::
 ```
-
-### What These Tests Cover
-
-- **Unit tests:** Individual function and module correctness
-- **Scroll tests:** TUI boundary conditions and scrolling behavior
-- **Matcher correctness gate:** Compares complete matcher behavior with the
-  independent oracle
-- **Property tests:** Generated matcher invariants
-- **Fuzz targets:** Parser and matcher crash-safety
-- **Benchmarks:** Performance regression detection
 
 ### Correctness gate
 
@@ -107,14 +75,6 @@ integration inventory, the matcher correctness gate, the adapter suites, and
 the browser layout checks.
 Fuzz and performance are independent `--fuzz` and `--performance` modes.
 
-The `ci.sh` script validates everything that CI checks:
-- ✅ All targets compile (lib, bins, tests, benchmarks)
-- ✅ No clippy warnings
-- ✅ Code is formatted
-- ✅ Workspace library and binary unit tests pass
-- ✅ Workspace doctests and lingrep-web JavaScript tests pass
-- ✅ Rustdoc builds with warnings denied, workspace-wide and feature-gated
-
 ### Matcher properties and fuzzing after parser or matcher changes
 
 Run matcher property tests after matcher changes. For parser or matcher changes,
@@ -129,6 +89,7 @@ cargo test -p lingrep-core --test suite -- matcher_property_tests::
 ## Edge Case Testing
 
 The edge case suite covers:
+
 - Empty inputs (empty text, empty patterns)
 - Boundary conditions (very long texts, single characters)
 - Unicode and emoji handling
@@ -137,37 +98,6 @@ The edge case suite covers:
 ```bash
 cargo test -p lingrep-core --test suite -- edge_cases_consolidated::
 ```
-
-## Performance Benchmarking
-
-Criterion benchmarks cover matcher construction/execution and V1 prepared-corpus
-open, integrity verification, projected decoding, and matching throughput.
-
-```bash
-# Run all benchmarks
-cargo bench
-
-# Run specific benchmark
-cargo bench -p lingrep-corpus --bench prepared_tokens
-
-# View HTML reports
-open target/criterion/report/index.html
-```
-
-### Prepared V1 Corpus Benchmark
-
-The prepared-corpus benchmark covers the compressed V1 token format:
-
-```bash
-# Run the prepared storage/execution benchmark
-cargo bench -p lingrep-corpus --bench prepared_tokens
-
-# View results
-open target/criterion/prepared_tokens/report/index.html
-```
-
-The benchmark emits file size, bytes/token, open latency, full-integrity
-verification latency, projected decode throughput, and matching throughput.
 
 ## OOC Execution Validation
 
@@ -181,7 +111,7 @@ cargo test -p lingrep-core --test suite -- execution_runner::
 cargo test -p lingrep-corpus --test suite -- prepared_tokens
 cargo test -p lingrep --test suite -- prepared_protocol::
 cargo test -p lingrep --test suite -- direct_protocol::
-cargo test -p lingrep --test suite -- sentence_final_characterization::
+cargo test -p lingrep --test suite -- policy_publication::
 ```
 
 These tests pin direct/V1 complete-`Match` parity, ordinal and source-error
@@ -238,18 +168,7 @@ Criterion corpus collector as a full-corpus RSS substitute.
 ### Prefer the library API
 
 Use direct library tests when the behavior does not cross a CLI process
-boundary; retain CLI tests for argument, exit-status, and stream contracts:
-
-```bash
-# Unit tests - fast, direct library access
-cargo test --lib
-
-# Matcher property tests
-cargo test -p lingrep-core --test suite -- matcher_property_tests::
-
-# Parser/matcher fuzzing (requires cargo-fuzz)
-./ci.sh --fuzz
-```
+boundary; retain CLI tests for argument, exit-status, and stream contracts.
 
 ### Test Utilities Available
 
@@ -266,29 +185,7 @@ let stats = run_matching_test(
 for property tests. Pair a generated input with an explicit invariant; the
 strategy alone proves nothing.
 
-## Advanced Testing Techniques
-
-### Test Helpers
-
-```rust
-use lingrep_core::testing::compile_test_pattern;
-
-let matcher = compile_test_pattern("[upos=NOUN]");
-let matches = matcher.find_matches(&tokens);
-assert!(!matches.is_empty(), "noun matching");
-```
-
-### Golden File Testing
-
-Use the `insta` crate for output snapshot testing:
-
-```bash
-# Create snapshots
-cargo test
-
-# Update snapshots after intentional changes
-INSTA_UPDATE=1 cargo test
-```
+### Snapshot locations
 
 Matcher snapshots are stored beside their owning suites under
 `lingrep-core/src/fsm/compiler/snapshots/` and `lingrep-core/tests/suite/snapshots/`.
@@ -305,65 +202,6 @@ Matcher snapshots are stored beside their owning suites under
    they require `cargo-fuzz` and run with `./ci.sh --fuzz`.
 5. **Benchmarks:** `lingrep-core/benches/`, `lingrep-corpus/benches/`, and
    `lingrep/benches/`.
-
-## Running Tests by Category
-
-```bash
-# Unit tests only (fastest)
-cargo test --lib
-
-# Integration tests only
-cargo test --workspace --tests
-
-# Focused matcher property module
-cargo test -p lingrep-core --test suite -- matcher_property_tests::
-
-# Specific test function
-cargo test --lib test_pattern_matching
-
-# Run tests serially to expose race conditions
-cargo test --lib -- --test-threads=1
-```
-
-## Best Practices
-
-1. **Test at the owning boundary** — use library tests for library behavior and CLI tests for process contracts
-2. **Use property tests for complex logic**
-3. **Run the matcher correctness gate after performance changes**
-4. **Add golden file tests for output validation**
-5. **Use `--test-threads=1` to expose races**
-
-## Troubleshooting
-
-### Tests Failing with "Dictionary Not Found"
-
-```bash
-dict_root="$(nix build .#vibrato-dictionaries --no-link --print-out-paths)"
-export LINGREP_DICTIONARY_PATH="$dict_root/share/vibrato/unidic-cwj-202512.dic"
-```
-
-### Tests Timing Out
-
-```bash
-# Run with more verbose output
-cargo test -- --nocapture
-
-# Run specific test only
-cargo test --lib test_specific_function
-
-# Run with increased stack size (for deep recursion)
-RUST_MIN_STACK=8388608 cargo test
-```
-
-### Flaky Tests
-
-```bash
-# Run serially to detect race conditions
-cargo test -- --test-threads=1 --exact test_flaky_test
-
-# Run multiple times
-for i in {1..10}; do cargo test --lib test_flaky || break; done
-```
 
 ## Related documentation
 

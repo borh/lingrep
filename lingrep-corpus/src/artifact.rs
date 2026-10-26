@@ -236,6 +236,7 @@ pub struct AnalyzerRecord {
     pub profile: String,
     pub segmentation: String,
     pub normalization: String,
+    pub normalization_unicode_version: Option<[u8; 3]>,
     pub language_policy: String,
     pub boundary_policy: String,
     pub semantic_identity: String,
@@ -273,6 +274,7 @@ impl AnalyzerRecord {
             profile: profile.into(),
             segmentation: segmentation.into(),
             normalization: normalization.into(),
+            normalization_unicode_version: descriptor.normalization().unicode_version(),
             language_policy: descriptor.language_policy().into(),
             boundary_policy: descriptor.boundary_policy().into(),
             semantic_identity: encode_digest(descriptor.semantic_identity().as_bytes()),
@@ -618,7 +620,7 @@ impl CorpusBuilder {
             .unwrap_or("corpus");
         let staging = create_staging(parent, base)?;
         let tokens_name = TOKENS_NAME;
-        let token_writer = TokenWriter::create(
+        let token_writer = TokenWriter::create_indexed(
             &staging.join(tokens_name),
             physical_schema,
             Arc::clone(&config.temp_budget),
@@ -1329,7 +1331,8 @@ impl CorpusBuilder {
         let locations_path = self.staging.join(LOCATIONS_NAME);
         let provenance_path = self.staging.join(PROVENANCE_NAME);
         let enhanced_path = self.staging.join(ENHANCED_NAME);
-        self.token_writer
+        let postings = self
+            .token_writer
             .take()
             .expect("token writer is open")
             .finish(analysis_identity)?;
@@ -1374,15 +1377,17 @@ impl CorpusBuilder {
             &analysis_identity,
             &self.physical_token_schema,
         )?;
-        let built = crate::postings::build(
-            &self.staging,
-            &reader,
-            &analysis_identity,
-            &self.physical_token_schema,
-            &tokens_fact.blake3,
-            Arc::clone(&self.config.temp_budget),
-            should_continue,
-        );
+        let built = match postings {
+            Some(postings) => postings.finish(
+                &self.staging,
+                &reader,
+                &analysis_identity,
+                &self.physical_token_schema,
+                &tokens_fact.blake3,
+                should_continue,
+            ),
+            None => Ok(false),
+        };
         if !should_continue() {
             return Ok(None);
         }
@@ -1633,6 +1638,18 @@ impl CorpusArtifact {
             .transpose()
     }
 
+    fn require_complete_sentences(&self) -> Result<(), CorpusError> {
+        if let Some(truncation) = self.manifest.sentence_truncation
+            && truncation.count > 0
+        {
+            return Err(invalid_artifact(format!(
+                "artifact contains {} truncated sentence(s); rebuild the complete corpus with ling corpus build",
+                truncation.count
+            )));
+        }
+        Ok(())
+    }
+
     pub fn sentence_source(&self) -> Result<PreparedSentenceSource, CorpusError> {
         let schema = self.token_schema()?;
         let attributes = TokenAttributeIndex::ALL
@@ -1647,6 +1664,7 @@ impl CorpusArtifact {
         &self,
         attributes: &[TokenAttributeIndex],
     ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.require_complete_sentences()?;
         let reader = TokenReader::open(
             &self.root.join(TOKENS_NAME),
             &self.analysis_identity,
@@ -1665,6 +1683,7 @@ impl CorpusArtifact {
         &self,
         matcher_attributes: &[lingrep_core::token_match::AttributeKey],
     ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.require_complete_sentences()?;
         let reader = TokenReader::open(
             &self.root.join(TOKENS_NAME),
             &self.analysis_identity,
@@ -1692,6 +1711,7 @@ impl CorpusArtifact {
         &self,
         projection: &BoundProjection,
     ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.require_complete_sentences()?;
         let reader = TokenReader::open(
             &self.root.join(TOKENS_NAME),
             &self.analysis_identity,
@@ -1706,6 +1726,26 @@ impl CorpusArtifact {
             &self.logical_token_schema,
             projection.clone(),
         )
+    }
+
+    /// A sentence is included if any label is selected, or if it has no labels and `include_unlabelled` is true.
+    /// `None` selects every label; an empty list selects none.
+    /// Pull batches on a blocking thread while `runtime` remains alive.
+    pub fn bound_sentence_source_with_sections(
+        &self,
+        projection: &BoundProjection,
+        provenance: Arc<ProvenanceView>,
+        runtime: tokio::runtime::Handle,
+        included: Option<Vec<String>>,
+        include_unlabelled: bool,
+    ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.validate_provenance_view(&provenance)?;
+        Ok(self.bound_sentence_source(projection)?.with_sections(
+            provenance,
+            runtime,
+            included,
+            include_unlabelled,
+        ))
     }
 
     /// Prunes sentences using a proof from the catalog the caller will execute.
@@ -1749,14 +1789,16 @@ impl CorpusArtifact {
         &self,
         reader: &crate::BlockingProvenance,
     ) -> Result<(), CorpusError> {
-        if reader.view().analysis_identity() != &self.analysis_identity {
+        self.validate_provenance_view(reader.view())
+    }
+
+    fn validate_provenance_view(&self, view: &ProvenanceView) -> Result<(), CorpusError> {
+        if view.analysis_identity() != &self.analysis_identity {
             return Err(CorpusError::AnalysisIdentityMismatch {
                 component: PROVENANCE_NAME,
             });
         }
-        if reader.view().artifact_binding()
-            != Some(&self.manifest.component_blake3(PROVENANCE_NAME)?)
-        {
+        if view.artifact_binding() != Some(&self.manifest.component_blake3(PROVENANCE_NAME)?) {
             return Err(CorpusError::ArtifactBindingMismatch {
                 component: PROVENANCE_NAME,
             });

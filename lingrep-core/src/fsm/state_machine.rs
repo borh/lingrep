@@ -4,17 +4,13 @@ use crate::fsm::AttrValueType;
 use compact_str::CompactString;
 use std::collections::{HashMap, HashSet};
 
-/// Immutable NFA state-machine data.
 #[derive(Clone, Debug, PartialEq)]
-pub struct StateMachineData {
-    /// Transitions keyed by their source state.
-    pub state_transitions: HashMap<usize, Vec<(TransitionLabel, usize)>>,
+pub(crate) struct StateMachineData {
+    pub(crate) state_transitions: HashMap<usize, Vec<(TransitionLabel, usize)>>,
 
-    /// Final states and their pattern names.
-    pub final_states: HashSet<FinalState>,
+    pub(crate) final_states: HashSet<FinalState>,
 
-    /// Pattern names that can end at each state.
-    pub state_patterns: HashMap<usize, Vec<CompactString>>,
+    pub(crate) state_patterns: HashMap<usize, Vec<CompactString>>,
 }
 
 #[derive(Clone, Debug)]
@@ -385,19 +381,6 @@ impl StateMachineBuilder {
 #[cfg(test)]
 mod state_machine_data_tests {
     use super::*;
-
-    #[test]
-    fn test_state_machine_data_public_fields() {
-        let data = StateMachineData {
-            state_transitions: HashMap::new(),
-            final_states: HashSet::new(),
-            state_patterns: HashMap::new(),
-        };
-
-        assert!(data.state_transitions.is_empty());
-        assert!(data.final_states.is_empty());
-        assert!(data.state_patterns.is_empty());
-    }
 
     #[test]
     fn test_builder_allocate_state() {

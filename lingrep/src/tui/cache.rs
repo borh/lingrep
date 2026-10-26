@@ -155,40 +155,13 @@ mod tests {
     }
 
     #[test]
-    fn test_surface_entry() {
-        let entry = SurfaceEntry {
-            form: "test".to_string(),
-            count: 42,
-        };
-        assert_eq!(entry.form, "test");
-        assert_eq!(entry.count, 42);
-    }
-
-    #[test]
-    fn test_kwic_line() {
-        let kwic = KwicLine {
-            pre: "before".to_string(),
-            key: "match".to_string(),
-            post: "after".to_string(),
-            match_start: 0,
-            match_end: 0,
-        };
-        assert_eq!(kwic.pre, "before");
-        assert_eq!(kwic.key, "match");
-        assert_eq!(kwic.post, "after");
-    }
-
-    #[test]
-    fn test_cache_config_default() {
-        let config = CacheConfig::default();
-        assert_eq!(config.max_requests, 5);
-        assert_eq!(config.max_patterns_per_request, 50);
-    }
-
-    #[test]
-    fn test_result_cache_default() {
+    fn default_cache_applies_request_and_pattern_capacities() {
         let cache = ResultCache::default();
         assert_eq!(cache.config.max_requests, 5);
+        assert_eq!(cache.config.max_patterns_per_request, 50);
+        assert_eq!(cache.frequencies.cap().get(), 5);
+        assert_eq!(cache.surface.cap().get(), 250);
+        assert_eq!(cache.kwic.cap().get(), 250);
     }
 
     #[test]

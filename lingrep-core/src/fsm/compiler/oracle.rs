@@ -96,11 +96,23 @@ fn execution_relations_hold<T: TokenInfoTrait>(
             return false;
         };
         match &relation.target {
-            RelationTarget::Captured { capture, .. } => {
+            RelationTarget::Captured {
+                capture, polarity, ..
+            } => {
                 let Some(&(dependent_start, _)) = path.slots.get(capture) else {
                     return false;
                 };
-                execution_relation_matches_token(relation, tokens, dependent_start, head_start)
+                if *polarity == RelationPolarity::Negative
+                    && !execution_dependency_observation_is_usable(tokens)
+                {
+                    return false;
+                }
+                let exists =
+                    execution_relation_matches_token(relation, tokens, dependent_start, head_start);
+                match polarity {
+                    RelationPolarity::Positive => exists,
+                    RelationPolarity::Negative => !exists,
+                }
             }
             RelationTarget::Anonymous { polarity, .. } => {
                 if !execution_dependency_observation_is_usable(tokens) {

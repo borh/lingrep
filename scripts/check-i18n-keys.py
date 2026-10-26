@@ -14,7 +14,7 @@ import sys
 import pathlib
 
 WEB = pathlib.Path(__file__).resolve().parent.parent / "lingrep-web"
-TEMPLATES = (WEB / "src" / "templates").rglob("*.html")
+TEMPLATES = (WEB / "templates").rglob("*.html")
 JS = [
     WEB / "assets" / "results-explorer.js",
     WEB / "assets" / "app.js",

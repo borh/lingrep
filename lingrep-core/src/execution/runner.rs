@@ -21,7 +21,7 @@ use super::{
 
 /// A clonable cooperative-cancellation signal shared with an execution run.
 #[derive(Debug, Clone, Default)]
-pub struct CancellationFlag(Arc<AtomicBool>);
+pub struct CancellationFlag(pub(super) Arc<AtomicBool>);
 
 impl CancellationFlag {
     /// Creates an unset cancellation flag.
@@ -575,6 +575,14 @@ where
                 .expect("the executor admits only this binding's sentence schema")
         },
     )?;
+    if matches!(outcome, RunOutcome::Completed(_))
+        && let Some(session) = analyzer.session
+    {
+        session.finish().map_err(|error| ExecutionError::Source {
+            ordinal: 0,
+            message: error.to_string(),
+        })?;
+    }
     let stats = sealed.stats();
     let (program_stats, trace) = sealed.into_reporting();
     Ok(match outcome {
@@ -1271,7 +1279,7 @@ fn validate_raw_sentences(
             .checked_add(actual)
             .ok_or(ExecutionError::ResourceAccounting)?;
     }
-    if stage_bytes > limits.max_stage_input_bytes {
+    if sentences.len() > 1 && stage_bytes > limits.max_stage_input_bytes {
         return Err(ExecutionError::InvalidLimit {
             field: "source_batch_input_bytes",
             message: format!(

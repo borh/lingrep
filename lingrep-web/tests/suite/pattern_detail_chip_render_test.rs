@@ -26,6 +26,9 @@ fn render(hits: Vec<RetainedHitText>) -> String {
     );
     PatternDetailFragment {
         definition: None,
+        chains: None,
+        chained: None,
+        documents: None,
         pattern_name: "chips",
         exact_total_label: "1".into(),
         exact_total: 1,
@@ -46,6 +49,7 @@ fn hit(reference_ordinal: usize, section_labels: Box<[String]>) -> RetainedHitTe
         key: "食べる".into(),
         right: "。".into(),
         section_labels,
+        in_chain: false,
     }
 }
 

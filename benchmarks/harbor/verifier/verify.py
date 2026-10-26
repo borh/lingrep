@@ -7,12 +7,25 @@ import json
 import os
 import resource
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
 
 SUBMISSION = Path("/logs/artifacts/submission")
 TESTS = Path("/tests")
+REWARD_PATH = Path("/logs/verifier/reward.json")
+OUTCOME_PATH = Path("/logs/verifier/outcome.json")
+OUTCOME_SCHEMA = "lingrep-linguistic-eval.verifier-outcome/v1"
+DIMENSIONS = (
+    "evidence",
+    "verdict",
+    "query_visible",
+    "query_hidden",
+    "script_visible",
+    "script_hidden",
+)
+VERDICT_SCHEMA = "lingrep-linguistic-eval.verdict/v1"
 REQUIRED = {
     "schema",
     "eval_document_id",
@@ -31,6 +44,33 @@ ORDER = (
 MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 MAX_REPLAY_FILE_BYTES = 512 * 1024 * 1024
 MAX_RUNNER_BYTES = 1024 * 1024
+MAX_TEXT_ARTIFACT_BYTES = 1024 * 1024
+
+
+def open_submission_file(path: Path) -> int:
+    """Open a path the agent or its sandboxed runner wrote, without following a
+    link; it may point into `/tests` or be a FIFO."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        if path.is_symlink():
+            raise ValueError(f"{path.name} is a symbolic link") from error
+        raise
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise ValueError(f"{path.name} is not a regular file")
+    return descriptor
+
+
+def read_submission_bytes(path: Path, limit: int) -> bytes:
+    with os.fdopen(open_submission_file(path), "rb") as source:
+        if os.fstat(source.fileno()).st_size > limit:
+            raise ValueError(f"{path.name} exceeds {limit} bytes")
+        return source.read(limit + 1)
+
+
+def read_submission_text(path: Path, limit: int) -> str:
+    return read_submission_bytes(path, limit).decode()
 
 
 def row_key(row: dict) -> tuple:
@@ -59,6 +99,11 @@ def validate_rows(rows: list[dict]) -> list[dict]:
 
 
 def load_rows(path: Path) -> list[dict]:
+    text = read_submission_text(path, MAX_EVIDENCE_BYTES)
+    return validate_rows([json.loads(line) for line in text.splitlines()])
+
+
+def load_gold(path: Path) -> list[dict]:
     return validate_rows([json.loads(line) for line in path.read_text().splitlines()])
 
 
@@ -110,7 +155,11 @@ def load_jsonl(path: Path) -> list[dict]:
 def load_documents(path: Path) -> list[dict]:
     documents = load_jsonl(path)
     for document in documents:
-        if set(document) != {"eval_document_id", "sentences"}:
+        if not {"eval_document_id", "sentences"} <= set(document) <= {
+            "eval_document_id",
+            "metadata",
+            "sentences",
+        }:
             raise ValueError("invalid replay document schema")
         if not isinstance(document["eval_document_id"], str) or not isinstance(
             document["sentences"], list
@@ -126,13 +175,6 @@ def event_data(events: list[dict], kind: str) -> list[dict]:
 
 
 def match_char_span(match: dict) -> tuple[int, int]:
-    """Read the record's own code-point offsets, which the tool publishes.
-
-    `ling` computes these from the published span, so a `detach` or a span
-    rewrite moves them with it. Rebuilding them from token indices would be a
-    second implementation of the same projection, and one that silently scores
-    zero when a sentence withdraws offsets (`counters.offsets_omitted`).
-    """
     char_span = match.get("char_span")
     if not isinstance(char_span, dict):
         raise TypeError(
@@ -147,7 +189,6 @@ def match_char_span(match: dict) -> tuple[int, int]:
 
 
 def match_document_id(match: dict) -> str:
-    """Read the document identity the run projected from its own metadata."""
     source_metadata = match.get("source_metadata")
     document = (
         source_metadata.get("document") if isinstance(source_metadata, dict) else None
@@ -182,12 +223,6 @@ def project_matches(match_events: list[dict]) -> list[dict]:
 
 
 def published_label(definition: dict) -> str:
-    """The name a definition publishes its records under.
-
-    `output_name` is compiler-owned metadata that rewrites the published name
-    (`lingrep_core::fsm::policy::POLICY_KEYS`), and it is the only way to
-    publish a label that is not a legal definition identifier.
-    """
     metadata = definition.get("metadata")
     output_name = metadata.get("output_name") if isinstance(metadata, dict) else None
     return output_name if isinstance(output_name, str) else definition["name"]
@@ -204,21 +239,24 @@ def validate_definition_labels(events: list[dict], labels: list[str]) -> None:
         )
 
 
-def run_lingrep(*arguments: str) -> list[dict]:
+def run_lingrep(*arguments: str, timeout: float) -> list[dict]:
     completed = subprocess.run(
         ["ling-verifier", *arguments],
         text=True,
         capture_output=True,
         check=False,
+        timeout=timeout,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
-        raise ValueError(f"ling replay failed: {detail}")
+        raise ReplayFailure(f"ling replay failed: {detail}")
     return [json.loads(line) for line in completed.stdout.splitlines()]
 
 
-def replay(query: Path, corpus: Path, labels: list[str]) -> list[dict]:
-    documents = load_documents(corpus)
+def replay(
+    query: Path, corpus: Path, labels: list[str], *, timeout: float
+) -> list[dict]:
+    documents = verifier_input(load_documents, corpus)
     matches = run_lingrep(
         "--json",
         "matches",
@@ -231,6 +269,7 @@ def replay(query: Path, corpus: Path, labels: list[str]) -> list[dict]:
         "--progress",
         "never",
         str(corpus),
+        timeout=timeout,
     )
     validate_definition_labels(matches, labels)
     return validate_rows_against_documents(project_matches(matches), documents)
@@ -239,19 +278,17 @@ def replay(query: Path, corpus: Path, labels: list[str]) -> list[dict]:
 def submitted_query() -> Path:
     queries = sorted(SUBMISSION.rglob("*.lx"))
     expected = SUBMISSION / "query.lx"
-    if queries != [expected] or expected.is_symlink() or not expected.is_file():
-        raise ValueError(
-            "submitted catalog must be exactly one regular query.lx"
-        )
+    if queries != [expected]:
+        raise ValueError("submitted catalog must be exactly one query.lx")
+    read_submission_bytes(expected, MAX_TEXT_ARTIFACT_BYTES)
     return expected
 
 
 def submitted_runner() -> Path:
     runner = SUBMISSION / "run-analysis"
-    if runner.is_symlink() or not runner.is_file() or not os.access(runner, os.X_OK):
+    read_submission_bytes(runner, MAX_RUNNER_BYTES)
+    if not os.access(runner, os.X_OK):
         raise ValueError("submission must contain a regular executable run-analysis")
-    if runner.stat().st_size > MAX_RUNNER_BYTES:
-        raise ValueError("run-analysis exceeds the submission size limit")
     return runner
 
 
@@ -324,9 +361,18 @@ def sandbox_command(submission: Path, workspace: Path) -> list[str]:
     return command
 
 
-def replay_analysis(corpus: Path) -> list[dict]:
+def output_tail(path: Path) -> str:
+    try:
+        with os.fdopen(open_submission_file(path), "rb") as source:
+            source.seek(max(0, os.fstat(source.fileno()).st_size - 4096))
+            return source.read().decode(errors="replace").strip()
+    except (OSError, ValueError) as error:
+        return f"<{path.name} unreadable: {error}>"
+
+
+def replay_analysis(corpus: Path, *, timeout: float) -> list[dict]:
     submitted_runner()
-    documents = load_documents(corpus)
+    documents = verifier_input(load_documents, corpus)
     with tempfile.TemporaryDirectory(prefix="lingrep-harbor-replay-") as temporary:
         workspace = Path(temporary)
         workspace.chmod(0o777)
@@ -349,126 +395,258 @@ def replay_analysis(corpus: Path) -> list[dict]:
                 stdout=stdout,
                 stderr=stderr,
                 check=False,
-                timeout=30,
+                timeout=timeout,
                 preexec_fn=limit_files,
             )
         if completed.returncode != 0:
-            detail = stderr_path.read_text(errors="replace")[-4096:].strip()
-            if not detail:
-                detail = stdout_path.read_text(errors="replace")[-4096:].strip()
-            raise ValueError(f"run-analysis replay failed: {detail}")
+            detail = output_tail(stderr_path) or output_tail(stdout_path)
+            raise ReplayFailure(f"run-analysis replay failed: {detail}")
         evidence = workspace / "evidence.jsonl"
-        if evidence.stat().st_size > MAX_EVIDENCE_BYTES:
-            raise ValueError("run-analysis evidence exceeds replay size limit")
         return validate_rows_against_documents(load_rows(evidence), documents)
 
 
-def main() -> None:
-    reward = {"evidence_f1": 0.0, "exact": 0.0, "format": 0.0}
+class ReplayFailure(ValueError):
+    """The submitted runner or catalog executed and failed."""
+
+
+class VerifierFailure(Exception):
+    """A verifier-owned input under `/tests` was unreadable."""
+
+
+def verifier_input(read, *arguments):
     try:
-        result = json.loads((SUBMISSION / "result.json").read_text())
-        if result.get("schema") != "lingrep-linguistic-eval.result/v1":
-            raise ValueError("invalid result schema")
-        if not (SUBMISSION / "analysis.md").read_text().strip():
-            raise ValueError("analysis.md is empty")
-        visible_documents = load_documents(TESTS / "visible.jsonl")
+        return read(*arguments)
+    except Exception as error:
+        raise VerifierFailure(f"{error.__class__.__name__}: {error}") from error
+
+
+def classify(error: Exception) -> str:
+    if isinstance(error, VerifierFailure):
+        return "infrastructure_failure"
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "replay_timeout"
+    if isinstance(error, ReplayFailure):
+        return "replay_failed"
+    return "invalid_submission"
+
+
+SUBMISSION_ERRORS = (
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+    subprocess.TimeoutExpired,
+    VerifierFailure,
+)
+
+
+def load_json(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def task_contract() -> dict:
+    contract = {"query": None, "script": None, "verdict": None}
+    for kind, name in (
+        ("query", "query-replay.json"),
+        ("script", "analysis-replay.json"),
+        ("verdict", "verdict.json"),
+    ):
+        path = TESTS / name
+        if path.exists():
+            try:
+                contract[kind] = verifier_input(load_json, path)
+            except VerifierFailure as error:
+                raise VerifierFailure(f"{name}: {error}") from error
+    return contract
+
+
+def declare_dimensions(contract: dict) -> tuple[dict, dict]:
+    reward = {"evidence_f1": 0.0, "exact": 0.0, "format": 0.0}
+    outcomes = {"evidence": {"applicable": True, "outcome": "not_reached"}}
+    has_verdict = contract["verdict"] is not None
+    if has_verdict:
+        reward["verdict_correct"] = 0.0
+    outcomes["verdict"] = {
+        "applicable": has_verdict,
+        "outcome": "not_reached" if has_verdict else "not_applicable",
+    }
+    for kind in ("query", "script"):
+        config = contract[kind]
+        applicable = config is not None
+        has_hidden = applicable and bool(config["has_hidden_driver"])
+        if applicable:
+            reward.update(
+                {
+                    f"{kind}_valid": 0.0,
+                    f"visible_{kind}_f1": 0.0,
+                    f"visible_{kind}_exact": 0.0,
+                    f"{kind}_exact": 0.0,
+                }
+            )
+        if has_hidden:
+            reward.update({f"hidden_{kind}_f1": 0.0, f"hidden_{kind}_exact": 0.0})
+        for scope, present in (("visible", applicable), ("hidden", has_hidden)):
+            outcomes[f"{kind}_{scope}"] = {
+                "applicable": present,
+                "outcome": "not_reached" if present else "not_applicable",
+            }
+    return reward, outcomes
+
+
+def score_evidence(reward: dict, outcome: dict) -> None:
+    try:
+        visible_documents = verifier_input(load_documents, TESTS / "visible.jsonl")
+        expected = verifier_input(load_gold, TESTS / "gold.jsonl")
         predicted = validate_rows_against_documents(
             load_rows(SUBMISSION / "evidence.jsonl"), visible_documents
         )
-        expected = load_rows(TESTS / "gold.jsonl")
-        score = score_rows(predicted, expected)
-        reward = {
+    except SUBMISSION_ERRORS as error:
+        outcome.update({"outcome": classify(error), "detail": str(error)})
+        print(f"evidence verification failed: {error}")
+        return
+    score = score_rows(predicted, expected)
+    reward.update(
+        {
             "evidence_f1": score["f1"],
             "exact": score["exact"],
             "format": 1.0,
             "precision": score["precision"],
             "recall": score["recall"],
         }
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-        print(f"evidence verification failed: {error}")
+    )
+    outcome["outcome"] = "scored"
 
-    config_path = TESTS / "query-replay.json"
-    if config_path.exists():
-        reward.update(
-            {
-                "query_valid": 0.0,
-                "visible_query_f1": 0.0,
-                "visible_query_exact": 0.0,
-                "query_exact": 0.0,
-            }
-        )
+
+def load_verdict(path: Path) -> bool:
+    """The submitted `verdict.json`: exactly `schema`, `answerable` and `reason`."""
+    verdict = json.loads(read_submission_text(path, MAX_TEXT_ARTIFACT_BYTES))
+    if not isinstance(verdict, dict) or set(verdict) != {"schema", "answerable", "reason"}:
+        raise ValueError("verdict.json must be an object with schema, answerable and reason")
+    if verdict["schema"] != VERDICT_SCHEMA:
+        raise ValueError(f"verdict.json schema must be {VERDICT_SCHEMA}")
+    if not isinstance(verdict["answerable"], bool) or not isinstance(verdict["reason"], str):
+        raise TypeError("verdict.json answerable must be a boolean and reason a string")
+    return verdict["answerable"]
+
+
+def score_verdict(expected: dict, reward: dict, outcome: dict) -> None:
+    try:
+        answerable = verifier_input(lambda: bool(expected["answerable"]))
+        submitted = load_verdict(SUBMISSION / "verdict.json")
+    except SUBMISSION_ERRORS as error:
+        outcome.update({"outcome": classify(error), "detail": str(error)})
+        print(f"verdict verification failed: {error}")
+        return
+    reward["verdict_correct"] = float(submitted == answerable)
+    outcome["outcome"] = "scored"
+
+
+def score_replay(kind: str, prepare, *, has_hidden: bool, reward: dict, outcomes: dict) -> None:
+    """`prepare` validates the submission and returns `corpus -> rows`; the hidden
+    replay runs only after a scored visible one, else records `not_reached`."""
+    visible = outcomes[f"{kind}_visible"]
+    hidden = outcomes[f"{kind}_hidden"]
+    try:
+        run = prepare()
+        gold = verifier_input(load_gold, TESTS / "gold.jsonl")
+        rows = run(TESTS / "visible.jsonl")
+    except SUBMISSION_ERRORS as error:
+        visible.update({"outcome": classify(error), "detail": str(error)})
+        if has_hidden and isinstance(error, VerifierFailure):
+            hidden.update({"outcome": "infrastructure_failure", "detail": str(error)})
+        print(f"{kind} replay verification failed: {error}")
+        return
+    reward[f"{kind}_valid"] = 1.0
+    score = score_rows(rows, gold)
+    reward[f"visible_{kind}_f1"] = score["f1"]
+    reward[f"visible_{kind}_exact"] = score["exact"]
+    visible["outcome"] = "scored"
+    all_exact = score["exact"] == 1.0
+    if has_hidden:
         try:
-            config = json.loads(config_path.read_text())
+            hidden_gold = verifier_input(load_gold, TESTS / "hidden-gold.jsonl")
+            hidden_rows = run(TESTS / "hidden.jsonl")
+        except SUBMISSION_ERRORS as error:
+            hidden.update({"outcome": classify(error), "detail": str(error)})
+            print(f"hidden {kind} replay verification failed: {error}")
+            return
+        hidden_score = score_rows(hidden_rows, hidden_gold)
+        reward[f"hidden_{kind}_f1"] = hidden_score["f1"]
+        reward[f"hidden_{kind}_exact"] = hidden_score["exact"]
+        hidden["outcome"] = "scored"
+        all_exact = all_exact and hidden_score["exact"] == 1.0
+    reward[f"{kind}_exact"] = float(all_exact)
+
+
+def write_results(reward: dict, outcomes: dict) -> None:
+    REWARD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REWARD_PATH.write_text(json.dumps(reward, sort_keys=True) + "\n")
+    OUTCOME_PATH.write_text(
+        json.dumps(
+            {"schema": OUTCOME_SCHEMA, "dimensions": outcomes},
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def main() -> None:
+    try:
+        contract = task_contract()
+    except VerifierFailure as error:
+        print(f"task contract unreadable: {error}")
+        write_results(
+            {"evidence_f1": 0.0, "exact": 0.0, "format": 0.0},
+            {
+                name: {
+                    "applicable": True,
+                    "outcome": "infrastructure_failure",
+                    "detail": str(error),
+                }
+                for name in DIMENSIONS
+            },
+        )
+        return
+    reward, outcomes = declare_dimensions(contract)
+    score_evidence(reward, outcomes["evidence"])
+    if contract["verdict"] is not None:
+        score_verdict(contract["verdict"], reward, outcomes["verdict"])
+
+    query_config = contract["query"]
+    if query_config is not None:
+
+        def prepare_query():
             query = submitted_query()
-            visible = replay(query, TESTS / "visible.jsonl", config["labels"])
-            reward["query_valid"] = 1.0
-            visible_score = score_rows(visible, load_rows(TESTS / "gold.jsonl"))
-            reward["visible_query_f1"] = visible_score["f1"]
-            reward["visible_query_exact"] = visible_score["exact"]
-            all_exact = visible_score["exact"] == 1.0
-            if config["has_hidden_driver"]:
-                reward["hidden_query_f1"] = 0.0
-                reward["hidden_query_exact"] = 0.0
-                hidden = replay(query, TESTS / "hidden.jsonl", config["labels"])
-                hidden_score = score_rows(
-                    hidden, load_rows(TESTS / "hidden-gold.jsonl")
-                )
-                reward["hidden_query_f1"] = hidden_score["f1"]
-                reward["hidden_query_exact"] = hidden_score["exact"]
-                all_exact = all_exact and hidden_score["exact"] == 1.0
-            reward["query_exact"] = float(all_exact)
-        except (
-            OSError,
-            ValueError,
-            TypeError,
-            KeyError,
-            IndexError,
-            json.JSONDecodeError,
-        ) as error:
-            print(f"query replay verification failed: {error}")
+            labels = verifier_input(lambda: list(query_config["labels"]))
+            timeout = verifier_input(lambda: float(query_config["replay_timeout_sec"]))
+            return lambda corpus: replay(query, corpus, labels, timeout=timeout)
 
-    analysis_config_path = TESTS / "analysis-replay.json"
-    if analysis_config_path.exists():
-        reward.update(
-            {
-                "script_valid": 0.0,
-                "visible_script_f1": 0.0,
-                "visible_script_exact": 0.0,
-                "script_exact": 0.0,
-            }
+        score_replay(
+            "query",
+            prepare_query,
+            has_hidden=bool(query_config["has_hidden_driver"]),
+            reward=reward,
+            outcomes=outcomes,
         )
-        try:
-            config = json.loads(analysis_config_path.read_text())
-            visible = replay_analysis(TESTS / "visible.jsonl")
-            reward["script_valid"] = 1.0
-            visible_score = score_rows(visible, load_rows(TESTS / "gold.jsonl"))
-            reward["visible_script_f1"] = visible_score["f1"]
-            reward["visible_script_exact"] = visible_score["exact"]
-            all_exact = visible_score["exact"] == 1.0
-            if config["has_hidden_driver"]:
-                reward["hidden_script_f1"] = 0.0
-                reward["hidden_script_exact"] = 0.0
-                hidden = replay_analysis(TESTS / "hidden.jsonl")
-                hidden_score = score_rows(
-                    hidden, load_rows(TESTS / "hidden-gold.jsonl")
-                )
-                reward["hidden_script_f1"] = hidden_score["f1"]
-                reward["hidden_script_exact"] = hidden_score["exact"]
-                all_exact = all_exact and hidden_score["exact"] == 1.0
-            reward["script_exact"] = float(all_exact)
-        except (
-            OSError,
-            ValueError,
-            TypeError,
-            KeyError,
-            subprocess.TimeoutExpired,
-            json.JSONDecodeError,
-        ) as error:
-            print(f"run-analysis replay verification failed: {error}")
 
-    output = Path("/logs/verifier/reward.json")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(reward, sort_keys=True) + "\n")
+    script_config = contract["script"]
+    if script_config is not None:
+
+        def prepare_script():
+            submitted_runner()
+            timeout = verifier_input(lambda: float(script_config["replay_timeout_sec"]))
+            return lambda corpus: replay_analysis(corpus, timeout=timeout)
+
+        score_replay(
+            "script",
+            prepare_script,
+            has_hidden=bool(script_config["has_hidden_driver"]),
+            reward=reward,
+            outcomes=outcomes,
+        )
+
+    write_results(reward, outcomes)
 
 
 if __name__ == "__main__":

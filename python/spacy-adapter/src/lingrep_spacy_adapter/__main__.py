@@ -41,8 +41,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 boundary_component=args.boundary_component,
             )
             return 0
-        lock = Path(__file__).resolve().parents[2] / "uv.lock"
+        lock = Path(__file__).with_name("uv.lock")
+        if not lock.is_file():
+            lock = Path(__file__).resolve().parents[2] / "uv.lock"
         lock_digest = blake3.blake3(lock.read_bytes()).hexdigest()
+        from lingrep_adapter_protocol.resources import validate_runtime
+
+        validate_runtime(Path(args.model_root))
         serve(
             sys.stdin.buffer,
             sys.stdout.buffer,

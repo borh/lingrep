@@ -52,6 +52,23 @@ pub fn retention_offers(ceiling: usize) -> Vec<usize> {
     offers
 }
 
+/// The offer a shared link's retention selects on this server: the largest
+/// offer not above the link's value, or the smallest offer when every offer is
+/// above it. `None` selects the ceiling, as a page opened without a link does.
+pub fn link_retention(offers: &[usize], requested: Option<usize>) -> usize {
+    let ceiling = offers.last().copied().unwrap_or(1);
+    let Some(requested) = requested else {
+        return ceiling;
+    };
+    offers
+        .iter()
+        .rev()
+        .find(|offer| **offer <= requested)
+        .or(offers.first())
+        .copied()
+        .unwrap_or(ceiling)
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("dictionary path must not be empty")]
@@ -118,6 +135,19 @@ impl Config {
                 // the declared key, like the error below.
                 return Err(ConfigError::UnreadablePath {
                     kind: format!("bccwj corpus {:?}", name.as_str()),
+                    path: path_display,
+                });
+            }
+            if matches!(
+                read_config.format(),
+                lingrep_core::corpus::CorpusFormat::Tei
+                    | lingrep_core::corpus::CorpusFormat::SoranohaTei
+            ) {
+                return Err(ConfigError::UnreadablePath {
+                    kind: format!(
+                        "TEI corpus {:?}; prepare it with ling corpus build",
+                        name.as_str()
+                    ),
                     path: path_display,
                 });
             }
@@ -382,7 +412,17 @@ impl Default for RequestStore {
 
 #[cfg(test)]
 mod retention_tests {
-    use super::retention_offers;
+    use super::{link_retention, retention_offers};
+
+    #[test]
+    fn a_link_selects_the_largest_offer_not_above_its_retention() {
+        let offers = retention_offers(1_000);
+        assert_eq!(link_retention(&offers, None), 1_000);
+        assert_eq!(link_retention(&offers, Some(50)), 50);
+        assert_eq!(link_retention(&offers, Some(60)), 50);
+        assert_eq!(link_retention(&offers, Some(2_000)), 1_000);
+        assert_eq!(link_retention(&offers, Some(5)), 20);
+    }
 
     #[test]
     fn the_ceiling_is_the_largest_offer_and_is_never_duplicated() {

@@ -305,7 +305,7 @@ fn flatten_external_batch(
             .checked_add(input.input().len())
             .ok_or(ExecutionError::ResourceAccounting)
     })?;
-    if input_bytes > limits.max_stage_input_bytes {
+    if analysis.inputs().len() > 1 && input_bytes > limits.max_stage_input_bytes {
         return Err(ExecutionError::Source {
             ordinal: *next_corpus_sentence,
             message: format!(

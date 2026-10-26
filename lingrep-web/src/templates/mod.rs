@@ -30,6 +30,7 @@ impl std::fmt::Display for TrustedFragmentHtml {
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct IndexPage {
+    pub search_scope: Option<crate::search_scope::SearchScope>,
     pub workbench_id: String,
     pub current_page: &'static str,
     pub seed_pattern: String,
@@ -48,12 +49,21 @@ pub struct IndexPage {
     /// Ascending retention values the run control offers. See
     /// [`retention_offers`](crate::state::retention_offers).
     pub retained_options: Vec<usize>,
-    /// The offer selected on load: the server's configured ceiling, so a page
-    /// nobody touches runs exactly what it ran before the control existed.
+    /// The offer selected on load: the server's configured ceiling, or the
+    /// offer a shared link's retention maps to. See
+    /// [`link_retention`](crate::state::link_retention).
     pub retained_default: usize,
 }
 
 impl IndexPage {
+    pub fn imrad_labels_json(&self) -> String {
+        serde_json::to_string(&crate::section_analysis::DEFAULT_SECTION_LABELS).unwrap_or_default()
+    }
+
+    pub fn scope_json(&self) -> String {
+        serde_json::to_string(&self.search_scope).unwrap_or_default()
+    }
+
     /// Whether this offer is the one selected on load. A method rather than a
     /// template comparison: the loop yields a reference and Askama has no
     /// dereference operator.
@@ -151,17 +161,21 @@ pub struct PatternResultData {
     pub auto_load: bool,
     pub authored_index: usize,
     pub metadata_groups: Box<[crate::pattern_catalog::MetadataGroup]>,
+    pub coincident: Option<crate::pattern_catalog::CoincidenceBadge>,
 }
 
 #[derive(Template)]
 #[template(path = "fragments/results_explorer.html")]
 pub struct ResultsExplorer<'a> {
+    pub search_scope: Option<&'a crate::search_scope::SearchScope>,
+    pub excluded_sentences: u64,
     pub workbench_id: &'a str,
     pub revision: u64,
     pub results: &'a [PatternResultData],
     pub has_results: bool,
     pub grouping_fields: &'a [crate::pattern_catalog::GroupingField],
     pub default_grouping_field: &'a str,
+    pub coverage: Option<crate::pattern_catalog::SentenceCoverage>,
     pub section_analysis: Option<&'a TrustedFragmentHtml>,
 }
 
@@ -182,12 +196,14 @@ pub struct SectionScopeControl<'a> {
     pub summary: String,
     pub summary_empty: bool,
     pub distance_value: &'a str,
+    pub contrast: &'a crate::section_contrast::ContrastSelection,
     pub oob: bool,
 }
 
 #[derive(Template)]
 #[template(path = "fragments/section_analysis.html")]
 pub struct SectionAnalysis<'a> {
+    pub comparison_control: Option<TrustedFragmentHtml>,
     pub workbench_id: &'a str,
     pub revision: u64,
     pub selected_labels: &'a [String],
@@ -196,6 +212,8 @@ pub struct SectionAnalysis<'a> {
     pub distance_jensen_shannon: bool,
     pub distance_cosine: bool,
     pub comparison: Option<&'a crate::section_comparison::SectionComparison>,
+    pub contrast_selection: &'a crate::section_contrast::ContrastSelection,
+    pub contrast: Option<&'a crate::section_contrast::SectionContrast>,
     pub dendrogram: Option<&'a crate::section_dendrogram::SectionDendrogram>,
     pub section_dendrogram: Option<&'a crate::section_dendrogram::SectionDendrogram>,
 }
@@ -241,6 +259,12 @@ pub struct PatternDetailFragment<'a> {
     /// are still on screen and still correct, and a broken source is not
     /// something a reader of *these* results can act on.
     pub definition: Option<PatternDefinitionView>,
+    /// Absent unless the run derived compounds and at least one contains
+    /// this pattern; the Chains tab is then omitted.
+    pub chains: Option<crate::compound_chains::ChainPanel>,
+    /// Absent unless the run derived compounds.
+    pub chained: Option<crate::compound_chains::ChainShare>,
+    pub documents: Option<crate::document_reach::DocumentShare>,
     /// Raw exact count for i18n interpolation args.
     pub exact_total: u64,
     pub exact_total_label: String,
@@ -266,6 +290,7 @@ impl PatternDetailFragment<'_> {
 #[derive(Template)]
 #[template(path = "fragments/hit_detail.html")]
 pub struct HitDetailFragment<'a> {
+    pub overlaps: Vec<crate::inspection::OverlapCandidate>,
     pub reference_ordinal: usize,
     pub workbench_id: &'a str,
     pub revision: u64,
@@ -397,6 +422,7 @@ mod tests {
         section_dendrogram: Option<&crate::section_dendrogram::SectionDendrogram>,
     ) -> TrustedFragmentHtml {
         let html = SectionAnalysis {
+            comparison_control: None,
             workbench_id: "wb",
             revision: 1,
             selected_labels: &[],
@@ -405,6 +431,8 @@ mod tests {
             distance_jensen_shannon: true,
             distance_cosine: false,
             comparison,
+            contrast_selection: &crate::section_contrast::ContrastSelection::default(),
+            contrast: None,
             dendrogram,
             section_dendrogram,
         }
@@ -435,6 +463,7 @@ mod tests {
                 key: "甲".into(),
                 right: "後".into(),
                 section_labels: Box::new([]),
+                in_chain: false,
             },
             crate::pattern_detail::RetainedHitText {
                 reference_ordinal: 1,
@@ -442,11 +471,15 @@ mod tests {
                 key: "乙".into(),
                 right: "右".into(),
                 section_labels: Box::new([]),
+                in_chain: false,
             },
         ];
         let projection = project(hits);
         let html = PatternDetailFragment {
             definition: None,
+            chains: None,
+            chained: None,
+            documents: None,
             pattern_name: "broad",
             exact_total: 72_730,
             exact_total_label: "72,730".into(),
@@ -488,11 +521,15 @@ mod tests {
                 key: format!("surface-{index:02}"),
                 right: "後".into(),
                 section_labels: vec![format!("section-{index:02}")].into_boxed_slice(),
+                in_chain: false,
             })
             .collect();
         let projection = project(hits);
         let html = PatternDetailFragment {
             definition: None,
+            chains: None,
+            chained: None,
+            documents: None,
             pattern_name: "broad",
             exact_total: 25,
             exact_total_label: "25".into(),
@@ -525,6 +562,7 @@ mod tests {
     #[test]
     fn test_index_page_renders_full_layout_via_inheritance() {
         let page = IndexPage {
+            search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
@@ -560,6 +598,7 @@ mod tests {
     #[test]
     fn the_index_page_puts_the_edit_loop_in_one_band_and_drops_the_repeated_chrome() {
         let page = IndexPage {
+            search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
@@ -612,8 +651,6 @@ mod tests {
         // it: opened in place it grew the band and displaced the editor.
         assert!(html.contains("<dialog class=\"editor-help-dialog\""));
         assert!(!html.contains("<details class=\"editor-help\""));
-        // The controls row keeps only the opener; the reference text itself
-        // sits after the query library, outside the workspace.
         let controls = band
             .split_once("permalink-controls")
             .expect("the controls row")
@@ -621,7 +658,11 @@ mod tests {
             .split_once("</div>")
             .expect("the controls row closes")
             .0;
-        assert!(controls.contains("data-editor-help-open"));
+        assert!(!controls.contains("data-editor-help-open"));
+        let nav = html.split_once("</nav>").expect("the header closes").0;
+        assert!(nav.contains("data-editor-help-open"));
+        assert!(nav.contains("href=\"help\""));
+        assert_eq!(html.matches("data-editor-help-open").count(), 1);
         assert!(!controls.contains("class=\"help\""));
         assert!(
             html.find("data-query-library") < html.find("editor-help-dialog"),
@@ -633,7 +674,9 @@ mod tests {
         assert!(form.contains("name=\"retained\""));
         assert!(form.contains("<option value=\"20\">20</option>"));
         assert!(form.contains("<option value=\"1000\" selected>1000</option>"));
-        assert!(form.contains("name=\"derive_compounds\" value=\"true\""));
+        for name in ["derive_compounds", "document_reach"] {
+            assert!(form.contains(&format!("name=\"{name}\" value=\"true\" checked")));
+        }
         assert!(form.contains("name=\"compound_category\""));
         assert!(form.contains("value=\"compound\""));
         assert!(form.contains("value=\"source\""));
@@ -642,6 +685,7 @@ mod tests {
     #[test]
     fn test_index_page_renders() {
         let page = IndexPage {
+            search_scope: Default::default(),
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
@@ -688,8 +732,8 @@ mod tests {
             "the query library must not be nested in the search form"
         );
         // The seed grammar renders as the editor's content, HTML-escaped.
-        assert!(html.contains("seed := [lemma=だ &amp; orth=そう]."));
-        assert!(html.contains("&lt;b&gt;"));
+        assert!(html.contains("seed := [lemma=だ &#38; orth=そう]."));
+        assert!(html.contains("&#60;b&#62;"));
         assert!(!html.contains("<b>"));
     }
 
@@ -744,7 +788,7 @@ mod tests {
             .render()
             .unwrap();
         assert!(failure_html.contains("role=\"status\""));
-        assert!(failure_html.contains("&lt;script&gt;"));
+        assert!(failure_html.contains("&#60;script&#62;"));
         assert!(!failure_html.contains("<script>"));
         assert!(failure_html.contains("Latest query did not complete"));
     }
@@ -833,12 +877,15 @@ mod tests {
         };
         let section_analysis = section_fragment(Some(&comparison), None, None);
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 1,
             results: &[],
             has_results: false,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: Some(&section_analysis),
         }
         .render()
@@ -922,12 +969,15 @@ mod tests {
         let dendrogram = SectionDendrogram::new(&comparison).expect("three patterns cluster");
         let section_analysis = section_fragment(Some(&comparison), Some(&dendrogram), None);
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 1,
             results: &[],
             has_results: false,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: Some(&section_analysis),
         }
         .render()
@@ -936,6 +986,8 @@ mod tests {
         assert!(html.contains("class=\"section-dendrogram\""), "{html}");
         assert!(html.contains("data-detail-view=\"clusters\""), "{html}");
         assert!(html.contains("data-section-dendrogram"), "{html}");
+        assert!(html.contains("data-dendrogram-fullscreen"), "{html}");
+        assert!(html.contains("data-dendrogram-orientation"), "{html}");
         assert!(html.contains("data-detail-tab=\"clusters\""), "{html}");
         assert_eq!(
             html.matches("class=\"dendrogram-label\"").count(),
@@ -1017,12 +1069,15 @@ mod tests {
             SectionDendrogram::by_pattern_profile(&comparison).expect("three sections cluster");
         let section_analysis = section_fragment(Some(&comparison), None, Some(&sections));
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 1,
             results: &[],
             has_results: false,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: Some(&section_analysis),
         }
         .render()
@@ -1054,12 +1109,15 @@ mod tests {
     #[test]
     fn a_run_with_nothing_to_compare_renders_no_comparison_band() {
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 1,
             results: &[],
             has_results: false,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: None,
         }
         .render()
@@ -1078,14 +1136,18 @@ mod tests {
             auto_load: true,
             authored_index: 0,
             metadata_groups: Box::default(),
+            coincident: None,
         }];
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 7,
             results: &results,
             has_results: true,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: None,
         }
         .render()
@@ -1130,12 +1192,15 @@ mod tests {
     #[test]
     fn empty_explorer_is_current_and_idle() {
         let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb",
             revision: 8,
             results: &[],
             has_results: false,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: None,
         }
         .render()
@@ -1145,20 +1210,75 @@ mod tests {
     }
 
     #[test]
+    fn a_coincident_compound_row_is_badged_with_the_authored_pattern() {
+        let results = [
+            PatternResultData {
+                pattern_id: 3,
+                pattern_name: "複合項目〔こと ＋ できる〕".into(),
+                count: 412,
+                count_label: "412".into(),
+                auto_load: true,
+                authored_index: 3,
+                metadata_groups: Box::default(),
+                coincident: Some(crate::pattern_catalog::CoincidenceBadge {
+                    pattern_name: "ことができる".into(),
+                    coincident: 400,
+                    total: 412,
+                }),
+            },
+            PatternResultData {
+                pattern_id: 0,
+                pattern_name: "こと".into(),
+                count: 500,
+                count_label: "500".into(),
+                auto_load: false,
+                authored_index: 0,
+                metadata_groups: Box::default(),
+                coincident: None,
+            },
+        ];
+        let html = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
+            workbench_id: "wb",
+            revision: 1,
+            results: &results,
+            has_results: true,
+            grouping_fields: &[],
+            default_grouping_field: "",
+            coverage: None,
+            section_analysis: None,
+        }
+        .render()
+        .unwrap();
+        assert_eq!(html.matches("coincident-badge").count(), 1, "{html}");
+        assert!(html.contains(">≡ ことができる 400/412</span>"), "{html}");
+        assert!(
+            html.contains(
+                "data-i18n-args='{\"name\": \"ことができる\", \"coincident\": 400, \"total\": 412}'"
+            ),
+            "{html}"
+        );
+    }
+
+    #[test]
     fn results_explorer_renders_export_download_link() {
         let explorer = ResultsExplorer {
+            search_scope: None,
+            excluded_sentences: 0,
             workbench_id: "wb1",
             revision: 5,
             results: &[],
             has_results: true,
             grouping_fields: &[],
             default_grouping_field: "",
+            coverage: None,
             section_analysis: None,
         };
         let html = explorer.render().expect("renders");
         assert!(html.contains("href=\"api/export/wb1/5\""));
         assert!(html.contains("download"));
-        assert!(html.contains("Download all results"));
+        assert!(html.contains("Download results in this search scope"));
     }
 
     #[test]
@@ -1210,9 +1330,7 @@ mod tests {
         .unwrap();
         assert!(html.contains("5 sentences · 1 documents"));
         assert!(html.contains("corpus-context-sections"));
-        assert!(html.contains(
-            "id=\"corpus-analysis-scope\" class=\"corpus-context-sections\" hx-preserve"
-        ));
+        assert!(html.contains("id=\"corpus-analysis-scope\" class=\"corpus-context-sections\""));
         assert!(!html.contains("corpus-sections-label"));
         assert!(!html.contains("hx-get"));
     }

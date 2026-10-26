@@ -24,8 +24,11 @@ mod protocol_discovery;
 mod sample_protocol;
 mod scope_protocol;
 mod section_protocol;
-mod sentence_final_characterization;
 mod summarize;
 mod terminal_safety;
 mod tokenize_protocol;
 mod variants_protocol;
+
+mod external_analyzer_cli;
+
+mod ending_report;

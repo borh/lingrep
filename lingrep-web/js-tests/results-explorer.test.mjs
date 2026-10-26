@@ -5,6 +5,7 @@ import {
   DETAIL_VIEWS,
   activationKey,
   applyFilterEmptyNote,
+  applyOccurrenceEmptyNote,
   availableDetailViews,
   resolveDetailView,
   compareCatalogRows,
@@ -13,10 +14,12 @@ import {
   emptyHitState,
   filterStatus,
   groupLabelNode,
+  groupCatalog,
   isOverflowing,
   namedMaximum,
   nextRowIndex,
   pageProjection,
+  sortKwicRows,
   pageRangeLabel,
   parseKwicPageSize,
   rankedEntryVisible,
@@ -26,6 +29,7 @@ import {
   transitionHitState,
   transitionPageState,
   visibleForQuery,
+  visibleForOccurrence,
   visibleForSection,
   visibleForVariation,
 } from "../assets/results-explorer.js";
@@ -112,6 +116,10 @@ test("page range reports the visible slice and active scopes", () => {
     pageRangeLabel(0, 0, 0, null, undefined),
     "0 retained hits · All surfaces",
   );
+  assert.equal(
+    pageRangeLabel(0, 4, 4, null, undefined, "", "standalone"),
+    "1–4 of 4 retained hits · Without adjacent matches · All surfaces",
+  );
 });
 
 test("concordance text filtering matches substrings case-insensitively and ignores whitespace", () => {
@@ -151,6 +159,41 @@ test("an emptied surface filter states why instead of reading as broken", () => 
   // A pane without the note is a no-op, not a crash.
   assert.equal(
     applyFilterEmptyNote({ querySelector: () => null }, 0, "7", "all"),
+    undefined,
+  );
+});
+
+test("occurrence filtering reads the row's chain flag", () => {
+  assert.equal(visibleForOccurrence("true", "all"), true);
+  assert.equal(visibleForOccurrence("false", "all"), true);
+  assert.equal(visibleForOccurrence("true", "chained"), true);
+  assert.equal(visibleForOccurrence("false", "chained"), false);
+  assert.equal(visibleForOccurrence("false", "standalone"), true);
+  assert.equal(visibleForOccurrence("true", "standalone"), false);
+  // A row without the attribute is not a chain component.
+  assert.equal(visibleForOccurrence(undefined, "standalone"), true);
+});
+
+test("an emptied occurrence selection states why", () => {
+  const note = { hidden: true };
+  const detail = {
+    querySelector: (selector) =>
+      selector === "[data-kwic-occurrence-empty]" ? note : null,
+  };
+  applyOccurrenceEmptyNote(detail, 0, "standalone", "all", "all");
+  assert.equal(note.hidden, false);
+  applyOccurrenceEmptyNote(detail, 0, "all", "all", "all");
+  assert.equal(note.hidden, true);
+  applyOccurrenceEmptyNote(detail, 0, "standalone", "7", "all");
+  assert.equal(note.hidden, true);
+  applyOccurrenceEmptyNote(detail, 0, "standalone", "all", "2");
+  assert.equal(note.hidden, true);
+  applyOccurrenceEmptyNote(detail, 0, "standalone", "all", "all", "重要");
+  assert.equal(note.hidden, true);
+  applyOccurrenceEmptyNote(detail, 2, "standalone", "all", "all");
+  assert.equal(note.hidden, true);
+  assert.equal(
+    applyOccurrenceEmptyNote({ querySelector: () => null }, 0, "chained", "all", "all"),
     undefined,
   );
 });
@@ -400,4 +443,54 @@ test("a selection whose panel went away falls back, and no choice prefers the de
   assert.equal(resolveDetailView(null, ["sections"]), "sections");
   assert.equal(resolveDetailView(null, ["sections", "concordance"]), "concordance");
   assert.equal(resolveDetailView(null, []), null);
+});
+
+const kwicSortRow = (ordinal, section, key, left, right) => ({
+  dataset: { hitOrdinal: String(ordinal) },
+  querySelectorAll: () => section.map(textContent => ({ textContent })),
+  querySelector: selector => ({ textContent: ({ ".kwic-key": key, ".kwic-left-text": left, ".kwic-right": right })[selector] }),
+});
+
+test("KWIC sort uses section, matched text and context while retaining original hit identities", () => {
+  const rows = [
+    kwicSortRow(0, ["results", "methods"], "いう", "あい", "う"),
+    kwicSortRow(1, ["introduction"], "あう", "いあ", "い"),
+    kwicSortRow(2, [], "いう", "あい", "あ"),
+  ];
+  const ordinals = (field, descending = false) => sortKwicRows(rows, field, descending).map(row => row.dataset.hitOrdinal);
+  assert.deepEqual(ordinals("section"), ["1", "0", "2"]);
+  assert.deepEqual(ordinals("section", true), ["0", "1", "2"]);
+  assert.deepEqual(ordinals("match"), ["1", "0", "2"]);
+  assert.deepEqual(ordinals("match", true), ["0", "2", "1"]);
+  assert.deepEqual(ordinals("left"), ["1", "0", "2"]);
+  assert.deepEqual(ordinals("right"), ["2", "1", "0"]);
+  assert.deepEqual(sortKwicRows([...rows].reverse(), "original").map(row => row.dataset.hitOrdinal), ["0", "1", "2"]);
+  assert.deepEqual(rows.map(row => row.dataset.hitOrdinal), ["0", "1", "2"]);
+});
+
+test("left-context sorting keeps combining characters together", () => {
+  const rows = [kwicSortRow(2, [], "", "xが", ""), kwicSortRow(1, [], "", "xか\u3099", "")];
+  assert.deepEqual(sortKwicRows(rows, "left").map(row => row.dataset.hitOrdinal), ["1", "2"]);
+});
+
+
+test("catalog grouping preserves rows and totals, ranks totals, and breaks ties by label", () => {
+  const row = (total, key, label) => ({
+    dataset: { exactTotal: String(total) },
+    querySelectorAll: () => key === null ? [] : [{
+      dataset: { groupField: "category", groupKey: key, groupLabel: label },
+    }],
+  });
+  const b1 = row(3, "b", "Beta");
+  const a = row(5, "a", "Alpha");
+  const b2 = row(2, "b", "Beta");
+  const missing = row(1, null);
+  const dominant = row(8, "c", "Gamma");
+  assert.deepEqual(groupCatalog([b1, a, missing, b2, dominant], "category"), [
+    { key: "c", label: "Gamma", exactTotal: 8, rows: [dominant] },
+    { key: "a", label: "Alpha", exactTotal: 5, rows: [a] },
+    { key: "b", label: "Beta", exactTotal: 5, rows: [b1, b2] },
+    { key: "missing", label: "Unclassified", exactTotal: 1, rows: [missing] },
+  ]);
+  assert.deepEqual(groupCatalog([], "category"), []);
 });

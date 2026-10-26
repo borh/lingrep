@@ -104,7 +104,7 @@ fn sudachi_semantic_identity_is_pinned() {
         .collect();
     assert_eq!(
         hex,
-        "72d8da56a358ca9a66eb5205442e6c08de84415a133d868247a78e1c74bb4cbd"
+        "a6db886dac3ec4682b63883307324ea317c92de08a033698b9d74f80fa5dc514"
     );
 }
 
@@ -447,55 +447,62 @@ fn sudachi_provider_pos_hierarchy_maps_to_portable_upos() {
     );
 }
 
-/// Sudachi's declared input cap is the one this workspace clamps to.
-///
-/// `SUDACHI_MAX_INPUT_BYTES` restates a constant Sudachi does not export, so it
-/// can silently disagree with the library after an upgrade — and disagreeing
-/// upward reintroduces exactly the failure the clamp exists to prevent: a
-/// sentence accepted by every limit this workspace knows about, refused inside
-/// the tokenizer with `Input is too long`.
-///
-/// Tokenizing at the boundary and one byte past it is what makes this a pin on
-/// the library rather than a restatement of our own arithmetic. The unit test
-/// beside the constant asserts the value; this asserts the value is *true*.
 #[test]
 #[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
-fn sudachi_declares_the_input_limit_we_pin() {
+fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
     let plan = load_plan(
         SudachiEdition::Core,
         SudachiSplit::C,
         ExtractionProfile::Tokenize,
         SegmentationMode::Input,
     );
-    let limit = plan.max_input_bytes().expect("Sudachi declares a limit");
-
-    // One-byte characters, so the byte count is the character count and the
-    // boundary is exact.
-    let at_limit = "a".repeat(limit);
-    let over_limit = "a".repeat(limit + 1);
-
+    let mut builder = lingrep_core::fsm::FsmBuilder::new();
+    builder
+        .add_definition(lingrep_core::fsm::PatternSource::named(
+            "boundary.lx",
+            "boundary := [text=、] [text=猫].",
+        ))
+        .unwrap();
+    let matcher = builder.build().unwrap().matcher;
     let projection = plan
         .schema()
-        .bind_projection([lingrep_core::token_match::AttributeKey::new("text").unwrap()])
+        .bind_projection(plan.schema().keys().iter().cloned())
         .unwrap();
-    let analyze = |text: &str| {
-        let input = TextUnit::admit(
-            InputUnitId::new(1),
-            TextUnitKind::Sentence,
-            text,
-            NormalizationPolicy::None,
-        )
-        .unwrap();
-        plan.create_session()
+    for text in [
+        format!("{}😀猫", "猫、".repeat(20_000)),
+        format!("{}😀{}", "a".repeat(49_148), "猫".repeat(20_000)),
+    ] {
+        let input =
+            TextUnit::sentence(InputUnitId::new(1), &text, NormalizationPolicy::None).unwrap();
+        let batch = plan
+            .create_session()
             .analyze_bounded_batch(vec![input], &projection)
-            .is_ok()
-    };
-
-    assert!(analyze(&at_limit), "{limit} bytes must be accepted");
-    assert!(
-        !analyze(&over_limit),
-        "{} bytes must be refused; if this passes, Sudachi's cap rose and \
-         SUDACHI_MAX_INPUT_BYTES is now needlessly small",
-        limit + 1
-    );
+            .unwrap();
+        let analyzed = &batch.inputs()[0];
+        assert_eq!(analyzed.sentences().len(), 1);
+        let sentence = &analyzed.sentences()[0];
+        assert_eq!(sentence.source_range().as_usize(), 0..text.len());
+        let mut end = 0;
+        for (ordinal, token) in sentence.surface_tokens().iter().enumerate() {
+            let range = token.source_range().as_usize();
+            assert_eq!(range.start, end);
+            assert_eq!(token.word_range(), ordinal as u32..ordinal as u32 + 1);
+            end = range.end;
+        }
+        assert_eq!(end, text.len());
+        if text.contains('、') {
+            assert!(
+                matcher
+                    .find_matches(sentence.words())
+                    .contains(&lingrep_core::fsm::Match {
+                        pattern: "boundary".into(),
+                        start: 16_381,
+                        end: 16_383,
+                        captures: Box::new([]),
+                        graph_bindings: Box::new([]),
+                        lexical: None,
+                    })
+            );
+        }
+    }
 }

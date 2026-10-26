@@ -1,9 +1,4 @@
 //! Match emission: construction, dedup, and the terminal overlap filter.
-//!
-//! State-advancement code (`nfa_matcher.rs`) calls `MatchSink::emit` and never
-//! touches the dedup set, the context-window arithmetic, or the
-//! longest-match-per-start filter. This module is the single place those
-//! concerns live.
 
 use super::pool::FastBuild;
 use crate::fsm::Match;

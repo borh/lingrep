@@ -103,9 +103,6 @@ pub fn resolve_input_format(
     }
 }
 
-/// The corpus format a caller declares for a source, used as the CLI-facing tag
-/// (case-insensitive, lowercase `plain`/`jsonl`/`markdown`) and as the
-/// discriminator of [`CorpusReadConfig`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum CorpusFormat {
     Plain,
@@ -114,6 +111,8 @@ pub enum CorpusFormat {
     Conllu,
     Bccwj,
     Soranoha,
+    SoranohaTei,
+    Tei,
 }
 
 impl CorpusFormat {
@@ -124,7 +123,12 @@ impl CorpusFormat {
     #[must_use]
     pub const fn supports_section_labels(self) -> bool {
         match self {
-            Self::Plain | Self::Jsonl | Self::Conllu | Self::Soranoha => false,
+            Self::Plain
+            | Self::Jsonl
+            | Self::Conllu
+            | Self::Soranoha
+            | Self::SoranohaTei
+            | Self::Tei => false,
             Self::Markdown | Self::Bccwj => true,
         }
     }
@@ -140,7 +144,13 @@ impl CorpusFormat {
     pub const fn sentence_metadata_keys(self) -> &'static [&'static str] {
         match self {
             Self::Conllu => &super::conllu::SENTENCE_METADATA_KEYS,
-            Self::Plain | Self::Jsonl | Self::Markdown | Self::Bccwj | Self::Soranoha => &[],
+            Self::Plain
+            | Self::Jsonl
+            | Self::Markdown
+            | Self::Bccwj
+            | Self::Soranoha
+            | Self::SoranohaTei
+            | Self::Tei => &[],
         }
     }
 }
@@ -167,6 +177,8 @@ pub enum CorpusReadConfig {
     /// inside one file to reach its members, where every [`InputFormat`]
     /// reader consumes one `BufRead` stream.
     Soranoha,
+    SoranohaTei,
+    Tei,
 }
 
 impl CorpusReadConfig {
@@ -181,6 +193,8 @@ impl CorpusReadConfig {
             CorpusFormat::Conllu => Self::Conllu,
             CorpusFormat::Bccwj => Self::Bccwj,
             CorpusFormat::Soranoha => Self::Soranoha,
+            CorpusFormat::SoranohaTei => Self::SoranohaTei,
+            CorpusFormat::Tei => Self::Tei,
         }
     }
 
@@ -194,6 +208,8 @@ impl CorpusReadConfig {
             Self::Conllu => CorpusFormat::Conllu,
             Self::Bccwj => CorpusFormat::Bccwj,
             Self::Soranoha => CorpusFormat::Soranoha,
+            Self::SoranohaTei => CorpusFormat::SoranohaTei,
+            Self::Tei => CorpusFormat::Tei,
         }
     }
 
@@ -214,6 +230,8 @@ impl CorpusReadConfig {
             Self::Conllu => CONLLU_CONFIG_TAG,
             Self::Bccwj => BCCWJ_CONFIG_TAG,
             Self::Soranoha => SORANOHA_CONFIG_TAG,
+            Self::SoranohaTei => 0x81e4_73f9_d94a_b067,
+            Self::Tei => 0x785d_1c80_2e96_4bb3,
         }
     }
 
@@ -223,11 +241,12 @@ impl CorpusReadConfig {
             Self::Jsonl => InputFormat::Jsonl,
             Self::Markdown(config) => InputFormat::Markdown(config.clone()),
             Self::Conllu => InputFormat::Conllu,
+            Self::Tei => InputFormat::Tei,
             // [`Self::discover`] rejects the Bccwj and Soranoha configs at
             // construction, so no `CorpusSource` can ever hold one; neither is
             // an `InputFormat` (BCCWJ is a directory of zips, spec §3.1, and a
             // Soranoha archive's reader needs a seekable handle).
-            Self::Bccwj | Self::Soranoha => {
+            Self::Bccwj | Self::Soranoha | Self::SoranohaTei => {
                 #[expect(
                     clippy::unreachable,
                     reason = "discover rejects the Bccwj and Soranoha configs at construction, so no CorpusSource holds one"
@@ -245,7 +264,8 @@ impl CorpusReadConfig {
         match self {
             Self::Markdown(_) => Some(CorpusFileKind::Markdown),
             Self::Conllu => Some(CorpusFileKind::Conllu),
-            Self::Plain | Self::Jsonl | Self::Bccwj | Self::Soranoha => None,
+            Self::Tei => Some(CorpusFileKind::Xml),
+            Self::Plain | Self::Jsonl | Self::Bccwj | Self::Soranoha | Self::SoranohaTei => None,
         }
     }
 }
@@ -280,7 +300,10 @@ impl CorpusSource {
     /// single file is admitted as-is, with no extension inference: the declared
     /// config is the format.
     pub fn discover(path: impl AsRef<Path>, config: CorpusReadConfig) -> io::Result<Self> {
-        if matches!(config, CorpusReadConfig::Bccwj | CorpusReadConfig::Soranoha) {
+        if matches!(
+            config,
+            CorpusReadConfig::Bccwj | CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei
+        ) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "neither a bccwj distribution nor a soranoha archive is a CorpusSource; ling reads both through its own corpus path, and lingrep-web serves them only as prepared artifacts",
@@ -292,7 +315,7 @@ impl CorpusSource {
             let Some(file_kind) = config.directory_file_kind() else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires a Markdown or CoNLL-U read config",
+                    "a directory corpus requires a Markdown, CoNLL-U, or TEI read config",
                 ));
             };
             let mut discovery =

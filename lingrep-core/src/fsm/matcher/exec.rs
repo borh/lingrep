@@ -12,16 +12,15 @@ use super::pool::{FastBuild, HASHSET_POOL, StateSet};
 use super::predicate::{
     CompiledPositionAssertion, PREDICATE_SITE_DENSE_ADVANCE, PREDICATE_SITE_DENSE_MAIN,
     PREDICATE_SITE_DENSE_MATCH_CLOSURE, PREDICATE_SITE_DENSE_RETRY_ADVANCE,
-    PREDICATE_SITE_DENSE_RETRY_EXTEND, PredicateCatalog, PredicateSession,
+    PREDICATE_SITE_DENSE_RETRY_EXTEND, PredicateSession,
 };
 use super::spawn;
 use crate::fsm::types::*;
 use crate::token_match::{AttributeKey, SequenceToken, TokenInfoTrait, TokenSequence};
 use compact_str::CompactString;
 use log::{debug, trace};
-use std::collections::{HashMap, HashSet};
 
-pub struct Matcher;
+pub(crate) struct Matcher;
 
 fn form_key() -> &'static AttributeKey {
     static FORM: std::sync::LazyLock<AttributeKey> =
@@ -29,11 +28,6 @@ fn form_key() -> &'static AttributeKey {
     &FORM
 }
 
-/// Reusable per-thread scratch space for `find_matches`.
-///
-/// NFA-only traversal buffers live in a thread-local and retain capacity
-/// between calls. Predicate memoization is owned by `PredicateSession` so the
-/// NFA, assertion, and program paths share one position-stamped cache.
 #[derive(Default)]
 pub(crate) struct ExecScratch {
     /// Generation-stamped DFS visited marks (state id -> generation).
@@ -221,24 +215,6 @@ impl Matcher {
         });
     }
 
-    /// Compatibility entry point over builder-shaped maps.
-    ///
-    /// Builds a `DenseMachine` per call (an O(machine size) clone). Hold a
-    /// [`super::CompiledCatalog`] instead when matching repeatedly; it builds the
-    /// dense view once at compile time.
-    pub fn find_matches<S: TokenSequence + ?Sized>(
-        state_machine: &HashMap<usize, Vec<(TransitionLabel, usize)>>,
-        final_states: &HashSet<FinalState>,
-        state_patterns: &HashMap<usize, Vec<CompactString>>,
-        tokens: &S,
-    ) -> Vec<Match> {
-        let mut predicates = PredicateCatalog::default();
-        let dense =
-            DenseMachine::build(state_machine, final_states, state_patterns, &mut predicates);
-        let session = PredicateSession::new(&predicates);
-        Self::find_matches_dense(&dense, &session, tokens)
-    }
-
     pub(crate) fn find_matches_dense<S: TokenSequence + ?Sized>(
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
@@ -268,21 +244,6 @@ impl Matcher {
             _ => Self::assertion_holds_at(assertion, predicates, tokens, position),
         };
         Self::find_matches_internal(dense, predicates, tokens, None, &mut assertion_holds)
-    }
-
-    /// Compatibility entry point over builder-shaped maps; see
-    /// [`Matcher::find_matches`] for the per-call dense-build cost.
-    pub fn find_matches_with_trace<S: TokenSequence + ?Sized>(
-        state_machine: &HashMap<usize, Vec<(TransitionLabel, usize)>>,
-        final_states: &HashSet<FinalState>,
-        state_patterns: &HashMap<usize, Vec<CompactString>>,
-        tokens: &S,
-    ) -> Trace {
-        let mut predicates = PredicateCatalog::default();
-        let dense =
-            DenseMachine::build(state_machine, final_states, state_patterns, &mut predicates);
-        let session = PredicateSession::new(&predicates);
-        Self::find_matches_with_trace_dense(&dense, &session, tokens)
     }
 
     pub(crate) fn find_matches_with_trace_dense<S: TokenSequence + ?Sized>(
@@ -1281,12 +1242,6 @@ impl Matcher {
             entry_position: current.position, // entry_position = position for epsilon
         }
     }
-
-    /// Public filtering function for NFA matching entry points.
-    /// Delegates to the emission module's single implementation.
-    pub fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
-        super::emit::filter_and_collect_matches(matches)
-    }
 }
 
 #[cfg(test)]
@@ -1294,10 +1249,6 @@ mod filter_tests {
     use super::Matcher;
     use crate::fsm::types::Match;
 
-    /// The supported compiler allocates disjoint final states per pattern, so
-    /// duplicate final-state ids only arise through the public raw-map entry
-    /// points. Pin the documented deterministic rule: the lexicographically
-    /// first pattern name wins.
     #[test]
     fn duplicate_final_state_ids_resolve_to_the_lexicographically_first_pattern() {
         use crate::fsm::types::{
@@ -1330,12 +1281,27 @@ mod filter_tests {
         let mut token = TokenInfo::default();
         token.set(TokenAttributeIndex::Orth, "a".into());
 
-        let matches =
-            Matcher::find_matches(&state_machine, &final_states, &state_patterns, &[token]);
+        let mut predicates = super::super::predicate::PredicateCatalog::default();
+        let dense = super::DenseMachine::build(
+            &state_machine,
+            &final_states,
+            &state_patterns,
+            &mut predicates,
+        );
+        let session = super::PredicateSession::new(&predicates);
+        let matches = Matcher::find_matches_dense(&dense, &session, &[token]);
 
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].pattern, "alpha");
-        assert_eq!((matches[0].start, matches[0].end), (0, 1));
+        assert_eq!(
+            matches,
+            vec![Match {
+                pattern: "alpha".into(),
+                start: 0,
+                end: 1,
+                captures: Box::default(),
+                graph_bindings: Box::default(),
+                lexical: None,
+            }]
+        );
     }
 
     fn matched(start: usize, end: usize) -> Match {
@@ -1386,7 +1352,7 @@ mod filter_tests {
                 .map(|(_, candidate)| candidate.clone())
                 .collect::<Vec<_>>();
             assert_eq!(
-                Matcher::filter_and_collect_matches(&input),
+                super::super::emit::filter_and_collect_matches(&input),
                 quadratic_reference(input),
                 "subset {subset:#x}"
             );

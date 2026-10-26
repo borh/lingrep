@@ -27,6 +27,16 @@ pub enum ProgressMode {
     Never,
 }
 
+impl ProgressMode {
+    pub(crate) fn resolve(self, stderr_is_terminal: bool) -> Self {
+        match self {
+            Self::Auto if stderr_is_terminal => Self::Always,
+            Self::Auto => Self::Never,
+            explicit => explicit,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplicitLimit<T> {
     Value(T),

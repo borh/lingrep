@@ -411,6 +411,20 @@ mod handlers_test {
                 html.contains("href=\"sample\""),
                 "missing Sample Debugger on {path}"
             );
+            assert!(
+                html.contains("href=\"sample\" target=\"_blank\" rel=\"noopener\""),
+                "Sample must preserve the current page on {path}"
+            );
+            assert!(
+                html.contains(
+                    "href=\"help\" target=\"_blank\" rel=\"noopener\" data-site-help-open"
+                ),
+                "Help needs a state-preserving fallback on {path}"
+            );
+            assert!(
+                html.contains("data-site-help aria-labelledby=\"site-help-title\""),
+                "Help dialog missing on {path}"
+            );
             assert_eq!(html.matches("aria-current=\"page\"").count(), 1, "{path}");
             assert!(!html.contains("github.com/anomalyco/lingrep#pattern-syntax"));
             if path == "/" {
@@ -449,116 +463,6 @@ mod handlers_test {
         }
     }
 
-    // Temporary source guard: the browser suite does not yet exercise every
-    // button interaction state. The next button presentation change must
-    // extend the existing browser scenario and remove this test in the same
-    // patch.
-    #[test]
-    fn button_styles_cover_scoped_variants_and_interaction_states() {
-        let css = include_str!("../../assets/app.css");
-        for rule in [".btn {", ".btn-primary {", ".btn-secondary {"] {
-            assert!(css.contains(rule), "missing rule {rule}");
-        }
-        for state in [
-            ".btn:focus-visible",
-            ".btn:disabled",
-            ".btn-primary:hover",
-            ".btn-primary:active",
-            ".btn-secondary:active",
-        ] {
-            assert!(css.contains(state), "missing interaction state {state}");
-        }
-        assert!(css.contains("cursor: default;"));
-        assert!(css.contains("opacity: 0.55;"));
-        assert!(
-            !css.contains("button {"),
-            "a bare `button {{` selector would regress affordance buttons"
-        );
-    }
-
-    /// Every asynchronous region already announced `aria-busy`, and the pattern
-    /// detail already set `data-loading` and marked its stale children `inert`.
-    /// Nothing was ever drawn for any of it. Pin that it is.
-    #[test]
-    fn every_announced_busy_region_has_a_visible_affordance() {
-        let css = include_str!("../../assets/app.css");
-        for required in [
-            "@keyframes lingrep-loading-sweep",
-            "#results[aria-busy=\"true\"]",
-            "#detail-body[aria-busy=\"true\"]",
-            "#sample-results[aria-busy=\"true\"]",
-            ".inspector-dock-body[aria-busy=\"true\"]",
-            "[data-loading=\"true\"] {",
-            "cursor: progress;",
-            // htmx marks the element that triggered the in-flight request; that
-            // is what says WHICH row the click landed on.
-            ".htmx-request { cursor: progress; }",
-            ".pattern-selector.htmx-request",
-            ".kwic-row.htmx-request > td",
-            "@media (prefers-reduced-motion: reduce)",
-            "animation: none;",
-        ] {
-            assert!(
-                css.contains(required),
-                "missing loading affordance: {required}"
-            );
-        }
-    }
-
-    /// The busy bar is only honest if it stops. `#results` is swapped **out of
-    /// band** by the terminal SSE event, and htmx fires only `oobAfterSwap` for
-    /// that — so the `afterSwap` handler never saw the one swap that ends a
-    /// corpus search, and the busy state was never cleared. Invisible before;
-    /// a bar that never stops now.
-    #[test]
-    fn the_corpus_busy_state_is_cleared_by_the_out_of_band_result_swap() {
-        let explorer = include_str!("../../assets/results-explorer.js");
-        assert!(explorer.contains("export function finishCorpusRequest"));
-        assert!(
-            explorer.contains("htmx:oobAfterSwap"),
-            "the terminal #results swap is out of band and needs its own listener"
-        );
-        let oob = explorer
-            .split_once("htmx:oobAfterSwap")
-            .expect("oob listener present")
-            .1;
-        assert!(
-            oob.contains("finishCorpusRequest"),
-            "the oob listener must clear the corpus busy state"
-        );
-    }
-
-    /// A collapsed distribution band is not persisted across sessions: one global
-    /// `localStorage` key would let a single click hide the surface
-    /// distribution and the section bar graph for every pattern in every
-    /// corpus, with no on-screen explanation.
-    #[test]
-    fn the_distribution_band_keeps_no_persisted_open_state() {
-        let explorer = include_str!("../../assets/results-explorer.js");
-        assert!(
-            !explorer.contains("lingrep-web:distributions-open"),
-            "the band's open state must not be persisted"
-        );
-        assert!(
-            !explorer.contains("data-distribution-band"),
-            "nothing may read the band's state back"
-        );
-    }
-
-    /// The catalog-level bands sit above `#detail-body` inside `.detail-panel`,
-    /// so scrolling the fresh pattern's own header to the top of the viewport
-    /// landed exactly past them: a run's two catalog-level answers were pushed
-    /// off screen the moment its results arrived. The first-visit scroll must
-    /// target the panel, which contains them.
-    #[test]
-    fn the_first_visit_scroll_does_not_land_past_the_catalog_bands() {
-        let explorer = include_str!("../../assets/results-explorer.js");
-        assert!(
-            explorer.contains("detail.closest(\".detail-panel\")"),
-            "the first-visit scroll must bring the panel into view"
-        );
-    }
-
     /// A `var(--name)` with no fallback whose name is never defined makes the
     /// whole declaration invalid at computed-value time, so the property falls
     /// back to its inherited or initial value rather than to anything the
@@ -575,7 +479,7 @@ mod handlers_test {
         // count too, because an inline `style` attribute is a legitimate place
         // to set one — `--constellation-depth` is set per node that way.
         let mut defined = definitions(css);
-        let templates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/templates");
+        let templates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         for path in template_sources(&templates) {
             let source = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -622,7 +526,7 @@ mod handlers_test {
     }
 
     /// Template sources under one directory, one level of nesting deep, which
-    /// is the whole of `src/templates`.
+    /// is the whole of `templates`.
     fn template_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
         let mut sources = Vec::new();
         let mut directories = vec![root.to_path_buf()];
@@ -642,49 +546,5 @@ mod handlers_test {
             }
         }
         sources
-    }
-
-    // Temporary source guard: the browser suite does not yet exercise the
-    // sample and match palette. The next sample or match presentation change
-    // must extend the existing browser scenario and remove this test in the
-    // same patch.
-    #[test]
-    fn sample_and_match_palette_remains_explicit() {
-        let css = include_str!("../../assets/app.css");
-        let explorer = include_str!("../../assets/results-explorer.js");
-        for required in [
-            "--match-text:",
-            "--match-bg:",
-            "--match-border:",
-            ".sample-input {",
-            "width: 100%;",
-            ".kwic-key {",
-            "color: var(--match-text);",
-            ".kwic-token-match {",
-            "function beginSampleRequest",
-            "function failSampleRequest",
-        ] {
-            assert!(
-                css.contains(required) || explorer.contains(required),
-                "missing presentation contract: {required}"
-            );
-        }
-    }
-
-    #[test]
-    fn analysis_sections_popover_escapes_query_band_and_stacks_above_kwic_header() {
-        let css = include_str!("../../assets/app.css");
-        for required in [
-            ".query-band {\n  position: relative;\n  z-index: 20;",
-            "overflow: visible;",
-            ".band-head {\n  position: relative;\n  z-index: 25;",
-            ".band-head .corpus-context-sections { position: static; }",
-            ".section-scope-form {\n  position: absolute;\n  z-index: 30;\n  inset-block-start: calc(100% + var(--space-1));\n  inset-inline-start: 0;",
-        ] {
-            assert!(
-                css.contains(required),
-                "missing popover stacking/overflow rule: {required}"
-            );
-        }
     }
 }

@@ -9,22 +9,21 @@ use lingrep::protocol::ContractId;
 #[test]
 fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
     use lingrep::output::{
-        MATCHES_CONTRACT, SENTENCE_FINAL_CONTRACT, SOURCES_CONTRACT, SUMMARY_CONTRACT,
-        TOKENIZE_CONTRACT,
+        MATCHES_CONTRACT, SOURCES_CONTRACT, SUMMARY_CONTRACT, TOKENIZE_CONTRACT,
     };
     use lingrep::protocol::{
         ContractId, capabilities, check, completions, diagnostic, dictionary, doctor, invocation,
-        query, sentence_final, sources, status, tokenize, variants,
+        query, sources, status, tokenize, variants,
     };
 
-    assert_eq!(ContractId::ALL.len(), 22);
+    assert_eq!(ContractId::ALL.len(), 20);
     let mut ids = ContractId::ALL
         .iter()
         .map(|id| id.as_str())
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 22);
+    assert_eq!(ids.len(), 20);
     assert_eq!(query::SCHEMA, ContractId::Query.as_str());
     assert_eq!(check::SCHEMA, ContractId::Check.as_str());
     assert_eq!(tokenize::SCHEMA, ContractId::Tokenize.as_str());
@@ -36,13 +35,8 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
     assert_eq!(doctor::SCHEMA, ContractId::Doctor.as_str());
     assert_eq!(dictionary::SCHEMA, ContractId::Dictionary.as_str());
     assert_eq!(completions::SCHEMA, ContractId::Completions.as_str());
-    assert_eq!(sentence_final::SCHEMA, ContractId::SentenceFinal.as_str());
     assert_eq!(MATCHES_CONTRACT, ContractId::MatchesTsv.as_str());
     assert_eq!(SUMMARY_CONTRACT, ContractId::SummarizeTsv.as_str());
-    assert_eq!(
-        SENTENCE_FINAL_CONTRACT,
-        ContractId::SentenceFinalTsv.as_str()
-    );
     assert_eq!(TOKENIZE_CONTRACT, ContractId::TokenizeTsv.as_str());
     assert_eq!(SOURCES_CONTRACT, ContractId::SourcesTsv.as_str());
     assert_eq!(variants::SCHEMA, ContractId::Variants.as_str());
@@ -51,7 +45,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
 #[test]
 fn registry_is_complete_unique_and_summary_sorted() {
     let summaries = lingrep::protocol::registry::summaries();
-    assert_eq!(summaries.len(), 22);
+    assert_eq!(summaries.len(), 20);
     assert!(
         summaries
             .windows(2)
@@ -122,7 +116,7 @@ fn stream_shapes_name_real_protocol_lifecycles() {
     use lingrep::protocol::discovery::StreamShape;
     use lingrep::protocol::registry;
 
-    for id in [Query, Tokenize, Sources, SentenceFinal] {
+    for id in [Query, Tokenize, Sources] {
         assert!(
             matches!(registry::get(id).stream(), Some(StreamShape::Phased { .. })),
             "{id:?}"
@@ -150,13 +144,7 @@ fn stream_shapes_name_real_protocol_lifecycles() {
             "{id:?}"
         );
     }
-    for id in [
-        MatchesTsv,
-        SummarizeTsv,
-        SentenceFinalTsv,
-        TokenizeTsv,
-        SourcesTsv,
-    ] {
+    for id in [MatchesTsv, SummarizeTsv, TokenizeTsv, SourcesTsv] {
         assert!(registry::get(id).stream().is_none(), "{id:?}");
     }
 }
@@ -315,7 +303,6 @@ fn every_json_contract_accepts_a_production_serialized_record() {
         doctor::{DoctorData, DoctorEnvelope, ProbeData},
         invocation::{InvocationData, InvocationEnvelope},
         manpages::{ManpagesData, ManpagesEnvelope},
-        sentence_final::{RunData, SentenceFinalEnvelope, SentenceFinalEvent},
         status::{StatusData, StatusEnvelope},
     };
 
@@ -403,19 +390,6 @@ fn every_json_contract_accepts_a_production_serialized_record() {
             .unwrap(),
         ),
         (
-            ContractId::SentenceFinal,
-            serde_json::to_value(SentenceFinalEnvelope::new(SentenceFinalEvent::Run(
-                RunData {
-                    run_id: "run".into(),
-                    dictionary_identity: "dictionary".into(),
-                    catalog_fingerprint: "catalog".into(),
-                    input_kind: "direct".into(),
-                    limits: serde_json::json!({}),
-                },
-            )))
-            .unwrap(),
-        ),
-        (
             ContractId::ProtocolContract,
             serde_json::to_value(ContractEnvelope::new(ContractEvent::ContractIndex(
                 ContractIndexData { contracts: vec![] },
@@ -431,7 +405,7 @@ fn every_json_contract_accepts_a_production_serialized_record() {
             .unwrap(),
         ),
     ];
-    assert_eq!(records.len(), 13);
+    assert_eq!(records.len(), 12);
     for (id, record) in records {
         assert!(record_validator(id).is_valid(&record), "{id:?}: {record}");
     }
@@ -460,7 +434,6 @@ fn tsv_descriptors_publish_the_writer_column_order() {
             ],
         ),
         (SummarizeTsv, &["pattern", "rank", "group", "count"]),
-        (SentenceFinalTsv, &["pattern", "surface", "count"]),
         (
             TokenizeTsv,
             &[
@@ -543,7 +516,7 @@ fn schema_json_distinguishes_compact_index_from_one_detail() {
     assert_eq!(records[0]["schema"], "lingrep.protocol-contract/v1");
     assert_eq!(records[0]["type"], "contract_index");
     let summaries = records[0]["data"]["contracts"].as_array().unwrap();
-    assert_eq!(summaries.len(), 22);
+    assert_eq!(summaries.len(), 20);
     assert!(
         summaries
             .iter()

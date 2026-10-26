@@ -1,14 +1,7 @@
-# Basic-to-enhanced dependency consistency instruments.
-#
-# Complete enhanced graphs may replace rather than repeat a basic endpoint:
-# relative references and empty-node reconstruction are ordinary examples.
-# These patterns therefore publish candidates and named representation classes;
-# they do not call every endpoint absence an annotation error.
-#
-# Guillaume's published GREW examples of graph matching for corpus exploration
-# and error mining informed the research question at the requirements level.
-# No GREW source, syntax, grammar, fixture, or algorithm was inspected or reused.
-# This catalog is original.
+# Basic-to-enhanced dependency consistency checks. Because enhanced graphs
+# replace basic endpoints in relative clauses (`ref`) and gapping (empty
+# nodes), missing basic endpoints are paired with those replacement classes
+# rather than treated unconditionally as errors.
 
 defaults
   status: "experimental"
@@ -30,9 +23,6 @@ pattern nonroot_basic_endpoint_absent :=
   (?<dependent> [dep.head!=0 & dep.rel~/.+/])
   where not basic_head($dependent) -[enhanced *]-> $dependent.
 
-# Publish the authored basic relation beside every enhanced relation retained
-# between the same endpoints. Parallel enhanced edges remain distinct edge
-# assignments rather than being collapsed into a false equality claim.
 finding: "endpoint_label_pair"
 key: [$dependent.dep.rel, $enhanced_edge.rel]
 pattern basic_enhanced_endpoint_pair :=
@@ -40,9 +30,6 @@ pattern basic_enhanced_endpoint_pair :=
   where basic_head($dependent)
           -[enhanced * as $enhanced_edge]-> $dependent.
 
-# A relative-reference edge into the dependent explains the common UD shape in
-# which the enhanced graph connects the antecedent rather than retaining the
-# basic relative-pronoun endpoint pair.
 finding: "relative_reference_replacement"
 key: [$dependent.dep.rel, $antecedent.lemma, $dependent.lemma]
 pattern relative_reference_replacement :=
@@ -50,8 +37,6 @@ pattern relative_reference_replacement :=
   where not basic_head($dependent) -[enhanced *]-> $dependent,
         (?<antecedent> []) -[enhanced ref]-> $dependent.
 
-# An empty enhanced head explains the ordinary gapping/reconstruction shape in
-# which a surface dependent is reattached to an elided predicate.
 finding: "empty_node_reconstruction"
 key: [$dependent.dep.rel, $elided_head.lemma, $replacement.rel,
       $dependent.lemma]

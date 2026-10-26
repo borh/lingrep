@@ -141,6 +141,7 @@ enum EntryKind {
 pub enum CorpusFileKind {
     Markdown,
     Conllu,
+    Xml,
 }
 
 impl CorpusFileKind {
@@ -153,6 +154,7 @@ impl CorpusFileKind {
             // single-file inference only; directory discovery selects `.md`.
             Self::Markdown => extension.eq_ignore_ascii_case("md"),
             Self::Conllu => extension.eq_ignore_ascii_case("conllu"),
+            Self::Xml => extension.eq_ignore_ascii_case("xml"),
         }
     }
 
@@ -160,6 +162,7 @@ impl CorpusFileKind {
         match self {
             Self::Markdown => "Markdown",
             Self::Conllu => "CoNLL-U",
+            Self::Xml => "TEI XML",
         }
     }
 }

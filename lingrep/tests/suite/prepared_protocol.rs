@@ -167,7 +167,7 @@ impl PreparedFixture {
             "{}",
             String::from_utf8_lossy(&build.stderr)
         );
-        assert!(String::from_utf8_lossy(&build.stdout).contains("corpus inventory (recorded)"));
+        assert!(String::from_utf8_lossy(&build.stdout).contains("prepared corpus:"));
         Self {
             _directory: directory,
             root,
@@ -1291,14 +1291,6 @@ fn build_never_replaces_an_existing_root() {
     }
 }
 
-/// Exceeding the residency limit terminates with an error; exceeding the sentence character limit truncates.
-///
-/// The two look symmetric and are not. An oversized *sentence* is invalid input,
-/// and a build truncates it and reports the truncation rather than losing the corpus around it
-/// — see `an_oversized_sentence_is_truncated_and_named_rather_than_refused`.
-/// An oversized *tokenized* sentence is a resource bound on this process, and
-/// there is nothing to truncate: the sentence already fits its own limit, and
-/// what exceeded is what analyzing it costs. Rejecting the build remains correct there.
 #[test]
 fn build_enforces_tokenized_residency_before_publication() {
     let dictionary = MiniDictionary::new();
@@ -1327,34 +1319,35 @@ fn build_enforces_tokenized_residency_before_publication() {
     );
 }
 
-/// A build under a sentence limit nothing can satisfy still publishes, with
-/// every sentence truncated to it. The limit bounds what is stored; it is no
-/// longer a way to reject a corpus.
 #[test]
-fn build_truncates_rather_than_refusing_an_oversized_sentence() {
+fn explicit_sentence_limit_aborts_build_without_publishing() {
     let dictionary = MiniDictionary::new();
     let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("corpus");
-    fs::create_dir(&root).unwrap();
-    fs::write(root.join("a.md"), "猫。\n").unwrap();
-
-    let artifact = directory.path().join("truncated.lingcorpus");
+    let source = directory.path().join("source.txt");
+    fs::write(&source, "猫。\n").unwrap();
+    let artifact = directory.path().join("limited.lingcorpus");
     let output = lingrep()
-        .args(["corpus", "build", "--max-sentence-bytes", "1"])
-        .args(["--dict-path"])
+        .args([
+            "--json",
+            "corpus",
+            "build",
+            "--input-format",
+            "plain",
+            "--max-sentence-bytes",
+            "1",
+            "--dict-path",
+        ])
         .arg(dictionary.path())
-        .args(["--output"])
+        .arg("--output")
         .arg(&artifact)
-        .arg(&root)
+        .arg(&source)
         .output()
         .unwrap();
-
-    assert_success(&output);
-    assert!(artifact.exists());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("warning[sentence_truncated]"),
-        "the loss must be reported: {stderr}"
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!artifact.exists());
+    assert_eq!(
+        parse_jsonl(&output.stderr)[0]["data"]["code"],
+        "sentence_too_large"
     );
 }
 
@@ -1873,8 +1866,11 @@ fn corpus_build_without_output_reuses_an_existing_matching_artifact() {
     );
     assert_eq!(
         without_elapsed(&second.stdout),
-        "corpus inventory (recorded)\ncomplete: 1 document(s), 1 distinct target(s), <elapsed>",
-        "and what it reports is the recorded inventory"
+        format!(
+            "prepared corpus: {}\n1 document(s), 1 sentence(s), 2 token(s)\ncomplete: 1 source(s), 1 distinct target(s), <elapsed>",
+            after[0].display()
+        ),
+        "reuse reports the saved corpus location and recorded counts"
     );
 }
 
@@ -2315,16 +2311,6 @@ fn bccwj_prepared_artifact_needs_no_source_root() {
                 .unwrap(),
         ),
         (
-            "sentence-final",
-            lingrep()
-                .args(["sentence-final", "--tsv", "--patterns"])
-                .arg(&patterns)
-                .args(["--corpus"])
-                .arg(&artifact)
-                .output()
-                .unwrap(),
-        ),
-        (
             "doctor",
             lingrep()
                 .args(["doctor", "--json", "--dict-path"])
@@ -2344,7 +2330,7 @@ fn bccwj_prepared_artifact_needs_no_source_root() {
         );
         ran += 1;
     }
-    assert_eq!(ran, 4);
+    assert_eq!(ran, 3);
 
     // The scoped query selected exactly the FIXED tree's two sentences and
     // excluded the VARIABLE tree's one — `sampling` made the overlap
@@ -2557,4 +2543,60 @@ fn bccwj_zips_are_distinct_targets_and_draw_no_alias_warning() {
             "prepared={prepared}"
         );
     }
+}
+
+#[test]
+fn default_execution_preserves_a_sentence_larger_than_a_batch() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("long.txt");
+    let artifact = directory.path().join("long.lingcorpus");
+    let text = format!("{}猫。", "猫 ".repeat(33_000));
+    fs::write(&source, &text).unwrap();
+    let query = |root: &Path, direct: bool| {
+        let mut command = lingrep();
+        command.args(["--json", "matches", "--pattern", "[text=。]."]);
+        if direct {
+            command
+                .args(["--input-format", "plain", "--dict-path"])
+                .arg(dictionary.path());
+        }
+        if !direct {
+            command.arg("--corpus");
+        }
+        command.arg(root).output().unwrap()
+    };
+    let direct = query(&source, true);
+    assert_success(&direct);
+    let build = lingrep()
+        .args(["corpus", "build", "--input-format", "plain", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert_success(&build);
+    assert!(!String::from_utf8_lossy(&build.stderr).contains("sentence_truncated"));
+    let prepared = query(&artifact, false);
+    assert_success(&prepared);
+    let results = |output: &Output| {
+        parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|event| event["type"] == "match")
+            .map(|event| event["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    let direct_matches = results(&direct);
+    assert_eq!(
+        direct_matches.len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&direct.stdout)
+    );
+    assert_eq!(direct_matches, results(&prepared));
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(artifact.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["sentence_truncation"], Value::Null);
+    assert_eq!(manifest["token_count"], 33_002);
 }

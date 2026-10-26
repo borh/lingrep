@@ -6,7 +6,8 @@ mod snapshot;
 pub use catalog::{TOKEN_FIELD_CATALOG, TokenFieldGroupKey, TokenFieldMeta};
 pub use constellation::{
     CompositionGap, CompositionItem, CompositionRegion, Constellation, ConstellationGroup,
-    ConstellationMatch, PublishedEvidence, SentencePatternAnalysis, project_sentence_patterns,
+    ConstellationMatch, OverlapCandidate, PublishedEvidence, SentencePatternAnalysis,
+    overlapping_candidates, project_sentence_patterns,
 };
 pub use projector::{
     CaptureInspection, CaptureLane, CaptureOrdinal, InspectedToken, InspectionProjector,

@@ -10,15 +10,6 @@
 > These requirements cover the supported `CompiledCatalog` matcher and compressed
 > V1 prepared artifacts.
 
-## Core Principles
-
-1. **Aim to be faster than the vibrato baseline** - prioritize this direction
-2. **Aim for memory growth that is sub-linear or constant** in dataset size
-3. **Prepared-artifact creation may trade one bounded build for faster repeated queries**
-4. **All binaries should work on all corpus sizes** - From <100K to >10M sentences
-
----
-
 ## Global Requirements
 
 ### Performance Baseline (vibrato)
@@ -62,10 +53,6 @@ ceiling; the budget arm governs small inputs.
 
 ### ling
 
-#### Use Cases
-- **Interactive:** TUI exploration (small corpora, frequent runs)
-- **Batch:** Large corpus processing (one-time runs)
-
 #### Performance Bars
 
 | Metric | Minimum | Target | Excellent |
@@ -78,12 +65,6 @@ ceiling; the budget arm governs small inputs.
 The memory row is evaluated against max(the stated multiple of input, the
 declared working-set budget) — see Memory Requirements above. On an input
 smaller than the budget, the budget arm governs.
-
-#### Functionality Requirements
-- ✅ Support all .lx pattern syntax
-- ✅ TUI for interactive exploration
-- ✅ Batch processing with progress reporting
-- ✅ Supported compressed V1 prepared artifact format
 
 #### Prepared V1 artifact requirements
 
@@ -107,8 +88,8 @@ sentence-local, so no window crosses a sentence boundary.
 
 #### Sentence-final lingrep patterns profile
 
-`ling sentence-final` is the supported sentence-final
-workflow. It should stream bounded batches, aim to exceed 300K tokens/sec
+`ling summarize --patterns patterns/sentence-final.lx` is the supported
+sentence-final workflow. It should stream bounded batches, aim to exceed 300K tokens/sec
 end-to-end, and keep peak RSS below both 2 GiB and 2× the input-file size.
 Long-running invocations report progress at least every 100K sentences.
 
@@ -158,15 +139,14 @@ microbenchmark. If its comparison is not decisive, escalate to Tier 2 or Tier
 
 **Guardrails must match the candidate's ladder rung.** A work-elimination
 candidate should hold user CPU and peak RSS near parity, and relative ceilings
-(±2% user, +5% RSS) are appropriate. A parallelism-rung candidate spends
-CPU and working memory to buy wall time — that is the mechanism, not a side
-effect — so sealing relative user-CPU or RSS ceilings rejects the mechanism
-itself. For a parallelism candidate seal instead: wall as primary; the
-absolute working-set budget above as the memory guardrail; and a
-parallel-efficiency floor — added CPU-seconds per wall-second saved, with
-its ceiling declared in the manifest (2× is a reasonable default: a candidate
-that burns more than two extra CPU-seconds per wall-second saved is buying
-speed the machine cannot afford under load).
+(±2% user, +5% RSS) are appropriate. A parallelism-rung candidate spends CPU
+and working memory to reduce wall time. Sealing relative user-CPU or RSS
+ceilings therefore rejects the mechanism itself. For a parallelism candidate,
+seal wall time as primary, use the absolute working-set budget above as the
+memory guardrail, and set a parallel-efficiency floor — added CPU-seconds per
+wall-second saved, with its ceiling declared in the manifest (2× is a
+reasonable default: a candidate that burns more than two extra CPU-seconds per
+wall-second saved is buying speed the machine cannot afford under load).
 
 ### Matcher catalog coverage
 
@@ -229,7 +209,7 @@ just perf-campaign verdict --dir target/campaign-<slug>
 the minimum useful effect, the guardrail ceilings and the command every run
 executes, before anything is measured. Because the command is sealed, two
 campaigns that measure different things carry different digests; `run` executes
-the manifest's command, and `record` refuses a run whose argv does not
+the manifest's command, and `record` rejects a run whose argv does not
 reconstruct from the seal. The worker pool is sealed too, and
 `verdict` reports `occupancy = mean(user) / (mean(wall) x workers)` per catalog
 beside a planning estimate of what the declared minimum implies about user
@@ -252,7 +232,7 @@ state cannot change which corpus an existing campaign measures.
 instead of writing it to a file and hashing that. The digest is identical
 either way, so no baseline moves; the run pays for a hashing consumer, pinned
 to `--digest-affinity` (by default the complement of `--affinity`), instead of
-the writes. The choice is sealed, and `record` refuses a run that does not match
+the writes. The choice is sealed, and `record` rejects a run that does not match
 the seal.
 
 `--stream-output` is not the default: the hasher can become the pipeline's rate
@@ -284,7 +264,7 @@ while the verdict names a catalog requiring escalation (3 → 8 → 20 blocks).
 leaves two sections for the author to fill in: where the bound went, and what
 was ruled out.
 
-An invalid campaign is refused rather than adjudicated, with an exit status
+An invalid campaign is rejected rather than adjudicated, with an exit status
 distinct from every verdict: a dev-profile build, an edited manifest, a
 workload that changed after sealing, unbalanced arms, short coverage, or broken
 output parity.
@@ -304,11 +284,12 @@ The `lingrep-perf.work/v1` screen includes assertion state visits and frontier
 high-water plus publication-policy candidate visits, record drops, span
 narrowings, and capture drops. It also includes tree-evaluator candidate
 volume, as the pair `candidates_produced` / `candidates_retained` — the
-candidates `evaluate` constructs and those surviving deduplication. It does not label process-global
-allocator traffic, output bytes, or scheduler-dependent queue occupancy as
-deterministic catalog work. V1 decode allocations require a prepared-pipeline
-probe; serialization bytes belong at the real `matches`/`summarize` writer;
-and a reorder high-water belongs to the stage that owns that buffer.
+candidates that `evaluate` constructs and those that survive deduplication. It
+does not label process-global allocator traffic, output bytes, or
+scheduler-dependent queue occupancy as deterministic catalog work. V1 decode
+allocations require a prepared-pipeline probe; serialization bytes belong at
+the real `matches`/`summarize` writer; and a reorder high-water belongs to the
+stage that owns that buffer.
 
 Synthetic patterns remain appropriate for characterization tests and
 counted-work screens. They cannot replace this repository-catalog matrix in a
@@ -320,51 +301,6 @@ speed never lowers that bar. Their measurement defaults to Tier 3 unless a
 stricter change-specific plan applies. A documented harness limitation may
 justify different evidence, but the claim must be narrowed to what was
 actually measured rather than treating weak evidence as a win.
-
-### Before Writing Code
-
-1. **Check requirements** - Find the relevant section above
-2. **Identify bars** - What minimum/target/excellent metrics apply?
-3. **Measure baseline** - Run current code and record performance
-4. **Set targets** - Define completion criteria
-
-### During Development
-
-1. **Profile first** - Use `perf record -g` and flamegraphs
-2. **Use the selected evidence tier** - Run focused benchmarks continuously;
-   reserve a longer paired campaign for the tier that requires it
-3. **Test on real data** - Japanese corpora, not synthetic data
-4. **Validate correctness** - Run the matcher correctness gate (`./scripts/test_matcher_correctness.sh`) after changes
-
-### Before Merging
-
-**Required (correctness/CI gates):**
-```bash
-# 1. All tests pass
-cargo test --lib
-
-# 2. Matcher correctness gate passes (correctness validation)
-./scripts/test_matcher_correctness.sh
-
-# 3. No clippy warnings
-cargo clippy -- -D warnings
-
-# 4. Code is formatted
-cargo fmt --check
-
-# 5. Full CI validation
-./ci.sh
-```
-
-Run the applicable focused benchmark and the evidence tier selected above;
-`cargo bench` is useful when the whole benchmark suite is relevant, but it is
-not required merely as ceremony for an unrelated path.
-
-**Documentation required:**
-- Update current requirements when targets or acceptance criteria change.
-- Record measurements and trade-offs in the commit message or pull request.
-
----
 
 ## Performance Regression Testing
 
@@ -401,34 +337,11 @@ cargo bench -p lingrep-core --bench corpus_discovery
 Criterion stores baselines under `target/criterion/`.
 
 
-## Quick Reference Checklist
-
-### Before claiming a feature is "done":
-
-- [ ] Approaches the minimum performance target (see tables above)
-- [ ] Memory usage is sub-linear or constant
-- [ ] Faster than vibrato baseline (end-to-end)
-- [ ] All tests pass
-- [ ] Benchmarks show improvement (not degradation)
-- [ ] No clippy warnings
-- [ ] Documentation updated
-- [ ] Real corpus tested (not just synthetic data)
-
-### If performance doesn't meet the targets:
-
-1. **Document the gap** — record actual numbers and the trade-off
-2. **Profile** — Find the bottleneck
-3. **Optimize** — Improve the hot path
-4. **Measure** — Verify improvement
-5. **Repeat** — Iterate toward the targets
-
----
-
 ## Results Export Endpoint (XLSX)
 
 The results-export endpoint (`GET /api/export/{workbench_id}/{revision}`) runs a
-dedicated export scan over the prepared corpus. This is matching-only work,
-performed off the hot path, and it runs under the coordinator's scan permit. At
+dedicated export scan over the prepared corpus. The scan performs matching only,
+runs off the hot path, and uses the coordinator's scan permit. At
 the default scan concurrency of `1`, at most one export or display scan runs at
 a time; a higher `with_scan_concurrency` bound relaxes this serialization.
 
@@ -440,6 +353,22 @@ limit. The ignored `measure_peak_rss_full_export` harness in
 scan permit serializes the scan phase, so scans do not stack; an operator who
 requires a tighter bound can lower `MAX_EXPORT_ROWS`.
 
+### Match context reading
+
+`GET /api/hit-context/{workbench}/{revision}/{pattern}/{occurrence}/{scope}`
+reads only the bound artifact's recorded document or authored paragraph range.
+Each page contains at most 20 sentences and 256 KiB of displayed text. A sentence's
+compressed analysis payload and decompressed payload are each limited to 128 KiB
+(the compressed envelope also permits its fixed header). Reconstructed-word reads
+check recorded token residency before projection and cap joined written forms at
+128 KiB; token decoding retains its existing 64 MiB raw-block scratch limit. These
+limits do not describe total resident memory. Rendered HTML is capped at 2 MiB.
+
+Requests to read match context share the coordinator's scan permit and retain
+it through blocking decoding, including after request cancellation. No page
+loads an entire document or scans the corpus's document inventory. Oversized
+sentences receive placeholders and remain addressable by paging.
+
 ### Permalinks
 
 Permalink decode (`GET /?v=1&q=…`) inflates through a reader capped at the 1 MiB
@@ -447,14 +376,3 @@ pattern limit (`permalink::MAX_PATTERN_BYTES`), so a crafted small blob cannot
 expand without bound. The complete request target is bounded by
 `MAX_REQUEST_TARGET_LEN` (32,000 characters); larger patterns are refused at
 copy time rather than truncated.
-
-## Summary
-
-These are goals to develop towards, not hard gates.
-
-**Primary goal:** Be faster than the vibrato baseline.
-
-**Secondary goal:** Keep memory growth sub-linear or constant in corpus size.
-
-**Testing goal:** Keep the matcher correctness gate passing; correctness is a
-merge gate.

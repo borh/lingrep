@@ -63,10 +63,20 @@ export function corpusSwitchOutcome(status, payload) {
  * default. Sending it is what keeps a copied link — and a corpus switch —
  * pointed at the corpus the page is actually on.
  */
-export function permalinkRequestBody(pattern, corpus) {
+export function permalinkRequestBody(pattern, corpus, retained, searchScope) {
     const params = new URLSearchParams({ pattern });
     if (corpus) params.set("corpus", corpus);
+    if (retained) params.set("retained", retained);
+    if (searchScope && searchScope !== "null") params.set("search_scope", searchScope);
     return params.toString();
+}
+
+export function corpusSwitchRequestBody(form, corpus) {
+    return permalinkRequestBody(
+        form?.querySelector("#corpus-pattern")?.value ?? "",
+        corpus,
+        form?.querySelector("select[name=retained]")?.value,
+    );
 }
 
 /**
@@ -82,6 +92,7 @@ export function permalinkRequestBody(pattern, corpus) {
 export function permalinkRequestForForm(form) {
     const pattern = form?.querySelector("#corpus-pattern")?.value ?? "";
     const corpus = form?.querySelector("input[name=corpus]")?.value;
+    const retained = form?.querySelector("select[name=retained]")?.value;
     if (!corpus) {
         return {
             action: "report",
@@ -89,7 +100,7 @@ export function permalinkRequestForForm(form) {
             text: "Choose a corpus before copying a link.",
         };
     }
-    return { action: "request", body: permalinkRequestBody(pattern, corpus) };
+    return { action: "request", body: permalinkRequestBody(pattern, corpus, retained, form.querySelector("[data-search-scope-value]")?.value) };
 }
 
 /** The viewport at which the query band is pinned rather than in flow. */
@@ -235,7 +246,6 @@ if (typeof document !== "undefined") {
     document.addEventListener("change", async (event) => {
         const select = event.target.closest?.("[data-corpus-select]");
         if (!select) return;
-        const pattern = document.getElementById("corpus-pattern");
 
         const report = (outcome) => {
             // The served option carries `selected`, so restoring it leaves the
@@ -250,7 +260,7 @@ if (typeof document !== "undefined") {
             const response = await fetch("api/permalink", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: permalinkRequestBody(pattern?.value ?? "", select.value),
+                body: corpusSwitchRequestBody(document.querySelector("[data-corpus-search]"), select.value),
             });
             const payload = await response.json().catch(() => null);
             const outcome = corpusSwitchOutcome(response.status, payload);
@@ -320,6 +330,15 @@ if (typeof document !== "undefined") {
         apply();
     })();
 
+    document.addEventListener("click", (event) => {
+        const link = event.target.closest("[data-site-help-open]");
+        if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        const dialog = document.querySelector("[data-site-help]");
+        if (!dialog) return;
+        event.preventDefault();
+        dialog.showModal();
+    });
+
     // Syntax help opens over the page rather than inside the band. As an
     // inline `details` it was a flex item in the controls row, so opening it
     // rendered its paragraph in a narrow detached column and grew the band by
@@ -329,6 +348,7 @@ if (typeof document !== "undefined") {
     (function () {
         const dialog = () => document.querySelector("[data-editor-help]");
         document.addEventListener("click", (event) => {
+            if (event.target.closest("[data-site-help-open], [data-site-help]")) return;
             if (event.target.closest("[data-editor-help-open]")) {
                 dialog()?.showModal();
                 return;
@@ -341,6 +361,7 @@ if (typeof document !== "undefined") {
             }
         });
         document.addEventListener("keydown", (event) => {
+            if (event.target.closest?.("[data-site-help]")) return;
             if (event.key !== "Escape") return;
             for (const openScope of document.querySelectorAll("details.corpus-analysis-scope[open]")) {
                 openScope.open = false;
@@ -527,6 +548,7 @@ if (typeof document !== "undefined") {
         document.addEventListener(
             "keydown",
             (event) => {
+                if (event.target.closest?.("[data-site-help]")) return;
                 if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) {
                     return;
                 }

@@ -15,6 +15,10 @@
 //! measurement.
 //!
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use lingrep_core::corpus::{
     AdmittedCorpus, AdmittedCorpusEvent, CorpusEvent, ScopeObservation, metadata_from_json,

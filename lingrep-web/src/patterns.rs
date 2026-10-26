@@ -20,60 +20,35 @@ pub fn format_web_pattern(source: &str) -> Result<FormatOutcome, FormatError> {
     )
 }
 
-/// Resolve one definition of `source` into a self-contained one, by name.
+/// Resolve one authored definition of `source` into a self-contained one, by
+/// name.
 ///
 /// The source is the catalog a completed run was produced from, not the live
 /// editor, so what this describes is the pattern the results on screen came
 /// from rather than whatever has been typed since.
-///
-/// Derived contiguous compound items (`複合項目〔A ＋ B〕`) have no single
-/// authored declaration; when `name` is not a direct definition and matches
-/// that derived shape, each component is expanded in order and concatenated so
-/// its authored declarations, full expansions, references, and railroad SVG
-/// state diagram are shown together.
 pub fn expand_web_pattern(
     source: &str,
     name: &str,
 ) -> Result<Option<DefinitionExpansion>, ExpandError> {
-    if let Some(expansion) = expand_pattern_definition(
+    expand_pattern_definition(
         PatternSource::named(WEB_PATTERN_SOURCE_NAME, source),
         CompileLimits::default(),
         name,
-    )? {
-        return Ok(Some(expansion));
-    }
-    expand_compound_pattern(source, name)
+    )
 }
 
-fn expand_compound_pattern(
+/// Expand a derived compound item from the names of its components, in chain
+/// order.
+///
+/// A compound has no authored declaration; each component is expanded and the
+/// results are concatenated so its declarations, full expansions, references,
+/// and railroad diagram are shown together under `name`. `Ok(None)` when any
+/// component is not a definition of `source`.
+pub fn expand_compound_pattern(
     source: &str,
     name: &str,
+    component_names: &[&str],
 ) -> Result<Option<DefinitionExpansion>, ExpandError> {
-    let Some(rest) = name.strip_prefix("複合項目〔") else {
-        return Ok(None);
-    };
-    let Some((components_str, tail)) = rest.split_once('〕') else {
-        return Ok(None);
-    };
-    let valid_tail = tail.is_empty()
-        || tail
-            .strip_prefix('〔')
-            .and_then(|s| s.strip_suffix('〕'))
-            .is_some_and(|digits| {
-                !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
-            });
-    if !valid_tail {
-        return Ok(None);
-    }
-    let component_names: Vec<&str> = components_str
-        .split(" ＋ ")
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect();
-    if component_names.len() < 2 {
-        return Ok(None);
-    }
-
     let mut declarations = Vec::with_capacity(component_names.len());
     let mut expanded_parts = Vec::with_capacity(component_names.len());
     let mut any_expanded = false;
@@ -159,6 +134,33 @@ mod tests {
     }
 
     #[test]
+    fn default_catalog_publishes_the_longer_authored_match_before_compound_derivation() {
+        use lingrep_core::{fsm::Match, token_match::TokenInfo};
+
+        let compiled =
+            compile_web_pattern(include_str!("../../patterns/sentence-final.lx")).unwrap();
+        let tokens = vec![
+            TokenInfo::default().with_orth("と"),
+            TokenInfo::default().with_orth("考え").with_lemma("考える"),
+            TokenInfo::default()
+                .with_orth("られる")
+                .with_lemma("られる"),
+        ];
+        let published = compiled.matcher.find_published_matches(&tokens).unwrap();
+        assert_eq!(
+            published,
+            vec![Match {
+                pattern: "と考えられる".into(),
+                start: 0,
+                end: 3,
+                captures: Box::default(),
+                graph_bindings: Box::default(),
+                lexical: None,
+            }]
+        );
+    }
+
+    #[test]
     fn search_invalid_regex_never_formats_submitted_secret_or_source() {
         const SECRET: &str = "SEARCH_REGEX_SECRET_62E8";
         let source = format!("秘密 := [text~/({SECRET}/].");
@@ -188,6 +190,24 @@ mod tests {
         assert!(!rendered.contains("猫"), "{rendered}");
         assert!(!rendered.contains("犬"), "{rendered}");
         assert!(!rendered.contains(&source), "{rendered}");
+    }
+
+    /// The display name is a label: components come from the caller's list,
+    /// so a name with no parseable structure expands all the same.
+    #[test]
+    fn compound_expansion_resolves_components_from_the_supplied_names_only() {
+        let source = "a := [text=甲].\nb := [text=乙].";
+        let expansion = expand_compound_pattern(source, "unrelated label", &["b", "a"])
+            .expect("the catalog compiles")
+            .expect("both components are definitions");
+        assert_eq!(expansion.name, "unrelated label");
+        assert_eq!(expansion.declaration, "b := [text=乙].\na := [text=甲].");
+        assert!(
+            expand_compound_pattern(source, "複合項目〔a ＋ c〕", &["a", "c"])
+                .unwrap()
+                .is_none(),
+            "an unknown component yields no expansion"
+        );
     }
 
     #[test]

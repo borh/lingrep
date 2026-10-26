@@ -1,7 +1,6 @@
 use super::{
-    AttributesTsvRow, MatchTsvRow, SentenceFinalTsvRow, SourceTsvRow, SummaryTsvRow,
-    TokenizeTsvRow, write_attributes_tsv, write_match_tsv, write_sentence_final_tsv,
-    write_source_tsv, write_summary_tsv, write_tokenize_tsv,
+    AttributesTsvRow, MatchTsvRow, SourceTsvRow, SummaryTsvRow, TokenizeTsvRow,
+    write_attributes_tsv, write_match_tsv, write_source_tsv, write_summary_tsv, write_tokenize_tsv,
 };
 
 fn decode_tsv_record(bytes: &[u8]) -> Vec<String> {
@@ -82,18 +81,6 @@ fn summary_tsv_is_fixed_four_columns_with_rfc4180_encoding() {
 
 #[test]
 fn new_tsv_contracts_have_fixed_headerless_rows_and_escaping() {
-    let mut sentence_final = Vec::new();
-    write_sentence_final_tsv(
-        &mut sentence_final,
-        &SentenceFinalTsvRow {
-            pattern: "p\tq".into(),
-            surface: "猫\n犬".into(),
-            count: 2,
-        },
-    )
-    .unwrap();
-    assert_eq!(decode_tsv_record(&sentence_final), ["p\tq", "猫\n犬", "2"]);
-
     let mut tokenize = Vec::new();
     write_tokenize_tsv(
         &mut tokenize,
@@ -149,7 +136,7 @@ fn new_tsv_contracts_have_fixed_headerless_rows_and_escaping() {
         ["orthbase", "18364", "0", "475", "18839"]
     );
 
-    for bytes in [&sentence_final, &tokenize, &source, &attributes] {
+    for bytes in [&tokenize, &source, &attributes] {
         assert!(!bytes.contains(&0x1b));
     }
 }

@@ -603,90 +603,62 @@ fn manifest_of(artifact: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(artifact.join("manifest.json")).unwrap()).unwrap()
 }
 
-/// A corpus is bad data's natural habitat, and one runaway line should not cost
-/// the other documents. The build truncates and says so, naming the document —
-/// a corpus-global sentence ordinal locates nothing in a large tree.
 #[test]
-fn an_oversized_sentence_is_truncated_and_named_rather_than_refused() {
+fn a_legacy_truncated_artifact_is_never_reused_as_complete() {
     let directory = TempDir::new().unwrap();
-    let long = format!("{}。\n", "猫".repeat(200));
-    let artifact = directory.path().join("out.lingcorpus");
-    let output = build_tree(
-        &markdown_tree(directory.path(), &long),
-        &artifact,
-        &["--max-sentence-bytes", "128"],
-    );
-
-    assert!(
-        output.status.success(),
-        "the build must complete: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("warning[sentence_truncated]"),
-        "truncation must be reported: {stderr}"
-    );
-    assert!(
-        stderr.contains("00002.md"),
-        "the warning must name the document: {stderr}"
-    );
-
-    // The good documents survive, which is the whole point of not refusing.
-    let manifest = manifest_of(&artifact);
-    assert_eq!(manifest["document_count"], 2);
-    assert_eq!(manifest["sentence_truncation"]["count"], 1);
-    assert_eq!(manifest["sentence_truncation"]["limit"], 128);
-}
-
-/// Truncation is the one thing that makes a resource limit semantic: two limits
-/// that both complete now emit different corpora. So the artifact records the
-/// limit it truncated at, and a build asking for a different one is refused
-/// rather than silently handed the shorter corpus.
-///
-/// Refused rather than rebuilt because identity does not carry the limit, so a
-/// rebuild would want this very path and publication never overwrites.
-#[test]
-fn a_truncated_artifact_is_not_reused_under_a_different_limit() {
-    let directory = TempDir::new().unwrap();
-    let long = format!("{}。\n", "猫".repeat(200));
-    let root = markdown_tree(directory.path(), &long);
-
-    // No `--output`: reuse only ever considers the canonical sibling path.
+    let root = markdown_tree(directory.path(), "猫。\n");
     let build = |extra: &[&str]| {
         let dictionary = MiniDictionary::new();
         lingrep()
-            .args(["corpus", "build", "--input-format", "markdown"])
-            .arg("--dict-path")
+            .args([
+                "corpus",
+                "build",
+                "--input-format",
+                "markdown",
+                "--dict-path",
+            ])
             .arg(dictionary.path())
             .args(extra)
             .arg(&root)
             .output()
             .unwrap()
     };
-
-    assert!(build(&["--max-sentence-bytes", "128"]).status.success());
-    // The same limit reuses without rebuilding: truncation alone does not make
-    // an artifact untouchable.
-    assert!(build(&["--max-sentence-bytes", "128"]).status.success());
-
-    let output = build(&["--max-sentence-bytes", "512"]);
-    assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.contains("different corpus under the same identity"),
-        "the refusal must say what is wrong: {stderr}"
-    );
-    assert!(
-        stderr.contains("--max-sentence-bytes 128"),
-        "and name the limit that would reuse it: {stderr}"
-    );
+    assert!(build(&[]).status.success());
+    let artifact = fs::read_dir(directory.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "lingcorpus"))
+        .unwrap();
+    let mut manifest = manifest_of(&artifact);
+    manifest["sentence_truncation"] = serde_json::json!({"count": 1, "limit": 128});
+    fs::write(
+        artifact.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let query = lingrep()
+        .args(["--json", "matches", "--pattern", "[].", "--corpus"])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert!(!query.status.success());
+    assert!(String::from_utf8_lossy(&query.stderr).contains("truncated sentence"));
+    let inspection = lingrep()
+        .args(["corpus", "inspect"])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert!(inspection.status.success());
+    for extra in [&[][..], &["--max-sentence-bytes", "128"][..]] {
+        let output = build(extra);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("rebuild the complete corpus"));
+    }
 }
 
-/// A corpus that needed no truncation records nothing. This is what keeps every
-/// artifact already on disk valid: absence *is* the pre-truncation value.
 #[test]
-fn a_build_that_truncates_nothing_records_nothing() {
+fn complete_builds_do_not_record_truncation() {
     let directory = TempDir::new().unwrap();
     let artifact = directory.path().join("clean.lingcorpus");
     assert!(
@@ -696,26 +668,4 @@ fn a_build_that_truncates_nothing_records_nothing() {
     );
 
     assert_eq!(manifest_of(&artifact)["sentence_truncation"], Value::Null);
-}
-
-/// Truncation cuts between characters. A byte-indexed cut through a three-byte
-/// Japanese character would panic rather than shorten, and the limit is
-/// measured in bytes while the text this corpus carries is not.
-#[test]
-fn truncation_lands_on_a_character_boundary() {
-    let directory = TempDir::new().unwrap();
-    let artifact = directory.path().join("boundary.lingcorpus");
-    // Three-byte characters against a limit that is not a multiple of three.
-    let long = format!("{}。\n", "猫".repeat(100));
-    assert!(
-        build_tree(
-            &markdown_tree(directory.path(), &long),
-            &artifact,
-            &["--max-sentence-bytes", "100"]
-        )
-        .status
-        .success()
-    );
-
-    assert_eq!(manifest_of(&artifact)["sentence_truncation"]["count"], 1);
 }

@@ -11,6 +11,10 @@
     clippy::unwrap_used
 )]
 #[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
 mod supported {
     use compact_str::CompactString;
     use lingrep_core::fsm::{

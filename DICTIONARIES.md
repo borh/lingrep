@@ -17,6 +17,11 @@ and writes it to `$XDG_DATA_HOME/lingrep/dictionaries/`
 loads the installed `cwj` when neither `--dict-path` nor
 `LINGREP_DICTIONARY_PATH` names a dictionary; pass any other with `--dict-path`.
 
+The installer copies upstream license notices into `licenses/<name>/` beside
+the dictionaries, including when the dictionary is already installed. Treat
+dictionary files as immutable: replace them with `ling dictionary install`
+rather than editing them in place, especially while a process has them mapped.
+
 | Name | File | Download | Installed | License |
 | --- | --- | --- | --- | --- |
 | `cwj` | `unidic-cwj-202512.dic` | 412 MB | 1.31 GB | BSD-3-Clause, GPL-2.0 or LGPL-2.1 |
@@ -43,6 +48,7 @@ same license.
 aggregate `.#vibrato-dictionaries` download the same release files, so their
 `share/vibrato/*.dic` outputs are identical to what `ling dictionary install`
 writes. `nix develop` exports the CWJ path as `LINGREP_DICTIONARY_PATH`.
+Each package includes upstream notices in `share/licenses/unidic-<name>-202512/`.
 
 ## Building from source
 

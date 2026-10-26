@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use axum::{Router, body::Body, http::Request};
 use http_body_util::BodyExt;
 use lingrep_core::token_match::TokenInfo;

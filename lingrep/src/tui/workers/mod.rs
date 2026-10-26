@@ -29,16 +29,3 @@ pub(crate) struct TaskHandles {
     pub surface: Option<TaskHandle>,
     pub kwic: Option<TaskHandle>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_task_handles_default() {
-        let handles = TaskHandles::default();
-        assert!(handles.pattern.is_none());
-        assert!(handles.surface.is_none());
-        assert!(handles.kwic.is_none());
-    }
-}

@@ -16,8 +16,8 @@ use serde::ser::SerializeMap;
 
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
-use super::query_resolution::{QueryScope, ResolvedMatchingQuery, resolve_matching_query};
-use super::query_scope::{build_scope_report, parse_scope};
+use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
+use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
     random_id,
@@ -37,9 +37,6 @@ use crate::protocol::query::{
     SourceSpan, SpanConvention, SummaryData, SummaryGroupData, TemporaryStorageLimits, Termination,
 };
 use crate::protocol::write_jsonl;
-use crate::section_diagnostics::{
-    warn_read_time_excluded, warn_self_label_no_ops, warn_unused_labels,
-};
 use crate::summary::{
     AggregationGroup, AggregationInput, FinalizedSummary, OwnedAggregationInput, SummaryAggregator,
     SummaryRow, shard_hash,
@@ -168,33 +165,13 @@ pub fn run(
     // Parsed before any input is opened: a clause is authored text, so a bad
     // one is a usage error rather than a run that reads a corpus and fails.
     let scope_clause = parse_scope(args.selection.clause.as_deref())?;
-    // Resolved before anything is read, and refused here rather than after a
-    // corpus has been scanned.
-    let sample = args.sample.resolve().map_err(CliError::InvalidArgs)?;
-    if args.sample.blocks && output != OutputMode::Jsonl {
-        return Err(CliError::InvalidArgs(
-            "--sample-blocks requires --json so the run declares its correlated sample unit".into(),
-        ));
-    }
-    if sample.is_some() && args.cache.cache {
-        return Err(CliError::InvalidArgs(
-            "--sample cannot be combined with --cache: the artifact would name a \
-             fraction of the corpus as the whole of it. Sample a direct run, or \
-             build the artifact first and sample the query against it."
-                .to_owned(),
-        ));
-    }
-    if sample.is_some() && args.tsv {
-        // `summarize --tsv` is a fixed headerless row and carries no `run`
-        // record, so a sampled total would travel with nothing saying it is an
-        // estimate. Refusing is the honest half of "declare or refuse".
-        return Err(CliError::InvalidArgs(
-            "--sample cannot be combined with --tsv: `lingrep.summarize-tsv/v1` \
-             has no run record, so a sampled count would be published as if it \
-             were a census. Use JSONL, whose `run` record declares the sample."
-                .to_owned(),
-        ));
-    }
+    let sample = super::query_support::resolve_query_sample(
+        &args.sample,
+        args.cache.cache,
+        args.tsv,
+        output,
+        QueryMode::Summarize,
+    )?;
 
     // Before query execution: direct execution is the default; `--cache`
     // observes ROOT, then reuses or creates a compatible artifact beside it.
@@ -214,14 +191,7 @@ pub fn run(
         analysis,
         bound,
         run: run_facts,
-        scope:
-            QueryScope {
-                scope_observation,
-                prepared_scope,
-                section_labels,
-                markdown_diagnostics,
-                read_time_policy,
-            },
+        scope,
     } = resolve_matching_query(
         &args.input,
         selected_corpus,
@@ -239,23 +209,12 @@ pub fn run(
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
     let run_id = random_id();
-    // Checkable without reading input, so it is reported before the run rather
-    // than beside its results.
-    warn_self_label_no_ops(
+    scope.warn_before_run(
+        scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
         config.diagnostic_format,
         &run_id,
     )?;
-    if let Some(clause) = scope_clause.as_ref() {
-        if let Some(policy) = read_time_policy.as_ref() {
-            warn_read_time_excluded(clause, policy, config.diagnostic_format, &run_id)?;
-        }
-        // A prepared artifact's label set is complete here. A Markdown stream's
-        // is not — its sink is read after the run, below.
-        if markdown_diagnostics.is_none() {
-            warn_unused_labels(clause, &section_labels, config.diagnostic_format, &run_id)?;
-        }
-    }
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
         run_id: run_id.clone(),
         mode: QueryMode::Summarize,
@@ -386,7 +345,8 @@ pub fn run(
                 Some(capacity) => Publication::from(PolicySelection::Apply).with_trace(capacity),
                 None => Publication::from(PolicySelection::Apply),
             },
-            prepared_scope
+            scope
+                .prepared_scope
                 .as_ref()
                 .map_or(&SentenceAdmission::All, |resolved| &resolved.admission),
         );
@@ -460,25 +420,11 @@ pub fn run(
             .collect::<Vec<_>>();
         // `summarize` publishes no per-match prefix, so it always runs to
         // completion: its basis is the corpus on both paths.
-        // A Markdown stream only knows which labels it saw once it has finished
-        // reading, so the unused-label report waits for the sink. On a limited
-        // run this reports what the *prefix* observed, which is the honest
-        // answer to "did this run see the label you named".
-        if let (Some(clause), Some(diagnostics)) =
-            (scope_clause.as_ref(), markdown_diagnostics.as_ref())
-        {
-            warn_unused_labels(
-                clause,
-                &diagnostics.observed_labels(),
-                config.diagnostic_format,
-                &run_id,
-            )?;
-        }
-        let scope_report = build_scope_report(
+        let scope_report = scope.report_after_run(
             scope_clause.as_ref(),
-            prepared_scope.as_ref(),
-            &scope_observation,
             false,
+            config.diagnostic_format,
+            &run_id,
         )?;
         let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
             0,

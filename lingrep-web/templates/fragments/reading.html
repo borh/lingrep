@@ -1,0 +1,36 @@
+<section class="reading-page" data-reading-page>
+  <header class="reading-toolbar">
+    <div class="reading-heading">{% match self.title() %}{% when Some with (title) %}<h3>{{ title }}</h3><small class="reading-source">{{ source }}</small>{% when None %}<h3>{{ source }}</h3>{% endmatch %}</div>
+    <nav aria-label="Reading scope" data-i18n-aria-label="reading.scope">
+      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/paragraph{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}false{% else %}true{% endif %}" data-i18n="reading.paragraph">Paragraph</button>
+      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/document{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}true{% else %}false{% endif %}" data-i18n="reading.document">Document</button>
+    </nav>
+  </header>
+  {% if !metadata.is_empty() || metadata_omitted %}
+  <details class="reading-metadata" data-reading-metadata>
+    <summary data-i18n="reading.metadata">Document metadata</summary>
+    <dl>{% for field in metadata %}<div class="provenance-field"><dt>{{ field.key }}</dt><dd><ul class="provenance-values">{% for value in field.values %}<li>{{ value }}</li>{% endfor %}</ul></dd></div>{% endfor %}</dl>
+    {% if metadata_omitted %}<p data-i18n="reading.metadata_omitted">Some metadata exceeds the display limits.</p>{% endif %}
+  </details>
+  {% endif %}
+  {% if paragraph_missing %}<p class="alert" data-reading-unavailable data-i18n="reading.no_paragraph">No paragraph information is stored for this hit.</p>{% endif %}
+  {% if sentences.is_empty() && !paragraph_missing && paragraph_choices.is_empty() %}<p class="alert" data-i18n="reading.limit">Context exceeds the reading limits.</p>{% endif %}
+  {% if !paragraph_choices.is_empty() %}<p data-i18n="reading.choose_paragraph">This hit belongs to several authored paragraphs.</p><ul>{% for choice in paragraph_choices %}<li><button type="button" class="chain-link" hx-get="{{ root_url }}/paragraph?paragraph={{ choice.id }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace"><span data-i18n="reading.paragraph_sentences" data-i18n-args='{"first": {{ choice.first }}, "last": {{ choice.last }}}'>Paragraph · sentences {{ choice.first }}–{{ choice.last }}</span></button></li>{% endfor %}</ul>{% endif %}
+  {% if !sentences.is_empty() %}
+  <nav class="reading-pager" aria-label="Context pages" data-i18n-aria-label="reading.pages">
+    {% match previous %}{% when Some with (before) %}<button type="button" class="btn btn-secondary" data-reading-previous hx-get="{{ root_url }}/{{ self.scope() }}?{{ self.page_query() }}before={{ before }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-label="Previous sentences" data-i18n-aria-label="reading.earlier"><span aria-hidden="true">←</span></button>{% when None %}{% endmatch %}
+    {% if self.has_excluded() %}<button type="button" class="btn btn-secondary" data-reading-context hx-get="{{ self.context_url() }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace">{% if show_excluded %}<span data-i18n="reading.hide_excluded">Hide excluded context</span>{% else %}<span data-i18n="reading.show_excluded">Show excluded context</span>{% endif %}</button>{% endif %}
+    <button type="button" class="btn btn-secondary" data-reading-selected hx-get="{{ root_url }}/{{ self.scope() }}?{{ self.page_query() }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" data-i18n="reading.selected">Back to match</button>
+    {% match next %}{% when Some with (start) %}<button type="button" class="btn btn-secondary" data-reading-next hx-get="{{ root_url }}/{{ self.scope() }}?{{ self.page_query() }}start={{ start }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-label="Next sentences" data-i18n-aria-label="reading.later"><span aria-hidden="true">→</span></button>{% when None %}{% endmatch %}
+  </nav>
+  <div class="reading-text" lang="ja">
+    {% for sentence in self.rows() %}
+    {% if !sentence.sections.is_empty() %}<p class="reading-section" data-reading-section aria-label="Section" data-i18n-aria-label="reading.section">{% for label in sentence.sections %}{% if !loop.first %}<span class="reading-section-separator" aria-hidden="true"> › </span>{% endif %}<span>{{ label }}</span>{% endfor %}</p>{% endif %}
+    {% if sentence.excluded && !show_excluded %}<p class="reading-excluded-gap" data-reading-excluded data-i18n="reading.excluded_gap">Text excluded from search</p>{% else %}
+    {% for id in sentence.paragraph_starts %}<p class="reading-paragraph-label" data-reading-paragraph="{{ id }}"><span data-i18n="reading.paragraph">Paragraph</span></p>{% endfor %}
+    <p class="reading-sentence{% if sentence.excluded %} reading-outside-scope{% endif %}{% if sentence.selected %} reading-sentence-selected{% endif %}" data-reading-sentence="{{ sentence.ordinal }}"{% if sentence.selected %} aria-current="true"{% endif %}><span class="reading-sentence-number">{{ sentence.number }}</span>{% if sentence.omitted %}<span class="reading-omitted" data-i18n="reading.omitted">Sentence text is unavailable within the reading limits.</span>{% else %}<span class="reading-sentence-text">{{ sentence.left }}{% if !sentence.key.is_empty() %}<mark>{{ sentence.key }}</mark>{% endif %}{{ sentence.right }}{% if sentence.reconstructed %} <small class="reading-reconstructed" data-i18n="reading.reconstructed">Reconstructed</small>{% endif %}</span>{% endif %}</p>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>

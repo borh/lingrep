@@ -9,35 +9,13 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from command_analysis import analyze_trial
+from experiment import discover_trials, find_experiment
 
 TASK_FILES = ("instruction.md", "task.toml")
 TASK_DIRECTORIES = ("environment",)
 TRIAL_FILES = ("config.json", "result.json", "analysis.json", "analysis.md")
 TRIAL_DIRECTORIES = ("verifier", "artifacts")
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-
-
-def find_experiment(path: Path) -> tuple[Path, dict]:
-    current = path.resolve()
-    if current.is_file():
-        current = current.parent
-    for candidate in (current, *current.parents):
-        manifest = candidate / "experiment.json"
-        if manifest.is_file():
-            return candidate, json.loads(manifest.read_text())
-    raise FileNotFoundError(f"no experiment.json found at or above {path}")
-
-
-def load_trials(root: Path) -> list[tuple[Path, dict]]:
-    trials = []
-    for path in root.rglob("result.json"):
-        result = json.loads(path.read_text())
-        if "trial_name" in result and "task_name" in result:
-            trials.append((path, result))
-    return sorted(
-        trials,
-        key=lambda item: (item[1].get("started_at") or "", item[1]["trial_name"]),
-    )
 
 
 def archive_name(*parts: str) -> str:
@@ -55,7 +33,7 @@ def add_bytes(archive: zipfile.ZipFile, name: str, content: bytes) -> None:
 
 
 def add_file(archive: zipfile.ZipFile, source: Path, name: str) -> None:
-    if source.is_file():
+    if source.is_file() and not source.is_symlink():
         add_bytes(archive, name, source.read_bytes())
 
 
@@ -63,7 +41,9 @@ def add_tree(archive: zipfile.ZipFile, source: Path, prefix: str) -> None:
     if not source.is_dir():
         return
     for path in sorted(
-        candidate for candidate in source.rglob("*") if candidate.is_file()
+        candidate
+        for candidate in source.rglob("*")
+        if candidate.is_file() and not candidate.is_symlink()
     ):
         add_file(archive, path, archive_name(prefix, str(path.relative_to(source))))
 
@@ -91,24 +71,24 @@ def validate_trajectory(path: Path) -> None:
 def export_experiment(experiment: Path, destination: Path) -> int:
     root, manifest = find_experiment(experiment)
     if destination.exists():
-        raise FileExistsError(f"refusing to overwrite viewer bundle: {destination}")
+        raise FileExistsError(f"viewer bundle already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    trials = load_trials(root)
+    trials = [trial for trial in discover_trials(root) if trial.result is not None]
     if not trials:
         raise ValueError(f"experiment has no completed Harbor trials: {root}")
 
     task_sources: dict[str, Path] = {}
     trial_rows: list[tuple[str, Path]] = []
-    for result_path, result in trials:
-        task_name = result["task_name"]
+    for completed in trials:
+        task_name = completed.result["task_name"]
         task = manifest.get("tasks", {}).get(task_name)
         if not isinstance(task, dict):
             raise TypeError(
                 f"trial task is absent from experiment manifest: {task_name}"
             )
         task_key = f"{task['arm']}-{task['case_id']}"
-        trial = result_path.parent
+        trial = completed.path
         trajectory = trial / "agent" / "trajectory.json"
         validate_trajectory(trajectory)
         source = task_source(trial)

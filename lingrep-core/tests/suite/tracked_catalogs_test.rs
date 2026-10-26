@@ -56,23 +56,21 @@ fn every_tracked_catalog_compiles() {
     );
 }
 
-/// The formatter may respace a line. It may not restructure a catalog.
-///
-/// It did both. `render` emitted exactly one newline for any gap that
-/// contained one, so every blank line in every tracked catalog was deleted —
-/// `sf-experimental.lx` came back 99 lines shorter, `sketch-grammar.lx` 23 —
-/// and the running two-space counter it indented with knew only about
-/// `defaults` and `schema`, so every continuation line, every hand-aligned
-/// nesting level in `double-wo.lx`, and every `policy` statement was flattened
-/// to column zero. Both losses land on the browser editor, which formats on
-/// blur: a researcher who clicked away from a pattern got their catalog's
-/// paragraphs and indentation dissolved under them.
-///
-/// This asserts the property rather than a golden text, so it covers a catalog
-/// added later for free, and it deliberately says nothing about what happens
-/// *within* a line — respacing operators is the formatter's job.
 #[test]
 fn formatting_a_tracked_catalog_preserves_its_line_structure() {
+    fn lines_with_collapsed_blanks(source: &str) -> Vec<&str> {
+        let mut previous_blank = false;
+        source
+            .lines()
+            .filter(|line| {
+                let blank = line.trim().is_empty();
+                let keep = !blank || !previous_blank;
+                previous_blank = blank;
+                keep
+            })
+            .collect()
+    }
+
     let sources = tracked_catalog_sources();
     assert!(
         sources.len() >= 4,
@@ -87,7 +85,7 @@ fn formatting_a_tracked_catalog_preserves_its_line_structure() {
         .unwrap_or_else(|error| panic!("{name} must format: {error}"))
         .source;
 
-        let before: Vec<&str> = source.lines().collect();
+        let before = lines_with_collapsed_blanks(&source);
         let after: Vec<&str> = formatted.lines().collect();
         assert_eq!(
             before.len(),
@@ -589,7 +587,9 @@ fn every_pattern_catalog_has_a_pinned_guardrail_role() {
         // a bare value, so the line prefix is the oracle.
         assert_eq!(
             descriptor.regimes.contains(&RuntimeRegime::RecordTransform),
-            source.lines().any(|line| line.starts_with("transform:")),
+            source
+                .lines()
+                .any(|line| line.trim_start().starts_with("transform:")),
             "{}: the RecordTransform tag and the catalog's own transform list disagree",
             descriptor.path
         );

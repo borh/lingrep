@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use std::sync::Arc;
 
 use askama::Template;
@@ -202,7 +203,7 @@ async fn selected_token_returns_grouped_fields_not_a_full_sentence_table() {
     assert!(
         response
             .html
-            .contains("&lt;script&gt;fixture&lt;/script&gt;")
+            .contains("&#60;script&#62;fixture&#60;/script&#62;")
     );
 }
 

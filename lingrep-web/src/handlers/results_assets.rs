@@ -35,6 +35,14 @@ const HTMX_EXT_SSE_JS: &[u8] = include_bytes!(concat!(
 
 const ASSETS: &[AssetEntry] = &[
     (
+        "/search-scope.js",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/search-scope.js"
+        )),
+        "text/javascript; charset=utf-8",
+    ),
+    (
         "/results-explorer.js",
         RESULTS_EXPLORER_JS,
         "text/javascript; charset=utf-8",

@@ -1,69 +1,75 @@
-//! Simple token matching tests
-//!
-//! Tests the most basic pattern matching: matching a single token by its
-//! part of speech or lemma.
+use lingrep_core::fsm::{CompileLimits, Match, PatternSource, compile_catalog};
+use lingrep_core::token_match::TokenInfo;
 
-use lingrep_core::testing::{compile_test_pattern, tokenize_japanese};
+#[hegel::test(test_cases = 100, derandomize = true)]
+fn scalar_predicates_distinguish_absent_empty_equal_and_unequal_values(tc: hegel::TestCase) {
+    let values = [
+        None,
+        Some(""),
+        Some("猫"),
+        Some("NOUN"),
+        Some("猫🐈"),
+        Some("e\u{301}"),
+    ];
+    let symbols = tc.draw(hegel::generators::binary().max_size(64));
+    let attributes = symbols
+        .iter()
+        .map(|symbol| {
+            let symbol = usize::from(*symbol);
+            [
+                values[symbol % 6],
+                values[(symbol / 6) % 6],
+                values[(symbol / 36) % 6],
+            ]
+        })
+        .collect::<Vec<_>>();
+    let tokens = attributes
+        .iter()
+        .map(|attributes| {
+            let mut token = TokenInfo::default();
+            if let Some(value) = attributes[0] {
+                token = token.with_orth(value);
+            }
+            if let Some(value) = attributes[1] {
+                token = token.with_lemma(value);
+            }
+            if let Some(value) = attributes[2] {
+                token = token.with_pos(value);
+            }
+            token
+        })
+        .collect::<Vec<_>>();
 
-#[test]
-fn test_simple_noun_match() {
-    let matcher = compile_test_pattern("[upos=NOUN]");
-
-    let text = "猫がいる";
-    let tokens = tokenize_japanese(text);
-
-    // Debug: print tokens
-    println!("Tokens for '{text}':");
-    for (i, token) in tokens.iter().enumerate() {
-        println!("  [{}] pos={:?}, orth={:?}", i, token.pos(), token.orth());
+    for (column, key, literal) in [(0, "text", "猫"), (1, "lemma", "猫"), (2, "upos", "NOUN")] {
+        let source = format!(
+            "equal := [{key}={literal}]. different := [{key}!={literal}]. complement := [!({key}={literal})]."
+        );
+        let matcher = compile_catalog(
+            PatternSource::named("scalar.lx", &source),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let mut expected = Vec::new();
+        for (start, attributes) in attributes.iter().enumerate() {
+            let value = attributes[column];
+            for (pattern, accepts) in [
+                ("complement", value != Some(literal)),
+                ("different", value.is_some_and(|value| value != literal)),
+                ("equal", value == Some(literal)),
+            ] {
+                if accepts {
+                    expected.push(Match {
+                        pattern: pattern.into(),
+                        start,
+                        end: start + 1,
+                        captures: Box::default(),
+                        graph_bindings: Box::default(),
+                        lexical: None,
+                    });
+                }
+            }
+        }
+        assert_eq!(matcher.find_matches(&tokens), expected, "{key}");
     }
-
-    let _matches = matcher.find_matches(&tokens);
-
-    // Just verify pattern parses and runs
-}
-
-#[test]
-fn test_simple_lemma_match() {
-    let matcher = compile_test_pattern("[lemma=ある]");
-
-    let text = "ある";
-    let tokens = tokenize_japanese(text);
-    let _matches = matcher.find_matches(&tokens);
-
-    // Just verify pattern parses and runs
-}
-
-#[test]
-fn test_simple_pos_no_match() {
-    let matcher = compile_test_pattern("[upos=VERB]");
-
-    let text = "猫";
-    let tokens = tokenize_japanese(text);
-    let matches = matcher.find_matches(&tokens);
-
-    // NOUN should not match VERB pattern
-    assert!(matches.is_empty() || !tokens.iter().any(|t| t.pos() == Some("VERB")));
-}
-
-#[test]
-fn test_empty_input() {
-    let matcher = compile_test_pattern("[upos=NOUN]");
-
-    let text = "";
-    let tokens = tokenize_japanese(text);
-    let matches = matcher.find_matches(&tokens);
-
-    assert_eq!(matches.len(), 0, "Empty input should produce 0 matches");
-}
-
-#[test]
-fn test_multi_token_sentence() {
-    let matcher = compile_test_pattern("[upos=NOUN]");
-
-    let text = "猫がいる";
-    let tokens = tokenize_japanese(text);
-    let _matches = matcher.find_matches(&tokens);
-
-    // Just verify pattern parses and runs
 }

@@ -28,7 +28,13 @@ When the directory that holds `ling` is not on `PATH`, the script appends a
 marked line to the shell's startup file: `~/.bashrc` (`~/.bash_profile` on
 macOS), `~/.zshrc` (`$ZDOTDIR/.zshrc` when set), `$XDG_CONFIG_HOME/fish/conf.d/lingrep.fish`, or
 `~/.profile` for other shells. Running the script again replaces the installed
-files and does not add a second line. The script requires no administrator
+files and does not add a second line. To update an installer-managed installation,
+download the latest `install.sh` again with the commands above and run it using
+the same install-directory settings. Set `LING_VERSION` to select a specific
+release or roll back, then check `ling --version`. Check the release notes for
+prepared-corpus format changes before updating; incompatible artifacts must be
+rebuilt from source. Update Nix, Cargo, and distribution-managed installations
+through their original package manager. The script requires no administrator
 rights. [scripts/install.sh](../scripts/install.sh) is its source.
 
 | Variable | Effect |
@@ -53,7 +59,7 @@ platform. An archive unpacks to a single directory containing `bin/ling`, shell
 completions, manual pages, the license, and third-party notices.
 
 ```bash
-version=0.4.0
+version=0.5.0
 target=aarch64-apple-darwin  # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 base=https://github.com/borh/lingrep/releases/download/v$version
 curl -LO "$base/ling-$version-$target.tar.gz"
@@ -63,8 +69,6 @@ tar xzf "ling-$version-$target.tar.gz"
 export PATH="$PWD/ling-$version-$target/bin:$PATH"
 ling --version
 ```
-
-The `export` line applies to the current terminal only.
 
 ## Nix
 

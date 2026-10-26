@@ -1,6 +1,10 @@
 // Exempt benchmark code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::{path::Path, sync::Arc, time::Instant};
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
@@ -122,6 +126,7 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
     for index in 0..sentences {
         let location = builder
             .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                annotations: Box::new([]),
                 structure: Default::default(),
                 id: SentenceId::new(index as u64),
                 document_id: DocumentId::new(0),

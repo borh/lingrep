@@ -3,7 +3,7 @@
   "format_generation": 2,
   "identity_scheme": "a1",
   "source_identity": "0c69515329f880d3acc700c370c09af7e34ad4210dad725f2f904786e13bff13",
-  "analysis_identity": "a519701200187a2983101b95193b1302e50e59e7cfc647e1235def07baedef8e",
+  "analysis_identity": "3f8abb95e195030c67984b97930f65b81efff5da0d64b18149080e969c8eea17",
   "reader_identity": "c5467f7cd5f7fb3d478b878a52f23626d37e0a5f08fb4d5f6a8fe2e54bec7c31",
   "admission_identity": "900ce622ce1b0d9584102b32eb82eb916e60785834a97569a7630435ee4bc5e0",
   "dictionary_fingerprint": "b56324d351dca1c022d4c67daddcd6a7ba7f20fecdce3803b627b959df8f3d14",
@@ -173,9 +173,14 @@
     "profile": "morphology",
     "segmentation": "input",
     "normalization": "nfc",
+    "normalization_unicode_version": [
+      18,
+      0,
+      0
+    ],
     "language_policy": "ja",
     "boundary_policy": "input-v1",
-    "semantic_identity": "510fa10c9f342b50a9729e3ae34972f9826bd74bc382df0daf05156cc4907c70"
+    "semantic_identity": "1c8c3b227665e617d01120a4f4e80d1c245476ddb50b4b93686aa4df12e58746"
   },
   "document_count": 1,
   "sentence_count": 1,
@@ -214,17 +219,21 @@
   "components": {
     "locations.v1": {
       "length": 274,
-      "blake3": "c1aba3cede18429e0d70a68fc063448b05fb4d4f6b377822222c97e9ac59ae63"
+      "blake3": "a437a3d3d2cd0be4138133409c1beede3b10c57b0ef72b43013a7e4168737df7"
+    },
+    "postings.v1": {
+      "length": 216,
+      "blake3": "e17aaf59e6cf3b0ca7d64107129d605faa4db7feaecf6c23d804d8040174263f"
     },
     "provenance.sqlite": {
       "length": 73728,
-      "blake3": "fdf2f86a99ef7a2e1eba2fd31b156886f1095ae57a83ca84d65f38519341420c"
+      "blake3": "288b5b1b7d66ecaf932f1aa69f5f04f1dae61c5f8532a9b984731884de8b73e4"
     },
     "tokens.v1.zst": {
       "length": 751,
-      "blake3": "27322216c5d21f624876e28c7afe875c235ed84e835e9736f8afe3f2664cf1e8"
+      "blake3": "6d72a48de50400f0421bb6c1c0cac444bf13e8ceea7751a84cebececee2fc530"
     }
   },
-  "producer_version": "0.1.0",
-  "build_timestamp_unix_seconds": 1792328583
+  "producer_version": "0.4.0",
+  "build_timestamp_unix_seconds": 1792994388
 }

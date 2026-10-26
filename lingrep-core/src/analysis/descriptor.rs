@@ -177,7 +177,7 @@ impl AnalyzerDescriptor {
         hash.update(&[self.family as u8]);
         hash.update(&[self.profile as u8]);
         hash.update(&[self.segmentation as u8]);
-        hash.update(&[self.normalization as u8]);
+        hash.update(self.normalization.identity_bytes());
         frame(&mut hash, self.language_policy.as_bytes());
         frame(&mut hash, self.boundary_policy.as_bytes());
         hash.update(&self.implementation_digest);

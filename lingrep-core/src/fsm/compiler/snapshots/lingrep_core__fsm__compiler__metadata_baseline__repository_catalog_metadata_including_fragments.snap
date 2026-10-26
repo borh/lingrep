@@ -1,6 +1,5 @@
 ---
 source: lingrep-core/src/fsm/compiler/metadata_baseline.rs
-assertion_line: 70
 expression: baseline
 ---
 {
@@ -685,6 +684,12 @@ expression: baseline
     },
     "patterns/npv-collocation.lx": {
         "pattern npv": {
+            "output_name": "\"npv\"",
+            "status": "\"experimental\"",
+            "transform": "[{\"op\":\"truncate_before\",\"scope\":\"$vc\",\"stop\":\"[upos in {ADP, SCONJ, PART}]\"},{\"op\":\"truncate_before\",\"scope\":\"$vc\",\"stop\":\"[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]\"},{\"attr\":\"lemma\",\"component\":\"last\",\"op\":\"substitute\",\"scope\":\"$vc\",\"table\":{\"居る\":\"いる\",\"成る\":\"なる\",\"有る\":\"ある\",\"為る\":\"する\"}},{\"op\":\"join\",\"scope\":\"$vc\"}]",
+        },
+        "pattern npv_separated": {
+            "output_name": "\"npv\"",
             "status": "\"experimental\"",
             "transform": "[{\"op\":\"truncate_before\",\"scope\":\"$vc\",\"stop\":\"[upos in {ADP, SCONJ, PART}]\"},{\"op\":\"truncate_before\",\"scope\":\"$vc\",\"stop\":\"[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]\"},{\"attr\":\"lemma\",\"component\":\"last\",\"op\":\"substitute\",\"scope\":\"$vc\",\"table\":{\"居る\":\"いる\",\"成る\":\"なる\",\"有る\":\"ある\",\"為る\":\"する\"}},{\"op\":\"join\",\"scope\":\"$vc\"}]",
         },

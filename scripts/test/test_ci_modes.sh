@@ -8,9 +8,17 @@ if [[ ! -x "$repo_root/ci.sh" ]]; then
     exit 1
 fi
 temporary=$(mktemp -d)
-trap 'rm -rf "$temporary"' EXIT
+cleanup() {
+    local status=$?
+    if [[ $status -ne 0 ]]; then
+        cat "$temporary/stdout.log" "$temporary/stderr.log" >&2
+    fi
+    rm -rf "$temporary"
+    exit "$status"
+}
+trap cleanup EXIT
 
-mkdir -p "$temporary/bin" "$temporary/scripts" "$temporary/inputs"
+mkdir -p "$temporary/bin" "$temporary/scripts/test" "$temporary/inputs"
 cp "$repo_root/ci.sh" "$temporary/ci.sh"
 chmod +x "$temporary/ci.sh"
 
@@ -19,7 +27,7 @@ make_script_stub() {
     cat >"$temporary/scripts/$name" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-name=$(basename "$0")
+name=${0##*/}
 printf 'script:%s\n' "$name" >>"$LINGREP_CI_TEST_LOG"
 if [[ ${LINGREP_CI_FAIL_STEP:-} == "$name" ]]; then
     exit 42
@@ -28,28 +36,24 @@ EOF
     chmod +x "$temporary/scripts/$name"
 }
 
-for script in \
-    check-build-env.sh \
-    check-test-consolidation.sh \
-    check-test-filters.sh \
-    check-test-thread-default.sh \
-    check-ling-test-launches.sh \
-    check-lx-catalogs.sh \
-    check-i18n-keys.py \
-    run_lingrep_web_layout_e2e.sh \
-    test_matcher_correctness.sh \
-    check-live-launchers.py \
-    run_fuzz_smoke.sh \
-    measure_sentence_final_profile.sh
-do
-    make_script_stub "$script"
+for script in "$repo_root"/scripts/*.sh "$repo_root"/scripts/*.py "$repo_root"/scripts/test/*.sh; do
+    make_script_stub "${script#"$repo_root/scripts/"}"
+done
+
+for command_name in uv python; do
+    cat >"$temporary/bin/$command_name" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s:%s\n' "${0##*/}" "$*" >>"$LINGREP_CI_TEST_LOG"
+EOF
+    chmod +x "$temporary/bin/$command_name"
 done
 
 cat >"$temporary/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo:%s\n' "$*" >>"$LINGREP_CI_TEST_LOG"
-if [[ ${LINGREP_CI_FAIL_STEP:-} == cargo ]]; then
+if [[ ${LINGREP_CI_FAIL_STEP:-} == cargo || ${LINGREP_CI_FAIL_STEP:-} == "cargo:$*" ]]; then
     exit 42
 fi
 if [[ ${1:-} == metadata ]]; then
@@ -108,6 +112,7 @@ assert_lacks_prefix() {
 
 assert_full_contract() {
     assert_has "cargo:test --workspace --tests --quiet"
+    assert_has "script:cargo-test-selected.py"
     [[ $(grep -Fxc "cargo:test --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
     assert_has "script:run_lingrep_web_layout_e2e.sh"
     assert_has "script:test_matcher_correctness.sh"
@@ -130,6 +135,8 @@ grep -F "deprecated" "$temporary/stderr.log" >/dev/null
 
 run_mode --fast
 assert_has "script:check-build-env.sh"
+assert_has "script:test_ci_modes.sh"
+assert_has "script:test_fuzz_smoke.sh"
 assert_has "cargo:fmt --check --all"
 assert_has "cargo:clippy --all-targets -- -D warnings"
 assert_has "cargo:test --workspace --lib --bins --quiet"
@@ -162,15 +169,31 @@ if (cd "$temporary" && "$temporary/ci.sh" --fast extra) >/dev/null 2>&1; then
     exit 1
 fi
 
-export LINGREP_CI_FAIL_STEP=check-test-consolidation.sh
-if run_mode --fast; then
-    echo "selected-step failure must propagate" >&2
-    exit 1
-fi
+for failure in \
+    check-test-consolidation.sh \
+    cargo-test-selected.py \
+    'cargo:fmt --check --all' \
+    'cargo:test --workspace --tests --quiet' \
+    test_matcher_correctness.sh
+do
+    export LINGREP_CI_FAIL_STEP=$failure
+    if run_mode --full; then
+        echo "selected-step failure must propagate: $failure" >&2
+        exit 1
+    else
+        status=$?
+        [[ $status -eq 42 ]]
+    fi
+    if grep -F "CI lane passed" "$temporary/stdout.log" >/dev/null; then
+        echo "failed lane must not report success: $failure" >&2
+        exit 1
+    fi
+    assert_lacks_prefix "cargo:doc "
+done
 unset LINGREP_CI_FAIL_STEP
 
 rm "$temporary/bin/chromedriver"
-for command_name in bash basename cat dirname tee; do
+for command_name in bash cat dirname tee; do
     ln -s "$(type -P "$command_name")" "$temporary/bin/$command_name"
 done
 original_path=$PATH
@@ -180,3 +203,4 @@ if run_mode --full; then
     exit 1
 fi
 export PATH=$original_path
+grep -F "full CI requires chromium and chromedriver" "$temporary/stderr.log" >/dev/null

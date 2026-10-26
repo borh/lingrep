@@ -330,6 +330,16 @@ impl Manifest {
                 _ => json(error),
             }
         })?;
+        let normalization = match manifest.analyzer.normalization.as_str() {
+            "none" => lingrep_core::analysis::NormalizationPolicy::None,
+            "nfc" => lingrep_core::analysis::NormalizationPolicy::Nfc,
+            _ => return Err(invalid("manifest normalization policy is invalid")),
+        };
+        if manifest.analyzer.normalization_unicode_version != normalization.unicode_version() {
+            return Err(invalid(
+                "manifest normalization Unicode version differs from this build; rebuild the corpus",
+            ));
+        }
         if manifest.provenance_schema_version != PROVENANCE_SCHEMA_VERSION {
             return Err(CorpusError::UnsupportedSchema {
                 component: "provenance.sqlite",

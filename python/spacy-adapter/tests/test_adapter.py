@@ -851,6 +851,40 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(imported, ["torch"])
 
 
+class ProfileJsonTests(unittest.TestCase):
+    def test_profile_rejects_duplicate_keys_at_each_depth(self) -> None:
+        from lingrep_spacy_adapter.bundle import PROFILE_FILE, load_profile
+
+        for source in (
+            '{"format": "a", "format": "b"}',
+            '{"selections": {"x": {"schema": [{"key": "text", "key": "lemma"}]}}}',
+        ):
+            with (
+                self.subTest(source=source),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / PROFILE_FILE).write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                    load_profile(root)
+
+
+class ResourceManifestTests(unittest.TestCase):
+    def test_resource_manifest_hashes_large_files_without_read_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = root / "model"
+            model.mkdir()
+            (model / "weights.bin").write_bytes(b"x" * (MANIFEST_HASH_CHUNK_BYTES + 17))
+            with patch.object(
+                Path,
+                "read_bytes",
+                side_effect=AssertionError("resource hashing must stream"),
+            ):
+                digest = resource_manifest_digest(Path("model"), root)
+        self.assertEqual(len(digest), 64)
+
+
 @unittest.skipUnless(
     REAL_SPACY, "requires LINGREP_SPACY_TEST_REAL=1 and the spacy extra"
 )
@@ -871,20 +905,6 @@ class ModelBundleTests(unittest.TestCase):
                 prepare_model_bundle(
                     Path("unused"), probe_text="x", morphology_keys=keys
                 )
-
-    def test_resource_manifest_hashes_large_files_without_read_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            model = root / "model"
-            model.mkdir()
-            (model / "weights.bin").write_bytes(b"x" * (MANIFEST_HASH_CHUNK_BYTES + 17))
-            with patch.object(
-                Path,
-                "read_bytes",
-                side_effect=AssertionError("resource hashing must stream"),
-            ):
-                digest = resource_manifest_digest(Path("model"), root)
-        self.assertEqual(len(digest), 64)
 
     def test_preparation_excludes_renamed_unneeded_components(self) -> None:
         import spacy
@@ -950,9 +970,9 @@ class GiNzaModelTests(unittest.TestCase):
                 ProjectionAttribute("lemma", "scalar"),
                 ProjectionAttribute("upos", "scalar"),
                 ProjectionAttribute("xpos", "scalar"),
+                ProjectionAttribute("dep.enhanced", "string_set"),
                 ProjectionAttribute("dep.head", "scalar"),
                 ProjectionAttribute("dep.rel", "scalar"),
-                ProjectionAttribute("dep.enhanced", "string_set"),
             ]
             direct = analyze_document(doc, projection, "input")[0]
             process = subprocess.run(
@@ -974,9 +994,9 @@ class GiNzaModelTests(unittest.TestCase):
                 None if columns[2] == "_" else columns[2],
                 None if columns[3] == "_" else columns[3],
                 None if columns[4] == "_" else columns[4],
+                [] if columns[8] == "_" else columns[8].split("|"),
                 None if columns[6] == "_" else columns[6],
                 None if columns[7] == "_" else columns[7].lower(),
-                [] if columns[8] == "_" else columns[8].split("|"),
             ]
             for columns in cli_rows
         ]
@@ -1152,5 +1172,73 @@ class GiNzaModelTests(unittest.TestCase):
                 self.assertIn(marker, rocm_ready["execution"]["runtime"])
 
 
+@unittest.skipUnless(
+    any(
+        os.environ.get(f"LINGREP_SPACY_RUN_{backend}") == "1"
+        for backend in ("CUDA", "ROCM")
+    ),
+    "requires LINGREP_SPACY_RUN_CUDA=1 or LINGREP_SPACY_RUN_ROCM=1",
+)
+class GinzaGpuLauncherTests(unittest.TestCase):
+    def test_ginza_gpu_launcher_matches_cpu_conllu(self) -> None:
+        source = (
+            "猫が走る。犬は走らない。\n"
+            "彼女は「明日、東京へ行きます」と言った。\n"
+            "２０２６年の価格は1,234円です。\n"
+            "\n"
+            "すもももももももものうち。\n"
+            "吾輩は猫である。名前はまだ無い。\n"
+        ).encode()
+        model = os.environ.get("LINGREP_SPACY_GINZA_MODEL", "ja_ginza")
+        arguments = ["-b", model, "-d", "-c", "print", "-f", "conllu"]
+        cpu = subprocess.run(
+            [str(Path(sys.executable).with_name("ginza")), "-g", "-1", *arguments],
+            input=source,
+            capture_output=True,
+            check=True,
+            timeout=180,
+        )
+        self.assertIn("\t猫\t".encode(), cpu.stdout)
+        launcher = Path(__file__).resolve().parents[1] / "bin" / "ginza-gpu"
+        for backend in ("cuda", "rocm"):
+            if os.environ.get(f"LINGREP_SPACY_RUN_{backend.upper()}") != "1":
+                continue
+            with self.subTest(backend=backend):
+                gpu = subprocess.run(
+                    [sys.executable, str(launcher), backend, "-g", "0", *arguments],
+                    input=source,
+                    capture_output=True,
+                    check=False,
+                    timeout=180,
+                )
+                self.assertEqual(gpu.returncode, 0, gpu.stderr.decode())
+                self.assertEqual(cpu.stdout, gpu.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(
+    os.environ.get("LINGREP_SPACY_ENGLISH_MODEL"), "requires the packaged English model"
+)
+class EnglishModelTests(unittest.TestCase):
+    def test_packaged_model_produces_repeatable_morphology_and_dependencies(self):
+        root = os.environ["LINGREP_SPACY_ENGLISH_MODEL"]
+        loaded = load_spacy_pipeline(root, "cpu", "morphology", "input")
+        keys = [attribute.key for attribute in loaded.schema]
+        for key in ("text", "lemma", "upos", "feat.Number", "dep.head", "dep.rel"):
+            self.assertIn(key, keys)
+        text = "I was speaking. They listened."
+        results = []
+        for _ in range(2):
+            doc = next(loaded.pipeline.pipe([text], batch_size=1))
+            results.append(analyze_document(doc, loaded.schema, "input"))
+        self.assertEqual(results[0], results[1])
+        rows = [
+            results[0][0]["values"][offset : offset + len(keys)]
+            for offset in range(0, len(results[0][0]["values"]), len(keys))
+        ]
+        self.assertTrue(any(row[keys.index("lemma")] == "speak" for row in rows))
+        self.assertTrue(any(row[keys.index("dep.rel")] == "nsubj" for row in rows))
+        self.assertTrue(any(row[keys.index("feat.Number")] for row in rows))

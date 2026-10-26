@@ -13,7 +13,6 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::Path;
 
-use lingrep_core::analysis::AnalyzerPlan;
 use lingrep_core::corpus::{
     AdmittedCorpus, CorpusReadConfig, ScopeObservation, resolve_input_format,
 };
@@ -112,7 +111,7 @@ pub fn run(
                 resolution
             });
             let inputs = artifact.analysis_inputs()?;
-            write_token_schema_notice(artifact.analyzer(), inputs.token_schema().as_bytes())?;
+            write_token_schema_notice(artifact.analyzer(), &inputs)?;
             let documents = artifact.document_count();
             let admission = prepared_scope
                 .as_ref()
@@ -148,7 +147,12 @@ pub fn run(
                 && matches!(&config.analyzer, AnalyzerCliConfig::Vibrato))
             .then(|| args.input.direct_dictionary_path())
             .transpose()?;
-            let resolved = resolve_input(format, config, dict_path.as_deref())?;
+            let resolved = resolve_input(
+                format,
+                config,
+                dict_path.as_deref(),
+                terminal.cancellation(),
+            )?;
             let schema = resolved.schema().clone();
             let descriptor = resolved.descriptor().clone();
             let dictionary_digest = resolved.resource_identity();

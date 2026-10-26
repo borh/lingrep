@@ -358,7 +358,7 @@ mod index_tests {
 
 #[cfg(test)]
 mod differential_tests {
-    use crate::fsm::matcher::nfa_matcher::Matcher;
+    use crate::fsm::matcher::exec::Matcher;
     use crate::fsm::matcher::predicate::PredicateSession;
     use crate::fsm::{CompileLimits, PatternSource, compile_catalog};
     use crate::token_match::{TokenAttributeIndex, TokenInfo};

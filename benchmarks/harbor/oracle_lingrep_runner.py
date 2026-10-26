@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reference executable submission for catalog-backed oracle preflight."""
+"""Reference `run-analysis`: replays the `query.lx` beside it with `ling`, scoped
+by the `--where` clause in a sibling `scope.where` when the case declares one."""
 
 import json
 import subprocess
@@ -24,10 +25,13 @@ def event_data(values: list[dict], kind: str) -> list[dict]:
 def main() -> None:
     corpus = Path(sys.argv[1])
     output = Path(sys.argv[2])
+    solution = Path(__file__).resolve().parent
+    scope = solution / "scope.where"
     matched = events(
         "matches",
         "--patterns",
-        "/submission/query.lx",
+        str(solution / "query.lx"),
+        *(["--where", scope.read_text().strip()] if scope.exists() else []),
         "--source-metadata",
         "@document.eval_document_id",
         "--limit",
@@ -39,8 +43,6 @@ def main() -> None:
 
     rows = []
     for match in event_data(matched, "match"):
-        # The record's own offsets and document identity: no second pass over
-        # token text to rebuild what the tool already publishes.
         char_span = match["char_span"]
         rows.append(
             {

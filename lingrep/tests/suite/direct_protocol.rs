@@ -1130,6 +1130,67 @@ fn one_thousand_markdown_omissions_retain_one_sample() {
 }
 
 #[test]
+fn human_conllu_matches_preserve_word_spacing_direct_and_prepared() {
+    let directory = TempDir::new().unwrap();
+    let input = directory.path().join("spaced.conllu");
+    std::fs::write(&input, "# text = it was done yesterday.\n1\tit\tit\tPRON\tPRP\t_\t3\tnsubj\t_\t_\n2\twas\tbe\tAUX\tVBD\t_\t3\taux\t_\t_\n3\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n4\tyesterday\tyesterday\tNOUN\tNN\t_\t3\tobl\t_\tSpaceAfter=No\n5\t.\t.\tPUNCT\t.\t_\t3\tpunct\t_\tSpaceAfter=No\n\n").unwrap();
+    let without_offsets = directory.path().join("without-offsets.conllu");
+    std::fs::write(
+        &without_offsets,
+        std::fs::read_to_string(&input).unwrap().replace(
+            "# text = it was done yesterday.",
+            "# text = inconsistent source text",
+        ),
+    )
+    .unwrap();
+    for input in [&input, &without_offsets] {
+        let artifact = directory.path().join(format!(
+            "{}.lingcorpus",
+            input.file_stem().unwrap().to_str().unwrap()
+        ));
+        let build = lingrep()
+            .args(["corpus", "build", "--output"])
+            .arg(&artifact)
+            .arg(input)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        for source in [input, &artifact] {
+            for (pattern, context, expected) in [
+                ("[upos=VERB].", "5", "it was ⟦done⟧ yesterday.\n"),
+                ("[upos=VERB].", "1", "was ⟦done⟧ yesterday\n"),
+                ("[upos=PRON] [upos=AUX].", "5", "⟦it was⟧ done yesterday.\n"),
+            ] {
+                let mut command = lingrep();
+                command.args([
+                    "matches",
+                    "--pattern",
+                    pattern,
+                    "--context",
+                    context,
+                    "--color",
+                    "never",
+                ]);
+                if source == &artifact {
+                    command.arg("--corpus");
+                }
+                let output = command.arg(source).output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+            }
+        }
+    }
+}
+
+#[test]
 fn human_matches_use_quiet_default_and_custom_morpheme_boundaries() {
     let directory = TempDir::new().unwrap();
     let corpus = directory.path().join("one.txt");
@@ -1696,6 +1757,7 @@ fn a_deferred_oversized_sentence_retains_its_typed_resource_failure() {
             metadata: Box::new([]),
         }),
         Ok(AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(0),
             document_id: document,
@@ -1707,6 +1769,7 @@ fn a_deferred_oversized_sentence_retains_its_typed_resource_failure() {
             metadata: Box::new([]),
         })),
         Ok(AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(1),
             document_id: document,
@@ -1749,6 +1812,7 @@ fn deferred_source_errors_use_the_global_next_sentence_ordinal() {
             metadata: Box::new([]),
         }),
         Ok(AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(0),
             document_id: document,
@@ -3323,4 +3387,192 @@ fn prepared_multiword_offsets_preserve_enclosures_and_sentence_wide_absence() {
         let complete = parse_jsonl(&output.stdout).pop().unwrap();
         assert_eq!(complete["data"]["counters"]["offsets_omitted"], 1);
     }
+}
+
+#[test]
+fn tei_annotations_preserve_soranoha_plaintext_matches_and_prepared_records() {
+    use std::io::Write;
+    let directory = TempDir::new().unwrap();
+    let dictionary = MiniDictionary::new();
+    let plain = crate::support::soranoha_archive(&directory.path().join("plain.zip"));
+    let archive = directory.path().join("tei.zip");
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+    let catalog = crate::support::SORANOHA_CATALOG.replace(".txt", ".xml");
+    writer
+        .start_file("catalog.csv", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(catalog.as_bytes()).unwrap();
+    for (name, id, body) in [
+        (
+            "kumo.xml",
+            "000092_000879",
+            "<p><ruby source='#source-cat'><rb>猫</rb><rt>ねこ</rt></ruby>が<hi rend='bouten'>文</hi>を鳴く。</p>",
+        ),
+        (
+            "hari.xml",
+            "000013_000879",
+            "<p>犬が<choice><orig>眠る</orig><corr>走る</corr></choice>。</p>",
+        ),
+    ] {
+        let xml = format!(
+            "<TEI xmlns='http://www.tei-c.org/ns/1.0' xmlns:snh='https://w3id.org/soranoha/ns/tei' snh:vocab-version='3'><teiHeader><fileDesc><publicationStmt><idno type='soranoha-work-identifier'>{id}</idno></publicationStmt></fileDesc></teiHeader><text><body>{body}</body></text></TEI>"
+        );
+        writer
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap();
+    let artifact = directory.path().join("tei.lingcorpus");
+    let build = lingrep()
+        .args([
+            "corpus",
+            "build",
+            "--input-format",
+            "soranoha-tei",
+            "--dict-path",
+        ])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&archive)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    for (query, expected) in [
+        ("[tei.ruby has ねこ]", "猫"),
+        ("[tei.element has hi]", "文"),
+        ("[tei.rend has bouten]", "文"),
+        ("[tei.source has \\u0023source-cat]", "猫"),
+    ] {
+        let pattern = format!("p := (?<word> {query}).");
+        let mut results = Vec::new();
+        for prepared in [false, true] {
+            let mut command = lingrep();
+            command.args([
+                "--json",
+                "matches",
+                "--pattern",
+                &pattern,
+                "--limit",
+                "all",
+                "--source-metadata",
+                "@document.identifier",
+            ]);
+            if prepared {
+                command.arg("--corpus").arg(&artifact);
+            } else {
+                command
+                    .args(["--input-format", "soranoha-tei", "--dict-path"])
+                    .arg(dictionary.path())
+                    .arg(&archive);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{query}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !String::from_utf8_lossy(&output.stderr).contains("featurization_policy_mismatch")
+            );
+            validate_query_jsonl(&output.stdout).unwrap();
+            let records = match_events(&output)
+                .into_iter()
+                .map(|v| v["data"].clone())
+                .collect::<Vec<_>>();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["surface"], expected);
+            assert_eq!(
+                records[0]["char_span"],
+                serde_json::json!({"start":if expected=="文" {2}else{0},"end":if expected=="文" {3}else{1}})
+            );
+            results.push(records);
+        }
+        assert_eq!(results[0], results[1], "{query}");
+    }
+    let mut results = Vec::new();
+    for (format, path) in [("soranoha", &plain), ("soranoha-tei", &archive)] {
+        let output = run_direct_with_pattern(
+            path,
+            "p := (?<word> []).",
+            &["--input-format", format, "--limit", "all"],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let records = match_events(&output)
+            .into_iter()
+            .map(|v| {
+                let mut data = v["data"].clone();
+                data["source_name"] = data["source_name"]
+                    .as_str()
+                    .unwrap()
+                    .replace(".xml", ".txt")
+                    .into();
+                data
+            })
+            .collect::<Vec<_>>();
+        results.push(records);
+    }
+    assert_eq!(results[0], results[1]);
+}
+
+#[test]
+fn standalone_tei_directory_preserves_generic_block_and_ruby_queries() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("works");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.xml"),"<TEI xmlns='http://www.tei-c.org/ns/1.0'><teiHeader><fileDesc><titleStmt><title>独立資料</title></titleStmt></fileDesc></teiHeader><text><body><p><ruby><rb>入学試験</rb><rt>にゅうがくしけん</rt></ruby></p></body></text></TEI>").unwrap();
+    std::fs::write(root.join("b.XML"),"<t:TEI xmlns:t='http://www.tei-c.org/ns/1.0'><t:text><t:body><t:ab>猫<t:l>犬</t:l></t:ab></t:body></t:text></t:TEI>").unwrap();
+    std::fs::write(root.join("ignored.txt"), "猫").unwrap();
+    let output = run_direct_with_pattern(
+        &root,
+        "p := (?<word> [tei.ruby has にゅうがくしけん]).",
+        &[
+            "--input-format",
+            "tei",
+            "--limit",
+            "all",
+            "--source-metadata",
+            "@document.title",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records = match_events(&output);
+    assert_eq!(
+        records.len(),
+        1,
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(records[0]["data"]["surface"], "入学試験");
+    assert_eq!(
+        records[0]["data"]["source_metadata"]["document"]["title"],
+        "独立資料"
+    );
+    let output = run_direct_with_pattern(
+        &root,
+        "p := (?<word> [text in {猫,犬}]).",
+        &["--input-format", "tei", "--limit", "all"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records = match_events(&output);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["data"]["corpus_sentence_ordinal"], 1);
+    assert_eq!(records[1]["data"]["corpus_sentence_ordinal"], 2);
 }

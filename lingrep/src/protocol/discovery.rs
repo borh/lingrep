@@ -53,8 +53,6 @@ contract_ids! {
     MatchesTsv => "lingrep.matches-tsv/v1",
     ProtocolContract => "lingrep.protocol-contract/v1",
     Query => "lingrep.query/v2",
-    SentenceFinal => "lingrep.sentence-final/v1",
-    SentenceFinalTsv => "lingrep.sentence-final-tsv/v1",
     Sources => "lingrep.sources/v1",
     SourcesTsv => "lingrep.sources-tsv/v1",
     Status => "lingrep.status/v1",

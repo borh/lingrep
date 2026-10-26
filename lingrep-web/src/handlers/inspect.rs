@@ -53,7 +53,7 @@ async fn inspect(
     reference_ordinal: usize,
     token_index: usize,
 ) -> Result<TokenInspectionFragment, EndpointInspectionError> {
-    let (_snapshot, inspector, _provenance, runtime) =
+    let (_snapshot, inspector, _ready, runtime) =
         bound_inspector(store, &workbench, revision).await?;
     let pattern = PatternKey::new(pattern_index).ok_or(EndpointInspectionError::UnknownPattern)?;
     let inspection = match inspector

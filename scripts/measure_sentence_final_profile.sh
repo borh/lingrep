@@ -24,7 +24,8 @@ cargo build --release -p lingrep
 
 binary="$repo_root/target/release/ling"
 full_arguments=(
-    sentence-final
+    summarize
+    --top all
     --patterns "$LINGREP_REAL_PATTERNS_PATH"
     --dict-path "$LINGREP_DICTIONARY_PATH"
     --batch-sentences 1000
@@ -34,19 +35,25 @@ full_arguments=(
     "$LINGREP_REAL_CORPUS_PATH"
 )
 benchmark_arguments=(
-    sentence-final
+    summarize
+    --top all
     --patterns "$LINGREP_REAL_PATTERNS_PATH"
     --dict-path "$LINGREP_DICTIONARY_PATH"
     --batch-sentences 1000
     --batch-raw-bytes 262144
     --progress always
-    --tsv
+    --json
     "$benchmark_corpus"
 )
 
 "$binary" "${full_arguments[@]}" >/dev/null 2>target/sentence-final-profile.stderr
-"$binary" "${benchmark_arguments[@]}" >/dev/null 2>target/sentence-final-profile-benchmark.stderr
-completed_tokens=$(sed -n 's/.*tokens=\([0-9][0-9]*\).*/\1/p' target/sentence-final-profile-benchmark.stderr | tail -n 1)
+completed_tokens=$("$binary" "${benchmark_arguments[@]}" 2>target/sentence-final-profile-benchmark.stderr | python3 -c '
+import json, sys
+for line in sys.stdin:
+    record = json.loads(line)
+    if record["type"] == "complete":
+        print(record["data"]["counters"]["tokens_matched"])
+')
 if [ -z "$completed_tokens" ] || [ "$completed_tokens" -eq 0 ]; then
     echo "sentence-final preflight did not report a positive completed token count" >&2
     exit 1

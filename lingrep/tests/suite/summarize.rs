@@ -780,7 +780,10 @@ fn alias_warning_precedes_tsv_rows_and_documents_multiplicity_semantics() {
     assert!(stderr.contains("alias_documents=1"));
     assert!(stderr.contains("max_target_multiplicity=2"));
 
-    let help = lingrep().args(["summarize", "--help"]).output().unwrap();
+    let help = lingrep()
+        .args(["summarize", "--help-all"])
+        .output()
+        .unwrap();
     assert_success(&help);
     assert!(
         String::from_utf8(help.stdout)

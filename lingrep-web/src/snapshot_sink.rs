@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -15,7 +14,7 @@ use crate::section_tally::{
 };
 use crate::snapshot::{
     CaptureDescriptor, CaptureKey, CaptureSpanRef, CompoundCategory, MatchRef, PatternDescriptor,
-    PatternKey, PatternMetadataValue,
+    PatternKey, PatternMetadataValue, PatternOrigin,
 };
 
 /// What the sink is doing about sections during the scan.
@@ -53,10 +52,15 @@ fn reservoir_draw(pattern: PatternKey, seen: u64) -> u64 {
 
 #[derive(Debug)]
 pub(crate) struct SnapshotSink {
+    pub(crate) search_scope: crate::search_scope::SearchScope,
+    pub(crate) excluded_sentences: u64,
     pub(crate) refs: Vec<MatchRef>,
     max_refs: usize,
     pattern_ids: HashMap<String, PatternKey>,
     compound_ids: HashMap<Vec<PatternKey>, PatternKey>,
+    /// Same-span coincidences per `(compound, authored)` pair, written into
+    /// the compound descriptors by `finish`.
+    coincidences: HashMap<(PatternKey, PatternKey), u64>,
     pub(crate) derive_compounds: bool,
     pub(crate) compound_category: CompoundCategory,
     pub(crate) patterns: Vec<PatternDescriptor>,
@@ -77,6 +81,10 @@ pub(crate) struct SnapshotSink {
     /// Owned here rather than by the tally, because the tally does not exist
     /// in the refused branch and the gate must hold in both.
     pub(crate) observed_sentences: u64,
+    /// Observed sentences that published at least one match, counted once
+    /// per sentence however many matches or compounds it holds.
+    pub(crate) matched_sentences: u64,
+    document_tally: Option<DocumentTally>,
     last_ordinal: Option<u64>,
     /// Reused across pushes so the per-sentence distinct-pattern set costs no
     /// allocation. Emptied at the start of every push.
@@ -110,6 +118,7 @@ impl SnapshotSink {
             sections,
             false,
             CompoundCategory::Compound,
+            false,
         )
     }
 
@@ -119,6 +128,7 @@ impl SnapshotSink {
         sections: SectionScanState,
         derive_compounds: bool,
         compound_category: CompoundCategory,
+        document_reach: bool,
     ) -> Result<Self, ErrorCategory> {
         let mut pattern_ids = HashMap::with_capacity(pattern_data.len());
         let mut patterns = Vec::with_capacity(pattern_data.len());
@@ -130,13 +140,17 @@ impl SnapshotSink {
                 name,
                 exact_total: 0,
                 metadata,
+                origin: PatternOrigin::Authored { chained_total: 0 },
             });
         }
         Ok(Self {
+            search_scope: Default::default(),
+            excluded_sentences: 0,
             refs: Vec::new(),
             max_refs,
             pattern_ids,
             compound_ids: HashMap::new(),
+            coincidences: HashMap::new(),
             derive_compounds,
             compound_category,
             patterns,
@@ -146,6 +160,8 @@ impl SnapshotSink {
             sections: Some(sections),
             finalized_sections: None,
             observed_sentences: 0,
+            matched_sentences: 0,
+            document_tally: document_reach.then(DocumentTally::default),
             last_ordinal: None,
             matched_scratch: Vec::new(),
             surface_scratch: Vec::new(),
@@ -178,20 +194,14 @@ impl SnapshotSink {
             CompoundCategory::SourceCategories if source_category.is_empty() => "複合項目".into(),
             CompoundCategory::SourceCategories => source_category.clone(),
         };
-        let components_label = component_names.join(" ＋ ");
         let name = compound_name(&component_names, |candidate| {
             self.pattern_ids.contains_key(candidate)
         });
         let key = PatternKey::new(self.patterns.len()).ok_or_else(|| {
             ExecutionError::Sink("derived pattern catalog exceeded u32 identity space".into())
         })?;
-        let mut metadata: Vec<(String, PatternMetadataValue)> = vec![
-            ("category".into(), PatternMetadataValue::String(category)),
-            (
-                "component_patterns".into(),
-                PatternMetadataValue::String(components_label),
-            ),
-        ];
+        let mut metadata: Vec<(String, PatternMetadataValue)> =
+            vec![("category".into(), PatternMetadataValue::String(category))];
         if !source_category.is_empty() {
             metadata.push((
                 "source_categories".into(),
@@ -205,6 +215,10 @@ impl SnapshotSink {
             name,
             exact_total: 0,
             metadata: metadata.into_boxed_slice(),
+            origin: PatternOrigin::Compound {
+                components: components.into(),
+                coincident: Box::default(),
+            },
         });
         self.compound_ids.insert(components.to_vec(), key);
         Ok(key)
@@ -218,6 +232,11 @@ impl SnapshotSink {
     /// Called from the scan's blocking thread, never from the async
     /// coordinator: the production span source blocks on its channel.
     pub(crate) fn finish(&mut self) -> Result<(), ExecutionError> {
+        if let Some(tally) = &mut self.document_tally
+            && tally.current.take().is_some()
+        {
+            tally.close_document(&self.patterns);
+        }
         let state = self
             .sections
             .take()
@@ -241,6 +260,21 @@ impl SnapshotSink {
                 .then_with(|| left.span.end.cmp(&right.span.end))
                 .then_with(|| left.pattern_key.index().cmp(&right.pattern_key.index()))
         });
+        let mut by_compound = HashMap::<PatternKey, Vec<(PatternKey, u64)>>::new();
+        for (&(compound, authored), &count) in &self.coincidences {
+            by_compound
+                .entry(compound)
+                .or_default()
+                .push((authored, count));
+        }
+        for (compound, mut entries) in by_compound {
+            entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            if let PatternOrigin::Compound { coincident, .. } =
+                &mut self.patterns[compound.index()].origin
+            {
+                *coincident = entries.into_boxed_slice();
+            }
+        }
         Ok(())
     }
 
@@ -309,6 +343,248 @@ impl SnapshotSink {
     }
 }
 
+impl SnapshotSink {
+    /// Derives this sentence's compound matches and reports, per base match,
+    /// whether it is a component of any chain. Registers new compounds and
+    /// their same-span coincidences, and widens the section tally to them.
+    fn derive_chains(
+        &mut self,
+        matches: &[lingrep_core::fsm::Match],
+    ) -> Result<(Vec<lingrep_core::fsm::Match>, Vec<bool>), ExecutionError> {
+        let component_matches = matches
+            .iter()
+            .map(|matched| {
+                let key = self
+                    .pattern_ids
+                    .get(matched.pattern.as_str())
+                    .copied()
+                    .ok_or_else(|| {
+                        ExecutionError::Sink("match referenced an unknown pattern".into())
+                    })?;
+                Ok((key, matched.start, matched.end))
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        let derived = contiguous_chains(&component_matches);
+        let mut compounds = Vec::with_capacity(derived.chains.len());
+        for chain in derived.chains {
+            let key = self.add_compound(&chain.components)?;
+            // Published matches arrive in canonical `(start, end, pattern)`
+            // order, so the authored matches on exactly this span are one
+            // contiguous run.
+            let same_span = component_matches
+                .partition_point(|&(_, start, end)| (start, end) < (chain.start, chain.end))..;
+            for &(authored, start, end) in &component_matches[same_span] {
+                if (start, end) != (chain.start, chain.end) {
+                    break;
+                }
+                *self.coincidences.entry((key, authored)).or_default() += 1;
+            }
+            compounds.push(lingrep_core::fsm::Match {
+                pattern: CompactString::new(self.patterns[key.index()].name.as_str()),
+                start: chain.start,
+                end: chain.end,
+                captures: Box::default(),
+                graph_bindings: Box::default(),
+                lexical: None,
+            });
+        }
+        if let Some(state) = self.sections.take() {
+            self.sections = Some(match state {
+                SectionScanState::Building(mut builder) => {
+                    match builder.ensure_patterns(self.patterns.len()) {
+                        Ok(()) => SectionScanState::Building(builder),
+                        Err(refusal) => SectionScanState::Refused(refusal),
+                    }
+                }
+                SectionScanState::Refused(refusal) => SectionScanState::Refused(refusal),
+            });
+        }
+        Ok((compounds, derived.in_chain))
+    }
+
+    /// Counts one published match and retains it when its pattern's
+    /// reservoir admits it.
+    fn observe_match(
+        &mut self,
+        sentence_index: u64,
+        sentence: &dyn lingrep_core::token_match::TokenSequence,
+        matched: &lingrep_core::fsm::Match,
+        in_chain: bool,
+        counting_surfaces: bool,
+    ) -> Result<(), ExecutionError> {
+        let pattern = matched.pattern.to_string();
+        let pattern_key =
+            self.pattern_ids.get(&pattern).copied().ok_or_else(|| {
+                ExecutionError::Sink("match referenced an unknown pattern".into())
+            })?;
+        self.patterns[pattern_key.index()].exact_total += 1;
+        if in_chain
+            && let PatternOrigin::Authored { chained_total } =
+                &mut self.patterns[pattern_key.index()].origin
+        {
+            *chained_total += 1;
+        }
+        if !self.matched_scratch.contains(&pattern_key) {
+            self.matched_scratch.push(pattern_key);
+        }
+        if counting_surfaces {
+            self.stage_surface(pattern_key, sentence, matched.start..matched.end);
+        }
+        // Reservoir sampling (Algorithm R). `exact_total` was just
+        // incremented, so it is this match's 1-based arrival number among
+        // the pattern's matches — the denominator the algorithm needs, and
+        // already exact because publication was never capped.
+        let seen = self.patterns[pattern_key.index()].exact_total;
+        let held = self.reservoirs.get(&pattern_key).map_or(0, Vec::len);
+        let slot = if held < self.max_refs {
+            Some(None)
+        } else {
+            let draw = reservoir_draw(pattern_key, seen);
+            let candidate = usize::try_from(draw % seen).unwrap_or(usize::MAX);
+            (candidate < self.max_refs).then_some(Some(candidate))
+        };
+        let Some(replaces) = slot else {
+            return Ok(());
+        };
+        let captures = matched
+            .captures
+            .iter()
+            .map(|capture| {
+                let identity = (pattern_key, capture.name.clone(), capture.path.clone());
+                let capture_key = match self.capture_keys.get(&identity).copied() {
+                    Some(key) => key,
+                    None => self.insert_capture_descriptor(
+                        pattern_key,
+                        capture.name.clone(),
+                        capture.path.clone(),
+                    )?,
+                };
+                Ok(CaptureSpanRef {
+                    capture_key,
+                    span: capture.start..capture.end,
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        let reference = MatchRef {
+            sentence_index,
+            span: matched.start..matched.end,
+            pattern_key,
+            captures: captures.into_boxed_slice(),
+            graph_bindings: matched.graph_bindings.clone(),
+            lexical: matched
+                .lexical
+                .as_ref()
+                .map(|lexical| crate::snapshot::LexicalMatchRef {
+                    term: lexical.term.to_string(),
+                    matched_by: lexical
+                        .matched_by
+                        .iter()
+                        .map(|attribute| attribute.pattern_key().to_owned())
+                        .collect(),
+                }),
+            in_chain,
+        };
+        let reservoir = self.reservoirs.entry(pattern_key).or_default();
+        match replaces {
+            // Filling: the reservoir is short, so this match is kept
+            // outright and `refs` grows by one.
+            None => {
+                reservoir.push(self.refs.len());
+                self.refs.push(reference);
+            }
+            // Full: overwrite in place, so `refs` never exceeds
+            // `patterns × max_refs` however long the corpus runs.
+            Some(index) => {
+                let position = reservoir[index];
+                self.refs[position] = reference;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Per-document occurrence counts arise by diffing each touched pattern's
+/// `exact_total` against `total_at_close` when `current` advances, so only
+/// patterns matched in the open document are visited on document close.
+#[derive(Debug, Default)]
+struct DocumentTally {
+    current: Option<u64>,
+    documents_scanned: u64,
+    per_pattern: Vec<PatternDocumentState>,
+    touched: Vec<PatternKey>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PatternDocumentState {
+    last_document: Option<u64>,
+    documents: u64,
+    total_at_close: u64,
+    top_counts: [u64; TOP_DOCUMENTS],
+}
+
+const TOP_DOCUMENTS: usize = 5;
+
+impl DocumentTally {
+    fn touch(&mut self, document: u64, matched: &[PatternKey]) {
+        for &key in matched {
+            if self.per_pattern.len() <= key.index() {
+                self.per_pattern
+                    .resize_with(key.index() + 1, PatternDocumentState::default);
+            }
+            let state = &mut self.per_pattern[key.index()];
+            if state.last_document != Some(document) {
+                state.last_document = Some(document);
+                state.documents += 1;
+                self.touched.push(key);
+            }
+        }
+    }
+
+    fn close_document(&mut self, patterns: &[PatternDescriptor]) {
+        for key in self.touched.drain(..) {
+            let state = &mut self.per_pattern[key.index()];
+            let total = patterns[key.index()].exact_total;
+            let count = total - state.total_at_close;
+            state.total_at_close = total;
+            if let Some(slot) = state.top_counts.iter_mut().min()
+                && count > *slot
+            {
+                *slot = count;
+            }
+        }
+    }
+
+    fn summary(&self, pattern_count: usize) -> crate::snapshot::DocumentSummary {
+        let by_pattern = (0..pattern_count)
+            .map(|index| {
+                let state = self.per_pattern.get(index).cloned().unwrap_or_default();
+                let mut top = state
+                    .top_counts
+                    .into_iter()
+                    .filter(|count| *count > 0)
+                    .collect::<Vec<_>>();
+                top.sort_unstable_by(|a, b| b.cmp(a));
+                crate::snapshot::DocumentReach {
+                    documents: state.documents,
+                    top_counts: top.into_boxed_slice(),
+                }
+            })
+            .collect();
+        crate::snapshot::DocumentSummary {
+            documents_scanned: self.documents_scanned,
+            by_pattern,
+        }
+    }
+}
+
+impl SnapshotSink {
+    pub(crate) fn document_summary(&self) -> Option<crate::snapshot::DocumentSummary> {
+        self.document_tally
+            .as_ref()
+            .map(|tally| tally.summary(self.patterns.len()))
+    }
+}
+
 /// Collapses a sweep refusal into the sink error the runner propagates. The
 /// cause is preserved in the message; the coordinator logs it and shows the
 /// generic integrity text, as it does for every other scan failure.
@@ -335,134 +611,67 @@ impl MatchSink for SnapshotSink {
             )));
         }
         self.last_ordinal = Some(sentence_index);
+        if let Some(tally) = &mut self.document_tally
+            && tally.current != Some(location.document_ordinal)
+        {
+            if let Some(previous) = tally.current {
+                if location.document_ordinal < previous {
+                    return Err(ExecutionError::Sink(format!(
+                        "document ordinals must not decrease: {previous} then {}",
+                        location.document_ordinal
+                    )));
+                }
+                tally.close_document(&self.patterns);
+            }
+            tally.current = Some(location.document_ordinal);
+            tally.documents_scanned += 1;
+        }
         self.observed_sentences += 1;
+        if !matches.is_empty() {
+            self.matched_sentences += 1;
+        }
         self.matched_scratch.clear();
         self.surface_used = 0;
-        let mut published_matches = Cow::Borrowed(matches);
-        if self.derive_compounds {
-            let mut derived_matches = matches.to_vec();
-            let component_matches = matches
-                .iter()
-                .map(|matched| {
-                    let key = self
-                        .pattern_ids
-                        .get(matched.pattern.as_str())
-                        .copied()
-                        .ok_or_else(|| {
-                            ExecutionError::Sink("match referenced an unknown pattern".into())
-                        })?;
-                    Ok((key, matched.start, matched.end))
-                })
-                .collect::<Result<Vec<_>, ExecutionError>>()?;
-            for derived in contiguous_chains(&component_matches) {
-                let key = self.add_compound(&derived.components)?;
-                derived_matches.push(lingrep_core::fsm::Match {
-                    pattern: CompactString::new(self.patterns[key.index()].name.as_str()),
-                    start: derived.start,
-                    end: derived.end,
-                    captures: Box::default(),
-                    graph_bindings: Box::default(),
-                    lexical: None,
-                });
-            }
-            derived_matches.sort_by(|left, right| {
-                left.start
-                    .cmp(&right.start)
-                    .then_with(|| left.end.cmp(&right.end))
-                    .then_with(|| left.pattern.cmp(&right.pattern))
-            });
-            published_matches = Cow::Owned(derived_matches);
-            if let Some(state) = self.sections.take() {
-                self.sections = Some(match state {
-                    SectionScanState::Building(mut builder) => {
-                        match builder.ensure_patterns(self.patterns.len()) {
-                            Ok(()) => SectionScanState::Building(builder),
-                            Err(refusal) => SectionScanState::Refused(refusal),
-                        }
-                    }
-                    SectionScanState::Refused(refusal) => SectionScanState::Refused(refusal),
-                });
-            }
-        }
+        let derived = if self.derive_compounds {
+            Some(self.derive_chains(matches)?)
+        } else {
+            None
+        };
         let counting_surfaces = matches!(self.sections, Some(SectionScanState::Building(_)));
-        for matched in published_matches.iter() {
-            let pattern = matched.pattern.to_string();
-            let pattern_key = self.pattern_ids.get(&pattern).copied().ok_or_else(|| {
-                ExecutionError::Sink("match referenced an unknown pattern".into())
-            })?;
-            self.patterns[pattern_key.index()].exact_total += 1;
-            if !self.matched_scratch.contains(&pattern_key) {
-                self.matched_scratch.push(pattern_key);
-            }
-            if counting_surfaces {
-                self.stage_surface(pattern_key, _sentence, matched.start..matched.end);
-            }
-            // Reservoir sampling (Algorithm R). `exact_total` was just
-            // incremented, so it is this match's 1-based arrival number among
-            // the pattern's matches — the denominator the algorithm needs, and
-            // already exact because publication was never capped.
-            let seen = self.patterns[pattern_key.index()].exact_total;
-            let held = self.reservoirs.get(&pattern_key).map_or(0, Vec::len);
-            let slot = if held < self.max_refs {
-                Some(None)
-            } else {
-                let draw = reservoir_draw(pattern_key, seen);
-                let candidate = usize::try_from(draw % seen).unwrap_or(usize::MAX);
-                (candidate < self.max_refs).then_some(Some(candidate))
-            };
-            if let Some(replaces) = slot {
-                let captures = matched
-                    .captures
+        match &derived {
+            Some((compounds, in_chain)) => {
+                let mut published = matches
                     .iter()
-                    .map(|capture| {
-                        let identity = (pattern_key, capture.name.clone(), capture.path.clone());
-                        let capture_key = match self.capture_keys.get(&identity).copied() {
-                            Some(key) => key,
-                            None => self.insert_capture_descriptor(
-                                pattern_key,
-                                capture.name.clone(),
-                                capture.path.clone(),
-                            )?,
-                        };
-                        Ok(CaptureSpanRef {
-                            capture_key,
-                            span: capture.start..capture.end,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, ExecutionError>>()?;
-                let reference = MatchRef {
-                    sentence_index,
-                    span: matched.start..matched.end,
-                    pattern_key,
-                    captures: captures.into_boxed_slice(),
-                    graph_bindings: matched.graph_bindings.clone(),
-                    lexical: matched.lexical.as_ref().map(|lexical| {
-                        crate::snapshot::LexicalMatchRef {
-                            term: lexical.term.to_string(),
-                            matched_by: lexical
-                                .matched_by
-                                .iter()
-                                .map(|attribute| attribute.pattern_key().to_owned())
-                                .collect(),
-                        }
-                    }),
-                };
-                let reservoir = self.reservoirs.entry(pattern_key).or_default();
-                match replaces {
-                    // Filling: the reservoir is short, so this match is kept
-                    // outright and `refs` grows by one.
-                    None => {
-                        reservoir.push(self.refs.len());
-                        self.refs.push(reference);
-                    }
-                    // Full: overwrite in place, so `refs` never exceeds
-                    // `patterns × max_refs` however long the corpus runs.
-                    Some(index) => {
-                        let position = reservoir[index];
-                        self.refs[position] = reference;
-                    }
+                    .zip(in_chain.iter().copied())
+                    .chain(compounds.iter().map(|matched| (matched, false)))
+                    .collect::<Vec<_>>();
+                published.sort_by_key(|(matched, _)| {
+                    (matched.start, matched.end, matched.pattern.as_str())
+                });
+                for (matched, in_chain) in published {
+                    self.observe_match(
+                        sentence_index,
+                        _sentence,
+                        matched,
+                        in_chain,
+                        counting_surfaces,
+                    )?;
                 }
             }
+            None => {
+                for matched in matches {
+                    self.observe_match(
+                        sentence_index,
+                        _sentence,
+                        matched,
+                        false,
+                        counting_surfaces,
+                    )?;
+                }
+            }
+        }
+        if let Some(tally) = &mut self.document_tally {
+            tally.touch(location.document_ordinal, &self.matched_scratch);
         }
         if let Some(SectionScanState::Building(builder)) = &mut self.sections {
             // The scratch is moved out and back so the builder can borrow the
@@ -665,6 +874,43 @@ mod tests {
             sink.observed_sentences, 2,
             "the denominator counts sentences, not matches"
         );
+        assert_eq!(sink.matched_sentences, 1);
+    }
+
+    #[test]
+    fn a_sentence_is_covered_once_however_many_matches_it_publishes() {
+        for derive_compounds in [false, true] {
+            let mut sink = SnapshotSink::new_with_compounds(
+                5,
+                vec![("a".into(), Box::default()), ("b".into(), Box::default())],
+                SectionScanState::Refused(SectionRefusal {
+                    labels: 0,
+                    patterns: 2,
+                }),
+                derive_compounds,
+                CompoundCategory::Compound,
+                false,
+            )
+            .unwrap();
+            let tokens = [
+                TokenInfo::default().with_orth("甲"),
+                TokenInfo::default().with_orth("乙"),
+            ];
+            sink.push(
+                &location(0),
+                &tokens,
+                &[a_span_match("a", 0..1), a_span_match("b", 1..2)],
+            )
+            .unwrap();
+            sink.push(&location(1), &tokens, &[a_span_match("a", 0..1)])
+                .unwrap();
+            sink.push(&location(2), &tokens, &[]).unwrap();
+            assert_eq!(
+                (sink.matched_sentences, sink.observed_sentences),
+                (2, 3),
+                "derive_compounds={derive_compounds}"
+            );
+        }
     }
 
     #[test]
@@ -728,6 +974,7 @@ mod tests {
             SectionScanState::Building(Box::new(builder)),
             true,
             CompoundCategory::Compound,
+            false,
         )
         .unwrap();
         let matches = [
@@ -756,6 +1003,32 @@ mod tests {
                 field == "category" && value == &PatternMetadataValue::String("複合項目".into())
             })
         }));
+        let key = |index: usize| PatternKey::new(index).unwrap();
+        let component_chains = derived
+            .iter()
+            .map(|(key, _, _)| sink.patterns[key.index()].components().unwrap().to_vec())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            component_chains,
+            std::collections::HashSet::from([
+                vec![key(0), key(1)],
+                vec![key(1), key(2)],
+                vec![key(0), key(1), key(2)],
+            ]),
+            "each compound carries its ordered component keys"
+        );
+        assert!(
+            sink.patterns[..3]
+                .iter()
+                .all(|pattern| pattern.components().is_none()),
+            "authored patterns have no components"
+        );
+        assert!(
+            sink.patterns[..3]
+                .iter()
+                .all(|pattern| { pattern.origin == PatternOrigin::Authored { chained_total: 1 } }),
+            "each base occurrence is counted once however many chains nest it"
+        );
         sink.finish().unwrap();
         let Some(SectionAvailability::Available(tally)) = &sink.finalized_sections else {
             panic!("sections should include dynamic compound rows");
@@ -772,6 +1045,353 @@ mod tests {
             6,
             "derived matches have independent details"
         );
+    }
+
+    /// `こと` `が` chains with `できる` on exactly the span the authored
+    /// `ことができる` covers, so every such occurrence is a same-span
+    /// coincidence; a sentence where the longer pattern did not fire is not.
+    #[test]
+    fn a_compound_counts_its_same_span_coincidences_per_authored_pattern() {
+        let mut sink = SnapshotSink::new_with_compounds(
+            10,
+            vec![
+                ("こと".into(), Box::default()),
+                ("できる".into(), Box::default()),
+                ("ことができる".into(), Box::default()),
+            ],
+            SectionScanState::Refused(SectionRefusal {
+                labels: 0,
+                patterns: 3,
+            }),
+            true,
+            CompoundCategory::Compound,
+            false,
+        )
+        .unwrap();
+        let sentence = [
+            TokenInfo::default().with_orth("こと"),
+            TokenInfo::default().with_orth("が"),
+            TokenInfo::default().with_orth("できる"),
+        ];
+        sink.push(
+            &location(0),
+            &sentence,
+            &[
+                a_span_match("こと", 0..2),
+                a_span_match("ことができる", 0..3),
+                a_span_match("できる", 2..3),
+            ],
+        )
+        .unwrap();
+        sink.push(
+            &location(1),
+            &sentence,
+            &[a_span_match("こと", 0..2), a_span_match("できる", 2..3)],
+        )
+        .unwrap();
+        sink.finish().unwrap();
+        let compound = sink
+            .patterns
+            .iter()
+            .find(|pattern| pattern.components().is_some())
+            .expect("one compound");
+        assert_eq!(compound.exact_total, 2);
+        assert_eq!(
+            compound.origin,
+            PatternOrigin::Compound {
+                components: Box::from([PatternKey::new(0).unwrap(), PatternKey::new(1).unwrap()]),
+                coincident: Box::from([(PatternKey::new(2).unwrap(), 1)]),
+            }
+        );
+    }
+
+    /// `ことができる` ends where `だろう` starts in the first sentence and
+    /// stands alone in the second, so one of its two retained occurrences is
+    /// a chain component and the other is not.
+    #[test]
+    fn a_retained_occurrence_records_whether_it_is_a_chain_component() {
+        let patterns = || {
+            vec![
+                ("ことができる".into(), Box::default()),
+                ("だろう".into(), Box::default()),
+            ]
+        };
+        let refused = || {
+            SectionScanState::Refused(SectionRefusal {
+                labels: 0,
+                patterns: 2,
+            })
+        };
+        let chained = [
+            TokenInfo::default().with_orth("こと"),
+            TokenInfo::default().with_orth("が"),
+            TokenInfo::default().with_orth("できる"),
+            TokenInfo::default().with_orth("だろう"),
+        ];
+        let alone = [
+            TokenInfo::default().with_orth("こと"),
+            TokenInfo::default().with_orth("が"),
+            TokenInfo::default().with_orth("できる"),
+        ];
+        let push_both = |sink: &mut SnapshotSink| {
+            sink.push(
+                &location(0),
+                &chained,
+                &[
+                    a_span_match("ことができる", 0..3),
+                    a_span_match("だろう", 3..4),
+                ],
+            )
+            .unwrap();
+            sink.push(&location(1), &alone, &[a_span_match("ことができる", 0..3)])
+                .unwrap();
+            sink.finish().unwrap();
+        };
+
+        let mut sink = SnapshotSink::new_with_compounds(
+            10,
+            patterns(),
+            refused(),
+            true,
+            CompoundCategory::Compound,
+            false,
+        )
+        .unwrap();
+        push_both(&mut sink);
+        let compound = sink
+            .patterns
+            .iter()
+            .find(|pattern| pattern.components().is_some())
+            .expect("one compound");
+        assert_eq!(compound.name, "複合項目〔ことができる ＋ だろう〕");
+        assert_eq!(compound.exact_total, 1);
+        assert_eq!(
+            sink.patterns[0].origin,
+            PatternOrigin::Authored { chained_total: 1 }
+        );
+        assert_eq!(sink.patterns[0].exact_total, 2);
+        let flags = sink
+            .refs
+            .iter()
+            .map(|reference| {
+                (
+                    reference.sentence_index,
+                    reference.pattern_key.index(),
+                    reference.in_chain,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            flags,
+            vec![(0, 0, true), (0, 2, false), (0, 1, true), (1, 0, false)],
+            "components are flagged, the compound's own match and the standalone occurrence are not"
+        );
+
+        let mut sink = SnapshotSink::new_with_compounds(
+            10,
+            patterns(),
+            refused(),
+            false,
+            CompoundCategory::Compound,
+            false,
+        )
+        .unwrap();
+        push_both(&mut sink);
+        assert_eq!(sink.patterns.len(), 2);
+        assert!(
+            sink.refs.iter().all(|reference| !reference.in_chain),
+            "without derivation no occurrence is a chain component"
+        );
+    }
+
+    fn located(ordinal: u64, document: u64) -> SentenceLocation {
+        SentenceLocation {
+            document_ordinal: document,
+            document_id: lingrep_core::corpus::DocumentId::new(document),
+            ..location(ordinal)
+        }
+    }
+
+    #[test]
+    fn document_reach_and_top_counts_match_a_per_document_oracle() {
+        let corpus: Vec<(u64, Vec<usize>)> = vec![
+            (0, vec![0, 1]),
+            (0, vec![0]),
+            (0, vec![0, 0, 1]),
+            (1, vec![]),
+            (2, vec![1]),
+            (3, vec![0, 1]),
+            (3, vec![0]),
+            (4, vec![0]),
+            (5, vec![0]),
+            (6, vec![0, 0, 0, 0]),
+            (7, vec![0]),
+        ];
+        let names = ["a", "b", "never"];
+        for derive_compounds in [false, true] {
+            let mut sink = SnapshotSink::new_with_compounds(
+                3,
+                names
+                    .iter()
+                    .map(|name| ((*name).to_string(), Box::default()))
+                    .collect(),
+                SectionScanState::Refused(SectionRefusal {
+                    labels: 0,
+                    patterns: 3,
+                }),
+                derive_compounds,
+                CompoundCategory::Compound,
+                true,
+            )
+            .unwrap();
+            let mut oracle = std::collections::BTreeMap::<(String, u64), u64>::new();
+            let tokens = [
+                TokenInfo::default().with_orth("甲"),
+                TokenInfo::default().with_orth("乙"),
+                TokenInfo::default().with_orth("丙"),
+                TokenInfo::default().with_orth("丁"),
+            ];
+            for (ordinal, (document, hits)) in corpus.iter().enumerate() {
+                let matches = hits
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, &pattern)| a_span_match(names[pattern], offset..offset + 1))
+                    .collect::<Vec<_>>();
+                sink.push(&located(ordinal as u64, *document), &tokens, &matches)
+                    .unwrap();
+                for matched in &matches {
+                    *oracle
+                        .entry((matched.pattern.to_string(), *document))
+                        .or_default() += 1;
+                }
+                if derive_compounds {
+                    let component_matches = matches
+                        .iter()
+                        .map(|m| (sink.pattern_ids[m.pattern.as_str()], m.start, m.end))
+                        .collect::<Vec<_>>();
+                    for chain in contiguous_chains(&component_matches).chains {
+                        let name = sink.patterns[sink.compound_ids[&chain.components].index()]
+                            .name
+                            .clone();
+                        *oracle.entry((name, *document)).or_default() += 1;
+                    }
+                }
+            }
+            sink.finish().unwrap();
+            let summary = sink.document_summary().expect("the run counted documents");
+            assert_eq!(
+                summary.documents_scanned, 8,
+                "documents with a scanned sentence"
+            );
+            assert_eq!(summary.by_pattern.len(), sink.patterns.len());
+            for pattern in &sink.patterns {
+                let mut counts = oracle
+                    .iter()
+                    .filter(|((name, _), _)| *name == pattern.name)
+                    .map(|(_, count)| *count)
+                    .collect::<Vec<_>>();
+                counts.sort_unstable_by(|a, b| b.cmp(a));
+                let reach = summary.reach(pattern.key).unwrap();
+                assert_eq!(
+                    reach.documents,
+                    counts.len() as u64,
+                    "{}: documents reached (derive_compounds={derive_compounds})",
+                    pattern.name
+                );
+                assert_eq!(
+                    reach.top_counts.to_vec(),
+                    counts.into_iter().take(5).collect::<Vec<_>>(),
+                    "{}: top counts",
+                    pattern.name
+                );
+                assert!(reach.top_counts.iter().sum::<u64>() <= pattern.exact_total);
+            }
+            let never = &sink.patterns[2];
+            assert_eq!(
+                summary.reach(never.key).unwrap(),
+                &crate::snapshot::DocumentReach {
+                    documents: 0,
+                    top_counts: Box::default()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_without_the_option_keeps_no_document_state() {
+        let mut sink =
+            SnapshotSink::new(5, vec![("p".into(), Box::default())], no_refusal()).unwrap();
+        sink.push(&located(0, 0), &(&[] as &[TokenInfo]), &[a_match("p")])
+            .unwrap();
+        sink.push(&located(1, 1), &(&[] as &[TokenInfo]), &[a_match("p")])
+            .unwrap();
+        sink.finish().unwrap();
+        assert!(sink.document_tally.is_none());
+        assert!(sink.document_summary().is_none());
+    }
+
+    #[test]
+    fn a_single_document_corpus_puts_everything_in_the_top_document() {
+        let mut sink = SnapshotSink::new_with_compounds(
+            5,
+            vec![("p".into(), Box::default())],
+            no_refusal(),
+            false,
+            CompoundCategory::Compound,
+            true,
+        )
+        .unwrap();
+        for ordinal in 0..4 {
+            sink.push(
+                &located(ordinal, 0),
+                &(&[] as &[TokenInfo]),
+                &[a_match("p")],
+            )
+            .unwrap();
+        }
+        sink.finish().unwrap();
+        let summary = sink.document_summary().unwrap();
+        assert_eq!(summary.documents_scanned, 1);
+        assert_eq!(
+            summary.reach(PatternKey::new(0).unwrap()).unwrap(),
+            &crate::snapshot::DocumentReach {
+                documents: 1,
+                top_counts: Box::from([4])
+            }
+        );
+    }
+
+    #[test]
+    fn non_contiguous_document_ordinals_fail_the_run() {
+        let mut sink = SnapshotSink::new_with_compounds(
+            5,
+            vec![("p".into(), Box::default())],
+            no_refusal(),
+            false,
+            CompoundCategory::Compound,
+            true,
+        )
+        .unwrap();
+        sink.push(&located(0, 3), &(&[] as &[TokenInfo]), &[])
+            .unwrap();
+        sink.push(&located(1, 4), &(&[] as &[TokenInfo]), &[])
+            .unwrap();
+        let error = sink
+            .push(&located(2, 3), &(&[] as &[TokenInfo]), &[])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("document ordinals must not decrease"),
+            "{error}"
+        );
+    }
+
+    fn no_refusal() -> SectionScanState {
+        SectionScanState::Refused(SectionRefusal {
+            labels: 0,
+            patterns: 1,
+        })
     }
 
     #[test]
@@ -795,6 +1415,7 @@ mod tests {
             }),
             true,
             CompoundCategory::SourceCategories,
+            false,
         )
         .unwrap();
         let key = sink

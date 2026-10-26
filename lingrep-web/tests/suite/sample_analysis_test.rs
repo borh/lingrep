@@ -4,6 +4,39 @@ use lingrep_web::inspection::CompositionItem;
 use lingrep_web::sample::{SampleAnalysis, analyze_tokens};
 
 #[test]
+fn overlap_diagnostics_include_nested_and_crossing_candidates_but_exclude_adjacent_matches() {
+    use lingrep_web::inspection::{OverlapCandidate, overlapping_candidates};
+    let compiled = lingrep_web::patterns::compile_web_pattern(
+        "output_name: \"selected\" a := 甲 乙. b := 乙 丙. c := 甲. d := 丙. policy resolve patterns rank: [longest, start, end, pattern]. end",
+    ).unwrap();
+    let tokens = vec![tok("甲", "名詞"), tok("乙", "名詞"), tok("丙", "名詞")];
+    let explanation = compiled.matcher.explain_sentence(&tokens).unwrap();
+    assert_eq!(
+        overlapping_candidates(&explanation, "selected", 0..2),
+        vec![
+            OverlapCandidate {
+                name: "c".into(),
+                span: 0..1,
+                published: false
+            },
+            OverlapCandidate {
+                name: "b".into(),
+                span: 1..3,
+                published: false
+            },
+        ]
+    );
+    assert_eq!(
+        overlapping_candidates(&explanation, "d", 2..3),
+        vec![OverlapCandidate {
+            name: "b".into(),
+            span: 1..3,
+            published: false
+        },]
+    );
+}
+
+#[test]
 fn matched_carries_document_global_spans_and_capture_values() {
     let lines = vec![
         vec![tok("猫", "名詞"), tok("が", "助詞")],

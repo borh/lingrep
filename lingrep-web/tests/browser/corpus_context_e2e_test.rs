@@ -263,7 +263,7 @@ async fn selector_fixture() -> String {
         }
         // The codec's own query-only form, which is what the real endpoint
         // answers with, so this fixture cannot drift from it.
-        match lingrep_web::permalink::encode_query_only(&pattern, &corpus, None) {
+        match lingrep_web::permalink::encode_query_only(&pattern, &corpus, None, None) {
             Ok(path) => axum::Json(serde_json::json!({ "path": path })).into_response(),
             Err(_) => (
                 StatusCode::PAYLOAD_TOO_LARGE,

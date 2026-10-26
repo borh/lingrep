@@ -1,0 +1,58 @@
+<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label"{% match corpus_context.identity_digest %}{% when Some with (digest) %} data-corpus-digest="{{ digest }}"{% when None %}{% endmatch %}{% if corpus_context.polling %} hx-get="api/corpus-context?k={{ corpus_context.corpus_key }}" hx-trigger="load delay:2s, every 3s" hx-swap="outerHTML"{% endif %}>
+  <p class="corpus-context-name"><span data-i18n="corpus.label">Corpus:</span> <span{% match corpus_context.identity_digest %}{% when Some with (digest) %} title="{{ digest }}"{% when None %}{% endmatch %}>{{ corpus_context.name }}</span></p>
+  {# Offered only when there is a choice to make, so a single-corpus server's
+     panel is byte-identical to what it was before the selector existed.
+     Switching NAVIGATES (see app.js): a workbench is bound to one corpus at
+     admission, so a new corpus needs a new page, not a mutated one. #}
+  {% if corpora.len() > 1 %}
+  {# No visible label: the line above already says "Corpus:", and the selected
+     option already names the current corpus. Two stacked labels stated one
+     fact twice. The control still needs an accessible name, so it carries an
+     aria-label instead — `corpus.select` is that name, not a caption. #}
+  <label class="corpus-select-label" for="corpus-select">
+    <select id="corpus-select" data-corpus-select
+            aria-label="Corpus" data-i18n-aria-label="corpus.select">
+    {# No resolved slot — an unknown-corpus landing. Without a placeholder the
+       browser would display the first corpus while the page is pointed at none,
+       and choosing that one would fire no `change` and so never navigate. #}
+    {% if corpus_context.corpus_key.is_empty() %}
+      <option value="" disabled selected data-i18n="corpus.select_prompt">Choose a corpus</option>
+    {% endif %}
+    {% for option in corpora %}
+      <option value="{{ option.key }}"{% if option.active %} selected{% endif %}>{{ option.display_name }}</option>
+    {% endfor %}
+    </select>
+  </label>
+  {# The switch's live region is deliberately NOT here: this section is replaced
+     wholesale by the corpus-context poll (`hx-swap="outerHTML"`), which would
+     erase a reported failure within seconds — and fastest while the corpus is
+     preparing, which is when the message matters most. It lives in index.html,
+     outside the swapped subtree. #}
+  {% endif %}
+  {# Whole-sentence localization with number arguments; the English served
+     text stays inline so English-mode pins and semantics are unchanged. #}
+  {% match corpus_context.sentence_count %}{% when Some with (sentences) %}
+  {% match corpus_context.document_count %}{% when Some with (documents) %}
+  <p class="corpus-context-counts" data-i18n="corpus.counts"
+     data-i18n-args='{"sentences": {{ sentences }}, "documents": {{ documents }}}'>{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }} sentences · {{ corpus_context.document_count_label.as_deref().unwrap_or("") }} documents</p>
+  {% when None %}
+  <p class="corpus-context-counts" data-i18n="corpus.counts_sentences_only"
+     data-i18n-args='{"sentences": {{ sentences }}}'>{{ corpus_context.sentence_count_label.as_deref().unwrap_or("") }} sentences</p>
+  {% endmatch %}
+  {% when None %}{% endmatch %}
+  <div id="corpus-analysis-scope" class="corpus-context-sections">
+    {% if !corpus_context.sections.is_empty() %}
+    <details class="corpus-analysis-scope">
+      <summary><span data-i18n="corpus.sections">Sections:</span>
+        <span class="scope-count">{{ corpus_context.sections.len() }}</span>
+      </summary>
+      <div class="section-scope-form">
+        <div class="scope-options">
+          {% for section in corpus_context.sections %}<span class="corpus-section" data-corpus-section-label="{{ section.label }}">{{ section.label }} <small>{{ section.count_label }}</small></span>{% endfor %}
+        </div>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  {% match corpus_context.note %}{% when Some with (note) %}<p class="corpus-context-note muted"{% match corpus_context.note_key %}{% when Some with (key) %} data-i18n="{{ key }}"{% when None %}{% endmatch %}{% match corpus_context.note_args %}{% when Some with (args) %} data-i18n-args='{{ args }}'{% when None %}{% endmatch %}>{{ note }}</p>{% when None %}{% endmatch %}
+</section>

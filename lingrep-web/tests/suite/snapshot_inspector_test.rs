@@ -18,7 +18,7 @@ use lingrep_web::inspection::{InspectionError, SnapshotInspector};
 use lingrep_web::revision::RevisionId;
 use lingrep_web::snapshot::{
     CaptureDescriptor, CaptureKey, CaptureSpanRef, CompletedSnapshot, MatchRef, PatternDescriptor,
-    PatternKey,
+    PatternKey, PatternOrigin,
 };
 
 use crate::v6_support::ready_fixture;
@@ -40,10 +40,14 @@ fn fixture(
     let reader = ready.reader().unwrap();
     let key = PatternKey::new(0).unwrap();
     let snapshot = Arc::new(CompletedSnapshot {
+        search_scope: Default::default(),
+        excluded_sentences: 0,
         sections: lingrep_web::section_tally::SectionAvailability::Available(
             lingrep_web::section_tally::SectionTally::unlabelled(),
         ),
         observed_sentences: 0,
+        matched_sentences: 0,
+        documents: None,
         sentences_matched: 0,
         revision: RevisionId(1),
         corpus_identity: CorpusIdentity::new(snapshot_identity),
@@ -55,6 +59,7 @@ fn fixture(
             name: "eating".into(),
             exact_total: 1,
             metadata: Box::default(),
+            origin: PatternOrigin::Authored { chained_total: 0 },
         }]
         .into_boxed_slice(),
         match_refs: vec![MatchRef {
@@ -64,6 +69,7 @@ fn fixture(
             captures: Box::default(),
             graph_bindings: Box::default(),
             lexical: None,
+            in_chain: false,
         }]
         .into_boxed_slice(),
         capture_catalog: Box::default(),
@@ -87,6 +93,7 @@ fn fixture_two_refs(
             captures: Box::default(),
             graph_bindings: Box::default(),
             lexical: None,
+            in_chain: false,
         },
         MatchRef {
             sentence_index: 0,
@@ -95,6 +102,7 @@ fn fixture_two_refs(
             captures: Box::default(),
             graph_bindings: Box::default(),
             lexical: None,
+            in_chain: false,
         },
     ]
     .into_boxed_slice();

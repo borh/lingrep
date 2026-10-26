@@ -7,6 +7,9 @@
 //! gate to build under `--release` keep their own binary; see the plan's
 //! isolation rule.
 
+#[global_allocator]
+static TEST_ALLOCATOR: std::alloc::System = std::alloc::System;
+
 #[path = "../support/mod.rs"]
 mod support;
 

@@ -197,6 +197,14 @@ pub(super) fn encode(sentences: &[CandidateSentence]) -> Result<Vec<u8>, CorpusE
 }
 
 pub(super) fn decode(artifact: &[u8]) -> Result<Vec<CandidateSentence>, CorpusError> {
+    decode_bounded(artifact, MAX_RAW_BYTES)?
+        .ok_or_else(|| invalid("raw payload exceeds its fixed bound"))
+}
+
+pub(super) fn decode_bounded(
+    artifact: &[u8],
+    limit: usize,
+) -> Result<Option<Vec<CandidateSentence>>, CorpusError> {
     if artifact.len() < HEADER_LEN || &artifact[..8] != MAGIC || artifact[8] != LAYOUT_TAG {
         return Err(invalid("invalid magic, version, or layout"));
     }
@@ -212,6 +220,9 @@ pub(super) fn decode(artifact: &[u8]) -> Result<Vec<CandidateSentence>, CorpusEr
     ))?;
     if raw_len > MAX_RAW_BYTES || HEADER_LEN.checked_add(stored_len) != Some(artifact.len()) {
         return Err(invalid("payload length is invalid"));
+    }
+    if raw_len > limit {
+        return Ok(None);
     }
     let raw = zstd::bulk::decompress(&artifact[HEADER_LEN..], raw_len)
         .map_err(|error| invalid(format!("decompression failed: {error}")))?;
@@ -261,7 +272,7 @@ pub(super) fn decode(artifact: &[u8]) -> Result<Vec<CandidateSentence>, CorpusEr
     }
     reader.finish()?;
     validate(&sentences)?;
-    Ok(sentences)
+    Ok(Some(sentences))
 }
 
 fn validate(sentences: &[CandidateSentence]) -> Result<(), CorpusError> {

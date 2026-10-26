@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;

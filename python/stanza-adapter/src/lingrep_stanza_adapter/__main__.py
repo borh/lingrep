@@ -49,7 +49,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         import blake3
 
-        lock = Path(__file__).resolve().parents[2] / "uv.lock"
+        lock = Path(__file__).with_name("uv.lock")
+        if not lock.is_file():
+            lock = Path(__file__).resolve().parents[2] / "uv.lock"
+        from lingrep_adapter_protocol.resources import validate_runtime
+
+        validate_runtime(Path(args.resource_root))
         serve(
             sys.stdin.buffer,
             sys.stdout.buffer,

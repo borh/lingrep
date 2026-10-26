@@ -291,6 +291,15 @@ impl CorpusReader {
 }
 
 impl BoundCorpusReader {
+    pub fn sentence_words_bounded(
+        &self,
+        index: u64,
+        limit: usize,
+    ) -> Result<Option<Vec<String>>, CorpusReadError> {
+        self.source
+            .sentence_words_bounded(index, limit)
+            .map_err(CorpusReadError::Corruption)
+    }
     pub async fn sentence(&self, index: u64) -> Result<Option<Vec<TokenInfo>>, CorpusReadError> {
         self.decode_sentences(&[index])
             .map(|mut values| values.pop().flatten())
@@ -735,6 +744,12 @@ impl ArtifactCorpusEvents {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "a bccwj corpus is not supported by lingrep-web; ling reads BCCWJ distributions",
+                ));
+            }
+            CorpusReadConfig::Tei | CorpusReadConfig::SoranohaTei => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "a TEI corpus must be prepared with ling corpus build before lingrep-web serves it",
                 ));
             }
             CorpusReadConfig::Soranoha => {
@@ -1239,6 +1254,7 @@ pub(crate) fn test_ready_corpus(
                 for (ordinal, tokens) in sentences.iter().enumerate() {
                     let location = builder
                         .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                            annotations: Box::new([]),
                             structure: Default::default(),
                             id: lingrep_core::corpus::SentenceId::new(ordinal as u64),
                             document_id: DocumentId::new(0),
@@ -1333,11 +1349,11 @@ mod tests {
 
         assert_eq!(
             hex(&build_reader_identity(&CorpusReadConfig::Jsonl)),
-            "3422793012a2f7130725d91afcdc995b56fd3c7df69d5e7fcfad2c5ef91a1d34"
+            "65d0a037af9c05ba6473371af4f3b1c10aa6c6131335f6e8fcad4f3cddeb735b"
         );
         assert_eq!(
             hex(&build_reader_identity(&CorpusReadConfig::Plain)),
-            "b1ff0711e7ca79c5d0b98075acdde8b50368c121b8f7829aec6da7aaa9755ca2"
+            "4929553aefc1959cfd5e0e595d7e6d79fc72cd6fd1d55ce0ca85fff60997820d"
         );
 
         let markdown = CorpusReadConfig::Markdown(
@@ -1345,7 +1361,7 @@ mod tests {
         );
         assert_ne!(
             hex(&build_reader_identity(&markdown)),
-            "e6e3551c916214f19813eca5e74f734f70598ba643888cad52b459516ccf9d53",
+            "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1",
             "the Markdown dialects differ by design and must keep two names"
         );
     }

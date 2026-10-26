@@ -11,12 +11,12 @@ Options:
           [env: LINGREP_DICTIONARY_PATH]
 
   -i, --input <INPUT>
-          Input corpus file or directory; reads from stdin when omitted
+          Corpus input path; stdin is unsupported. Omit only when using --corpus.
 
       --input-format <INPUT_FORMAT>
-          Override the inferred corpus format (`plain`, `jsonl`, `markdown`, `conllu`, `bccwj`, `soranoha`; commands may restrict accepted formats)
+          Override the inferred corpus format (commands may restrict accepted formats)
           
-          [possible values: plain, jsonl, markdown, conllu, bccwj, soranoha]
+          [possible values: plain, jsonl, markdown, conllu, bccwj, soranoha, soranoha-tei, tei]
 
       --host <HOST>
           Address to bind. Loopback by default — change with `LINGREP_WEB_HOST` or `--host` to expose the service to other hosts (typically behind a reverse proxy that adds TLS and access control)

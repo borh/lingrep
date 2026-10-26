@@ -8,6 +8,10 @@
 //! just perf-work --baseline before.json # what moved
 //! ```
 
+#[cfg(all(feature = "screen", not(target_env = "msvc")))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]

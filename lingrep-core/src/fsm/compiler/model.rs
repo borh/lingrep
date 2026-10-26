@@ -444,11 +444,6 @@ pub(crate) enum ParsedLabelTerm {
     },
 }
 
-/// Whether a dependency-edge target must or must not exist.
-///
-/// Basic anonymous targets and enhanced exact edges carry this polarity. An
-/// enhanced negative edge may only refer to endpoints bound elsewhere; it
-/// never introduces a node or edge binding of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelationPolarity {
     Positive,
@@ -463,6 +458,7 @@ pub(crate) enum RelationPolarity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ParsedRelationTarget<T> {
     Captured {
+        polarity: RelationPolarity,
         capture: T,
         span: SourceSpan,
     },
@@ -487,6 +483,7 @@ pub(crate) enum ParsedRelationTarget<T> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelationTarget<T> {
     Captured {
+        polarity: RelationPolarity,
         capture: T,
         span: SourceSpan,
     },

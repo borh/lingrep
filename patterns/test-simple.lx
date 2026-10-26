@@ -1,4 +1,1 @@
-# Simple test pattern for cache comparison
-# This pattern matches "ある" followed by optional "た"
-
 test_aru := ある た?.

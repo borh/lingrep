@@ -175,6 +175,7 @@ fn paragraph_start(document_id: u64) -> AdmittedCorpusEvent {
 
 fn sentence(sentence: u64, document: u64, local: u64) -> AdmittedCorpusEvent {
     AdmittedCorpusEvent::Sentence(AdmittedSentence {
+        annotations: Box::new([]),
         structure: Default::default(),
         id: SentenceId::new(sentence),
         document_id: DocumentId::new(document),
@@ -368,6 +369,7 @@ async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
         .unwrap();
     for ordinal in 0..2 {
         let event = AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(ordinal),
             document_id: DocumentId::new(0),
@@ -668,6 +670,136 @@ async fn tiny_shared_temp_budget_fails_typed_and_cleans_private_staging() {
     assert!(staging_entries(directory.path()).is_empty());
     assert!(!destination.exists());
     assert_eq!(temp_budget.used_bytes(), 0);
+}
+
+#[tokio::test]
+async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
+    let tokens = (0..65_536)
+        .map(|ordinal| {
+            TokenInfo::default()
+                .with_orth("語")
+                .with_lemma(format!("項{ordinal:05}"))
+        })
+        .collect::<Vec<_>>();
+    for mode in [
+        "drop",
+        "cancel",
+        "cancel_emission",
+        "postings_io",
+        "capture_budget",
+        "recorder_budget",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("spilled.lingcorpus");
+        let budget = Arc::new(TempBudget::new(16 * 1024 * 1024));
+        let mut builder = CorpusBuilder::begin(
+            BuildConfig {
+                temp_budget: Arc::clone(&budget),
+                ..build_config()
+            },
+            &destination,
+        )
+        .await
+        .unwrap();
+        let document = source_document(0, "spilled.md", 0, false);
+        builder.register_source_document(&document).unwrap();
+        builder
+            .source_observation()
+            .begin_source("spilled.md")
+            .unwrap();
+        builder
+            .source_observation()
+            .update_source_bytes(b"spilled")
+            .unwrap();
+        builder.source_observation().end_source().unwrap();
+        builder
+            .push_corpus_event(&document_start(0, "spilled.md"))
+            .await
+            .unwrap();
+        let location = builder
+            .push_corpus_event(&sentence(0, 0, 0))
+            .await
+            .unwrap()
+            .unwrap();
+        let before_capture = budget.used_bytes();
+        let mut reservation = None;
+        if mode == "capture_budget" {
+            reservation = Some(budget.reserve(budget.snapshot().headroom_bytes()).unwrap());
+        }
+        let pushed = builder.push_tokenized_sentence(&location, &tokens).await;
+        if mode == "capture_budget" {
+            let CorpusError::Io(error) = pushed.unwrap_err() else {
+                panic!("spill capacity must retain the I/O error chain");
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+            let operation = error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<lingrep_core::spill::SpillOperationError>()
+                .unwrap();
+            assert_eq!(operation.budget().headroom_bytes(), 0);
+            drop(builder);
+        } else {
+            pushed.unwrap();
+            assert!(
+                budget.used_bytes() > before_capture,
+                "{mode}: capture must spill before finish"
+            );
+            builder.push_corpus_event(&document_end(0)).await.unwrap();
+            match mode {
+                "drop" => drop(builder),
+                "cancel" => {
+                    assert!(
+                        builder
+                            .finish_guarded(
+                                discovery_for(&[document]),
+                                || false,
+                                || panic!("cancelled build reached publication")
+                            )
+                            .await
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+                "cancel_emission" => {
+                    let index = staging_entries(directory.path())[0].join("postings.v1");
+                    assert!(
+                        builder
+                            .finish_guarded(
+                                discovery_for(&[document]),
+                                || !index.exists(),
+                                || panic!("cancelled build reached publication")
+                            )
+                            .await
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+                "postings_io" => {
+                    fs::create_dir(staging_entries(directory.path())[0].join("postings.v1"))
+                        .unwrap();
+                    assert!(builder.finish(discovery_for(&[document])).await.is_err());
+                }
+                "recorder_budget" => {
+                    reservation = Some(budget.reserve(budget.snapshot().headroom_bytes()).unwrap());
+                    assert_eq!(
+                        builder
+                            .finish(discovery_for(&[document]))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                        "temp_capacity"
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        drop(reservation);
+        assert_eq!(budget.used_bytes(), 0, "{mode}");
+        assert!(staging_entries(directory.path()).is_empty(), "{mode}");
+        assert!(!destination.exists(), "{mode}");
+    }
 }
 
 #[tokio::test]
@@ -1162,6 +1294,7 @@ async fn artifact_composition_orders_regions_by_start_then_widest_span() {
     .enumerate()
     {
         let event = AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(ordinal as u64),
             document_id: DocumentId::new(0),
@@ -1867,6 +2000,7 @@ async fn labelled_artifact(parent: &Path, labels: &[&[&str]]) -> CorpusArtifact 
         .unwrap();
     for (ordinal, active) in labels.iter().enumerate() {
         let event = AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(ordinal as u64),
             document_id: DocumentId::new(0),
@@ -2312,4 +2446,33 @@ async fn prepared_admission_checks_declared_index_and_leaves_unvisited_tokens_fo
         .unwrap();
     assert!(source.next_batch(&ExecutionLimits::default()).is_err());
     assert_eq!(source.filter_stats().sentences_proven_absent(), 0);
+}
+
+#[tokio::test]
+async fn nfc_artifact_requires_the_current_unicode_table_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = build_two_document_artifact(directory.path()).await;
+    let original = read_manifest(&root);
+    assert_eq!(original["analyzer"]["normalization"], "nfc");
+    CorpusArtifact::open(&root).expect("current Unicode tables");
+    for version in [None, Some([17, 0, 0]), Some([19, 0, 0])] {
+        let mut manifest = original.clone();
+        let analyzer = manifest["analyzer"].as_object_mut().unwrap();
+        match version {
+            None => {
+                analyzer.remove("normalization_unicode_version");
+            }
+            Some(version) => {
+                analyzer.insert(
+                    "normalization_unicode_version".into(),
+                    serde_json::json!(version),
+                );
+            }
+        }
+        write_manifest(&root, &manifest);
+        let error = CorpusArtifact::open(&root)
+            .err()
+            .expect("different normalization tables");
+        assert!(error.to_string().contains("normalization"), "{error}");
+    }
 }

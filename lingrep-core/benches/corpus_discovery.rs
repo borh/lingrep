@@ -3,6 +3,10 @@
 //! Fixture creation occurs before Criterion starts timing. Discovery itself only
 //! reads directory metadata and retains no traversal spill files.
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::fs;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};

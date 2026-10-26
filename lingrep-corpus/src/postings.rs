@@ -2,7 +2,9 @@ use crate::{AnalysisIdentity, CorpusError, TokenSchemaIdentity, tokens::TokenRea
 use lingrep_core::{
     fsm::SentenceFilter,
     spill::{SortedRunCounts, SpillPolicy, TempBudget},
-    token_match::{AttributeKey, AttributeKind},
+    token_match::{
+        AttributeKey, AttributeKind, AttributeOrdinal, BoundProjection, BoundTokenSentence,
+    },
 };
 use memmap2::{Mmap, MmapOptions};
 use serde::{Deserialize, Serialize};
@@ -61,8 +63,6 @@ struct Key {
     attribute: u8,
     value: String,
     sentence: u64,
-    block: u64,
-    block_bytes: u64,
 }
 
 fn invalid(message: impl Into<String>) -> CorpusError {
@@ -107,232 +107,256 @@ fn delta(out: &mut Vec<u8>, mut value: u64) {
     out.push(value as u8);
 }
 
-pub(crate) fn build(
-    root: &Path,
-    reader: &TokenReader,
-    analysis: &AnalysisIdentity,
-    schema: &TokenSchemaIdentity,
-    token_hash: &str,
-    budget: Arc<TempBudget>,
-    should_continue: &mut impl FnMut() -> bool,
-) -> Result<bool, CorpusError> {
-    let coverage = ATTRIBUTES
-        .into_iter()
-        .filter(|key| {
-            reader
-                .schema()
-                .attributes()
-                .iter()
-                .any(|a| a.key().as_str() == *key && a.kind() == AttributeKind::Scalar)
-        })
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    if coverage.is_empty() {
-        return Ok(false);
-    }
-    let projection = reader
-        .schema()
-        .bind_projection(
-            coverage
-                .iter()
-                .map(|a| AttributeKey::new(a).expect("fixed attribute key")),
-        )
-        .map_err(|e| invalid(e.to_string()))?;
-    let attributes = coverage
-        .iter()
-        .map(|attribute| {
-            projection
-                .ordinal_for_key(&AttributeKey::new(attribute).expect("fixed attribute key"))
-                .expect("projection includes every indexed attribute")
-        })
-        .collect::<Vec<_>>();
-    let mut sorted = SortedRunCounts::<Key>::with_policy(
-        SpillPolicy {
-            max_pending_bytes: 16 * 1024 * 1024,
-            max_pending_keys: 65_536,
-            merge_fan_in: 16,
-        },
-        budget,
-    )?;
-    let mut start = 0;
-    let mut total_bytes = 0;
-    while start < reader.sentence_count() {
-        if !should_continue() {
-            return Ok(false);
-        }
-        let (block, entry) = reader.block_for_sentence(start)?;
-        total_bytes += entry.stored_len;
-        let ordinals = (start..start + entry.sentence_count).collect::<Vec<_>>();
-        let sentences = reader.decode_bound_ordinals(&ordinals, &projection, false)?;
-        for (sentence_ordinal, sentence) in ordinals.into_iter().zip(sentences) {
-            let mut values = Vec::with_capacity(sentence.len());
-            for (attribute, ordinal) in attributes.iter().enumerate() {
-                values.clear();
-                values.extend((0..sentence.len()).filter_map(|token| {
-                    sentence
-                        .token(token)
-                        .expect("token index is in range")
-                        .get(*ordinal)
-                }));
-                values.sort_unstable();
-                values.dedup();
-                for &value in &values {
-                    sorted.add(
-                        Key {
-                            attribute: u8::try_from(attribute)
-                                .expect("two indexed attributes fit u8"),
-                            value: value.into(),
-                            sentence: sentence_ordinal,
-                            block,
-                            block_bytes: entry.stored_len,
-                        },
-                        1,
-                    )?;
-                }
+pub(crate) struct PostingsBuilder {
+    coverage: Vec<String>,
+    attributes: Vec<AttributeOrdinal>,
+    sorted: SortedRunCounts<Key>,
+    sentences: u64,
+}
+
+impl PostingsBuilder {
+    pub(crate) fn new(
+        projection: &BoundProjection,
+        budget: Arc<TempBudget>,
+    ) -> Result<Option<Self>, CorpusError> {
+        let mut coverage = Vec::new();
+        let mut attributes = Vec::new();
+        for key in ATTRIBUTES {
+            if let Some(ordinal) =
+                projection.ordinal_for_key(&AttributeKey::new(key).expect("fixed attribute key"))
+                && projection.kind(ordinal) == Some(AttributeKind::Scalar)
+            {
+                coverage.push(key.to_owned());
+                attributes.push(ordinal);
             }
         }
-        start += entry.sentence_count;
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(root.join(NAME))?;
-    file.write_all(MAGIC)?;
-    let mut entries = Vec::<((String, String), Entry)>::new();
-    let mut raw = Vec::new();
-    let mut previous = 0_u64;
-    let mut first = 0;
-    let mut count = 0;
-    let mut last_block = None;
-    let mut directory_charge = 256;
-    let sorted_result = sorted.visit_sorted(|key, _| {
-        if !should_continue() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "postings build cancelled",
-            ));
+        if coverage.is_empty() {
+            return Ok(None);
         }
-        let attribute = coverage.get(usize::from(key.attribute)).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "posting attribute is outside coverage",
-            )
-        })?;
-        if !entries
-            .last()
-            .is_some_and(|(group, _)| group.0 == *attribute && group.1 == key.value)
-        {
-            if count != 0 {
-                entries
-                    .last_mut()
-                    .expect("current entry")
-                    .1
+        let sorted = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: 16 * 1024 * 1024,
+                max_pending_keys: 65_536,
+                merge_fan_in: 16,
+            },
+            budget,
+        )?;
+        Ok(Some(Self {
+            coverage,
+            attributes,
+            sorted,
+            sentences: 0,
+        }))
+    }
+
+    pub(crate) fn push(&mut self, sentence: &BoundTokenSentence) -> Result<(), CorpusError> {
+        let mut values = Vec::with_capacity(sentence.len());
+        for (attribute, ordinal) in self.attributes.iter().enumerate() {
+            values.clear();
+            values.extend((0..sentence.len()).filter_map(|token| {
+                sentence
+                    .token(token)
+                    .expect("token index is in range")
+                    .get(*ordinal)
+            }));
+            values.sort_unstable();
+            values.dedup();
+            for &value in &values {
+                self.sorted.add(
+                    Key {
+                        attribute: u8::try_from(attribute).expect("two indexed attributes fit u8"),
+                        value: value.into(),
+                        sentence: self.sentences,
+                    },
+                    1,
+                )?;
+            }
+        }
+        self.sentences = self
+            .sentences
+            .checked_add(1)
+            .ok_or_else(|| invalid("sentence count overflow"))?;
+        Ok(())
+    }
+
+    pub(crate) fn finish(
+        self,
+        root: &Path,
+        reader: &TokenReader,
+        analysis: &AnalysisIdentity,
+        schema: &TokenSchemaIdentity,
+        token_hash: &str,
+        should_continue: &mut impl FnMut() -> bool,
+    ) -> Result<bool, CorpusError> {
+        let Self {
+            coverage,
+            mut sorted,
+            sentences,
+            ..
+        } = self;
+        if sentences != reader.sentence_count() {
+            return Err(invalid("captured sentence count differs from token file"));
+        }
+        let projection = reader
+            .schema()
+            .bind_projection(std::iter::empty::<AttributeKey>())
+            .map_err(|error| invalid(error.to_string()))?;
+        let mut start = 0;
+        let mut total_bytes = 0;
+        while start < reader.sentence_count() {
+            if !should_continue() {
+                return Ok(false);
+            }
+            let (_, entry) = reader.block_for_sentence(start)?;
+            total_bytes += entry.stored_len;
+            let ordinals = (start..start + entry.sentence_count).collect::<Vec<_>>();
+            reader.decode_bound_ordinals(&ordinals, &projection, false)?;
+            start += entry.sentence_count;
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join(NAME))?;
+        file.write_all(MAGIC)?;
+        let mut entries = Vec::<((String, String), Entry)>::new();
+        let mut raw = Vec::new();
+        let mut previous = 0_u64;
+        let mut first = 0;
+        let mut count = 0;
+        let mut block_end = None;
+        let mut directory_charge = 256;
+        let sorted_result = sorted.visit_sorted(|key, _| {
+            if !should_continue() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "postings build cancelled",
+                ));
+            }
+            let attribute = coverage.get(usize::from(key.attribute)).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "posting attribute is outside coverage",
+                )
+            })?;
+            if !entries
+                .last()
+                .is_some_and(|(group, _)| group.0 == *attribute && group.1 == key.value)
+            {
+                if count != 0 {
+                    entries
+                        .last_mut()
+                        .expect("current entry")
+                        .1
+                        .chunks
+                        .push(chunk(&mut file, &mut raw, count, first, previous)?);
+                }
+                let group = (attribute.clone(), key.value.clone());
+                directory_charge += group.0.len() + group.1.len() + 128;
+                if directory_charge > MAX_DIRECTORY {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::FileTooLarge,
+                        "postings directory exceeds 64 MiB",
+                    ));
+                }
+                entries.push((
+                    group,
+                    Entry {
+                        frequency: 0,
+                        covered_bytes: 0,
+                        chunks: Vec::new(),
+                    },
+                ));
+                previous = 0;
+                count = 0;
+                block_end = None;
+            }
+            let entry = &mut entries.last_mut().expect("current entry").1;
+            if raw.len() >= CHUNK {
+                entry
                     .chunks
                     .push(chunk(&mut file, &mut raw, count, first, previous)?);
+                directory_charge += 80;
+                if directory_charge > MAX_DIRECTORY {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::FileTooLarge,
+                        "postings directory exceeds 64 MiB",
+                    ));
+                }
+                previous = 0;
+                count = 0;
             }
-            let group = (attribute.clone(), key.value.clone());
-            directory_charge += group.0.len() + group.1.len() + 128;
-            if directory_charge > MAX_DIRECTORY {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::FileTooLarge,
-                    "postings directory exceeds 64 MiB",
-                ));
+            if count == 0 {
+                first = key.sentence;
             }
-            entries.push((
-                group,
-                Entry {
-                    frequency: 0,
-                    covered_bytes: 0,
-                    chunks: Vec::new(),
-                },
-            ));
-            previous = 0;
-            count = 0;
-            last_block = None;
+            delta(&mut raw, key.sentence - previous);
+            previous = key.sentence;
+            count += 1;
+            entry.frequency += 1;
+            if block_end.is_none_or(|end| key.sentence >= end) {
+                let (_, block_entry) = reader
+                    .block_for_sentence(key.sentence)
+                    .map_err(std::io::Error::other)?;
+                block_end = Some(block_entry.first_sentence + block_entry.sentence_count);
+                entry.covered_bytes += block_entry.stored_len;
+            }
+            Ok(())
+        });
+        if let Err(error) = sorted_result {
+            if error.kind() == std::io::ErrorKind::FileTooLarge {
+                drop(file);
+                std::fs::remove_file(root.join(NAME))?;
+                return Ok(false);
+            }
+            return Err(error.into());
         }
-        let entry = &mut entries.last_mut().expect("current entry").1;
-        if raw.len() >= CHUNK {
-            entry
+        if count != 0 {
+            entries
+                .last_mut()
+                .expect("current entry")
+                .1
                 .chunks
                 .push(chunk(&mut file, &mut raw, count, first, previous)?);
-            directory_charge += 80;
-            if directory_charge > MAX_DIRECTORY {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::FileTooLarge,
-                    "postings directory exceeds 64 MiB",
-                ));
+        }
+        let mut directory = Vec::new();
+        directory.extend_from_slice(analysis.as_bytes());
+        directory.extend_from_slice(schema.as_bytes());
+        directory.extend_from_slice(
+            blake3::Hash::from_hex(token_hash)
+                .map_err(|e| invalid(e.to_string()))?
+                .as_bytes(),
+        );
+        put(&mut directory, reader.sentence_count());
+        put(&mut directory, total_bytes);
+        put(&mut directory, coverage.len() as u64);
+        for key in coverage {
+            text(&mut directory, &key);
+        }
+        put(&mut directory, entries.len() as u64);
+        for ((attribute, value), entry) in entries {
+            text(&mut directory, &attribute);
+            text(&mut directory, &value);
+            put(&mut directory, entry.frequency);
+            put(&mut directory, entry.covered_bytes);
+            put(&mut directory, entry.chunks.len() as u64);
+            for c in entry.chunks {
+                for n in [c.offset, c.stored, c.raw, c.count, c.first, c.last] {
+                    put(&mut directory, n);
+                }
+                directory.extend_from_slice(&c.hash);
             }
-            previous = 0;
-            count = 0;
-        }
-        if count == 0 {
-            first = key.sentence;
-        }
-        delta(&mut raw, key.sentence - previous);
-        previous = key.sentence;
-        count += 1;
-        entry.frequency += 1;
-        if last_block != Some(key.block) {
-            entry.covered_bytes += key.block_bytes;
-            last_block = Some(key.block);
-        }
-        Ok(())
-    });
-    if let Err(error) = sorted_result {
-        if error.kind() == std::io::ErrorKind::FileTooLarge {
-            drop(file);
-            std::fs::remove_file(root.join(NAME))?;
-            return Ok(false);
-        }
-        return Err(error.into());
-    }
-    if count != 0 {
-        entries
-            .last_mut()
-            .expect("current entry")
-            .1
-            .chunks
-            .push(chunk(&mut file, &mut raw, count, first, previous)?);
-    }
-    let mut directory = Vec::new();
-    directory.extend_from_slice(analysis.as_bytes());
-    directory.extend_from_slice(schema.as_bytes());
-    directory.extend_from_slice(
-        blake3::Hash::from_hex(token_hash)
-            .map_err(|e| invalid(e.to_string()))?
-            .as_bytes(),
-    );
-    put(&mut directory, reader.sentence_count());
-    put(&mut directory, total_bytes);
-    put(&mut directory, coverage.len() as u64);
-    for key in coverage {
-        text(&mut directory, &key);
-    }
-    put(&mut directory, entries.len() as u64);
-    for ((attribute, value), entry) in entries {
-        text(&mut directory, &attribute);
-        text(&mut directory, &value);
-        put(&mut directory, entry.frequency);
-        put(&mut directory, entry.covered_bytes);
-        put(&mut directory, entry.chunks.len() as u64);
-        for c in entry.chunks {
-            for n in [c.offset, c.stored, c.raw, c.count, c.first, c.last] {
-                put(&mut directory, n);
+            if directory.len() > MAX_DIRECTORY {
+                drop(file);
+                std::fs::remove_file(root.join(NAME))?;
+                return Ok(false);
             }
-            directory.extend_from_slice(&c.hash);
         }
-        if directory.len() > MAX_DIRECTORY {
-            drop(file);
-            std::fs::remove_file(root.join(NAME))?;
-            return Ok(false);
-        }
+        file.write_all(&directory)?;
+        file.write_all(&(directory.len() as u64).to_le_bytes())?;
+        file.write_all(blake3::hash(&directory).as_bytes())?;
+        file.write_all(MAGIC)?;
+        file.sync_all()?;
+        Ok(true)
     }
-    file.write_all(&directory)?;
-    file.write_all(&(directory.len() as u64).to_le_bytes())?;
-    file.write_all(blake3::hash(&directory).as_bytes())?;
-    file.write_all(MAGIC)?;
-    file.sync_all()?;
-    Ok(true)
 }
 
 struct Cursor<'a> {
@@ -672,6 +696,82 @@ mod tests {
     }
 
     #[test]
+    fn postings_bytes_cover_empty_sentences_spilled_runs_and_chunk_boundaries() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tokens");
+        let schema = TokenSchema::from_keys(["lemma", "text", "unidic.pos1", "upos"]).unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let analysis = AnalysisIdentity::from_bytes([9; 32]);
+        let schema_id = TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes());
+        let budget = Arc::new(TempBudget::new(16 * 1024 * 1024));
+        let mut writer = TokenWriter::create_indexed(&path, schema, Arc::clone(&budget)).unwrap();
+        for ordinal in 0..70_000 {
+            let tokens = if ordinal == 0 { 0 } else { 2 };
+            let lemma = match ordinal {
+                1 => None,
+                100 => Some("長".repeat(50).into()),
+                257 => Some("rare".into()),
+                _ => Some("common".into()),
+            };
+            let values = (0..tokens)
+                .flat_map(|_| {
+                    projection.keys().iter().map(|key| match key.as_str() {
+                        "lemma" => lemma.clone(),
+                        "unidic.pos1" => Some("名詞".into()),
+                        "text" => Some("日本語".into()),
+                        _ => None,
+                    })
+                })
+                .collect();
+            writer
+                .push_bound_sentence(
+                    BoundTokenSentence::from_projected_values(&projection, tokens, values).unwrap(),
+                )
+                .unwrap();
+        }
+        let postings = writer.finish(analysis).unwrap().unwrap();
+        let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
+        let hash = blake3::hash(&std::fs::read(&path).unwrap())
+            .to_hex()
+            .to_string();
+        assert!(
+            postings
+                .finish(
+                    root.path(),
+                    &reader,
+                    &analysis,
+                    &schema_id,
+                    &hash,
+                    &mut || true
+                )
+                .unwrap()
+        );
+        assert!(budget.peak_used_bytes() > 0);
+        assert_eq!(budget.used_bytes(), 0);
+        let index = PostingIndex::open(
+            &root.path().join(NAME),
+            &analysis,
+            &schema_id,
+            &hash,
+            70_000,
+        )
+        .unwrap();
+        index.verify().unwrap();
+        let common = index.entry(&("lemma".into(), "common".into())).unwrap();
+        assert_eq!(common.frequency, 69_996);
+        assert_eq!(common.chunks.len(), 2);
+        assert_eq!(common.covered_bytes, index.total_bytes);
+        assert_eq!(
+            blake3::hash(&std::fs::read(root.path().join(NAME)).unwrap())
+                .to_hex()
+                .as_str(),
+            "ca455404f27cc0af840a76531dbe524345deca42a88e48eee7003987a259f7a3"
+        );
+    }
+
+    #[test]
     fn indexed_attributes_keep_their_names_across_projection_subsets() {
         for keys in [
             vec!["unidic.pos1"],
@@ -688,7 +788,7 @@ mod tests {
             let schema_id = TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes());
             let budget = Arc::new(TempBudget::new(16 * 1024 * 1024));
             let mut writer =
-                TokenWriter::create(&path, schema.clone(), Arc::clone(&budget)).unwrap();
+                TokenWriter::create_indexed(&path, schema.clone(), Arc::clone(&budget)).unwrap();
             let values = projection
                 .keys()
                 .iter()
@@ -699,22 +799,22 @@ mod tests {
                     BoundTokenSentence::from_projected_values(&projection, 1, values).unwrap(),
                 )
                 .unwrap();
-            writer.finish(analysis).unwrap();
+            let postings = writer.finish(analysis).unwrap().unwrap();
             let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
             let hash = blake3::hash(&std::fs::read(&path).unwrap())
                 .to_hex()
                 .to_string();
             assert!(
-                build(
-                    root.path(),
-                    &reader,
-                    &analysis,
-                    &schema_id,
-                    &hash,
-                    budget,
-                    &mut || true
-                )
-                .unwrap()
+                postings
+                    .finish(
+                        root.path(),
+                        &reader,
+                        &analysis,
+                        &schema_id,
+                        &hash,
+                        &mut || true
+                    )
+                    .unwrap()
             );
             let index =
                 PostingIndex::open(&root.path().join(NAME), &analysis, &schema_id, &hash, 1)
@@ -738,7 +838,8 @@ mod tests {
         let analysis = AnalysisIdentity::from_bytes([4; 32]);
         let schema_id = TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes());
         let budget = Arc::new(TempBudget::new(16 * 1024 * 1024));
-        let mut writer = TokenWriter::create(&path, schema.clone(), Arc::clone(&budget)).unwrap();
+        let mut writer =
+            TokenWriter::create_indexed(&path, schema.clone(), Arc::clone(&budget)).unwrap();
         for ordinal in 0..2048 {
             let value = match ordinal {
                 17 => "rare",
@@ -756,22 +857,22 @@ mod tests {
                 )
                 .unwrap();
         }
-        writer.finish(analysis).unwrap();
+        let postings = writer.finish(analysis).unwrap().unwrap();
         let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
         let hash = blake3::hash(&std::fs::read(&path).unwrap())
             .to_hex()
             .to_string();
         assert!(
-            build(
-                root.path(),
-                &reader,
-                &analysis,
-                &schema_id,
-                &hash,
-                budget,
-                &mut || true
-            )
-            .unwrap()
+            postings
+                .finish(
+                    root.path(),
+                    &reader,
+                    &analysis,
+                    &schema_id,
+                    &hash,
+                    &mut || true
+                )
+                .unwrap()
         );
         let index = Arc::new(
             PostingIndex::open(&root.path().join(NAME), &analysis, &schema_id, &hash, 2048)

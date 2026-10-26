@@ -27,6 +27,10 @@
 //! under the same normalization, and reports a structural context window at
 //! the first difference — element path and character offset, never the text.
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufWriter, Write};
@@ -35,7 +39,7 @@ use std::path::{Path, PathBuf};
 use lingrep_core::corpus::TraversalLimits;
 use lingrep_core::corpus::bccwj::{
     BccwjInventory, BccwjMetadata, Sampling, Subcorpus, basename_from_entry, open_zip_archive,
-    parse_entry, zip_entry_names,
+    parse_entry, zip_entries, zip_entry_names,
 };
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -108,7 +112,7 @@ fn select(root: &Path, seed: u64, out: &mut dyn Write) -> io::Result<()> {
     for zip in &inventory.zips {
         let file = fs::File::open(&zip.path)?;
         let archive = open_zip_archive(file)?;
-        let names = zip_entry_names(&archive);
+        let names = zip_entry_names(&archive)?;
         let code = zip.subcorpus.as_code().to_owned();
         let mut candidates: Vec<(String, String, String)> = names
             .iter()
@@ -179,12 +183,15 @@ fn entry_bytes(root: &Path, zip_logical: &str, entry: &str) -> io::Result<Vec<u8
         })?;
     let file = fs::File::open(&zip.path)?;
     let mut archive = open_zip_archive(file)?;
-    let index = archive.index_for_name(entry).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("zip {zip_logical} has no entry {entry}"),
-        )
-    })?;
+    let index = zip_entries(&archive)?
+        .into_iter()
+        .find_map(|(name, index)| (name == entry).then_some(index))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("zip {zip_logical} has no entry {entry}"),
+            )
+        })?;
     let mut reader = archive.by_index(index)?;
     let mut bytes = Vec::new();
     io::Read::read_to_end(&mut reader, &mut bytes)?;

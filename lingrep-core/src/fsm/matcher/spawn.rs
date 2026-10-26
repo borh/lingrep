@@ -4,7 +4,7 @@
 //! [`inject_spawns`] for how the executor uses it at each token position.
 
 use super::dense::DenseMachine;
-use super::nfa_matcher::{ExecScratch, Matcher};
+use super::exec::{ExecScratch, Matcher};
 use super::predicate::{
     CompiledPositionAssertion, PredicateCatalog, PredicateId, PredicateSession,
     SpawnPredicateDescriptor,

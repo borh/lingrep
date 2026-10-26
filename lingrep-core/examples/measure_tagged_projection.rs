@@ -1,4 +1,8 @@
 #[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(target_os = "linux")]
 use std::io;
 #[cfg(target_os = "linux")]
 use std::time::Instant;

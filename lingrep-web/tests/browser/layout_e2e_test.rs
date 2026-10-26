@@ -14,7 +14,10 @@
 
 #![allow(clippy::result_large_err)]
 
+use self::reading_support::RevisionTestExt;
 use std::{fmt::Write as _, time::Duration};
+
+use futures::FutureExt;
 
 use axum::{
     Router,
@@ -24,13 +27,633 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use thirtyfour::extensions::cdp::ChromeDevTools;
+use thirtyfour::cdp::Cdp;
 use thirtyfour::prelude::*;
 use tokio::{net::TcpListener, task::JoinHandle};
+
+#[allow(dead_code)]
+#[path = "../suite/v6_support.rs"]
+mod reading_support;
 
 struct FixtureServer {
     address: String,
     task: JoinHandle<()>,
+}
+
+#[tokio::test]
+async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> WebDriverResult<()>
+{
+    use lingrep_web::state::{Config, DetailLimits, RequestStore};
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let sentences = vec![vec![lingrep_core::token_match::TokenInfo::default().with_orth("HIT")]; 3];
+    let artifact = reading_support::build_artifact_with_sections(
+        vec![("fixture.md", 0, false, sentences)],
+        vec![vec!["abstract".into()], vec!["introduction".into()], vec![]],
+    );
+    let runtime = std::sync::Arc::new(lingrep_web::corpus_runtime::CorpusRuntime::from_ready(
+        lingrep_web::corpus_runtime::CorpusIdentity::new("scope-browser"),
+        reading_support::open_artifact(&artifact),
+        std::sync::Arc::new(lingrep_web::server_context::ServerContext::new("/tmp/dict").unwrap()),
+    ));
+    let store = RequestStore::with_runtime(
+        Config {
+            dict_path: String::new(),
+            corpora: Vec::new(),
+            input_format: None,
+            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                lingrep_core::corpus::SectionPolicy::default(),
+            ),
+            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+            detail_limits: DetailLimits { max_kwic: 10 },
+        },
+        runtime,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let fixture = FixtureServer {
+        address,
+        task: tokio::spawn(async move {
+            let cold_store = store.clone();
+            let app = lingrep_web::app_router(store).route(
+                "/cold-scope",
+                get(move |raw: axum::extract::RawQuery| {
+                    let store = cold_store.clone();
+                    async move {
+                        use askama::Template;
+                        let mut html = lingrep_web::handlers::index::index_page(
+                            axum::extract::State(store),
+                            raw,
+                        )
+                        .await
+                        .0;
+                        let mut context = lingrep_web::corpus_context::CorpusContextView::preparing(
+                            "fixture".into(),
+                            None,
+                        );
+                        context.corpus_key = "default".into();
+                        let partial = lingrep_web::templates::CorpusContextPartial {
+                            corpus_context: context,
+                            corpora: vec![],
+                        }
+                        .render()
+                        .unwrap();
+                        let start = html.find("<section class=\"corpus-context\"").unwrap();
+                        let end =
+                            start + html[start..].find("</section>").unwrap() + "</section>".len();
+                        html.replace_range(start..end, &partial);
+                        let start = html.find("data-search-scope-options>").unwrap()
+                            + "data-search-scope-options>".len();
+                        let end = start + html[start..].find("</div>").unwrap();
+                        html.replace_range(start..end, "");
+                        Html(html.replace("data-autorun", "data-run-when-ready"))
+                    }
+                }),
+            );
+            axum::serve(listener, app).await.unwrap();
+        }),
+    };
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver.set_window_rect(0, 0, 1_440, 900).await?;
+    let query =
+        lingrep_web::permalink::encode_query_only("hit := HIT.", "default", None, None).unwrap();
+    driver
+        .goto(format!("{}/cold-scope{query}", fixture.address))
+        .await?;
+    driver
+        .query(By::Css(".corpus-context[data-corpus-digest]"))
+        .wait(Duration::from_secs(10), Duration::from_millis(50))
+        .first()
+        .await?;
+    wait_for_selector(&driver, "[data-exact-total='1']").await?;
+    driver
+        .find(By::Css("[data-detail-tab='sections']"))
+        .await?
+        .click()
+        .await?;
+    assert_eq!(
+        driver
+            .find(By::Css("#section-heading"))
+            .await?
+            .text()
+            .await?,
+        "Section distribution — search scope"
+    );
+    assert!(
+        driver
+            .find_all(By::Css(".section-overview [data-search-value='abstract']"))
+            .await?
+            .is_empty()
+    );
+    assert_eq!(
+        driver
+            .find_all(By::Css(
+                ".section-overview [data-search-value='introduction']"
+            ))
+            .await?
+            .len(),
+        1
+    );
+    driver
+        .find(By::Css("[data-detail-tab='concordance']"))
+        .await?
+        .click()
+        .await?;
+    driver.find(By::Css(".kwic-row")).await?.click().await?;
+    wait_for_selector(&driver, ".hit-detail[data-reference-ordinal='0']").await?;
+    let state_script = "return JSON.stringify([location.href,document.querySelector('#corpus-pattern').value,document.querySelector('[data-search-scope-value]').value,document.querySelector('.kwic-row[aria-selected=true]').dataset.hitOrdinal,document.querySelector('.hit-detail').dataset.referenceOrdinal]);";
+    let before_help: String = driver.execute(state_script, vec![]).await?.convert()?;
+    driver.execute("window.helpUnderlyingSubmits=0;document.querySelector('[data-corpus-search]').addEventListener('submit',()=>window.helpUnderlyingSubmits++);", vec![]).await?;
+    driver
+        .find(By::Css("[data-site-help-open]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-site-help][open]").await?;
+    driver.execute("document.querySelector('[data-site-help-close]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true,cancelable:true}));", vec![]).await?;
+    assert_eq!(
+        driver
+            .execute("return window.helpUnderlyingSubmits", vec![])
+            .await?
+            .convert::<u64>()?,
+        0
+    );
+    driver
+        .find(By::Css("[data-site-help-close]"))
+        .await?
+        .send_keys(Key::Escape)
+        .await?;
+    assert!(
+        !driver
+            .execute(
+                "return document.querySelector('[data-site-help]').open",
+                vec![]
+            )
+            .await?
+            .convert::<bool>()?
+    );
+    assert_eq!(
+        driver
+            .execute(state_script, vec![])
+            .await?
+            .convert::<String>()?,
+        before_help
+    );
+    let original_window = driver.window().await?;
+    driver
+        .find(By::Css(".site-nav a[href='sample']"))
+        .await?
+        .click()
+        .await?;
+    for _ in 0..100 {
+        if driver.windows().await?.len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let windows = driver.windows().await?;
+    assert_eq!(windows.len(), 2);
+    let sample_window = windows
+        .into_iter()
+        .find(|window| *window != original_window)
+        .unwrap();
+    driver.switch_to_window(sample_window).await?;
+    wait_for_selector(&driver, "[data-sample-workspace]").await?;
+    assert_eq!(driver.current_url().await?.path(), "/sample");
+    driver
+        .find(By::Css("[data-site-help-open]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-site-help][open]").await?;
+    driver.close_window().await?;
+    driver.switch_to_window(original_window).await?;
+    assert_eq!(
+        driver
+            .execute(state_script, vec![])
+            .await?
+            .convert::<String>()?,
+        before_help
+    );
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-preset='main']"))
+        .await?
+        .click()
+        .await?;
+    assert!(
+        !driver
+            .find(By::Css("[data-scope-include][value='abstract']"))
+            .await?
+            .is_selected()
+            .await?
+    );
+    assert!(
+        driver
+            .find(By::Css("[data-scope-include][value='introduction']"))
+            .await?
+            .is_selected()
+            .await?
+    );
+    driver
+        .find(By::Css("[data-scope-unlabelled]"))
+        .await?
+        .click()
+        .await?;
+    assert!(
+        driver
+            .find(By::Css("[data-scope-pending]"))
+            .await?
+            .is_displayed()
+            .await?
+    );
+    driver
+        .find(By::Css("[data-search-scope] button[type='submit']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-exact-total='2']").await?;
+    wait_for_selector(&driver, "[data-search-scope-applied]").await?;
+    assert_eq!(
+        driver
+            .find_all(By::Css(
+                "[data-section-comparison] #comparison-section-control"
+            ))
+            .await?
+            .len(),
+        1
+    );
+    assert!(
+        driver
+            .find_all(By::Css("#corpus-analysis-scope form"))
+            .await?
+            .is_empty()
+    );
+    wait_for_selector(&driver, ".kwic-row").await?;
+    driver.find(By::Css(".kwic-row")).await?.click().await?;
+    wait_for_selector(&driver, "[data-reading-open]").await?;
+    driver
+        .find(By::Css("[data-reading-open][hx-get$='/document']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "dialog[open] [data-reading-page]").await?;
+    driver
+        .find(By::Css("[data-reading-previous]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-reading-excluded]").await?;
+    assert!(
+        driver
+            .find_all(By::Css("[data-reading-sentence='0']"))
+            .await?
+            .is_empty()
+    );
+    driver
+        .find(By::Css("[data-reading-context]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-reading-sentence='0'].reading-outside-scope").await?;
+    driver
+        .find(By::Css(
+            ".reading-dialog [data-i18n-aria-label='reading.close']",
+        ))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-unlabelled]"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] button[type='submit']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-exact-total='1']").await?;
+    for width in [320, 1_440] {
+        driver.set_window_rect(0, 0, width, 900).await?;
+        let contained: bool = driver
+            .execute(
+                "return document.documentElement.scrollWidth<=innerWidth",
+                vec![],
+            )
+            .await?
+            .convert()?;
+        assert!(contained, "search scope overflows at {width}px");
+        driver
+            .find(By::Css(".corpus-analysis-scope > summary"))
+            .await?
+            .click()
+            .await?;
+        let popover_clickable: bool = driver.execute(r#"
+const panel=document.querySelector('.section-scope-form'), rect=panel.getBoundingClientRect();
+const x=rect.left+rect.width/2;
+return rect.left>=0&&rect.right<=innerWidth&&rect.height>0&&[rect.top+4,(rect.top+rect.bottom)/2,rect.bottom-4].every(y=>y>=0&&y<innerHeight&&panel.contains(document.elementFromPoint(x,y)));
+"#, vec![]).await?.convert()?;
+        assert!(
+            popover_clickable,
+            "sections popover is clipped or covered at {width}px"
+        );
+        driver
+            .find(By::Css(".corpus-analysis-scope > summary"))
+            .await?
+            .click()
+            .await?;
+        driver
+            .screenshot(&std::env::temp_dir().join(format!("lingrep-search-scope-{width}.png")))
+            .await?;
+    }
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-preset='all']"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] button[type='submit']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-exact-total='3']").await?;
+    assert!(
+        driver
+            .find_all(By::Css("[data-search-scope-applied]"))
+            .await?
+            .is_empty()
+    );
+    driver.execute("const sort=document.querySelector('[data-kwic-sort]');sort.value='section';sort.dispatchEvent(new Event('change',{bubbles:true}));const direction=document.querySelector('[data-kwic-sort-direction]');direction.value='descending';direction.dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
+    let order: Vec<String> = driver
+        .execute(
+            "return [...document.querySelectorAll('.kwic-row')].map(row=>row.dataset.hitOrdinal)",
+            vec![],
+        )
+        .await?
+        .convert()?;
+    assert_eq!(order, ["1", "0", "2"]);
+    driver
+        .find(By::Css(".kwic-row[data-hit-ordinal='1']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, ".hit-detail[data-reference-ordinal='1']").await?;
+    for (scope, total, selected) in [
+        (
+            json!({"included_sections":["abstract"],"include_unlabelled":false}),
+            "1",
+            "abstract",
+        ),
+        (
+            json!({"included_sections":null,"include_unlabelled":true}),
+            "3",
+            "introduction",
+        ),
+    ] {
+        let encoded = serde_urlencoded::to_string([("s", scope.to_string())]).unwrap();
+        driver
+            .goto(format!("{}/cold-scope{query}&{encoded}", fixture.address))
+            .await?;
+        driver
+            .query(By::Css(".corpus-context[data-corpus-digest]"))
+            .wait(Duration::from_secs(10), Duration::from_millis(50))
+            .first()
+            .await?;
+        wait_for_selector(&driver, &format!("[data-exact-total='{total}']")).await?;
+        assert!(
+            driver
+                .find(By::Css(format!("[data-scope-include][value='{selected}']")))
+                .await?
+                .is_selected()
+                .await?
+        );
+    }
+    driver.quit().await?;
+    fixture.task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> WebDriverResult<()> {
+    use askama::Template;
+    use lingrep_web::{
+        revision::WorkbenchId,
+        state::{Config, DetailLimits, RequestStore},
+        templates::HitDetailFragment,
+    };
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let words = (0..30)
+        .map(|i| {
+            vec![
+                lingrep_core::token_match::TokenInfo::default().with_orth(if i == 0 {
+                    "HIT".into()
+                } else {
+                    format!("文{i}")
+                }),
+            ]
+        })
+        .collect();
+    let (_artifact, runtime) = reading_support::runtime_fixture("reading-browser", words);
+    let store = RequestStore::with_runtime(
+        Config {
+            dict_path: String::new(),
+            corpora: Vec::new(),
+            input_format: None,
+            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                lingrep_core::corpus::SectionPolicy::default(),
+            ),
+            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+            detail_limits: DetailLimits { max_kwic: 10 },
+        },
+        runtime,
+    );
+    let workbench = WorkbenchId::new("reading-browser");
+    store
+        .coordinators
+        .accept_next_revision(
+            workbench.clone(),
+            store.corpora.resolve(None).unwrap(),
+            "hit := HIT.".into(),
+        )
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if store
+                .coordinators
+                .snapshot(&workbench)
+                .await
+                .and_then(|view| view.state.displayed_snapshot().cloned())
+                .is_some()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let hit = HitDetailFragment {
+        overlaps: Vec::new(),
+        reference_ordinal: 0,
+        workbench_id: "reading-browser",
+        revision: 1,
+        pattern_key: 0,
+        id_prefix: "reading".into(),
+        tokens: Vec::new(),
+        capture_lanes: Vec::new(),
+        captures: Vec::new(),
+        graph_bindings: Vec::new(),
+        provenance: None,
+    }
+    .render()
+    .unwrap();
+    let html = format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/vendor/htmx.min.js"></script><script type="module" src="/assets/results-explorer.js"></script></head><body><main>{hit}</main></body></html>"#
+    );
+    let app = lingrep_web::app_router(store).route(
+        "/reader-fixture",
+        get(move || {
+            let html = html.clone();
+            async move { Html(html) }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let fixture = FixtureServer {
+        address,
+        task: tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        }),
+    };
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver
+        .goto(format!("{}/reader-fixture", fixture.address))
+        .await?;
+    wait_for_selector(&driver, "[data-reading-open]").await?;
+    driver
+        .find(By::Css("[data-reading-open][hx-get$='/document']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "dialog[open] [data-reading-page]").await?;
+    driver
+        .find(By::Css(".reading-toolbar [hx-get$='/paragraph']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(
+        &driver,
+        ".reading-toolbar [hx-get$='/paragraph'][aria-pressed='true']",
+    )
+    .await?;
+    driver
+        .find(By::Css(".reading-toolbar [hx-get$='/document']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(
+        &driver,
+        ".reading-toolbar [hx-get$='/document'][aria-pressed='true']",
+    )
+    .await?;
+    assert_eq!(
+        driver
+            .find(By::Css(".reading-dialog mark"))
+            .await?
+            .text()
+            .await?,
+        "HIT"
+    );
+    assert_eq!(
+        driver
+            .find_all(By::Css("[data-reading-sentence]"))
+            .await?
+            .len(),
+        20
+    );
+    driver
+        .find(By::Css("[data-reading-next]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-reading-sentence='20']").await?;
+    assert_eq!(
+        driver
+            .find_all(By::Css("[data-reading-sentence]"))
+            .await?
+            .len(),
+        10
+    );
+    assert!(
+        driver
+            .find_all(By::Css(".reading-dialog mark"))
+            .await?
+            .is_empty()
+    );
+    driver
+        .find(By::Css("[data-reading-selected]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-reading-sentence='0'] mark").await?;
+    for width in [320, 1_440] {
+        driver.set_window_rect(0, 0, width, 900).await?;
+        let contained: bool = driver.execute("const d=document.querySelector('.reading-dialog').getBoundingClientRect();return d.left>=0&&d.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth", vec![]).await?.convert()?;
+        assert!(contained, "reading dialog overflows at {width}px");
+        driver
+            .screenshot(&std::env::temp_dir().join(format!("lingrep-reading-{width}.png")))
+            .await?;
+    }
+    driver.execute("htmx.ajax('GET','api/hit-context/reading-browser/1/0/0/document?start=1000','#reading-body-0-0')", vec![]).await?;
+    wait_for_selector(&driver, ".reading-dialog .alert-error").await?;
+    assert!(
+        driver
+            .find(By::Css(".reading-dialog .alert-error"))
+            .await?
+            .text()
+            .await?
+            .contains("Invalid reading scope or page")
+    );
+    driver
+        .find(By::Css(
+            ".reading-dialog [data-i18n-aria-label='reading.close']",
+        ))
+        .await?
+        .click()
+        .await?;
+    let closed: bool = driver.execute("return !document.querySelector('.reading-dialog').open&&document.activeElement.hasAttribute('data-reading-open')", vec![]).await?.convert()?;
+    assert!(closed, "closing returns focus to the reading control");
+    driver.quit().await
 }
 
 impl Drop for FixtureServer {
@@ -229,7 +852,7 @@ fn fixture_html() -> String {
 </section>"#;
 
     format!(
-        r#"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"></head><body><main><section class="results-explorer"><div class="pattern-rail"></div><section class="pattern-detail" data-retained-count="1000" data-pattern-id="0"><div class="pattern-detail-summary"><h2>fixture</h2><p>1000 corpus matches</p></div><button type="button" class="surface-filter" data-variation="1" aria-pressed="false"><span lang="ja">variation one</span></button><section class="fixture-controls"><div class="kwic-token-ribbon">{tokens}</div><button class="hit-capture-item" data-capture-target="fixture-capture">capture {}</button><div id="fixture-capture"><section class="capture-inspection" hidden>detail</section></div></section>{density}<div class="kwic-region"><header class="kwic-pane-header"><div class="kwic-filter-bar"><span class="kwic-pane-pattern">fixture</span><p class="kwic-filter-status" role="status" aria-live="polite"></p><button type="button" class="filter-chip" data-clear-surface-filter hidden>Clear surface filter</button></div><nav class="kwic-pager" data-kwic-pager><button class="btn btn-secondary" data-page-previous>Previous</button><span data-page-status></span><button class="btn btn-secondary" data-page-next>Next</button><label>Rows per page<select data-page-size><option>50</option><option selected>100</option><option>250</option><option>500</option><option>1000</option></select></label></nav></header><div class="kwic-container"><table class="kwic-concordance" role="grid" data-hit-grid data-kwic-pagination><thead><tr><th>#</th><th>Sentence</th></tr></thead><tbody>{rows}</tbody></table></div></div></section><aside class="inspector-dock" id="inspector-dock" hidden aria-label="Hit inspector"><header class="inspector-dock-header"><h2 class="inspector-dock-title" data-inspector-title>Hit inspector</h2><button type="button" class="inspector-dock-close" data-inspector-close aria-label="Close inspector">×</button></header><div id="inspector-body" class="inspector-dock-body" aria-live="polite" aria-busy="false"></div></aside></section></main><script>window.hitSelectCount=0;window.layoutInitializedAt=-1;const measurementObserver=new MutationObserver((records)=>{{if(records.some((record)=>record.attributeName==='data-overflow')){{window.layoutInitializedAt=performance.now();measurementObserver.disconnect();}}}});measurementObserver.observe(document.querySelector('[data-hit-grid]'),{{attributes:true,subtree:true,attributeFilter:['data-overflow']}});for(const row of document.querySelectorAll('.kwic-row')){{row.addEventListener('hit-select',()=>{{window.hitSelectCount+=1;const inspector=document.getElementById('inspector-body');inspector.innerHTML=`<article class="hit-detail" data-reference-ordinal="${{row.dataset.hitOrdinal}}"><p>Retained hit</p></article>`;document.dispatchEvent(new CustomEvent('htmx:afterSwap',{{detail:{{target:inspector}}}}));}});}}</script><script type="module" src="/assets/results-explorer.js"></script></body></html>"#,
+        r#"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"></head><body><main><section class="results-explorer"><div class="pattern-rail"></div><section class="pattern-detail" data-retained-count="1000" data-pattern-id="0"><div class="pattern-detail-summary"><h2>fixture</h2><p>1000 corpus matches</p></div><button type="button" class="surface-filter" data-variation="1" aria-pressed="false"><span lang="ja">variation one</span></button><section class="fixture-controls"><div class="kwic-token-ribbon">{tokens}</div><button class="hit-capture-item" data-capture-target="fixture-capture">capture {}</button><div id="fixture-capture"><section class="capture-inspection" hidden>detail</section></div></section>{density}<div class="kwic-region"><header class="kwic-pane-header"><div class="kwic-filter-bar"><span class="kwic-pane-pattern">fixture</span><p class="kwic-filter-status" role="status" aria-live="polite"></p><button type="button" class="filter-chip" data-clear-surface-filter hidden>Clear surface filter</button></div><nav class="kwic-pager" data-kwic-pager><button class="btn btn-secondary" data-page-previous>Previous</button><span data-page-status></span><button class="btn btn-secondary" data-page-next>Next</button><label>Rows<select data-page-size><option>50</option><option selected>100</option><option>250</option><option>500</option><option>1000</option></select></label><label>Sort<select data-kwic-sort><option value="original">Retained order</option><option value="match">Matched text</option><option value="left">Left context</option><option value="right">Right context</option></select></label><select data-kwic-sort-direction aria-label="Sort direction"><option value="ascending">Ascending</option><option value="descending">Descending</option></select></nav></header><div class="kwic-container"><table class="kwic-concordance" role="grid" data-hit-grid data-kwic-pagination><thead><tr><th>#</th><th>Sentence</th></tr></thead><tbody>{rows}</tbody></table></div></div></section><aside class="inspector-dock" id="inspector-dock" hidden aria-label="Hit inspector"><header class="inspector-dock-header"><h2 class="inspector-dock-title" data-inspector-title>Hit inspector</h2><button type="button" class="inspector-dock-close" data-inspector-close aria-label="Close inspector">×</button></header><div id="inspector-body" class="inspector-dock-body" aria-live="polite" aria-busy="false"></div></aside></section></main><script>window.hitSelectCount=0;window.layoutInitializedAt=-1;const measurementObserver=new MutationObserver((records)=>{{if(records.some((record)=>record.attributeName==='data-overflow')){{window.layoutInitializedAt=performance.now();measurementObserver.disconnect();}}}});measurementObserver.observe(document.querySelector('[data-hit-grid]'),{{attributes:true,subtree:true,attributeFilter:['data-overflow']}});for(const row of document.querySelectorAll('.kwic-row')){{row.addEventListener('hit-select',()=>{{window.hitSelectCount+=1;const inspector=document.getElementById('inspector-body');inspector.innerHTML=`<article class="hit-detail" data-reference-ordinal="${{row.dataset.hitOrdinal}}"><p>Retained hit</p></article>`;document.dispatchEvent(new CustomEvent('htmx:afterSwap',{{detail:{{target:inspector}}}}));}});}}</script><script type="module" src="/assets/results-explorer.js"></script></body></html>"#,
         "unbroken".repeat(80),
     )
 }
@@ -277,14 +900,13 @@ fn band_fixture_html() -> &'static str {
       <button type="submit" class="btn btn-primary">Search Corpus</button>
       <label class="retained-control">Hits kept <select name="retained"><option value="1000" selected>1000</option></select></label>
       <span class="compound-control-group">
-        <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"> Derive contiguous compound items</label>
+        <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"> Derive compounds</label>
         <small class="compound-help">Creates an independent derived pattern for every chain of adjacent matches.</small>
-        <label class="retained-control compound-category-control">Compound category <select name="compound_category"><option value="compound">Compound item</option><option value="source">Source categories</option></select></label>
+        <label class="retained-control compound-category-control">Category <select name="compound_category"><option value="compound">Compound item</option><option value="source">Source categories</option></select></label>
       </span>
       <button type="button" class="btn btn-secondary copy-permalink">Copy link</button>
       <button type="button" class="btn btn-secondary editor-size-toggle">Expand editor</button>
       <button type="button" class="btn btn-secondary editor-fold-toggle">Fold editor <kbd>Ctrl+E</kbd></button>
-      <button type="button" class="editor-help-open">Syntax and shortcuts</button>
     </div>
   </div></div>
 </div>
@@ -335,7 +957,7 @@ fn tabs_fixture_html() -> &'static str {
         </section>
         <div class="detail-view" data-detail-view="concordance">
           <div class="kwic-region">
-            <header class="kwic-pane-header"><div class="kwic-filter-bar"><span class="kwic-pane-pattern">p</span><p class="kwic-filter-status" role="status" aria-live="polite"></p><button type="button" class="filter-chip" data-clear-surface-filter hidden>Clear surface filter</button><button type="button" class="btn btn-compact btn-secondary kwic-quick-toggle" data-quick-filter-toggle="surface" aria-expanded="false">Filter by surface (2)</button></div><nav class="kwic-pager" data-kwic-pager><button class="btn btn-secondary" data-page-previous>Previous</button><span data-page-status></span><button class="btn btn-secondary" data-page-next>Next</button><label>Rows per page<select data-page-size><option>50</option><option selected>100</option></select></label></nav><div class="kwic-quick-drawer" data-quick-filter-drawer="surface" hidden></div></header>
+            <header class="kwic-pane-header"><div class="kwic-filter-bar"><span class="kwic-pane-pattern">p</span><p class="kwic-filter-status" role="status" aria-live="polite"></p><button type="button" class="filter-chip" data-clear-surface-filter hidden>Clear surface filter</button><button type="button" class="btn btn-compact btn-secondary kwic-quick-toggle" data-quick-filter-toggle="surface" aria-expanded="false">Filter by surface (2)</button></div><nav class="kwic-pager" data-kwic-pager><button class="btn btn-secondary" data-page-previous>Previous</button><span data-page-status></span><button class="btn btn-secondary" data-page-next>Next</button><label>Rows<select data-page-size><option>50</option><option selected>100</option></select></label></nav><div class="kwic-quick-drawer" data-quick-filter-drawer="surface" hidden></div></header>
             <div class="kwic-container"><table class="kwic-concordance" role="grid" data-hit-grid data-kwic-pagination><thead><tr><th>#</th><th>Sentence</th></tr></thead><tbody>
               <tr class="kwic-row" role="row" aria-selected="false" tabindex="0" data-hit-ordinal="0" data-variation="0"><td>1</td><td class="kwic-sentence-cell"><span class="kwic-sentence" lang="ja">a0</span></td></tr>
               <tr class="kwic-row" role="row" aria-selected="false" tabindex="-1" data-hit-ordinal="1" data-variation="0"><td>2</td><td class="kwic-sentence-cell"><span class="kwic-sentence" lang="ja">a1</span></td></tr>
@@ -451,6 +1073,114 @@ enum FormatMode {
     Real,
 }
 
+fn dendrogram_fixture_html() -> String {
+    use askama::Template;
+    use lingrep_web::section_dendrogram::{
+        DendrogramLeaf, DendrogramLink, DendrogramTick, SectionDendrogram,
+    };
+    #[derive(Template)]
+    #[template(
+        source = r#"{% import "macros.html" as macros %}<!doctype html><html lang="en"><head>
+<link rel="stylesheet" href="/assets/app.css"></head><body><main>
+{% call macros::dendrogram_plot(tree, "fixture-tree", "results.cluster_aria", "Fixture dendrogram") %}{% endcall %}
+</main><script type="module" src="/assets/results-explorer.js"></script></body></html>"#,
+        ext = "html"
+    )]
+    struct Fixture {
+        tree: SectionDendrogram,
+    }
+    Fixture {
+        tree: SectionDendrogram {
+            leaves: vec![
+                DendrogramLeaf {
+                    key: 0,
+                    name: "ことができる".into(),
+                    label: "ことができる".into(),
+                    y: 22,
+                    label_x: 112,
+                    leaf_x: 120,
+                },
+                DendrogramLeaf {
+                    key: 1,
+                    name: "だろう".into(),
+                    label: "だろう".into(),
+                    y: 44,
+                    label_x: 112,
+                    leaf_x: 120,
+                },
+            ],
+            links: vec![DendrogramLink {
+                points: "120,22 320,22 320,44 120,44".into(),
+                distance_label: "1.00".into(),
+                leaves: 2,
+            }],
+            ticks: vec![DendrogramTick {
+                x: 120,
+                label: "0".into(),
+            }],
+            width: 440,
+            height: 100,
+            axis_y: 66,
+            tick_y: 71,
+            tick_label_y: 83,
+            entities_without_observations: 0,
+            insufficient_evidence: false,
+            max_distance_label: "1.00".into(),
+            degenerate: false,
+        },
+    }
+    .render()
+    .unwrap()
+}
+
+fn header_help_fixture_html() -> String {
+    use askama::Template;
+    lingrep_web::templates::IndexPage {
+        search_scope: Default::default(),
+        corpora: vec![],
+        workbench_id: "header-fixture".into(),
+        current_page: "corpus",
+        seed_pattern: String::new(),
+        auto_run: false,
+        run_when_ready: false,
+        link_banner: None,
+        link_notice: None,
+        corpus_context: lingrep_web::corpus_context::CorpusContextView::ready(
+            "Fixture".into(),
+            "fixture-digest".into(),
+            10,
+            1,
+            vec![],
+        ),
+        catalog_keys: vec![],
+        retained_options: vec![100],
+        retained_default: 100,
+    }
+    .render()
+    .unwrap()
+}
+
+fn feedback_fixture_html() -> &'static str {
+    r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/app.css"></head><body>
+<main>
+<form data-corpus-search><button type="button" id="primary" class="btn btn-primary">Search</button>
+<button type="button" id="secondary" class="btn btn-secondary">Copy</button>
+<button type="button" id="plain">Plain control</button></form>
+<div id="search-status"></div>
+<section id="results" aria-busy="false"><div class="detail-panel">
+<header id="catalog-band" style="height:160px">Catalog distributions</header>
+<section id="detail-body" aria-busy="false"><article class="pattern-detail" data-pattern-id="0" style="height:2500px">
+<button type="button" class="pattern-selector">Pattern</button>
+<table><tbody><tr class="kwic-row"><td>Pending hit</td></tr></tbody></table>
+<mark class="kwic-key">match</mark><button type="button" class="kwic-token kwic-token-match">match</button>
+</article></section></div></section>
+<section data-sample-workspace><form class="sample-form"><textarea class="sample-input">sample</textarea>
+<p data-sample-status></p></form><div id="sample-results" aria-busy="false">Sample results</div></section>
+<aside><div id="inspector-body" class="inspector-dock-body" aria-busy="false">Inspector</div></aside>
+</main><script type="module" src="/assets/results-explorer.js"></script></body></html>"#
+}
+
 async fn fixture_server() -> FixtureServer {
     fixture_server_with(FormatMode::Echo).await
 }
@@ -473,8 +1203,14 @@ async fn fixture_server_with(format_mode: FormatMode) -> FixtureServer {
                 async move { Html(html) }
             }),
         )
+        .route("/feedback", get(|| async { Html(feedback_fixture_html()) }))
         .route("/provenance", get(|| async { Html(provenance_fixture_html()) }))
         .route("/band", get(|| async { Html(band_fixture_html()) }))
+        .route("/header-help", get(|| async { Html(header_help_fixture_html()) }))
+        .route("/assets/app.js", get(|| async {
+            ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], include_str!("../../assets/app.js"))
+        }))
+        .route("/dendrogram", get(|| async { Html(dendrogram_fixture_html()) }))
         .route("/tabs", get(|| async { Html(tabs_fixture_html()) }))
         .route("/explorer", get(|| async { Html(explorer_fixture_html()) }))
         .route("/editor", get(|| async { Html(editor_fixture_html()) }))
@@ -630,14 +1366,19 @@ async fn driver_available(url: &str) -> bool {
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))
         .unwrap_or(url);
-    tokio::net::TcpStream::connect(address).await.is_ok()
+    let available = tokio::net::TcpStream::connect(address).await.is_ok();
+    assert!(
+        available || std::env::var_os("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_none(),
+        "required Chromedriver is unavailable at {url}"
+    );
+    available
 }
 
 async fn wait_for_selector(driver: &WebDriver, selector: &str) -> WebDriverResult<()> {
     for _ in 0..100 {
         let exists: bool = driver
             .execute(
-                "return document.querySelector(arguments[0]) !== null",
+                "const element = document.querySelector(arguments[0]); return !!element && !element.closest('.htmx-settling, .htmx-added')",
                 vec![serde_json::to_value(selector)?],
             )
             .await?
@@ -682,9 +1423,9 @@ return 'pending';
     ))
 }
 
-async fn emulate_color_scheme(tools: &ChromeDevTools, scheme: &str) -> WebDriverResult<()> {
+async fn emulate_color_scheme(tools: &Cdp, scheme: &str) -> WebDriverResult<()> {
     tools
-        .execute_cdp_with_params(
+        .send_raw(
             "Emulation.setEmulatedMedia",
             json!({
                 "features": [{
@@ -804,7 +1545,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
             .await?
             .text()
             .await?,
-        "Page 1 of 10"
+        "1 / 10"
     );
     let previous_disabled: (bool, String, String, String, String, String) = driver
         .execute(
@@ -887,7 +1628,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
             .await?
             .text()
             .await?,
-        "Page 2 of 10"
+        "2 / 10"
     );
     driver
         .find(By::Css("[data-kwic-pager] [data-page-previous]"))
@@ -931,7 +1672,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
         .await?;
     let filtered_page_reset: bool = driver
         .execute(
-            r#"const visible=[...document.querySelectorAll('.kwic-row')].filter((row)=>!row.hidden);return document.querySelector('[data-page-status]').textContent==='Page 1 of 5'&&visible.length===100&&visible[0].dataset.hitOrdinal==='2';"#,
+            r#"const visible=[...document.querySelectorAll('.kwic-row')].filter((row)=>!row.hidden);return document.querySelector('[data-page-status]').textContent==='1 / 5'&&visible.length===100&&visible[0].dataset.hitOrdinal==='2';"#,
             vec![],
         )
         .await?
@@ -1302,6 +2043,23 @@ return {
     );
     assert!(dock_wide.1, "explorer must carry inspector-open while open");
     assert!(dock_wide.2, "open inspector re-homed into the wide dock");
+    for width in [1_024, 1_152, 1_280, 1_440] {
+        driver.set_window_rect(0, 0, width, 900).await?;
+        let pager_within_column: bool = driver
+            .execute(
+                r#"await new Promise(resolve => requestAnimationFrame(resolve));
+                const pager = document.querySelector('.kwic-pager');
+                const dock = document.getElementById('inspector-dock').getBoundingClientRect();
+                return [...pager.children].every(child => child.getBoundingClientRect().right <= dock.left);"#,
+                vec![],
+            )
+            .await?
+            .convert()?;
+        assert!(
+            pager_within_column,
+            "pager overlaps the inspector at {width}px"
+        );
+    }
     let tracking: (f64, f64, f64, f64) = driver
         .execute(
             r#"document.querySelector('.kwic-row[data-hit-ordinal="40"]').scrollIntoView({block:'center'});return [document.querySelector('.pattern-rail').getBoundingClientRect().top,document.getElementById('inspector-dock').getBoundingClientRect().top,document.querySelector('.kwic-pane-header').getBoundingClientRect().top,document.documentElement.scrollWidth-document.documentElement.clientWidth];"#,
@@ -1576,7 +2334,7 @@ async fn editor_chrome_follows_light_and_dark_palette() -> WebDriverResult<()> {
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
     let driver = WebDriver::new(&driver_url, capabilities).await?;
-    let tools = ChromeDevTools::new(driver.handle.clone());
+    let tools = driver.cdp();
 
     for scheme in ["dark", "light"] {
         eprintln!("editor-chrome-e2e: apply {scheme} scheme");
@@ -2949,6 +3707,90 @@ async fn detail_views_are_exclusive_and_surface_search_lives_with_the_definition
         .await?
         .convert()?;
     assert_eq!(quick_filtered, (1, true));
+    let filter_states: Vec<(usize, String, String, String, String, String)> = driver.execute(
+        r#"const detail=document.querySelector('.pattern-detail');
+        const header=detail.querySelector('.kwic-pane-header');
+        header.insertAdjacentHTML('beforeend','<button data-quick-filter-toggle="section">Sections</button><div data-quick-filter-drawer="section" hidden></div><button data-clear-section-filter>Clear section</button>');
+        detail.querySelector('.section-overview').insertAdjacentHTML('beforeend','<li><button class="section-filter" data-section="none" aria-pressed="false"><span class="section-label">(no section)</span></button></li>');
+        detail.insertAdjacentHTML('beforeend','<button class="occurrence-filter" data-occurrence="all" aria-pressed="true">All</button><button class="occurrence-filter" data-occurrence="standalone" aria-pressed="false">Standalone</button><button class="occurrence-filter" data-occurrence="chained" aria-pressed="false">Chained</button>');
+        for(const [index,row] of [...detail.querySelectorAll('.kwic-row')].entries()) {
+          row.dataset.sectionIds=index===1?'':'0';row.dataset.inChain=String(index>0);
+        }
+        const click=selector=>document.querySelector(selector).click();
+        const states=[];
+        const record=()=>states.push([
+          document.querySelectorAll('.kwic-row:not([hidden])').length,
+          document.querySelector('.surface-filter[aria-pressed="true"]')?.dataset.variation??'all',
+          document.querySelector('[data-quick-variation][aria-pressed="true"]')?.dataset.quickVariation??'all',
+          document.querySelector('.section-filter[aria-pressed="true"]')?.dataset.section??'all',
+          document.querySelector('[data-quick-section][aria-pressed="true"]')?.dataset.quickSection??'all',
+          document.querySelector('.occurrence-filter[aria-pressed="true"]')?.dataset.occurrence??'all'
+        ]);
+        click('[data-quick-variation="1"]');record();
+        click('.surface-filter[data-variation="0"]');record();
+        click('[data-clear-surface-filter]');record();
+        click('[data-quick-filter-toggle="section"]');
+        click('[data-quick-section="0"]');record();
+        click('[data-quick-variation="1"]');record();
+        click('[data-clear-section-filter]');record();
+        click('.surface-filter[data-variation="1"]');
+        click('[data-quick-section="none"]');record();
+        click('[data-quick-section="none"]');record();
+        click('[data-quick-variation="1"]');click('[data-quick-section="0"]');
+        click('[data-occurrence="chained"]');click('[data-occurrence="chained"]');record();
+        const target=document.querySelector('#detail-body');
+        document.dispatchEvent(new CustomEvent('htmx:beforeRequest',{detail:{elt:document.querySelector('.pattern-selector')}}));
+        const replacement=target.firstElementChild.cloneNode(true);
+        for(const button of replacement.querySelectorAll('[aria-pressed]'))button.setAttribute('aria-pressed',String(button.dataset.occurrence==='all'));
+        target.replaceChildren(replacement);
+        document.dispatchEvent(new CustomEvent('htmx:afterSwap',{detail:{target}}));record();
+        return states;"#,
+        vec![],
+    ).await?.convert()?;
+    let expected = [
+        (3, "all", "all", "all", "all", "all"),
+        (2, "0", "0", "all", "all", "all"),
+        (3, "all", "all", "all", "all", "all"),
+        (2, "all", "all", "0", "0", "all"),
+        (1, "1", "1", "0", "0", "all"),
+        (1, "1", "1", "all", "all", "all"),
+        (1, "all", "all", "none", "none", "all"),
+        (3, "all", "all", "all", "all", "all"),
+        (1, "1", "1", "0", "0", "chained"),
+        (1, "1", "1", "0", "0", "chained"),
+    ]
+    .map(
+        |(count, surface, quick_surface, section, quick_section, occurrence)| {
+            (
+                count,
+                surface.to_owned(),
+                quick_surface.to_owned(),
+                section.to_owned(),
+                quick_section.to_owned(),
+                occurrence.to_owned(),
+            )
+        },
+    );
+    assert_eq!(filter_states, expected);
+    driver.execute(
+        r#"document.querySelector('[data-detail-tabs]').insertAdjacentHTML('beforeend', '<button type="button" role="tab" data-detail-tab="chains">Chains</button>');
+        document.querySelector('.pattern-detail').insertAdjacentHTML('beforeend', '<section class="detail-view chain-panel" data-detail-view="chains" hidden><h3>Chains</h3><p>Before p: neighbour</p></section>');"#,
+        vec![],
+    ).await?;
+    for width in [320, 1440] {
+        driver.set_window_rect(0, 0, width, 900).await?;
+        driver
+            .find(By::Css("[data-detail-tab=concordance]"))
+            .await?
+            .click()
+            .await?;
+        driver
+            .find(By::Css("[data-detail-tab=chains]"))
+            .await?
+            .click()
+            .await?;
+        assert_eq!(displayed_views(&driver).await?, "chains");
+    }
     driver.quit().await
 }
 
@@ -3122,6 +3964,7 @@ fn provenance_fixture_html() -> String {
     );
     for ordinal in 0..2 {
         html.push_str(&HitDetailFragment {
+        overlaps: Vec::new(),
             reference_ordinal: ordinal, workbench_id: "wb", revision: 1, pattern_key: 0,
             id_prefix: format!("provenance-{ordinal}"), tokens: Vec::new(), capture_lanes: Vec::new(), captures: Vec::new(), graph_bindings: Vec::new(),
             provenance: Some(HitProvenance {
@@ -3186,4 +4029,609 @@ async fn provenance_grains_render_separately_and_escape_metadata() -> WebDriverR
     assert!(driver.find_all(By::Css("img, script")).await?.is_empty());
     driver.quit().await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn dendrogram_rotates_and_enters_and_leaves_fullscreen() -> WebDriverResult<()> {
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver.set_window_rect(0, 0, 1100, 800).await?;
+    driver
+        .goto(format!("{}/dendrogram", fixture.address))
+        .await?;
+    wait_for_selector(&driver, "[data-dendrogram-orientation]").await?;
+    let orientation = driver
+        .find(By::Css("[data-dendrogram-orientation]"))
+        .await?;
+    let select = thirtyfour::components::SelectElement::new(&orientation).await?;
+    select.select_by_value("vertical").await?;
+    let geometry: (String, String, usize) = driver.execute(
+        "const svg = document.querySelector('.section-dendrogram'); return [svg.getAttribute('viewBox'), svg.querySelector('g').getAttribute('transform'), svg.querySelectorAll('.dendrogram-label').length];",
+        vec![],
+    ).await?.convert()?;
+    assert_eq!(
+        geometry,
+        (
+            "0 0 100 440".into(),
+            "translate(0 440) rotate(-90)".into(),
+            2
+        )
+    );
+    let fullscreen = driver.find(By::Css("[data-dendrogram-fullscreen]")).await?;
+    fullscreen.click().await?;
+    driver
+        .query(By::Css("[data-dendrogram-view]:fullscreen"))
+        .first()
+        .await?;
+    let fills_viewport: bool = driver.execute(
+        "const box = document.fullscreenElement.getBoundingClientRect(); return Math.abs(box.width - innerWidth) < 2 && Math.abs(box.height - innerHeight) < 2;",
+        vec![],
+    ).await?.convert()?;
+    assert!(fills_viewport);
+    select.select_by_value("horizontal").await?;
+    let horizontal: (String, bool) = driver.execute(
+        "const svg = document.querySelector('.section-dendrogram'); return [svg.getAttribute('viewBox'), svg.querySelector('g').hasAttribute('transform')];",
+        vec![],
+    ).await?.convert()?;
+    assert_eq!(horizontal, ("0 0 440 100".into(), false));
+    fullscreen.click().await?;
+    assert!(
+        driver
+            .query(By::Css("[data-dendrogram-view]:fullscreen"))
+            .not_exists()
+            .await?
+    );
+    let active: bool = driver
+        .execute("return !!document.fullscreenElement;", vec![])
+        .await?
+        .convert()?;
+    assert!(!active);
+    driver.execute(
+        "document.querySelector('[data-dendrogram-view]').requestFullscreen = () => Promise.reject(new Error('blocked'));",
+        vec![],
+    ).await?;
+    fullscreen.click().await?;
+    driver
+        .query(By::Css("[data-dendrogram-status]"))
+        .with_text("Full screen is unavailable in this browser.")
+        .first()
+        .await?;
+    assert_eq!(
+        fullscreen.attr("aria-pressed").await?.as_deref(),
+        Some("false")
+    );
+    driver.quit().await
+}
+
+#[tokio::test]
+async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -> WebDriverResult<()>
+{
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver
+        .goto(format!("{}/header-help", fixture.address))
+        .await?;
+    assert!(
+        driver
+            .find(By::Css(".site-nav a[href='help']"))
+            .await
+            .is_ok()
+    );
+    for locale in ["en", "ja"] {
+        let current: Option<String> = driver
+            .execute(
+                "return document.documentElement.dataset.locale ?? null;",
+                vec![],
+            )
+            .await?
+            .convert()?;
+        if current.as_deref().unwrap_or("en") != locale {
+            driver
+                .find(By::Css("[data-locale-toggle]"))
+                .await?
+                .click()
+                .await?;
+        }
+        if locale == "ja" {
+            driver
+                .query(By::Css("html[data-locale='ja']"))
+                .first()
+                .await?;
+        }
+        for width in [320, 768, 1440] {
+            driver.set_window_rect(0, 0, width, 900).await?;
+            let clipped: Vec<String> = driver.execute(
+                "return [...document.querySelectorAll('.site-nav a, .site-nav button')].filter(el => {const r = el.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth + 1;}).map(el => el.textContent || el.getAttribute('aria-label'));",
+                vec![],
+            ).await?.convert()?;
+            assert!(
+                clipped.is_empty(),
+                "clipped header controls at {width}px/{locale}: {clipped:?}"
+            );
+            let help = driver.find(By::Css("[data-site-help-open]")).await?;
+            let before_url = driver.current_url().await?;
+            help.click().await?;
+            wait_for_selector(&driver, "[data-site-help][open]").await?;
+            let fills_viewport: bool = driver.execute("const dialog=document.querySelector('[data-site-help]');const box=dialog.getBoundingClientRect();return Math.abs(box.width-innerWidth)<2&&Math.abs(box.height-innerHeight)<2&&dialog.scrollWidth<=dialog.clientWidth&&document.querySelector('.site-help-content').scrollWidth<=document.querySelector('.site-help-content').clientWidth;", vec![]).await?.convert()?;
+            assert!(
+                fills_viewport,
+                "Help must fill the viewport without horizontal overflow at {width}px/{locale}"
+            );
+            if width == 320 {
+                driver
+                    .screenshot(
+                        &std::env::temp_dir().join(format!("lingrep-help-{locale}-320.png")),
+                    )
+                    .await?;
+            }
+            driver
+                .find(By::Css("[data-site-help-close]"))
+                .await?
+                .send_keys(Key::Escape)
+                .await?;
+            assert!(
+                driver
+                    .query(By::Css("[data-site-help][open]"))
+                    .not_exists()
+                    .await?
+            );
+            assert_eq!(driver.current_url().await?, before_url);
+            assert!(
+                driver
+                    .execute(
+                        "return document.activeElement.matches('[data-site-help-open]')",
+                        vec![]
+                    )
+                    .await?
+                    .convert::<bool>()?
+            );
+            help.click().await?;
+            driver
+                .find(By::Css("[data-site-help-close]"))
+                .await?
+                .click()
+                .await?;
+            assert!(
+                driver
+                    .query(By::Css("[data-site-help][open]"))
+                    .not_exists()
+                    .await?
+            );
+            let opener = driver
+                .find(By::Css(".site-nav [data-editor-help-open]"))
+                .await?;
+            let compact: bool = driver.execute("return document.querySelector('[data-editor-help-open]').getBoundingClientRect().width <= 40;", vec![]).await?.convert()?;
+            assert!(compact);
+            opener.click().await?;
+            driver
+                .query(By::Css("dialog[data-editor-help][open]"))
+                .first()
+                .await?;
+            driver
+                .find(By::Css("[data-editor-help-close]"))
+                .await?
+                .send_keys(Key::Escape)
+                .await?;
+            assert!(
+                driver
+                    .query(By::Css("dialog[data-editor-help][open]"))
+                    .not_exists()
+                    .await?
+            );
+            let restored: bool = driver
+                .execute(
+                    "return document.activeElement.matches('[data-editor-help-open]');",
+                    vec![],
+                )
+                .await?
+                .convert()?;
+            assert!(restored);
+            opener.click().await?;
+            driver
+                .find(By::Css("[data-editor-help-close]"))
+                .await?
+                .click()
+                .await?;
+            assert!(
+                driver
+                    .query(By::Css("dialog[data-editor-help][open]"))
+                    .not_exists()
+                    .await?
+            );
+        }
+    }
+    driver.quit().await
+}
+
+#[tokio::test]
+async fn kwic_sort_orders_all_retained_pages_and_keeps_filtered_hit_identity() -> WebDriverResult<()>
+{
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver.set_window_rect(0, 0, 1440, 900).await?;
+    driver.goto(&fixture.address).await?;
+    wait_for_selector(&driver, ".results-enhanced").await?;
+    driver.execute("const direction=document.querySelector('[data-kwic-sort-direction]');direction.value='descending';direction.dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
+    let first_visible = || async {
+        driver.execute("return [...document.querySelectorAll('.kwic-row')].find(row=>!row.hidden).dataset.hitOrdinal", vec![]).await?.convert::<String>()
+    };
+    assert_eq!(first_visible().await?, "999");
+    driver
+        .find(By::Css("[data-page-next]"))
+        .await?
+        .click()
+        .await?;
+    assert_eq!(first_visible().await?, "899");
+    driver
+        .find(By::Css(".surface-filter"))
+        .await?
+        .click()
+        .await?;
+    assert_eq!(first_visible().await?, "999");
+    driver
+        .find(By::Css(".kwic-row[data-hit-ordinal='999']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, ".hit-detail[data-reference-ordinal='999']").await?;
+    driver.execute("const direction=document.querySelector('[data-kwic-sort-direction]');direction.value='ascending';direction.dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
+    assert_eq!(first_visible().await?, "2");
+    for width in [320, 1440] {
+        driver.set_window_rect(0, 0, width, 900).await?;
+        assert!(
+            driver
+                .execute(
+                    "return document.documentElement.scrollWidth<=innerWidth",
+                    vec![]
+                )
+                .await?
+                .convert::<bool>()?
+        );
+    }
+    driver.quit().await
+}
+
+#[tokio::test]
+async fn kwic_pending_requests_preserve_rollback_paging_and_pattern_restore() -> WebDriverResult<()>
+{
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    driver.set_window_rect(0, 0, 1440, 900).await?;
+    driver.goto(&fixture.address).await?;
+    wait_for_selector(&driver, ".results-enhanced").await?;
+    driver.execute(r#"
+const detail = document.querySelector('.pattern-detail');
+window.freshDetail = detail.outerHTML;
+const body = document.createElement('div'); body.id = 'detail-body';
+detail.before(body); body.append(detail);
+const selector = document.createElement('button'); selector.className = 'pattern-selector';
+document.querySelector('.pattern-rail').append(selector);
+window.pendingHits = [];
+document.addEventListener('hit-select', event => {
+  event.stopImmediatePropagation();
+  const request = {row: event.target, aborted: false};
+  request.row.addEventListener('htmx:abort', () => {request.aborted = true}, {once: true});
+  pendingHits.push(request);
+}, true);
+window.deliverHit = index => {
+  const request = pendingHits[index];
+  if (request.aborted) return false;
+  const target = document.getElementById('inspector-body');
+  target.innerHTML = `<article class="hit-detail" data-reference-ordinal="${request.row.dataset.hitOrdinal}">hit ${index}</article>`;
+  document.dispatchEvent(new CustomEvent('htmx:afterSwap', {detail: {target}}));
+  return true;
+};
+window.failHit = index => pendingHits[index].row.dispatchEvent(new CustomEvent('htmx:responseError', {
+  bubbles: true, detail: {elt: pendingHits[index].row, target: document.getElementById('inspector-body')}
+}));
+window.selectHit = ordinal => document.querySelector(`.kwic-row[data-hit-ordinal="${ordinal}"]`).click();
+window.swapPattern = id => {
+  document.dispatchEvent(new CustomEvent('htmx:beforeRequest', {detail: {elt: selector}}));
+  body.innerHTML = freshDetail;
+  body.querySelector('.pattern-detail').dataset.patternId = id;
+  document.dispatchEvent(new CustomEvent('htmx:afterSwap', {detail: {target: body}}));
+};
+window.disconnectedMeasurements = 0;
+window.disconnectedResizeObservers = new Set();
+for (const type of [IntersectionObserver, ResizeObserver]) {
+  const disconnect = type.prototype.disconnect;
+  type.prototype.disconnect = function() {
+    if (this instanceof IntersectionObserver) disconnectedMeasurements++;
+    else disconnectedResizeObservers.add(this);
+    return disconnect.call(this);
+  };
+}
+selectHit('0'); deliverHit(0); selectHit('1'); failHit(1);
+return document.querySelector('.kwic-row[aria-selected="true"]').dataset.hitOrdinal;
+"#, vec![]).await?.convert::<String>().map(|ordinal| assert_eq!(ordinal, "0"))?;
+    driver.execute("selectHit('2')", vec![]).await?;
+    driver.set_window_rect(0, 0, 600, 900).await?;
+    wait_for_selector(&driver, ".kwic-inspector-row").await?;
+    assert!(driver.execute("return document.querySelector('.kwic-inspector-row')?.previousElementSibling.dataset.hitOrdinal === '2' && document.querySelector('#inspector-body').getAttribute('aria-busy') === 'true'", vec![]).await?.convert::<bool>()?);
+    driver
+        .execute(
+            r#"
+const direction = document.querySelector('[data-kwic-sort-direction]');
+direction.value = 'descending'; direction.dispatchEvent(new Event('change', {bubbles: true}));
+"#,
+            vec![],
+        )
+        .await?;
+    assert!(driver.execute("return pendingHits[2].aborted && !deliverHit(2) && !document.querySelector('.kwic-row[aria-selected=\"true\"]') && !document.querySelector('.kwic-inspector-row') && document.querySelector('#inspector-body').parentElement.id === 'inspector-dock'", vec![]).await?.convert::<bool>()?);
+    driver
+        .execute(
+            "document.querySelector('[data-page-next]').click(); selectHit('899')",
+            vec![],
+        )
+        .await?;
+    driver.set_window_rect(0, 0, 1440, 900).await?;
+    driver
+        .execute("swapPattern('1'); failHit(3)", vec![])
+        .await?;
+    assert!(driver.execute("return pendingHits[3].aborted && !deliverHit(3) && disconnectedMeasurements === 1 && disconnectedResizeObservers.size === 2 && !document.querySelector('.kwic-row[aria-selected=\"true\"]')", vec![]).await?.convert::<bool>()?);
+    driver.execute("swapPattern('0')", vec![]).await?;
+    assert!(driver.execute("return document.querySelector('[data-kwic-sort-direction]').value === 'descending' && [...document.querySelectorAll('.kwic-row')].find(row => !row.hidden).dataset.hitOrdinal === '899' && pendingHits.at(-1).row.dataset.hitOrdinal === '899' && disconnectedMeasurements === 2 && disconnectedResizeObservers.size === 3", vec![]).await?.convert::<bool>()?);
+    driver
+        .execute("deliverHit(pendingHits.length - 1)", vec![])
+        .await?;
+    assert!(driver.execute("return document.querySelector('.hit-detail').dataset.referenceOrdinal === '899' && document.querySelector('#inspector-body').getAttribute('aria-busy') === 'false'", vec![]).await?.convert::<bool>()?);
+    driver.execute("document.querySelector('[data-inspector-close]').click(); selectHit('898'); failHit(pendingHits.length - 1)", vec![]).await?;
+    assert!(driver.execute("return document.querySelector('[data-retry-hit]').dataset.retryHit === '898' && document.querySelector('.kwic-row[aria-selected=\"true\"]').dataset.hitOrdinal === '898' && document.querySelector('#inspector-body').getAttribute('aria-busy') === 'false'", vec![]).await?.convert::<bool>()?);
+    driver.quit().await
+}
+
+#[tokio::test]
+async fn controls_display_focus_pressed_disabled_and_match_styles() -> WebDriverResult<()> {
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+    driver.goto(format!("{}/feedback", fixture.address)).await?;
+    driver.action_chain().send_keys(Key::Tab).perform().await?;
+    let primary = driver.find(By::Id("primary")).await?;
+    assert!(driver.execute("return document.activeElement.id==='primary'&&document.activeElement.matches(':focus-visible')", vec![]).await?.convert::<bool>()?);
+    assert_eq!(primary.css_value("outline-style").await?, "solid");
+    assert!(
+        primary
+            .css_value("outline-width")
+            .await?
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .unwrap()
+            > 0.0
+    );
+    for id in ["primary", "secondary"] {
+        let button = driver.find(By::Id(id)).await?;
+        driver.action_chain().move_to(0, 0).perform().await?;
+        let normal = button.css_value("background-color").await?;
+        driver
+            .action_chain()
+            .move_to_element_center(&button)
+            .perform()
+            .await?;
+        let hovered = button.css_value("background-color").await?;
+        assert_ne!(normal, hovered, "{id} hover has no visible feedback");
+        driver
+            .action_chain()
+            .click_and_hold_element(&button)
+            .perform()
+            .await?;
+        let pressed = button.css_value("background-color").await?;
+        driver.action_chain().release().perform().await?;
+        assert_ne!(
+            hovered, pressed,
+            "{id} pressed state has no visible feedback"
+        );
+        driver
+            .execute(
+                "document.getElementById(arguments[0]).disabled=true",
+                vec![id.into()],
+            )
+            .await?;
+        assert_eq!(button.css_value("cursor").await?, "default");
+        assert!(button.css_value("opacity").await?.parse::<f64>().unwrap() < 1.0);
+        let disabled = button.css_value("background-color").await?;
+        driver
+            .action_chain()
+            .click_and_hold_element(&button)
+            .perform()
+            .await?;
+        assert_eq!(button.css_value("background-color").await?, disabled);
+        driver.action_chain().release().perform().await?;
+    }
+    assert_ne!(
+        driver
+            .find(By::Id("plain"))
+            .await?
+            .css_value("padding")
+            .await?,
+        primary.css_value("padding").await?
+    );
+    let request_highlights: Vec<bool> = driver.execute(r#"
+return ['.pattern-selector','.kwic-row'].map(selector=>{
+ const trigger=document.querySelector(selector), painted=trigger.querySelector('td')??trigger;
+ const previous=getComputedStyle(painted).backgroundColor;trigger.classList.add('htmx-request');
+ const style=getComputedStyle(painted);return style.cursor==='progress'&&style.backgroundColor!==previous&&style.boxShadow!=='none';
+});
+"#, vec![]).await?.convert()?;
+    assert_eq!(request_highlights, [true; 2]);
+    let tools = driver.cdp();
+    for scheme in ["light", "dark"] {
+        emulate_color_scheme(&tools, scheme).await?;
+        let key = driver.find(By::Css(".kwic-key")).await?;
+        let token = driver.find(By::Css(".kwic-token-match")).await?;
+        for property in ["color", "background-color", "border-bottom-color"] {
+            assert_eq!(
+                key.css_value(property).await?,
+                token.css_value(property).await?,
+                "{scheme} {property}"
+            );
+        }
+        assert_ne!(
+            key.css_value("color").await?,
+            key.css_value("background-color").await?
+        );
+        assert_eq!(key.css_value("border-bottom-style").await?, "solid");
+        let contained: bool = driver.execute("const input=document.querySelector('.sample-input');return input.getBoundingClientRect().width<=input.parentElement.getBoundingClientRect().width&&input.getBoundingClientRect().width>0", vec![]).await?.convert()?;
+        assert!(contained, "sample input overflows in {scheme}");
+    }
+        Ok::<(), WebDriverError>(())
+    }).catch_unwind().await;
+    let quit = driver.quit().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            quit
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+#[tokio::test]
+async fn request_feedback_clears_after_swaps_and_errors_and_respects_reduced_motion()
+-> WebDriverResult<()> {
+    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
+    if !driver_available(&driver_url).await {
+        return Ok(());
+    }
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let outcome = std::panic::AssertUnwindSafe(async {
+    driver.goto(format!("{}/feedback", fixture.address)).await?;
+    let cases = [
+        ("form[data-corpus-search]", "#results", "htmx:oobAfterSwap"),
+        (".sample-form", "#sample-results", "htmx:afterSwap"),
+        (".pattern-selector", "#detail-body", "htmx:afterSwap"),
+    ];
+    for (trigger, target, completion) in cases {
+        let visible: bool = driver
+            .execute(
+                r#"
+const elt=document.querySelector(arguments[0]), target=document.querySelector(arguments[1]);
+document.dispatchEvent(new CustomEvent('htmx:beforeRequest',{detail:{elt}}));
+return target.getAttribute('aria-busy')==='true'&&getComputedStyle(target).backgroundImage!=='none';
+"#,
+                vec![trigger.into(), target.into()],
+            )
+            .await?
+            .convert()?;
+        assert!(visible, "no loading indicator for {target}");
+        if target == "#detail-body" {
+            assert!(driver.execute("return document.querySelector('#detail-body').firstElementChild.inert&&getComputedStyle(document.querySelector('#detail-body')).cursor==='progress'", vec![]).await?.convert::<bool>()?);
+        }
+        let cleared: bool = driver.execute(r#"
+const target=document.querySelector(arguments[0]);
+document.dispatchEvent(new CustomEvent(arguments[1],{detail:{target}}));
+return target.getAttribute('aria-busy')==='false'&&getComputedStyle(target).backgroundImage==='none'&&!target.firstElementChild?.inert;
+"#, vec![target.into(), completion.into()]).await?.convert()?;
+        assert!(cleared, "loading indicator persists for {target}");
+        for error in ["htmx:responseError", "htmx:sendError"] {
+            let failed: bool = driver.execute(r#"
+const elt=document.querySelector(arguments[0]), target=document.querySelector(arguments[1]);
+document.dispatchEvent(new CustomEvent('htmx:beforeRequest',{detail:{elt}}));
+document.dispatchEvent(new CustomEvent(arguments[2],{detail:{elt}}));
+return target.getAttribute('aria-busy')==='false'&&getComputedStyle(target).backgroundImage==='none';
+"#, vec![trigger.into(), target.into(), error.into()]).await?.convert()?;
+            assert!(failed, "{error} leaves {target} busy");
+        }
+    }
+    let moving_bars: Vec<bool> = driver.execute(r#"
+return ['#results','#detail-body','#sample-results','#inspector-body'].map(selector=>{
+ const target=document.querySelector(selector);target.setAttribute('aria-busy','true');
+ const style=getComputedStyle(target);return style.animationName!=='none'&&style.backgroundImage!=='none';
+});
+"#, vec![]).await?.convert()?;
+    assert_eq!(moving_bars, [true; 4]);
+    let tools = driver.cdp();
+    tools
+        .send_raw(
+            "Emulation.setEmulatedMedia",
+            json!({"features":[{"name":"prefers-reduced-motion","value":"reduce"}]}),
+        )
+        .await?;
+    let static_bars: Vec<bool> = driver.execute(r#"
+return ['#results','#detail-body','#sample-results','#inspector-body'].map(selector=>{
+ const target=document.querySelector(selector);target.setAttribute('aria-busy','true');
+ const style=getComputedStyle(target);return style.animationName==='none'&&style.backgroundImage!=='none'&&style.backgroundSize==='100% 3px';
+});
+"#, vec![]).await?.convert()?;
+    assert_eq!(static_bars, [true; 4]);
+    driver.execute("for(const target of document.querySelectorAll('[aria-busy]'))target.setAttribute('aria-busy','false');document.querySelector('.pattern-detail').dataset.patternId='fresh';document.dispatchEvent(new CustomEvent('htmx:afterSwap',{detail:{target:document.querySelector('#detail-body')}}));", vec![]).await?;
+    for _ in 0..100 {
+        let top: f64 = driver
+            .execute(
+                "return document.querySelector('#catalog-band').getBoundingClientRect().top",
+                vec![],
+            )
+            .await?
+            .convert()?;
+        if top.abs() < 2.0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let catalog_visible: bool = driver.execute("const r=document.querySelector('#catalog-band').getBoundingClientRect();return r.top>=-2&&r.bottom<=innerHeight", vec![]).await?.convert()?;
+    assert!(
+        catalog_visible,
+        "first pattern visit scrolls past catalog information"
+    );
+        Ok::<(), WebDriverError>(())
+    }).catch_unwind().await;
+    let quit = driver.quit().await;
+    match outcome {
+        Ok(result) => {
+            result?;
+            quit
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }

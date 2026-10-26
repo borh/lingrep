@@ -362,7 +362,7 @@ pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 ///
 /// Revision 2 introduced bounded cumulative frontmatter. Revision 1 tags,
 /// including the historical untagged default `0`, must never be reused.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 3;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 4;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -782,7 +782,7 @@ impl<R: BufRead> DialectIterator<R> {
             Block::Frontmatter { .. } => {
                 if line.trim_end() == "---" {
                     self.block = Block::Body;
-                    let value = serde_yaml::from_str::<serde_json::Value>(&self.frontmatter)
+                    let value = serde_saphyr::from_str::<serde_json::Value>(&self.frontmatter)
                         .map_err(|error| {
                             self.at_line(format!("failed to parse YAML frontmatter: {error}"))
                         })?;
@@ -1085,7 +1085,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&3u32.to_le_bytes());
+        encoded.extend_from_slice(&4u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -1600,6 +1600,20 @@ mod reader_tests {
     fn frontmatter_never_reaches_the_corpus() {
         let markdown = "---\ntitle: SECRET TITLE\nauthor: SECRET AUTHOR\n---\n\n本文です。\n";
         assert_eq!(read_all(markdown, permissive()), ["本文です。"]);
+    }
+
+    #[test]
+    fn duplicate_frontmatter_keys_are_rejected() {
+        let error = read(
+            "---\ntitle: first\ntitle: second\n---\n本文です。\n",
+            permissive(),
+        )
+        .expect_err("duplicate YAML metadata key");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().to_lowercase().contains("duplicate"),
+            "{error}"
+        );
     }
 
     #[test]

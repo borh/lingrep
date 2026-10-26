@@ -119,11 +119,13 @@ for shell in "${shells[@]}"; do
         [[ $("$home/.local/bin/ling" --version) == "ling $version" ]] || fail "installed binary"
         [[ $(grep -c 'Added by the lingrep installer' "$home/.bashrc") == 1 ]] || fail "PATH line"
         grep -qx 'export PATH="$HOME/.local/bin:$PATH"' "$home/.bashrc" || fail "PATH line text"
+        printf '#!/bin/sh\necho "ling 0.0.1"\n' >"$home/.local/bin/ling"
         status=0
         env -i HOME="$home" SHELL=/bin/bash TMPDIR="$temporary" PATH="$stubs:$PATH" \
             TEST_RELEASE="$release" TEST_CURL_LOG="$temporary/curl.log" \
             TEST_UNAME_S=Linux TEST_UNAME_M=x86_64 "$shell" "$installer" >/dev/null 2>&1 || status=$?
         [[ $status == 0 && $(grep -c 'Added by the lingrep installer' "$home/.bashrc") == 1 ]] || fail "rerun duplicated the PATH line"
+        [[ $("$home/.local/bin/ling" --version) == "ling $version" ]] || fail "upgrade did not replace the previous binary"
     fi
 
     # Manual pages and completions go under the default XDG data directory.

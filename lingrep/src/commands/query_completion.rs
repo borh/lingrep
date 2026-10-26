@@ -68,7 +68,10 @@ impl CompletionObservation {
             } => Ok((
                 CompleteCorpus::Stdin {
                     stream_id,
-                    observed_content_digest: observation.observed_content_digest(),
+                    observed_content_digest: match filesystem {
+                        FilesystemCompletion::Full => observation.observed_content_digest(),
+                        FilesystemCompletion::PrefixUnavailable => None,
+                    },
                 },
                 None,
             )),

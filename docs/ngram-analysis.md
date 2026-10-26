@@ -17,9 +17,9 @@ Use `--corpus artifact.lingcorpus` in place of the input path and dictionary for
 a prepared-corpus run. The output's `pattern` column identifies the order:
 `unigram`, `bigram`, `trigram`, `fourgram`, or `fivegram`.
 
-Each key records `text` and `upos` separately for every token position. This
-preserves token boundaries even when a value contains punctuation or
-whitespace. Key publication is all-or-nothing: if either attribute is absent
+Each key records `text` and `upos` separately for every token position. These
+separate fields preserve token boundaries even when a value contains punctuation
+or whitespace. Key publication is all-or-nothing: if either attribute is absent
 on any token, that match contributes to `records_unkeyed` instead of a partial
 tuple. Use `ling coverage --patterns patterns/ngrams.lx ...` to check
 attribute coverage for a corpus or analyzer.

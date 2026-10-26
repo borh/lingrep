@@ -30,7 +30,7 @@ fn defaults_and_validation_are_explicit() {
             max_tokenized_bytes: DEFAULT_MAX_TOKENIZED_BYTES,
         }
     );
-    assert_eq!(DEFAULT_MAX_SENTENCE_BYTES, 64 * 1024);
+    assert_eq!(DEFAULT_MAX_SENTENCE_BYTES, DEFAULT_MAX_INPUT_RECORD_BYTES);
     // Wide enough that the byte cap below normally decides the retained batch.
     assert_eq!(DEFAULT_MAX_STAGE_SENTENCES, 2048);
     assert_eq!(DEFAULT_MAX_STAGE_INPUT_BYTES, 128 * 1024);
@@ -61,31 +61,11 @@ fn defaults_and_validation_are_explicit() {
     }
 
     let limits = ExecutionLimits {
-        max_stage_input_bytes: defaults.max_sentence_bytes - 1,
+        max_stage_input_bytes: 1,
+        max_input_record_bytes: 1,
         ..defaults
     };
-    assert!(matches!(
-        limits.validate(),
-        Err(ExecutionError::InvalidLimit {
-            field: "max_stage_input_bytes",
-            ..
-        })
-    ));
-
-    // A record holds at least one sentence, so the same rule binds the record
-    // bound. It lives here rather than in a caller so that every caller — both
-    // CLIs and any library consumer — gets it from one place.
-    let limits = ExecutionLimits {
-        max_input_record_bytes: defaults.max_sentence_bytes - 1,
-        ..defaults
-    };
-    assert!(matches!(
-        limits.validate(),
-        Err(ExecutionError::InvalidLimit {
-            field: "max_input_record_bytes",
-            ..
-        })
-    ));
+    assert!(limits.validate().is_ok());
 }
 
 /// The record bound scopes a document; the stage bound scopes a batch. They

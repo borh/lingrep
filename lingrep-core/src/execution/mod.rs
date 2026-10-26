@@ -48,3 +48,8 @@ pub use source::{
     SentenceBatchSource, SentenceLocation, TextIteratorSource, TokenizedAdmission,
     cached_run_attributes,
 };
+
+#[cfg(unix)]
+mod external_session;
+#[cfg(unix)]
+pub use external_session::ExternalAnalyzerSession;

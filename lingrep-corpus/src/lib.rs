@@ -64,12 +64,12 @@ pub use lingrep_core::corpus::{DocumentId, SentenceId};
 pub use lingrep_core::execution::SentenceLocation;
 pub use provenance::{
     ActiveRegion, BlockingProvenance, DivisionMetadataRow, DocumentMetadataRow, MAX_SECTION_LABELS,
-    ProvenanceView, RegionSpanRow, RichSentenceMetadata, RichSentenceProvenance, SectionCoverage,
-    StoredSentenceAnalysis, StoredSurfaceAlignment,
+    ParagraphRange, ProvenanceView, RegionSpanRow, RichSentenceMetadata, RichSentenceProvenance,
+    SectionCoverage, SentenceReadingRanges, StoredSentenceAnalysis, StoredSurfaceAlignment,
 };
 pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
     artifact_bytes, containing_directory, is_superseded, remove_superseded,
 };
-pub use tokens::PreparedSentenceSource;
+pub use tokens::{PreparedScopeStats, PreparedSentenceSource};
 pub use verify::{ComponentVerification, VerificationReport};

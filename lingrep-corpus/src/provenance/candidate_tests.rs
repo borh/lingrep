@@ -49,6 +49,37 @@ fn selected_layout_round_trips_exact_text_ranges_and_word_alignment() {
     assert_eq!(decode(&first).unwrap(), expected);
 }
 
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn bounded_decode_agrees_with_unbounded_decode_exactly_within_the_raw_limit(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let size = tc.draw(g::integers::<usize>()) % 4097;
+    let character = char::from_u32(tc.draw(g::integers::<u32>())).unwrap_or('\0');
+    let expected = vec![CandidateSentence {
+        text: format!("字<&{}", character.to_string().repeat(size)),
+        surfaces: vec![],
+    }];
+    let artifact = encode(&expected).unwrap();
+    let raw = u64::from_le_bytes(artifact[9..17].try_into().unwrap()) as usize;
+    let limit = match tc.draw(g::integers::<u8>().max_value(3)) {
+        0 => raw.saturating_sub(1),
+        1 => raw,
+        2 => raw + 1,
+        _ => tc.draw(g::integers::<usize>()),
+    };
+    assert_eq!(
+        super::candidate::decode_bounded(&artifact, limit).unwrap(),
+        (raw <= limit).then_some(expected)
+    );
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn bounded_decode_rejects_every_truncated_encoding(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let artifact = encode(&fixture()).unwrap();
+    let cut = tc.draw(g::integers::<usize>()) % artifact.len();
+    assert!(super::candidate::decode_bounded(&artifact[..cut], usize::MAX).is_err());
+}
+
 #[test]
 fn decoder_rejects_corruption_truncation_and_trailing_bytes() {
     let valid = encode(&fixture()).unwrap();

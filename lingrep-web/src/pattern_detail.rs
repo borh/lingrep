@@ -24,6 +24,7 @@ pub struct RetainedHitText {
     pub key: String,
     pub right: String,
     pub section_labels: Box<[String]>,
+    pub in_chain: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,7 @@ impl SurfaceSectionMatrix {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectedHit {
+    pub has_overlaps: bool,
     pub reference_ordinal: usize,
     pub variation_index: usize,
     pub left: String,
@@ -141,10 +143,13 @@ pub struct ProjectedHit {
     pub right: String,
     pub section_labels: Box<[String]>,
     pub section_indices: Box<[usize]>,
+    pub in_chain: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatternDetailProjection {
+    pub overlap_hits: usize,
+    pub overlap_names: Vec<String>,
     pub variations: Vec<SurfaceVariation>,
     /// Whether `variations` counts the corpus or the retained sample.
     ///
@@ -296,8 +301,6 @@ impl PatternDetailProjection {
 
         let has_hit_sections = hits.iter().any(|hit| !hit.section_labels.is_empty());
 
-        // The corpus vocabulary, not this pattern's slice of it. A refusal
-        // never built a tally, but it does know the label count it refused.
         let corpus_section_labels = match sections {
             SectionAvailability::VocabularyTooLarge(refusal) => refusal.labels,
             SectionAvailability::Available(tally) => tally
@@ -307,7 +310,6 @@ impl PatternDetailProjection {
                 .count(),
         };
 
-        // Section distribution over the whole corpus, from the scan's tally.
         let section_unavailable = match sections {
             SectionAvailability::VocabularyTooLarge(refusal) => Some(refusal.clone()),
             SectionAvailability::Available(_) => None,
@@ -450,6 +452,7 @@ impl PatternDetailProjection {
                     .filter_map(|label| section_ids.get(label).copied())
                     .collect::<Box<[usize]>>();
                 ProjectedHit {
+                    has_overlaps: false,
                     reference_ordinal: hit.reference_ordinal,
                     variation_index: variation_ids[&hit.key],
                     left: hit.left,
@@ -457,10 +460,13 @@ impl PatternDetailProjection {
                     right: hit.right,
                     section_labels: hit.section_labels,
                     section_indices,
+                    in_chain: hit.in_chain,
                 }
             })
             .collect();
         Self {
+            overlap_hits: 0,
+            overlap_names: Vec::new(),
             variations,
             variations_are_exact,
             overview_len,
@@ -589,6 +595,7 @@ mod tests {
             key: key.into(),
             right: format!("right-{ordinal}"),
             section_labels: Box::new([]),
+            in_chain: false,
         }
     }
 

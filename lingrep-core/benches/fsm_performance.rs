@@ -1,6 +1,10 @@
 // Exempt benchmark code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use lingrep_core::fsm::{BoundCatalog, CompileLimits, PatternSource, compile_catalog};
 use lingrep_core::token_match::{BoundTokenSentence, ProjectedAttributeValue, TokenSchema};

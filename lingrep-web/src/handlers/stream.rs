@@ -9,7 +9,7 @@ use futures::stream::{Stream, StreamExt};
 use std::convert::Infallible;
 
 use crate::coordinator::CoordinatorView;
-use crate::pattern_catalog::project_pattern_catalog;
+use crate::pattern_catalog::{project_pattern_catalog, sentence_coverage};
 use crate::revision::{AttemptPhase, WorkbenchId};
 use crate::revision_status::{RevisionStatusKind, project_revision_status};
 use crate::snapshot::CompletedSnapshot;
@@ -40,18 +40,7 @@ pub(crate) fn render_stream_event(view: &CoordinatorView, request_id: &str) -> S
     if let Some(AttemptPhase::Completed) = view.state.current_attempt().map(|attempt| attempt.phase)
     {
         let explorer = render_completed_results(view.state.displayed_snapshot(), request_id);
-        let scope_control = view
-            .state
-            .displayed_snapshot()
-            .and_then(|snapshot| {
-                crate::section_analysis::render_scope_control(
-                    snapshot, request_id, None, None, true,
-                )
-            })
-            .map_or_else(
-                || "<div id=\"corpus-analysis-scope\" hx-swap-oob=\"outerHTML\"></div>".to_owned(),
-                |fragment| fragment.to_string(),
-            );
+        let scope_control = String::new();
         let announcement = RevisionStatusFragment { status: &status }
             .render()
             .unwrap_or_else(|_| "<p role=\"status\">Results are current.</p>".into());
@@ -127,7 +116,7 @@ fn result_event_body(explorer: &str, scope_control: &str, announcement: &str) ->
 }
 
 fn render_live_results(summary: &crate::coordinator::LiveSummary) -> Option<String> {
-    let rows = summary
+    let mut rows = summary
         .rows
         .iter()
         .map(|row| LivePatternResultData {
@@ -136,6 +125,7 @@ fn render_live_results(summary: &crate::coordinator::LiveSummary) -> Option<Stri
             count_label: format_count(row.total),
         })
         .collect::<Vec<_>>();
+    rows.sort_by_key(|row| std::cmp::Reverse(row.count));
     LiveResults { results: &rows }.render().ok()
 }
 
@@ -168,6 +158,7 @@ fn render_completed_results(snapshot: Option<&CompletedSnapshot>, workbench_id: 
                     auto_load: pattern.auto_load,
                     authored_index: pattern.authored_index,
                     metadata_groups: pattern.groups,
+                    coincident: pattern.coincident,
                 })
                 .collect::<Vec<_>>();
             (
@@ -179,15 +170,25 @@ fn render_completed_results(snapshot: Option<&CompletedSnapshot>, workbench_id: 
         .unwrap_or_default();
     let (results, grouping_fields, default_grouping_field) = projection;
     let revision = snapshot.map_or(0, |snapshot| snapshot.revision.0);
-    let section_analysis = snapshot
-        .and_then(|snapshot| crate::section_analysis::render(snapshot, workbench_id, None, None));
+    let section_analysis = snapshot.and_then(|snapshot| {
+        crate::section_analysis::render(
+            snapshot,
+            workbench_id,
+            None,
+            None,
+            &crate::section_contrast::ContrastSelection::default(),
+        )
+    });
     ResultsExplorer {
+        search_scope: snapshot.map(|snapshot| &snapshot.search_scope),
+        excluded_sentences: snapshot.map_or(0, |snapshot| snapshot.excluded_sentences),
         workbench_id,
         revision,
         has_results: results.iter().any(|result| result.count > 0),
         results: &results,
         grouping_fields: &grouping_fields,
         default_grouping_field: default_grouping_field.as_deref().unwrap_or(""),
+        coverage: snapshot.and_then(sentence_coverage),
         section_analysis: section_analysis.as_ref(),
     }
     .render()
@@ -210,6 +211,48 @@ mod tests {
         let html = super::render_completed_results(None, "wb");
         assert!(html.contains("No matches"), "{html}");
         assert!(!html.contains("hx-trigger=\"load, click\""), "{html}");
+        assert!(!html.contains("data-catalog-coverage"), "{html}");
+    }
+
+    #[test]
+    fn completed_results_state_how_many_scanned_sentences_carry_a_match() {
+        use crate::corpus_runtime::CorpusIdentity;
+        use crate::snapshot::{CompletedSnapshot, PatternDescriptor, PatternKey, PatternOrigin};
+        let snapshot = CompletedSnapshot {
+            search_scope: Default::default(),
+            excluded_sentences: 0,
+            sections: crate::section_tally::SectionAvailability::Available(
+                crate::section_tally::SectionTally::unlabelled(),
+            ),
+            observed_sentences: 6_570,
+            matched_sentences: 3_516,
+            documents: None,
+            sentences_matched: 6_570,
+            revision: RevisionId(1),
+            corpus_identity: CorpusIdentity::new("fixture"),
+            source: std::sync::Arc::from(""),
+            derive_compounds: false,
+            compound_category: crate::snapshot::CompoundCategory::Compound,
+            patterns: vec![PatternDescriptor {
+                key: PatternKey::new(0).unwrap(),
+                name: "p".into(),
+                exact_total: 4_689,
+                metadata: Box::default(),
+                origin: PatternOrigin::Authored { chained_total: 0 },
+            }]
+            .into_boxed_slice(),
+            match_refs: Box::default(),
+            capture_catalog: Box::default(),
+            oversized_omissions: None,
+        };
+        let html = super::render_completed_results(Some(&snapshot), "wb");
+        assert!(
+            html.contains(
+                r#"data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": 3516, "scanned": 6570, "pct": "53.5"}'"#
+            ),
+            "{html}"
+        );
+        assert!(html.contains("3,516 of 6,570 scanned sentences"), "{html}");
     }
 
     #[test]
@@ -268,10 +311,24 @@ mod tests {
         let mut view = running_view(3, 7);
         view.live_summary = Some(crate::coordinator::LiveSummary {
             revision: RevisionId(1),
-            rows: vec![crate::coordinator::LivePatternTotal {
-                name: Arc::from("noun <unsafe>"),
-                total: 12_345,
-            }]
+            rows: vec![
+                crate::coordinator::LivePatternTotal {
+                    name: Arc::from("lower frequency"),
+                    total: 2,
+                },
+                crate::coordinator::LivePatternTotal {
+                    name: Arc::from("noun <unsafe>"),
+                    total: 12_345,
+                },
+                crate::coordinator::LivePatternTotal {
+                    name: Arc::from("equal frequency"),
+                    total: 2,
+                },
+                crate::coordinator::LivePatternTotal {
+                    name: Arc::from("zero matches"),
+                    total: 0,
+                },
+            ]
             .into(),
         });
 
@@ -280,8 +337,20 @@ mod tests {
         assert_eq!(frame.name, "progress");
         assert!(frame.body.contains("id=\"live-results\""), "{}", frame.body);
         assert!(frame.body.contains("12,345"), "{}", frame.body);
-        assert!(frame.body.contains("noun &lt;unsafe&gt;"), "{}", frame.body);
+        assert!(
+            frame.body.contains("noun &#60;unsafe&#62;"),
+            "{}",
+            frame.body
+        );
         assert!(!frame.body.contains("noun <unsafe>"), "{}", frame.body);
+        let positions = [
+            "noun &#60;unsafe&#62;",
+            "lower frequency",
+            "equal frequency",
+            "zero matches",
+        ]
+        .map(|name| frame.body.find(name).expect("live pattern row"));
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
@@ -347,7 +416,7 @@ mod tests {
     #[test]
     fn completed_phase_renders_a_result_event_with_the_oob_wrapper() {
         use crate::corpus_runtime::CorpusIdentity;
-        use crate::snapshot::{CompletedSnapshot, PatternDescriptor, PatternKey};
+        use crate::snapshot::{CompletedSnapshot, PatternDescriptor, PatternKey, PatternOrigin};
         let workbench = WorkbenchId::new("wb");
         let mut state = RevisionCoordinatorState::new(workbench.clone());
         assert!(state.accept(
@@ -356,10 +425,14 @@ mod tests {
             CacheReadinessView::Ready
         ));
         let snapshot = Arc::new(CompletedSnapshot {
+            search_scope: Default::default(),
+            excluded_sentences: 0,
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
             ),
             observed_sentences: 0,
+            matched_sentences: 0,
+            documents: None,
             sentences_matched: 0,
             revision: RevisionId(1),
             corpus_identity: CorpusIdentity::new("fixture"),
@@ -371,6 +444,7 @@ mod tests {
                 name: "p".into(),
                 exact_total: 0,
                 metadata: Box::default(),
+                origin: PatternOrigin::Authored { chained_total: 0 },
             }]
             .into_boxed_slice(),
             match_refs: Box::default(),

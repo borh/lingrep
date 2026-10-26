@@ -19,11 +19,11 @@ uv lock --project "$project" --check
 # is exactly what they do not test.
 run_model_free_checks() {
     uv run --project "$project" --frozen --extra cpu python -m compileall -q \
-        "$project/src" "$project/tests" "$project/tools"
+        "$project/src" "$repo_root/python/adapter-protocol/src" "$project/tests" "$project/tools"
     uv run --project "$project" --frozen --extra cpu python -m unittest discover \
         -s "$project/tests" -v
     uv run --project "$project" --frozen --extra cpu ruff check \
-        "$project/src" "$project/tests" "$project/tools" \
+        "$project/src" "$repo_root/python/adapter-protocol/src" "$project/tests" "$project/tools" \
         "$project/bin/lingrep-stanza-adapter"
 }
 
@@ -62,7 +62,7 @@ case "$mode" in
         python -c 'import sys; print(sys.executable)')
     LINGREP_STANZA_ADAPTER_PYTHON=$adapter_python \
       LINGREP_STANZA_MODEL_ROOT=$model_root \
-      cargo test -p lingrep-core --test external_process_contract stanza_ \
+      "$repo_root/scripts/cargo-test-selected.py" -p lingrep-core --test external_process_contract stanza_ \
         -- --ignored --nocapture
     ;;
   *)

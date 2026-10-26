@@ -2,12 +2,6 @@ defaults
   status: "experimental"
 end
 
-# The catalog's own key schema. `required` is scoped by visibility because
-# `layer`, `category`, `examples` and `research_classes` sit on all 86 patterns
-# and on none of the
-# 18 fragments; a flat `required` would reject this catalog. Policy keys and
-# the three catalog-level compiler declarations are owned by the compiler and
-# are not declared here.
 schema
   pattern layer: string required in {"S0", "S1", "S2", "S3"}
   pattern category: string required
@@ -19,65 +13,24 @@ schema
   status: string required in {"experimental"}
 end
 
-# Experimental sentence-final patterns.
+# Sentence-final expressions translated from the dm-annotations SF pipeline.
+# Each policy statement names the upstream function it translates, and
+# `scripts/upstream_sf_differential.py` compares the two stage by stage.
 #
-# `research_classes` is the research-facing taxonomy: S1A-E are non-modal
-# sentence-final expressions, S2A-J are writer-attitude modalities, and S3A-F
-# are representative morphemes within a final expression. A list is deliberate:
-# a text such as `と言える` is both S2B thought/judgement and S3F restatement.
-# `layer` remains the upstream publication-policy dimension and must not be
-# inferred from, or replaced by, this taxonomy. S2J is intentionally absent:
-# `てしまう` alone also has neutral perfective readings, so the catalog does not
-# label it regret without an overt, reliable marker.
+# `research_classes` (S1A-E non-modal finals, S2A-J writer-attitude
+# modalities, S3A-F morphemes within a final) is independent of `layer`. No
+# pattern carries S2J (regret), because てしまう alone also has neutral
+# perfective readings.
 #
-# Shared definitions are fragments and therefore never emit matches.
-#
-# All eight result policies this catalog was translated with are DECLARED and
-# applied by the engine. They live in the policy block at the end of this file,
-# as eight statements in upstream's stage order — stage 1's four per-layer
-# resolves collapsed into one `resolve all partition: layer` when the language
-# gained its partition-by-dimension operator, while stage 6 remains two rules
-# over one anchor. Each statement carries the upstream function it translates.
-#
-# The block is a publication decision, not a matching one: it changes which
-# records this catalog emits and never which spans it finds.
-# `scripts/upstream_sf_differential.py` compares it stage by stage with
-# upstream.
-#
-# Three approximations, named rather than hidden:
-#
-#   - Stage 2's negation operand is a fragment, not a token test. Upstream
-#     inspects the token after the match; a fragment operand reaches the same
-#     answer through the synthesized `__policy__` evidence emitter. See the
-#     comment on NEG below for why it is not `NAI`.
-#   - `lemma` stands in for spaCy's `norm_` throughout. They are not the same
-#     normalization, and where they disagree this catalog disagrees with
-#     upstream.
-#   - Stage 5 NARROWS a trailing copula where upstream SPLITS it into two
-#     records. `detach` cannot emit a record, so the copula half is lost rather
-#     than published separately. This is why our record counts entering stage 6
-#     are lower than upstream's by roughly the number of subjects.
-#
-# The block follows upstream: stage 3 drops the passive and not the
-# aspect; stage 2's subject is @ている alone, since upstream's `_TEIRU_NAMES` is
-# a one-element set; and stage 6 measures against `propositional_end`, the
-# `effective_end` that `filter_pipeline.py:100` passes, not the raw sentence end.
-#
-# Nothing here remains caller-owned. Citation stripping is subsumed by the
-# propositional_end anchor: on this corpus it IS trailing-punctuation stripping
-# — 2 sentences in 545 differ — which is why a punctuation-only anchor
-# suffices. On a corpus with parenthesized citations it would be a different
-# rule, and this catalog would require a wider `exclude` fragment on the anchor.
-#
-# Documentation-only citation sketches (not executable definitions):
-# citation_note := 注 [upos=NUM] [text=）]?.
-# citation_parenthesized_year := （ [upos in {PROPN, NOUN, X}]+ [upos=NUM] ）.
+# Divergences from upstream:
+#   - `lemma` stands in for spaCy's `norm_`.
+#   - `detach` narrows a trailing copula where upstream splits it into two
+#     records, so fewer records reach the `admit` statements.
+#   - `propositional_end` strips trailing punctuation only; a corpus with
+#     parenthesized citations requires a wider `TRAILING_APPARATUS`.
 
-# Shared executable fragments
-
-# The plain verb and the potential share a lemma in UniDic, so every 言う slot
-# a potential can reach reads orthbase. Naming the two lists is why that is
-# one edit rather than seven.
+# UniDic assigns `lemma=言う` to the potential 言える, so 言う slots that a
+# potential can reach test `orthbase` against these sets.
 set IU := {言う, いう}.
 set IERU := {言える, いえる}.
 set WAKE := {わけ, 訳}.
@@ -117,17 +70,6 @@ fragment SURU := [lemma=為る].
 role: "helper"
 fragment NARU := [lemma in {成る, なる} & text != なろう].
 
-# The negation operand of stage 2's `exclude`, distinct from `NAI`.
-#
-# `NAI` is wider (`ない 無い ず ぬ なかっ 無かっ ねえ`), reads `text`, and takes an
-# optional trailing `た`. Reusing it would drop more `ている` records than
-# the intended negation inventory, and it reads `lemma` so the inflected
-# `なかっ` is still recognized.
-#
-# It is also the operand of a fragment-operand `exclude`, which is what makes
-# "the token after `ている` is a negation" expressible at all: upstream tests a
-# token, not a match, and a fragment emits through the synthesized
-# `__policy__` evidence emitter at every position it matches.
 role: "helper"
 fragment NEG := [lemma in {ない, 無い, ぬ, ず}].
 
@@ -136,7 +78,6 @@ anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
 max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
 fragment TRAILING_APPARATUS := [upos=PUNCT]+.
 
-# _DISCOURSE_ACTIONS definitions
 
 role: "research"
 layer: "S3"
@@ -178,7 +119,6 @@ priority_order: 0
 research_classes: ["S1B"]
 としておくにとどめる := [text=と] [text=し] @VERB_TE [lemma=置く] [text=に] [lemma=留める].
 
-# _S2 definitions
 
 role: "research"
 layer: "S2"
@@ -280,27 +220,7 @@ category: "S2d 外部根拠"
 examples: ["A社で働いていたという"]
 priority_order: 1
 research_classes: ["S2G"]
-# The 言う family reads `orthbase`, not `lemma`, and this is the pattern that
-# forces it. UniDic's lemma for the potential 言える is 言う — the same lemma
-# the plain 言う carries — so `lemma in {言う, いう}` matches 「と言える」 as
-# readily as 「という」. `orthbase` preserves the distinct dictionary forms and
-# keeps the two kanji / kana spellings separate.
 という := [text=と] [unidic.orthbase in @IU].
-#
-# Seven definitions put this verb in this slot and five now read
-# `unidic.orthbase in @IU`: という, ということだ, とは言い難い, というのである
-# and と言われる. Both spellings, because upstream writes three of them against
-# `NORM="言う"`, which is spelling-normalizing — UniDic's `orthbase` for a kana
-# 「いい」 is いう, so a single-valued `unidic.orthbase=言う` would stop matching
-# 「とはいいがたい」, which is upstream's own example.
-#
-# The other two — という指摘もある, ということである, ということで — keep
-# `[text=いう & lemma=言う]`, and that is not an oversight. Upstream pins those
-# three to `ORTH="いう"` (:223, :345, :356), and a surface pinned to いう cannot
-# be a potential in the first place. Rewriting their second conjunct as
-# `orthbase` would either say nothing new (`unidic.orthbase=いう`) or match no token at
-# all (`unidic.orthbase=言う`, which the surface いう never carries). Uniformity here is
-# in what the predicate means, not in which attribute spells it.
 
 role: "research"
 layer: "S2"
@@ -400,7 +320,6 @@ priority_order: 1
 research_classes: ["S2C"]
 とみられる := [text=と] [lemma=見る] (@RERU | @RARE).
 
-# _S1 definitions
 
 role: "research"
 layer: "S1"
@@ -847,7 +766,6 @@ priority_order: 2
 research_classes: ["S3A"]
 つつある := [lemma=つつ] [lemma=有る].
 
-# _S0 definitions
 
 role: "research"
 layer: "S0"
@@ -884,69 +802,23 @@ priority_order: 3
 research_classes: ["S1A"]
 行う := [lemma=行う].
 
-# Membership of `%upper_layer` is a function of `layer`, so it is derived by
-# the predicate below rather than restated on 77 definitions. The other three
-# groups stay literal `groups:` lists deliberately: `aspect`,
-# `trailing_copula` and `s0_conditional` are curated memberships — upstream
-# name-lists, not functions of any metadata key — so a list is the honest
-# encoding, and a derived group refuses restatement anyway
-# (`LiteralEntryForDerivedGroup`).
+# `aspect`, `trailing_copula`, and `s0_conditional` stay literal `groups:`
+# lists because upstream defines them by name rather than metadata.
 group upper_layer := layer in {"S1", "S2", "S3"}.
 
-# The publication decisions this catalog declares, in upstream's stage order.
-# Order is semantic here and not presentational: a `resolve` before an `exclude`
-# contests a different field than one after it, and `admit` reads the published
-# end, so standing after the `detach` measures a trimmed record.
-#
-# `detach` selects `%trailing_copula` rather than naming thirteen subjects
-# because the thirteen declare one rule, not thirteen: the copula is
-# inflectional variation (だ / である / であった / でした) and the research unit
-# is the head. `output_name` supplies the name; this supplies the span.
-#
-# `evidence: raw` is forced, not chosen: `DA` is a fragment and never emits, so
-# its records come from the synthesized `__policy__DA` emitter.
 policy
-  # Stage 1 — `deduplicate_longest(group=layer)`. One statement: `partition:
-  # layer` subdivides the selected set by each definition's `layer` metadata
-  # and runs the rank contest independently per class, so the layers never
-  # resolve against each other — that cross-layer contest is stage 4's job.
+  # deduplicate_longest(group=layer)
   resolve all partition: layer, rank: [longest, start, end, pattern].
-  # Stage 2 — `filter_teiru_negation`. The subject is `@ている` alone, not an
-  # aspect group: upstream's `_TEIRU_NAMES` is a one-element set, and `てくる`
-  # is subject only to stage 3.
+  # filter_teiru_negation: upstream's `_TEIRU_NAMES` contains only ている.
   exclude @ている with: @NEG, relation: after, evidence: raw.
-  # Stage 3 — `filter_passive_before_aspect`. The subject is the *passive*:
-  # upstream drops the `される` that an aspect consumed, not the aspect. The
-  # aspect starts where the passive ends, which is `after`.
-  #
-  # `evidence: current` because upstream computes `aspect_starts` from the set
-  # surviving stages 1-2, not from the raw stream. It is the only `current` in
-  # this block.
+  # filter_passive_before_aspect
   exclude @される with: %aspect, relation: after, evidence: current.
-  # Stage 4 — `suppress_inner_layers`. The cross-layer contest, and the only
-  # statement that ranks by `priority_order`: within one layer there is no
-  # layer to break a tie. Lower wins, so S3 (0) is outermost, which is
-  # upstream's `_LAYER_PRIORITY` sorted ascending.
+  # suppress_inner_layers: matches upstream's `_LAYER_PRIORITY`.
   resolve patterns rank: [longest, priority_order, start, end, pattern].
   detach %trailing_copula with: @DA, relation: at_end, evidence: raw.
-  # Stage 6 — `filter_sentence_final`. Position is load-bearing: `admit` reads
-  # the *published* end, so standing after the `detach` measures the distance on
-  # the trimmed record, which is what upstream does by running its stage 6 after
-  # its stage 5.
-  #
-  # The anchor is `propositional_end`, not the reserved `sentence_end`.
-  # `filter_pipeline.py:100` passes `effective_end` — the citation- and
-  # attribution-stripped end — to this stage and to the という stage alike, so
-  # both must read one anchor.
+  # filter_sentence_final: upstream passes the punctuation-stripped `effective_end`.
   admit all terminal: {within: 5, anchor: propositional_end}.
   admit @という terminal: {exact: true, anchor: propositional_end}.
-  # Stage 8 — `filter_s0_requires_upper_layer`. A sentence-wide presence test,
-  # not an overlap contest: any surviving non-S0 record licenses every S0 record
-  # in the sentence, and `relation: in_sentence` is exactly that — the operand's
-  # mere presence decides. `evidence: current` because upstream evaluates this over
-  # surviving records, and by this point most of them are gone.
-  #
-  # `だ` is absent from `%s0_conditional` and so is never selected, which
-  # keeps it unconditionally.
+  # filter_s0_requires_upper_layer
   require %s0_conditional with: %upper_layer, relation: in_sentence, evidence: current.
 end

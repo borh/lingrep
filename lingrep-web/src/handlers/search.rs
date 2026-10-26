@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::coordinator::AdmitError;
+use crate::coordinator::{AdmitError, RevisionRequest};
 use crate::revision::WorkbenchId;
 use crate::revision_status::project_revision_status;
 use crate::state::RequestStore;
@@ -15,6 +15,8 @@ use crate::templates::StreamContainer;
 
 #[derive(Deserialize, Serialize)]
 pub struct SearchForm {
+    #[serde(default)]
+    pub search_scope: Option<String>,
     pub pattern: String,
     /// The corpus the page is pointed at, carried by a hidden field the index
     /// renders from the resolved slot. Absent means the default, so a caller
@@ -31,6 +33,8 @@ pub struct SearchForm {
     pub derive_compounds: Option<bool>,
     #[serde(default)]
     pub compound_category: Option<String>,
+    #[serde(default)]
+    pub document_reach: Option<bool>,
 }
 
 /// Matches `handlers::sample::MAX_PATTERN_BYTES` and the compiler's
@@ -70,47 +74,19 @@ pub async fn search(
                 .to_string(),
         );
     }
+    let Ok(scope) = crate::search_scope::SearchScope::parse(form.search_scope.as_deref()) else {
+        return Html(
+            "<div class=\"alert alert-error\" role=\"status\">Invalid search scope.</div>".into(),
+        );
+    };
     let workbench = WorkbenchId::new(&workbench_id);
-    // The request's selected corpus, which admission then binds the workbench
-    // to for good. The key now arrives from the client: the index renders it as
-    // a hidden field, so the corpus the page is pointed at — not the server's
-    // default — is what this request answers from.
-    //
-    // The lookup must stay FALLIBLE. `resolve(None)` cannot miss for a validated
-    // configuration, but a supplied key is client data, and an undeclared or
-    // malformed one resolves to `None`. Panicking here would then be a panicking
-    // request handler — a trivial denial of service.
-    //
-    // This is the seam where a client's key first becomes DURABLE state: the
-    // slot below is what binds the workbench to a corpus for good. So an
-    // unresolvable selection must return before `try_accept_next_revision` —
-    // admitting against a fallback corpus would silently answer from the wrong
-    // data, which is the failure this whole task exists to close.
-    //
-    // The message reuses the existing `corpus.unavailable` key rather than
-    // introducing a string, so this adds no i18n entry; the `data-i18n`
-    // attribute is what the client swaps at `htmx:afterSwap`.
     let Some(slot) = store.corpora.resolve(form.corpus.as_deref()) else {
         return Html(
             "<div class=\"alert alert-error\" role=\"status\" data-i18n=\"corpus.unavailable\">Corpus unavailable.</div>"
                 .to_string(),
         );
     };
-    // The step without which a never-selected slot stays Idle with readiness
-    // Checking forever: start_or_observe only transitions from Idle, and nothing
-    // else in this path calls it. Idempotent once building or ready.
-    //
-    // It must run BEFORE `try_accept_next_revision`, because that admission is
-    // what spawns `run_revision` — whose `wait_for_ready` awaits a readiness
-    // change that an unstarted runtime will never send. The revision would then
-    // never become terminal, so its entry would never become evictable, and each
-    // such request would burn one session for the life of the process. A tab left
-    // open on `/?…&k=sci` across a restart posts exactly this.
     slot.runtime.start_or_observe().await;
-    // The two refusals are different facts and are reported as different facts.
-    // A conflict says the workbench is already bound elsewhere — reachable only
-    // now that the request names a corpus — and is something the reader can act
-    // on; capacity exhaustion is not.
     let compound_category = if form.compound_category.as_deref() == Some("source") {
         crate::snapshot::CompoundCategory::SourceCategories
     } else {
@@ -118,13 +94,17 @@ pub async fn search(
     };
     if let Err(error) = store
         .coordinators
-        .try_accept_next_revision_with_compounds(
+        .accept_revision(
             workbench.clone(),
             slot,
-            form.pattern,
-            form.retained,
-            form.derive_compounds.unwrap_or(false),
-            compound_category,
+            RevisionRequest {
+                source: form.pattern,
+                retained: form.retained,
+                derive_compounds: form.derive_compounds.unwrap_or(false),
+                compound_category,
+                document_reach: form.document_reach.unwrap_or(false),
+                search_scope: scope,
+            },
         )
         .await
     {

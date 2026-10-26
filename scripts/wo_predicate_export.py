@@ -27,10 +27,10 @@ Two outputs, written under ``--out-dir``:
   ``ginza -d`` (sentencizer disabled) each line is exactly one sentence, so the
   CoNLL-U sentence ordinal within a document equals the JSONL index.
 * ``export-manifest.json`` — counts, the run record path, the catalog CSV hash,
-  the sentence-splitting rule, and this file's own BLAKE3 digest.
+  the sentence-splitting rule, and this file's own SHA-256 digest.
 
 Sentence splitting is deliberately simple and stated once, here: each
-plaintext line is a paragraph; leading and trailing whitespace (including the
+plaintext line is a paragraph; tabs become single spaces in both outputs; leading and trailing whitespace (including the
 U+3000 paragraph indent) is removed; a sentence ends after a run of ``。！？``
 together with any closing quotation or bracket characters that immediately
 follow it; a paragraph remainder without a terminator is one sentence. Empty
@@ -50,14 +50,14 @@ from collections import defaultdict
 from pathlib import Path
 
 SENTENCE_RULE = (
-    "paragraph = plaintext line; strip; split after [。！？]+ plus any following "
+    "paragraph = plaintext line; tabs to spaces; strip; split after [。！？]+ plus any following "
     "closing marks [」』）〕】〉》]; keep remainder; drop empty"
 )
 _SENTENCE = re.compile(r"[^。！？]*[。！？]+[」』）〕】〉》]*|[^。！？]+$")
 
 
 def split_sentences(paragraph: str) -> list[str]:
-    text = paragraph.strip()
+    text = paragraph.replace("\t", " ").strip()
     if not text:
         return []
     return [s for s in (m.group(0).strip() for m in _SENTENCE.finditer(text)) if s]

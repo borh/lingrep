@@ -1,6 +1,6 @@
 //! Basic public NFA matcher invariants.
 
-use lingrep_core::fsm::{CompileLimits, PatternSource, compile_catalog};
+use lingrep_core::fsm::{Capture, CompileLimits, Match, PatternSource, compile_catalog};
 use lingrep_core::testing::token;
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
 
@@ -55,20 +55,36 @@ fn named_and_unnamed_group_erasure_preserves_full_matches(tc: hegel::TestCase) {
             _ => token("z"),
         })
         .collect::<Vec<_>>();
-    let matches = matcher.find_matches(&tokens);
-
-    let identities = |pattern: &str| {
-        matches
-            .iter()
-            .filter(|matched| matched.pattern == pattern)
-            .map(|matched| (matched.start, matched.end))
-            .collect::<Vec<_>>()
-    };
-    let expected = identities("plain");
-
-    assert_eq!(identities("unnamed"), expected);
-    assert_eq!(identities("named"), expected);
-    assert_eq!(identities("nested"), expected);
+    let mut expected = Vec::new();
+    for (start, pair) in tokens.windows(2).enumerate() {
+        if pair[0].orth() != Some("a") || pair[1].orth() != Some("b") {
+            continue;
+        }
+        for (pattern, capture) in [
+            ("named", Some("pair")),
+            ("nested", Some("outer")),
+            ("plain", None),
+            ("unnamed", None),
+        ] {
+            expected.push(Match {
+                pattern: pattern.into(),
+                start,
+                end: start + 2,
+                captures: capture.map_or_else(Box::default, |name| {
+                    vec![Capture {
+                        name: name.into(),
+                        path: format!("{pattern}/{name}").into(),
+                        start,
+                        end: start + 2,
+                    }]
+                    .into_boxed_slice()
+                }),
+                graph_bindings: Box::default(),
+                lexical: None,
+            });
+        }
+    }
+    assert_eq!(matcher.find_matches(&tokens), expected);
 }
 
 #[hegel::test(test_cases = 500, derandomize = true)]

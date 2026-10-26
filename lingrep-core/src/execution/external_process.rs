@@ -570,6 +570,27 @@ fn validate_python_project_bundle(
     )?;
     collect_regular_files(root, &root.join(lock), &mut project_files)?;
     collect_regular_files(root, &root.join(project), &mut project_files)?;
+    let protocol = project_root
+        .parent()
+        .ok_or_else(|| {
+            ExternalProcessError::Manifest(format!("{provider} project has no protocol parent"))
+        })?
+        .join("adapter-protocol");
+    let protocol_path = root.join(&protocol);
+    let metadata = std::fs::symlink_metadata(&protocol_path).map_err(|error| {
+        ExternalProcessError::Manifest(format!("cannot inspect adapter protocol project: {error}"))
+    })?;
+    if !metadata.is_dir() || metadata.is_symlink() {
+        return Err(ExternalProcessError::Manifest(
+            "adapter protocol project must be a regular directory".into(),
+        ));
+    }
+    collect_regular_files(
+        root,
+        &protocol_path.join("pyproject.toml"),
+        &mut project_files,
+    )?;
+    collect_regular_files(root, &protocol_path.join("src"), &mut project_files)?;
     let declared = implementation
         .iter()
         .map(|entry| entry.relative_path.clone())
@@ -729,6 +750,12 @@ pub struct ExternalAdapterCancellation {
 }
 
 impl ExternalAdapterCancellation {
+    pub fn from_flag(flag: &super::CancellationFlag) -> Self {
+        Self {
+            requested: Arc::clone(&flag.0),
+        }
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -873,6 +900,7 @@ impl ExternalAdapterProcess {
             .clone()
             .unwrap_or_else(|| entrypoint.clone());
         let mut child_command = Command::new(executable);
+        child_command.env("PYTHONDONTWRITEBYTECODE", "1");
         if command.interpreter.is_some() {
             child_command.arg(&entrypoint);
         }
@@ -1083,7 +1111,7 @@ impl ExternalAdapterProcess {
                 ))
             })?;
         }
-        if stage_input_bytes > limits.max_stage_input_bytes {
+        if inputs.len() > 1 && stage_input_bytes > limits.max_stage_input_bytes {
             return Err(ExternalProtocolError::new_for_execution(
                 "limit",
                 "live inputs exceed max_stage_input_bytes",

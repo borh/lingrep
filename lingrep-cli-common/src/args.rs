@@ -33,8 +33,7 @@ pub struct CorpusInputArgs {
     /// Input corpus file or directory; reads from stdin when omitted.
     #[arg(short = 'i', long = "input")]
     pub input: Option<PathBuf>,
-    /// Override the inferred corpus format (`plain`, `jsonl`, `markdown`,
-    /// `conllu`, `bccwj`, `soranoha`; commands may restrict accepted formats).
+    /// Override the inferred corpus format (commands may restrict accepted formats).
     #[arg(long = "input-format", value_enum)]
     pub input_format: Option<lingrep_core::corpus::CorpusFormat>,
 }

@@ -22,7 +22,7 @@ pub mod policy_program;
 /// because a caller that asked for one has to be able to read it.
 pub mod policy_trace;
 mod sentence_matcher;
-pub mod state_machine;
+mod state_machine;
 pub mod types;
 
 // Matcher, builder, scheduler, and engine tests live beside the APIs they
@@ -49,7 +49,7 @@ pub use identity::{
 pub use inline::normalize_inline_pattern;
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
-    CompiledLexiconDefinition, FsmBuilder, Matcher, PredicateDigest, clear_pools,
+    CompiledLexiconDefinition, FsmBuilder, PredicateDigest, clear_pools,
 };
 #[cfg(feature = "bench-instrumentation")]
 pub use matcher::{

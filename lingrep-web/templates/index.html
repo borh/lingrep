@@ -1,0 +1,177 @@
+{% extends "layout.html" %}
+{% block title %}lingrep-web{% endblock %}
+{% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
+{% block content %}
+{# The query band is sticky above 64rem, so everything a running edit needs —
+   what corpus, the pattern, run, and the run's own status — is inside it and
+   the results scroll underneath. Below 64rem it is an ordinary block and the
+   fold-to-a-bar behaviour is unchanged; a band pinned to a phone viewport
+   would cost more of it than it saves. #}
+<div class="query-band" data-query-band>
+<div class="band-head">
+{% include "partials/corpus_context.html" %}
+{# The corpus switch's live region sits OUTSIDE the polled section above: that
+   section is swapped wholesale every few seconds while a corpus prepares, and a
+   region inside it would lose the message it just reported. #}
+{% if corpora.len() > 1 %}
+<p class="corpus-select-status muted" role="status" data-corpus-select-status></p>
+{% endif %}
+{# Run state, beside what it is a run over. Reading it used to mean scrolling
+   away from the editor it is about. #}
+<div id="search-status"></div>
+<div id="results-stale" role="status" aria-live="polite"></div>
+</div>
+<div class="query-workspace" data-query-workspace>
+<div class="query-editor-column">
+<button type="button" class="editor-collapsed-bar" data-editor-collapsed-bar hidden
+        aria-expanded="false" aria-controls="corpus-editor">
+    <span class="editor-collapsed-preview" data-editor-preview lang="ja"></span>
+    <span class="editor-collapsed-hint"><span data-i18n="editor.edit_hint">Edit query</span> <kbd>Ctrl+E</kbd></span>
+</button>
+<form hx-post="api/search/{{ workbench_id }}"
+      hx-target="#search-status"
+      hx-swap="innerHTML"
+      data-pattern-submit="corpus-pattern" data-corpus-search{% if auto_run %} data-autorun{% endif %}{% if run_when_ready %} data-run-when-ready{% endif %}>
+    {# The corpus the page is pointed at. Carried on every submit so the request
+       answers from the SELECTED corpus rather than the server's default; an
+       unresolvable value is refused rather than falling back. #}
+    <input type="hidden" name="corpus" value="{{ corpus_context.corpus_key }}">
+    <div>
+        <label class="visually-hidden" for="corpus-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>
+        <div id="corpus-editor" class="corpus-pattern-editor" data-editor-size>
+            <textarea id="corpus-pattern" name="pattern" rows="4" data-pattern-editor
+                      spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
+                      placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
+        </div>
+    </div>
+    <details class="search-scope" data-search-scope data-imrad-labels="{{ self.imrad_labels_json() }}">
+      <summary><span data-i18n="scope.title">Search scope</span>: <span data-scope-summary data-i18n="scope.all">All text</span></summary>
+      <input type="hidden" name="search_scope" value="{{ self.scope_json() }}" data-search-scope-value>
+      <div class="scope-presets">
+        <button type="button" class="btn btn-secondary" data-scope-preset="all" data-i18n="scope.all">All text</button>
+        <button type="button" class="btn btn-secondary" data-scope-preset="main" data-i18n="scope.main">IMRAD + related</button>
+      </div>
+      <fieldset><legend data-i18n="scope.include">Include sections</legend>
+        <div class="scope-options" data-search-scope-options>
+          {% for section in corpus_context.sections %}<label class="section-scope-option"><input type="checkbox" data-scope-include value="{{ section.label }}"><span>{{ section.label }}</span></label>{% endfor %}
+        </div>
+      </fieldset>
+      <label class="section-scope-option"><input type="checkbox" data-scope-unlabelled checked><span data-i18n="scope.unlabelled">Include unlabelled text</span></label>
+      <p class="scope-pending" data-scope-pending hidden data-i18n="scope.pending">Changes not applied</p>
+      <button type="submit" class="btn btn-primary" data-i18n="scope.apply">Apply &amp; rerun</button>
+    </details>
+    <div class="permalink-controls">
+        <button type="submit" class="btn btn-primary"><span data-i18n="editor.search">Search Corpus</span></button>
+        <button type="button" class="btn btn-secondary sample-drawer-toggle"
+                data-sample-drawer-toggle aria-expanded="false"
+                aria-controls="inline-sample-drawer"><span data-i18n="editor.test_sample">Test on sample</span></button>
+        {# How many hits per pattern this run keeps. A run parameter, so it sits
+           with the run button and posts with the query; the server's configured
+           ceiling is both the largest offer and the default. #}
+        <label class="retained-control"><span data-i18n="editor.retained">Hits kept</span>
+            <select name="retained" data-retained-select>
+            {% for option in retained_options %}<option value="{{ option }}"{% if self.is_default_retention(option) %} selected{% endif %}>{{ option }}</option>{% endfor %}
+            </select>
+        </label>
+        <span class="compound-control-group" title="Creates an independent derived pattern for every chain of adjacent matches." data-i18n-title="editor.derive_compounds_help">
+            <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true" checked>
+                <span data-i18n="editor.derive_compounds">Derive compounds</span>
+            </label>
+            <small class="compound-help" data-i18n="editor.derive_compounds_help">Creates an independent derived pattern for every chain of adjacent matches.</small>
+            <label class="retained-control compound-category-control"><span data-i18n="editor.compound_category">Category</span>
+                <select name="compound_category">
+                    <option value="compound" data-i18n="editor.compound_category_item">Compound item</option>
+                    <option value="source" data-i18n="editor.compound_category_source">Source categories</option>
+                </select>
+            </label>
+        </span>
+        <span class="compound-control-group" title="Counts, per pattern, how many documents it occurs in and how much its largest documents contribute." data-i18n-title="editor.document_reach_help">
+            <label class="retained-control"><input type="checkbox" name="document_reach" value="true" checked>
+                <span data-i18n="editor.document_reach">Count documents reached</span>
+            </label>
+            <small class="compound-help" data-i18n="editor.document_reach_help">Counts, per pattern, how many documents it occurs in and how much its largest documents contribute.</small>
+        </span>
+        <button type="button" class="btn btn-secondary copy-permalink" data-copy-permalink><span data-i18n="editor.copy_link">Copy link</span></button>
+        <button type="button" class="btn btn-secondary editor-size-toggle"
+                data-editor-toggle aria-controls="corpus-editor"
+                aria-expanded="false"><span data-i18n="editor.expand">Expand editor</span></button>
+        <button type="button" class="btn btn-secondary editor-fold-toggle"
+                data-editor-fold><span data-i18n="editor.fold">Fold editor</span> <kbd>Ctrl+E</kbd></button>
+        <span class="permalink-status copy-status" role="status" aria-live="polite"></span>
+    </div>
+    <div class="permalink-fallback" hidden>
+        <label><span data-i18n="editor.shareable_link">Shareable link</span>
+            <input type="text" class="permalink-url" readonly aria-label="Shareable link"
+                   data-i18n-aria-label="editor.shareable_link">
+        </label>
+    </div>
+</form>
+<section id="inline-sample-drawer" class="inline-sample-drawer" data-inline-sample-drawer hidden
+         aria-label="Sample sentence tester" data-i18n-aria-label="sample.title">
+    <div class="inline-sample-controls">
+        <label class="inline-sample-label" for="inline-sample-text">
+            <span data-i18n="sample.label">Sample text</span>
+            <span class="muted"><span data-i18n="sample.hint">(one sentence per line)</span></span>
+        </label>
+        <div class="inline-sample-input-row">
+            <textarea id="inline-sample-text" class="sample-input inline-sample-input" rows="3" lang="ja"
+                      placeholder="猫が走る。" data-inline-sample-text>この結果は重要であると考えられる。
+さらなる検証が必要であると思われる。
+その可能性が高いと言えるのではないだろうか。</textarea>
+            <div class="inline-sample-actions">
+                <button type="button" class="btn btn-primary" data-run-inline-sample><span data-i18n="sample.run">Run on sample</span></button>
+                <button type="button" class="btn btn-secondary" data-sample-drawer-close><span data-i18n="editor.help_close">Close</span></button>
+                <span class="sample-status" role="status" aria-live="polite" data-inline-sample-status></span>
+            </div>
+        </div>
+    </div>
+    <div id="inline-sample-results" class="inline-sample-results" data-inline-sample-results aria-live="polite"></div>
+</section>
+</div>
+{% include "partials/query_library.html" %}
+</div>
+<script type="module" src="assets/query-library.js"></script>
+<script type="module" src="assets/search-scope.js"></script>
+<script type="module" src="assets/editor-sizing.js"></script>
+</div>
+
+{# Reference text for the editor above, as an overlay. Outside the band so the
+   band's own scrollport cannot clip it, and a `dialog` so Escape, the backdrop
+   and focus containment are the platform's rather than ours. #}
+<dialog class="editor-help-dialog" data-editor-help aria-labelledby="editor-help-title">
+    <h2 id="editor-help-title" data-i18n="editor.help_summary">Syntax and shortcuts</h2>
+    <p class="help">
+    <span data-i18n="editor.format_hint_prefix">Format:</span> <code>name := [constraints]</code>.
+    <span data-i18n="editor.example_prefix">Example:</span> <code>verb := [upos=VERB]</code>
+    <br>
+    <kbd>F12</kbd> <span data-i18n="editor.kbd_goto">go to definition</span> &middot;
+    <kbd>F4</kbd> / <kbd>Shift+F4</kbd> <span data-i18n="editor.kbd_cycle">cycle references</span>.
+    <br>
+    <kbd>Ctrl+Enter</kbd> <span data-i18n="editor.kbd_run">run query</span> &middot;
+    <kbd>Ctrl+E</kbd> <span data-i18n="editor.kbd_fold">fold / expand editor</span>.
+    </p>
+    <button type="button" class="btn btn-secondary editor-help-close" data-editor-help-close
+            data-i18n="editor.help_close">Close</button>
+</dialog>
+
+{% match link_banner %}
+{% when Some with (banner) %}
+<div class="permalink-banner alert alert-error" role="status">
+    <span data-i18n="banner.prefix">This link was built against corpus</span> <code>{{ banner.link_digest }}</code><span data-i18n="banner.middle">, but this
+    server is serving</span> <code>{{ banner.live_digest }}</code>. <span data-i18n="banner.suffix">The pattern was seeded but
+    not run automatically; results may differ if you run it.</span>
+    <button type="button" class="permalink-dismiss" data-dismiss-permalink
+            aria-label="Dismiss corpus mismatch warning"
+            data-i18n-aria-label="banner.dismiss" data-i18n-title="banner.dismiss">×</button>
+</div>
+{% when None %}
+{% endmatch %}
+{% match link_notice %}
+{% when Some with (notice) %}
+<div class="permalink-notice alert" role="status" data-i18n="{{ notice.key }}">{{ notice.text }}</div>
+{% when None %}
+{% endmatch %}
+
+<div id="live-results"></div>
+<div id="results"></div>
+{% endblock %}

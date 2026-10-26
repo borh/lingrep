@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from lingrep_adapter_protocol import _unique_object
+from lingrep_adapter_protocol.resources import (
+    MANIFEST_HASH_CHUNK_BYTES as MANIFEST_HASH_CHUNK_BYTES,
+)
+from lingrep_adapter_protocol.resources import (
+    canonical_json,
+)
+from lingrep_adapter_protocol.resources import (
+    digest_json as digest_json,
+)
+from lingrep_adapter_protocol.resources import (
+    resource_manifest_digest as _resource_manifest_digest,
+)
+
 PROFILE_FILE = "lingrep-spacy-model.json"
 PROFILE_FORMAT = "lingrep.spacy-model/v1"
-MANIFEST_HASH_CHUNK_BYTES = 1 << 20
 PORTABLE_SCHEMA = (
     {"key": "text", "kind": "scalar"},
     {"key": "lemma", "kind": "scalar"},
@@ -21,22 +33,6 @@ MORPH_TARGETS = {
     "token.pos": lambda token: bool(token.pos_),
     "token.tag": lambda token: bool(token.tag_),
 }
-
-
-def canonical_json(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def digest_json(value: Any) -> str:
-    import blake3
-
-    return blake3.blake3(canonical_json(value)).hexdigest()
 
 
 def prepare_model_bundle(
@@ -83,6 +79,13 @@ def prepare_model_bundle(
     morphology_components = _minimal_components(
         names, summary, set(MORPH_TARGETS).difference(base_assignments), None
     )
+    if morphology_components is None:
+        try:
+            _validate_morphology_probe(root, names, names, probe_text)
+        except ValueError:
+            pass
+        else:
+            morphology_components = names
     morphology_available = morphology_components is not None
 
     selections: dict[str, dict[str, Any]] = {}
@@ -117,7 +120,7 @@ def prepare_model_bundle(
                 boundary_component,
             )
             if combined is None:
-                raise ValueError("morphology boundary dependencies are unavailable")
+                combined = names
             _validate_morphology_probe(root, names, combined, probe_text)
             selections["morphology/analyzer"] = _selection(
                 full, combined, f"spacy:{boundary_component}:v1", schema
@@ -172,63 +175,8 @@ def selection_digest(selection: Mapping[str, Any]) -> str:
     return digest_json(selection)
 
 
-def resource_manifest_digest(model_root: Path, manifest_root: Path) -> str:
-    import blake3
-
-    root = manifest_root.resolve(strict=True)
-    model = model_root
-    if model.is_absolute() or any(part in {"", ".", ".."} for part in model.parts):
-        raise ValueError("spaCy model root must be normalized and manifest-relative")
-    absolute = root / model
-    entries: list[tuple[str, int, bytes]] = []
-    _collect_manifest_files(root, absolute, entries)
-    entries.sort(key=lambda entry: entry[0].encode("utf-8"))
-    digest = blake3.blake3()
-    digest.update(b"lingrep.analyzer-resources/v1")
-    digest.update(len(entries).to_bytes(8, "little"))
-    for relative, length, content_digest in entries:
-        encoded = relative.encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "little"))
-        digest.update(encoded)
-        digest.update(length.to_bytes(8, "little"))
-        digest.update(content_digest)
-    return digest.hexdigest()
-
-
-def _collect_manifest_files(
-    root: Path, current: Path, entries: list[tuple[str, int, bytes]]
-) -> None:
-    import blake3
-
-    if current.name == "__pycache__" or current.suffix == ".pyc":
-        raise ValueError("spaCy model root contains a generated Python cache")
-    stat = current.lstat()
-    if current.is_symlink():
-        raise ValueError(f"spaCy model path {current} contains a symlink")
-    if current.is_file():
-        relative = current.relative_to(root).as_posix()
-        digest = blake3.blake3()
-        length = 0
-        with current.open("rb") as stream:
-            while chunk := stream.read(MANIFEST_HASH_CHUNK_BYTES):
-                length += len(chunk)
-                digest.update(chunk)
-        after = current.stat()
-        before_identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-        after_identity = (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        )
-        if length != stat.st_size or before_identity != after_identity:
-            raise ValueError("spaCy model resource changed while it was hashed")
-        entries.append((relative, length, digest.digest()))
-        return
-    if not current.is_dir():
-        raise ValueError(f"spaCy model path {current} is not regular")
-    for child in sorted(current.iterdir(), key=lambda path: os.fsencode(path.name)):
-        _collect_manifest_files(root, child, entries)
+def resource_manifest_digest(resource_root: Path, manifest_root: Path) -> str:
+    return _resource_manifest_digest(resource_root, manifest_root, provider="spaCy")
 
 
 def _minimal_components(
@@ -258,6 +206,21 @@ def _selection(
     boundary_policy: str,
     schema: Sequence[Mapping[str, str]],
 ) -> dict[str, Any]:
+    schema = list(schema)
+    if len(schema) > 1 and any(
+        "token.dep" in pipeline.analyze_pipes(pretty=False)["summary"][name]["assigns"]
+        for name in components
+    ):
+        schema.extend(
+            [
+                {"key": "dep.head", "kind": "scalar"},
+                {"key": "dep.rel", "kind": "scalar"},
+                {"key": "dep.enhanced", "kind": "string_set"},
+            ]
+        )
+        from .adapter import _projection_order
+
+        schema.sort(key=lambda attribute: _projection_order(attribute["key"]))
     configured = []
     for name in components:
         config = _plain(pipeline.config["components"][name])
@@ -327,67 +290,34 @@ def _validate_selection(value: Any) -> None:
 
 
 def _validate_schema(value: Any) -> None:
+    from .adapter import ProjectionAttribute, _validate_projection
+
     if not isinstance(value, list) or not value:
         raise ValueError("spaCy profile schema must be a nonempty array")
-    keys = []
-    for attribute in value:
-        if not isinstance(attribute, dict) or set(attribute) != {"key", "kind"}:
-            raise ValueError("spaCy profile schema entry has the wrong shape")
-        if not isinstance(attribute["key"], str) or attribute["kind"] not in {
-            "scalar",
-            "string_set",
-        }:
-            raise ValueError("spaCy profile schema entry is invalid")
-        key = attribute["key"]
-        expected_kind = (
-            "scalar"
-            if key in {item["key"] for item in PORTABLE_SCHEMA}
-            else "string_set"
-        )
-        if attribute["kind"] != expected_kind or not (
-            key in {item["key"] for item in PORTABLE_SCHEMA}
-            or key.startswith("feat.")
-            or _is_provider_morphology_key(key)
-        ):
-            raise ValueError(
-                "spaCy profile schema entry is not a canonical V8 attribute"
-            )
-        keys.append(attribute["key"])
-    if len(keys) != len(set(keys)):
-        raise ValueError("spaCy profile schema contains duplicate keys")
-    portable_order = {item["key"]: index for index, item in enumerate(PORTABLE_SCHEMA)}
-    canonical = sorted(
-        keys,
-        key=lambda key: (
-            (0, portable_order[key], b"")
-            if key in portable_order
-            else (1, 0, key.encode("utf-8"))
-            if key.startswith("feat.")
-            else (2, 0, key.encode("utf-8"))
-        ),
-    )
-    if keys != canonical:
-        raise ValueError("spaCy profile schema is not in canonical V8 order")
-
-
-def _is_provider_morphology_key(key: str) -> bool:
-    if not key.startswith("spacy.morph."):
-        return False
-    name = key.removeprefix("spacy.morph.")
-    return bool(name) and name.isascii() and name.isalnum() and name.islower()
+    if any(
+        not isinstance(item, dict) or set(item) != {"key", "kind"} for item in value
+    ):
+        raise ValueError("spaCy profile schema entry has the wrong shape")
+    if any(
+        not isinstance(item["key"], str) or item["kind"] not in {"scalar", "string_set"}
+        for item in value
+    ):
+        raise ValueError("spaCy profile schema entry is invalid")
+    _validate_projection(tuple(ProjectionAttribute(**item) for item in value))
 
 
 def _validate_requested_morphology_keys(keys: Sequence[str]) -> None:
-    if any(
-        not isinstance(key, str) or not _is_provider_morphology_key(key) for key in keys
-    ):
-        raise ValueError(
-            "requested morphology keys must use canonical spacy.morph.* names"
+    try:
+        if any(
+            not isinstance(key, str) or not key.startswith(("feat.", "spacy.morph."))
+            for key in keys
+        ):
+            raise ValueError("invalid morphology key")
+        _validate_schema(
+            list(PORTABLE_SCHEMA) + [{"key": key, "kind": "string_set"} for key in keys]
         )
-    if list(keys) != sorted(set(keys), key=lambda key: key.encode("utf-8")):
-        raise ValueError(
-            "requested morphology keys must be unique and in canonical order"
-        )
+    except ValueError as error:
+        raise ValueError(f"invalid morphology keys: {error}") from error
 
 
 def _plain(value: Any) -> Any:
@@ -405,12 +335,3 @@ def _validate_hex_digest(value: Any) -> None:
         bytes.fromhex(value)
     except ValueError as error:
         raise ValueError("spaCy profile digest is invalid") from error
-
-
-def _unique_object(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key {key!r}")
-        value[key] = item
-    return value

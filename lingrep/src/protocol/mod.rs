@@ -18,7 +18,6 @@ pub mod invocation;
 pub mod manpages;
 pub mod query;
 pub mod registry;
-pub mod sentence_final;
 pub mod sources;
 pub mod status;
 pub mod tokenize;
@@ -199,52 +198,6 @@ where
                 )?;
                 complete = true;
             }
-        }
-    }
-    if !saw_run {
-        Err(ProtocolError::MissingRun)
-    } else if complete {
-        Ok(())
-    } else {
-        Err(ProtocolError::MissingComplete)
-    }
-}
-
-pub fn validate_sentence_final_stream<I>(events: I) -> Result<(), ProtocolError>
-where
-    I: IntoIterator<Item = sentence_final::SentenceFinalEnvelope>,
-{
-    let mut saw_run = false;
-    let mut complete = false;
-    for envelope in events {
-        if envelope.schema != sentence_final::SCHEMA {
-            return Err(ProtocolError::WrongSchema {
-                line: 0,
-                expected: sentence_final::SCHEMA.into(),
-                actual: envelope.schema,
-            });
-        }
-        if complete {
-            return match envelope.event {
-                sentence_final::SentenceFinalEvent::Complete(_) => {
-                    Err(ProtocolError::DuplicateComplete)
-                }
-                _ => Err(ProtocolError::EventAfterComplete),
-            };
-        }
-        match envelope.event {
-            sentence_final::SentenceFinalEvent::Run(_) if saw_run => {
-                return Err(ProtocolError::DuplicateRun);
-            }
-            sentence_final::SentenceFinalEvent::Run(_) => saw_run = true,
-            sentence_final::SentenceFinalEvent::Row(_) if !saw_run => {
-                return Err(ProtocolError::MissingRun);
-            }
-            sentence_final::SentenceFinalEvent::Complete(_) if !saw_run => {
-                return Err(ProtocolError::MissingRun);
-            }
-            sentence_final::SentenceFinalEvent::Row(_) => {}
-            sentence_final::SentenceFinalEvent::Complete(_) => complete = true,
         }
     }
     if !saw_run {
@@ -486,16 +439,11 @@ fn validate_tokenize_stream(events: Vec<tokenize::TokenizeEnvelope>) -> Result<(
                     complete_event.coverage,
                     complete_event.termination,
                 )?;
-                if complete_event.coverage != query::Coverage::Full
-                    || complete_event.termination != query::Termination::Eof
-                {
-                    return Err(ProtocolError::InvalidCorpusLifecycle {
-                        message: "tokenize completion must be full/eof".into(),
-                    });
-                }
                 let inventory_is_valid = match run {
-                    query::RunCorpus::Prepared { .. } | query::RunCorpus::Direct { .. } => {
+                    query::RunCorpus::Prepared { .. } => complete_event.inventory.is_some(),
+                    query::RunCorpus::Direct { .. } => {
                         complete_event.inventory.is_some()
+                            == (complete_event.coverage == query::Coverage::Full)
                     }
                     query::RunCorpus::Stdin { .. } => complete_event.inventory.is_none(),
                 };

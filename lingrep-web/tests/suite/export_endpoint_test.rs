@@ -20,6 +20,7 @@
 //! a ready corpus but does not drive a revision, so its helpers are not reusable
 //! here. No `LINGREP_DICTIONARY_PATH` is required.
 
+use crate::v6_support::RevisionTestExt;
 use std::io::Cursor;
 
 use axum::{Router, body::Body, http::Request, http::header};

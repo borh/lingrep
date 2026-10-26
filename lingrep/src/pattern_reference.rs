@@ -65,6 +65,9 @@ requires a corpus that carries `dep.head` and `dep.rel` (CoNLL-U or a
 dependency-parsing analyzer); binding fails if these attributes are absent. This form
 matches basic edges only; `dep.enhanced` is not consulted.
 
+`not $head -[labels]-> $dependent` holds when both captures bind and no matching
+edge connects their final token assignments.
+
 Use `_` when only existence matters, not the dependent's identity:
 
   where $v -[obj|obj:*]-> _       some direct object exists
@@ -74,11 +77,11 @@ Use `_` when only existence matters, not the dependent's identity:
                                       no direct object satisfies the complete test
 
 The anonymous form emits once per body match even when several dependents
-match. Captured edges remain positive. Every
-anonymous constraint fails unless every token in the supplied sentence has a
-usable scalar `dep.head` and `dep.rel` and every head is in range. Missing
-dependency evidence therefore never proves absence. Neither `_` nor a target
-predicate adds a capture or result field.
+match. Neither `_` nor a target predicate adds a capture or result field.
+
+A captured negative constraint and either anonymous polarity require every token
+in the supplied sentence to carry usable scalar `dep.head` and `dep.rel` values
+with an in-range head. Incomplete dependency evidence fails these constraints.
 
 A bracketed dependent is likewise anonymous and constrained by the ordinary
 one-token Boolean test. Named tests and sets are legal there. A missing value
@@ -101,7 +104,7 @@ it does not match a missing attribute and cannot be combined with other terms.
 unsubtyped form; write `-[obl|obl:*]->` for either. A `@name`
 term names a `set` declaration and resolves where `[x in @S]` resolves; a
 member that is not a well-formed relation label is a compile error. A term
-repeated in one bracket, and two constraints sharing a dependent capture with
+repeated in one bracket, and two positive constraints sharing a dependent capture with
 disjoint label sets, are both rejected: a token carries exactly one `dep.rel`,
 so the first adds nothing and the second could never match.
 

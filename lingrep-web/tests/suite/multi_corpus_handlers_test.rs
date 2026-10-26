@@ -26,6 +26,7 @@
 //! first byte of block 0's payload in `tokens.v1.zst`, which V1 detects on the
 //! next decode because it validates the mapped block checksum every time.
 
+use crate::v6_support::RevisionTestExt;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::num::NonZeroUsize;

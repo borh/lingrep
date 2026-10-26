@@ -567,7 +567,7 @@ where
                             };
                             DirectSentenceValue::Bound(BoundSentenceInput::new(words, graph))
                         } else {
-                            DirectSentenceValue::Text(
+                            DirectSentenceValue::Text(if sentence.annotations.is_empty() {
                                 match self.segmentation {
                                     SegmentationMode::Input => TextUnit::sentence(
                                         InputUnitId::new(sentence.id.get()),
@@ -583,8 +583,27 @@ where
                                 }
                                 .map_err(|error| {
                                     source_error(sentence.id.get(), error.to_string())
-                                })?,
-                            )
+                                })?
+                            } else {
+                                TextUnit::annotated(
+                                    InputUnitId::new(sentence.id.get()),
+                                    match self.segmentation {
+                                        SegmentationMode::Input => TextUnitKind::Sentence,
+                                        SegmentationMode::Analyzer => TextUnitKind::Segment,
+                                    },
+                                    lingrep_core::analysis::AnnotatedText::new(
+                                        sentence.text,
+                                        sentence.annotations.into_vec(),
+                                    )
+                                    .map_err(|error| {
+                                        source_error(sentence.id.get(), error.to_string())
+                                    })?,
+                                    self.normalization,
+                                )
+                                .map_err(|error| {
+                                    source_error(sentence.id.get(), error.to_string())
+                                })?
+                            })
                         };
                         Some(DirectSentence {
                             location,
@@ -668,8 +687,14 @@ where
                 self.terminal_failure = Some(failure);
                 break;
             }
+            let annotation_bytes = match &sentence.value {
+                DirectSentenceValue::Text(unit) => {
+                    lingrep_core::analysis::AnnotatedText::annotation_bytes(unit.annotations())
+                }
+                DirectSentenceValue::Bound(_) => 0,
+            };
             let next_bytes = raw_bytes
-                .checked_add(sentence_bytes)
+                .checked_add(sentence_bytes.saturating_add(annotation_bytes))
                 .ok_or(ExecutionError::ResourceAccounting)?;
             if !batch.is_empty()
                 && (batch.len() == limits.max_stage_sentences
@@ -760,6 +785,7 @@ mod tests {
         text: &str,
     ) -> AdmittedCorpusEvent {
         AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(ordinal),
             document_id: document,
@@ -803,6 +829,7 @@ mod tests {
                 metadata: Box::new([]),
             }),
             Ok(AdmittedCorpusEvent::Sentence(AdmittedSentence {
+                annotations: Box::new([]),
                 structure: Default::default(),
                 id: SentenceId::new(0),
                 document_id: document,
@@ -1034,7 +1061,12 @@ impl FilesystemCorpusEvents {
     ) -> Result<(Self, FilesystemObservation, MarkdownDiagnostics), ExecutionError> {
         let validated = CorpusDiscovery::validate_root(root, limits.clone())
             .map_err(|error| execution_discovery_error(&error))?;
-        if validated.is_directory() && matches!(config, CorpusReadConfig::Soranoha) {
+        if validated.is_directory()
+            && matches!(
+                config,
+                CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei
+            )
+        {
             let error = DiscoveryError::IoAt {
                 logical_path: PathBuf::from("."),
                 source: io::Error::new(
@@ -1047,14 +1079,17 @@ impl FilesystemCorpusEvents {
         if validated.is_directory()
             && !matches!(
                 config,
-                CorpusReadConfig::Markdown(_) | CorpusReadConfig::Conllu | CorpusReadConfig::Bccwj
+                CorpusReadConfig::Markdown(_)
+                    | CorpusReadConfig::Conllu
+                    | CorpusReadConfig::Bccwj
+                    | CorpusReadConfig::Tei
             )
         {
             let error = DiscoveryError::IoAt {
                 logical_path: PathBuf::from("."),
                 source: io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires the Markdown, CoNLL-U, or BCCWJ reader",
+                    "a directory corpus requires the Markdown, CoNLL-U, TEI, or BCCWJ reader",
                 ),
             };
             return Err(execution_discovery_error(&error));
@@ -1382,12 +1417,13 @@ pub(crate) fn input_format(config: &CorpusReadConfig) -> InputFormat {
         CorpusReadConfig::Plain => InputFormat::Plaintext,
         CorpusReadConfig::Jsonl => InputFormat::Jsonl,
         CorpusReadConfig::Conllu => InputFormat::Conllu,
+        CorpusReadConfig::Tei => InputFormat::Tei,
         CorpusReadConfig::Markdown(config) => InputFormat::Markdown(config.clone()),
         // BCCWJ is a directory of zips and a Soranoha archive is a seekable
         // container: neither reader consumes one `BufRead` stream, so both
         // stream through their own arms instead of this mapping. This function
         // is reached only for the file formats above.
-        CorpusReadConfig::Bccwj | CorpusReadConfig::Soranoha => {
+        CorpusReadConfig::Bccwj | CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei => {
             #[expect(
                 clippy::unreachable,
                 reason = "bccwj and soranoha documents stream through their dedicated arms, not the file-format mapping"
@@ -1418,6 +1454,19 @@ pub(crate) fn stdin_events(
 ) {
     let observation = StdinObservation::default();
     let reader = observation.reader(io::stdin());
+    if matches!(config, CorpusReadConfig::Tei) {
+        let events = match lingrep_core::corpus::tei::TeiEvents::new(
+            reader,
+            "<stdin>".into(),
+            max_input_record_bytes,
+        ) {
+            Ok(events) => {
+                Box::new(events) as Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>
+            }
+            Err(error) => Box::new(std::iter::once(Err(error))),
+        };
+        return (observation, events);
+    }
     let (reader, _) =
         BoundedRecordReader::new(BufReader::new(reader), max_input_record_bytes, "<stdin>");
     let events = stream_input_events(input_format(config), reader, "<stdin>".into(), None);
@@ -1441,8 +1490,17 @@ pub(crate) fn open_corpus_document(
     record_limit: usize,
     document: &SourceDocument,
 ) -> io::Result<Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>> {
-    if matches!(config, CorpusReadConfig::Soranoha) {
-        return crate::soranoha_seam::open(source, inventory, document, record_limit);
+    if matches!(
+        config,
+        CorpusReadConfig::Soranoha | CorpusReadConfig::SoranohaTei
+    ) {
+        return crate::soranoha_seam::open(
+            source,
+            inventory,
+            document,
+            record_limit,
+            matches!(config, CorpusReadConfig::SoranohaTei),
+        );
     }
     let file = File::open(&document.path)?;
     if let Some(inventory) = inventory {
@@ -1452,6 +1510,16 @@ pub(crate) fn open_corpus_document(
     }
     let reader = HashingReader::new(file, source.clone(), &document.logical_name)
         .map_err(identity_io_error)?;
+    if matches!(config, CorpusReadConfig::Tei) {
+        return lingrep_core::corpus::tei::TeiEvents::new(
+            reader,
+            document.logical_name.clone(),
+            record_limit,
+        )
+        .map(|events| {
+            Box::new(events) as Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>
+        });
+    }
     let (reader, _) =
         BoundedRecordReader::new(BufReader::new(reader), record_limit, &document.logical_name);
     Ok(stream_input_events(

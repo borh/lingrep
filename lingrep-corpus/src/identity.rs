@@ -80,15 +80,10 @@ impl ReaderIdentity {
         config: &lingrep_core::corpus::CorpusReadConfig,
         normalization: lingrep_core::analysis::NormalizationPolicy,
     ) -> Self {
-        use lingrep_core::analysis::NormalizationPolicy;
-
         let mut hash = blake3::Hasher::new();
         hash.update(READER_WITH_NORMALIZATION_DOMAIN);
         hash.update(&lingrep_core::corpus::reader_identity_digest(config));
-        hash.update(&[match normalization {
-            NormalizationPolicy::None => 0,
-            NormalizationPolicy::Nfc => 1,
-        }]);
+        hash.update(normalization.identity_bytes());
         Self::from_bytes(*hash.finalize().as_bytes())
     }
 }
@@ -467,20 +462,6 @@ mod reader_identity_tests {
             .collect()
     }
 
-    /// Every reader identity a build can record, pinned as literals.
-    ///
-    /// These are artifact addresses. A change to any of them renames every
-    /// artifact built under it, so this test exists to make that a decision
-    /// somebody typed rather than a consequence somebody discovered. Moving one
-    /// is legitimate only as an identity-scheme cutover.
-    ///
-    /// The `nfc`/`jsonl` row pins the value both binaries derive for a JSONL
-    /// root, which differs from the unframed digest.
-    ///
-    /// The Markdown row carries the default [`SectionPolicy`], which is the one
-    /// a CLI build with no `--md-*-sections` flags uses. It is not the only
-    /// Markdown identity — the policy feeds `reader_tag` — but it is the one
-    /// every default build addresses.
     #[test]
     fn structural_reader_identities_are_pinned() {
         let markdown =
@@ -489,7 +470,7 @@ mod reader_identity_tests {
             (
                 &CorpusReadConfig::Jsonl,
                 NormalizationPolicy::Nfc,
-                "3422793012a2f7130725d91afcdc995b56fd3c7df69d5e7fcfad2c5ef91a1d34",
+                "65d0a037af9c05ba6473371af4f3b1c10aa6c6131335f6e8fcad4f3cddeb735b",
             ),
             (
                 &CorpusReadConfig::Jsonl,
@@ -499,17 +480,17 @@ mod reader_identity_tests {
             (
                 &CorpusReadConfig::Plain,
                 NormalizationPolicy::Nfc,
-                "b1ff0711e7ca79c5d0b98075acdde8b50368c121b8f7829aec6da7aaa9755ca2",
+                "4929553aefc1959cfd5e0e595d7e6d79fc72cd6fd1d55ce0ca85fff60997820d",
             ),
             (
                 &markdown,
                 NormalizationPolicy::Nfc,
-                "e6e3551c916214f19813eca5e74f734f70598ba643888cad52b459516ccf9d53",
+                "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1",
             ),
             (
                 &CorpusReadConfig::Bccwj,
                 NormalizationPolicy::Nfc,
-                "1030dbe7fb417afe02212318fad40c15870da35c3ad1a1637d591f4c16c79f90",
+                "d1ee857e00bfa141eec574e1a247f9189d343a9f9b920ce35075b8fc4d7fc2d7",
             ),
         ] {
             assert_eq!(

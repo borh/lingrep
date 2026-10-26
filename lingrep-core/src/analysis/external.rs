@@ -700,7 +700,7 @@ impl<R: BufRead> ExternalTranscript<R> {
                 .checked_add(document.text.len())
                 .ok_or_else(|| limit_error("stage input bytes", batch_id))?;
             if request_bytes > self.limits.max_request_batch_bytes
-                || input_bytes > bounds.max_stage_input_bytes
+                || (document_count > 1 && input_bytes > bounds.max_stage_input_bytes)
             {
                 return Err(
                     limit_error("request/stage input bytes", batch_id).input(document.input_id)

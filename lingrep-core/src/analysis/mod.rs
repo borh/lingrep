@@ -1,6 +1,7 @@
 //! Analyzer-neutral admitted text and morphology values.
 
-mod analyzer;
+pub(crate) mod analyzer;
+mod annotations;
 mod batch;
 mod descriptor;
 mod external;
@@ -13,6 +14,7 @@ mod text;
 mod vibrato;
 
 pub use analyzer::{AnalysisError, AnalyzerPlan, AnalyzerSession};
+pub use annotations::{AnnotatedAnalysisSession, AnnotatedText, TextAnnotation};
 pub use batch::{AnalyzedInput, AnalyzedSentence, SurfaceToken, ValidatedAnalysisBatch};
 pub use descriptor::{
     AnalyzerDescriptor, AnalyzerFamily, ExecutionProvenance, ExtractionProfile, SegmentationMode,

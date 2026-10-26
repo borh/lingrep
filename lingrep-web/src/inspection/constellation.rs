@@ -12,6 +12,44 @@ use lingrep_core::token_match::TokenInfo;
 
 use super::projector::TokenSummary;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlapCandidate {
+    pub name: String,
+    pub span: Range<usize>,
+    pub published: bool,
+}
+
+pub fn overlapping_candidates(
+    explanation: &SentenceExplanation,
+    published_name: &str,
+    span: Range<usize>,
+) -> Vec<OverlapCandidate> {
+    let mut skipped_selected = false;
+    explanation
+        .candidates
+        .iter()
+        .filter_map(|candidate| {
+            if !skipped_selected
+                && candidate.published.as_ref().is_some_and(|matched| {
+                    matched.pattern == published_name
+                        && matched.start == span.start
+                        && matched.end == span.end
+                })
+            {
+                skipped_selected = true;
+                return None;
+            }
+            (candidate.raw.start < span.end && span.start < candidate.raw.end).then(|| {
+                OverlapCandidate {
+                    name: candidate.raw.pattern.to_string(),
+                    span: candidate.raw.start..candidate.raw.end,
+                    published: candidate.published.is_some(),
+                }
+            })
+        })
+        .collect()
+}
+
 /// Research-facing span groups for one sentence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constellation {

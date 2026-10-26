@@ -24,6 +24,7 @@
 //! V7 validates the mapped block checksum on every decode, the later inspect
 //! read observes corruption even though the scan already read it cleanly.
 
+use crate::v6_support::RevisionTestExt;
 use std::sync::Arc;
 use std::time::Duration;
 

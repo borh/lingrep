@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from lingrep_adapter_protocol import _unique_object
+from lingrep_adapter_protocol.resources import (
+    canonical_json,
+)
+from lingrep_adapter_protocol.resources import (
+    digest_json as digest_json,
+)
+from lingrep_adapter_protocol.resources import (
+    resource_manifest_digest as _resource_manifest_digest,
+)
+
 PROFILE_FILE = "lingrep-stanza-model.json"
 PROFILE_FORMAT = "lingrep.stanza-model/v1"
-MANIFEST_HASH_CHUNK_BYTES = 1 << 20
 PROCESSOR_ORDER = ("tokenize", "mwt", "pos", "lemma")
 BASE_UD_FEATURE_NAMES = (
     "Abbr",
@@ -61,22 +71,6 @@ MORPHOLOGY_SCALARS = (
     {"key": "upos", "kind": "scalar"},
     {"key": "xpos", "kind": "scalar"},
 )
-
-
-def canonical_json(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def digest_json(value: Any) -> str:
-    import blake3
-
-    return blake3.blake3(canonical_json(value)).hexdigest()
 
 
 def prepare_model_bundle(
@@ -193,28 +187,7 @@ def selection_digest(selection: Mapping[str, Any]) -> str:
 
 
 def resource_manifest_digest(resource_root: Path, manifest_root: Path) -> str:
-    import blake3
-
-    root = manifest_root.resolve(strict=True)
-    if resource_root.is_absolute() or any(
-        part in {"", ".", ".."} for part in resource_root.parts
-    ):
-        raise ValueError(
-            "Stanza resource root must be normalized and manifest-relative"
-        )
-    entries: list[tuple[str, int, bytes]] = []
-    _collect_manifest_files(root, root / resource_root, entries)
-    entries.sort(key=lambda entry: entry[0].encode("utf-8"))
-    digest = blake3.blake3()
-    digest.update(b"lingrep.analyzer-resources/v1")
-    digest.update(len(entries).to_bytes(8, "little"))
-    for relative, length, content_digest in entries:
-        encoded = relative.encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "little"))
-        digest.update(encoded)
-        digest.update(length.to_bytes(8, "little"))
-        digest.update(content_digest)
-    return digest.hexdigest()
+    return _resource_manifest_digest(resource_root, manifest_root, provider="Stanza")
 
 
 def _declared_selection(
@@ -392,47 +365,3 @@ def _is_feature_key(key: str) -> bool:
         and layer[:-1].isascii()
         and layer[:-1].isalnum()
     )
-
-
-def _collect_manifest_files(
-    root: Path, current: Path, entries: list[tuple[str, int, bytes]]
-) -> None:
-    import blake3
-
-    if current.name == "__pycache__" or current.suffix == ".pyc":
-        raise ValueError("Stanza resource root contains a generated Python cache")
-    before = current.lstat()
-    if current.is_symlink():
-        raise ValueError(f"Stanza resource path {current} contains a symlink")
-    if current.is_file():
-        digest = blake3.blake3()
-        length = 0
-        with current.open("rb") as stream:
-            while chunk := stream.read(MANIFEST_HASH_CHUNK_BYTES):
-                length += len(chunk)
-                digest.update(chunk)
-        after = current.stat()
-        before_identity = (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        )
-        after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        if before_identity != after_identity or length != before.st_size:
-            raise ValueError("Stanza resource changed while it was hashed")
-        entries.append((current.relative_to(root).as_posix(), length, digest.digest()))
-        return
-    if not current.is_dir():
-        raise ValueError(f"Stanza resource path {current} is not regular")
-    for child in current.iterdir():
-        _collect_manifest_files(root, child, entries)
-
-
-def _unique_object(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key {key!r}")
-        result[key] = value
-    return result

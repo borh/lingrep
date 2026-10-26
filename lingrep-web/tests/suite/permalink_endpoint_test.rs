@@ -218,6 +218,13 @@ async fn post_permalink(
     if let Some(corpus) = corpus {
         fields.push(("corpus", corpus));
     }
+    post_permalink_fields(store, &fields).await
+}
+
+async fn post_permalink_fields(
+    store: &RequestStore,
+    fields: &[(&str, &str)],
+) -> (StatusCode, serde_json::Value) {
     let body = serde_urlencoded::to_string(fields).unwrap();
     let request = Request::builder()
         .method("POST")
@@ -370,7 +377,7 @@ const SEEDED: &str = "shared_permalink_probe := [upos=VERB].";
 #[tokio::test]
 async fn landing_matching_digest_seeds_and_autoruns() {
     let (store, _directory, digest) = ready_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest)).unwrap();
+    let target = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest), None).unwrap();
     let (status, body) = get_index(store, &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -385,18 +392,54 @@ async fn landing_matching_digest_seeds_and_autoruns() {
 #[tokio::test]
 async fn landing_without_a_digest_assertion_seeds_and_autoruns() {
     let (store, _directory, _digest) = ready_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "default", None).unwrap();
+    let target = lingrep_web::permalink::encode(SEEDED, "default", None, None).unwrap();
     let (status, body) = get_index(store, &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
     assert!(body.contains("data-autorun"));
 }
 
+/// The sender chose 50 of the 100 the server offers; the recipient's page
+/// opens with 50 selected, so the autorun retains the sample the sender read.
+#[tokio::test]
+async fn a_link_carries_the_retention_the_sender_was_reading() {
+    let (store, _directory, _digest) = ready_store().await;
+    let (status, body) =
+        post_permalink_fields(&store, &[("pattern", SEEDED), ("retained", "50")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = body["path"].as_str().unwrap();
+    assert!(path.contains("&r=50"), "{path}");
+    let (status, html) = get_index(store, &format!("/{path}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("data-autorun"));
+    assert!(html.contains(r#"<option value="50" selected>"#), "{html}");
+    assert!(!html.contains(r#"<option value="100" selected>"#));
+}
+
+/// A link from a server with a higher ceiling lands on this server's own
+/// ceiling, and a client that sends no retention mints a link without one.
+#[tokio::test]
+async fn a_retention_above_the_offers_lands_on_the_ceiling() {
+    let (store, _directory, _digest) = ready_store().await;
+    let (_, body) =
+        post_permalink_fields(&store, &[("pattern", SEEDED), ("retained", "5000")]).await;
+    let path = body["path"].as_str().unwrap();
+    assert!(
+        path.contains("&r=100"),
+        "minted at this server's ceiling: {path}"
+    );
+    let foreign = lingrep_web::permalink::encode(SEEDED, "default", None, Some(5_000)).unwrap();
+    let (_, html) = get_index(store.clone(), &foreign).await;
+    assert!(html.contains(r#"<option value="100" selected>"#), "{html}");
+    let (_, body) = post_permalink(&store, SEEDED, None).await;
+    assert!(!body["path"].as_str().unwrap().contains("&r="));
+}
+
 /// A retired selector-less target cannot seed or run a query.
 #[tokio::test]
 async fn a_selector_less_target_is_unreadable() {
     let (store, _directory, digest) = ready_store().await;
-    let current = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest)).unwrap();
+    let current = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest), None).unwrap();
     let retired = format!("/?v=1&q={}&c={digest}", query_of(&current));
     let (status, body) = get_index(store, &retired).await;
     assert_eq!(status, StatusCode::OK);
@@ -410,7 +453,7 @@ async fn a_selector_less_target_is_unreadable() {
 #[tokio::test]
 async fn landing_on_a_cold_selection_prepares_without_autorun() {
     let harness = cold_corpus_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "sci", None).unwrap();
+    let target = lingrep_web::permalink::encode(SEEDED, "sci", None, None).unwrap();
     let (status, body) = get_index(harness.store.clone(), &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -461,7 +504,7 @@ async fn landing_on_a_cold_selection_prepares_without_autorun() {
 #[tokio::test]
 async fn landing_on_an_undeclared_corpus_keeps_the_query_without_pointing_anywhere() {
     let harness = two_corpus_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "absent", None).unwrap();
+    let target = lingrep_web::permalink::encode(SEEDED, "absent", None, None).unwrap();
     let (status, body) = get_index(harness.store.clone(), &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -488,7 +531,8 @@ async fn landing_on_an_undeclared_corpus_keeps_the_query_without_pointing_anywhe
 #[tokio::test]
 async fn landing_mismatched_digest_seeds_without_autorun_and_warns() {
     let (store, _directory, _digest) = ready_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "default", Some("deadbeefdead")).unwrap();
+    let target =
+        lingrep_web::permalink::encode(SEEDED, "default", Some("deadbeefdead"), None).unwrap();
     let (status, body) = get_index(store, &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -500,7 +544,8 @@ async fn landing_mismatched_digest_seeds_without_autorun_and_warns() {
 #[tokio::test]
 async fn landing_ready_link_while_corpus_loading_seeds_without_autorun() {
     let (store, _directory) = not_ready_store();
-    let target = lingrep_web::permalink::encode(SEEDED, "default", Some("abcdef012345")).unwrap();
+    let target =
+        lingrep_web::permalink::encode(SEEDED, "default", Some("abcdef012345"), None).unwrap();
     let (status, body) = get_index(store, &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -536,7 +581,8 @@ async fn landing_on_a_failed_corpus_says_unavailable_not_loading() {
     .await
     .expect("a corpus with no dictionary must reach the failed state");
 
-    let target = lingrep_web::permalink::encode(SEEDED, "default", Some("abcdef012345")).unwrap();
+    let target =
+        lingrep_web::permalink::encode(SEEDED, "default", Some("abcdef012345"), None).unwrap();
     let (status, body) = get_index(store, &target).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(SEEDED));
@@ -554,7 +600,7 @@ async fn landing_on_a_failed_corpus_says_unavailable_not_loading() {
 #[tokio::test]
 async fn landing_malformed_query_variants_fall_back_without_400() {
     let (store, _directory, digest) = ready_store().await;
-    let valid = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest)).unwrap();
+    let valid = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest), None).unwrap();
     let encoded = query_of(&valid);
     let cases = [
         "/?v=1&q=not*base64&k=default&c=abcdef012345".to_string(),
@@ -586,7 +632,7 @@ async fn landing_malformed_query_variants_fall_back_without_400() {
 #[tokio::test]
 async fn landing_over_length_target_falls_back_without_decoding() {
     let (store, _directory, digest) = ready_store().await;
-    let target = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest)).unwrap();
+    let target = lingrep_web::permalink::encode(SEEDED, "default", Some(&digest), None).unwrap();
     let oversized = format!(
         "{target}&{}",
         "x".repeat(2 * lingrep_web::permalink::MAX_REQUEST_TARGET_LEN)

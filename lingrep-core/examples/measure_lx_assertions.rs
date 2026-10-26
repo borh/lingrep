@@ -1,3 +1,7 @@
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use compact_str::CompactString;
 use lingrep_core::fsm::{
     BoundCatalog, CompileLimits, CompiledCatalog, PatternSource, compile_catalog,

@@ -72,15 +72,15 @@ scratch is bounded by the largest sentence that worker has seen.
 The default and hard-ceiling values are `SUPPORTED_DEFAULTS` and `HARD_CEILING`
 in `lingrep-core/src/fsm/compiler/limits.rs`. Callers may tighten defaults with
 `CompileLimits::tightened`; they cannot raise them. CLI and web surfaces always
-use the defaults and expose no override flag. Generated owned bytes charge
-compatibility predicates, consuming-transition payload fan-out, catalog names,
-and deep-cloned catalog metadata before each allocation; this counter is not
-RSS.
+use the defaults and expose no override flag. The generated-owned-byte budget
+includes compatibility predicates, payloads duplicated across consuming
+transitions, catalog names, and deep-cloned catalog metadata. These are charged
+before each allocation; this counter is not RSS.
 
 Boolean token tests have two independent budgets with separate diagnostics.
-`TokenTestTooComplex` bounds the disjunctive-normal-form branch count a `[…]`
-distributes to. `TokenTestExpansionTooLarge` bounds the node count reached while
-substituting `test` references before distribution — `test a := @b & @b.`
+`TokenTestTooComplex` bounds the number of branches produced by distributing a
+`[…]` into disjunctive normal form. `TokenTestExpansionTooLarge` bounds the node
+count reached while substituting `test` references before distribution — `test a := @b & @b.`
 doubles the resolved tree at every level of a chain while still distributing to
 one branch, so the branch budget cannot detect it. Substitution nodes are charged
 twice: per `[…]`, which bounds one test's shape and points the diagnostic at the
@@ -157,7 +157,7 @@ neither the pattern language nor match semantics.
   and NFA construction.
 - `lingrep-core/src/fsm/matcher/builder.rs`: mutable definition collection.
 - `lingrep-core/src/fsm/matcher/compiled.rs`: immutable public executor.
-- `lingrep-core/src/fsm/matcher/nfa_matcher.rs`: reference matching behavior.
+- `lingrep-core/src/fsm/matcher/exec.rs`: dense NFA execution.
 - `lingrep-core/src/fsm/sentence_matcher.rs`: batch-scoped sentence scheduling.
 - `lingrep-core/src/fsm/inline.rs`: inline-pattern construction helper.
 - `lingrep-core/src/fsm/types.rs`: `Match`, patterns, and token specifications.

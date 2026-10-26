@@ -7,11 +7,25 @@ import argparse
 import json
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
+
+from generate_dataset import REPLAY_TIMEOUT_SEC, verifier_timeout_sec
 
 
 def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def build(context: Path) -> str:
+    """Image id of a `podman build` of `context`; no tag, so concurrent preflights
+    cannot select each other's images."""
+    return subprocess.run(
+        ["podman", "build", "-q", str(context)],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
 
 
 def require_oracle_reward(
@@ -19,6 +33,7 @@ def require_oracle_reward(
 ) -> None:
     required = {
         "evidence exact": reward.get("exact"),
+        "verdict correct": reward.get("verdict_correct"),
         "script valid": reward.get("script_valid"),
         "visible script exact": reward.get("visible_script_exact"),
         "script exact": reward.get("script_exact"),
@@ -44,67 +59,89 @@ def require_oracle_reward(
 
 
 def replay_dimensions(task: Path) -> tuple[bool, bool]:
-    """What this generated task scores, read from the generated files.
-
-    The replayed catalog is what the task scores, so it decides which rewards
-    the oracle must reach. Generation writes the replay configuration, the
-    oracle catalog, and the contract paragraph together; reading them back from
-    the task rather than from an arm name or a catalog field is what keeps this
-    gate from drifting from what the verifier will ask for.
-    """
+    """`(has_query, has_hidden)` from the generated task's replay configuration."""
     config = json.loads((task / "tests" / "analysis-replay.json").read_text())
-    has_query = (task / "tests" / "query-replay.json").is_file()
-    packaged = (task / "solution" / "query.lx").is_file()
-    if has_query and not packaged:
+    query_config_path = task / "tests" / "query-replay.json"
+    has_query = query_config_path.is_file()
+    has_hidden = config["has_hidden_driver"]
+    configs = [config]
+    if has_query:
+        configs.append(json.loads(query_config_path.read_text()))
+    if any(replay.get("replay_timeout_sec") != REPLAY_TIMEOUT_SEC for replay in configs):
+        raise RuntimeError(f"{task.name} declares a replay timeout the generator did not set")
+    expected = float(verifier_timeout_sec(has_query=has_query, has_hidden=has_hidden))
+    declared = tomllib.loads((task / "task.toml").read_text())["verifier"]["timeout_sec"]
+    if declared != expected:
         raise RuntimeError(
-            f"{task.name} replays a catalog but packages no oracle query.lx"
+            f"{task.name} verifier timeout {declared} does not cover its {expected} s replay budget"
         )
-    if packaged and not has_query:
-        raise RuntimeError(
-            f"{task.name} packages an oracle query.lx that is never replayed"
-        )
-    return has_query, config["has_hidden_driver"]
+    return has_query, has_hidden
 
 
 def preflight(generated: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="lingrep-harbor-oracle-") as temporary:
         temporary_root = Path(temporary)
         tasks = [
-            (arm, task)
-            for arm in ("lingrep", "mecab")
-            for task in sorted((generated / arm).iterdir())
+            (arm_root.name, task)
+            for arm_root in sorted(generated.iterdir())
+            for task in sorted(arm_root.iterdir())
         ]
+        dimensions = {task: replay_dimensions(task) for _, task in tasks}
         for arm, task in tasks:
-            has_query, has_hidden = replay_dimensions(task)
-            if not has_query:
+            if arm != "lingrep":
                 continue
-
+            catalog = task / "solution" / "query.lx"
+            try:
+                result = subprocess.run(
+                    [
+                        "ling",
+                        "check",
+                        "--patterns",
+                        str(catalog),
+                        "--schema",
+                        "unidic-morphology",
+                        "--json",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(
+                    f"invalid oracle catalog {catalog}: {error.stderr}"
+                ) from error
+            binding = json.loads(result.stdout)["data"]["binding"]
+            answerable = json.loads((task / "tests" / "verdict.json").read_text())["answerable"]
+            if binding.get("refusal") or (binding["unavailable"] and answerable):
+                raise RuntimeError(f"invalid oracle catalog {catalog}: {binding}")
+        for arm, task in tasks:
+            has_query, has_hidden = dimensions[task]
             logs = temporary_root / arm / task.name / "logs"
             logs.mkdir(parents=True)
             logs.chmod(0o777)
+            environment = build(task / "environment")
             run(
                 [
-                    "docker",
+                    "podman",
                     "run",
                     "--rm",
                     "-v",
                     f"{task / 'solution'}:/solution:ro",
                     "-v",
                     f"{logs}:/logs",
-                    f"{arm}-linguistic-eval:latest",
+                    environment,
                     "/solution/solve.sh",
                 ]
             )
-            image = f"{arm}-harbor-oracle-verifier:latest"
-            run(["docker", "build", "-q", "-t", image, str(task / "tests")])
+            verifier = build(task / "tests")
             run(
                 [
-                    "docker",
+                    "podman",
                     "run",
                     "--rm",
                     "-v",
                     f"{logs}:/logs",
-                    image,
+                    verifier,
                     "/tests/test.sh",
                 ]
             )

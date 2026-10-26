@@ -1,0 +1,125 @@
+{% import "macros.html" as macros %}
+<div id="section-analysis" data-section-analysis>
+<section class="detail-view section-comparison-band" data-detail-view="sections" data-section-comparison aria-labelledby="comparison-heading">
+  {% match comparison_control %}{% when Some with (control) %}{{ control|safe }}{% when None %}{% endmatch %}
+  <h3 id="comparison-heading"><span data-i18n="results.compare_sections">Section distribution — all patterns</span></h3>
+  {% if !has_selection %}<p class="comparison-note" data-i18n="results.section_selection_empty">Choose at least one section above to show the comparison and clustering.</p>{% endif %}
+  {% if has_selection && !has_comparison %}<p class="comparison-note" data-i18n="results.section_selection_unavailable">No comparison is available for the selected sections and patterns.</p>{% endif %}
+  {% match comparison %}{% when Some with (comparison) %}
+    <div class="section-comparison-scroll">
+      <table class="section-comparison">
+        <thead><tr>
+          <th scope="col" data-i18n="results.col_pattern">Pattern</th>
+          {% for column in comparison.columns %}<th scope="col" class="comparison-column"><span class="comparison-label">{{ column.label }}</span><span class="comparison-universe">{{ column.universe }}</span></th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in comparison.rows %}
+          <tr data-pattern-id="{{ row.pattern_key }}"><th scope="row" class="comparison-pattern"><button type="button" class="comparison-pattern-select" data-select-pattern="{{ row.pattern_key }}">{{ row.pattern_name }}</button></th>
+          {% for cell in row.cells %}<td class="comparison-cell" data-count="{{ cell.count }}" data-rate-tenths="{{ cell.rate_tenths }}" title="{{ cell.count }} · {{ cell.rate_label }}"><span class="comparison-fill" aria-hidden="true" style="opacity:{{ cell.intensity }}%"></span><span class="comparison-value">{{ cell.count }}</span></td>{% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="comparison-note" data-i18n="results.compare_scale">Every cell is shaded on one scale across the whole table, so rows are comparable. A cell's tooltip gives its share of that section.</p>
+    {% if comparison.hidden_sections > 0 %}<p class="comparison-note" data-i18n="results.compare_hidden" data-i18n-args='{"n": {{ comparison.hidden_sections }}}'>{{ comparison.hidden_sections }} smaller sections are not shown.</p>{% endif %}
+    <section class="section-contrast-band" data-detail-view="sections" data-section-contrast aria-labelledby="contrast-heading">
+      <h3 id="contrast-heading"><span data-i18n="results.contrast_heading">Rate contrast between two sections</span></h3>
+      <form class="cluster-controls contrast-controls" id="section-contrast-controls"
+            hx-post="api/section-analysis/{{ workbench_id }}/{{ revision }}"
+            hx-trigger="change" hx-target="#section-analysis" hx-swap="outerHTML">
+        <input type="hidden" name="submitted" value="1">
+        {% for label in selected_labels %}<input type="hidden" name="section" value="{{ label }}">{% endfor %}
+        {% if distance_cosine %}<input type="hidden" name="distance" value="cosine">{% else %}<input type="hidden" name="distance" value="jensen-shannon">{% endif %}
+        <label class="section-distance"><span data-i18n="results.contrast_reference">Reference section</span>
+          <select name="contrast_reference" data-contrast-reference>
+            <option value=""{% if contrast_selection.reference_label().is_empty() %} selected{% endif %} data-i18n="results.contrast_unselected">— choose —</option>
+            {% for column in comparison.columns %}<option value="{{ column.label }}"{% if column.label == contrast_selection.reference_label() %} selected{% endif %}>{{ column.label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="section-distance"><span data-i18n="results.contrast_comparison">Compared section</span>
+          <select name="contrast_comparison" data-contrast-comparison>
+            <option value=""{% if contrast_selection.comparison_label().is_empty() %} selected{% endif %} data-i18n="results.contrast_unselected">— choose —</option>
+            {% for column in comparison.columns %}<option value="{{ column.label }}"{% if column.label == contrast_selection.comparison_label() %} selected{% endif %}>{{ column.label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="section-distance"><span data-i18n="detail.order">Order</span>
+          <select name="contrast_order" data-contrast-order>
+            <option value="difference-desc"{% if contrast_selection.order.form_value() == "difference-desc" %} selected{% endif %} data-i18n="results.contrast_order_difference_desc">Difference ↓</option>
+            <option value="difference-asc"{% if contrast_selection.order.form_value() == "difference-asc" %} selected{% endif %} data-i18n="results.contrast_order_difference_asc">Difference ↑</option>
+            <option value="name-asc"{% if contrast_selection.order.form_value() == "name-asc" %} selected{% endif %} data-i18n="detail.order_name">Name ↑</option>
+          </select>
+        </label>
+      </form>
+      {% if contrast_selection.is_same_section() %}<p class="comparison-note" data-i18n="results.contrast_same_section">Choose two different sections.</p>{% endif %}
+      {% match contrast %}{% when Some with (contrast) %}
+      <div class="section-comparison-scroll">
+        <table class="section-comparison section-contrast">
+          <thead><tr>
+            <th scope="col" data-i18n="results.col_pattern">Pattern</th>
+            <th scope="col" class="comparison-column" data-contrast-column="reference"><span class="comparison-label">{{ contrast.reference.label }}</span><span class="comparison-universe">{{ contrast.reference.universe }}</span></th>
+            <th scope="col" class="comparison-column" data-contrast-column="comparison"><span class="comparison-label">{{ contrast.comparison.label }}</span><span class="comparison-universe">{{ contrast.comparison.universe }}</span></th>
+            <th scope="col" class="comparison-column" data-contrast-column="difference" data-i18n="results.contrast_col_difference">Difference</th>
+            <th scope="col" class="comparison-column" data-contrast-column="ratio" data-i18n="results.contrast_col_ratio">Ratio</th>
+          </tr></thead>
+          <tbody>
+          {% for row in contrast.rows %}
+            <tr data-pattern-id="{{ row.pattern_key }}"><th scope="row" class="comparison-pattern"><button type="button" class="comparison-pattern-select" data-select-pattern="{{ row.pattern_key }}">{{ row.pattern_name }}</button></th>
+            <td class="comparison-cell" data-count="{{ row.reference_count }}" title="{{ row.reference_count }}">{{ row.reference_ppm_label }}</td>
+            <td class="comparison-cell" data-count="{{ row.comparison_count }}" title="{{ row.comparison_count }}">{{ row.comparison_ppm_label }}</td>
+            <td class="comparison-cell" data-difference-ppm="{{ row.difference_ppm }}">{{ row.difference_label }}</td>
+            <td class="comparison-cell">{% match row.ratio_label %}{% when Some with (ratio) %}{{ ratio }}{% when None %}<span class="contrast-ratio-unavailable" data-i18n="results.contrast_ratio_unavailable" title="The reference rate is zero, so no ratio is defined." data-i18n-title="results.contrast_ratio_unavailable_note">—</span>{% endmatch %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="comparison-note" data-i18n="results.contrast_note">Rates are occurrences per million sentences of each section; the header shows each section’s sentence count and a cell’s tooltip its count. Difference is the compared rate minus the reference rate; ratio is the compared rate over the reference rate.</p>
+      {% when None %}{% endmatch %}
+    </section>
+  {% when None %}{% endmatch %}
+</section>
+{% if has_comparison %}
+<section class="detail-view section-cluster-controls" data-detail-view="clusters" aria-label="Clustering options" data-i18n-aria-label="results.cluster_options_aria">
+  <form class="cluster-controls" id="section-cluster-distance"
+        hx-post="api/section-analysis/{{ workbench_id }}/{{ revision }}"
+        hx-trigger="change" hx-target="#section-analysis" hx-swap="outerHTML">
+    <input type="hidden" name="submitted" value="1">
+    {% for label in selected_labels %}<input type="hidden" name="section" value="{{ label }}">{% endfor %}
+    <input type="hidden" name="contrast_reference" value="{{ contrast_selection.reference_label() }}">
+    <input type="hidden" name="contrast_comparison" value="{{ contrast_selection.comparison_label() }}">
+    <input type="hidden" name="contrast_order" value="{{ contrast_selection.order.form_value() }}">
+    <label class="section-distance"><span data-i18n="results.cluster_distance_label">Clustering distance</span>
+      <select name="distance" data-cluster-distance>
+        <option value="jensen-shannon"{% if distance_jensen_shannon %} selected{% endif %} data-i18n="results.distance_jensen_shannon">Jensen–Shannon</option>
+        <option value="cosine"{% if distance_cosine %} selected{% endif %} data-i18n="results.distance_cosine">Cosine</option>
+      </select>
+    </label>
+  </form>
+</section>
+{% endif %}
+  {% match dendrogram %}{% when Some with (tree) %}
+  <section class="detail-view section-dendrogram-band" data-detail-view="clusters"
+           data-section-dendrogram aria-labelledby="cluster-patterns-heading">
+    <h3 id="cluster-patterns-heading"><span data-i18n="results.cluster_patterns">Patterns clustered by section profile</span></h3>
+    {% call macros::dendrogram_plot(tree, "dendrogram-patterns-title", "results.cluster_aria", "Dendrogram of patterns clustered by their section profiles (agglomerative, average linkage).") %}{% endcall %}
+    {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
+    <p class="comparison-note" data-i18n="results.cluster_scale">Each pattern is profiled by its occurrence rate per million sentences in each section, normalized to unit sum, so a pattern distributed in proportion to section size has a uniform profile. Linkage is average (UPGMA).</p>
+    {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_insufficient">Fewer than two patterns have observed occurrences in the displayed sections, so no clustering is reported.</p>{% endif %}
+    {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
+    {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} patterns with no occurrences in the displayed sections have no profile to cluster and are omitted.</p>{% endif %}
+  </section>
+  {% when None %}{% endmatch %}
+  {% match section_dendrogram %}{% when Some with (tree) %}
+  <section class="detail-view section-dendrogram-band" data-detail-view="clusters"
+           data-section-dendrogram-transposed aria-labelledby="cluster-sections-heading">
+    <h3 id="cluster-sections-heading"><span data-i18n="results.cluster_sections">Sections clustered by pattern profile</span></h3>
+    {% call macros::dendrogram_plot(tree, "dendrogram-sections-title", "results.cluster_sections_aria", "Dendrogram of sections clustered by their pattern profiles (agglomerative, average linkage).") %}{% endcall %}
+    {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
+    <p class="comparison-note" data-i18n="results.cluster_sections_scale">Each section is profiled by its composition over patterns: every count is divided by that pattern's total across the displayed sections, so that a frequent pattern does not dominate, and the result is normalized to unit sum. A section whose composition matches the catalog's overall one therefore has a uniform profile.</p>
+    {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_sections_insufficient">Fewer than two sections have observed occurrences, so no clustering is reported.</p>{% endif %}
+    {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_sections_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
+    {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_sections_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} sections with no matching patterns have no profile to cluster and are omitted.</p>{% endif %}
+  </section>
+  {% when None %}{% endmatch %}
+</div>

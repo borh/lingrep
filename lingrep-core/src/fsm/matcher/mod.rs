@@ -10,7 +10,6 @@ mod emit;
 mod evaluated;
 mod exec;
 mod lexicon;
-mod nfa_matcher;
 mod pool;
 /// Crate-visible so the result-policy engine can evaluate transform guards
 /// through the matcher's own predicate semantics rather than a second
@@ -41,9 +40,6 @@ pub use spawn_candidate_metrics::{
     SpawnAtomOperator, SpawnCandidateAccumulator, SpawnCandidateCatalogMetrics,
     SpawnCandidateShapeEffect, SpawnPredicateShapeMetric, SpawnSafeAtomMetric,
 };
-
-// NFA Matcher is typically used internally, but re-export for advanced use cases
-pub use nfa_matcher::Matcher;
 
 // Re-export the pool-release hook for external use if needed
 pub use pool::clear_pools;

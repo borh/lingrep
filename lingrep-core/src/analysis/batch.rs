@@ -35,8 +35,8 @@ impl SurfaceToken {
 pub struct AnalyzedSentence {
     analyzer_sentence_ordinal: u32,
     source_range: SourceRange,
-    surface_tokens: Box<[SurfaceToken]>,
-    words: BoundTokenSentence,
+    pub(super) surface_tokens: Box<[SurfaceToken]>,
+    pub(super) words: BoundTokenSentence,
 }
 
 impl AnalyzedSentence {

@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use lingrep_core::token_match::TokenInfo;
 use lingrep_web::coordinator::CoordinatorRegistry;
 use lingrep_web::revision::WorkbenchId;

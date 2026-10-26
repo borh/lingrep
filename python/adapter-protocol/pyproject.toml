@@ -1,0 +1,23 @@
+[project]
+name = "lingrep-adapter-protocol"
+version = "0.1.0"
+description = "Bounded morphology protocol framing for lingrep analyzers"
+requires-python = ">=3.14,<3.15"
+dependencies = ["blake3>=1.0.8,<2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lingrep_adapter_protocol"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"pyproject.toml" = "lingrep_adapter_protocol/_project/pyproject.toml"

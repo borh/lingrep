@@ -1,6 +1,5 @@
 ---
 source: lingrep-core/tests/suite/pattern_compiler_contract.rs
-assertion_line: 804
 expression: repository_catalog_fingerprints()
 ---
 [
@@ -206,7 +205,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -243,7 +242,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -280,7 +279,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -313,7 +312,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -346,7 +345,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -379,7 +378,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -416,7 +415,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -453,7 +452,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -490,7 +489,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Gries & Stefanowitsch 2004, Extending collostructional analysis; re-derived\n  against unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -561,7 +560,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -598,7 +597,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -635,7 +634,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -672,7 +671,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -709,7 +708,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -750,7 +749,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -787,7 +786,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -824,7 +823,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -861,7 +860,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -902,7 +901,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -943,7 +942,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -980,7 +979,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -1013,7 +1012,7 @@ expression: repository_catalog_fingerprints()
                     ),
                     (
                         "source",
-                        "Stefanowitsch & Gries 2003, Collostructions; re-derived against unidic-cwj-202512\n",
+                        ">-\n  Stefanowitsch & Gries 2003, Collostructions; re-derived against\n  unidic-cwj-202512\n",
                     ),
                     (
                         "status",
@@ -1736,7 +1735,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"unidic.pos2\")",
         ],
         predicates: PredicateDigest(
-            "f7e63fa0ab3c86713b6034524e30816014965c0be270300e58e02b2b09485607",
+            "42e8cbcdc3fa45e950888c053055cfe7b1aa1efeec3b8cae6ecf145d4f84c040",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 12,
@@ -2053,7 +2052,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"unidic.pos2\")",
         ],
         predicates: PredicateDigest(
-            "2e44a1161c7c2da2490084b7901dc9b07c0abd7b61ff87f3fa87b151c6916eff",
+            "0d8f3f450b8ede59102aeded0ac632a250b3bc2ad375cfe7bdb610bc535a52f1",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 25,
@@ -2130,7 +2129,7 @@ expression: repository_catalog_fingerprints()
     },
     CatalogFingerprint {
         source: "patterns/npv-collocation.lx",
-        definitions: 1,
+        definitions: 2,
         catalog: [
             (
                 "npv",
@@ -2140,12 +2139,37 @@ expression: repository_catalog_fingerprints()
                         "$n.lemma,$p.lemma,$vc.span.text",
                     ),
                     (
+                        "output_name",
+                        "npv\n",
+                    ),
+                    (
                         "status",
                         "experimental\n",
                     ),
                     (
                         "transform",
-                        "- op: truncate_before\n  scope: $vc\n  stop: '[upos in {ADP, SCONJ, PART}]'\n- op: truncate_before\n  scope: $vc\n  stop: '[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]'\n- attr: lemma\n  component: last\n  op: substitute\n  scope: $vc\n  table:\n    居る: いる\n    成る: なる\n    有る: ある\n    為る: する\n- op: join\n  scope: $vc\n",
+                        "- op: truncate_before\n  scope: $vc\n  stop: \"[upos in {ADP, SCONJ, PART}]\"\n- op: truncate_before\n  scope: $vc\n  stop: \"[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]\"\n- attr: lemma\n  component: last\n  op: substitute\n  scope: $vc\n  table:\n    居る: いる\n    成る: なる\n    有る: ある\n    為る: する\n- op: join\n  scope: $vc\n",
+                    ),
+                ],
+            ),
+            (
+                "npv_separated",
+                [
+                    (
+                        "key",
+                        "$n.lemma,$p.lemma,$vc.span.text",
+                    ),
+                    (
+                        "output_name",
+                        "npv\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                    (
+                        "transform",
+                        "- op: truncate_before\n  scope: $vc\n  stop: \"[upos in {ADP, SCONJ, PART}]\"\n- op: truncate_before\n  scope: $vc\n  stop: \"[lemma in {ます, た, から, ため, たり, こと, よう, です, べし, だ}]\"\n- attr: lemma\n  component: last\n  op: substitute\n  scope: $vc\n  table:\n    居る: いる\n    成る: なる\n    有る: ある\n    為る: する\n- op: join\n  scope: $vc\n",
                     ),
                 ],
             ),
@@ -2158,15 +2182,15 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "894fd35b0dd6858f2abadf978ec99f57f484d7beaf863a772948088f221ba7f1",
+            "312891dcb4157061300ebbb3cce9df5018c60c737cf7483dfd8e7a0213a1d2df",
         ),
         compiler_stats: CompilerStatsFingerprint {
-            definitions: 1,
-            expression_nodes: 17,
-            max_depth: 5,
+            definitions: 2,
+            expression_nodes: 31,
+            max_depth: 6,
             reference_edges: 0,
-            nfa_states: 4,
-            transitions: 2,
+            nfa_states: 2,
+            transitions: 1,
         },
     },
     CatalogFingerprint {
@@ -2374,7 +2398,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "064bed719573e3482d01a10b7ee69162add3ec420d92375787f3c3e1af1ff1b0",
+            "53cd986c34a18dab01fec685ff1102f6766d712d429ede6f5f1ba0d32d342e49",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 6,
@@ -2947,6 +2971,7 @@ expression: repository_catalog_fingerprints()
         ],
         policy: [
             "admit All terminal=Within(5) anchor=propositional_end",
+            "resolve Patterns rank=[Longest, Start, End, Pattern]",
         ],
         required_attributes: [
             "AttributeKey(\"lemma\")",
@@ -5963,7 +5988,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "e70e829bf96dc5aa8faaae3591e039f6195a6fd3e5f1885039006133ab5cfa8b",
+            "4562433051bde3eaad5c1196c186d2fa590c98df765caf95a68cd6fa6c9928e7",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 104,
@@ -6233,7 +6258,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "b4e0568c8845df3eb2aac7af27f4b40481304696f85cbd65f0fece00cd7409d8",
+            "7def31507c2a74bb206ad437474143c71d9a0e8de43c2de4f37e9a522640732c",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 27,
@@ -7512,7 +7537,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"upos\")",
         ],
         predicates: PredicateDigest(
-            "0ac5a924b3569057b3f17c00b9c9b38180da3c3dd242ba0b1733e7abadfc2d14",
+            "9c069764247b763c0ed2d17bc4a6c41027e3c93c0058b66e9e3f1f7b1cf73027",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 7,
@@ -7612,7 +7637,7 @@ expression: repository_catalog_fingerprints()
             "AttributeKey(\"xpos\")",
         ],
         predicates: PredicateDigest(
-            "7cb8f2701c196c570167608c85a4d1422acb78aff29e4f6005c02a9e9d826aa3",
+            "6ea3fdf0bd2f56c3ef18e8d2e58fc18ab9fa70ff1ca9c735c8bf0f7bccc0364f",
         ),
         compiler_stats: CompilerStatsFingerprint {
             definitions: 6,

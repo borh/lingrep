@@ -95,7 +95,7 @@ syntax highlighting, or command history.
 | `Ctrl+C` | Cancel active pattern matching |
 | `Ctrl+Q` | Exit the explorer |
 
-The editor expects a complete lingrep patterns document. For example:
+Enter a complete lingrep patterns document in the editor. For example:
 
 ```pattern
 fragment verb := [upos=VERB].

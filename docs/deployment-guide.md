@@ -166,8 +166,8 @@ deletes it. If a declared artifact is corrupt, the corpus is marked failed and
 its files are left unchanged. An artifact that lingrep-web built itself from a
 source is discarded and rebuilt when corrupt.
 
-A prepared artifact is how lingrep-web serves a format it has no reader for.
-BCCWJ is read only by `ling`, and lingrep-web refuses a BCCWJ distribution
+Use a prepared artifact to serve a format that lingrep-web cannot read directly.
+BCCWJ is read only by `ling`, and lingrep-web rejects a BCCWJ distribution
 root. Prepare it once, then declare the result:
 
 ```sh
@@ -241,7 +241,7 @@ opens the dictionary on first corpus selection, not at startup.
 ## Markdown corpus dialect
 
 lingrep-web reads `.md` files using the pandoc dialect (one sentence per line).
-Section selection is applied at read time and changes which lines become
+The section policy used during preparation determines which lines become
 sentences, so the same file read under two section policies produces two
 different artifacts. The module's default, `markdown.excludeSections = [
 "references" ]`, excludes only `references`; lingrep-web run without the
@@ -282,9 +282,3 @@ preparation:
 ```nix
 services.lingrep-web.environment.RUST_LOG = "info,lingrep_web=debug";
 ```
-
-## Development workflow
-
-For local development, run `cargo run -p lingrep-web` in the dev shell, which
-exports `LINGREP_DICTIONARY_PATH`. After editing the NixOS module, run
-`nix flake check`.

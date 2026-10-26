@@ -55,7 +55,7 @@ pub(crate) fn analyze_program(
         // span carries the refusal.
         for relation in &definition.relations {
             let mut operands = vec![(relation.head, relation.head_span)];
-            if let RelationTarget::Captured { capture, span } = &relation.target {
+            if let RelationTarget::Captured { capture, span, .. } = &relation.target {
                 operands.push((*capture, *span));
             }
             for (capture, span) in operands {
@@ -95,25 +95,17 @@ pub(crate) fn analyze_program(
                 }
             }
         }
-        // A token carries exactly one `dep.rel`, so two constraints sharing a
-        // dependent capture can both hold only if their label sets intersect.
-        // Disjoint sets make the definition silently unmatchable — the
-        // `WhereSelfEdge` defect class — and `-[a|b]->` on one edge is the
-        // spelling that actually says what the two-constraint form was
-        // reaching for.
-        //
-        // Sound and deliberately incomplete, like the intersection width
-        // refusal. It keys on the *dependent* only: nested captures legally
-        // bind one token, so two constraints with one dependent and
-        // intersecting sets can be two spellings of one satisfiable edge.
         for (index, relation) in definition.relations.iter().enumerate() {
             for other in &definition.relations[index + 1..] {
                 let (
                     RelationTarget::Captured {
-                        capture: dependent, ..
+                        capture: dependent,
+                        polarity,
+                        ..
                     },
                     RelationTarget::Captured {
                         capture: other_dependent,
+                        polarity: other_polarity,
                         ..
                     },
                 ) = (&relation.target, &other.target)
@@ -124,7 +116,10 @@ pub(crate) fn analyze_program(
                     continue;
                 }
                 let intersects = relation_labels_intersect(&relation.labels, &other.labels);
-                if !intersects {
+                if *polarity == RelationPolarity::Positive
+                    && *other_polarity == RelationPolarity::Positive
+                    && !intersects
+                {
                     diagnostics.push(diagnostic(
                         sources,
                         other.label_span,
@@ -133,6 +128,25 @@ pub(crate) fn analyze_program(
                          label sets; a token carries exactly one `dep.rel`, so both can \
                          never hold and this pattern could never match — write one \
                          constraint with `-[a|b]->` if either label will do",
+                    ));
+                }
+                let contradictory = relation.head == other.head
+                    && match (polarity, other_polarity) {
+                        (RelationPolarity::Positive, RelationPolarity::Negative) => {
+                            relation_labels_subset(&relation.labels, &other.labels)
+                        }
+                        (RelationPolarity::Negative, RelationPolarity::Positive) => {
+                            relation_labels_subset(&other.labels, &relation.labels)
+                        }
+                        _ => false,
+                    };
+                if contradictory {
+                    diagnostics.push(diagnostic(
+                        sources,
+                        other.label_span,
+                        DiagnosticCode::WhereContradictoryExistence,
+                        "a negative basic edge covers every label admitted by a positive \
+                         edge between the same captured endpoints",
                     ));
                 }
             }
@@ -213,7 +227,7 @@ pub(crate) fn analyze_program(
             let mut operands: Vec<(CaptureId, SourceSpan)> = Vec::new();
             for relation in &definition.relations {
                 operands.push((relation.head, relation.head_span));
-                if let RelationTarget::Captured { capture, span } = &relation.target {
+                if let RelationTarget::Captured { capture, span, .. } = &relation.target {
                     operands.push((*capture, *span));
                 }
             }
@@ -331,7 +345,14 @@ fn relation_label_subset(subset: &RelationLabel, superset: &RelationLabel) -> bo
 
 fn relation_existence_polarity(relation: &ExecutionRelation) -> Option<RelationPolarity> {
     match &relation.target {
-        RelationTarget::Captured { .. } => Some(RelationPolarity::Positive),
+        RelationTarget::Captured {
+            polarity: RelationPolarity::Positive,
+            ..
+        } => Some(RelationPolarity::Positive),
+        RelationTarget::Captured {
+            polarity: RelationPolarity::Negative,
+            ..
+        } => None,
         RelationTarget::Anonymous { polarity, .. } => Some(*polarity),
         RelationTarget::Predicate {
             polarity: RelationPolarity::Positive,

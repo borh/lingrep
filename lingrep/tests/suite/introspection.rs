@@ -95,7 +95,9 @@ fn human_describe_explains_example_purpose_and_placeholders() {
     assert!(stdout.contains("patterns: lingrep patterns catalog file"));
     assert!(stdout.contains("dictionary: Vibrato dictionary cache"));
     assert!(stdout.contains("root: direct corpus root"));
-    assert!(stdout.contains("tsv contracts: lingrep.matches-tsv/v1"));
+    assert!(stdout.contains("options: ling matches --help-all"));
+    assert!(!stdout.contains("schemas:"));
+    assert!(!stdout.contains("lingrep.matches-tsv/v1"));
 }
 
 #[test]
@@ -423,4 +425,97 @@ fn doctor_corpus_is_bounded_open_not_full_verification() {
         parse_jsonl(&verify.stderr)[0]["data"]["code"],
         "component_checksum_mismatch"
     );
+}
+
+#[test]
+fn plans_validate_only_the_resources_of_the_selected_analyzer() {
+    let temp = tempfile::tempdir().unwrap();
+    let conllu = temp.path().join("input.conllu");
+    std::fs::write(&conllu, "1\t猫\t猫\tNOUN\t_\t_\t0\troot\t_\t_\n\n").unwrap();
+    for command in ["matches", "summarize", "tokenize", "coverage"] {
+        let mut run = lingrep_without_dictionary();
+        run.args([command, "--plan", "--json"]);
+        if matches!(command, "matches" | "summarize") {
+            run.args(["--pattern", "[]."]);
+        }
+        let output = run
+            .arg(&conllu)
+            .env("LINGREP_DICTIONARY_PATH", temp.path().join("missing.dic"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let data = &parse_jsonl(&output.stdout)[0]["data"];
+        assert!(data["dictionary_path"].is_null());
+    }
+    let dictionary = temp.path().join("system_core.dic");
+    std::fs::write(
+        &dictionary,
+        "plan checks paths without loading the dictionary",
+    )
+    .unwrap();
+    let text_input = temp.path().join("native.txt");
+    std::fs::write(&text_input, "猫。\n").unwrap();
+    let sudachi = lingrep_without_dictionary()
+        .args([
+            "matches",
+            "--plan",
+            "--json",
+            "--pattern",
+            "[].",
+            "--analyzer",
+            "sudachi",
+            "--sudachi-dict",
+        ])
+        .arg(&dictionary)
+        .arg(&text_input)
+        .env("LINGREP_DICTIONARY_PATH", temp.path().join("missing.dic"))
+        .output()
+        .unwrap();
+    assert!(
+        sudachi.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sudachi.stderr)
+    );
+    assert_eq!(
+        parse_jsonl(&sudachi.stdout)[0]["data"]["dictionary_path"],
+        dictionary.display().to_string()
+    );
+    let human = lingrep_without_dictionary()
+        .args(["matches", "--plan", "--pattern", "[]."])
+        .arg(&conllu)
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    let human = String::from_utf8(human.stdout).unwrap();
+    assert!(human.contains("patterns: inline.lx"), "{human}");
+    assert!(human.contains("settings:"), "{human}");
+    assert!(!human.contains("limits: {"), "{human}");
+    let config = temp.path().join("external.toml");
+    std::fs::write(&config, "version = 1\nkind = 'protocol'\npython = 'python3'\nentrypoint = 'adapter.py'\nlanguage = 'en'\nschema = [{key = 'text', kind = 'scalar'}]\n").unwrap();
+    let text = temp.path().join("input.txt");
+    std::fs::write(&text, "hello\n").unwrap();
+    let output = lingrep_without_dictionary()
+        .args([
+            "matches",
+            "--plan",
+            "--json",
+            "--pattern",
+            "[].",
+            "--analyzer-config",
+        ])
+        .arg(&config)
+        .arg(&text)
+        .env("LINGREP_DICTIONARY_PATH", temp.path().join("missing.dic"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(parse_jsonl(&output.stdout)[0]["data"]["dictionary_path"].is_null());
 }

@@ -46,7 +46,6 @@ pub const HELP_EXAMPLES: &[HelpExample] = &[
 #[derive(Template)]
 #[template(path = "help.html")]
 struct HelpPage {
-    examples: &'static [HelpExample],
     current_page: &'static str,
 }
 
@@ -56,7 +55,6 @@ pub fn routes() -> Router<RequestStore> {
 
 async fn help_page() -> Html<String> {
     HelpPage {
-        examples: HELP_EXAMPLES,
         current_page: "help",
     }
     .render().map_or_else(|_| {

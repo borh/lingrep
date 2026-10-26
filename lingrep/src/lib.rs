@@ -31,3 +31,6 @@ pub use cli::Cli;
 pub use error::CliError;
 pub use protocol::write_jsonl;
 mod analyzer_selection;
+
+#[cfg(unix)]
+mod external_analyzer;

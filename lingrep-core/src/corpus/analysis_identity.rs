@@ -30,6 +30,8 @@ pub fn reader_identity_digest(config: &CorpusReadConfig) -> [u8; 32] {
         CorpusFormat::Bccwj => 4,
         CorpusFormat::Conllu => 5,
         CorpusFormat::Soranoha => 6,
+        CorpusFormat::SoranohaTei => 7,
+        CorpusFormat::Tei => 8,
     }]);
     *digest.finalize().as_bytes()
 }

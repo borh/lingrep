@@ -3,7 +3,7 @@ name = "lingrep-harbor-eval"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "harbor @ git+https://github.com/harbor-framework/harbor.git@1b1dbc43729edff705071a797bb0f98a90cf62f5",
+  "harbor @ git+https://github.com/harbor-framework/harbor.git@b53b8134e1241686dca7759af188f987ecc48e8b",
   "tree-sitter>=0.25,<0.26",
   "tree-sitter-bash>=0.25,<0.26",
 ]
@@ -13,3 +13,5 @@ dev = ["pytest==9.1.1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not containers'"
+markers = ["containers: runs Podman against the loaded benchmark images"]

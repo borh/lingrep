@@ -1,0 +1,18 @@
+<nav class="site-nav">
+    <a href="./" class="site-nav-brand">lingrep</a>
+    <span class="site-nav-sep">|</span>
+    <a href="./" class="site-nav-link"{% if current_page == "corpus" %} aria-current="page"{% endif %}><span data-i18n="nav.corpus">Corpus Search</span></a>
+    <span class="site-nav-sep">|</span>
+    <a href="sample" target="_blank" rel="noopener" title="Open Sample Debugger in a new tab" data-i18n-title="nav.sample_new_tab" class="site-nav-link"{% if current_page == "sample" %} aria-current="page"{% endif %}><span data-i18n="nav.sample">Sample Debugger</span></a>
+    <span class="site-nav-sep">|</span>
+    <a href="help" target="_blank" rel="noopener" data-site-help-open aria-haspopup="dialog" aria-controls="site-help" class="site-nav-link"{% if current_page == "help" %} aria-current="page"{% endif %}><span data-i18n="nav.help">Help</span></a>
+    <span class="site-nav-spacer"></span>
+    {% if current_page == "corpus" %}
+    <button type="button" class="editor-help-open" data-editor-help-open
+            aria-haspopup="dialog" title="Syntax and shortcuts" data-i18n-title="editor.help_summary">
+        <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><rect x="1" y="1" width="16" height="12" rx="2"/><path d="M4 4h1m3 0h1m3 0h1M4 7h1m3 0h1m3 0h1M5 10h8"/></svg>
+        <span class="visually-hidden" data-i18n="editor.help_summary">Syntax and shortcuts</span>
+    </button>
+    {% endif %}
+    <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
+</nav>

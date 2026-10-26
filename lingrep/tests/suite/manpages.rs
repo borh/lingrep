@@ -170,6 +170,8 @@ fn manpages_cover_root_and_every_public_nested_command() {
             assert!(page.contains("PipeInBareValue"), "{name}");
         }
         if name == "ling-matches.1" {
+            assert!(page.contains("retained in one physical batch"), "{name}");
+            assert!(!page.contains(r"external\-executable"), "{name}");
             assert!(page.contains(r"\fB\-\-align\-hits\fR"), "{name}");
             assert!(
                 page.contains(r"\fB\-\-morpheme\-separator\fR \fI<TEXT>\fR"),

@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use lingrep_core::analysis::{AnalyzerLanes, NativeAnalyzerPlan};
+use crate::analyzer_selection::CliAnalyzerPlan;
+use lingrep_core::analysis::AnalyzerSession;
 use lingrep_core::corpus::{
     AdmittedCorpus, CorpusReadConfig, ScopeObservation, resolve_input_format,
 };
@@ -36,7 +37,7 @@ use crate::section_diagnostics::refuse_unanswerable;
 use crate::terminal::TerminalArbiter;
 
 pub(crate) enum ResolvedAnalysis {
-    Direct(Box<NativeAnalyzerPlan>),
+    Direct(Box<CliAnalyzerPlan>),
     Tokenized(TokenSchema),
 }
 
@@ -45,11 +46,9 @@ impl ResolvedAnalysis {
         &'a self,
         workers: usize,
         pool: &'a ThreadPool,
-    ) -> AnalysisBinding<AnalyzerLanes<'a, NativeAnalyzerPlan>> {
+    ) -> AnalysisBinding<Box<dyn AnalyzerSession + 'a>> {
         match self {
-            Self::Direct(plan) => {
-                AnalysisBinding::Session(AnalyzerLanes::new(plan.as_ref(), workers, pool))
-            }
+            Self::Direct(plan) => AnalysisBinding::Session(plan.create_lanes(workers, pool)),
             Self::Tokenized(schema) => AnalysisBinding::Prepared(schema.clone()),
         }
     }
@@ -77,11 +76,58 @@ pub(crate) struct ResolvedMatchingQuery {
 
 #[derive(Default)]
 pub(crate) struct QueryScope {
-    pub(crate) scope_observation: ScopeObservation,
+    scope_observation: ScopeObservation,
     pub(crate) prepared_scope: Option<ScopeResolution>,
-    pub(crate) section_labels: BTreeSet<String>,
-    pub(crate) markdown_diagnostics: Option<lingrep_core::corpus::MarkdownDiagnostics>,
-    pub(crate) read_time_policy: Option<lingrep_core::corpus::SectionPolicy>,
+    section_labels: BTreeSet<String>,
+    markdown_diagnostics: Option<lingrep_core::corpus::MarkdownDiagnostics>,
+    read_time_policy: Option<lingrep_core::corpus::SectionPolicy>,
+}
+
+impl QueryScope {
+    pub(crate) fn warn_before_run(
+        &self,
+        clause: Option<&ScopeClause>,
+        self_labels: &[String],
+        format: crate::cli::DiagnosticFormat,
+        run_id: &str,
+    ) -> Result<(), CliError> {
+        use crate::section_diagnostics::{
+            warn_read_time_excluded, warn_self_label_no_ops, warn_unused_labels,
+        };
+        warn_self_label_no_ops(self_labels, format, run_id)?;
+        if let Some(clause) = clause {
+            if let Some(policy) = &self.read_time_policy {
+                warn_read_time_excluded(clause, policy, format, run_id)?;
+            }
+            if self.markdown_diagnostics.is_none() {
+                warn_unused_labels(clause, &self.section_labels, format, run_id)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn report_after_run(
+        &self,
+        clause: Option<&ScopeClause>,
+        limited: bool,
+        format: crate::cli::DiagnosticFormat,
+        run_id: &str,
+    ) -> Result<Option<crate::protocol::query::ScopeReport>, CliError> {
+        if let (Some(clause), Some(diagnostics)) = (clause, &self.markdown_diagnostics) {
+            crate::section_diagnostics::warn_unused_labels(
+                clause,
+                &diagnostics.observed_labels(),
+                format,
+                run_id,
+            )?;
+        }
+        super::query_scope::build_scope_report(
+            clause,
+            self.prepared_scope.as_ref(),
+            &self.scope_observation,
+            limited,
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -104,6 +150,7 @@ pub(crate) fn resolve_matching_query(
             "--sample-blocks requires --corpus".into(),
         ));
     }
+    let catalog_attributes = compiled.matcher.execution_attributes();
     let root = input.root.as_deref();
     let stdin = selected_corpus.is_none() && root.is_none_or(|path| path == Path::new("-"));
     let mut scope = QueryScope::default();
@@ -113,7 +160,13 @@ pub(crate) fn resolve_matching_query(
         let analyzer_name = crate::attribute_binding::analyzer_name(artifact.analyzer());
         let bound = compiled
             .matcher
-            .bind_with_projection(&schema, projected_attributes.iter().cloned())
+            .bind_with_projection(
+                &schema,
+                projected_attributes
+                    .iter()
+                    .filter(|key| catalog_attributes.contains(key) || schema.keys().contains(key))
+                    .cloned(),
+            )
             .map_err(|error| crate::attribute_binding::bind_refusal(&error, &analyzer_name))?;
         crate::attribute_binding::write_unavailable_attribute_notices(
             &bound,
@@ -181,7 +234,7 @@ pub(crate) fn resolve_matching_query(
             QueryMode::Summarize => None,
         };
         let analysis = artifact.analysis_inputs()?;
-        write_token_schema_notice(artifact.analyzer(), analysis.token_schema().as_bytes())?;
+        write_token_schema_notice(artifact.analyzer(), &analysis)?;
         let source_identity = encode_digest(artifact.source_identity().as_bytes());
         let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
         let inventory = protocol_inventory(*artifact.inventory_stats());
@@ -235,7 +288,12 @@ pub(crate) fn resolve_matching_query(
             && matches!(&config.analyzer, AnalyzerCliConfig::Vibrato))
         .then(|| input.direct_dictionary_path())
         .transpose()?;
-        let resolved = resolve_input(format, config, dict_path.as_deref())?;
+        let resolved = resolve_input(
+            format,
+            config,
+            dict_path.as_deref(),
+            terminal.cancellation(),
+        )?;
         let schema = resolved.schema().clone();
         let descriptor = resolved.descriptor().clone();
         let dictionary_digest = resolved.resource_identity();
@@ -248,7 +306,13 @@ pub(crate) fn resolve_matching_query(
         let analyzer_name = crate::attribute_binding::analyzer_name(&analyzer_record);
         let bound = compiled
             .matcher
-            .bind_with_projection(&schema, projected_attributes.iter().cloned())
+            .bind_with_projection(
+                &schema,
+                projected_attributes
+                    .iter()
+                    .filter(|key| catalog_attributes.contains(key) || schema.keys().contains(key))
+                    .cloned(),
+            )
             .map_err(|error| crate::attribute_binding::bind_refusal(&error, &analyzer_name))?;
         crate::attribute_binding::write_unavailable_attribute_notices(
             &bound,

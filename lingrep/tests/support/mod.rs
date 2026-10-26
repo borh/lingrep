@@ -272,6 +272,7 @@ pub async fn build_single_sentence_artifact(destination: &Path, text: &str, toke
         .expect("start prepared test paragraph");
     let location = builder
         .push_corpus_event(&AdmittedCorpusEvent::Sentence(AdmittedSentence {
+            annotations: Box::new([]),
             structure: Default::default(),
             id: SentenceId::new(0),
             document_id: DocumentId::new(0),

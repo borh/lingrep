@@ -178,8 +178,11 @@ fn a_sentence_at_the_default_limit_makes_progress_as_a_singleton() {
 }
 
 #[test]
-fn an_oversized_sentence_fails_before_it_can_be_tokenized() {
-    let limits = ExecutionLimits::default();
+fn an_explicitly_limited_sentence_fails_before_it_can_be_tokenized() {
+    let limits = ExecutionLimits {
+        max_sentence_bytes: 64 * 1024,
+        ..ExecutionLimits::default()
+    };
     let mut source = TextIteratorSource::new(std::iter::once("x".repeat(64 * 1024 + 1)));
 
     assert!(matches!(

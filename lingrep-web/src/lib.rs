@@ -1,10 +1,12 @@
 pub mod catalog_index;
 pub mod cli;
+pub mod compound_chains;
 pub mod coordinator;
 pub mod corpus_context;
 pub mod corpus_runtime;
 pub mod corpus_set;
 mod derived_patterns;
+pub mod document_reach;
 mod export;
 pub mod handlers;
 pub mod inspection;
@@ -14,11 +16,13 @@ pub mod pattern_detail;
 pub mod patterns;
 pub mod permalink;
 pub mod provenance_view;
+mod reading;
 pub mod revision;
 pub mod revision_status;
 pub mod sample;
 pub mod section_analysis;
 pub mod section_comparison;
+pub mod section_contrast;
 pub mod section_dendrogram;
 pub mod section_tally;
 pub mod security_headers;
@@ -130,3 +134,5 @@ mod tests {
         assert_eq!(root.status(), StatusCode::NOT_FOUND);
     }
 }
+
+pub mod search_scope;

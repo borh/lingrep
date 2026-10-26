@@ -1,65 +1,12 @@
-//! Soranoha bulk plaintext archives: one ZIP per release selection, with the
-//! bibliography beside the texts.
+//! Reads Soranoha plaintext or TEI ZIP archives with `catalog.csv` document metadata.
 //!
-//! Soranoha publishes a bulk archive for the whole corpus and for each
-//! smaller selection (one author, one NDC class or subclass, the children's
-//! material). Every archive has the same shape: `catalog.csv` at the root and
-//! one plaintext file per work beside it, so the archive is self-describing
-//! and a work can be found, sized and cited without opening a text.
-//!
-//! The archive is one discovered source, exactly as a JSONL file is; each
-//! data entry is one admitted document. Entry order is byte-sorted by member
-//! name, so a document's ordinal is a property of the set of works rather than
-//! of the ZIP's physical order. The archive's bytes are therefore the whole
-//! source identity, bibliography included: a catalog edit that leaves every
-//! text unchanged still names a different corpus.
-//!
-//! The joined catalog is held for the archive's lifetime — one metadata record
-//! per work, never per sentence — while each work is inflated, split and
-//! dropped one at a time, so text-bearing memory follows the largest work and
-//! only the metadata table grows with the work count.
-//!
-//! # The catalog
-//!
-//! `catalog.csv` is written with a UTF-8 byte-order mark, CRLF records and
-//! every field quoted ([`CATALOG_COLUMNS`] is the pinned header). Each row is
-//! joined to its entry by `filename`. The row's columns become the document's
-//! `@document.*` metadata verbatim, so `--where '@document.author = …'` and
-//! `--source-metadata @document.identifier` reach the bibliography without a
-//! second file.
-//!
-//! - An empty field is **omitted**, not stored as an empty string: `subtitle`,
-//!   `first_published`, `ndc`, the source-edition fields and `doi` are absent
-//!   from many works, and "not recorded" is not "recorded as empty".
-//! - `body_character_count` and `source_edition_year` are typed as numbers;
-//!   every other column, `identifier` included, is a string. The identifier
-//!   keeps its leading zeros.
-//! - `identifier`, `filename` and `release` are required on every row, and
-//!   the release is one value across the archive: an archive is a release
-//!   selection, so a mixed one is corrupt rather than merely odd.
-//! - Columns added by a later catalog version are carried as string metadata
-//!   instead of being refused, so a reader of this release keeps working on
-//!   the next one. A *missing* pinned column is an error, because then the
-//!   join or a citation key could not be read.
-//!
-//! # What the text is
-//!
-//! The plaintext projection is reading text only: ruby readings, editorial
-//! notes and apparatus are absent, and source indentation is preserved as
-//! U+3000. Lines are Aozora Bunko's physical line breaks rather than authored
-//! paragraphs, so `paragraph` structure is reported unavailable and sentences
-//! are framed from each line with the same Japanese delimiter rule as the
-//! `plain` format. Reading the same member as `plain` and as part of a
-//! Soranoha archive therefore admits the same sentence texts.
-//!
-//! The TEI archive is not read here: its members are refused by name, and the
-//! plaintext archive is the projection this format reads.
+//! Works are emitted as documents in byte-sorted member-name order.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, Read, Seek};
+use std::io::{self, BufRead, Read, Seek};
 
 use super::structured::{CorpusEvent, Metadata, metadata_from_json};
-use super::zip::zip_entry_names;
+use super::zip::zip_entries;
 use crate::utils::split_sentence_ja;
 use zip::ZipArchive;
 
@@ -100,6 +47,7 @@ const NUMERIC_COLUMNS: [&str; 2] = ["body_character_count", "source_edition_year
 /// bomb cannot arrive disguised as a catalog, and it is generous enough for an
 /// order of magnitude more works than the corpus holds.
 const MAX_CATALOG_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_WORK_BYTES: usize = 64 * 1024 * 1024;
 
 /// The per-archive `CorpusEvent` stream over a caller-owned handle.
 ///
@@ -117,17 +65,21 @@ pub struct SoranohaEvents<R: Read + Seek> {
     /// The joined catalog, keyed by member name.
     rows: HashMap<String, Metadata>,
     source_name: String,
-    /// The run's `max_input_record_bytes`, applied per work.
-    max_entry_bytes: usize,
+    max_record_bytes: usize,
+    active: Option<ActiveDocument>,
+    tei: bool,
+}
+
+enum ActiveDocument {
+    Plain(io::Lines<crate::execution::BoundedRecordReader<io::Cursor<String>>>),
+    Tei(super::tei::TeiReading),
 }
 
 impl<R: Read + Seek> SoranohaEvents<R> {
     /// Opens one archive and validates its bibliography.
     ///
-    /// `max_entry_bytes` is the run's `--max-record-bytes`; a work whose
-    /// declared uncompressed size exceeds it is refused before a byte is
-    /// decompressed, and the read itself is bounded so an entry that
-    /// under-declares its size cannot outgrow the limit either.
+    /// `max_record_bytes` bounds a physical line, independently of the book's size.
+    /// Each inflated book is also bounded at 64 MiB.
     ///
     /// # Errors
     ///
@@ -135,29 +87,34 @@ impl<R: Read + Seek> SoranohaEvents<R> {
     /// no work entries, the catalog is malformed, a work has no row, two rows
     /// name one file or one identifier, rows disagree about the release, or a
     /// member belongs to a TEI archive.
-    pub fn new(reader: R, source_name: String, max_entry_bytes: usize) -> io::Result<Self> {
+    pub fn new(reader: R, source_name: String, max_record_bytes: usize) -> io::Result<Self> {
+        Self::new_with_kind(reader, source_name, max_record_bytes, false)
+    }
+    pub fn new_tei(reader: R, source_name: String, max_record_bytes: usize) -> io::Result<Self> {
+        Self::new_with_kind(reader, source_name, max_record_bytes, true)
+    }
+    fn new_with_kind(
+        reader: R,
+        source_name: String,
+        max_record_bytes: usize,
+        tei: bool,
+    ) -> io::Result<Self> {
         let mut zip = ZipArchive::new(reader).map_err(|error| {
             invalid(format!(
                 "soranoha archive {source_name}: not a readable ZIP archive: {error}"
             ))
         })?;
-        let names = zip_entry_names(&zip);
-        if !names.iter().any(|name| name == CATALOG_MEMBER) {
+        let entries = zip_entries(&zip)?;
+        if !entries.iter().any(|(name, _)| name == CATALOG_MEMBER) {
             return Err(invalid(format!(
                 "soranoha archive {source_name}: no {CATALOG_MEMBER} at the root"
             )));
         }
         let catalog = read_catalog(&mut zip, &source_name)?;
         let rows = parse_catalog(&catalog, &source_name)?;
-        let entries: Vec<(String, usize)> = names
+        let entries: Vec<(String, usize)> = entries
             .into_iter()
-            .filter(|name| name != CATALOG_MEMBER)
-            .map(|name| {
-                let index = zip
-                    .index_for_name(&name)
-                    .expect("the name came from this archive");
-                (name, index)
-            })
+            .filter(|(name, _)| name != CATALOG_MEMBER)
             .collect();
         if entries.is_empty() {
             return Err(invalid(format!(
@@ -165,9 +122,14 @@ impl<R: Read + Seek> SoranohaEvents<R> {
             )));
         }
         for (name, _) in &entries {
-            if name.to_ascii_lowercase().ends_with(".xml") {
+            if !tei && name.to_ascii_lowercase().ends_with(".xml") {
                 return Err(invalid(format!(
                     "soranoha archive {source_name}: entry {name} is TEI, which this reader does not read; use the archive built from the plaintext projection"
+                )));
+            }
+            if tei && !name.to_ascii_lowercase().ends_with(".xml") {
+                return Err(invalid(format!(
+                    "soranoha TEI archive {source_name}: entry {name} is not XML"
                 )));
             }
             if !rows.contains_key(name) {
@@ -183,7 +145,9 @@ impl<R: Read + Seek> SoranohaEvents<R> {
             pending: VecDeque::new(),
             rows,
             source_name,
-            max_entry_bytes,
+            max_record_bytes,
+            active: None,
+            tei,
         })
     }
 
@@ -194,7 +158,7 @@ impl<R: Read + Seek> SoranohaEvents<R> {
                 self.source_name
             ))
         };
-        let limit = self.max_entry_bytes;
+        let limit = MAX_WORK_BYTES;
         let mut entry = self
             .zip
             .by_index(index)
@@ -204,7 +168,9 @@ impl<R: Read + Seek> SoranohaEvents<R> {
         // then covers an entry that under-declares its size.
         let declared = entry.size();
         if declared > limit as u64 {
-            return Err(context(oversized(declared.to_string(), limit)));
+            return Err(context(format!(
+                "is {declared} bytes, over the {limit}-byte inflated-work memory limit"
+            )));
         }
         let mut bytes = Vec::with_capacity(usize::try_from(declared).unwrap_or(0));
         entry
@@ -213,39 +179,67 @@ impl<R: Read + Seek> SoranohaEvents<R> {
             .read_to_end(&mut bytes)
             .map_err(|error| context(format!("unreadable ZIP entry: {error}")))?;
         if bytes.len() > limit {
-            return Err(context(oversized(format!("more than {limit}"), limit)));
+            return Err(context(format!(
+                "exceeds the {limit}-byte inflated-work memory limit"
+            )));
         }
         drop(entry);
         let text =
             String::from_utf8(bytes).map_err(|error| context(format!("is not UTF-8: {error}")))?;
-        let metadata = self
+        let mut metadata = self
             .rows
             .get(name)
             .cloned()
             .expect("every data entry was joined at construction");
-        let mut events = Vec::new();
-        events.push(CorpusEvent::DocumentStart {
+        if self.tei {
+            let mut reading = super::tei::TeiReading::parse(&text, self.max_record_bytes)
+                .map_err(|e| context(e.to_string()))?;
+            if !reading.soranoha_profile {
+                return Err(context(
+                    "TEI work lacks the Soranoha vocabulary declaration".into(),
+                ));
+            }
+            let expected = metadata
+                .iter()
+                .find(|(key, _)| key == "identifier")
+                .map(|(_, v)| v.to_json());
+            if reading
+                .work_identifier
+                .as_ref()
+                .map(|v| serde_json::json!(v))
+                != expected
+            {
+                return Err(context(
+                    "TEI header work identifier differs from catalog.csv".into(),
+                ));
+            }
+            let mut fields = metadata.into_vec();
+            for (key, value) in std::mem::take(&mut reading.metadata) {
+                if !fields.iter().any(|(name, _)| name == &key) {
+                    fields.push((key, value));
+                }
+            }
+            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            metadata = fields.into_boxed_slice();
+            self.active = Some(ActiveDocument::Tei(reading));
+        } else {
+            let (reader, _) = crate::execution::BoundedRecordReader::new(
+                io::Cursor::new(text),
+                self.max_record_bytes,
+                name,
+            );
+            self.active = Some(ActiveDocument::Plain(reader.lines()));
+        }
+        let events = vec![CorpusEvent::DocumentStart {
             source_name: name.to_owned(),
             metadata,
-        });
-        events.push(CorpusEvent::DivisionObservation {
+        },
+        CorpusEvent::DivisionObservation {
             kind: "paragraph".into(),
             observation: super::DivisionObservation::Unavailable {
                 reason: "soranoha plaintext preserves Aozora Bunko line breaks and declares no authored paragraph boundaries".into(),
             },
-        });
-        for line in text.lines() {
-            for segment in split_sentence_ja(line) {
-                events.push(CorpusEvent::Sentence {
-                    text: segment,
-                    words: None,
-                    enhanced_graph: None,
-                    active_labels: Box::new([]),
-                    metadata: Box::new([]),
-                });
-            }
-        }
-        events.push(CorpusEvent::DocumentEnd);
+        }];
         self.pending.extend(events);
         Ok(self
             .pending
@@ -260,6 +254,50 @@ impl<R: Read + Seek> Iterator for SoranohaEvents<R> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(event) = self.pending.pop_front() {
             return Some(Ok(event));
+        }
+        if let Some(ActiveDocument::Tei(reading)) = self.active.as_mut() {
+            return match reading.next() {
+                Some(Ok(text)) => Some(Ok(CorpusEvent::AnnotatedSentence {
+                    text,
+                    active_labels: Box::new([]),
+                    metadata: Box::new([]),
+                })),
+                Some(Err(error)) => {
+                    self.active = None;
+                    Some(Err(error))
+                }
+                None => {
+                    self.active = None;
+                    Some(Ok(CorpusEvent::DocumentEnd))
+                }
+            };
+        }
+        while let Some(ActiveDocument::Plain(lines)) = self.active.as_mut() {
+            match lines.next() {
+                Some(Ok(line)) => {
+                    self.pending
+                        .extend(split_sentence_ja(&line).into_iter().map(|text| {
+                            CorpusEvent::Sentence {
+                                text,
+                                words: None,
+                                enhanced_graph: None,
+                                active_labels: Box::new([]),
+                                metadata: Box::new([]),
+                            }
+                        }));
+                    if let Some(event) = self.pending.pop_front() {
+                        return Some(Ok(event));
+                    }
+                }
+                Some(Err(error)) => {
+                    self.active = None;
+                    return Some(Err(error));
+                }
+                None => {
+                    self.active = None;
+                    return Some(Ok(CorpusEvent::DocumentEnd));
+                }
+            }
         }
         if self.position >= self.entries.len() {
             return None;
@@ -280,12 +318,6 @@ impl<R: Read + Seek> Iterator for SoranohaEvents<R> {
             None,
         )
     }
-}
-
-fn oversized(observed: String, limit: usize) -> String {
-    format!(
-        "is {observed} bytes, over the {limit}-byte input-record limit; raise --max-record-bytes to read it"
-    )
 }
 
 fn invalid(message: String) -> io::Error {
@@ -600,6 +632,33 @@ mod tests {
     }
 
     #[test]
+    fn a_book_larger_than_the_record_limit_streams_its_short_lines() {
+        let text = "猫。\n".repeat(100);
+        let events = SoranohaEvents::new(
+            archive(&[
+                (
+                    "catalog.csv",
+                    csv(&[row("000092_000879", "kumo.txt", "c373bb")]),
+                ),
+                ("kumo.txt", text),
+            ]),
+            "a.zip".into(),
+            8,
+        )
+        .unwrap()
+        .collect::<io::Result<Vec<_>>>()
+        .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, CorpusEvent::Sentence { .. }))
+                .count(),
+            100
+        );
+        assert!(matches!(events.last(), Some(CorpusEvent::DocumentEnd)));
+    }
+
+    #[test]
     fn the_pinned_header_is_the_reader_contract() {
         assert_eq!(CATALOG_COLUMNS.len(), 17);
         assert_eq!(CATALOG_COLUMNS[0], "identifier");
@@ -861,7 +920,7 @@ mod tests {
             "{error}"
         );
 
-        // An entry over the run's record limit is refused before inflation.
+        // A physical line over the record limit is refused.
         let mut limited = SoranohaEvents::new(
             archive(&[
                 (
@@ -881,10 +940,7 @@ mod tests {
                 None => panic!("the oversized entry must be refused"),
             }
         };
-        assert!(
-            error.to_string().contains("raise --max-record-bytes"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("limit is 8"), "{error}");
     }
 
     #[test]

@@ -482,6 +482,11 @@ fn invalid_metadata(context: &str, message: &str) -> io::Error {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CorpusEvent {
+    AnnotatedSentence {
+        text: crate::analysis::AnnotatedText,
+        active_labels: Box<[String]>,
+        metadata: Metadata,
+    },
     DivisionStart {
         source_ordinal: u64,
         source_id: Option<String>,
@@ -533,6 +538,7 @@ pub struct AdmittedSentence {
     pub document_id: DocumentId,
     pub document_sentence_ordinal: u64,
     pub text: String,
+    pub annotations: Box<[crate::analysis::TextAnnotation]>,
     pub words: Option<crate::token_match::BoundTokenSentence>,
     /// Preserved reader capability and sentence-local enhanced graph evidence.
     /// Graph-capable prepared storage consumes it as the sentence sidecar
@@ -802,7 +808,33 @@ impl<I> AdmittedCorpus<I> {
     }
 
     fn admit(&mut self, event: CorpusEvent) -> io::Result<Option<AdmittedCorpusEvent>> {
+        let (event, annotations) = match event {
+            CorpusEvent::AnnotatedSentence {
+                text,
+                active_labels,
+                metadata,
+            } => {
+                let (text, annotations) = text.into_parts();
+                (
+                    CorpusEvent::Sentence {
+                        text,
+                        words: None,
+                        enhanced_graph: None,
+                        active_labels,
+                        metadata,
+                    },
+                    annotations,
+                )
+            }
+            other => (
+                other,
+                Box::new([]) as Box<[crate::analysis::TextAnnotation]>,
+            ),
+        };
         match event {
+            CorpusEvent::AnnotatedSentence { .. } => Err(Self::invalid(
+                "annotated sentence was not normalized at admission",
+            )),
             CorpusEvent::DocumentStart {
                 source_name,
                 metadata,
@@ -1006,6 +1038,7 @@ impl<I> AdmittedCorpus<I> {
                     document_id,
                     document_sentence_ordinal: document_ordinal,
                     text,
+                    annotations,
                     words,
                     enhanced_graph,
                     active_labels,

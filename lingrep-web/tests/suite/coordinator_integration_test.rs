@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use crate::v6_support::RevisionTestExt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -100,11 +101,14 @@ async fn subscribed_entry_is_pinned_and_new_id_is_rejected_when_full() {
 
     let _sub = registry.subscribe(&a).await.unwrap(); // pins `a` even though terminal
     let rejected = registry
-        .try_accept_next_revision(
+        .accept_revision(
             WorkbenchId::new("b"),
             &slot,
-            "verb := [upos=VERB].".into(),
-            None,
+            lingrep_web::coordinator::RevisionRequest {
+                source: "verb := [upos=VERB].".into(),
+                retained: None,
+                ..Default::default()
+            },
         )
         .await;
     assert!(
@@ -127,11 +131,14 @@ async fn terminal_unsubscribed_entry_is_evicted_for_a_new_id() {
 
     assert!(
         registry
-            .try_accept_next_revision(
+            .accept_revision(
                 WorkbenchId::new("b"),
                 &slot,
-                "verb := [upos=VERB].".into(),
-                None
+                lingrep_web::coordinator::RevisionRequest {
+                    source: "verb := [upos=VERB].".into(),
+                    retained: None,
+                    ..Default::default()
+                }
             )
             .await
             .is_ok(),
@@ -478,13 +485,29 @@ async fn readmitting_a_workbench_under_a_different_corpus_is_a_conflict() {
 
     harness
         .registry
-        .try_accept_next_revision(workbench.clone(), harness.slot_a(), "p := [].".into(), None)
+        .accept_revision(
+            workbench.clone(),
+            harness.slot_a(),
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                retained: None,
+                ..Default::default()
+            },
+        )
         .await
         .expect("first admission succeeds");
 
     let conflict = harness
         .registry
-        .try_accept_next_revision(workbench.clone(), harness.slot_b(), "p := [].".into(), None)
+        .accept_revision(
+            workbench.clone(),
+            harness.slot_b(),
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                retained: None,
+                ..Default::default()
+            },
+        )
         .await;
 
     assert!(matches!(conflict, Err(AdmitError::CorpusConflict)));
@@ -497,7 +520,15 @@ async fn readmitting_under_the_same_corpus_still_succeeds() {
     for _ in 0..2 {
         harness
             .registry
-            .try_accept_next_revision(workbench.clone(), harness.slot_a(), "p := [].".into(), None)
+            .accept_revision(
+                workbench.clone(),
+                harness.slot_a(),
+                lingrep_web::coordinator::RevisionRequest {
+                    source: "p := [].".into(),
+                    retained: None,
+                    ..Default::default()
+                },
+            )
             .await
             .expect("same-corpus readmission is ordinary");
     }
@@ -511,7 +542,15 @@ async fn the_entry_cap_is_global_across_corpora() {
     let first = WorkbenchId::random();
     harness
         .registry
-        .try_accept_next_revision(first.clone(), harness.slot_a(), "p := [].".into(), None)
+        .accept_revision(
+            first.clone(),
+            harness.slot_a(),
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                retained: None,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -527,7 +566,15 @@ async fn the_entry_cap_is_global_across_corpora() {
     let second = WorkbenchId::random();
     let result = harness
         .registry
-        .try_accept_next_revision(second, harness.slot_b(), "p := [].".into(), None)
+        .accept_revision(
+            second,
+            harness.slot_b(),
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                retained: None,
+                ..Default::default()
+            },
+        )
         .await;
     assert!(matches!(result, Err(AdmitError::RegistryFull)));
 }

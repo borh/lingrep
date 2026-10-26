@@ -19,7 +19,6 @@ ling summarize
 ling tokenize
 ling coverage
 ling explore
-ling sentence-final
 ling corpus build|inspect|inventory|variants
 ```
 
@@ -45,7 +44,7 @@ language reference.
 - Human-readable output is the default. Use `--json` or a command's supported
   `--tsv` mode for versioned machine output.
 - Omitted roots are errors; pass `-` explicitly for stdin.
-- `--corpus` with a prepared `.lingcorpus` artifact refuses `--dict-path`,
+- `--corpus` with a prepared `.lingcorpus` artifact rejects `--dict-path`,
   because the artifact already contains analyzed tokens.
 
 Use `ling contracts` to inspect stable machine-output contracts and

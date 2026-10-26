@@ -53,7 +53,7 @@ fn sources_human_and_tsv_are_distinct_bounded_projections() {
     assert!(human.status.success());
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.starts_with("corpus inventory (live)\n"));
-    assert!(human.contains("complete: 3 document(s), 2 distinct target(s)"));
+    assert!(human.contains("complete: 3 source(s), 2 distinct target(s)"));
 
     let tsv = lingrep()
         .args(["corpus", "inventory", "--tsv"])
@@ -362,4 +362,34 @@ fn bccwj_sources_are_the_zips_and_carry_no_aliases() {
     assert_eq!(inventory["alias_documents"], 0, "{inventory}");
     assert_eq!(inventory["max_target_multiplicity"], 1, "{inventory}");
     assert_eq!(inventory["external_targets"], 0, "{inventory}");
+}
+
+#[test]
+fn human_prepared_corpus_output_names_the_location_size_and_verification_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input.conllu");
+    fs::write(&input, "# newdoc id = first\n1\t猫\t猫\tNOUN\t_\t_\t0\troot\t_\t_\n\n# newdoc id = second\n1\t犬\t犬\tNOUN\t_\t_\t0\troot\t_\t_\n\n").unwrap();
+    let corpus = temp.path().join("saved.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--output"])
+        .arg(&corpus)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(built.status.success());
+    let built = String::from_utf8(built.stdout).unwrap();
+    assert!(built.contains(&corpus.display().to_string()), "{built}");
+    assert!(
+        built.contains("2 document(s), 2 sentence(s), 2 token(s)"),
+        "{built}"
+    );
+    assert!(built.contains("complete: 1 source(s)"), "{built}");
+    let inspect = lingrep()
+        .args(["corpus", "inspect", "--verify"])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert!(inspect.status.success());
+    let inspect = String::from_utf8(inspect.stdout).unwrap();
+    assert!(inspect.contains("content verified"), "{inspect}");
 }

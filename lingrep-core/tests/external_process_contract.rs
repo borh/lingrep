@@ -146,6 +146,69 @@ fn copy_manifest_file(
     (PathBuf::from(relative), *blake3::hash(&bytes).as_bytes())
 }
 
+fn stage_adapter_implementation(
+    repository: &std::path::Path,
+    root: &std::path::Path,
+    family: &str,
+) -> Vec<(PathBuf, [u8; 32])> {
+    fn copy_tree(
+        repository: &std::path::Path,
+        root: &std::path::Path,
+        relative: &std::path::Path,
+        entries: &mut Vec<(PathBuf, [u8; 32])>,
+    ) {
+        if relative
+            .file_name()
+            .is_some_and(|name| name == "__pycache__")
+            || relative
+                .extension()
+                .is_some_and(|extension| extension == "pyc")
+        {
+            return;
+        }
+        let source = repository.join(relative);
+        let metadata = std::fs::symlink_metadata(&source).unwrap();
+        if metadata.is_dir() {
+            for child in std::fs::read_dir(&source).unwrap() {
+                copy_tree(
+                    repository,
+                    root,
+                    &relative.join(child.unwrap().file_name()),
+                    entries,
+                );
+            }
+        } else {
+            assert!(
+                metadata.is_file(),
+                "adapter implementation must contain regular files"
+            );
+            entries.push(copy_manifest_file(
+                repository,
+                root,
+                relative.to_str().unwrap(),
+            ));
+        }
+    }
+    let mut entries = Vec::new();
+    for relative in [
+        format!("python/{family}-adapter/bin"),
+        format!("python/{family}-adapter/src"),
+        format!("python/{family}-adapter/pyproject.toml"),
+        format!("python/{family}-adapter/uv.lock"),
+        "python/adapter-protocol/src".into(),
+        "python/adapter-protocol/pyproject.toml".into(),
+    ] {
+        copy_tree(
+            repository,
+            root,
+            std::path::Path::new(&relative),
+            &mut entries,
+        );
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
 fn resource_entries(
     root: &std::path::Path,
     directory: &std::path::Path,
@@ -213,16 +276,7 @@ fn stanza_owner_fixture() -> StanzaOwnerFixture {
         .to_path_buf();
     let isolated = tempfile::tempdir().unwrap();
     let root = isolated.path();
-    let implementation = [
-        "python/stanza-adapter/bin/lingrep-stanza-adapter",
-        "python/stanza-adapter/pyproject.toml",
-        "python/stanza-adapter/uv.lock",
-        "python/stanza-adapter/src/lingrep_stanza_adapter/__init__.py",
-        "python/stanza-adapter/src/lingrep_stanza_adapter/__main__.py",
-        "python/stanza-adapter/src/lingrep_stanza_adapter/adapter.py",
-        "python/stanza-adapter/src/lingrep_stanza_adapter/bundle.py",
-    ]
-    .map(|relative| copy_manifest_file(&repository, root, relative));
+    let implementation = stage_adapter_implementation(&repository, root, "stanza");
     let model = root.join("model");
     copy_regular_tree(&source_model, &model);
     let profile: serde_json::Value =
@@ -341,16 +395,7 @@ fn locked_spacy_adapter_runs_through_the_verified_rust_process_owner() {
         .to_path_buf();
     let isolated = tempfile::tempdir().unwrap();
     let root = isolated.path();
-    let implementation = [
-        "python/spacy-adapter/bin/lingrep-spacy-adapter",
-        "python/spacy-adapter/pyproject.toml",
-        "python/spacy-adapter/uv.lock",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/__init__.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/__main__.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/adapter.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/bundle.py",
-    ]
-    .map(|relative| copy_manifest_file(&repository, root, relative));
+    let implementation = stage_adapter_implementation(&repository, root, "spacy");
     let model = root.join("model");
     let status = ProcessCommand::new(&python)
         .args([
@@ -509,16 +554,7 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
         .to_path_buf();
     let isolated = tempfile::tempdir().unwrap();
     let root = isolated.path();
-    let implementation = [
-        "python/spacy-adapter/bin/lingrep-spacy-adapter",
-        "python/spacy-adapter/pyproject.toml",
-        "python/spacy-adapter/uv.lock",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/__init__.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/__main__.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/adapter.py",
-        "python/spacy-adapter/src/lingrep_spacy_adapter/bundle.py",
-    ]
-    .map(|relative| copy_manifest_file(&repository, root, relative));
+    let implementation = stage_adapter_implementation(&repository, root, "spacy");
     let status = ProcessCommand::new(&python)
         .args([
             "-c",
@@ -645,6 +681,131 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
         ]
     );
     process.finish().unwrap();
+}
+
+#[test]
+#[ignore = "requires the locked adapter Python and packaged English model"]
+fn packaged_english_model_preserves_matches_across_process_runs() {
+    let python = PathBuf::from(std::env::var_os("LINGREP_SPACY_ADAPTER_PYTHON").unwrap());
+    let source = PathBuf::from(std::env::var_os("LINGREP_SPACY_ENGLISH_MODEL").unwrap());
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut results = Vec::new();
+    for _ in 0..2 {
+        let isolated = tempfile::tempdir().unwrap();
+        let root = isolated.path();
+        let implementation = stage_adapter_implementation(&repository, root, "spacy");
+        let model = root.join("model");
+        copy_regular_tree(&source, &model);
+        let profile: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(model.join("lingrep-spacy-model.json")).unwrap())
+                .unwrap();
+        let selection = &profile["selections"]["morphology/input"];
+        let digest = decode_digest(
+            profile["selection_digests"]["morphology/input"]
+                .as_str()
+                .unwrap(),
+        );
+        let schema = TokenSchema::new(selection["schema"].as_array().unwrap().iter().map(|a| {
+            SchemaAttribute::new(
+                a["key"].as_str().unwrap(),
+                if a["kind"] == "scalar" {
+                    AttributeKind::Scalar
+                } else {
+                    AttributeKind::StringSet
+                },
+            )
+            .unwrap()
+        }))
+        .unwrap();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        let catalog = portable_content_catalog(&schema, &projection);
+        let mut resources = Vec::new();
+        resource_entries(root, &model, &mut resources);
+        resources.sort_by(|a, b| a.0.cmp(&b.0));
+        let command = ExternalAdapterCommand::spacy(
+            &python,
+            "python/spacy-adapter/bin/lingrep-spacy-adapter",
+            "model",
+            "cpu",
+            1,
+        )
+        .unwrap();
+        let manifest = VerifiedAdapterManifest::new(
+            root,
+            implementation.clone(),
+            resources.clone(),
+            &command,
+            vec![ExternalComponent::new("spacy-profile", digest).unwrap()],
+        )
+        .unwrap();
+        let descriptor = AnalyzerDescriptor::new(
+            AnalyzerFamily::External,
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            NormalizationPolicy::None,
+            "en",
+            "input-v1",
+            manifest.implementation_digest(),
+            manifest.resource_manifest_digest(),
+            [0; 32],
+            [0; 32],
+            external_component_closure_digest(manifest.components()),
+            digest,
+            schema.digest(),
+        )
+        .unwrap();
+        let identity = descriptor.semantic_identity();
+        let config = ExternalRunConfig::new(
+            "english-model-smoke",
+            descriptor,
+            schema.clone(),
+            projection.clone(),
+            manifest.components().to_vec(),
+            ExternalProtocolLimits::default(),
+        )
+        .unwrap();
+        let mut process =
+            ExternalAdapterProcess::launch(command, manifest, config, Arc::new(|_| Ok(())))
+                .unwrap();
+        let batch = process
+            .exchange_batch(
+                vec![
+                    TextUnit::sentence(
+                        InputUnitId::new(1),
+                        "I was speaking. They listened.",
+                        NormalizationPolicy::None,
+                    )
+                    .unwrap(),
+                ],
+                &ExecutionLimits::default(),
+            )
+            .unwrap();
+        let words = batch.analysis().inputs()[0].sentences()[0].words();
+        let matches = catalog.find_matches(words).unwrap();
+        assert!(!matches.is_empty());
+        assert_eq!(
+            words
+                .token(2)
+                .unwrap()
+                .get(projection.ordinal_key("lemma").unwrap()),
+            Some("speak")
+        );
+        assert_eq!(
+            words
+                .token(0)
+                .unwrap()
+                .get(projection.ordinal_key("dep.rel").unwrap()),
+            Some("nsubj")
+        );
+        results.push((identity, matches));
+        process.finish().unwrap();
+    }
+    assert_eq!(results[0], results[1]);
 }
 
 #[test]
@@ -906,6 +1067,14 @@ fn spacy_manifest_requires_the_exact_relative_model_and_project_lock() {
         ("adapter/pyproject.toml", b"project".as_slice()),
         ("adapter/uv.lock", b"lock".as_slice()),
         (
+            "adapter-protocol/pyproject.toml",
+            b"protocol project".as_slice(),
+        ),
+        (
+            "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
+            b"protocol".as_slice(),
+        ),
+        (
             "adapter/src/lingrep_spacy_adapter/__init__.py",
             b"package".as_slice(),
         ),
@@ -950,6 +1119,8 @@ fn spacy_manifest_requires_the_exact_relative_model_and_project_lock() {
         entry("adapter/src/lingrep_spacy_adapter/__main__.py"),
         entry("adapter/src/lingrep_spacy_adapter/adapter.py"),
         entry("adapter/src/lingrep_spacy_adapter/bundle.py"),
+        entry("adapter-protocol/pyproject.toml"),
+        entry("adapter-protocol/src/lingrep_adapter_protocol/__init__.py"),
     ];
     let resources = [
         entry("model/config.cfg"),
@@ -1104,6 +1275,14 @@ fn stanza_fixture() -> (
         ("adapter/pyproject.toml", b"project".as_slice()),
         ("adapter/uv.lock", b"lock".as_slice()),
         (
+            "adapter-protocol/pyproject.toml",
+            b"protocol project".as_slice(),
+        ),
+        (
+            "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
+            b"protocol".as_slice(),
+        ),
+        (
             "adapter/src/lingrep_stanza_adapter/__init__.py",
             b"package".as_slice(),
         ),
@@ -1141,6 +1320,8 @@ fn stanza_fixture() -> (
         "adapter/src/lingrep_stanza_adapter/__main__.py",
         "adapter/src/lingrep_stanza_adapter/adapter.py",
         "adapter/src/lingrep_stanza_adapter/bundle.py",
+        "adapter-protocol/pyproject.toml",
+        "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
     ]
     .map(entry)
     .to_vec();
@@ -1239,17 +1420,19 @@ fn stanza_manifest_rejects_undeclared_sibling_imports_symlinks_and_decoy_resourc
         1,
     )
     .unwrap();
-    std::fs::write(root.join("adapter/src/stanza.py"), b"shadow import").unwrap();
-    let shadow = VerifiedAdapterManifest::new(
-        root,
-        implementation.clone(),
-        resources.clone(),
-        &command,
-        vec![ExternalComponent::new("stanza-profile", [1; 32]).unwrap()],
-    )
-    .unwrap_err();
-    assert!(shadow.to_string().contains("executable project closure"));
-    std::fs::remove_file(root.join("adapter/src/stanza.py")).unwrap();
+    for shadow_path in ["adapter/src/stanza.py", "adapter-protocol/src/stanza.py"] {
+        std::fs::write(root.join(shadow_path), b"shadow import").unwrap();
+        let shadow = VerifiedAdapterManifest::new(
+            root,
+            implementation.clone(),
+            resources.clone(),
+            &command,
+            vec![ExternalComponent::new("stanza-profile", [1; 32]).unwrap()],
+        )
+        .unwrap_err();
+        assert!(shadow.to_string().contains("executable project closure"));
+        std::fs::remove_file(root.join(shadow_path)).unwrap();
+    }
 
     let linked = root.join("model/linked.pt");
     symlink("tokenize/gsd.pt", &linked).unwrap();

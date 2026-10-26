@@ -24,55 +24,69 @@ pub(crate) fn compound_name(names: &[String], exists: impl Fn(&str) -> bool) -> 
     }
 }
 
+pub(crate) struct ContiguousChains {
+    pub(crate) chains: Vec<DerivedMatch>,
+    /// Per input match, whether it is a component of any chain.
+    pub(crate) in_chain: Vec<bool>,
+}
+
 /// Enumerates every contiguous path through the base matches in one sentence.
 /// A derived item is identified by its ordered component keys and full span.
-pub(crate) fn contiguous_chains(matches: &[(PatternKey, usize, usize)]) -> Vec<DerivedMatch> {
-    let mut chains = Vec::new();
+pub(crate) fn contiguous_chains(matches: &[(PatternKey, usize, usize)]) -> ContiguousChains {
+    let mut output = ContiguousChains {
+        chains: Vec::new(),
+        in_chain: vec![false; matches.len()],
+    };
     let mut seen = HashSet::new();
     let mut starts = HashMap::<usize, Vec<usize>>::new();
     for (index, &(_, start, _)) in matches.iter().enumerate() {
         starts.entry(start).or_default().push(index);
     }
     for (index, &(key, start, end)) in matches.iter().enumerate() {
-        let mut path = vec![key];
+        let mut path = vec![(index, key)];
         extend(
             matches,
             &starts,
-            index,
             start,
             end,
             &mut path,
             &mut seen,
-            &mut chains,
+            &mut output,
         );
     }
-    chains
+    output
 }
 
 fn extend(
     matches: &[(PatternKey, usize, usize)],
     starts: &HashMap<usize, Vec<usize>>,
-    last_index: usize,
     start: usize,
     end: usize,
-    path: &mut Vec<PatternKey>,
+    path: &mut Vec<(usize, PatternKey)>,
     seen: &mut HashSet<(Vec<PatternKey>, usize, usize)>,
-    output: &mut Vec<DerivedMatch>,
+    output: &mut ContiguousChains,
 ) {
-    if path.len() >= 2 && seen.insert((path.clone(), start, end)) {
-        output.push(DerivedMatch {
-            components: path.clone(),
-            start,
-            end,
-        });
+    if path.len() >= 2 {
+        let components = path.iter().map(|(_, key)| *key).collect::<Vec<_>>();
+        if seen.insert((components.clone(), start, end)) {
+            for (index, _) in path.iter() {
+                output.in_chain[*index] = true;
+            }
+            output.chains.push(DerivedMatch {
+                components,
+                start,
+                end,
+            });
+        }
     }
+    let last_index = path.last().map(|(index, _)| *index);
     for &index in starts.get(&end).into_iter().flatten() {
         let (key, _, next_end) = matches[index];
-        if index == last_index || next_end <= end {
+        if Some(index) == last_index || next_end <= end {
             continue;
         }
-        path.push(key);
-        extend(matches, starts, index, start, next_end, path, seen, output);
+        path.push((index, key));
+        extend(matches, starts, start, next_end, path, seen, output);
         path.pop();
     }
 }
@@ -87,13 +101,19 @@ mod tests {
 
     #[test]
     fn enumerates_every_contiguous_chain_without_crossing_gaps() {
-        let chains = contiguous_chains(&[
+        let derived = contiguous_chains(&[
             (key(0), 0, 2),
             (key(1), 2, 3),
             (key(2), 3, 5),
             (key(3), 6, 7),
         ]);
-        let sequences = chains
+        assert_eq!(
+            derived.in_chain,
+            [true, true, true, false],
+            "the match past the gap is in no chain"
+        );
+        let sequences = derived
+            .chains
             .iter()
             .map(|chain| {
                 (
@@ -119,7 +139,7 @@ mod tests {
 
     #[test]
     fn overlapping_alternatives_produce_distinct_component_sequences() {
-        let chains = contiguous_chains(&[(key(0), 0, 1), (key(1), 0, 1), (key(2), 1, 2)]);
+        let chains = contiguous_chains(&[(key(0), 0, 1), (key(1), 0, 1), (key(2), 1, 2)]).chains;
         assert_eq!(chains.len(), 2);
         assert!(chains.iter().any(|chain| {
             chain.components == [key(0), key(2)] && chain.start == 0 && chain.end == 2

@@ -1,13 +1,14 @@
 //! Public `ling` command tree and bounded-resource arguments.
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use lingrep_cli_common::{MarkdownReaderArgs, TerminalSafeText};
 use lingrep_core::corpus::{CorpusFormat, TraversalLimits};
 use lingrep_core::execution::{
-    DEFAULT_MAX_INPUT_RECORD_BYTES, DEFAULT_MAX_SENTENCE_BYTES, DEFAULT_MAX_STAGE_INPUT_BYTES,
-    DEFAULT_MAX_STAGE_SENTENCES, DEFAULT_MAX_TOKENIZED_BYTES, ExecutionLimits,
+    DEFAULT_MAX_INPUT_RECORD_BYTES, DEFAULT_MAX_STAGE_INPUT_BYTES, DEFAULT_MAX_STAGE_SENTENCES,
+    DEFAULT_MAX_TOKENIZED_BYTES, ExecutionLimits,
 };
 
 use crate::error::CliError;
@@ -33,12 +34,10 @@ fn limit_flag(field: &str) -> &str {
     }
 }
 
-/// Renders an `ExecutionLimits` rejection using flag names on both sides, so
-/// "must be at least max_sentence_bytes" reads as the flag that supplies it.
+/// Renders execution-limit errors using CLI flag names.
 fn limit_diagnostic(error: &lingrep_core::execution::ExecutionError) -> String {
     match error {
         lingrep_core::execution::ExecutionError::InvalidLimit { field, message } => {
-            let message = message.replace("max_sentence_bytes", limit_flag("max_sentence_bytes"));
             format!("{} {message}", limit_flag(field))
         }
         other => other.to_string(),
@@ -89,13 +88,23 @@ fn default_workers() -> usize {
 /// Search Japanese text and CoNLL-U treebanks for token patterns over surface
 /// form, lemma, part of speech, morphological features and dependency relations.
 #[derive(Debug, Parser)]
-#[command(name = "ling", version, after_help = ROOT_AFTER_HELP)]
+#[command(
+    name = "ling", version, after_help = ROOT_AFTER_HELP,
+    disable_help_flag = true,
+    arg(help_argument(clap::ArgAction::HelpShort)),
+    arg(clap::Arg::new("help_all").long("help-all").global(true)
+        .action(clap::ArgAction::HelpLong)
+        .help("Show all options, including advanced controls")),
+    mut_subcommands(configure_help)
+)]
 pub struct Cli {
-    /// Write JSONL records and machine-readable JSON diagnostics.
+    /// Write results as JSON Lines (one JSON object per line).
+    ///
+    /// Diagnostics on stderr are also JSON; terminal styling is disabled.
     #[arg(long, global = true, help_heading = "Output")]
     pub json: bool,
 
-    /// Control ANSI styling in human output.
+    /// Color terminal output.
     #[arg(
         long,
         global = true,
@@ -107,6 +116,52 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Command,
+}
+
+fn help_argument(action: clap::ArgAction) -> clap::Arg {
+    clap::Arg::new("help")
+        .short('h')
+        .long("help")
+        .action(action)
+        .help("Show help")
+}
+
+fn configure_help(command: clap::Command) -> clap::Command {
+    let check = command.get_name() == "check";
+    let action = if check {
+        clap::ArgAction::Help
+    } else {
+        clap::ArgAction::HelpShort
+    };
+    command
+        .disable_help_flag(true)
+        .arg(help_argument(action))
+        .mut_args(|arg| {
+            if check
+                && matches!(
+                    arg.get_id().as_str(),
+                    "workers"
+                        | "progress"
+                        | "max_traversal_depth"
+                        | "max_source_entries"
+                        | "max_directory_entries"
+                        | "max_documents"
+                        | "max_source_index_bytes"
+                        | "max_temp_bytes"
+                )
+            {
+                return arg.hide(true);
+            }
+            if arg.is_hide_short_help_set()
+                && arg.get_long_help().is_none()
+                && let Some(help) = arg.get_help().cloned()
+            {
+                arg.long_help(help)
+            } else {
+                arg
+            }
+        })
+        .mut_subcommands(configure_help)
 }
 
 const ROOT_AFTER_HELP: &str = "\
@@ -132,15 +187,13 @@ pub enum Command {
     /// If multiple input aliases name the same source, each alias contributes
     /// its own counts.
     Summarize(SummarizeArgs),
-    /// Print each sentence's tokens and their attributes.
+    /// Split text into tokens; --json includes linguistic attributes.
     Tokenize(TokenizeArgs),
     /// Count the tokens that carry each attribute.
     #[command(name = "coverage")]
     Attributes(AttributesArgs),
     /// Browse pattern counts and matches in an interactive terminal view.
     Explore(ExploreArgs),
-    /// Count matches followed only by punctuation to the end of the sentence.
-    SentenceFinal(SentenceFinalArgs),
     /// Save analyzed corpora for reuse, inspect them, and list corpus sources.
     Corpus(CorpusArgs),
     /// Validate patterns without reading a corpus; --help lists the syntax.
@@ -302,7 +355,16 @@ pub struct MatchesArgs {
     #[command(flatten)]
     pub resources: ResourceArgs,
 
-    /// Write headerless `lingrep.matches-tsv/v1` records: sequence, pattern,
+    /// Save a report of sentence endings unexplained by published matches.
+    ///
+    /// Includes exact counts and bounded token examples after a full scan.
+    /// Fails above 4096 groups or 32 MiB; never replaces an existing report.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["limit", "raw_matches", "retain"], help_heading = "Output")]
+    pub ending_report: Option<PathBuf>,
+
+    /// Write tab-separated match rows for spreadsheets or shell tools.
+    ///
+    /// Headerless `lingrep.matches-tsv/v1` columns: sequence, pattern,
     /// source, document and sentence ordinals, match span, and context surfaces.
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
@@ -313,7 +375,8 @@ pub struct MatchesArgs {
         value_name = "N",
         default_value_t = 5,
         conflicts_with = "tsv",
-        help_heading = "Output"
+        help_heading = "Output",
+        hide_short_help = true
     )]
     pub context_color_depth: usize,
 
@@ -324,7 +387,8 @@ pub struct MatchesArgs {
         value_name = "THEME",
         default_value_t,
         conflicts_with = "tsv",
-        help_heading = "Output"
+        help_heading = "Output",
+        hide_short_help = true
     )]
     pub context_color_theme: ContextColorTheme,
 
@@ -332,8 +396,7 @@ pub struct MatchesArgs {
     #[arg(
         long,
         conflicts_with_all = ["json", "tsv"],
-        help_heading = "Output"
-    )]
+        help_heading = "Output", hide_short_help = true)]
     pub align_hits: bool,
 
     /// Insert this printable text between displayed morphemes.
@@ -342,8 +405,7 @@ pub struct MatchesArgs {
         value_name = "TEXT",
         default_value = "",
         conflicts_with_all = ["json", "tsv"],
-        help_heading = "Output"
-    )]
+        help_heading = "Output", hide_short_help = true)]
     pub morpheme_separator: TerminalSafeText,
 
     /// Publish @document.KEY, @sentence.KEY or @division(KIND).KEY in JSONL matches (repeatable).
@@ -351,19 +413,25 @@ pub struct MatchesArgs {
         long = "source-metadata",
         value_name = "KEY",
         conflicts_with = "tsv",
-        help_heading = "Output"
+        help_heading = "Output",
+        hide_short_help = true
     )]
     pub source_metadata: Vec<String>,
 
-    /// Include this many tokens before and after each match.
+    /// Context tokens on each side (text default: 5; JSON/TSV default: 0).
     #[arg(long, help_heading = "Output")]
     pub context: Option<usize>,
 
-    /// Publish only the first N matches in normal order; `all` removes the limit.
+    /// Show at most N matches (text default: 100); `all` shows every match.
+    ///
+    /// Default: 100 in terminal output, unlimited with --json or --tsv.
+    /// Stops scanning at the limit; --retain samples from a full scan instead.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub limit: Option<ExplicitLimit<u64>>,
 
-    /// Scan the complete scope and retain at most N JSON match records (64 MiB maximum).
+    /// Scan the full scope and return a random sample of N matches (--json).
+    ///
+    /// Retained output is limited to 64 MiB.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=100_000), conflicts_with_all = ["limit", "tsv"], help_heading = "Output")]
     pub retain: Option<u32>,
 
@@ -372,12 +440,13 @@ pub struct MatchesArgs {
         long,
         default_value_t = 0,
         requires = "retain",
-        help_heading = "Output"
+        help_heading = "Output",
+        hide_short_help = true
     )]
     pub retain_seed: u64,
 
     /// Publish matcher output before applying the catalog's policy block.
-    #[arg(long, help_heading = "Matching")]
+    #[arg(long, help_heading = "Matching", hide_short_help = true)]
     pub raw_matches: bool,
 
     /// Run the query and report policy decisions for at most N published records.
@@ -386,12 +455,13 @@ pub struct MatchesArgs {
         long,
         value_name = "N",
         conflicts_with = "raw_matches",
-        help_heading = "Diagnostics"
+        help_heading = "Diagnostics",
+        hide_short_help = true
     )]
     pub trace_policy: Option<usize>,
 
     /// Validate inputs and print the execution plan without reading corpus records.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -411,22 +481,32 @@ pub struct SummarizeArgs {
     #[command(flatten)]
     pub resources: ResourceArgs,
 
-    /// Write headerless `lingrep.summarize-tsv/v1` records with pattern,
+    /// Write tab-separated counts for spreadsheets or shell tools.
+    ///
+    /// Headerless `lingrep.summarize-tsv/v1` columns: pattern,
     /// rank, typed group, and exact count columns.
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
-    /// Publish at most N exact group-count rows per pattern; `all` removes the limit.
+    /// Show N groups per pattern (text default: 20); `all` shows every group.
+    ///
+    /// Default: 20 in terminal output, unlimited with --json or --tsv.
+    /// All input is counted before selecting the most frequent groups.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
 
     /// Run the query and report policy decisions for at most N published records.
     /// `--plan` only validates and prints the invocation.
-    #[arg(long, value_name = "N", help_heading = "Diagnostics")]
+    #[arg(
+        long,
+        value_name = "N",
+        help_heading = "Diagnostics",
+        hide_short_help = true
+    )]
     pub trace_policy: Option<usize>,
 
     /// Validate inputs and print the execution plan without reading corpus records.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -438,9 +518,9 @@ pub struct CorpusArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CorpusCommand {
-    /// Build or reuse an immutable prepared-corpus artifact.
+    /// Analyze a corpus once and save it for repeated searches.
     Build(Box<CorpusBuildArgs>),
-    /// Inspect an immutable prepared-corpus artifact.
+    /// Show the contents of a saved, analyzed corpus.
     Inspect(CorpusInspectArgs),
     /// Inventory sources discovered under a corpus root.
     #[command(name = "inventory")]
@@ -455,9 +535,10 @@ pub struct CorpusBuildArgs {
     #[arg(short = 'd', long, value_name = "PATH", help_heading = "Input")]
     pub dict_path: Option<PathBuf>,
 
-    /// Publish to this new directory; never replace an existing path. If
-    /// omitted, publish to the canonical content-addressed path beside ROOT.
-    /// Deriving that name requires one additional read of the source.
+    /// Save the analyzed corpus in this new directory.
+    ///
+    /// Never replaces an existing path. By default, saves beside ROOT under
+    /// an automatically generated name; naming requires an extra read of the source.
     #[arg(long, value_name = "ARTIFACT", help_heading = "Output")]
     pub output: Option<PathBuf>,
 
@@ -479,7 +560,7 @@ pub struct CorpusBuildArgs {
     pub markdown: MarkdownReaderArgs,
 
     /// Validate inputs and print the execution plan without traversing ROOT.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -502,7 +583,7 @@ pub struct CorpusInspectArgs {
     pub artifact: PathBuf,
 
     /// Validate inputs and print the execution plan without opening corpus data.
-    #[arg(long)]
+    #[arg(long, hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -534,7 +615,7 @@ pub struct CorpusVariantsArgs {
     pub prune: bool,
 
     /// Validate inputs and print the execution plan without scanning artifacts.
-    #[arg(long)]
+    #[arg(long, hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -546,11 +627,15 @@ pub struct CorpusSourcesArgs {
     #[command(flatten)]
     pub markdown: MarkdownReaderArgs,
 
-    /// Control whether progress is written to stderr.
+    /// Show progress while a command runs.
+    ///
+    /// Progress is written to stderr, separately from the results.
     #[arg(long, value_enum, default_value_t)]
     pub progress: ProgressMode,
 
-    /// Write headerless `lingrep.sources-tsv/v1` records with source ordinal,
+    /// Write tab-separated document rows for spreadsheets or shell tools.
+    ///
+    /// Headerless `lingrep.sources-tsv/v1` columns: source ordinal,
     /// logical name, target group, external-target flag, and multiplicity.
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
@@ -564,7 +649,7 @@ pub struct CorpusSourcesArgs {
     pub input_format: Option<CorpusFormat>,
 
     /// Validate inputs and print the execution plan without traversing ROOT.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -577,18 +662,21 @@ pub struct TokenizeArgs {
     #[command(flatten)]
     pub resources: ResourceArgs,
 
-    /// Write headerless `lingrep.tokenize-tsv/v1` columns:
+    /// Write tab-separated token rows for spreadsheets or shell tools.
+    ///
+    /// Headerless `lingrep.tokenize-tsv/v1` columns:
     /// `corpus_sentence_ordinal`, `source_name`, `document_ordinal`,
     /// `document_sentence_ordinal`, `token_index`, `orth`, `lemma`, `pos`, `cform`.
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
-    /// Publish at most N sentences; `all` removes the limit.
+    /// Publish at most N sentences (text default: 100); `all` removes the limit.
+    /// JSON and TSV output are unlimited by default.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub limit: Option<ExplicitLimit<u64>>,
 
     /// Validate inputs and print the execution plan without reading corpus records.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
@@ -596,26 +684,6 @@ pub struct TokenizeArgs {
 pub struct ExploreArgs {
     #[command(flatten)]
     pub query: InteractiveQueryArgs,
-}
-
-#[derive(Debug, Args)]
-pub struct SentenceFinalArgs {
-    #[command(flatten)]
-    pub query: InteractiveQueryArgs,
-
-    /// Write headerless `lingrep.sentence-final-tsv/v1` records with pattern,
-    /// surface, and exact count columns.
-    #[arg(long, conflicts_with = "json", help_heading = "Output")]
-    pub tsv: bool,
-
-    /// Run the query and report policy decisions for at most N published records.
-    /// `--plan` only validates and prints the invocation.
-    #[arg(long, value_name = "N", help_heading = "Diagnostics")]
-    pub trace_policy: Option<usize>,
-
-    /// Validate inputs and print the execution plan without reading corpus records.
-    #[arg(long, help_heading = "Diagnostics")]
-    pub plan: bool,
 }
 
 #[derive(Debug, Args)]
@@ -632,13 +700,15 @@ pub struct InteractiveQueryArgs {
 #[derive(Debug, Args)]
 #[group(required = true, multiple = false)]
 pub struct CatalogArgs {
-    /// Compile a complete lingrep patterns document from this file. For syntax, run
-    /// `ling check --help`.
+    /// Load patterns from a .lx file.
+    ///
+    /// For pattern syntax, run `ling check --help`.
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
 
-    /// Compile one inline pattern expression or catalog. For syntax, run
-    /// `ling check --help`.
+    /// Match an inline pattern, such as `[upos=VERB].`.
+    ///
+    /// Accepts an expression or a complete catalog. For syntax, run `ling check --help`.
     #[arg(long, value_name = "PATTERN", help_heading = "Catalog")]
     pub pattern: Option<String>,
 }
@@ -668,13 +738,15 @@ impl CatalogArgs {
 #[derive(Debug, Args)]
 #[group(required = false, multiple = false)]
 pub struct OptionalCatalogArgs {
-    /// Compile a complete lingrep patterns document from this file. For syntax, run
-    /// `ling check --help`.
+    /// Load patterns from a .lx file.
+    ///
+    /// For pattern syntax, run `ling check --help`.
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
 
-    /// Compile one inline pattern expression or catalog. For syntax, run
-    /// `ling check --help`.
+    /// Match an inline pattern, such as `[upos=VERB].`.
+    ///
+    /// Accepts an expression or a complete catalog. For syntax, run `ling check --help`.
     #[arg(long, value_name = "PATTERN", help_heading = "Catalog")]
     pub pattern: Option<String>,
 }
@@ -721,15 +793,17 @@ pub struct AttributesArgs {
     pub tsv: bool,
 
     /// Validate inputs and print the execution plan without reading corpus records.
-    #[arg(long, help_heading = "Diagnostics")]
+    #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
 }
 
 /// Direct root/stdin or immutable prepared corpus.
 #[derive(Debug, Args)]
 pub struct QueryInputArgs {
-    /// Vibrato dictionary for direct input; overrides `LINGREP_DICTIONARY_PATH`.
-    /// Not accepted with `--corpus`: a prepared artifact already contains analyzed tokens.
+    /// Japanese dictionary file; normally selected automatically.
+    ///
+    /// Overrides `LINGREP_DICTIONARY_PATH` for Vibrato. Not accepted with
+    /// `--corpus`, which already contains analyzed tokens.
     #[arg(
         short = 'd',
         long,
@@ -739,7 +813,7 @@ pub struct QueryInputArgs {
     )]
     pub dict_path: Option<PathBuf>,
 
-    /// Read analyzed tokens and source information from this prepared artifact.
+    /// Search a saved, analyzed corpus created by `ling corpus build`.
     #[arg(
         long,
         value_name = "ARTIFACT",
@@ -776,7 +850,9 @@ pub struct QueryInputArgs {
 /// Document selection for commands that apply scope predicates.
 #[derive(Debug, Default, Args)]
 pub struct ScopeArgs {
-    /// Filter by @document.KEY, @sentence.KEY, @section or within(KIND, KEY=value).
+    /// Filter by document, sentence, or section metadata.
+    ///
+    /// Select @document.KEY, @sentence.KEY, @section or within(KIND, KEY=value).
     ///
     /// Use `&` for conjunction and parentheses around disjunctions:
     /// `@document.subject_area = 社会学 & (@document.year >= 2010 | @document.keywords contains 農学)`.
@@ -792,7 +868,7 @@ pub struct ScopeArgs {
 /// would put those two on the same footing.
 #[derive(Clone, Debug, Default, Args)]
 pub struct SampleArgs {
-    /// Look at this fraction of the corpus, between 0 and 1.
+    /// Analyze this fraction of input; for example, 0.1 selects 10%.
     ///
     /// By default, sentences are selected by a hash of `--sample-seed` and the corpus
     /// sentence ordinal, so the sample is a property of the corpus rather than
@@ -806,7 +882,7 @@ pub struct SampleArgs {
     pub rate: Option<f64>,
 
     /// Sample whole prepared token blocks; adjacent sentences are correlated.
-    #[arg(long = "sample-blocks", requires_all = ["rate", "corpus"], help_heading = "Selection")]
+    #[arg(long = "sample-blocks", requires_all = ["rate", "corpus"], help_heading = "Selection", hide_short_help = true)]
     pub blocks: bool,
 
     /// Seed for `--sample`; repeat with the same sampling unit and corpus.
@@ -815,7 +891,8 @@ pub struct SampleArgs {
         value_name = "N",
         default_value_t = 0,
         requires = "rate",
-        help_heading = "Selection"
+        help_heading = "Selection",
+        hide_short_help = true
     )]
     pub seed: u64,
 }
@@ -863,7 +940,7 @@ impl SampleArgs {
 /// Optional prepared-artifact behavior for non-interactive corpus commands.
 #[derive(Clone, Debug, Default, Args)]
 pub struct CacheArgs {
-    /// Reuse a compatible artifact beside ROOT, or create one when absent.
+    /// Save analyzed input beside ROOT and reuse it on later runs.
     ///
     /// Reusing an artifact scans ROOT to verify its exact source identity.
     /// Specify a known artifact with `--corpus` to skip source verification.
@@ -890,7 +967,7 @@ pub(crate) fn validate_format_root(
             "bccwj input must be a distribution root (a directory containing C-XML/ and DOC/)"
                 .to_owned(),
         ),
-        CorpusFormat::Soranoha if stdin || root.is_none_or(|root| !root.is_file()) => Err(
+        CorpusFormat::Soranoha | CorpusFormat::SoranohaTei if stdin || root.is_none_or(|root| !root.is_file()) => Err(
             "soranoha input must be a bulk archive file (the .zip downloaded from soranoha.org)"
                 .to_owned(),
         ),
@@ -995,19 +1072,37 @@ impl From<&TraversalArgs> for TraversalLimits {
 #[derive(Clone, Debug, Args)]
 pub struct ResourceArgs {
     /// Normalize input text before analysis; `nfc` is the default.
-    #[arg(long, value_enum, default_value_t, help_heading = "Analysis")]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t,
+        help_heading = "Analysis",
+        hide_short_help = true
+    )]
     pub normalization: NormalizationArg,
 
-    /// Morphological analyzer used for direct input; `vibrato` is the default.
+    /// Analyzer for direct text input. Use --analyzer-config for spaCy or Stanza.
     #[arg(long, value_enum, default_value_t, help_heading = "Analysis")]
     pub analyzer: AnalyzerArg,
 
     /// Extract token text only (`text`) or full morphology (the default).
-    #[arg(long, value_enum, default_value_t, help_heading = "Analysis")]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t,
+        help_heading = "Analysis",
+        hide_short_help = true
+    )]
     pub profile: ProfileArg,
 
     /// Treat each input record as one sentence (the default), or let the analyzer segment it.
-    #[arg(long, value_enum, default_value_t, help_heading = "Analysis")]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t,
+        help_heading = "Analysis",
+        hide_short_help = true
+    )]
     pub segmentation: SegmentationArg,
 
     /// Sudachi dictionary file; valid only with `--analyzer sudachi`.
@@ -1049,12 +1144,19 @@ pub struct ResourceArgs {
     )]
     pub sudachi_edition: Option<SudachiEditionArg>,
 
+    /// Analyzer settings file, including a spaCy or Stanza setup output.
+    ///
+    /// Paths in the TOML file are relative to that file.
+    #[arg(long, value_name = "FILE", help_heading = "Analysis", conflicts_with_all = ["analyzer", "external_executable", "external_args", "sudachi_dict", "sudachi_resources", "sudachi_split", "sudachi_edition"])]
+    pub analyzer_config: Option<PathBuf>,
+
     /// External adapter executable; valid only with `--analyzer external`.
     #[arg(
         long,
         value_name = "PATH",
         help_heading = "Analyzer-specific",
-        hide_short_help = true
+        hide_short_help = true,
+        hide = true
     )]
     pub external_executable: Option<PathBuf>,
 
@@ -1064,8 +1166,7 @@ pub struct ResourceArgs {
         value_name = "VALUE",
         action = clap::ArgAction::Append,
         help_heading = "Analyzer-specific",
-        hide_short_help = true
-    )]
+        hide_short_help = true, hide = true)]
     pub external_args: Vec<String>,
 
     #[command(flatten)]
@@ -1078,15 +1179,14 @@ pub struct RuntimeArgs {
     #[command(flatten)]
     pub traversal: TraversalArgs,
 
-    /// Maximum UTF-8 bytes accepted for one raw sentence.
+    /// Refuse raw sentences above this byte limit; otherwise use the input-record memory bound.
     #[arg(
         long,
-        default_value_t = DEFAULT_MAX_SENTENCE_BYTES,
         value_parser = positive_usize,
         help_heading = "Safety limits",
         hide_short_help = true
     )]
-    pub max_sentence_bytes: usize,
+    pub max_sentence_bytes: Option<usize>,
 
     /// Maximum bytes accepted for one physical input record: a JSONL document,
     /// or a plaintext or Markdown line. Independent of `--batch-raw-bytes`,
@@ -1110,7 +1210,7 @@ pub struct RuntimeArgs {
     )]
     pub batch_sentences: usize,
 
-    /// Maximum raw UTF-8 bytes retained in one physical batch.
+    /// Target raw UTF-8 bytes per batch; a larger sentence runs alone.
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_STAGE_INPUT_BYTES,
@@ -1145,11 +1245,12 @@ pub struct RuntimeArgs {
         long,
         default_value_t = default_workers(),
         value_parser = positive_usize,
-        help_heading = "Execution"
-    )]
+        help_heading = "Execution", hide_short_help = true)]
     pub workers: usize,
 
-    /// Control whether progress is written to stderr.
+    /// Show progress while a command runs.
+    ///
+    /// Progress is written to stderr, separately from the results.
     #[arg(long, value_enum, default_value_t, help_heading = "Execution")]
     pub progress: ProgressMode,
 }
@@ -1158,7 +1259,13 @@ pub struct RuntimeArgs {
 #[derive(Clone, Debug, Args)]
 pub struct InteractiveResourceArgs {
     /// Normalize direct input text before analysis; `nfc` is the default.
-    #[arg(long, value_enum, default_value_t, help_heading = "Analysis")]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t,
+        help_heading = "Analysis",
+        hide_short_help = true
+    )]
     pub normalization: NormalizationArg,
 
     #[command(flatten)]
@@ -1210,6 +1317,7 @@ pub enum AnalyzerArg {
     #[default]
     Vibrato,
     Sudachi,
+    #[value(hide = true)]
     External,
 }
 
@@ -1293,6 +1401,9 @@ impl From<SudachiEditionArg> for lingrep_core::analysis::SudachiEdition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalyzerCliConfig {
+    ConfiguredExternal {
+        path: PathBuf,
+    },
     Vibrato,
     Sudachi {
         dictionary: PathBuf,
@@ -1344,7 +1455,6 @@ pub enum MatchFormat {
     Human,
 }
 
-/// Validated process-independent configuration passed to command owners.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionCliConfig {
     pub traversal: TraversalLimits,
@@ -1366,7 +1476,7 @@ fn prepared_input_conflict(matches: &clap::ArgMatches) -> Option<&'static str> {
     let (command, args) = matches.subcommand()?;
     if !matches!(
         command,
-        "matches" | "summarize" | "tokenize" | "coverage" | "explore" | "sentence-final"
+        "matches" | "summarize" | "tokenize" | "coverage" | "explore"
     ) || args.get_one::<PathBuf>("corpus").is_none()
     {
         return None;
@@ -1387,6 +1497,7 @@ fn prepared_input_conflict(matches: &clap::ArgMatches) -> Option<&'static str> {
             "sudachi_resources",
             "sudachi_split",
             "sudachi_edition",
+            "analyzer_config",
             "external_executable",
             "external_args",
         ]);
@@ -1456,7 +1567,6 @@ impl Cli {
             }) => args.tsv,
             Command::Tokenize(args) => args.tsv,
             Command::Attributes(args) => args.tsv,
-            Command::SentenceFinal(args) => args.tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Check(_)
@@ -1482,7 +1592,6 @@ impl Cli {
             }) if args.tsv => OutputMode::Tsv,
             Command::Tokenize(args) if args.tsv => OutputMode::Tsv,
             Command::Attributes(args) if args.tsv => OutputMode::Tsv,
-            Command::SentenceFinal(args) if args.tsv => OutputMode::Tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Check(_)
@@ -1491,8 +1600,7 @@ impl Cli {
             | Command::Corpus(_)
             | Command::Tokenize(_)
             | Command::Attributes(_)
-            | Command::Explore(_)
-            | Command::SentenceFinal(_) => OutputMode::Human,
+            | Command::Explore(_) => OutputMode::Human,
             Command::Describe(_)
             | Command::Completions(_)
             | Command::Manpages(_)
@@ -1533,7 +1641,6 @@ impl Cli {
             Command::Tokenize(args) => args.resources.clone(),
             Command::Attributes(args) => args.resources.clone(),
             Command::Explore(args) => args.query.resources.as_resource_args(),
-            Command::SentenceFinal(args) => args.query.resources.as_resource_args(),
             Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Sources(args),
             }) => ResourceArgs::with_traversal(args.traversal.clone(), args.progress),
@@ -1549,7 +1656,9 @@ impl Cli {
         };
 
         let limits = ExecutionLimits {
-            max_sentence_bytes: resources.max_sentence_bytes,
+            max_sentence_bytes: resources
+                .max_sentence_bytes
+                .unwrap_or(resources.max_record_bytes),
             max_input_record_bytes: resources.max_record_bytes,
             max_stage_sentences: resources.batch_sentences,
             max_stage_input_bytes: resources.batch_raw_bytes,
@@ -1567,66 +1676,64 @@ impl Cli {
             || resources.sudachi_edition.is_some();
         let has_external_options =
             resources.external_executable.is_some() || !resources.external_args.is_empty();
-        let analyzer = match resources.analyzer {
-            AnalyzerArg::Vibrato => {
-                if has_sudachi_options || has_external_options {
-                    return Err(CliError::InvalidArgs(
-                        "Sudachi/external options require their matching --analyzer value".into(),
-                    ));
+        let analyzer = if let Some(path) = resources.analyzer_config.as_ref() {
+            AnalyzerCliConfig::ConfiguredExternal { path: path.clone() }
+        } else {
+            match resources.analyzer {
+                AnalyzerArg::Vibrato => {
+                    if has_sudachi_options || has_external_options {
+                        return Err(CliError::InvalidArgs(
+                            "Sudachi/external options require their matching --analyzer value"
+                                .into(),
+                        ));
+                    }
+                    AnalyzerCliConfig::Vibrato
                 }
-                AnalyzerCliConfig::Vibrato
-            }
-            AnalyzerArg::Sudachi => {
-                if has_external_options {
-                    return Err(CliError::InvalidArgs(
-                        "external adapter options are invalid with --analyzer sudachi".into(),
-                    ));
-                }
-                let dictionary = resources.sudachi_dict.clone().ok_or_else(|| {
-                    CliError::InvalidArgs(
-                        "--sudachi-dict is required with --analyzer sudachi".into(),
-                    )
-                })?;
-                let edition = resources
-                    .sudachi_edition
-                    .or_else(|| SudachiEditionArg::from_dictionary_file_name(&dictionary))
-                    .ok_or_else(|| {
-                        CliError::InvalidArgs(format!(
-                            "the Sudachi edition cannot be read from the file name {}; \
-                             pass --sudachi-edition small, core or full",
-                            dictionary.display()
-                        ))
-                    })?;
-                AnalyzerCliConfig::Sudachi {
-                    dictionary,
-                    resources: resources.sudachi_resources.clone(),
-                    split: resources.sudachi_split.unwrap_or(SudachiSplitArg::C).into(),
-                    edition: edition.into(),
-                }
-            }
-            AnalyzerArg::External => {
-                if has_sudachi_options {
-                    return Err(CliError::InvalidArgs(
-                        "Sudachi options are invalid with --analyzer external".into(),
-                    ));
-                }
-                AnalyzerCliConfig::External {
-                    executable: resources.external_executable.clone().ok_or_else(|| {
+                AnalyzerArg::Sudachi => {
+                    if has_external_options {
+                        return Err(CliError::InvalidArgs(
+                            "external adapter options are invalid with --analyzer sudachi".into(),
+                        ));
+                    }
+                    let dictionary = resources.sudachi_dict.clone().ok_or_else(|| {
                         CliError::InvalidArgs(
-                            "--external-executable is required with --analyzer external".into(),
+                            "--sudachi-dict is required with --analyzer sudachi".into(),
                         )
-                    })?,
-                    arguments: resources.external_args.clone().into_boxed_slice(),
+                    })?;
+                    let edition = resources
+                        .sudachi_edition
+                        .or_else(|| SudachiEditionArg::from_dictionary_file_name(&dictionary))
+                        .ok_or_else(|| {
+                            CliError::InvalidArgs(format!(
+                                "the Sudachi edition cannot be read from the file name {}; \
+                             pass --sudachi-edition small, core or full",
+                                dictionary.display()
+                            ))
+                        })?;
+                    AnalyzerCliConfig::Sudachi {
+                        dictionary,
+                        resources: resources.sudachi_resources.clone(),
+                        split: resources.sudachi_split.unwrap_or(SudachiSplitArg::C).into(),
+                        edition: edition.into(),
+                    }
+                }
+                AnalyzerArg::External => {
+                    if has_sudachi_options {
+                        return Err(CliError::InvalidArgs(
+                            "Sudachi options are invalid with --analyzer external".into(),
+                        ));
+                    }
+                    AnalyzerCliConfig::External {
+                        executable: resources.external_executable.clone().ok_or_else(|| {
+                            CliError::InvalidArgs(
+                                "--external-executable is required with --analyzer external".into(),
+                            )
+                        })?,
+                        arguments: resources.external_args.clone().into_boxed_slice(),
+                    }
                 }
             }
         };
-        if matches!(&self.command, Command::SentenceFinal(_))
-            && !matches!(&analyzer, AnalyzerCliConfig::Vibrato)
-        {
-            return Err(CliError::InvalidArgs(
-                "sentence-final supports only --analyzer vibrato".into(),
-            ));
-        }
         let direct_dictionary = match &self.command {
             Command::Check(args) => args.dict_path.as_ref(),
             Command::Matches(args) => args.input.dict_path.as_ref(),
@@ -1634,7 +1741,6 @@ impl Cli {
             Command::Tokenize(args) => args.input.dict_path.as_ref(),
             Command::Attributes(args) => args.input.dict_path.as_ref(),
             Command::Explore(args) => args.query.input.dict_path.as_ref(),
-            Command::SentenceFinal(args) => args.query.input.dict_path.as_ref(),
             Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Build(args),
             }) => args.dict_path.as_ref(),
@@ -1655,7 +1761,7 @@ impl Cli {
             limits,
             max_temp_bytes: resources.max_temp_bytes,
             workers: resources.workers,
-            progress: resources.progress,
+            progress: resources.progress.resolve(std::io::stderr().is_terminal()),
             diagnostic_format: self.diagnostic_format(),
         })
     }
@@ -1678,7 +1784,7 @@ impl Default for RuntimeArgs {
     fn default() -> Self {
         Self {
             traversal: TraversalArgs::default(),
-            max_sentence_bytes: DEFAULT_MAX_SENTENCE_BYTES,
+            max_sentence_bytes: None,
             max_record_bytes: DEFAULT_MAX_INPUT_RECORD_BYTES,
             batch_sentences: DEFAULT_MAX_STAGE_SENTENCES,
             batch_raw_bytes: DEFAULT_MAX_STAGE_INPUT_BYTES,
@@ -1701,6 +1807,7 @@ impl Default for ResourceArgs {
             sudachi_resources: None,
             sudachi_split: None,
             sudachi_edition: None,
+            analyzer_config: None,
             external_executable: None,
             external_args: Vec::new(),
             runtime: RuntimeArgs::default(),
@@ -1866,7 +1973,7 @@ mod analyzer_selection_tests {
     }
 
     #[test]
-    fn external_arguments_are_literal_and_sentence_final_refuses_external() {
+    fn external_arguments_are_literal() {
         let cli = Cli::try_parse_from([
             "ling",
             "matches",
@@ -1889,18 +1996,5 @@ mod analyzer_selection_tests {
             arguments.as_ref(),
             ["--model", "path with spaces;rm -rf nope"]
         );
-
-        let specialist = Cli::try_parse_from([
-            "ling",
-            "sentence-final",
-            "--pattern",
-            "[]",
-            "--analyzer",
-            "external",
-            "--external-executable",
-            "adapter",
-            "input.txt",
-        ]);
-        assert!(specialist.is_err());
     }
 }

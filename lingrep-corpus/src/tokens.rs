@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
     thread::JoinHandle,
@@ -98,6 +98,7 @@ pub(crate) struct TokenWriter {
     buffered_upper_bound: u64,
     encoders: rayon::ThreadPool,
     recorder: RecorderHandle,
+    postings: Option<crate::postings::PostingsBuilder>,
 }
 
 /// Blocks encoded, or being encoded, ahead of the writer.
@@ -335,6 +336,17 @@ impl Drop for RecorderHandle {
 }
 
 impl TokenWriter {
+    pub(crate) fn create_indexed(
+        path: &Path,
+        schema: TokenSchema,
+        temp_budget: Arc<TempBudget>,
+    ) -> Result<Self, CorpusError> {
+        let mut writer = Self::create(path, schema, Arc::clone(&temp_budget))?;
+        writer.postings =
+            crate::postings::PostingsBuilder::new(&writer.full_projection, temp_budget)?;
+        Ok(writer)
+    }
+
     pub(crate) fn create(
         path: &Path,
         schema: TokenSchema,
@@ -373,6 +385,7 @@ impl TokenWriter {
             full_projection: Arc::new(full_projection),
             buffered: Vec::with_capacity(BLOCK_SENTENCE_LIMIT),
             buffered_upper_bound: BLOCK_HEADER_LEN,
+            postings: None,
             encoders,
             recorder: RecorderHandle::spawn(BlockRecorder {
                 file,
@@ -421,6 +434,9 @@ impl TokenWriter {
             .buffered_upper_bound
             .checked_add(upper)
             .ok_or_else(|| invalid("block-size accounting overflow"))?;
+        if let Some(postings) = self.postings.as_mut() {
+            postings.push(&sentence)?;
+        }
         self.buffered.push(sentence);
         if self.buffered.len() == BLOCK_SENTENCE_LIMIT {
             self.flush_block()?;
@@ -434,9 +450,13 @@ impl TokenWriter {
         self.push_bound_sentence(sentence)
     }
 
-    pub(crate) fn finish(mut self, analysis: AnalysisIdentity) -> Result<(), CorpusError> {
+    pub(crate) fn finish(
+        mut self,
+        analysis: AnalysisIdentity,
+    ) -> Result<Option<crate::postings::PostingsBuilder>, CorpusError> {
         self.flush_block()?;
-        self.recorder.join()?.finish(analysis)
+        self.recorder.join()?.finish(analysis)?;
+        Ok(self.postings.take())
     }
 
     /// Hands the buffered block to the recorder. Returns as soon as the queue
@@ -762,6 +782,23 @@ enum SourceProjection {
     },
 }
 
+#[derive(Clone, Default)]
+pub struct PreparedScopeStats(Arc<AtomicU64>);
+
+impl PreparedScopeStats {
+    /// Counts decoded, non-oversized sentences excluded by section selection.
+    pub fn excluded_sentences(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+struct SectionAdmission {
+    included: Option<Vec<String>>,
+    include_unlabelled: bool,
+    provenance: Arc<crate::ProvenanceView>,
+    runtime: tokio::runtime::Handle,
+}
+
 pub struct PreparedSentenceSource {
     reader: Arc<TokenReader>,
     enhanced: Option<Arc<EnhancedReader>>,
@@ -770,6 +807,8 @@ pub struct PreparedSentenceSource {
     next_ordinal: u64,
     terminal_failure: Option<String>,
     admission: SentenceAdmission,
+    sections: Option<SectionAdmission>,
+    scope_stats: PreparedScopeStats,
     cancel: Option<CancellationFlag>,
     tokenized_admission: TokenizedAdmission,
     source_metadata: Option<lingrep_core::corpus::SourceMetadataProjection>,
@@ -857,6 +896,8 @@ impl PreparedSentenceSource {
             next_ordinal: 0,
             terminal_failure: None,
             admission: SentenceAdmission::All,
+            sections: None,
+            scope_stats: PreparedScopeStats::default(),
             cancel: None,
             tokenized_admission: TokenizedAdmission::Fail,
             source_metadata: None,
@@ -867,6 +908,29 @@ impl PreparedSentenceSource {
             filter_stats: crate::PreparedFilterStats::default(),
         })
     }
+    /// The returned counter tracks exclusions after the source is moved into execution.
+    pub fn scope_stats(&self) -> PreparedScopeStats {
+        self.scope_stats.clone()
+    }
+
+    pub(crate) fn with_sections(
+        mut self,
+        provenance: Arc<crate::ProvenanceView>,
+        runtime: tokio::runtime::Handle,
+        included: Option<Vec<String>>,
+        include_unlabelled: bool,
+    ) -> Self {
+        if included.is_some() || !include_unlabelled {
+            self.sections = Some(SectionAdmission {
+                included,
+                include_unlabelled,
+                provenance,
+                runtime,
+            });
+        }
+        self
+    }
+
     /// Returns a live counter shared with this source, including after it reaches EOF.
     pub fn filter_stats(&self) -> crate::PreparedFilterStats {
         self.filter_stats.clone()
@@ -956,6 +1020,48 @@ impl PreparedSentenceSource {
         self.decode_sentences_with_attributes(pool, sentence_indices, &attributes)
     }
 
+    /// Reads only written word forms. Returns `None` before token projection
+    /// when recorded residency exceeds `limit`, or when the joined text exceeds
+    /// it, or when written forms are unavailable. Token-block decompression
+    /// retains its existing fixed scratch bound.
+    pub fn sentence_words_bounded(
+        &self,
+        ordinal: u64,
+        limit: usize,
+    ) -> Result<Option<Vec<String>>, CorpusError> {
+        if self.reader.resident_size(ordinal)? > limit {
+            return Ok(None);
+        }
+        let key = lingrep_core::token_match::AttributeKey::from(TokenAttributeIndex::Orth);
+        if !self.reader.schema.keys().contains(&key) {
+            return Ok(None);
+        }
+        let projection = self
+            .reader
+            .schema
+            .bind_projection([key.clone()])
+            .map_err(|error| invalid(error.to_string()))?;
+        let sentences = self
+            .reader
+            .decode_bound_ordinals(&[ordinal], &projection, false)?;
+        let Some(sentence) = sentences.first() else {
+            return Err(invalid("sentence is missing"));
+        };
+        let mut bytes = 0usize;
+        let mut words = Vec::with_capacity(sentence.len());
+        for index in 0..sentence.len() {
+            let Some(text) = sentence.scalar_key(index, &key) else {
+                return Ok(None);
+            };
+            bytes = bytes.saturating_add(text.len());
+            if bytes > limit {
+                return Ok(None);
+            }
+            words.push(text.to_owned());
+        }
+        Ok(Some(words))
+    }
+
     fn admitted(&self, ordinal: u64) -> Result<bool, CorpusError> {
         if self.admission.is_unrestricted() {
             return Ok(true);
@@ -970,12 +1076,8 @@ impl PreparedSentenceSource {
     }
 }
 
-impl SentenceBatchSource for PreparedSentenceSource {
-    fn wants_lookahead(&self) -> bool {
-        true
-    }
-
-    fn next_batch(
+impl PreparedSentenceSource {
+    fn next_decoded_batch(
         &mut self,
         limits: &ExecutionLimits,
     ) -> Result<Option<ExecutionBatch>, ExecutionError> {
@@ -1308,6 +1410,69 @@ impl SentenceBatchSource for PreparedSentenceSource {
             };
         }
         Ok(None)
+    }
+}
+
+impl SentenceBatchSource for PreparedSentenceSource {
+    fn wants_lookahead(&self) -> bool {
+        self.sections.is_none()
+    }
+
+    fn next_batch(
+        &mut self,
+        limits: &ExecutionLimits,
+    ) -> Result<Option<ExecutionBatch>, ExecutionError> {
+        loop {
+            let Some(batch) = self.next_decoded_batch(limits)? else {
+                return Ok(None);
+            };
+            let Some(sections) = &self.sections else {
+                return Ok(Some(batch));
+            };
+            let ExecutionBatch::BoundTokenized { sentences, charges } = batch else {
+                return Err(ExecutionError::Source {
+                    ordinal: self.next_ordinal,
+                    message: "Search scope requires bound prepared sentences.".into(),
+                });
+            };
+            let mut admitted = Vec::with_capacity(sentences.len());
+            for chunk in sentences.chunks(crate::MAX_PROVENANCE_PAGE_SIZE) {
+                let ids = chunk
+                    .iter()
+                    .map(|sentence| {
+                        crate::SentenceId::new(sentence.location.corpus_sentence_ordinal)
+                    })
+                    .collect::<Vec<_>>();
+                let page = sections
+                    .runtime
+                    .block_on(sections.provenance.section_admissions(
+                        &ids,
+                        sections.included.as_deref(),
+                        sections.include_unlabelled,
+                    ))
+                    .map_err(|error| ExecutionError::Source {
+                        ordinal: ids.first().map_or(0, |id| id.get()),
+                        message: error.to_string(),
+                    })?;
+                admitted.extend(page);
+            }
+            let mut kept = Vec::with_capacity(sentences.len());
+            let mut kept_charges = Vec::with_capacity(charges.len());
+            for ((sentence, charge), admitted) in sentences.into_iter().zip(charges).zip(admitted) {
+                if admitted {
+                    kept.push(sentence);
+                    kept_charges.push(charge);
+                } else {
+                    self.scope_stats.0.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            if !kept.is_empty() {
+                return Ok(Some(ExecutionBatch::BoundTokenized {
+                    sentences: kept,
+                    charges: kept_charges,
+                }));
+            }
+        }
     }
 }
 
@@ -1961,6 +2126,105 @@ mod tests {
     use super::*;
 
     #[test]
+    fn postings_finalization_validates_checksums_and_unindexed_cells() {
+        for damage in ["checksum", "unindexed_scalar"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("tokens");
+            let schema = TokenSchema::from_keys(["lemma", "text"]).unwrap();
+            let schema_id = TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes());
+            let budget = Arc::new(TempBudget::new(1024 * 1024));
+            let mut writer =
+                TokenWriter::create_indexed(&path, schema, Arc::clone(&budget)).unwrap();
+            let words = BoundTokenSentence::from_projected_values(
+                &writer.full_projection,
+                1,
+                vec![Some("語".into()); 2],
+            )
+            .unwrap();
+            writer.push_bound_sentence(words).unwrap();
+            let mut block =
+                encode_recorded_block(&writer.buffered, &writer.full_projection).unwrap();
+            if damage == "checksum" {
+                block.checksum[0] ^= 1;
+            } else {
+                let mut raw =
+                    zstd::bulk::decompress(&block.stored, block.raw_len as usize).unwrap();
+                let text_index = writer
+                    .full_projection
+                    .keys()
+                    .iter()
+                    .position(|key| key.as_str() == "text")
+                    .unwrap();
+                let cell = (BLOCK_HEADER_LEN + read_u64(&raw, 24).unwrap() + SENTENCE_ENTRY_LEN + 4)
+                    as usize
+                    + text_index * 4;
+                raw[cell..cell + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+                block.stored = zstd::bulk::compress(&raw, 3).unwrap();
+                block.checksum = *blake3::hash(&block.stored).as_bytes();
+            }
+            let postings = writer.postings.take().unwrap();
+            let mut recorder = writer.recorder.join().unwrap();
+            recorder.write(block).unwrap();
+            let analysis = AnalysisIdentity::from_bytes([9; 32]);
+            recorder.finish(analysis).unwrap();
+            drop(writer);
+            let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
+            let hash = blake3::hash(&std::fs::read(&path).unwrap())
+                .to_hex()
+                .to_string();
+            let error = postings
+                .finish(
+                    root.path(),
+                    &reader,
+                    &analysis,
+                    &schema_id,
+                    &hash,
+                    &mut || true,
+                )
+                .unwrap_err();
+            assert!(
+                error.to_string().contains(match damage {
+                    "checksum" => "block checksum mismatch",
+                    _ => "invalid scalar string id",
+                }),
+                "{damage}: {error}"
+            );
+            assert!(!root.path().join(crate::postings::NAME).exists());
+            assert_eq!(budget.used_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn standalone_and_uncovered_writers_do_not_capture_postings() {
+        for (indexed, keys) in [(false, vec!["lemma", "text"]), (true, vec!["text"])] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("tokens");
+            let schema = TokenSchema::from_keys(keys).unwrap();
+            let budget = Arc::new(TempBudget::new(1024 * 1024));
+            let mut writer = if indexed {
+                TokenWriter::create_indexed(&path, schema, Arc::clone(&budget)).unwrap()
+            } else {
+                TokenWriter::create(&path, schema, Arc::clone(&budget)).unwrap()
+            };
+            assert!(writer.postings.is_none());
+            let words = BoundTokenSentence::from_projected_values(
+                &writer.full_projection,
+                1,
+                vec![Some("語".into()); writer.full_projection.len()],
+            )
+            .unwrap();
+            writer.push_bound_sentence(words).unwrap();
+            assert!(
+                writer
+                    .finish(AnalysisIdentity::from_bytes([9; 32]))
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(budget.used_bytes(), 0);
+        }
+    }
+
+    #[test]
     fn block_samples_use_real_boundaries_and_leave_excluded_blocks_lazy() {
         use crate::locations::LocationWriter;
         use lingrep_core::execution::CorpusSample;
@@ -2415,7 +2679,11 @@ mod tests {
                 break;
             }
         }
-        let outcome = outcome.and_then(|()| writer.finish(AnalysisIdentity::from_bytes([5; 32])));
+        let outcome = outcome.and_then(|()| {
+            writer
+                .finish(AnalysisIdentity::from_bytes([5; 32]))
+                .map(drop)
+        });
         let error = outcome.expect_err("the exhausted budget must reach the caller");
         assert!(
             error.to_string().contains("temporary limit exceeded"),

@@ -2,6 +2,10 @@
 
 #![allow(clippy::panic, clippy::unwrap_used)]
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;

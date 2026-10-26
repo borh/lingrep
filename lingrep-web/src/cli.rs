@@ -67,7 +67,8 @@ impl FromStr for BasePath {
 #[derive(Parser)]
 #[command(
     name = "lingrep-web",
-    about = "Web interface for lingrep pattern matching"
+    about = "Web interface for lingrep pattern matching",
+    mut_arg("input", |arg| arg.help("Corpus input path; stdin is unsupported. Omit only when using --corpus."))
 )]
 pub struct Args {
     #[command(flatten)]
@@ -244,6 +245,14 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::{Args, DEFAULT_MAX_INPUT_RECORD_BYTES};
+
+    #[test]
+    fn input_help_requires_a_path_instead_of_promising_stdin() {
+        let help = Args::command().render_long_help().to_string();
+        assert!(!help.contains("reads from stdin when omitted"), "{help}");
+        assert!(help.contains("stdin is unsupported"), "{help}");
+        assert!(help.contains("--corpus"), "{help}");
+    }
 
     #[test]
     fn dictionary_argument_uses_devshell_environment_default() {

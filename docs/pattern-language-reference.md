@@ -69,10 +69,10 @@ its own diagnostic: `TokenTestTooComplex` names the branch count, and
 take a literal (substring containment) or a regex (substring search).
 
 String-set attributes use `has` and `not has` with one literal, or `has any` and
-`not has any` with an inline or named set. The scalar modes are refused for them
+`not has any` with an inline or named set. The scalar modes are rejected for them
 at schema binding, except `~` and `!~`, which read either kind. Over a set they
 are existential, as `has` is: `~` holds when some entry satisfies it, `!~` when
-none does. This finds a MISC entry by prefix, such as GiNZA's `Inf=`.
+none does. Use `~` to find a MISC entry by prefix, such as GiNZA's `Inf=`.
 
 Regex values use Rust `regex` syntax, not PCRE, and match one attribute value; an
 invalid regex is `InvalidRegex`. A regex operand with `=` or `!=` is a compile
@@ -95,16 +95,16 @@ decoded in all of those positions: `\uXXXX` (exactly four hexadecimal digits) an
 uses the same escape for U+3000, which is invisible in a diff. Regex operands are
 not decoded: their backslashes belong to the regex engine.
 
-Two spellings are refused with their own diagnostics:
+Two spellings are rejected with their own diagnostics:
 
 - An unquoted value is terminated by `&` and not by `|`, so `[text=a|text=b]` is
-  one atom whose value is the literal `a|text=b`. The compiler refuses it
+  one atom whose value is the literal `a|text=b`. The compiler rejects it
   (`PipeInBareValue`) and names both recoveries: `\u007C` for a literal pipe, or
   spacing (`[text=a | text=b]`) for a disjunction.
 - Metadata quotes every value and a token test quotes none, so `[text="の"]`
-  would test for the three-character literal `"の"`. The compiler refuses it
-  (`QuotedAttributeValue`), naming the unquoted spelling and `\u0022` for a value
-  whose quotes are real.
+  would test for the three-character literal `"の"`. The compiler rejects it
+  (`QuotedAttributeValue`) and reports the unquoted spelling and `\u0022` for a
+  literal quote character.
 
 ## Operators and precedence
 
@@ -178,8 +178,7 @@ and `not $v -[obj|obj:*]-> _` holds when none exists. The anonymous form
 publishes at most once per body match even when several tokens witness the edge.
 Both polarities fail unless every token in the supplied sentence slice carries
 usable scalar `dep.head` and `dep.rel` values with an in-range head, so an
-incomplete parse never counts as evidence of absence. Captured edges are
-positive only. `_` binds no capture.
+incomplete parse never counts as evidence of absence. `_` binds no capture.
 
 `not`, `_`, and `where` are contextual: `not := [].`, `_ := [].`, `where := [].`,
 `[text=not]`, `[text=_]`, and `[text=where]` remain legal outside this position.
@@ -202,8 +201,12 @@ observation described above.
 `$head -[labels]-> $dependent` holds when the dependent token's `dep.rel` is
 matched by the bracket and its `dep.head` designates the head capture's token.
 Both operands must be captures of statically exactly one token. A fragment may
-not declare a clause, an operand may not name itself, and each refusal has its
+not declare a clause, an operand may not name itself, and each violation has its
 own diagnostic.
+
+`not $head -[labels]-> $dependent` holds when both captures bind and no matching
+edge connects their final token assignments. It requires the complete
+basic-dependency observation described above.
 
 The bracket is either `*`, meaning any present basic `dep.rel`, or one or more
 terms joined by `|`. The any-label form is written `-[*]->`, does not match a
@@ -216,8 +219,9 @@ reference to a `set` declaration, resolved exactly where `[x in @S]` resolves, s
 `-[obl|obl:*]->` for either.
 
 `key: [$d.dep.rel]` publishes the label that matched, because a token carries
-exactly one `dep.rel`. This holds for a dependent operand only — `$v.dep.rel` on
-a head-only capture is that token's own relation to its head.
+exactly one `dep.rel`. The matched label is available this way only on a dependent
+operand — `$v.dep.rel` on a head-only capture is that token's own relation to its
+head.
 
 A multi-label bracket is one disjunctive constraint, not an independent count for
 every member. Candidates admitted by its labels compete in the definition's
@@ -227,7 +231,7 @@ whose rows must be each label's own pattern count, generate one definition per
 label. `matches --raw-matches` bypasses catalog policy; it does not expose
 candidates lost at matcher selection, and `summarize` has no raw mode.
 
-### Static refusals
+### Static validation
 
 The clause's own diagnostics:
 
@@ -236,24 +240,25 @@ The clause's own diagnostics:
 - `InvalidRelationLabel` names a `set` member that is not a well-formed label.
   A set names arbitrary literals, so `set S := {動詞}.` is legal and `-[@S]->` is
   not.
-- A `@name` that resolves to a definition or a `test` is `UndefinedReference`,
-  naming the kind found, as in the `in` case.
-- `WhereContradictoryLabels` refuses two constraints sharing a dependent capture
-  with disjoint label sets: a token carries one `dep.rel`, so both can never hold.
+- A `@name` that resolves to a definition or a `test` produces `UndefinedReference`.
+  The diagnostic reports the kind found, as in the `in` case.
+- `WhereContradictoryLabels`: two positive constraints share a dependent capture
+  but have disjoint label sets; a token carries one `dep.rel`, so both cannot hold.
   Write `-[a|b]->` when either label is acceptable.
-- `WhereContradictoryExistence` refuses a positive and negative anonymous
-  constraint on the same head only when the negative label set covers the
-  positive set. A positive captured edge counts as positive too. Mere overlap is
-  satisfiable through a positive label outside the exclusion. Subtype coverage is
-  semantic — `obl:tmod` is covered by `obl:*`, while bare `obl` is not. Two
-  negative constraints remain legal.
-- `WhereExclusiveCaptures` refuses a clause whose operands can never both bind: a
+- `WhereContradictoryExistence`: a positive and negative anonymous constraint
+  share a head and the negative label set covers the positive set. A positive
+  captured edge counts as positive too. Mere overlap is satisfiable through a
+  positive label outside the exclusion. Subtype coverage is semantic — `obl:tmod` is covered by `obl:*`, while bare `obl` is not. Two
+  negative constraints remain legal. A captured negative constraint contradicts
+  a positive captured edge only when both endpoints match and its labels cover
+  the positive labels.
+- `WhereExclusiveCaptures`: the clause's operands cannot all bind in one match; a
   capture in an alternation branch binds only when that branch is taken, so
   `((?<a> …) | (?<b> …)) where $a -[obj]-> $b` can never bind both. It applies to
   the whole clause, not per constraint, because `$c -[x]-> $a, $c -[y]-> $b`
   fails for the same reason. An alternation under a quantifier that can repeat
   it — `+`, `*`, `{2,4}` — stays legal, because two iterations can take two
-  branches; under `?` it is refused.
+  branches; under `?` it is rejected.
 
 ### Ordering against publication
 
@@ -263,7 +268,7 @@ An assignment that fails the clause does not hide a passing assignment reaching
 the same position.
 
 A catalog with a `where` clause requires `dep.head` and `dep.rel` at binding, so a
-morphology-only corpus is refused by name before matching. Only basic edges are
+morphology-only corpus is rejected by name before matching. Only basic edges are
 consulted; `dep.enhanced` is not.
 
 Optional captured edges, negated labels, ordering predicates and dependency paths
@@ -425,13 +430,14 @@ transform: [
 pattern npv := (?<n> [upos=NOUN]) (?<p> [upos=ADP]) (?<vb> []+).
 ```
 
-Unscoped, a span rewrite narrows the record, and narrowing discards every capture
-that falls outside it — usually including the capture the transform was written
-for. A scoped step rewrites only its own capture: the record span, the sibling
-captures, and any capture nested inside are unchanged. A scope naming a capture
-the match did not bind has no effect. `substitute`'s `component:` names an edge —
-`first` or `last` — of whichever span the scope selected; `span` and a `$capture`
-component are refused. `patterns/npv-collocation.lx` is the tracked exemplar.
+Without a scope, a span rewrite narrows the record span and discards every
+capture outside that span. The discarded captures usually include the capture
+that the transform was written for. A scoped step rewrites only its own
+capture: the record span, the sibling captures, and any capture nested inside
+are unchanged. A scope naming a capture the match did not bind has no effect.
+`substitute`'s `component:` names an edge — `first` or `last` — of whichever
+span the scope selected; `span` and a `$capture` component are refused.
+`patterns/npv-collocation.lx` is the tracked exemplar.
 
 A `substitute` with no later `join` is refused unless a `key:` projects the
 written form, because no output would read the substitution.
@@ -457,9 +463,9 @@ reported by `coverage --json`; changing versioned `norm` can therefore change
 lexical results and catalog identity.
 
 Lexicons work with `matches`, `summarize`, `explore`, and JSON evidence.
-`matches --tsv` refuses them because its fixed headerless row cannot carry the
+`matches --tsv` rejects them because its fixed headerless row cannot carry the
 variable-length `matched_by` list; `summarize --tsv` carries terms and typed
-segment lists. `sentence-final` refuses lexicons. `resolve` and `detach` may not
+segment lists. `resolve` and `detach` may not
 select one, and lexicons may not declare `transform:` or `render:`. The policy
 subject `patterns` selects ordinary patterns and excludes lexicons.
 
@@ -491,7 +497,7 @@ declaration — `group upper_layer := layer in {"S1", "S2", "S3"}.` — derives
 membership from a metadata predicate over the emitting definitions: `=`/`!=`
 take one quoted string, `in`/`not in` a braced set, and every form is existential
 and two-valued over presence, so a definition lacking the key or carrying a
-non-string value is a member of no form. `partition:`, by contrast, refuses a
+non-string value is a member of no form. `partition:`, by contrast, rejects a
 non-string value.
 
 Naming a derived group in a literal `groups:` list is a compile error

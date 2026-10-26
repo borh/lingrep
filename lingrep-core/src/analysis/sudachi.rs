@@ -71,7 +71,7 @@ fn dictionary_container(path: &Path) -> Option<DictionaryContainer> {
         .then_some(DictionaryContainer::HeaderVersioned)
 }
 
-const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v1";
+const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v2";
 const MAPPING_REVISION: &[u8] = b"lingrep.sudachi-pos-mapping/v1";
 const ALIGNMENT_REVISION: &[u8] = b"lingrep.sudachi-byte-alignment/v1";
 
@@ -340,46 +340,32 @@ impl SudachiPlan {
 
 impl sealed::Plan for SudachiPlan {}
 
-/// Sudachi's own hard cap on one input, from `input_text::buffer`'s
-/// `MAX_LENGTH` --- `u16::MAX / 4 * 3`, because its offset tables are `u16`.
-///
-/// Restated here rather than imported because it is not exported. That makes it
-/// a pin as much as a constant: `sudachi_declares_the_input_limit_we_pin`
-/// tokenizes at the boundary and one byte past it, so a Sudachi upgrade that
-/// moves the cap fails that test instead of silently reintroducing the failure
-/// this exists to prevent.
-///
-/// Note it is **below** this workspace's default `max_sentence_bytes` of
-/// 65,536, so the window where a sentence passes the caller's limit and then
-/// fails inside the tokenizer is real, not theoretical.
+// The pinned sudachi input_text::buffer uses u16 offsets and caps input at u16::MAX / 4 * 3 bytes.
 const SUDACHI_MAX_INPUT_BYTES: usize = u16::MAX as usize / 4 * 3;
 
-/// The gap the clamp closes is reachable, not theoretical.
-///
-/// If Sudachi's cap were at or above the default sentence limit, a caller
-/// bounding sentences by its own limit would never hand Sudachi anything it
-/// could refuse, and clamping would be dead code. It is below — 49,149 against
-/// 65,536 — so there is a real window where a sentence passes every limit this
-/// workspace configures and then fails inside the tokenizer.
-///
-/// A compile-time assertion rather than a test, so moving either number is a
-/// build failure at the line that depends on the relationship. The runtime pin
-/// on Sudachi's *actual* behaviour is
-/// `sudachi_declares_the_input_limit_we_pin`.
-const _: () = {
-    assert!(SUDACHI_MAX_INPUT_BYTES == 49_149);
-    assert!(SUDACHI_MAX_INPUT_BYTES < crate::execution::DEFAULT_MAX_SENTENCE_BYTES);
-};
+fn chunk_end(text: &str) -> usize {
+    if text.len() <= SUDACHI_MAX_INPUT_BYTES {
+        return text.len();
+    }
+    let mut end = SUDACHI_MAX_INPUT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end)
+        .and_then(|prefix| {
+            prefix.char_indices().rev().find(|(offset, ch)| {
+                *offset >= end / 2
+                    && (ch.is_whitespace() || matches!(ch, '、' | '，' | ',' | '；' | ';'))
+            })
+        })
+        .map_or(end, |(offset, ch)| offset + ch.len_utf8())
+}
 
 impl AnalyzerPlan for SudachiPlan {
     type Session = SudachiSession;
 
     fn schema(&self) -> &TokenSchema {
         &self.schema
-    }
-
-    fn max_input_bytes(&self) -> Option<usize> {
-        Some(SUDACHI_MAX_INPUT_BYTES)
     }
 
     fn create_session(&self) -> Self::Session {
@@ -448,52 +434,66 @@ impl AnalyzerSession for SudachiSession {
                 let sentence_text = input
                     .slice(sentence_range)
                     .map_err(|_| AnalysisError::InvalidSourceRange)?;
-                self.tokenizer.set_mode(self.split.mode());
-                self.tokenizer.reset().push_str(sentence_text);
-                self.tokenizer
-                    .do_tokenize()
-                    .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
-                self.results
-                    .collect_results(&mut self.tokenizer)
-                    .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
+                let mut values = Vec::new();
+                let mut surfaces = Vec::new();
+                let mut chunk_start = 0;
+                while chunk_start < sentence_text.len() {
+                    let remaining = sentence_text
+                        .get(chunk_start..)
+                        .ok_or(AnalysisError::InvalidSourceRange)?;
+                    let length = chunk_end(remaining);
+                    let sentence_text = remaining
+                        .get(..length)
+                        .ok_or(AnalysisError::InvalidSourceRange)?;
+                    self.tokenizer.set_mode(self.split.mode());
+                    self.tokenizer.reset().push_str(sentence_text);
+                    self.tokenizer
+                        .do_tokenize()
+                        .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
+                    self.results
+                        .collect_results(&mut self.tokenizer)
+                        .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
 
-                let token_count = self.results.len();
-                let value_count = token_count
-                    .checked_mul(fields.len())
-                    .ok_or(AnalysisError::ResourceAccounting)?;
-                let mut values = Vec::with_capacity(value_count);
-                let mut surfaces = Vec::with_capacity(token_count);
-                let sentence_start = sentence_range.start() as usize;
-                for (word_index, morpheme) in self.results.iter().enumerate() {
-                    let start = sentence_start
-                        .checked_add(morpheme.begin())
-                        .ok_or(AnalysisError::ResourceAccounting)?;
-                    let end = sentence_start
-                        .checked_add(morpheme.end())
-                        .ok_or(AnalysisError::ResourceAccounting)?;
-                    let source_range = input
-                        .source_range(start, end)
-                        .map_err(|_| AnalysisError::InvalidSourceRange)?;
-                    let surface = morpheme.surface();
-                    if input.slice(source_range).ok() != Some(surface.as_ref()) {
-                        return Err(AnalysisError::InvalidAlignment);
-                    }
-                    let word_start =
-                        u32::try_from(word_index).map_err(|_| AnalysisError::ResourceAccounting)?;
-                    surfaces.push(SurfaceToken::new(
-                        source_range,
-                        word_start,
-                        word_start
-                            .checked_add(1)
+                    let token_count = self.results.len();
+                    surfaces.reserve(token_count);
+                    values.reserve(
+                        token_count
+                            .checked_mul(fields.len())
                             .ok_or(AnalysisError::ResourceAccounting)?,
-                    ));
-                    let pos = needs_pos.then(|| morpheme.part_of_speech());
-                    values.extend(
-                        fields.iter().map(|field| {
-                            Some(field.value(&morpheme, pos.unwrap_or(&[]), &surface))
-                        }),
                     );
+                    let word_offset = surfaces.len();
+                    let sentence_start = sentence_range.start() as usize + chunk_start;
+                    for (word_index, morpheme) in self.results.iter().enumerate() {
+                        let start = sentence_start
+                            .checked_add(morpheme.begin())
+                            .ok_or(AnalysisError::ResourceAccounting)?;
+                        let end = sentence_start
+                            .checked_add(morpheme.end())
+                            .ok_or(AnalysisError::ResourceAccounting)?;
+                        let source_range = input
+                            .source_range(start, end)
+                            .map_err(|_| AnalysisError::InvalidSourceRange)?;
+                        let surface = morpheme.surface();
+                        if input.slice(source_range).ok() != Some(surface.as_ref()) {
+                            return Err(AnalysisError::InvalidAlignment);
+                        }
+                        let word_start = u32::try_from(word_offset + word_index)
+                            .map_err(|_| AnalysisError::ResourceAccounting)?;
+                        surfaces.push(SurfaceToken::new(
+                            source_range,
+                            word_start,
+                            word_start
+                                .checked_add(1)
+                                .ok_or(AnalysisError::ResourceAccounting)?,
+                        ));
+                        let pos = needs_pos.then(|| morpheme.part_of_speech());
+                        values.extend(fields.iter().map(|field| {
+                            Some(field.value(&morpheme, pos.unwrap_or(&[]), &surface))
+                        }));
+                    }
+                    chunk_start += length;
                 }
+                let token_count = surfaces.len();
                 let words =
                     BoundTokenSentence::from_projected_values(projection, token_count, values)
                         .map_err(|_| AnalysisError::ResourceAccounting)?;

@@ -2,11 +2,14 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::catalog_input::load_and_compile;
-use crate::cli::{Cli, Command, CorpusCommand, QueryInputArgs};
+use crate::cli::{
+    AnalyzerCliConfig, Cli, Command, CorpusCommand, ExecutionCliConfig, QueryInputArgs,
+};
 use crate::error::CliError;
 use crate::presentation::{ExplicitLimit, OutputMode};
 use crate::protocol::invocation::{InvocationData, InvocationEnvelope};
 use crate::protocol::write_jsonl;
+use lingrep_cli_common::SafeText;
 
 use super::CommandOutcome;
 
@@ -16,7 +19,6 @@ pub fn requested(cli: &Cli) -> bool {
         Command::Summarize(args) => args.plan,
         Command::Tokenize(args) => args.plan,
         Command::Attributes(args) => args.plan,
-        Command::SentenceFinal(args) => args.plan,
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Build(args) => args.plan,
             CorpusCommand::Inspect(args) => args.plan,
@@ -34,10 +36,10 @@ pub fn requested(cli: &Cli) -> bool {
     }
 }
 
-pub fn run(cli: &Cli) -> Result<CommandOutcome, CliError> {
-    let (command, input_kind, limits) = resolve(cli)?;
+pub fn run(cli: &Cli, config: &ExecutionCliConfig) -> Result<CommandOutcome, CliError> {
+    let (command, input_kind, limits) = resolve(cli, config)?;
     let (catalog_source, catalog_fingerprint) = resolve_catalog(cli)?;
-    let (dictionary_path, dictionary_source) = resolve_dictionary(cli)?;
+    let (dictionary_path, dictionary_source) = resolve_dictionary(cli, config)?;
     let data = InvocationData {
         command,
         catalog_source,
@@ -64,21 +66,37 @@ pub fn run(cli: &Cli) -> Result<CommandOutcome, CliError> {
         OutputMode::Human | OutputMode::Tsv => {
             writeln!(writer, "command: {}", data.command).map_err(CliError::Io)?;
             writeln!(writer, "input: {}", data.input_kind).map_err(CliError::Io)?;
-            writeln!(writer, "output: {}", data.output_mode).map_err(CliError::Io)?;
-            writeln!(writer, "color: {}", data.color).map_err(CliError::Io)?;
-            writeln!(writer, "progress: {}", data.progress).map_err(CliError::Io)?;
-            writeln!(writer, "limits: {}", data.limits).map_err(CliError::Io)?;
+            if let Some(source) = &data.catalog_source {
+                writeln!(writer, "patterns: {}", SafeText::from_untrusted(source))?;
+            }
+            if let Some(dictionary) = &data.dictionary_path {
+                writeln!(
+                    writer,
+                    "dictionary: {}",
+                    SafeText::from_untrusted(dictionary)
+                )?;
+            }
+            writeln!(writer, "output: {}", data.output_mode)?;
+            writeln!(writer, "settings:")?;
+            if let Some(settings) = data.limits.as_object() {
+                for (name, value) in settings.iter().filter(|(_, value)| !value.is_null()) {
+                    writeln!(writer, "  {}: {value}", name.replace('_', " "))?;
+                }
+            }
         }
     }
     Ok(CommandOutcome::Success)
 }
 
-fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
+fn resolve(
+    cli: &Cli,
+    config: &ExecutionCliConfig,
+) -> Result<(String, String, serde_json::Value), CliError> {
     match &cli.command {
         Command::Matches(args) => query(
             "matches",
             &args.input,
-            &args.resources,
+            config,
             args.context,
             args.limit.as_ref().map(|v| v.resolve()),
             args.cache.cache,
@@ -86,7 +104,7 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
         Command::Summarize(args) => query(
             "summarize",
             &args.input,
-            &args.resources,
+            config,
             None,
             args.top.as_ref().map(|v| v.resolve()),
             args.cache.cache,
@@ -94,7 +112,7 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
         Command::Tokenize(args) => query(
             "tokenize",
             &args.input,
-            &args.resources,
+            config,
             None,
             args.limit.as_ref().map(|v| v.resolve()),
             args.cache.cache,
@@ -102,18 +120,10 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
         Command::Attributes(args) => query(
             "coverage",
             &args.input,
-            &args.resources,
+            config,
             None,
             None,
             args.cache.cache,
-        ),
-        Command::SentenceFinal(args) => query(
-            "sentence-final",
-            &args.query.input,
-            &args.query.resources.as_resource_args(),
-            None,
-            None,
-            false,
         ),
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Build(args) => {
@@ -121,7 +131,7 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
                 Ok((
                     "corpus build".into(),
                     "direct".into(),
-                    serde_json::json!({"workers": args.resources.workers}),
+                    serde_json::json!({"workers": config.workers}),
                 ))
             }
             CorpusCommand::Inspect(args) => {
@@ -161,7 +171,7 @@ fn resolve(cli: &Cli) -> Result<(String, String, serde_json::Value), CliError> {
 fn query(
     command: &str,
     input: &QueryInputArgs,
-    resources: &crate::cli::ResourceArgs,
+    config: &ExecutionCliConfig,
     context: Option<usize>,
     limit: Option<Option<u64>>,
     cache_requested: bool,
@@ -170,7 +180,6 @@ fn query(
         read_manifest(artifact)?;
         "prepared"
     } else if input.root.as_deref() == Some(Path::new("-")) {
-        stat(&input.direct_dictionary_path()?)?;
         "stdin"
     } else {
         let root = input
@@ -178,21 +187,46 @@ fn query(
             .as_ref()
             .ok_or_else(|| CliError::InvalidArgs("ROOT or --corpus is required".into()))?;
         stat(root)?;
-        let dictionary = input.direct_dictionary_path()?;
-        stat(&dictionary)?;
         if cache_requested { "cached" } else { "direct" }
     };
+    if input.corpus.is_none() {
+        let format = lingrep_core::corpus::resolve_input_format(
+            input.root.as_deref().filter(|path| *path != Path::new("-")),
+            input.input_format,
+        );
+        if format != lingrep_core::corpus::CorpusFormat::Conllu {
+            match &config.analyzer {
+                AnalyzerCliConfig::Vibrato => stat(&input.direct_dictionary_path()?)?,
+                AnalyzerCliConfig::Sudachi {
+                    dictionary,
+                    resources,
+                    ..
+                } => {
+                    stat(dictionary)?;
+                    if let Some(path) = resources {
+                        stat(path)?;
+                    }
+                }
+                AnalyzerCliConfig::ConfiguredExternal { path } => stat(path)?,
+                AnalyzerCliConfig::External { .. } => {
+                    return Err(CliError::InvalidArgs(
+                        "use --analyzer-config FILE to select a verified external analyzer".into(),
+                    ));
+                }
+            }
+        }
+    }
     Ok((
         command.into(),
         input_kind.into(),
         serde_json::json!({
-            "workers": resources.workers,
+            "workers": config.workers,
             "context": context,
             "limit": limit.flatten(),
-            "batch_sentences": resources.batch_sentences,
-            "batch_raw_bytes": resources.batch_raw_bytes,
-            "max_record_bytes": resources.max_record_bytes,
-            "max_tokenized_bytes": resources.max_tokenized_bytes,
+            "batch_sentences": config.limits.max_stage_sentences,
+            "batch_raw_bytes": config.limits.max_stage_input_bytes,
+            "max_record_bytes": config.limits.max_input_record_bytes,
+            "max_tokenized_bytes": config.limits.max_tokenized_bytes,
         }),
     ))
 }
@@ -213,7 +247,6 @@ fn resolve_catalog(cli: &Cli) -> Result<(Option<String>, Option<String>), CliErr
     let catalog = match &cli.command {
         Command::Matches(args) => Some(&args.catalog),
         Command::Summarize(args) => Some(&args.catalog),
-        Command::SentenceFinal(args) => Some(&args.query.catalog),
         Command::Tokenize(_) | Command::Corpus(_) => None,
         _ => None,
     };
@@ -224,10 +257,32 @@ fn resolve_catalog(cli: &Cli) -> Result<(Option<String>, Option<String>), CliErr
     Ok((Some(catalog.source.name), Some(catalog.fingerprint)))
 }
 
-fn resolve_dictionary(cli: &Cli) -> Result<(Option<String>, Option<String>), CliError> {
+fn resolve_dictionary(
+    cli: &Cli,
+    config: &ExecutionCliConfig,
+) -> Result<(Option<String>, Option<String>), CliError> {
     let explicit_or_env = |input: &QueryInputArgs| -> Result<_, CliError> {
         if input.corpus.is_some() {
             return Ok((None, Some("prepared".into())));
+        }
+        let format = lingrep_core::corpus::resolve_input_format(
+            input.root.as_deref().filter(|path| *path != Path::new("-")),
+            input.input_format,
+        );
+        if format == lingrep_core::corpus::CorpusFormat::Conllu {
+            return Ok((None, None));
+        }
+        match &config.analyzer {
+            AnalyzerCliConfig::Sudachi { dictionary, .. } => {
+                return Ok((
+                    Some(dictionary.display().to_string()),
+                    Some("argument".into()),
+                ));
+            }
+            AnalyzerCliConfig::ConfiguredExternal { .. } | AnalyzerCliConfig::External { .. } => {
+                return Ok((None, None));
+            }
+            AnalyzerCliConfig::Vibrato => {}
         }
         let source = if input.dict_path.is_some() {
             "argument"
@@ -245,7 +300,6 @@ fn resolve_dictionary(cli: &Cli) -> Result<(Option<String>, Option<String>), Cli
         Command::Summarize(args) => explicit_or_env(&args.input),
         Command::Tokenize(args) => explicit_or_env(&args.input),
         Command::Attributes(args) => explicit_or_env(&args.input),
-        Command::SentenceFinal(args) => explicit_or_env(&args.query.input),
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Build(args) => Ok((
                 args.dict_path
@@ -269,7 +323,6 @@ fn schemas(cli: &Cli) -> Vec<String> {
         Command::Matches(_) | Command::Summarize(_) => "lingrep.query/v2",
         Command::Tokenize(_) => "lingrep.tokenize/v1",
         Command::Attributes(_) => "lingrep.attributes/v1",
-        Command::SentenceFinal(_) => "lingrep.sentence-final/v1",
         Command::Corpus(_) => "lingrep.sources/v1",
         _ => return Vec::new(),
     };
@@ -299,7 +352,6 @@ fn progress(cli: &Cli) -> String {
         Command::Summarize(args) => args.resources.progress,
         Command::Tokenize(args) => args.resources.progress,
         Command::Attributes(args) => args.resources.progress,
-        Command::SentenceFinal(args) => args.query.resources.progress,
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Build(args) => args.resources.progress,
             CorpusCommand::Sources(args) => args.progress,

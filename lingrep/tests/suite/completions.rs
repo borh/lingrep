@@ -20,7 +20,7 @@ fn every_supported_shell_generates_from_the_production_command() {
         );
         let script = String::from_utf8(output.stdout).unwrap();
         assert!(script.contains("matches"), "{shell}");
-        assert!(script.contains("sentence-final"), "{shell}");
+        assert!(!script.contains("sentence-final"), "{shell}");
         assert!(script.contains("json"), "{shell}");
         assert!(script.contains("color"), "{shell}");
         assert!(script.contains("align-hits"), "{shell}");

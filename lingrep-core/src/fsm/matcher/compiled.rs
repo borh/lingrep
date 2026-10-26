@@ -5,8 +5,9 @@ use super::assertion::{
 };
 use super::canonical_matches;
 use super::capture::CapturePlan;
+use super::dense::DenseMachine;
 use super::evaluated::EvaluatedPlan;
-use super::nfa_matcher::{DenseMachine, Matcher};
+use super::exec::Matcher;
 #[cfg(feature = "bench-instrumentation")]
 use super::predicate::PredicateMetrics;
 use super::predicate::{PredicateCatalog, PredicateDigest, PredicateSession};
@@ -575,7 +576,7 @@ impl CompiledCatalog {
         Ok(SentenceExplanation { candidates })
     }
 
-    pub(crate) fn spawn_decline(&self) -> Option<&super::nfa_matcher::SpawnDecline> {
+    pub(crate) fn spawn_decline(&self) -> Option<&super::spawn::SpawnDecline> {
         self.dense.spawn_decline()
     }
 

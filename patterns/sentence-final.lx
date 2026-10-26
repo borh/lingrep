@@ -139,4 +139,5 @@ category: "S0 命題内容"
 
 policy
   admit all terminal: {within: 5, anchor: propositional_end}.
+  resolve patterns rank: [longest, start, end, pattern].
 end

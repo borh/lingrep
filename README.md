@@ -51,7 +51,7 @@ The script installs `ling` on Linux and macOS (on Windows, in WSL) into
 `~/.local/bin`, or `$XDG_BIN_HOME` when it is set. With Nix, run
 `nix run github:borh/lingrep#ling -- --help` instead.
 [Install ling](docs/installation.md) lists the installer's options and the
-manual download.
+manual download, and [update instructions](docs/installation.md#install-script).
 
 ## Quick start
 

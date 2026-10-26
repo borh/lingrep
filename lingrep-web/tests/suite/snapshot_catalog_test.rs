@@ -1,9 +1,10 @@
+use crate::v6_support::RevisionTestExt;
 use lingrep_core::token_match::TokenInfo;
 use lingrep_web::coordinator::CoordinatorRegistry;
 use lingrep_web::corpus_runtime::CorpusIdentity;
 use lingrep_web::revision::{RevisionId, WorkbenchId};
 use lingrep_web::snapshot::{
-    CompletedSnapshot, MatchRef, PatternDescriptor, PatternKey, PatternMetadataValue,
+    CompletedSnapshot, MatchRef, PatternDescriptor, PatternKey, PatternMetadataValue, PatternOrigin,
 };
 
 use crate::v6_support::{default_slot, runtime_fixture};
@@ -97,10 +98,14 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
     let first = PatternKey::new(0).unwrap();
     let second = PatternKey::new(1).unwrap();
     let snapshot = CompletedSnapshot {
+        search_scope: Default::default(),
+        excluded_sentences: 0,
         sections: lingrep_web::section_tally::SectionAvailability::Available(
             lingrep_web::section_tally::SectionTally::unlabelled(),
         ),
         observed_sentences: 0,
+        matched_sentences: 0,
+        documents: None,
         sentences_matched: 0,
         revision: RevisionId(1),
         corpus_identity: CorpusIdentity::new("fixture"),
@@ -113,12 +118,14 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
                 name: "first".into(),
                 exact_total: 1,
                 metadata: Box::default(),
+                origin: PatternOrigin::Authored { chained_total: 0 },
             },
             PatternDescriptor {
                 key: second,
                 name: "second".into(),
                 exact_total: 1,
                 metadata: Box::default(),
+                origin: PatternOrigin::Authored { chained_total: 0 },
             },
         ]
         .into_boxed_slice(),
@@ -130,6 +137,7 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
                 captures: Box::default(),
                 graph_bindings: Box::default(),
                 lexical: None,
+                in_chain: false,
             },
             MatchRef {
                 sentence_index: 0,
@@ -138,6 +146,7 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
                 captures: Box::default(),
                 graph_bindings: Box::default(),
                 lexical: None,
+                in_chain: false,
             },
         ]
         .into_boxed_slice(),

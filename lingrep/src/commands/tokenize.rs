@@ -1,11 +1,10 @@
-//! Explicit bounded direct/stdin tokenization and `tokenize/v2` publication.
+//! Bounded tokenization and `lingrep.tokenize/v1` publication.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use lingrep_core::analysis::AnalyzerPlan;
 use lingrep_core::corpus::{AdmittedCorpus, CorpusReadConfig, resolve_input_format};
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionError, ExecutionLimits as MatcherLimits, SentenceBatchSource,
@@ -28,7 +27,7 @@ use crate::direct_source::{
 };
 use crate::error::CliError;
 use crate::output::{TokenizeTsvRow, write_tokenize_tsv};
-use crate::presentation::OutputMode;
+use crate::presentation::{OutputMode, resolve_match_limit};
 use crate::protocol::query::{
     AnalyzerRun, CompleteCorpus, Coverage, PublishedProjection, ResourceHighWater, RunCorpus,
     TemporaryStorageLimits, Termination,
@@ -44,6 +43,7 @@ struct TokenizeCounts {
     sentences_emitted: u64,
     tokens_emitted: u64,
     max_tokenized_bytes: usize,
+    termination: Termination,
 }
 
 struct SentencePublisher<'a, W> {
@@ -51,6 +51,7 @@ struct SentencePublisher<'a, W> {
     output: OutputMode,
     projection: &'a PublishedProjection,
     stream_id: Option<String>,
+    limit: Option<u64>,
 }
 
 impl<W: Write> SentencePublisher<'_, W> {
@@ -66,10 +67,18 @@ impl<W: Write> SentencePublisher<'_, W> {
             sentences_emitted: 0,
             tokens_emitted: 0,
             max_tokenized_bytes: 0,
+            termination: Termination::Eof,
         };
         loop {
             if terminal.cancellation().is_cancelled() {
                 return Ok(None);
+            }
+            if self
+                .limit
+                .is_some_and(|limit| counts.sentences_emitted >= limit)
+            {
+                counts.termination = Termination::ResultLimit;
+                break;
             }
             let batch = source.next_batch(limits);
             if terminal.cancellation().is_cancelled() {
@@ -85,6 +94,12 @@ impl<W: Write> SentencePublisher<'_, W> {
             for (sentence, tokenized_bytes) in sentences.into_iter().zip(charges) {
                 if terminal.cancellation().is_cancelled() {
                     return Ok(None);
+                }
+                if self
+                    .limit
+                    .is_some_and(|limit| counts.sentences_emitted >= limit)
+                {
+                    break;
                 }
                 let token_count = u64::try_from(sentence.value.words().len())
                     .map_err(|_| ExecutionError::ResourceAccounting)?;
@@ -130,6 +145,7 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
+    let limit = resolve_match_limit(output, args.limit);
     let resolved_corpus = crate::corpus_mode::resolve(
         &args.input,
         &args.cache,
@@ -139,7 +155,7 @@ pub fn run(
         &mut io::stderr(),
     )?;
     if let Some(artifact) = resolved_corpus.corpus.as_deref() {
-        return run_prepared(artifact, config, terminal, output);
+        return run_prepared(artifact, config, terminal, output, limit);
     }
 
     let started = Instant::now();
@@ -147,9 +163,14 @@ pub fn run(
     let dict_path = matches!(&config.analyzer, crate::cli::AnalyzerCliConfig::Vibrato)
         .then(|| args.input.direct_dictionary_path())
         .transpose()?;
-    let resolved = resolve_native(config, dict_path.as_deref())?;
+    let root = args.input.root.as_deref();
+    let stdin = root.is_none_or(|path| path == Path::new("-"));
+    let format = resolve_input_format(if stdin { None } else { root }, args.input.input_format);
+    let resolved = resolve_native(config, dict_path.as_deref(), terminal.cancellation())?;
     let dictionary_digest = resolved.resource_identity;
-    let analyzer_plan = resolved.plan;
+    let analyzer_plan = resolved
+        .plan
+        .for_format(format, config.limits.max_tokenized_bytes)?;
     let analyzer_record =
         lingrep_corpus::AnalyzerRecord::from_descriptor(analyzer_plan.descriptor());
     let analyzer_schema = analyzer_plan.schema().clone();
@@ -160,9 +181,6 @@ pub fn run(
     let analyzer_segmentation = analyzer_plan.descriptor().segmentation();
     let analyzer_session = analyzer_plan.create_session();
 
-    let root = args.input.root.as_deref();
-    let stdin = root.is_none_or(|path| path == Path::new("-"));
-    let format = resolve_input_format(if stdin { None } else { root }, args.input.input_format);
     crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
     let markdown_config = args
         .input
@@ -266,11 +284,13 @@ pub fn run(
             sentences_emitted,
             tokens_emitted,
             max_tokenized_bytes,
+            termination,
         }) = (SentencePublisher {
             writer: &mut writer,
             output,
             projection: &full_projection,
             stream_id: sentence_stream_id,
+            limit,
         })
         .stream(
             &mut source,
@@ -290,8 +310,12 @@ pub fn run(
         };
         presentation_progress.finish().map_err(CliError::Io)?;
 
+        let (coverage, filesystem_completion) = match termination {
+            Termination::Eof => (Coverage::Full, FilesystemCompletion::Full),
+            Termination::ResultLimit => (Coverage::Prefix, FilesystemCompletion::PrefixUnavailable),
+        };
         let (complete_corpus, inventory) =
-            completion_observation.complete(FilesystemCompletion::Full)?;
+            completion_observation.complete(filesystem_completion)?;
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
@@ -299,7 +323,7 @@ pub fn run(
         publish_projection(
             &mut writer,
             &TokenizeEnvelope::new(TokenizeEvent::Complete(TokenizeComplete {
-                coverage: Coverage::Full,
+                coverage,
                 corpus: complete_corpus,
                 sentences_emitted,
                 tokens_emitted,
@@ -317,7 +341,7 @@ pub fn run(
                     },
                 },
                 inventory,
-                termination: Termination::Eof,
+                termination,
             })),
             output,
         )?;
@@ -331,12 +355,13 @@ fn run_prepared(
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
     output: OutputMode,
+    limit: Option<u64>,
 ) -> Result<CommandOutcome, CliError> {
     let started = Instant::now();
     let presentation_progress = PresentationProgress::stderr();
     let artifact = CorpusArtifact::open(path)?;
     let analysis = artifact.analysis_inputs()?;
-    write_token_schema_notice(artifact.analyzer(), analysis.token_schema().as_bytes())?;
+    write_token_schema_notice(artifact.analyzer(), &analysis)?;
     let source_identity = encode_digest(artifact.source_identity().as_bytes());
     let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
     let inventory = protocol_inventory(*artifact.inventory_stats());
@@ -390,12 +415,13 @@ fn run_prepared(
         publish_projection(&mut writer, &run, output)?;
         writer.flush().map_err(execution_output_io)?;
 
-        let Some(TokenizeCounts { sentences_emitted, tokens_emitted, max_tokenized_bytes }) =
+        let Some(TokenizeCounts { sentences_emitted, tokens_emitted, max_tokenized_bytes, termination }) =
             (SentencePublisher {
                 writer: &mut writer,
                 output,
                 projection: &full_projection,
                 stream_id: None,
+                limit,
             }).stream(&mut source, &limits, terminal, |sentences_emitted, tokens_emitted| {
                 if config.progress == ProgressMode::Always {
                     presentation_progress.write_line(&format!(
@@ -411,7 +437,10 @@ fn run_prepared(
         publish_projection(
             &mut writer,
             &TokenizeEnvelope::new(TokenizeEvent::Complete(TokenizeComplete {
-                coverage: Coverage::Full,
+                coverage: match termination {
+                    Termination::Eof => Coverage::Full,
+                    Termination::ResultLimit => Coverage::Prefix,
+                },
                 corpus: CompleteCorpus::Prepared {
                     source_identity,
                     analysis_identity,
@@ -434,7 +463,7 @@ fn run_prepared(
                     },
                 },
                 inventory: Some(inventory),
-                termination: Termination::Eof,
+                termination,
             })),
             output,
         )?;
@@ -591,6 +620,7 @@ mod tests {
             output: OutputMode::Jsonl,
             projection: &PublishedProjection::new(schema.keys()),
             stream_id: Some("test-stream".into()),
+            limit: None,
         }
         .stream(
             source,

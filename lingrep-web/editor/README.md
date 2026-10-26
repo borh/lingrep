@@ -2,7 +2,8 @@
 
 This directory builds the vendored CodeMirror bundle used by the in-browser
 lingrep patterns editor (`assets/editor/pattern-editor.js`). The bundle is committed, so a normal
-lingrep-web build does not need npm; rebuild it only when upgrading CodeMirror.
+lingrep-web build requires no npm installation. Rebuild the bundle only when
+upgrading CodeMirror.
 
 ## Rebuild
 

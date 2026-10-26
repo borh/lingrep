@@ -29,6 +29,7 @@ fn hit(ordinal: usize, key: &str, sections: &[&str]) -> RetainedHitText {
         key: key.into(),
         right: "。".into(),
         section_labels: sections.iter().map(|s| (*s).to_string()).collect(),
+        in_chain: false,
     }
 }
 
@@ -48,6 +49,9 @@ fn render_with(hits: Vec<RetainedHitText>, sections: &SectionAvailability) -> St
     );
     PatternDetailFragment {
         definition: None,
+        chains: None,
+        chained: None,
+        documents: None,
         pattern_name: "sections",
         exact_total: retained_count as u64,
         exact_total_label: format!("{retained_count}"),
@@ -254,7 +258,7 @@ fn a_corpus_recording_no_section_labels_says_so_rather_than_rendering_nothing() 
     );
     assert!(html.contains("data-section-empty"), "{html}");
     assert!(
-        html.contains("This corpus records no section labels"),
+        html.contains("The search scope contains no labelled sections"),
         "{html}"
     );
     assert!(
@@ -272,7 +276,7 @@ fn a_pattern_under_no_labelled_section_names_the_corpus_labels_it_missed() {
     assert!(html.contains("data-section-empty"), "{html}");
     assert!(html.contains("matched in none of the 2 sections"), "{html}");
     assert!(
-        !html.contains("This corpus records no section labels"),
+        !html.contains("The search scope contains no labelled sections"),
         "the corpus does record labels: {html}"
     );
 }
@@ -285,7 +289,7 @@ fn renders_the_section_block_with_labels_counts_and_membership() {
         hit(2, "γ", &[]),
     ]);
     assert!(html.contains("class=\"detail-view section-distribution\""));
-    assert!(html.contains("Section distribution — corpus"));
+    assert!(html.contains("Section distribution — search scope"));
     // section labels sit in the dedicated hook
     assert!(html.contains("class=\"section-label\">methods<"));
     assert!(html.contains("class=\"section-label\">results<"));
@@ -305,7 +309,7 @@ fn states_why_the_section_block_is_empty_when_no_hit_has_a_section() {
     // are indistinguishable on screen, which is the defect this states away.
     assert!(html.contains("data-section-empty"), "{html}");
     assert!(
-        html.contains("This corpus records no section labels"),
+        html.contains("The search scope contains no labelled sections"),
         "{html}"
     );
     // ...but it carries no ranked list, and no "(no section)" noise.

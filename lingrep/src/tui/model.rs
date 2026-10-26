@@ -307,53 +307,30 @@ mod tests {
     use crate::tui::cache::PagedResult;
 
     #[test]
-    fn test_playground_input_default() {
-        let input = PlaygroundInput::default();
-        assert!(input.pattern.is_empty());
-        assert!(input.sample.is_empty());
-        assert_eq!(input.focus, PlaygroundFocus::Pattern);
-    }
-
-    #[test]
-    fn test_model_default() {
-        let model = Model::default();
-        assert!(matches!(model.mode, AppMode::Viewing { .. }));
-        assert!(model.pattern_draft.is_empty());
-        assert!(model.selected_pattern.is_none());
-    }
-
-    #[test]
-    fn test_model_is_cloneable() {
-        let model = Model::default();
-        let cloned = model.clone();
-        assert_eq!(model.request_seq, cloned.request_seq);
-    }
-
-    #[test]
-    fn test_task_states_default() {
-        let tasks = TaskStates::default();
-        assert_eq!(tasks.pattern.status, LoadStatus::Idle);
-        assert!(tasks.pattern.request_id.is_none());
-    }
-
-    #[test]
-    fn test_sub_task_load_state_default() {
-        let state = SubTaskLoadState::default();
-        assert_eq!(state.status, LoadStatus::Idle);
-        assert!(state.request_id.is_none());
-        assert!(state.pattern_id.is_none());
-        assert_eq!(state.received_lines, 0);
-    }
-
-    #[test]
-    fn test_model_new() {
-        let model = Model::new();
-        assert!(matches!(
-            model.mode,
-            AppMode::Viewing {
-                tab: Tab::Frequencies
+    fn new_model_starts_in_frequencies_with_idle_tasks_and_an_empty_editor() {
+        for model in [Model::new(), Model::default()] {
+            assert!(matches!(
+                model.mode,
+                AppMode::Viewing {
+                    tab: Tab::Frequencies
+                }
+            ));
+            assert!(model.pattern_draft.is_empty());
+            assert!(model.selected_pattern.is_none());
+            assert!(model.playground.pattern.is_empty());
+            assert!(model.playground.sample.is_empty());
+            assert_eq!(model.playground.focus, PlaygroundFocus::Pattern);
+            assert_eq!(model.tasks.pattern.status, LoadStatus::Idle);
+            assert!(model.tasks.pattern.request_id.is_none());
+            assert_eq!(model.tasks.pattern.progress.current, 0);
+            assert_eq!(model.tasks.pattern.progress.total, 0);
+            for task in [&model.tasks.surface, &model.tasks.kwic] {
+                assert_eq!(task.status, LoadStatus::Idle);
+                assert!(task.request_id.is_none());
+                assert!(task.pattern_id.is_none());
+                assert_eq!(task.received_lines, 0);
             }
-        ));
+        }
     }
 
     #[test]
@@ -381,15 +358,6 @@ mod tests {
 
         assert_eq!(model.pattern_names.len(), 2);
         assert_eq!(model.pattern_ids.len(), 2);
-    }
-
-    #[test]
-    fn test_pattern_load_state_default() {
-        let state = PatternLoadState::default();
-        assert_eq!(state.status, LoadStatus::Idle);
-        assert!(state.request_id.is_none());
-        assert_eq!(state.progress.current, 0);
-        assert_eq!(state.progress.total, 0);
     }
 
     #[test]
@@ -504,13 +472,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["first", "second"]
         );
-    }
-
-    #[test]
-    fn test_model_has_playground() {
-        let model = Model::default();
-        assert!(model.playground.pattern.is_empty());
-        assert!(model.playground.sample.is_empty());
     }
 
     #[test]

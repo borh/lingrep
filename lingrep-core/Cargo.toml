@@ -16,9 +16,6 @@ testing = ["dep:proptest"]
 # Opt-in matcher work counters for Criterion and measurement tests. Default
 # production builds compile out both the storage and counter updates.
 bench-instrumentation = []
-# Lets a measurement binary install a process-wide counting allocator.
-# Shipping binaries leave this disabled and continue to use jemalloc.
-external-allocator = []
 
 [[example]]
 name = "generate-ndc9-tsv"
@@ -62,9 +59,11 @@ vibrato-rkyv.workspace = true
 # host's liblzma when pkg-config finds one (Homebrew on the macOS runners),
 # and the released binary then fails to start on a Mac without Homebrew xz.
 lzma-sys = { version = "0.1.20", features = ["static"] }
-zstd = "0.13.1"
+zstd.workspace = true
 quick-xml = "0.41"
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+roxmltree = "0.21.2"
+unicode-segmentation = "1.13.3"
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 regex.workspace = true
 rustc-hash.workspace = true
 clap.workspace = true
@@ -85,8 +84,8 @@ tree-sitter = "0.26.11"
 tree-sitter-lingrep.workspace = true
 sudachi.workspace = true
 unicode-width = "0.2"
-unicode-normalization = "0.1.25"
-serde_yaml = "0.9.34"
+unicode-normalization = "0.1.26"
+serde-saphyr = { version = "2.0", default-features = false, features = ["deserialize", "serialize"] }
 serde_regex = "1.1.0"
 rand = "0.9.1"
 thiserror.workspace = true
@@ -95,9 +94,9 @@ libc = "0.2"
 # Proptest for property-based testing (optional, dev-only)
 proptest = { version = "1.5", optional = true }
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = "0.6.0"
-tikv-jemalloc-ctl = { version = "0.6.0", features = ["stats"] }
+[target.'cfg(not(target_env = "msvc"))'.dev-dependencies]
+tikv-jemallocator.workspace = true
+tikv-jemalloc-ctl = { git = "https://github.com/tikv/jemallocator.git", rev = "66b124bdf4f1c65f154135f4e9d4b25206540091", features = ["stats"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

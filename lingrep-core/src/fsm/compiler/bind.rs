@@ -167,10 +167,9 @@ pub(super) fn bind(
         match set_spans.entry(set.name.clone()) {
             Entry::Vacant(entry) => {
                 entry.insert(set.span);
-                set_members.insert(
-                    set.name.clone(),
-                    Arc::from(set.members.clone().into_boxed_slice()),
-                );
+                let mut members = set.members.clone();
+                members.sort_unstable();
+                set_members.insert(set.name.clone(), Arc::from(members.into_boxed_slice()));
             }
             // Reported rather than overwritten: `insert` on a duplicate keeps
             // the last declaration and says nothing, which is the silent wrong
@@ -1621,7 +1620,12 @@ fn bind_relations(
     let mut bound = Vec::with_capacity(relations.len());
     for relation in relations {
         let target = match &relation.target {
-            ParsedRelationTarget::Captured { capture, span } => RelationTarget::Captured {
+            ParsedRelationTarget::Captured {
+                polarity,
+                capture,
+                span,
+            } => RelationTarget::Captured {
+                polarity: *polarity,
                 capture: capture.clone(),
                 span: *span,
             },

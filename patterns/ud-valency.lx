@@ -1,16 +1,6 @@
-# Positive UD valency frames for Japanese head-final clauses, including
-# arguments inside adnominal relative and adverbial clauses.
-#
-# These patterns inventory attested argument combinations. They do not infer
-# absence: `subject_predicate` can match a clause that also has an object, and
-# `transitive_frame` can match a clause that also has an oblique. That keeps
-# open-world dependency data separate from a later statistical interpretation
-# of the counts.
-#
-# The two transitive definitions cover SOV and OSV order under one published
-# name. Dependency edges, not an arbitrary token-distance cutoff, define the
-# frame. This catalog requires `dep.head` and `dep.rel` and therefore binds to
-# CoNLL-U-style syntax data only.
+# Positive UD valency frames for Japanese head-final clauses (`dep.head`,
+# `dep.rel`). Each pattern inventories attested edges without asserting that
+# no other arguments are attached to the predicate.
 
 defaults
   status: "experimental"
@@ -67,12 +57,6 @@ pattern clausal_complement_predicate :=
   (?<predicate> [upos in {VERB, ADJ, AUX}])
   where $predicate -[@CLAUSAL_COMPLEMENT]-> $complement.
 
-# The broad subtree profiler promoted this chain after two independent parses
-# agreed on both its frequency and its sole observed Japanese surface order:
-# argument … relative predicate … modified head. The Markdown/GiNZA prefix
-# produced 1,028 matches and UD Japanese GSD produced 5,256. The role remains
-# a key rather than three definitions so downstream counts retain the corpus's
-# own nsubj/obj/obl distinction.
 key: [$head.lemma, $predicate.lemma, $argument.dep.rel, $argument.lemma]
 frame: "relative"
 pattern relative_clause_argument :=
@@ -82,11 +66,6 @@ pattern relative_clause_argument :=
   where $head -[acl]-> $predicate,
         $predicate -[nsubj|obj|obl]-> $argument.
 
-# The next punctuation/function-node-free subtree round selected the parallel
-# adverbial-clause chain. The Markdown/GiNZA prefix produced 879 matches and UD
-# Japanese GSD produced 5,721; every exact-profile match in both corpora used
-# argument … adverbial clause … matrix verb order. The argument relation stays
-# in the key so nsubj, obj, and obl remain independently countable.
 key: [$head.lemma, $clause.lemma, $argument.dep.rel, $argument.lemma]
 frame: "adverbial"
 pattern adverbial_clause_argument :=

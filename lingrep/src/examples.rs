@@ -154,19 +154,6 @@ static CORPUS_VARIANTS_EXAMPLES: &[CommandExample] = &[CommandExample {
     argv: &["corpus", "variants", "{artifact}"],
     placeholders: &[ARTIFACT],
 }];
-static SENTENCE_FINAL_EXAMPLES: &[CommandExample] = &[CommandExample {
-    id: "sentence-final/catalog-file-direct-root",
-    purpose: "Aggregate sentence-final matches over a direct corpus.",
-    argv: &[
-        "sentence-final",
-        "--patterns",
-        "{patterns}",
-        "--dict-path",
-        "{dictionary}",
-        "{root}",
-    ],
-    placeholders: &[PATTERNS, DICTIONARY, ROOT],
-}];
 static DESCRIBE_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "describe/machine-capabilities",
     purpose: "Read one command capability as JSON.",
@@ -261,11 +248,6 @@ static SEMANTICS: &[CommandSemantics] = &[
         examples: ExamplePublication::Omitted {
             reason: "interactive TUI startup is not a deterministic executable example",
         },
-    },
-    CommandSemantics {
-        command: "sentence-final",
-        input_modes: &["direct", "stdin", "prepared"],
-        examples: ExamplePublication::Published(SENTENCE_FINAL_EXAMPLES),
     },
     CommandSemantics {
         command: "dictionary",

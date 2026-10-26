@@ -75,7 +75,11 @@ fn json_detection_obeys_clap_boundaries_and_help_stays_human() {
     assert_eq!(after_delimiter.status.code(), Some(2));
     assert!(!after_delimiter.stderr.starts_with(b"{"));
 
-    for args in [vec!["--json", "--help"], vec!["--json", "--version"]] {
+    for args in [
+        vec!["--json", "--help"],
+        vec!["--json", "--help-all"],
+        vec!["--json", "--version"],
+    ] {
         let output = lingrep().args(args).output().unwrap();
         assert!(output.status.success());
         assert!(!output.stdout.starts_with(b"{"));
@@ -101,7 +105,7 @@ fn crowded_command_help_leads_with_workflow_and_defers_specialized_controls() {
         );
     }
 
-    let long = lingrep().args(["matches", "--help"]).output().unwrap();
+    let long = lingrep().args(["matches", "--help-all"]).output().unwrap();
     assert!(long.status.success());
     let long = String::from_utf8(long.stdout).unwrap();
     for (heading, option) in [
@@ -113,7 +117,7 @@ fn crowded_command_help_leads_with_workflow_and_defers_specialized_controls() {
         assert!(long.contains(option), "missing {option:?}:\n{long}");
     }
 
-    let tokenize = lingrep().args(["tokenize", "--help"]).output().unwrap();
+    let tokenize = lingrep().args(["tokenize", "--help-all"]).output().unwrap();
     assert!(tokenize.status.success());
     let tokenize = String::from_utf8(tokenize.stdout).unwrap();
     assert!(
@@ -200,7 +204,6 @@ fn workspace_and_nix_expose_only_lingrep() {
         "corpus",
         "tokenize",
         "explore",
-        "sentence-final",
     ] {
         assert!(help.contains(command), "{command}");
     }
@@ -253,14 +256,6 @@ fn public_command_tree_parses_without_legacy_top_level_mode_switches() {
         &["corpus", "inventory", "root"],
         &["tokenize", "--dict-path", "dict", "-"],
         &["explore", "--dict-path", "dict", "--pattern", "[].", "-"],
-        &[
-            "sentence-final",
-            "--dict-path",
-            "dict",
-            "--pattern",
-            "[].",
-            "-",
-        ],
     ];
 
     for args in cases {
@@ -664,33 +659,27 @@ fn the_record_bound_is_independent_of_the_stage_batch_budget() {
     );
 }
 
-/// A record holds at least one sentence, so a record bound below the sentence
-/// bound would refuse input no sentence diagnostic could explain.
 #[test]
-fn a_record_bound_below_the_sentence_bound_is_refused() {
-    let error = Cli::try_parse_from([
+fn explicit_sentence_and_record_limits_are_independent() {
+    let config = Cli::try_parse_from([
         "ling",
         "matches",
-        "--dict-path",
-        "dict",
         "--pattern",
         "[].",
         "--max-sentence-bytes",
         "65536",
         "--max-record-bytes",
         "1024",
+        "--batch-raw-bytes",
+        "16",
         "-",
     ])
     .unwrap()
     .execution_config()
-    .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("--max-record-bytes must be at least --max-sentence-bytes"),
-        "{error}"
-    );
+    .unwrap();
+    assert_eq!(config.limits.max_sentence_bytes, 65536);
+    assert_eq!(config.limits.max_input_record_bytes, 1024);
+    assert_eq!(config.limits.max_stage_input_bytes, 16);
 }
 
 #[test]
@@ -1670,7 +1659,6 @@ fn input_format_flag_is_accepted_at_all_command_positions() {
         ["tokenize"],
         ["coverage"],
         ["explore"],
-        ["sentence-final"],
     ] {
         let output = lingrep()
             .args(command)
@@ -1802,7 +1790,7 @@ fn a_directory_without_an_override_still_resolves_to_markdown() {
     let run = &events[0]["data"];
     assert_eq!(
         run["reader_identity"],
-        "e6e3551c916214f19813eca5e74f734f70598ba643888cad52b459516ccf9d53"
+        "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1"
     );
 }
 #[test]
@@ -1832,4 +1820,58 @@ fn a_file_root_override_resolves_the_declared_format() {
         inferred, overridden,
         "the declared format must change the reader identity"
     );
+}
+
+#[test]
+fn routine_help_keeps_advanced_options_available_by_explicit_request() {
+    let check = lingrep().args(["check", "--help-all"]).output().unwrap();
+    assert!(check.status.success());
+    let check = String::from_utf8(check.stdout).unwrap();
+    for unrelated in [
+        "--workers",
+        "--progress",
+        "--max-traversal-depth",
+        "--max-temp-bytes",
+    ] {
+        assert!(!check.contains(unrelated), "{check}");
+    }
+    for command in [
+        vec!["matches"],
+        vec!["summarize"],
+        vec!["tokenize"],
+        vec!["coverage"],
+        vec!["explore"],
+        vec!["corpus", "build"],
+        vec!["corpus", "inventory"],
+    ] {
+        let help = |flag: &str| {
+            let output = lingrep().args(&command).arg(flag).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+        let normal = help("--help");
+        let short = help("-h");
+        let complete = help("--help-all");
+        assert_eq!(normal, short);
+        assert!(normal.contains("--help-all"));
+        for flag in [
+            "--batch-raw-bytes",
+            "--max-source-index-bytes",
+            "--context-color-theme",
+            "--external-executable",
+            "--trace-policy",
+            "--normalization",
+        ] {
+            assert!(
+                !normal.contains(flag),
+                "{command:?} includes {flag} in ordinary help:\n{normal}"
+            );
+        }
+        assert!(complete.contains("--max-source-index-bytes"));
+        assert!(normal.contains("ROOT"));
+    }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -28,11 +28,37 @@ use lingrep_core::token_match::AttributeKey;
 const DEFAULT_BATCH_SIZE: usize = 1_024;
 const LIVE_SUMMARY_INTERVAL: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+pub struct RevisionRequest {
+    pub source: String,
+    /// None uses the configured ceiling; supplied values are clamped to 1..=ceiling.
+    pub retained: Option<usize>,
+    pub derive_compounds: bool,
+    pub compound_category: CompoundCategory,
+    pub document_reach: bool,
+    pub search_scope: crate::search_scope::SearchScope,
+}
+
+impl Default for RevisionRequest {
+    fn default() -> Self {
+        Self {
+            source: String::new(),
+            retained: None,
+            derive_compounds: false,
+            compound_category: CompoundCategory::Compound,
+            document_reach: false,
+            search_scope: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ScanOptions {
+    pub(crate) search_scope: crate::search_scope::SearchScope,
     pub(crate) retained: usize,
     pub(crate) derive_compounds: bool,
     pub(crate) compound_category: CompoundCategory,
+    pub(crate) document_reach: bool,
 }
 
 fn execution_failure() -> AttemptFailure {
@@ -100,12 +126,12 @@ fn resolve_scan(
     source: std::sync::Arc<str>,
 ) -> ScanResolution {
     match result {
-        ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), _, ref omissions)))
+        ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), ref sink, ref omissions)))
             if expected_sentence_count.is_some_and(|count| {
-                // An omitted oversized sentence legitimately never reaches
-                // matching, so completion accounts for the full corpus as
-                // matched + omitted; any other delta is corruption.
-                count != report.sentences_matched + omissions.as_ref().map_or(0, |o| o.count)
+                count
+                    != report.sentences_matched
+                        + sink.excluded_sentences
+                        + omissions.as_ref().map_or(0, |o| o.count)
             }) =>
         {
             ScanResolution {
@@ -182,9 +208,12 @@ fn resolve_scan(
                     workbench,
                     revision,
                     snapshot: Arc::new(CompletedSnapshot {
+                        search_scope: sink.search_scope.clone(),
+                        excluded_sentences: sink.excluded_sentences,
                         revision,
                         corpus_identity: identity,
                         source: std::sync::Arc::clone(&source),
+                        documents: sink.document_summary(),
                         derive_compounds: sink.derive_compounds,
                         compound_category: sink.compound_category,
                         patterns: sink.patterns.into_boxed_slice(),
@@ -192,6 +221,7 @@ fn resolve_scan(
                         capture_catalog: sink.capture_catalog.into_boxed_slice(),
                         sections,
                         observed_sentences: sink.observed_sentences,
+                        matched_sentences: sink.matched_sentences,
                         sentences_matched: report.sentences_matched,
                         oversized_omissions,
                     }),
@@ -241,6 +271,7 @@ enum Prepared {
         // Boxed: a compiled catalog dwarfs an `AttemptFailure`, and this enum
         // lives for exactly one match expression.
         compiled: Box<CompileOutput>,
+        provenance: Arc<lingrep_corpus::ProvenanceView>,
         /// `None` when the vocabulary was refused: a producer with no consumer
         /// fills its channel and parks forever, so it is never started.
         producer: Option<tokio::task::JoinHandle<()>>,
@@ -255,7 +286,11 @@ enum Prepared {
 /// The order is load-bearing. Availability is decided *before* the producer
 /// exists, because a producer whose consumer was never built parks on a full
 /// channel with nothing to drain it.
-async fn prepare_scan(ready: &ReadyCorpus, source: &str) -> Prepared {
+async fn prepare_scan(
+    ready: &ReadyCorpus,
+    source: &str,
+    scope: &crate::search_scope::SearchScope,
+) -> Prepared {
     let compiled = match compile_web_pattern(source) {
         Ok(output) => output,
         Err(error) => {
@@ -282,7 +317,7 @@ async fn prepare_scan(ready: &ReadyCorpus, source: &str) -> Prepared {
     // is a defensive bound on what the reader will enumerate at all, which
     // lingrep-web treats as an unreadable sidecar like any other. Reporting it as a
     // refusal would mean naming a label count this path cannot know.
-    let vocabulary = match provenance
+    let mut vocabulary = match provenance
         .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
         .await
     {
@@ -293,8 +328,14 @@ async fn prepare_scan(ready: &ReadyCorpus, source: &str) -> Prepared {
         }
     };
 
+    if let Some(selected) = &scope.included_sections {
+        let selected = selected.iter().map(String::as_str).collect::<HashSet<_>>();
+        vocabulary.retain(|section| selected.contains(section.label.as_str()));
+    }
+
     // `admit` runs the ceiling test and calls the closure only if it passes, so
     // the producer cannot be started for a vocabulary that has no consumer.
+    let scope_provenance = Arc::clone(&provenance);
     let mut producer = None;
     let sections = match section_tally::admit(&vocabulary, pattern_count, || {
         // The producer maps label → slot from this same order, so the slot
@@ -312,6 +353,7 @@ async fn prepare_scan(ready: &ReadyCorpus, source: &str) -> Prepared {
     };
     Prepared::Ready {
         compiled: Box::new(compiled),
+        provenance: scope_provenance,
         producer,
         sections,
     }
@@ -341,6 +383,8 @@ fn run_scan_blocking(
         progress_tx,
         false,
         CompoundCategory::Compound,
+        false,
+        Default::default(),
     )
 }
 
@@ -353,6 +397,8 @@ fn run_scan_blocking_with_options(
     progress_tx: watch::Sender<Option<ScanProgress>>,
     derive_compounds: bool,
     compound_category: CompoundCategory,
+    document_reach: bool,
+    scope: crate::search_scope::BoundScope,
 ) -> Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure> {
     let patterns = crate::pattern_catalog::pattern_metadata_pairs(&output.matcher);
     let snapshot = SnapshotSink::new_with_compounds(
@@ -361,11 +407,13 @@ fn run_scan_blocking_with_options(
         sections,
         derive_compounds,
         compound_category,
+        document_reach,
     )
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
     // `execute` applies publication policy; this surface only selects records.
     let mut sink = snapshot;
+    sink.search_scope = scope.specification();
     let mut attributes = output.matcher.execution_attributes();
     // Snapshot/KWIC projection needs surface forms even when recognition does
     // not. Keep that output requirement explicit at the execution boundary.
@@ -390,14 +438,15 @@ fn run_scan_blocking_with_options(
     // Prepared artifacts may contain oversized sentences. Omit and count them
     // so the result banner can disclose a degraded run.
     let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
-    let execution_source = ready
-        .artifact
-        .bound_sentence_source(bound.projection())
+    let execution_source = scope
+        .open_source(&ready.artifact, bound.projection())
         .map_err(|error| {
             tracing::warn!(%error, "sentence source construction failed");
             integrity_failure()
         })?
-        .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)));
+        .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))
+        .with_cancellation(cancel.clone());
+    let scope_stats = execution_source.scope_stats();
     let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
     let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
         execution_source,
@@ -426,6 +475,7 @@ fn run_scan_blocking_with_options(
     } else {
         sink.discard_sections();
     }
+    sink.excluded_sentences = scope_stats.excluded_sentences();
     let oversized_omissions = omissions.lock().map_err(|_| execution_failure())?.summary();
     Ok((outcome, sink, oversized_omissions))
 }
@@ -649,67 +699,28 @@ impl CoordinatorRegistry {
         Ok(entry)
     }
 
-    pub async fn accept_next_revision(
+    pub async fn accept_revision(
         &self,
         workbench: WorkbenchId,
         slot: &CorpusSlot,
-        source: String,
-    ) -> RevisionId {
-        self.try_accept_next_revision(workbench, slot, source, None)
-            .await
-            .unwrap_or_else(|_| {
-                #[expect(
-                    clippy::panic,
-                    reason = "registry capacity is reserved ahead of admission"
-                )]
-                {
-                    panic!("registry capacity available")
-                }
-            })
-    }
-
-    /// Accept a revision, retaining `requested` KWIC lines per pattern.
-    ///
-    /// `None` is the server's configured ceiling, which is also what a request
-    /// asking for more than the ceiling gets: retention is a display
-    /// preference, and a smaller concordance is a better answer than a refused
-    /// search. The value is per revision rather than per registry because it is
-    /// a property of what one reader asked for, not of how the server was
-    /// started.
-    pub async fn try_accept_next_revision(
-        &self,
-        workbench: WorkbenchId,
-        slot: &CorpusSlot,
-        source: String,
-        requested: Option<usize>,
+        request: RevisionRequest,
     ) -> Result<RevisionId, AdmitError> {
-        self.try_accept_next_revision_with_compounds(
-            workbench,
-            slot,
+        let RevisionRequest {
             source,
-            requested,
-            false,
-            CompoundCategory::Compound,
-        )
-        .await
-    }
-
-    pub(crate) async fn try_accept_next_revision_with_compounds(
-        &self,
-        workbench: WorkbenchId,
-        slot: &CorpusSlot,
-        source: String,
-        requested: Option<usize>,
-        derive_compounds: bool,
-        compound_category: CompoundCategory,
-    ) -> Result<RevisionId, AdmitError> {
-        let retained = requested.map_or(self.inner.max_refs, |asked| {
-            asked.clamp(1, self.inner.max_refs)
-        });
-        let options = ScanOptions {
             retained,
             derive_compounds,
             compound_category,
+            document_reach,
+            search_scope,
+        } = request;
+        let options = ScanOptions {
+            search_scope,
+            retained: retained.map_or(self.inner.max_refs, |asked| {
+                asked.clamp(1, self.inner.max_refs)
+            }),
+            derive_compounds,
+            compound_category,
+            document_reach,
         };
         let entry = self.admit(&workbench, slot).await?;
         let readiness = entry.runtime.readiness().borrow().clone();
@@ -914,7 +925,7 @@ impl CoordinatorRegistry {
         // Nothing here may degrade to an empty vocabulary: publishing an
         // exact-looking all-`None` distribution because a read failed is the
         // one outcome this feature must not have.
-        let prepared = prepare_scan(&ready, &source).await;
+        let prepared = prepare_scan(&ready, &source, &options.search_scope).await;
 
         let scan = match prepared {
             // No producer was started on this path, so there is nothing to join.
@@ -926,7 +937,9 @@ impl CoordinatorRegistry {
                 compiled,
                 producer,
                 sections,
+                provenance,
             } => {
+                let scope = crate::search_scope::BoundScope::new(options.search_scope, provenance);
                 let result = tokio::task::spawn_blocking(move || {
                     run_scan_blocking_with_options(
                         &ready,
@@ -937,6 +950,8 @@ impl CoordinatorRegistry {
                         progress_tx,
                         options.derive_compounds,
                         options.compound_category,
+                        options.document_reach,
+                        scope,
                     )
                 })
                 .await;
@@ -1123,7 +1138,7 @@ mod tests {
     use super::*;
     use crate::revision::AttemptPhase;
     use crate::revision_status::project_revision_status;
-    use crate::snapshot::{MatchRef, PatternDescriptor, PatternKey};
+    use crate::snapshot::{MatchRef, PatternDescriptor, PatternKey, PatternOrigin};
     use lingrep_core::execution::{MatchSink, SentenceBatchSource, execute};
     use lingrep_core::token_match::TokenInfo;
 
@@ -1264,6 +1279,8 @@ mod tests {
             progress_tx,
             true,
             CompoundCategory::SourceCategories,
+            false,
+            Default::default(),
         )
         .unwrap();
         assert!(omissions.is_none());
@@ -1302,6 +1319,8 @@ mod tests {
             progress_tx,
             true,
             CompoundCategory::Compound,
+            false,
+            Default::default(),
         )
         .expect("a derived chain is published output, not an over-count");
         assert!(matches!(outcome, RunOutcome::Completed(_)));
@@ -1792,7 +1811,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn prepare_scan_maps_a_compile_error_to_a_compile_failure() {
         let (_dir, ready) = tiny_ready_corpus(1);
-        let Prepared::Failed(failure) = prepare_scan(&ready, "broken := [text~/x/.").await else {
+        let Prepared::Failed(failure) =
+            prepare_scan(&ready, "broken := [text~/x/.", &Default::default()).await
+        else {
             panic!("a syntactically invalid catalog cannot be prepared");
         };
         assert_eq!(failure.category, ErrorCategory::Compile);
@@ -1805,7 +1826,7 @@ mod tests {
         let (_dir, ready) = tiny_ready_corpus(1);
         let Prepared::Ready {
             producer, sections, ..
-        } = prepare_scan(&ready, "p := [].").await
+        } = prepare_scan(&ready, "p := [].", &Default::default()).await
         else {
             panic!("a valid catalog over a readable corpus prepares");
         };
@@ -2002,10 +2023,14 @@ mod tests {
     fn snapshot(workbench: &WorkbenchId, revision: RevisionId) -> Arc<CompletedSnapshot> {
         let pattern_key = PatternKey::new(0).unwrap();
         Arc::new(CompletedSnapshot {
+            search_scope: Default::default(),
+            excluded_sentences: 0,
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
             ),
             observed_sentences: 0,
+            matched_sentences: 0,
+            documents: None,
             sentences_matched: 0,
             revision,
             corpus_identity: crate::corpus_runtime::CorpusIdentity::new(format!(
@@ -2020,6 +2045,7 @@ mod tests {
                 name: "test".into(),
                 exact_total: 2,
                 metadata: Box::default(),
+                origin: PatternOrigin::Authored { chained_total: 0 },
             }]
             .into_boxed_slice(),
             match_refs: vec![
@@ -2030,6 +2056,7 @@ mod tests {
                     captures: Box::default(),
                     graph_bindings: Box::default(),
                     lexical: None,
+                    in_chain: false,
                 },
                 MatchRef {
                     sentence_index: 1,
@@ -2038,6 +2065,7 @@ mod tests {
                     captures: Box::default(),
                     graph_bindings: Box::default(),
                     lexical: None,
+                    in_chain: false,
                 },
             ]
             .into_boxed_slice(),

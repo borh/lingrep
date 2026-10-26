@@ -489,11 +489,22 @@ wheels = [
 ]
 
 [[package]]
+name = "lingrep-adapter-protocol"
+version = "0.1.0"
+source = { editable = "../adapter-protocol" }
+dependencies = [
+    { name = "blake3" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "blake3", specifier = ">=1.0.8,<2" }]
+
+[[package]]
 name = "lingrep-spacy-adapter"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "blake3" },
+    { name = "lingrep-adapter-protocol" },
 ]
 
 [package.optional-dependencies]
@@ -534,7 +545,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "blake3", specifier = ">=1.0.8,<2" },
     { name = "click", marker = "extra == 'spacy'", specifier = ">=8.4.2,<9" },
     { name = "confection", marker = "extra == 'spacy'", specifier = ">=0.1.5,<1" },
     { name = "cupy-cuda12x", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = ">=14.1.1,<15" },
@@ -542,6 +552,7 @@ requires-dist = [
     { name = "ginza", marker = "extra == 'ginza'", specifier = "==5.2.0" },
     { name = "ja-ginza", marker = "extra == 'ginza'", specifier = "==5.2.0" },
     { name = "ja-ginza-electra", marker = "extra == 'electra'", specifier = "==5.2.0" },
+    { name = "lingrep-adapter-protocol", editable = "../adapter-protocol" },
     { name = "numpy", marker = "extra == 'spacy'", specifier = ">=2,<3" },
     { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.8.11,<3.8.12" },
     { name = "tokenizers", marker = "extra == 'electra'", specifier = "==0.22.2" },
@@ -1484,14 +1495,14 @@ name = "torch"
 version = "2.13.0+rocm7.2"
 source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
+    { name = "filelock", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
+    { name = "fsspec", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
+    { name = "jinja2", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
+    { name = "networkx", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
+    { name = "setuptools", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
+    { name = "sympy", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
     { name = "triton-rocm", marker = "(sys_platform == 'linux' and extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-rocm') or (extra == 'extra-21-lingrep-spacy-adapter-cuda' and extra == 'extra-21-lingrep-spacy-adapter-rocm')" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.13.0%2Brocm7.2-cp314-cp314-manylinux_2_28_x86_64.whl", upload-time = "2026-07-08T11:26:20Z" },

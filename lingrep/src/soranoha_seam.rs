@@ -37,6 +37,7 @@ pub(crate) fn open(
     inventory: Option<&OrderedInventoryObservation>,
     document: &SourceDocument,
     record_limit: usize,
+    tei: bool,
 ) -> io::Result<Box<dyn Iterator<Item = io::Result<CorpusEvent>> + Send>> {
     let mut file = File::open(&document.path)?;
     let integrity = zip_file_stat(&file)?;
@@ -50,7 +51,11 @@ pub(crate) fn open(
         .map_err(identity_io_error)?;
     io::copy(&mut hasher, &mut io::sink())?;
     file.rewind()?;
-    let events = SoranohaEvents::new(file, document.logical_name.clone(), record_limit)?;
+    let events = if tei {
+        SoranohaEvents::new_tei(file, document.logical_name.clone(), record_limit)?
+    } else {
+        SoranohaEvents::new(file, document.logical_name.clone(), record_limit)?
+    };
     Ok(Box::new(IntegrityChecked {
         events,
         path: document.path.clone(),

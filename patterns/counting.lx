@@ -2,24 +2,9 @@ defaults
   status: "experimental"
 end
 
-# Counting driver catalog: COST PROBES, NOT RESEARCH CLAIMS.
-#
-# Nine parameterizations of one shape — the multi-を generalization of
-# `double-wo.lx`'s raw candidate language — spelled by unrolling, because
-# unrolling is the only way the pattern language expresses a counting
-# constraint. The
-# parameters are k (number of を occurrences, suffix `_x2`/`_x3`/`_x4`) and
-# n (bounded gap between consecutive occurrences, suffix `_n4`/`_n8`/`_n16`).
-# Each pattern's cost is what the catalog exists to measure.
-#
-# The `examples:` claims verify only that each pattern's language is inhabited
-# by a real tokenization — they are constructed sentences, not corpus
-# attestations, and none of the nine names records a linguistic finding.
-#
-# The fragments restate double-wo's particle/anchor/gap predicates as of
-# 2026-08-14 under this catalog's own names: a set is catalog-scoped, so the
-# copy is forced, and the drift hazard is accepted because these definitions
-# are probes rather than classifier evidence.
+# Cost probes for unrolled counting constraints (`_x2`/`_x3`/`_x4` を
+# occurrences separated by `_n4`/`_n8`/`_n16` gap tokens), using a copy of
+# `double-wo.lx`'s particle, anchor, and gap predicates.
 
 set COUNTING_NON_CONTENT := {動詞, 助動詞, 補助記号}.
 

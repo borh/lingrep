@@ -67,7 +67,7 @@ pub fn run(
         .collect();
     let examples = args
         .verify_examples
-        .then(|| verify_examples(args, config, &catalog.output.matcher))
+        .then(|| verify_examples(args, config, &catalog.output.matcher, terminal))
         .transpose()?;
     let examples_failed = examples
         .as_ref()
@@ -223,8 +223,7 @@ fn publish_check<W: Write>(
             let CheckEvent::Check(data) = &check.event;
             writeln!(
                 writer,
-                "catalog {}: {} pattern(s), {} warning(s)",
-                SafeText::from_untrusted(&data.catalog_fingerprint),
+                "catalog checked: {} definition(s), {} warning(s)",
                 data.definitions.len(),
                 data.warnings.len()
             )
@@ -464,10 +463,9 @@ fn verify_examples(
     args: &CheckArgs,
     config: &crate::cli::ExecutionCliConfig,
     matcher: &lingrep_core::fsm::CompiledCatalog,
+    terminal: &TerminalArbiter,
 ) -> Result<crate::protocol::check::ExampleVerification, CliError> {
-    use lingrep_core::analysis::{
-        AnalyzerPlan, AnalyzerSession, InputUnitId, SegmentationMode, TextUnit,
-    };
+    use lingrep_core::analysis::{AnalyzerSession, InputUnitId, SegmentationMode, TextUnit};
     use lingrep_core::token_match::TokenInfo;
     use std::cell::RefCell;
     if config.segmentation != SegmentationMode::Input {
@@ -479,7 +477,11 @@ fn verify_examples(
         .dict_path
         .clone()
         .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
-    let resolved = crate::analyzer_selection::resolve_native(config, dictionary.as_deref())?;
+    let resolved = crate::analyzer_selection::resolve_native(
+        config,
+        dictionary.as_deref(),
+        terminal.cancellation(),
+    )?;
     let plan = resolved.plan;
     let bound = matcher
         .bind(plan.schema())
@@ -496,6 +498,7 @@ fn verify_examples(
         .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
     let session = RefCell::new(plan.create_session());
     let failure = RefCell::new(None);
+    let input_id = std::cell::Cell::new(0u64);
     let tokenize = |text: &str| -> Vec<TokenInfo> {
         if failure.borrow().is_some() {
             return Vec::new();
@@ -504,8 +507,12 @@ fn verify_examples(
             if text.len() > config.limits.max_sentence_bytes {
                 return Err("example exceeds --max-sentence-bytes".into());
             }
-            let unit = TextUnit::sentence(InputUnitId::new(0), text, config.normalization)
-                .map_err(|e| format!("{e:?}"))?;
+            let unit = TextUnit::sentence(
+                InputUnitId::new(input_id.replace(input_id.get() + 1)),
+                text,
+                config.normalization,
+            )
+            .map_err(|e| format!("{e:?}"))?;
             let batch = session
                 .borrow_mut()
                 .analyze_bounded_batch(vec![unit], &projection)
@@ -538,6 +545,10 @@ fn verify_examples(
             "example analysis failed: {error}"
         )));
     }
+    session
+        .borrow_mut()
+        .finish()
+        .map_err(|error| CliError::Corpus(error.to_string()))?;
     let convert = |f: lingrep_core::fsm::ExampleFailure| crate::protocol::check::ExampleFailure {
         definition: f.definition,
         example: f.example,

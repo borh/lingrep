@@ -30,6 +30,10 @@
     clippy::unwrap_used
 )]
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use lingrep::scope_precompute::resolve_scope;
 use lingrep_core::corpus::DocumentId;

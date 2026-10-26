@@ -48,19 +48,6 @@ pub enum CorpusOrigin {
     Direct,
 }
 
-impl CorpusOrigin {
-    /// The phrase a run record and a progress line both use.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Addressed => "addressed",
-            Self::Reused => "reused",
-            Self::Prepared => "prepared",
-            Self::Direct => "direct",
-        }
-    }
-}
-
 /// Decides which corpus a query reads, before any reading begins.
 ///
 /// `markdown` is the query's own section policy: it decides which lines become

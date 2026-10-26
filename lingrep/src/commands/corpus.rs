@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lingrep_cli_common::SafeText;
-use lingrep_core::analysis::{
-    AnalyzedInput, AnalyzerLanes, AnalyzerPlan, AnalyzerSession, InputUnitId, TextUnit,
-};
+use lingrep_core::analysis::{AnalyzedInput, AnalyzerSession, InputUnitId, TextUnit};
 use lingrep_core::corpus::{
     AdmittedCorpus, AdmittedCorpusEvent, CorpusDiscovery, CorpusFormat, CorpusReadConfig,
     DiscoveryError, DiscoveryReport, MarkdownReaderConfig, SourceDocument, resolve_input_format,
@@ -111,21 +109,11 @@ pub(crate) enum PublicationRole {
     IntermediateCommit,
 }
 
-/// What one prepared-artifact build needs, independent of which command asked
-/// for it.
-///
-/// `corpus build` and a query resolving its own corpus want the same artifact
-/// under the same name, so they state the same request and reach the same
-/// identity derivation. A second deriver is exactly the divergence that made
-/// `lingrep-web` and `ling` name two artifacts for one Markdown tree.
 pub(crate) struct BuildRequest {
     pub root: PathBuf,
     pub output: Option<PathBuf>,
     pub dict_path: Option<PathBuf>,
     pub markdown: MarkdownReaderConfig,
-    /// The `--input-format` override. A directory defaults to Markdown unless
-    /// this selects CoNLL-U or the BCCWJ distribution root, so it is part of
-    /// the request's identity.
     pub input_format: Option<CorpusFormat>,
 }
 
@@ -161,7 +149,12 @@ pub(crate) async fn ensure_artifact(
         .dict_path
         .clone()
         .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
-    let resolved_analyzer = resolve_input(format, config, vibrato_dictionary.as_deref())?;
+    let resolved_analyzer = resolve_input(
+        format,
+        config,
+        vibrato_dictionary.as_deref(),
+        terminal.cancellation(),
+    )?;
     let schema = resolved_analyzer.schema().clone();
     let descriptor = resolved_analyzer.descriptor().clone();
     let dictionary_digest = resolved_analyzer.resource_identity();
@@ -185,23 +178,11 @@ pub(crate) async fn ensure_artifact(
         .build()
         .map_err(|error| CliError::Corpus(format!("failed to create worker pool: {error}")))?;
     let analyzer = resolved_analyzer.into_native_plan();
-    // The caller's limit is a resource guard it chose; the analyzer's is a
-    // property of the tokenizer and is not negotiable. Truncating to the
-    // caller's alone leaves a window where a sentence passes it and then fails
-    // inside the analyzer, and Sudachi's cap is *below* this workspace's
-    // default, so that window is reachable rather than theoretical. Vibrato
-    // declares none, as MeCab did not, and the minimum is then the caller's.
-    let sentence_limit = analyzer
-        .as_ref()
-        .and_then(AnalyzerPlan::max_input_bytes)
-        .map_or(config.limits.max_sentence_bytes, |analyzer_limit| {
-            analyzer_limit.min(config.limits.max_sentence_bytes)
-        });
+    let sentence_limit = config.limits.max_sentence_bytes;
     let mut session = analyzer
         .as_ref()
-        .map(|analyzer| AnalyzerLanes::new(analyzer, config.workers, &pool));
+        .map(|analyzer| analyzer.create_lanes(config.workers, &pool));
     let resolved = resolve_destination(
-        sentence_limit,
         args.output.as_deref(),
         root,
         config,
@@ -265,7 +246,6 @@ pub(crate) async fn ensure_artifact(
     // of empty divisions. Shared active division metadata remains bounded by
     // admission independently of this window.
     let mut window: Vec<(Vec<SourceDocument>, Option<AdmittedCorpusEvent>)> = Vec::new();
-    let mut truncated: Vec<TruncatedSentence> = Vec::new();
     let mut reached_end = false;
     while !reached_end {
         if terminal.cancellation().is_cancelled() {
@@ -292,6 +272,9 @@ pub(crate) async fn ensure_artifact(
                 Some(AdmittedCorpusEvent::Sentence(sentence)) => {
                     lingrep_core::corpus::divisions::validate_metadata(&sentence.metadata)
                         .map_err(build_input_error)?
+                        + lingrep_core::analysis::AnnotatedText::annotation_bytes(
+                            &sentence.annotations,
+                        )
                         + sentence
                             .active_labels
                             .iter()
@@ -316,23 +299,6 @@ pub(crate) async fn ensure_artifact(
                 break;
             }
         }
-
-        // Before analysis *and* before the replay, so both see one text. The
-        // artifact stores the event's bytes and the tokens come from the
-        // analyzed unit, and the provenance sidecar cross-checks that the two
-        // agree — truncating only the analysis input fails that check, which is
-        // the sidecar doing its job.
-        let window_truncations = truncate_window_sentences(
-            &mut window,
-            active_physical.as_ref(),
-            config,
-            sentence_limit,
-        )?;
-        // Recorded before the pushes that carry the shortened text, so a build
-        // interrupted mid-window cannot publish truncated sentences under a
-        // manifest that claims none. The builder accumulates across windows.
-        builder.record_sentence_truncation(window_truncations.len() as u64, sentence_limit as u64);
-        truncated.extend(window_truncations);
 
         let analyzed = match session.as_mut() {
             Some(session) => analyze_window(
@@ -387,12 +353,16 @@ pub(crate) async fn ensure_artifact(
     // Before publication, and on stderr regardless of `--progress`: this is not
     // progress, it is a statement that the artifact about to be written is not
     // a faithful copy of its source.
-    warn_truncated_sentences(&truncated, sentence_limit, config.limits.max_sentence_bytes)?;
     let discovery = report
         .lock()
         .map_err(|_| CliError::Corpus("prepared discovery report lock poisoned".into()))?
         .clone()
         .ok_or_else(|| CliError::Corpus("prepared discovery did not reach clean EOF".into()))?;
+    if let Some(session) = session.as_mut() {
+        session
+            .finish()
+            .map_err(|error| CliError::Corpus(error.to_string()))?;
+    }
     let artifact = builder
         .finish_guarded(
             discovery,
@@ -452,7 +422,6 @@ enum Destination {
 /// derived, as it does for [`observe_root`].
 #[allow(clippy::too_many_arguments)]
 fn resolve_destination(
-    sentence_limit: usize,
     output: Option<&Path>,
     root: &Path,
     config: &ExecutionCliConfig,
@@ -518,36 +487,17 @@ fn resolve_destination(
     };
     match Realization::classify(&request, &report) {
         BuildOutcome::ExactReuse(path) => {
-            // Identity says these are the same corpus, and for every artifact
-            // that truncated nothing they are. A truncating build is the one
-            // case where a resource limit changed the content, so the recorded
-            // limit has to agree too — otherwise a run with a larger
-            // `--max-sentence-bytes` silently receives the shorter corpus a
-            // smaller one produced. Rebuilding is the conservative answer and
-            // costs one build.
             if let Some(recorded) = report
                 .realizations
                 .iter()
                 .find(|realization| realization.path == path)
                 .and_then(|realization| realization.sentence_truncation)
-                && recorded.limit != sentence_limit as u64
+                && recorded.count > 0
             {
-                // Rebuilding is not available: identity does not carry the
-                // limit, so the rebuilt corpus would want this very path, and
-                // publication never overwrites. Refusing names the one thing
-                // the operator has to decide — this artifact is a *different*
-                // corpus wearing the right name, and only they can say which
-                // one should keep it.
                 return Err(CliError::Corpus(format!(
-                    "the artifact at {} truncated {} sentence(s) at --max-sentence-bytes {}, \
-                     and this run specifies {}, so it is a different corpus under the same \
-                     identity; rerun with --max-sentence-bytes {}, or remove that artifact, \
-                     or pass an explicit --output",
+                    "the artifact at {} contains {} truncated sentence(s); remove it or use --output to rebuild the complete corpus",
                     path.display(),
-                    recorded.count,
-                    recorded.limit,
-                    sentence_limit,
-                    recorded.limit
+                    recorded.count
                 )));
             }
             Ok(Some(Destination::Reuse(path)))
@@ -643,34 +593,7 @@ async fn report_artifact(
     .await
 }
 
-/// Analyzes every sentence in one read window, in window order.
-///
-/// Batch-shaped rather than sentence-shaped so a lane-parallel session has a
-/// batch to spread; a window carrying no sentence analyzes to nothing and
-/// dispatches nothing.
-///
-/// The two size limits are enforced exactly where they were, and in window
-/// order, so the first oversized sentence is still the one reported. What did
-/// move is *when*: a window's whole analysis now precedes any of its builder
-/// pushes, so a failing sentence aborts the build with fewer of its
-/// predecessors pushed. Nothing observes that difference — a failed build
-/// publishes no artifact.
-///
-/// An **oversized sentence is truncated rather than refused**, and reported in
-/// [`truncate_window_sentences`]. A build is the one place where refusing is
-/// the worst of the three options: a corpus is bad data's natural habitat, one
-/// runaway line in one document of a thousand should not cost the other 999,
-/// and unlike a query there is no partial answer to fall back on. Truncating
-/// rather than skipping keeps the sentence *present* — a prepared artifact
-/// addresses sentences by ordinal, so dropping one silently renumbers
-/// everything after it.
-///
-/// This is a real loss and is treated as one: the run warns, and the artifact
-/// records the count and the limit so a later build cannot reuse a shortened
-/// corpus under a larger limit. `matches` still skips-and-degrades and
-/// `summarize` still refuses to publish a total, each for reasons recorded at
-/// those call sites; this is a third answer to a third question, not a change
-/// to either.
+/// Analyzes every sentence in one read window without changing its text.
 fn analyze_window(
     window: &[(Vec<SourceDocument>, Option<AdmittedCorpusEvent>)],
     active: Option<&SourceDocument>,
@@ -680,11 +603,6 @@ fn analyze_window(
     limit: usize,
 ) -> Result<Vec<AnalyzedInput>, CliError> {
     let mut inputs = Vec::new();
-    // A corpus-global sentence ordinal locates nothing in a thousand-document
-    // tree, and a truncation notice carries the document for exactly this.
-    // The window is walked in order rather than filtered so the name is the
-    // document the sentence actually came from; `active` seeds it, because a
-    // window can open in the middle of a document it never saw begin.
     let mut source = active.map(|document| document.logical_name.clone());
     for (drained, event) in window {
         if let Some(document) = drained.last() {
@@ -693,18 +611,28 @@ fn analyze_window(
         let Some(sentence) = event.as_ref().and_then(AdmittedCorpusEvent::sentence) else {
             continue;
         };
-        let input = TextUnit::sentence(
-            InputUnitId::new(sentence.id.get()),
-            &sentence.text,
-            config.normalization,
-        )
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+        let input = if sentence.annotations.is_empty() {
+            TextUnit::sentence(
+                InputUnitId::new(sentence.id.get()),
+                &sentence.text,
+                config.normalization,
+            )
+            .map_err(|error| CliError::Corpus(error.to_string()))?
+        } else {
+            TextUnit::annotated(
+                InputUnitId::new(sentence.id.get()),
+                lingrep_core::analysis::TextUnitKind::Sentence,
+                lingrep_core::analysis::AnnotatedText::new(
+                    sentence.text.clone(),
+                    sentence.annotations.to_vec(),
+                )
+                .map_err(|error| CliError::Corpus(error.to_string()))?,
+                config.normalization,
+            )
+            .map_err(|error| CliError::Corpus(error.to_string()))?
+        };
         let actual = input.len();
         if actual > limit {
-            // Unreachable: `truncate_window_sentences` ran over this window
-            // first and shortened anything that did not fit. Kept as a refusal
-            // rather than an assertion because the alternative to noticing here
-            // is an artifact whose stored tokens exceed what it claims to bound.
             return Err(ExecutionError::SentenceTooLarge {
                 ordinal: sentence.id.get(),
                 actual,
@@ -744,144 +672,6 @@ fn analyze_window(
         }
     }
     Ok(analyzed)
-}
-
-/// A sentence that did not fit `--max-sentence-bytes` and was shortened.
-struct TruncatedSentence {
-    ordinal: u64,
-    /// The document it came from, absent only when a window opened before any
-    /// document had been drained — which the seeding in `analyze_window` makes
-    /// unreachable in practice, and which is reported as unknown rather than
-    /// guessed if it ever happens.
-    source: Option<String>,
-    original: usize,
-    retained: usize,
-}
-
-/// Shortens every sentence in `window` that exceeds `max_sentence_bytes`,
-/// returning what it shortened.
-///
-/// Truncation is measured on the **admitted** text — what `TextUnit` produces
-/// after normalization — because that is what the limit bounds and what the
-/// artifact stores, but it is *applied* to the event's raw text, because the
-/// event is what the builder pushes. Normalization can lengthen a string, so
-/// cutting to the limit does not always reach it; the loop shrinks the budget
-/// by the overshoot until it does, and terminates because the budget strictly
-/// decreases and zero always fits.
-fn truncate_window_sentences(
-    window: &mut [(Vec<SourceDocument>, Option<AdmittedCorpusEvent>)],
-    active: Option<&SourceDocument>,
-    config: &ExecutionCliConfig,
-    limit: usize,
-) -> Result<Vec<TruncatedSentence>, CliError> {
-    let mut truncated = Vec::new();
-    let mut source = active.map(|document| document.logical_name.clone());
-    for (drained, event) in window.iter_mut() {
-        if let Some(document) = drained.last() {
-            source = Some(document.logical_name.clone());
-        }
-        let Some(AdmittedCorpusEvent::Sentence(sentence)) = event.as_mut() else {
-            continue;
-        };
-        let id = InputUnitId::new(sentence.id.get());
-        let admitted_len = |text: &str| -> Result<usize, CliError> {
-            TextUnit::sentence(id, text, config.normalization)
-                .map(|unit| unit.len())
-                .map_err(|error| CliError::Corpus(error.to_string()))
-        };
-        let original = admitted_len(&sentence.text)?;
-        if original <= limit {
-            continue;
-        }
-        let mut budget = limit;
-        let retained = loop {
-            let keep = floor_char_boundary(&sentence.text, budget);
-            // `get` rather than a slice expression: the workspace denies
-            // `clippy::string_slice`, and the denial is the point — a
-            // byte-indexed cut through a three-byte character panics, which is
-            // exactly the failure this whole function exists to avoid.
-            let prefix = sentence
-                .text
-                .get(..keep)
-                .ok_or_else(|| CliError::Corpus("truncation split a character".into()))?;
-            let candidate = admitted_len(prefix)?;
-            if candidate <= limit || keep == 0 {
-                sentence.text.truncate(keep);
-                break candidate;
-            }
-            budget = budget.saturating_sub((candidate - limit).max(1));
-        };
-        truncated.push(TruncatedSentence {
-            ordinal: sentence.id.get(),
-            source: source.clone(),
-            original,
-            retained,
-        });
-    }
-    Ok(truncated)
-}
-
-/// Reports every truncated sentence, or nothing at all when none was.
-///
-/// Every one is named rather than the first with a count, because each is a
-/// document a researcher may want to look at, and a corpus with hundreds of
-/// them is a corpus whose conversion needs re-running — which a wall of
-/// warnings says better than a number does.
-fn warn_truncated_sentences(
-    truncated: &[TruncatedSentence],
-    limit: usize,
-    configured: usize,
-) -> Result<(), CliError> {
-    if truncated.is_empty() {
-        return Ok(());
-    }
-    // Naming *which* limit bound the run matters: an operator who raises
-    // `--max-sentence-bytes` and sees the same truncations would otherwise have
-    // no way to learn that the analyzer, not the flag, is what is deciding.
-    let bound = if limit < configured {
-        " (the analyzer's own maximum, below the configured --max-sentence-bytes)"
-    } else {
-        " (--max-sentence-bytes)"
-    };
-    let stderr = std::io::stderr();
-    let mut writer = stderr.lock();
-    writeln!(
-        writer,
-        "warning[sentence_truncated]: {} sentence(s) exceeded {limit} bytes{bound} \
-         and were shortened to fit; the artifact does not reproduce its source for these",
-        truncated.len()
-    )
-    .map_err(CliError::Io)?;
-    for sentence in truncated {
-        writeln!(
-            writer,
-            "  sentence {} in {}: {} bytes retained of {}",
-            sentence.ordinal,
-            sentence
-                .source
-                .as_deref()
-                .map_or("an unnamed document", |name| name),
-            sentence.retained,
-            sentence.original
-        )
-        .map_err(CliError::Io)?;
-    }
-    Ok(())
-}
-
-/// The largest index `<= limit` that splits `text` between characters.
-///
-/// `str::floor_char_boundary` is still unstable, and a truncation that lands
-/// mid-codepoint would panic rather than shorten.
-fn floor_char_boundary(text: &str, limit: usize) -> usize {
-    if limit >= text.len() {
-        return text.len();
-    }
-    let mut index = limit;
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
 }
 
 /// Inspect a stored artifact without reopening any source root.
@@ -940,6 +730,20 @@ async fn inspect_artifact(
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
         let mut writer = stdout.lock();
+        if output == OutputMode::Human {
+            writeln!(
+                writer,
+                "prepared corpus: {}",
+                SafeText::from_untrusted(&args.artifact.display().to_string())
+            )?;
+            writeln!(
+                writer,
+                "{} document(s), {} sentence(s), {} token(s)",
+                artifact.document_count(),
+                artifact.sentence_count(),
+                artifact.token_count()
+            )?;
+        }
         publish_projected(
             &mut writer,
             &SourcesEnvelope::new(SourcesEvent::Run(SourcesRun {
@@ -975,6 +779,9 @@ async fn inspect_artifact(
         }
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
+        }
+        if output == OutputMode::Human && verification.is_some() {
+            writeln!(writer, "content verified")?;
         }
         publish_projected(
             &mut writer,
@@ -1296,14 +1103,13 @@ fn publish_projected<W: Write>(
             SourcesEvent::Run(_) | SourcesEvent::Complete(_) => Ok(()),
         },
         OutputMode::Human => match &event.event {
-            SourcesEvent::Run(run) => writeln!(
-                writer,
-                "corpus inventory ({})",
-                match run.source_kind {
-                    SourcesKind::Live => "live",
-                    SourcesKind::Artifact => "recorded",
+            SourcesEvent::Run(run) => {
+                if run.source_kind == SourcesKind::Live {
+                    writeln!(writer, "corpus inventory (live)")
+                } else {
+                    Ok(())
                 }
-            ),
+            }
             SourcesEvent::Source(source) => writeln!(
                 writer,
                 "{:>8}  {}{}",
@@ -1321,7 +1127,7 @@ fn publish_projected<W: Write>(
                 }
                 writeln!(
                     writer,
-                    "complete: {} document(s), {} distinct target(s), {} ms",
+                    "complete: {} source(s), {} distinct target(s), {} ms",
                     complete.inventory.documents,
                     complete.inventory.distinct_targets,
                     complete.elapsed_millis

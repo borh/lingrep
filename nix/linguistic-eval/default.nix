@@ -7,11 +7,8 @@ let
   unidicCwj = pkgs.stdenv.mkDerivation {
     pname = "unidic-cwj";
     version = "202512";
-    src = pkgs.fetchzip {
-      url = "https://clrd.ninjal.ac.jp/unidic_archive/2512/unidic-cwj-202512.zip";
-      hash = "sha256-lNvcTlhqSWoLPF104eS7r08Dw5SQYRwzTQXy6DxdfjM=";
-      stripRoot = false;
-    };
+    passthru.unidicSource = vibratoDictionary.unidicSource;
+    src = pkgs.fetchzip (vibratoDictionary.unidicSource // { stripRoot = false; });
     phases = [
       "unpackPhase"
       "installPhase"
@@ -136,6 +133,7 @@ let
       realTool,
       contents,
       environment,
+      dictionarySource,
       verifierTool ? null,
     }:
     let
@@ -143,7 +141,10 @@ let
     in
     pkgs.dockerTools.buildLayeredImage {
       inherit name;
-      contents = contents ++ [ toolWrapper ];
+      contents = contents ++ [
+        toolWrapper
+        pkgs.dockerTools.fakeNss
+      ];
       tag = "latest";
       extraCommands = ''
         mkdir -p app data home/agent logs/artifacts tmp usr/bin usr/local/bin
@@ -157,6 +158,7 @@ let
         chmod 1777 tmp logs/artifacts
       '';
       config = {
+        Labels."org.lingrep.unidic-source" = builtins.toJSON dictionarySource;
         Cmd = [ "/bin/bash" ];
         Env = [
           "HOME=/home/agent"
@@ -173,6 +175,7 @@ in
   inherit shellSmoke;
   lingrep = mkImage {
     name = "lingrep-linguistic-eval";
+    dictionarySource = vibratoDictionary.unidicSource;
     toolName = "ling";
     realTool = "${lingrep}/bin/ling";
     contents = commonContents ++ [
@@ -185,6 +188,7 @@ in
   };
   mecab = mkImage {
     name = "mecab-linguistic-eval";
+    dictionarySource = unidicCwj.unidicSource;
     toolName = "mecab";
     realTool = "${mecab}/bin/mecab";
     contents = commonContents ++ [

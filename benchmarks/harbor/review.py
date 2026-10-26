@@ -4,24 +4,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
 from pathlib import Path
 
-from generate_dataset import load_catalog, validate_catalog
+from experiment import sha256_file as sha256
+from generate_dataset import load_catalog, validate_targets
 
 PACKET_SCHEMA = "lingrep-linguistic-eval.review-packet/v1"
 ANNOTATION_SCHEMA = "lingrep-linguistic-eval.annotation/v1"
 COMPARISON_SCHEMA = "lingrep-linguistic-eval.annotation-comparison/v1"
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+ADJUDICATION_SCHEMA = "lingrep-linguistic-eval.adjudication/v1"
+CASE_TEXT_FIELDS = ("title", "capability", "phenomenon", "labels", "documents")
 
 
 def write_json(path: Path, value: object) -> None:
@@ -37,20 +31,15 @@ def prepare_review(catalog_path: Path, guide_path: Path, destination: Path) -> N
         "guide_sha256": sha256(guide_path),
     }
     if destination.exists():
-        raise FileExistsError(f"refusing to overwrite review packet: {destination}")
+        raise FileExistsError(f"review packet already exists: {destination}")
     destination.mkdir(parents=True)
 
-    packet_cases = [
-        {
-            "id": case["id"],
-            "title": case["title"],
-            "capability": case["capability"],
-            "phenomenon": case["phenomenon"],
-            "labels": case["labels"],
-            "sentences": case["sentences"],
-        }
-        for case in cases
-    ]
+    packet_cases = []
+    for case in cases:
+        packet_case = {"id": case["id"], **{field: case[field] for field in CASE_TEXT_FIELDS}}
+        if case.get("driver") is not None:
+            packet_case["driver"] = {"documents": case["driver"]["documents"]}
+        packet_cases.append(packet_case)
     packet = {"schema": PACKET_SCHEMA, **identity, "cases": packet_cases}
     packet_path = destination / "packet.json"
     write_json(packet_path, packet)
@@ -64,6 +53,7 @@ def prepare_review(catalog_path: Path, guide_path: Path, destination: Path) -> N
                 "id": case["id"],
                 "status": "REPLACE_WITH_annotate_OR_exclude",
                 "targets": [],
+                **({"driver_targets": []} if case.get("driver") is not None else {}),
                 "notes": "",
             }
             for case in cases
@@ -82,13 +72,21 @@ def load_packet(path: Path) -> dict:
     return packet
 
 
-def canonical_targets(case: dict, targets: object) -> list[dict]:
-    validated = validate_catalog([{**case, "targets": targets}])[0]
-    canonical = list(validated["targets"])
+def canonical_targets(case: dict, targets: object, *, documents: list[dict] | None = None) -> list[dict]:
+    if not isinstance(targets, list):
+        raise TypeError(f"targets must be a list for {case['id']}")
+    validate_targets(
+        case["id"],
+        case["labels"],
+        case["documents"] if documents is None else documents,
+        targets,
+    )
+    canonical = list(targets)
     if any(not target["label"] for target in canonical):
         raise ValueError(f"target labels must not be empty for {case['id']}")
     canonical.sort(
         key=lambda target: (
+            target["eval_document_id"],
             target["sentence_ordinal"],
             target["start_char"],
             target["end_char"],
@@ -97,6 +95,7 @@ def canonical_targets(case: dict, targets: object) -> list[dict]:
     )
     identities = [
         (
+            target["eval_document_id"],
             target["sentence_ordinal"],
             target["start_char"],
             target["end_char"],
@@ -139,33 +138,53 @@ def load_annotation(path: Path, packet: dict, packet_sha256: str) -> dict:
     packet_cases = {case["id"]: case for case in packet["cases"]}
     reviewed: dict[str, dict] = {}
     for review in annotation["cases"]:
-        if not isinstance(review, dict) or set(review) != {
-            "id",
-            "status",
-            "targets",
-            "notes",
-        }:
-            raise ValueError(f"invalid annotation case fields: {path}")
-        case_id = review["id"]
-        if case_id not in packet_cases or case_id in reviewed:
+        case_id = review.get("id") if isinstance(review, dict) else None
+        packet_case = packet_cases.get(case_id)
+        if packet_case is None or case_id in reviewed:
             raise ValueError(
                 f"unknown or duplicate annotation case {case_id!r}: {path}"
             )
+        if set(review) != case_fields(packet_case):
+            raise ValueError(f"invalid annotation case fields for {case_id}: {path}")
         if review["status"] not in {"annotate", "exclude"}:
             raise ValueError(f"invalid annotation status for {case_id}: {path}")
         if not isinstance(review["notes"], str):
             raise TypeError(f"annotation notes must be a string for {case_id}: {path}")
-        targets = canonical_targets(packet_cases[case_id], review["targets"])
+        resolved = resolve_targets(packet_case, review)
         if review["status"] == "exclude":
-            if targets:
+            if resolved["targets"] or resolved.get("driver_targets"):
                 raise ValueError(f"excluded case must not contain targets: {case_id}")
             if not review["notes"].strip():
                 raise ValueError(f"excluded case requires a reason: {case_id}")
-        reviewed[case_id] = {**review, "targets": targets}
+        reviewed[case_id] = {**review, **resolved}
     if set(reviewed) != set(packet_cases):
         missing = sorted(set(packet_cases) - set(reviewed))
         raise ValueError(f"annotation is missing cases {missing}: {path}")
     return {**annotation, "cases": reviewed}
+
+
+def case_fields(packet_case: dict) -> set[str]:
+    fields = {"id", "status", "targets", "notes"}
+    if "driver" in packet_case:
+        fields.add("driver_targets")
+    return fields
+
+
+def resolve_targets(packet_case: dict, review: dict) -> dict:
+    resolved = {"targets": canonical_targets(packet_case, review["targets"])}
+    if "driver" in packet_case:
+        resolved["driver_targets"] = canonical_targets(
+            packet_case,
+            review["driver_targets"],
+            documents=packet_case["driver"]["documents"],
+        )
+    return resolved
+
+
+def same_targets(left: dict, right: dict) -> bool:
+    return left["targets"] == right["targets"] and left.get("driver_targets") == right.get(
+        "driver_targets"
+    )
 
 
 def compare_annotations(packet_path: Path, first_path: Path, second_path: Path) -> dict:
@@ -183,9 +202,8 @@ def compare_annotations(packet_path: Path, first_path: Path, second_path: Path) 
         right = second["cases"][case_id]
         if left["status"] == right["status"] == "exclude":
             outcome = "excluded_by_both"
-        elif (
-            left["status"] == right["status"] == "annotate"
-            and left["targets"] == right["targets"]
+        elif left["status"] == right["status"] == "annotate" and same_targets(
+            left, right
         ):
             outcome = "agree"
         else:
@@ -208,6 +226,117 @@ def compare_annotations(packet_path: Path, first_path: Path, second_path: Path) 
     }
 
 
+def load_adjudication(path: Path, packet: dict, packet_sha256: str, comparison_sha256: str) -> dict:
+    adjudication = json.loads(path.read_text())
+    expected_fields = {"schema", "packet_sha256", "comparison_sha256", "adjudicator_id", "cases"}
+    if set(adjudication) != expected_fields or adjudication["schema"] != ADJUDICATION_SCHEMA:
+        raise ValueError(f"invalid adjudication record: {path}")
+    if adjudication["packet_sha256"] != packet_sha256:
+        raise ValueError(f"adjudication packet_sha256 does not match packet: {path}")
+    if adjudication["comparison_sha256"] != comparison_sha256:
+        raise ValueError(f"adjudication comparison_sha256 does not match comparison: {path}")
+    adjudicator = adjudication["adjudicator_id"]
+    if not isinstance(adjudicator, str) or not adjudicator.strip() or adjudicator.startswith("REPLACE_"):
+        raise ValueError(f"adjudication requires an opaque adjudicator_id: {path}")
+    packet_cases = {case["id"]: case for case in packet["cases"]}
+    decided: dict[str, dict] = {}
+    for decision in adjudication["cases"]:
+        case_id = decision.get("id") if isinstance(decision, dict) else None
+        packet_case = packet_cases.get(case_id)
+        if packet_case is None or case_id in decided:
+            raise ValueError(f"unknown or duplicate adjudication case {case_id!r}: {path}")
+        expected = (case_fields(packet_case) - {"status", "notes"}) | {"status", "rationale"}
+        if set(decision) != expected:
+            raise ValueError(f"invalid adjudication case fields for {case_id}: {path}")
+        if decision["status"] not in {"retain", "exclude"}:
+            raise ValueError(f"invalid adjudication status for {case_id}: {path}")
+        if not isinstance(decision["rationale"], str) or not decision["rationale"].strip():
+            raise ValueError(f"adjudication requires a rationale for {case_id}: {path}")
+        resolved = resolve_targets(packet_case, decision)
+        if decision["status"] == "exclude" and (
+            resolved["targets"] or resolved.get("driver_targets")
+        ):
+            raise ValueError(f"excluded case must not contain targets: {case_id}")
+        decided[case_id] = {**decision, **resolved}
+    return {**adjudication, "cases": decided}
+
+
+def validate_review(review: Path, final_catalog: Path) -> dict:
+    """Check `final_catalog` against `review`: `packet.json`, two `annotation-*.json`
+    records, `comparison.json`, and `adjudication.json` when any case required it."""
+    packet_path = review / "packet.json"
+    packet = load_packet(packet_path)
+    annotations = sorted(
+        path
+        for path in review.glob("annotation-*.json")
+        if path.name != "annotation-template.json"
+    )
+    if len(annotations) != 2:
+        raise ValueError(
+            f"reviewed mode requires exactly two annotation records, found {len(annotations)}: {review}"
+        )
+    comparison_path = review / "comparison.json"
+    expected_comparison = compare_annotations(packet_path, *annotations)
+    if json.loads(comparison_path.read_text()) != expected_comparison:
+        raise ValueError(f"comparison.json is not the comparison of the two annotation records: {review}")
+    packet_digest = sha256(packet_path)
+    first = load_annotation(annotations[0], packet, packet_digest)
+
+    disputed = {case["id"] for case in expected_comparison["cases"] if case["outcome"] == "adjudication_required"}
+    adjudication_path = review / "adjudication.json"
+    decided: dict[str, dict] = {}
+    if adjudication_path.exists():
+        decided = load_adjudication(
+            adjudication_path, packet, packet_digest, sha256(comparison_path)
+        )["cases"]
+    unresolved = sorted(disputed - set(decided))
+    if unresolved:
+        raise ValueError(f"unresolved adjudication for cases {unresolved}: {review}")
+    undisputed = sorted(set(decided) - disputed)
+    if undisputed:
+        raise ValueError(f"adjudication overrides agreed cases {undisputed}: {review}")
+
+    resolution: dict[str, dict | None] = {}
+    for case in packet["cases"]:
+        case_id = case["id"]
+        if case_id in decided:
+            decision = decided[case_id]
+            resolution[case_id] = None if decision["status"] == "exclude" else decision
+        elif first["cases"][case_id]["status"] == "exclude":
+            resolution[case_id] = None
+        else:
+            resolution[case_id] = first["cases"][case_id]
+
+    final = {case["id"]: case for case in load_catalog(final_catalog)}
+    expected_ids = {case_id for case_id, resolved in resolution.items() if resolved is not None}
+    if set(final) != expected_ids:
+        raise ValueError(
+            f"final catalog cases {sorted(final)} do not equal the reviewed cases {sorted(expected_ids)}"
+        )
+    packet_cases = {case["id"]: case for case in packet["cases"]}
+    for case_id in expected_ids:
+        case = final[case_id]
+        packet_case = packet_cases[case_id]
+        resolved = resolution[case_id]
+        for field in CASE_TEXT_FIELDS:
+            if case[field] != packet_case[field]:
+                raise ValueError(f"final catalog changed {field} of reviewed case {case_id}")
+        if canonical_targets(packet_case, case["targets"]) != resolved["targets"]:
+            raise ValueError(f"final catalog targets for {case_id} are not the reviewed targets")
+        if "driver" in packet_case:
+            driver = case.get("driver")
+            if driver is None or driver["documents"] != packet_case["driver"]["documents"]:
+                raise ValueError(f"final catalog changed the driver documents of {case_id}")
+            hidden = canonical_targets(
+                packet_case, driver["targets"], documents=driver["documents"]
+            )
+            if hidden != resolved["driver_targets"]:
+                raise ValueError(f"final catalog driver targets for {case_id} are not the reviewed targets")
+        elif case.get("driver") is not None:
+            raise ValueError(f"final catalog adds an unreviewed driver to {case_id}")
+    return resolution
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -223,6 +352,9 @@ def main() -> None:
     compare.add_argument("packet", type=Path)
     compare.add_argument("first", type=Path)
     compare.add_argument("second", type=Path)
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("review", type=Path)
+    validate.add_argument("catalog", type=Path)
     args = parser.parse_args()
 
     if args.command == "prepare":
@@ -230,6 +362,10 @@ def main() -> None:
             args.catalog.resolve(), args.guide.resolve(), args.output.resolve()
         )
         print(f"wrote blind review packet to {args.output}")
+    elif args.command == "validate":
+        resolution = validate_review(args.review.resolve(), args.catalog.resolve())
+        retained = sum(resolved is not None for resolved in resolution.values())
+        print(f"reviewed catalog verified: {retained} retained of {len(resolution)} cases")
     else:
         comparison = compare_annotations(
             args.packet.resolve(), args.first.resolve(), args.second.resolve()

@@ -724,6 +724,22 @@ pub struct DivisionMetadataRow {
     pub end_sentence: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParagraphRange {
+    pub id: u64,
+    pub sentences: std::ops::Range<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentenceReadingRanges {
+    pub document_id: DocumentId,
+    pub document: std::ops::Range<u64>,
+    pub paragraphs: Vec<ParagraphRange>,
+}
+
+// CROSS JOIN keeps the hit's bounded membership list before primary-key lookups.
+const READING_PARAGRAPHS_QUERY: &str = "SELECT d.division_id,d.document_id,d.first_sentence,d.end_sentence FROM sentence_provenance sp CROSS JOIN json_each(sp.division_ids_json) ids CROSS JOIN divisions d WHERE sp.sentence_id=? AND d.division_id=ids.value AND d.kind='paragraph' ORDER BY d.division_id LIMIT ?";
+
 pub struct ProvenanceView {
     pool: SqlitePool,
     analysis_identity: AnalysisIdentity,
@@ -2061,17 +2077,35 @@ impl ProvenanceView {
         &self,
         sentence: SentenceId,
     ) -> Result<StoredSentenceAnalysis, CorpusError> {
+        self.sentence_analysis_bounded(sentence, usize::MAX)
+            .await?
+            .ok_or_else(|| invalid("sentence analysis exceeds its fixed bound"))
+    }
+
+    /// Returns `None` before decompression when the encoded or decoded analysis
+    /// exceeds `limit` bytes. A missing sentence remains an error.
+    pub async fn sentence_analysis_bounded(
+        &self,
+        sentence: SentenceId,
+        limit: usize,
+    ) -> Result<Option<StoredSentenceAnalysis>, CorpusError> {
         let row = sqlx::query(
-            "SELECT analysis_blob, input_unit_id, input_kind, normalization,
+            "SELECT CASE WHEN length(analysis_blob)<=? THEN analysis_blob END AS analysis_blob, input_unit_id, input_kind, normalization,
                     input_identity, source_start, source_end
              FROM sentence_provenance WHERE sentence_id=?",
         )
+        .bind(i64::try_from(limit.saturating_add(25)).unwrap_or(i64::MAX))
         .bind(sqlite_integer(sentence.get(), "sentence ID")?)
         .fetch_one(&self.pool)
         .await
         .map_err(database)?;
-        let artifact: Vec<u8> = row.try_get("analysis_blob").map_err(database)?;
-        let decoded = candidate::decode(&artifact)?;
+        let artifact: Option<Vec<u8>> = row.try_get("analysis_blob").map_err(database)?;
+        let Some(artifact) = artifact else {
+            return Ok(None);
+        };
+        let Some(decoded) = candidate::decode_bounded(&artifact, limit)? else {
+            return Ok(None);
+        };
         let [stored] = decoded.as_slice() else {
             return Err(invalid("sentence analysis has wrong cardinality"));
         };
@@ -2114,7 +2148,7 @@ impl ProvenanceView {
             ),
             _ => return Err(invalid("stored source range is incomplete")),
         };
-        Ok(StoredSentenceAnalysis {
+        Ok(Some(StoredSentenceAnalysis {
             text: stored.text.clone(),
             surfaces: stored
                 .surfaces
@@ -2134,6 +2168,76 @@ impl ProvenanceView {
             normalization,
             input_identity,
             source_range,
+        }))
+    }
+
+    /// Indexed lookup of the owning document and authored paragraphs containing
+    /// `sentence`. No query-scope filtering or paragraph inference is applied.
+    pub async fn reading_ranges(
+        &self,
+        sentence: SentenceId,
+    ) -> Result<SentenceReadingRanges, CorpusError> {
+        let ordinal = sqlite_integer(sentence.get(), "sentence ID")?;
+        let row = sqlx::query("SELECT dm.document_id,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id=?")
+            .bind(ordinal).fetch_one(&self.pool).await.map_err(database)?;
+        let document_id = DocumentId::new(sqlite_u64(
+            row.try_get("document_id").map_err(database)?,
+            "document ID",
+        )?);
+        let first = sqlite_u64(
+            row.try_get("first_sentence").map_err(database)?,
+            "document start",
+        )?;
+        let count = sqlite_u64(
+            row.try_get("sentence_count").map_err(database)?,
+            "document count",
+        )?;
+        let end = first
+            .checked_add(count)
+            .filter(|end| *end <= self.sentence_count)
+            .ok_or_else(|| invalid("document reading range is invalid"))?;
+        if !(first..end).contains(&sentence.get()) {
+            return Err(invalid("sentence is outside its document"));
+        }
+        let rows = sqlx::query(READING_PARAGRAPHS_QUERY)
+            .bind(ordinal)
+            .bind((lingrep_core::corpus::divisions::MAX_ACTIVE_DIVISIONS + 1) as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database)?;
+        if rows.len() > lingrep_core::corpus::divisions::MAX_ACTIVE_DIVISIONS {
+            return Err(invalid("too many active paragraphs"));
+        }
+        let mut paragraphs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id = sqlite_u64(row.try_get("division_id").map_err(database)?, "division ID")?;
+            let owner = sqlite_u64(row.try_get("document_id").map_err(database)?, "document ID")?;
+            let start = sqlite_u64(
+                row.try_get("first_sentence").map_err(database)?,
+                "paragraph start",
+            )?;
+            let stop = sqlite_u64(
+                row.try_get("end_sentence").map_err(database)?,
+                "paragraph end",
+            )?;
+            if owner != document_id.get()
+                || start < first
+                || stop > end
+                || !(start..stop).contains(&sentence.get())
+            {
+                return Err(invalid(
+                    "paragraph crosses its owning document or excludes its sentence",
+                ));
+            }
+            paragraphs.push(ParagraphRange {
+                id,
+                sentences: start..stop,
+            });
+        }
+        Ok(SentenceReadingRanges {
+            document_id,
+            document: first..end,
+            paragraphs,
         })
     }
 
@@ -2234,6 +2338,65 @@ impl ProvenanceView {
                     )
                     .map(Arc::new)
                     .map_err(CorpusError::Io)
+            })
+            .collect()
+    }
+
+    /// Evaluates section inclusion for at most `MAX_PROVENANCE_PAGE_SIZE` sentence IDs.
+    /// Output follows input order; missing sentences and oversized stored label data are errors.
+    pub async fn section_admissions(
+        &self,
+        sentences: &[SentenceId],
+        included: Option<&[String]>,
+        include_unlabelled: bool,
+    ) -> Result<Vec<bool>, CorpusError> {
+        if sentences.len() > crate::MAX_PROVENANCE_PAGE_SIZE {
+            return Err(CorpusError::ProvenancePageCapacity {
+                limit: crate::MAX_PROVENANCE_PAGE_SIZE,
+            });
+        }
+        let ids = sentences
+            .iter()
+            .map(|id| sqlite_integer(id.get(), "sentence ID"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids = serde_json::to_string(&ids).map_err(|error| invalid(error.to_string()))?;
+        let all_sections = included.is_none();
+        let included = serde_json::to_string(included.unwrap_or_default())
+            .map_err(|error| invalid(error.to_string()))?;
+        let rows = sqlx::query(
+            r#"
+            WITH requested(position,sentence_id) AS (
+                SELECT CAST(key AS INTEGER), CAST(value AS INTEGER) FROM json_each(?)
+            )
+            SELECT sp.sentence_id,
+                CASE WHEN length(CAST(sp.region_labels_json AS BLOB))<=16777216 THEN
+                    CASE WHEN json_array_length(sp.region_labels_json)=0 THEN ?
+                    ELSE (? OR EXISTS (
+                        SELECT 1 FROM json_each(sp.region_labels_json) label
+                        JOIN json_each(?) included ON included.value=label.value
+                    )) END
+                END AS admitted
+            FROM requested
+            LEFT JOIN sentence_provenance sp ON sp.sentence_id=requested.sentence_id
+            ORDER BY requested.position
+        "#,
+        )
+        .bind(ids)
+        .bind(include_unlabelled)
+        .bind(all_sections)
+        .bind(included)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(database)?;
+        rows.into_iter()
+            .map(|row| {
+                let id: Option<i64> = row.try_get("sentence_id").map_err(database)?;
+                if id.is_none() {
+                    return Err(invalid("scope sentence is missing"));
+                }
+                row.try_get::<Option<bool>, _>("admitted")
+                    .map_err(database)?
+                    .ok_or_else(|| invalid("scope labels exceed their byte limit"))
             })
             .collect()
     }
@@ -2426,32 +2589,39 @@ impl ProvenanceView {
         Ok(spans)
     }
 
-    /// Every span, in `span_id` order, streamed rather than collected.
-    ///
-    /// `span_id` is assigned when a span **opens** — by the private
-    /// `ProvenanceWriter::open_region` — and spans open as the sentence cursor
-    /// advances, so this is already `first_sentence` order and is a primary-key
-    /// scan: no sort, and so no temp space proportional to span count. Rows are *inserted* at close
-    /// time, out of that order; only the read order matters.
-    ///
-    /// The contract is the reader's to check: a consumer must refuse a
-    /// decreasing `first_sentence` rather than miscount. It is not a schema
-    /// property, so a database that violates it is detected here rather than
-    /// prevented, and `lingrep-web`'s span sweep is the consumer that does so.
-    ///
-    /// Streams because a corpus's span table is `documents × labels` rows and
-    /// materializing it exceeds what a scan may hold transiently.
+    /// Yields spans in span-ID order from pages of at most 256 rows.
+    /// Releases the database connection before yielding a page's rows.
+    /// Callers must reject decreasing sentence starts; span-ID order is not a schema guarantee.
     pub fn region_spans_in_span_order(
         &self,
     ) -> impl futures::Stream<Item = Result<RegionSpanRow, CorpusError>> + Send + '_ {
-        use futures::StreamExt as _;
-
-        sqlx::query("SELECT label, first_sentence, end_sentence FROM region_spans ORDER BY span_id")
-            .fetch(&self.pool)
-            .map(|row| {
-                let row = row.map_err(database)?;
-                Ok(RegionSpanRow {
-                    label: row.try_get("label").map_err(database)?,
+        let rows = futures::stream::try_unfold(
+            (Some(i64::MIN), std::collections::VecDeque::new()),
+            move |(mut next, mut buffered): (
+                Option<i64>,
+                std::collections::VecDeque<sqlx::sqlite::SqliteRow>,
+            )| async move {
+                if buffered.is_empty() {
+                    let Some(first) = next else {
+                        return Ok(None);
+                    };
+                    let page = sqlx::query("SELECT span_id,CASE WHEN length(CAST(label AS BLOB))<=65536 THEN label END AS label,first_sentence,end_sentence FROM region_spans WHERE span_id>=? ORDER BY span_id LIMIT 256")
+                        .bind(first).fetch_all(&self.pool).await.map_err(database)?;
+                    let Some(last) = page.last() else {
+                        return Ok(None);
+                    };
+                    next = last
+                        .try_get::<i64, _>("span_id")
+                        .map_err(database)?
+                        .checked_add(1);
+                    buffered = page.into();
+                }
+                let Some(row) = buffered.pop_front() else {
+                    return Ok(None);
+                };
+                let label: Option<String> = row.try_get("label").map_err(database)?;
+                let span = RegionSpanRow {
+                    label: label.ok_or_else(|| invalid("region label exceeds 64 KiB"))?,
                     first_sentence: sqlite_u64(
                         row.try_get("first_sentence").map_err(database)?,
                         "region span start",
@@ -2460,8 +2630,11 @@ impl ProvenanceView {
                         row.try_get("end_sentence").map_err(database)?,
                         "region span end",
                     )?,
-                })
-            })
+                };
+                Ok(Some((span, (next, buffered))))
+            },
+        );
+        Box::pin(rows)
     }
 
     /// Aggregates section spans with an explicit result-cardinality bound.

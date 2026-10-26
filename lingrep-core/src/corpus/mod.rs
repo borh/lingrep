@@ -13,6 +13,7 @@ pub mod section_policy;
 pub mod soranoha;
 pub mod source;
 pub mod structured;
+pub mod tei;
 pub mod text_source;
 pub mod zip;
 

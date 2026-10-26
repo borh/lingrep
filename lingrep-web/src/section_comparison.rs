@@ -184,7 +184,7 @@ impl SectionComparison {
 /// `value / total * factor`, rounded to nearest, saturating, and `0` when
 /// there is no denominator. Kept in one place because the two callers differ
 /// only in `factor` and an inconsistency between them would be invisible.
-fn scale(value: u64, total: u64, factor: u64) -> u64 {
+pub(crate) fn scale(value: u64, total: u64, factor: u64) -> u64 {
     if total == 0 {
         return 0;
     }
@@ -196,7 +196,7 @@ fn scale(value: u64, total: u64, factor: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::section_tally::{SpanEvent, SpanEvents, build};
-    use crate::snapshot::PatternKey;
+    use crate::snapshot::{PatternKey, PatternOrigin};
 
     fn descriptor(index: usize, name: &str) -> PatternDescriptor {
         PatternDescriptor {
@@ -204,6 +204,7 @@ mod tests {
             name: name.into(),
             exact_total: 0,
             metadata: Box::default(),
+            origin: PatternOrigin::Authored { chained_total: 0 },
         }
     }
 

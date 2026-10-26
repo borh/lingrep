@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}lingrep-web{% endblock %}</title>
+    <link rel="icon" href="data:,">
+    <script defer src="assets/vendor/htmx.min.js"></script>
+    <script defer src="assets/vendor/htmx-ext-sse.min.js"></script>
+    {# A module, not a `defer` classic script: app.js exports `shouldRunOnReady`
+       so the guard is unit-testable, and `export` is a syntax error in a classic
+       script. A module is deferred by default and still executes after the two
+       `defer` scripts above, so htmx is loaded before any listener registers. #}
+    <script type="module" src="assets/app.js"></script>
+    <script type="module" src="assets/results-explorer.js"></script>
+    <script type="module" src="assets/i18n.js"></script>
+    {% block head %}{% endblock %}
+    <link rel="stylesheet" href="assets/app.css">
+</head>
+<body hx-ext="sse">
+    {% include "partials/nav.html" %}
+    <main>{% block content %}{% endblock %}</main>
+    <dialog id="site-help" class="site-help-dialog" data-site-help aria-labelledby="site-help-title">
+      <header class="site-help-header">
+        <h2 id="site-help-title" data-i18n="nav.help">Help</h2>
+        <form method="dialog"><button type="submit" class="btn btn-secondary" autofocus data-site-help-close data-i18n="editor.help_close">Close</button></form>
+      </header>
+      <div class="site-help-content"><div class="site-help-document">
+        {% include "partials/help_content.html" %}
+      </div></div>
+    </dialog>
+</body>
+</html>

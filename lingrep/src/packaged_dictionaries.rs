@@ -139,6 +139,7 @@ pub struct Installed {
 /// Downloads `dictionary` into `directory` and checks its digest, unless the
 /// file is already there with that digest.
 pub fn install(dictionary: PackagedDictionary, directory: &Path) -> Result<Installed, CliError> {
+    install_license_notices(dictionary, directory)?;
     let path = directory.join(dictionary.file_name);
     if path.is_file() {
         let (bytes, digest) = digest_file(&path).map_err(|error| io_error(&path, &error))?;
@@ -166,6 +167,44 @@ pub fn install(dictionary: PackagedDictionary, directory: &Path) -> Result<Insta
         bytes,
         already_present: false,
     })
+}
+
+fn install_license_notices(
+    dictionary: PackagedDictionary,
+    directory: &Path,
+) -> Result<(), CliError> {
+    let readme = match dictionary.name {
+        "cwj" => include_str!("../../nix/dictionary-licenses/cwj/README.md"),
+        "csj" => include_str!("../../nix/dictionary-licenses/csj/README.md"),
+        "novel" => include_str!("../../nix/dictionary-licenses/novel/README.md"),
+        "qkana" => include_str!("../../nix/dictionary-licenses/qkana/README.md"),
+        "kindai-bungo" => include_str!("../../nix/dictionary-licenses/kindai-bungo/README.md"),
+        "kinsei-edo" => include_str!("../../nix/dictionary-licenses/kinsei-edo/README.md"),
+        "kinsei-bungo" => include_str!("../../nix/dictionary-licenses/kinsei-bungo/README.md"),
+        name => return Err(CliError::Dictionary(format!("unknown dictionary: {name}"))),
+    };
+    let notices = directory.join("licenses").join(dictionary.name);
+    fs::create_dir_all(&notices).map_err(|error| io_error(&notices, &error))?;
+    let readme_path = notices.join("README.md");
+    fs::write(&readme_path, readme).map_err(|error| io_error(&readme_path, &error))?;
+    if matches!(dictionary.name, "cwj" | "csj") {
+        for (name, text) in [
+            ("BSD", include_str!("../../nix/dictionary-licenses/cwj/BSD")),
+            (
+                "COPYING",
+                include_str!("../../nix/dictionary-licenses/cwj/COPYING"),
+            ),
+            ("GPL", include_str!("../../nix/dictionary-licenses/cwj/GPL")),
+            (
+                "LGPL",
+                include_str!("../../nix/dictionary-licenses/cwj/LGPL"),
+            ),
+        ] {
+            let path = notices.join(name);
+            fs::write(&path, text).map_err(|error| io_error(&path, &error))?;
+        }
+    }
+    Ok(())
 }
 
 /// Decompresses the zstd stream `compressed` to `path`, replacing it only when
@@ -369,6 +408,35 @@ mod tests {
 
         assert!(error.to_string().contains("interrupted"), "{error}");
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn reinstall_restores_license_notices_without_downloading_the_dictionary() {
+        let directory = tempfile::tempdir().unwrap();
+        let content = b"installed dictionary";
+        let digest = Box::leak(blake3::hash(content).to_hex().to_string().into_boxed_str());
+        for mut dictionary in DICTIONARIES {
+            dictionary.blake3 = digest;
+            let path = directory.path().join(dictionary.file_name);
+            fs::write(&path, content).unwrap();
+
+            assert!(
+                install(dictionary, directory.path())
+                    .unwrap()
+                    .already_present
+            );
+
+            let notices = directory.path().join("licenses").join(dictionary.name);
+            let readme = fs::read_to_string(notices.join("README.md")).unwrap();
+            assert!(readme.contains("2025.12"));
+            if matches!(dictionary.name, "cwj" | "csj") {
+                for file in ["BSD", "COPYING", "GPL", "LGPL"] {
+                    assert!(fs::metadata(notices.join(file)).unwrap().len() > 0);
+                }
+            } else {
+                assert!(readme.contains("https://creativecommons.org/licenses/by-nc-sa/4.0/"));
+            }
+        }
     }
 
     #[test]

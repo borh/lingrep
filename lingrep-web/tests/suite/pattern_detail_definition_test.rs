@@ -18,7 +18,7 @@
 use askama::Template;
 use lingrep_web::{
     pattern_detail::{PatternDetailProjection, RetainedHitText},
-    patterns::expand_web_pattern,
+    patterns::{expand_compound_pattern, expand_web_pattern},
     templates::{PatternDefinitionView, PatternDetailFragment},
 };
 
@@ -36,6 +36,7 @@ fn render(definition: Option<PatternDefinitionView>) -> String {
         key: "鍵".into(),
         right: "右".into(),
         section_labels: Box::from([]),
+        in_chain: false,
     }];
     let sections = lingrep_web::pattern_detail::sample_sections(&hits);
     let projection = PatternDetailProjection::new(
@@ -45,6 +46,9 @@ fn render(definition: Option<PatternDefinitionView>) -> String {
     );
     PatternDetailFragment {
         definition,
+        chains: None,
+        chained: None,
+        documents: None,
         pattern_name: "ことが知られている",
         exact_total_label: "1".into(),
         exact_total: 1,
@@ -130,7 +134,21 @@ fn an_absent_definition_keeps_surface_variations_and_the_rest_of_the_pane() {
 
 #[test]
 fn compound_pattern_concatenates_declarations_expansions_and_diagram() {
-    let html = render(Some(view("複合項目〔ことが知られている ＋ 単独〕")));
+    let expansion = expand_compound_pattern(
+        CATALOG,
+        "複合項目〔ことが知られている ＋ 単独〕",
+        &["ことが知られている", "単独"],
+    )
+    .expect("the fixture catalog expands")
+    .expect("both components are definitions");
+    let html = render(Some(PatternDefinitionView {
+        declaration: expansion.declaration,
+        expanded: expansion.expanded,
+        references: expansion.references.into_vec(),
+        diagram: expansion
+            .diagram
+            .map(lingrep_web::templates::TrustedFragmentHtml::from_rendered),
+    }));
 
     assert!(html.contains("data-definition-band"), "{html}");
     assert!(

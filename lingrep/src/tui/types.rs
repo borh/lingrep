@@ -104,32 +104,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_request_id_equality() {
-        let id1 = RequestId(1);
-        let id2 = RequestId(1);
-        let id3 = RequestId(2);
-
-        assert_eq!(id1, id2);
-        assert_ne!(id1, id3);
-    }
-
-    #[test]
-    fn test_pattern_id_equality() {
-        let id1 = PatternId(1);
-        let id2 = PatternId(1);
-        let id3 = PatternId(2);
-
-        assert_eq!(id1, id2);
-        assert_ne!(id1, id3);
-    }
-
-    #[test]
-    fn test_load_status_default() {
-        let status = LoadStatus::default();
-        assert_eq!(status, LoadStatus::Idle);
-    }
-
-    #[test]
     fn test_tab_cycle() {
         assert_eq!(Tab::Frequencies.next(), Tab::Surface);
         assert_eq!(Tab::Surface.next(), Tab::Context);

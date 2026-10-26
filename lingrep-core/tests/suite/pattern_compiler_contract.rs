@@ -716,7 +716,7 @@ fn catalog_fingerprint(source: String, output: &CompileOutput) -> CatalogFingerp
                     .map(|(key, value)| {
                         (
                             key.to_string(),
-                            serde_yaml::to_string(&canonical_metadata(value))
+                            serde_saphyr::to_string(&canonical_metadata(value))
                                 .expect("metadata value serializes"),
                         )
                     })
@@ -978,10 +978,7 @@ const PINNED_DEFINITION_COUNTS: &[(&str, usize)] = &[
     // `token` denominator. Keys and captures add no definitions.
     ("patterns/comment-register.lx", 13),
     ("patterns/ngrams.lx", 5),
-    // One emitting pattern. The four captures and the three-op transform
-    // add no definitions, and the three sets are values rather than
-    // definitions.
-    ("patterns/npv-collocation.lx", 1),
+    ("patterns/npv-collocation.lx", 2),
     // Two emitting surface orders over one passive-agent relation.
     ("patterns/passive-agent-dep.lx", 2),
     // Three mutually exclusive evidence arms, each split into a
@@ -2018,6 +2015,567 @@ fn anonymous_dependency_edges_classify_heads_once() {
 }
 
 #[test]
+fn negative_captured_edges_filter_only_the_bound_pair_and_labels() {
+    for (head, relation, labels, accepted) in [
+        ("1", "obj", "obj", false),
+        ("3", "obj", "obj", true),
+        ("1", "obl", "obj", true),
+        ("1", "obl:tmod", "obj|obl:*", false),
+        ("1", "obl", "obj|obl:*", true),
+        ("1", "obl", "*", false),
+        ("3", "obl", "*", true),
+    ] {
+        let pattern = format!(
+            "pattern p := ^ (?<h> []) (?<d> []) [] $ \
+             where not $h -[{labels}]-> $d."
+        );
+        let matcher = compile_catalog(
+            PatternSource::named("negative-captured.lx", &pattern),
+            CompileLimits::default(),
+        )
+        .expect("a negative edge between captured endpoints compiles")
+        .matcher;
+        let bound = matcher
+            .bind(&lingrep_core::corpus::conllu::token_schema())
+            .unwrap();
+        let source = format!(
+            "1\th\th\tVERB\t_\t_\t0\troot\t_\t_\n\
+             2\td\td\tNOUN\t_\t_\t{head}\t{relation}\t_\t_\n\
+             3\tother\tother\tNOUN\t_\t_\t1\tobj\t_\t_\n"
+        );
+        let expected = if accepted {
+            vec![with_captures(
+                full_match("p", 0, 3),
+                &[("h", 0, 1), ("d", 1, 2)],
+            )]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            bound
+                .find_matches(&conllu_sentence(&source, &bound))
+                .unwrap(),
+            expected,
+            "head={head}, relation={relation}, labels={labels}"
+        );
+    }
+}
+
+#[test]
+fn negative_captured_edges_require_complete_basic_observations() {
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "negative-captured-observation.lx",
+            "pattern p := ^ (?<h> []) (?<d> []) [] $ where not $h -[*]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let sentence = conllu_sentence(
+        "1\th\th\tVERB\t_\t_\t0\troot\t_\t_\n\
+         2\td\td\tNOUN\t_\t_\t3\tobj\t_\t_\n\
+         3\tother\tother\tNOUN\t_\t_\t1\tobj\t_\t_\n",
+        &bound,
+    );
+    assert_eq!(
+        bound.find_matches(&sentence).unwrap(),
+        vec![with_captures(
+            full_match("p", 0, 3),
+            &[("h", 0, 1), ("d", 1, 2)]
+        )],
+    );
+    for index in 0..3 {
+        for (key, value) in [
+            ("dep.head", None),
+            ("dep.head", Some("_")),
+            ("dep.head", Some("bad")),
+            ("dep.head", Some("4")),
+            ("dep.rel", None),
+            ("dep.rel", Some("_")),
+            ("dep.rel", Some("")),
+        ] {
+            let incomplete =
+                replace_projected_scalar(&sentence, bound.projection(), index, key, value);
+            assert!(
+                bound.find_matches(&incomplete).unwrap().is_empty(),
+                "index={index}, key={key}, value={value:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn negative_captured_edges_filter_before_longest_selection_in_either_clause_order() {
+    for clause in [
+        "not $h -[obj]-> $d, $h -[other]-> _",
+        "$h -[other]-> _, not $h -[obj]-> $d",
+    ] {
+        let source =
+            format!("pattern p := ^ (?<h> [text=h]) []* (?<d> [upos=NOUN]) where {clause}.");
+        let matcher = compile_catalog(
+            PatternSource::named("negative-before-longest.lx", &source),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let bound = matcher
+            .bind(&lingrep_core::corpus::conllu::token_schema())
+            .unwrap();
+        let sentence = conllu_sentence(
+            "1\th\th\tVERB\t_\t_\t0\troot\t_\t_\n\
+             2\tfirst\tfirst\tNOUN\t_\t_\t3\tobj\t_\t_\n\
+             3\tmiddle\tmiddle\tADV\t_\t_\t1\tother\t_\t_\n\
+             4\tsecond\tsecond\tNOUN\t_\t_\t1\tobj\t_\t_\n",
+            &bound,
+        );
+        assert_eq!(
+            bound.find_matches(&sentence).unwrap(),
+            vec![with_captures(
+                full_match("p", 0, 2),
+                &[("h", 0, 1), ("d", 1, 2)]
+            )],
+        );
+    }
+}
+
+#[hegel::test(test_cases = 300, derandomize = true)]
+fn negative_captured_edges_match_an_independent_edge_model(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let raw_heads = tc.draw(g::vecs(g::integers::<u8>()).max_size(12));
+    let count = raw_heads.len();
+    let query = tc.draw(g::sampled_from(vec![
+        "obj",
+        "obl:*",
+        "obj|obl:*",
+        "@ROLE",
+        "*",
+    ]));
+    let padded = tc.draw(g::booleans());
+    let observations = raw_heads
+        .iter()
+        .map(|raw| {
+            let head = usize::from(*raw) % (count + 1);
+            let label = if tc.draw(g::booleans()) {
+                tc.draw(g::sampled_from(vec![
+                    "obj",
+                    "obj:agent",
+                    "obl",
+                    "obl:tmod",
+                    "xobj",
+                    "root",
+                    "_",
+                ]))
+                .to_owned()
+            } else {
+                tc.draw(g::text().max_size(24))
+            };
+            (
+                Some(if padded {
+                    format!("{head:03}")
+                } else {
+                    head.to_string()
+                }),
+                Some(label),
+            )
+        })
+        .collect::<Vec<_>>();
+    let pattern = format!(
+        "set ROLE := {{obj, obl:tmod}}. pattern p := ^ (?<h> []) (?<d> []) []* $ \
+         where not $h -[{query}]-> $d."
+    );
+    let mut builder = FsmBuilder::new();
+    builder
+        .add_document(PatternSource::named("generated-negative.lx", &pattern))
+        .unwrap();
+    let matcher = builder.build().unwrap().matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let words = projected_dependency_observations(&bound, &observations);
+    let usable = observations.iter().all(|(_, label)| {
+        label
+            .as_deref()
+            .is_some_and(|label| !label.is_empty() && label != "_")
+    });
+    let forbidden = count >= 2 && usize::from(raw_heads[1]) % (count + 1) == 1 && {
+        let label = observations[1].1.as_deref().unwrap();
+        match query {
+            "obj" => label == "obj",
+            "obl:*" => label.starts_with("obl:") && label.len() > 4,
+            "obj|obl:*" => label == "obj" || (label.starts_with("obl:") && label.len() > 4),
+            "@ROLE" => label == "obj" || label == "obl:tmod",
+            "*" => true,
+            _ => unreachable!(),
+        }
+    };
+    let expected = if count >= 2 && usable && !forbidden {
+        vec![with_captures(
+            full_match("p", 0, count),
+            &[("h", 0, 1), ("d", 1, 2)],
+        )]
+    } else {
+        vec![]
+    };
+    assert_eq!(matcher.find_matches(&words), expected);
+    assert_eq!(bound.find_matches(&words).unwrap(), expected);
+    let input = BoundSentenceInput::new(words, EnhancedGraphInput::NotRequested);
+    assert_eq!(bound.find_matches_input(&input).unwrap(), expected);
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn unusable_dependency_values_anywhere_prevent_captured_absence(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let count = tc
+        .draw(g::vecs(g::booleans()).min_size(2).max_size(12))
+        .len();
+    let index = tc.draw(g::integers::<usize>().max_value(count - 1));
+    let (key, replacement) = tc.draw(g::sampled_from(vec![
+        ("dep.head", None),
+        ("dep.head", Some("")),
+        ("dep.head", Some("_")),
+        ("dep.head", Some("-1")),
+        ("dep.head", Some("1.0")),
+        ("dep.head", Some(" 1")),
+        ("dep.head", Some("340282366920938463463374607431768211455")),
+        ("dep.rel", None),
+        ("dep.rel", Some("")),
+        ("dep.rel", Some("_")),
+    ]));
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "generated-unknown.lx",
+            "pattern p := ^ (?<h> []) (?<d> []) where not $h -[*]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let observations = vec![(Some("0".to_owned()), Some("root".to_owned())); count];
+    let words = projected_dependency_observations(&bound, &observations);
+    let words = if tc.draw(g::booleans()) {
+        replace_projected_scalar(&words, bound.projection(), index, key, replacement)
+    } else {
+        replace_projected_scalar(
+            &words,
+            bound.projection(),
+            index,
+            "dep.head",
+            Some(&(count + 1).to_string()),
+        )
+    };
+    assert_eq!(bound.find_matches(&words).unwrap(), Vec::<Match>::new());
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn captured_absence_uses_the_final_repeated_assignment(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let linked = tc.draw(g::vecs(g::booleans()).min_size(1).max_size(7));
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "generated-final-assignment.lx",
+            "pattern p := ^ (?<h> []) (?<d> [])+ $ where not $h -[obj]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let mut observations = vec![(Some("0".to_owned()), Some("root".to_owned()))];
+    observations.extend(linked.iter().map(|linked| {
+        (
+            Some(if *linked { "1" } else { "0" }.to_owned()),
+            Some("obj".to_owned()),
+        )
+    }));
+    let words = projected_dependency_observations(&bound, &observations);
+    let count = observations.len();
+    let expected = if *linked.last().unwrap() {
+        vec![]
+    } else {
+        vec![with_captures(
+            full_match("p", 0, count),
+            &[("h", 0, 1), ("d", count - 1, count)],
+        )]
+    };
+    assert_eq!(bound.find_matches(&words).unwrap(), expected);
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn captured_absence_retains_a_passing_assignment_at_the_same_span(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let linked = tc.draw(g::vecs(g::booleans()).min_size(1).max_size(7));
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "generated-competing-assignments.lx",
+            "pattern p := ^ (?<h> []) ((?<d> []) | [])+ $ where not $h -[obj]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let mut observations = vec![(Some("0".to_owned()), Some("root".to_owned()))];
+    observations.extend(linked.iter().map(|linked| {
+        (
+            Some(if *linked { "1" } else { "0" }.to_owned()),
+            Some("obj".to_owned()),
+        )
+    }));
+    let words = projected_dependency_observations(&bound, &observations);
+    let expected = linked
+        .iter()
+        .rposition(|linked| !linked)
+        .map_or_else(Vec::new, |last| {
+            vec![with_captures(
+                full_match("p", 0, observations.len()),
+                &[("h", 0, 1), ("d", last + 1, last + 2)],
+            )]
+        });
+    assert_eq!(bound.find_matches(&words).unwrap(), expected);
+}
+
+#[hegel::test(test_cases = 100, derandomize = true)]
+fn captured_absence_requires_both_optional_operands_to_bind(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let linked = tc.draw(g::vecs(g::booleans()).max_size(5));
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "generated-optional-operands.lx",
+            "pattern p := ^ (?<h> [])? (?<d> [])? [] $ where not $h -[obj]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let observations = linked
+        .iter()
+        .map(|linked| {
+            (
+                Some(if *linked { "1" } else { "0" }.to_owned()),
+                Some("obj".to_owned()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let words = projected_dependency_observations(&bound, &observations);
+    let expected = if linked.len() == 3 && !linked[1] {
+        vec![with_captures(
+            full_match("p", 0, 3),
+            &[("h", 0, 1), ("d", 1, 2)],
+        )]
+    } else {
+        vec![]
+    };
+    assert_eq!(bound.find_matches(&words).unwrap(), expected);
+}
+
+#[hegel::test(test_cases = 60, derandomize = true)]
+fn bound_sentence_batches_preserve_captured_absence_and_sentence_order(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let linked = tc.draw(g::vecs(g::booleans()).max_size(16));
+    let threads = tc.draw(g::integers::<usize>().min_value(1).max_value(4));
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "negative-batch.lx",
+            "pattern p := ^ (?<h> []) (?<d> []) $ where not $h -[obj]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let inputs = linked
+        .iter()
+        .map(|linked| {
+            let values = [
+                (Some("0".to_owned()), Some("root".to_owned())),
+                (
+                    Some(if *linked { "1" } else { "0" }.to_owned()),
+                    Some("obj".to_owned()),
+                ),
+            ];
+            BoundSentenceInput::new(
+                projected_dependency_observations(&bound, &values),
+                EnhancedGraphInput::NotRequested,
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected = linked
+        .iter()
+        .map(|linked| {
+            if *linked {
+                vec![]
+            } else {
+                vec![with_captures(
+                    full_match("p", 0, 2),
+                    &[("h", 0, 1), ("d", 1, 2)],
+                )]
+            }
+        })
+        .collect::<Vec<_>>();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .unwrap();
+    assert_eq!(
+        lingrep_core::fsm::BoundSentenceMatcher::new(&bound)
+            .match_all(&pool, &inputs)
+            .unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn captured_negative_labels_do_not_exclude_other_positive_dependents() {
+    let pattern = "pattern p := ^ (?<h> []) (?<d> []) (?<other> []) $ where \
+        $h -[obj]-> $d, not $h -[obl]-> $d, not $h -[obj]-> $other.";
+    let matcher = compile_catalog(
+        PatternSource::named("negative-pair-scope.lx", pattern),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let words = conllu_sentence(
+        "1\th\th\tVERB\t_\t_\t0\troot\t_\t_\n\
+        2\td\td\tNOUN\t_\t_\t1\tobj\t_\t_\n\
+        3\tother\tother\tVERB\t_\t_\t0\troot\t_\t_\n",
+        &bound,
+    );
+    assert_eq!(
+        bound.find_matches(&words).unwrap(),
+        vec![with_captures(
+            full_match("p", 0, 3),
+            &[("h", 0, 1), ("d", 1, 2), ("other", 2, 3)]
+        )]
+    );
+}
+
+#[test]
+fn captured_negative_polarity_participates_in_drift_but_clause_order_does_not() {
+    let first = "pattern p := (?<h> []) (?<d> []) where not $h -[obj]-> $d, not $h -[obl]-> $d.";
+    let reordered =
+        "pattern p := (?<h> []) (?<d> []) where not $h -[obl]-> $d, not $h -[obj]-> $d.";
+    let same = report_catalog_drift(&[
+        PatternSource::named("first.lx", first),
+        PatternSource::named("second.lx", reordered),
+    ])
+    .unwrap();
+    assert!(same.entries.is_empty());
+    let different = report_catalog_drift(&[
+        PatternSource::named(
+            "positive.lx",
+            "pattern p := (?<h> []) (?<d> []) where $h -[obj]-> $d.",
+        ),
+        PatternSource::named(
+            "negative.lx",
+            "pattern p := (?<h> []) (?<d> []) where not $h -[obj]-> $d.",
+        ),
+    ])
+    .unwrap();
+    assert_eq!(different.entries.len(), 1);
+}
+
+#[test]
+fn captured_absence_validation_scales_linearly_with_sentence_length() {
+    struct CountedWords<'a> {
+        words: &'a BoundTokenSentence,
+        reads: std::cell::Cell<usize>,
+    }
+    impl TokenSequence for CountedWords<'_> {
+        fn len(&self) -> usize {
+            self.words.len()
+        }
+        fn get(
+            &self,
+            token: usize,
+            attribute: TokenAttributeIndex,
+        ) -> Option<&compact_str::CompactString> {
+            TokenSequence::get(self.words, token, attribute)
+        }
+        fn value_key(&self, token: usize, key: &AttributeKey) -> Option<AttributeValueRef<'_>> {
+            self.reads.set(self.reads.get() + 1);
+            self.words.value_key(token, key)
+        }
+    }
+    let matcher = compile_catalog(
+        PatternSource::named(
+            "negative-scale.lx",
+            "pattern p := (?<h> []) (?<d> []) where not $h -[*]-> $d.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap()
+    .matcher;
+    let bound = matcher
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let measure = |count: usize| {
+        let values = vec![(Some("0".to_owned()), Some("root".to_owned())); count];
+        let words = projected_dependency_observations(&bound, &values);
+        let counted = CountedWords {
+            words: &words,
+            reads: std::cell::Cell::new(0),
+        };
+        let expected = (0..count - 1)
+            .map(|start| {
+                with_captures(
+                    full_match("p", start, start + 2),
+                    &[("h", start, start + 1), ("d", start + 1, start + 2)],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matcher.find_matches(&counted), expected);
+        counted.reads.get()
+    };
+    let small = measure(128);
+    let large = measure(256);
+    assert!(
+        small > 0 && large <= small * 3,
+        "doubling the sentence must not quadruple dependency reads: {small} -> {large}"
+    );
+    measure(100_000);
+}
+
+fn projected_dependency_observations(
+    bound: &lingrep_core::fsm::BoundCatalog,
+    observations: &[(Option<String>, Option<String>)],
+) -> BoundTokenSentence {
+    let values = observations
+        .iter()
+        .flat_map(|(head, label)| {
+            bound.projection().keys().iter().map(move |key| {
+                match key.as_str() {
+                    "dep.head" => head.as_deref(),
+                    "dep.rel" => label.as_deref(),
+                    key => panic!("unexpected projection key {key}"),
+                }
+                .map(compact_str::CompactString::from)
+            })
+        })
+        .collect();
+    BoundTokenSentence::from_projected_values(bound.projection(), observations.len(), values)
+        .unwrap()
+}
+
+#[test]
 fn anonymous_dependent_predicates_classify_heads_without_assignments() {
     // One verbal head has one pronominal and two nominal direct-object
     // witnesses. Each predicate target must publish the one-token head once,
@@ -2456,8 +3014,36 @@ fn where_clause_static_refusals_each_carry_their_own_code() {
         ),
         (
             "pattern p := (?<a> [text=x]) (?<b> [text=y]) \
-             where not $a -[obj]-> $b.",
-            DiagnosticCode::Syntax,
+             where not $a -[obj]-> $missing.",
+            DiagnosticCode::WhereCaptureUndefined,
+        ),
+        (
+            "pattern p := (?<a> []) (?<b> []) where not $missing -[obj]-> $b.",
+            DiagnosticCode::WhereCaptureUndefined,
+        ),
+        (
+            "pattern p := (?<a> []) where not $a -[obj]-> $a.",
+            DiagnosticCode::WhereSelfEdge,
+        ),
+        (
+            "pattern p := (?<a> []) (?<b> []+) where not $a -[obj]-> $b.",
+            DiagnosticCode::WhereCaptureNotSingleToken,
+        ),
+        (
+            "pattern p := ((?<a> []) | (?<b> [])) where not $a -[obj]-> $b.",
+            DiagnosticCode::WhereExclusiveCaptures,
+        ),
+        (
+            "fragment f := (?<d> []). pattern p := (?<h> []) @f @f where not $h -[obj]-> $d.",
+            DiagnosticCode::WhereCaptureUndefined,
+        ),
+        (
+            "pattern p := (?<a> []) (?<b> []) where $a -[obj|obl]-> $b, not $a -[*]-> $b.",
+            DiagnosticCode::WhereContradictoryExistence,
+        ),
+        (
+            "pattern p := (?<a> []) (?<b> []) where not $a -[*]-> $b, $a -[obj|obl]-> $b.",
+            DiagnosticCode::WhereContradictoryExistence,
         ),
         (
             "pattern p := (?<a> [text=x]) (?<b> [text=y]) \
@@ -4669,6 +5255,19 @@ fn with_capture(mut matched: Match, name: &str, start: usize, end: usize) -> Mat
         end,
     }]
     .into_boxed_slice();
+    matched
+}
+
+fn with_captures(mut matched: Match, captures: &[(&str, usize, usize)]) -> Match {
+    matched.captures = captures
+        .iter()
+        .map(|&(name, start, end)| lingrep_core::fsm::Capture {
+            name: name.into(),
+            path: format!("{}/{}", matched.pattern, name).into(),
+            start,
+            end,
+        })
+        .collect();
     matched
 }
 

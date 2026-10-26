@@ -1,35 +1,3 @@
-//! What a run's policy program did, rendered for the progress channel.
-//!
-//! Three commands publish through a catalog's `policy … end` block, and until
-//! this module only `matches` said what the block had done. The other two
-//! aggregate — `summarize` into per-pattern counts, `sentence-final` into
-//! pattern × surface counts — which is exactly the situation in which a
-//! researcher cannot see the answer any other way. A count that came out lower
-//! than expected has no visible cause in a total.
-//!
-//! Two reports, and they are answers to different questions:
-//!
-//! - [`write_per_statement`] is a run fact, printed unrequested under
-//!   `--progress always`. It says what each statement did to the whole run.
-//! - [`write_trace`] is requested by `--trace-policy N` and printed whatever
-//!   `--progress` says, because a flag that answered nothing unless a second
-//!   flag agreed would be a flag that looks broken.
-//!
-//! Both go to the progress channel and never to the record stream. A JSONL or
-//! TSV consumer's contract is the record; putting an explanation into it would
-//! change a published contract to serve a debugging affordance.
-//!
-//! # What the trace does and does not cover
-//!
-//! It explains the **policy program** — nothing after it. `sentence-final`
-//! applies its own sentence-final predicate to the records policy published,
-//! and `summarize` may drop a record with no key, so a record this trace ends
-//! with `kept` can still be absent from the command's output. That is not a
-//! contradiction: policy kept it and the command did not want it. Saying so
-//! here is cheaper than teaching each renderer to guess at its caller's filter,
-//! and more honest than a header that implies the trace is a complete account
-//! of a command it knows nothing about.
-
 use std::io::Write;
 
 use lingrep_core::fsm::{CatalogPolicy, OperationCounters, PolicyTrace, TracedOutcome};

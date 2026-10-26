@@ -1,0 +1,1085 @@
+[
+  {
+    "id": "soranoha-first-person-fiction-only",
+    "title": "Count first-person pronouns in fiction works only",
+    "capability": "feature_lookup",
+    "phenomenon": "The documents are passages from works by 夏目漱石 with their Soranoha catalog metadata. Only works classified as fiction count: a document whose metadata field ndc is exactly NDC 913. In those documents, using the installed UniDic-CWJ 202512 analysis, find every token whose primary part of speech is 代名詞 and whose lemma is 俺, 私 or 僕, whatever its surface spelling. Span only that token and label it first_person. Documents of any other NDC class contribute no evidence, however many first-person pronouns they contain.",
+    "labels": [
+      "first_person"
+    ],
+    "source": {
+      "kind": "soranoha",
+      "url": "https://soranoha.org/bulk/authors/soranoha-Natsume_Soseki-000148-plaintext.zip",
+      "sha256": "4f76eec8df33553a03ffb95e4817d9b30c77b24146ebcf99e50a88392bb59f67",
+      "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916",
+      "works": [
+        {
+          "identifier": "000752_000148",
+          "first_sentence": 0,
+          "sentence_count": 60
+        },
+        {
+          "identifier": "000772_000148",
+          "first_sentence": 0,
+          "sentence_count": 40
+        },
+        {
+          "identifier": "000799_000148",
+          "first_sentence": 0,
+          "sentence_count": 20
+        }
+      ]
+    },
+    "documents": [
+      {
+        "eval_document_id": "000752_000148",
+        "metadata": {
+          "identifier": "000752_000148",
+          "title": "坊っちゃん",
+          "author": "夏目 漱石",
+          "ndc": "NDC 913",
+          "orthographic_style": "新字新仮名",
+          "first_published": "「ホトトギス」1906（明治39）年4月",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "一",
+          "　親譲りの無鉄砲で小供の時から損ばかりしている。",
+          "小学校に居る時分学校の二階から飛び降りて一週間ほど腰を抜かした事がある。",
+          "なぜそんな無闇をしたと聞く人があるかも知れぬ。",
+          "別段深い理由でもない。",
+          "新築の二階から首を出していたら、同級生の一人が冗談に、いくら威張っても、そこから飛び降りる事は出来まい。",
+          "弱虫やーい。",
+          "と囃したからである。",
+          "小使に負ぶさって帰って来た時、おやじが大きな眼をして二階ぐらいから飛び降りて腰を抜かす奴があるかと云ったから、この次は抜かさずに飛んで見せますと答えた。",
+          "　親類のものから西洋製のナイフを貰って奇麗な刃を日に翳して、友達に見せていたら、一人が光る事は光るが切れそうもないと云った。",
+          "切れぬ事があるか、何でも切ってみせると受け合った。",
+          "そんなら君の指を切ってみろと注文したから、何だ指ぐらいこの通りだと右の手の親指の甲をはすに切り込んだ。",
+          "幸ナイフが小さいのと、親指の骨が堅かったので、今だに親指は手に付いている。",
+          "しかし創痕は死ぬまで消えぬ。",
+          "　庭を東へ二十歩に行き尽すと、南上がりにいささかばかりの菜園があって、真中に栗の木が一本立っている。",
+          "これは命より大事な栗だ。",
+          "実の熟する時分は起き抜けに背戸を出て落ちた奴を拾ってきて、学校で食う。",
+          "菜園の西側が山城屋という質屋の庭続きで、この質屋に勘太郎という十三四の倅が居た。",
+          "勘太郎は無論弱虫である。",
+          "弱虫の癖に四つ目垣を乗りこえて、栗を盗みにくる。",
+          "ある日の夕方折戸の蔭に隠れて、とうとう勘太郎を捕まえてやった。",
+          "その時勘太郎は逃げ路を失って、一生懸命に飛びかかってきた。",
+          "向うは二つばかり年上である。",
+          "弱虫だが力は強い。",
+          "鉢の開いた頭を、こっちの胸へ宛ててぐいぐい押した拍子に、勘太郎の頭がすべって、おれの袷の袖の中にはいった。",
+          "邪魔になって手が使えぬから、無暗に手を振ったら、袖の中にある勘太郎の頭が、右左へぐらぐら靡いた。",
+          "しまいに苦しがって袖の中から、おれの二の腕へ食い付いた。",
+          "痛かったから勘太郎を垣根へ押しつけておいて、足搦をかけて向うへ倒してやった。",
+          "山城屋の地面は菜園より六尺がた低い。",
+          "勘太郎は四つ目垣を半分崩して、自分の領分へ真逆様に落ちて、ぐうと云った。",
+          "勘太郎が落ちるときに、おれの袷の片袖がもげて、急に手が自由になった。",
+          "その晩母が山城屋に詫びに行ったついでに袷の片袖も取り返して来た。",
+          "　この外いたずらは大分やった。",
+          "大工の兼公と肴屋の角をつれて、茂作の人参畠をあらした事がある。",
+          "人参の芽が出揃わぬ処へ藁が一面に敷いてあったから、その上で三人が半日相撲をとりつづけに取ったら、人参がみんな踏みつぶされてしまった。",
+          "古川の持っている田圃の井戸を埋めて尻を持ち込まれた事もある。",
+          "太い孟宗の節を抜いて、深く埋めた中から水が湧き出て、そこいらの稲にみずがかかる仕掛であった。",
+          "その時分はどんな仕掛か知らぬから、石や棒ちぎれをぎゅうぎゅう井戸の中へ挿し込んで、水が出なくなったのを見届けて、うちへ帰って飯を食っていたら、古川が真赤になって怒鳴り込んで来た。",
+          "たしか罰金を出して済んだようである。",
+          "　おやじはちっともおれを可愛がってくれなかった。",
+          "母は兄ばかり贔屓にしていた。",
+          "この兄はやに色が白くって、芝居の真似をして女形になるのが好きだった。",
+          "おれを見る度にこいつはどうせ碌なものにはならないと、おやじが云った。",
+          "乱暴で乱暴で行く先が案じられると母が云った。",
+          "なるほど碌なものにはならない。",
+          "ご覧の通りの始末である。",
+          "行く先が案じられたのも無理はない。",
+          "ただ懲役に行かないで生きているばかりである。",
+          "　母が病気で死ぬ二三日前台所で宙返りをしてへっついの角で肋骨を撲って大いに痛かった。",
+          "母が大層怒って、お前のようなものの顔は見たくないと云うから、親類へ泊りに行っていた。",
+          "するととうとう死んだと云う報知が来た。",
+          "そう早く死ぬとは思わなかった。",
+          "そんな大病なら、もう少し大人しくすればよかったと思って帰って来た。",
+          "そうしたら例の兄がおれを親不孝だ、おれのために、おっかさんが早く死んだんだと云った。",
+          "口惜しかったから、兄の横っ面を張って大変叱られた。",
+          "　母が死んでからは、おやじと兄と三人で暮していた。",
+          "おやじは何にもせぬ男で、人の顔さえ見れば貴様は駄目だ駄目だと口癖のように云っていた。",
+          "何が駄目なんだか今に分らない。",
+          "妙なおやじがあったもんだ。",
+          "兄は実業家になるとか云ってしきりに英語を勉強していた。"
+        ]
+      },
+      {
+        "eval_document_id": "000772_000148",
+        "metadata": {
+          "identifier": "000772_000148",
+          "title": "私の個人主義",
+          "author": "夏目 漱石",
+          "ndc": "NDC 914",
+          "orthographic_style": "新字新仮名",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "　　　　――大正三年十一月二十五日学習院輔仁会において述――",
+          "　私は今日初めてこの学習院というものの中に這入りました。",
+          "もっとも以前から学習院は多分この見当だろうぐらいに考えていたには相違ありませんが、はっきりとは存じませんでした。",
+          "中へ這入ったのは無論今日が初めてでございます。",
+          "　さきほど岡田さんが紹介かたがたちょっとお話になった通りこの春何か講演をというご注文でありましたが、その当時は何か差支があって、――岡田さんの方が当人の私よりよくご記憶と見えてあなたがたにご納得のできるようにただいまご説明がありましたが、とにかくひとまずお断りを致さなければならん事になりました。",
+          "しかしただお断りを致すのもあまり失礼と存じまして、この次には参りますからという条件をつけ加えておきました。",
+          "その時念のためこの次はいつごろになりますかと岡田さんに伺いましたら、此年の十月だというお返事であったので、心のうちに春から十月までの日数を大体繰ってみて、それだけの時間があればそのうちにどうにかできるだろうと思ったものですから、よろしゅうございますとはっきりお受合申したのであります。",
+          "ところが幸か不幸か病気に罹りまして、九月いっぱい床についておりますうちにお約束の十月が参りました。",
+          "十月にはもう臥せってはおりませんでしたけれども、何しろひょろひょろするので講演はちょっとむずかしかったのです。",
+          "しかしお約束を忘れてはならないのですから、腹の中では、今に何か云って来られるだろう来られるだろうと思って、内々は怖がっていました。",
+          "　そのうちひょろひょろもついに癒ってしまったけれども、こちらからは十月末まで何のご沙汰もなく打ち過ぎました。",
+          "私は無論病気の事をご通知はしておきませんでしたが、二三の新聞にちょっと出たという話ですから、あるいはその辺の事情を察せられて、誰かが私の代りに講演をやって下さったのだろうと推測して安心し出しました。",
+          "ところへまた岡田さんがまた突然見えたのであります。",
+          "岡田さんはわざわざ長靴を穿いて見えたのであります。",
+          "（もっとも雨の降る日であったからでもありましょうが、）そう云った身拵えで、早稲田の奥まで来て下すって、例の講演は十一月の末まで繰り延ばす事にしたから約束通りやってもらいたいというご口上なのです。",
+          "私はもう責任を逃れたように考えていたものですから実は少々驚ろきました。",
+          "しかしまだ一カ月も余裕があるから、その間にどうかなるだろうと思って、よろしゅうございますとまたご返事を致しました。",
+          "　右の次第で、この春から十月に至るまで、十月末からまた十一月二十五日に至るまでの間に、何か纏ったお話をすべき時間はいくらでも拵えられるのですが、どうも少し気分が悪くって、そんな事を考えるのが面倒でたまらなくなりました。",
+          "そこでまあ十一月二十五日が来るまでは構うまいという横着な料簡を起して、ずるずるべったりにその日その日を送っていたのです。",
+          "いよいよと時日が逼った二三日前になって、何か考えなければならないという気が少ししたのですが、やはり考えるのが不愉快なので、とうとう絵を描いて暮らしてしまいました。",
+          "絵を描くというと何かえらいものが描けるように聞えるかも知れませんが、実は他愛もないものを描いて、それを壁に貼りつけて一人で二日も三日もぼんやり眺めているだけなのです。",
+          "昨日でしたかある人が来て、この絵は大変面白い――いや面白いと云ったのではありません、面白い気分の時に描いた画らしく見えると云ってくれたのでした。",
+          "それから私は愉快だから描いたのではない、不愉快だから描いたのだと云って私の心の状態をその男に説明してやりました。",
+          "世の中には愉快でじっとしていられない結果を画にしたり、書にしたり、または文にしたりする人がある通り、不愉快だから、どうかして好い心持になりたいと思って、筆を執って画なり文章なりを作る人もあります。",
+          "そうして不思議にもこの二つの心的状態が結果に現われたところを見るとよく一致している場合が起るのです。",
+          "しかしこれはほんのついでに申し上る事で、話の筋に関係した問題でもありませんから深くは立ち入りません。",
+          "――何しろ私はその変な画を眺めるだけで、講演の内容をちっとも組み立てずに暮らしてしまったのです。",
+          "　そのうちいよいよ二十五日が来たので、否でも応でもここへ顔を出さなければすまない事になりました。",
+          "それで今朝少し考を纏めてみましたが、準備がどうも不足のようです。",
+          "とてもご満足の行くようなお話はできかねますから、そのつもりでご辛防を願います。",
+          "　この会はいつごろから始まって今日まで続いているのか存じませんが、そのつどあなたがたがよその人を連れて来て、講演をさせるのは、一般の慣例として毫も不都合でないと私も認めているのですが、また一方から見ると、それほどあなた方の希望するような面白い講演は、いくらどこからどんな人を引張って来ても容易に聞かれるものではなかろうとも思うのです。",
+          "あなたがたにはただよその人が珍らしく見えるのではありますまいか。",
+          "　私が落語家から聞いた話の中にこんな諷刺的のがあります。",
+          "――昔しあるお大名が二人目黒辺へ鷹狩に行って、所々方々を馳け廻った末、大変空腹になったが、あいにく弁当の用意もなし、家来とも離れ離れになって口腹を充たす糧を受ける事ができず、仕方なしに二人はそこにある汚ない百姓家へ馳け込んで、何でも好いから食わせろと云ったそうです。",
+          "するとその農家の爺さんと婆さんが気の毒がって、ありあわせの秋刀魚を炙って二人の大名に麦飯を勧めたと云います。",
+          "二人はその秋刀魚を肴に非常に旨く飯を済まして、そこを立出たが、翌日になっても昨日の秋刀魚の香がぷんぷん鼻を衝くといった始末で、どうしてもその味を忘れる事ができないのです。",
+          "それで二人のうちの一人が他を招待して、秋刀魚のご馳走をする事になりました。",
+          "その旨を承わって驚ろいたのは家来です。",
+          "しかし主命ですから反抗する訳にも行きませんので、料理人に命じて秋刀魚の細い骨を毛抜で一本一本抜かして、それを味淋か何かに漬けたのを、ほどよく焼いて、主人と客とに勧めました。",
+          "ところが食う方は腹も減っていず、また馬鹿丁寧な料理方で秋刀魚の味を失った妙な肴を箸で突っついてみたところで、ちっとも旨くないのです。"
+        ]
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "metadata": {
+          "identifier": "000799_000148",
+          "title": "夢十夜",
+          "author": "夏目 漱石",
+          "ndc": "NDC 913",
+          "orthographic_style": "新字新仮名",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "第一夜",
+          "　こんな夢を見た。",
+          "　腕組をして枕元に坐っていると、仰向に寝た女が、静かな声でもう死にますと云う。",
+          "女は長い髪を枕に敷いて、輪郭の柔らかな瓜実顔をその中に横たえている。",
+          "真白な頬の底に温かい血の色がほどよく差して、唇の色は無論赤い。",
+          "とうてい死にそうには見えない。",
+          "しかし女は静かな声で、もう死にますと判然云った。",
+          "自分も確にこれは死ぬなと思った。",
+          "そこで、そうかね、もう死ぬのかね、と上から覗き込むようにして聞いて見た。",
+          "死にますとも、と云いながら、女はぱっちりと眼を開けた。",
+          "大きな潤のある眼で、長い睫に包まれた中は、ただ一面に真黒であった。",
+          "その真黒な眸の奥に、自分の姿が鮮に浮かんでいる。",
+          "　自分は透き徹るほど深く見えるこの黒眼の色沢を眺めて、これでも死ぬのかと思った。",
+          "それで、ねんごろに枕の傍へ口を付けて、死ぬんじゃなかろうね、大丈夫だろうね、とまた聞き返した。",
+          "すると女は黒い眼を眠そうに睜たまま、やっぱり静かな声で、でも、死ぬんですもの、仕方がないわと云った。",
+          "　じゃ、私の顔が見えるかいと一心に聞くと、見えるかいって、そら、そこに、写ってるじゃありませんかと、にこりと笑って見せた。",
+          "自分は黙って、顔を枕から離した。",
+          "腕組をしながら、どうしても死ぬのかなと思った。",
+          "　しばらくして、女がまたこう云った。",
+          "「死んだら、埋めて下さい。"
+        ]
+      }
+    ],
+    "oracle_query": "first_person := [unidic.pos1=代名詞 & lemma in {俺, 私, 僕}].\n",
+    "oracle_where": "@document.ndc = \"NDC 913\"",
+    "oracle_mecab": "FIRST_PERSON = {\"俺\", \"私\", \"僕\"}\n\n\ndef select(tokens, document):\n    if document.get(\"metadata\", {}).get(\"ndc\") != \"NDC 913\":\n        return\n    for index, token in enumerate(tokens):\n        if token.pos1 == \"代名詞\" and token.lemma in FIRST_PERSON:\n            yield index, index + 1, \"first_person\"\n",
+    "targets": [
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 24,
+        "start_char": 39,
+        "end_char": 41,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 26,
+        "start_char": 15,
+        "end_char": 17,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 30,
+        "start_char": 11,
+        "end_char": 13,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 39,
+        "start_char": 9,
+        "end_char": 11,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 42,
+        "start_char": 0,
+        "end_char": 2,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 53,
+        "start_char": 9,
+        "end_char": 11,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 53,
+        "start_char": 17,
+        "end_char": 19,
+        "surface": "おれ",
+        "label": "first_person"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 15,
+        "start_char": 4,
+        "end_char": 5,
+        "surface": "私",
+        "label": "first_person"
+      }
+    ]
+  },
+  {
+    "id": "soranoha-wo-predicate-collocation",
+    "title": "Extract accusative noun and predicate collocation candidates",
+    "capability": "sequence_composition",
+    "phenomenon": "The documents are passages from works by 夏目漱石 with their Soranoha catalog metadata. Using the installed UniDic-CWJ 202512 analysis, find every candidate pairing of an accusative-marked noun phrase with its predicate. The noun phrase is one token whose primary part of speech is 名詞 or 代名詞, followed by zero or more suffix tokens (接尾辞 with secondary class 名詞的), then the particle を analysed as 助詞 with secondary class 格助詞. Between を and the predicate allow zero to five tokens that are not 動詞, 助動詞 or 補助記号, whose secondary class is not 格助詞, 係助詞 or 接続助詞, and whose tertiary class is not サ変可能. The predicate is either one 動詞 token or a 名詞 token with tertiary class サ変可能 immediately followed by a token whose lemma is 為る. The span runs from the first noun-phrase token through the last predicate token. Label each span wo_collocation.",
+    "labels": [
+      "wo_collocation"
+    ],
+    "source": {
+      "kind": "soranoha",
+      "url": "https://soranoha.org/bulk/authors/soranoha-Natsume_Soseki-000148-plaintext.zip",
+      "sha256": "4f76eec8df33553a03ffb95e4817d9b30c77b24146ebcf99e50a88392bb59f67",
+      "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916",
+      "works": [
+        {
+          "identifier": "000752_000148",
+          "first_sentence": 0,
+          "sentence_count": 60
+        },
+        {
+          "identifier": "000799_000148",
+          "first_sentence": 0,
+          "sentence_count": 40
+        }
+      ]
+    },
+    "documents": [
+      {
+        "eval_document_id": "000752_000148",
+        "metadata": {
+          "identifier": "000752_000148",
+          "title": "坊っちゃん",
+          "author": "夏目 漱石",
+          "ndc": "NDC 913",
+          "orthographic_style": "新字新仮名",
+          "first_published": "「ホトトギス」1906（明治39）年4月",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "一",
+          "　親譲りの無鉄砲で小供の時から損ばかりしている。",
+          "小学校に居る時分学校の二階から飛び降りて一週間ほど腰を抜かした事がある。",
+          "なぜそんな無闇をしたと聞く人があるかも知れぬ。",
+          "別段深い理由でもない。",
+          "新築の二階から首を出していたら、同級生の一人が冗談に、いくら威張っても、そこから飛び降りる事は出来まい。",
+          "弱虫やーい。",
+          "と囃したからである。",
+          "小使に負ぶさって帰って来た時、おやじが大きな眼をして二階ぐらいから飛び降りて腰を抜かす奴があるかと云ったから、この次は抜かさずに飛んで見せますと答えた。",
+          "　親類のものから西洋製のナイフを貰って奇麗な刃を日に翳して、友達に見せていたら、一人が光る事は光るが切れそうもないと云った。",
+          "切れぬ事があるか、何でも切ってみせると受け合った。",
+          "そんなら君の指を切ってみろと注文したから、何だ指ぐらいこの通りだと右の手の親指の甲をはすに切り込んだ。",
+          "幸ナイフが小さいのと、親指の骨が堅かったので、今だに親指は手に付いている。",
+          "しかし創痕は死ぬまで消えぬ。",
+          "　庭を東へ二十歩に行き尽すと、南上がりにいささかばかりの菜園があって、真中に栗の木が一本立っている。",
+          "これは命より大事な栗だ。",
+          "実の熟する時分は起き抜けに背戸を出て落ちた奴を拾ってきて、学校で食う。",
+          "菜園の西側が山城屋という質屋の庭続きで、この質屋に勘太郎という十三四の倅が居た。",
+          "勘太郎は無論弱虫である。",
+          "弱虫の癖に四つ目垣を乗りこえて、栗を盗みにくる。",
+          "ある日の夕方折戸の蔭に隠れて、とうとう勘太郎を捕まえてやった。",
+          "その時勘太郎は逃げ路を失って、一生懸命に飛びかかってきた。",
+          "向うは二つばかり年上である。",
+          "弱虫だが力は強い。",
+          "鉢の開いた頭を、こっちの胸へ宛ててぐいぐい押した拍子に、勘太郎の頭がすべって、おれの袷の袖の中にはいった。",
+          "邪魔になって手が使えぬから、無暗に手を振ったら、袖の中にある勘太郎の頭が、右左へぐらぐら靡いた。",
+          "しまいに苦しがって袖の中から、おれの二の腕へ食い付いた。",
+          "痛かったから勘太郎を垣根へ押しつけておいて、足搦をかけて向うへ倒してやった。",
+          "山城屋の地面は菜園より六尺がた低い。",
+          "勘太郎は四つ目垣を半分崩して、自分の領分へ真逆様に落ちて、ぐうと云った。",
+          "勘太郎が落ちるときに、おれの袷の片袖がもげて、急に手が自由になった。",
+          "その晩母が山城屋に詫びに行ったついでに袷の片袖も取り返して来た。",
+          "　この外いたずらは大分やった。",
+          "大工の兼公と肴屋の角をつれて、茂作の人参畠をあらした事がある。",
+          "人参の芽が出揃わぬ処へ藁が一面に敷いてあったから、その上で三人が半日相撲をとりつづけに取ったら、人参がみんな踏みつぶされてしまった。",
+          "古川の持っている田圃の井戸を埋めて尻を持ち込まれた事もある。",
+          "太い孟宗の節を抜いて、深く埋めた中から水が湧き出て、そこいらの稲にみずがかかる仕掛であった。",
+          "その時分はどんな仕掛か知らぬから、石や棒ちぎれをぎゅうぎゅう井戸の中へ挿し込んで、水が出なくなったのを見届けて、うちへ帰って飯を食っていたら、古川が真赤になって怒鳴り込んで来た。",
+          "たしか罰金を出して済んだようである。",
+          "　おやじはちっともおれを可愛がってくれなかった。",
+          "母は兄ばかり贔屓にしていた。",
+          "この兄はやに色が白くって、芝居の真似をして女形になるのが好きだった。",
+          "おれを見る度にこいつはどうせ碌なものにはならないと、おやじが云った。",
+          "乱暴で乱暴で行く先が案じられると母が云った。",
+          "なるほど碌なものにはならない。",
+          "ご覧の通りの始末である。",
+          "行く先が案じられたのも無理はない。",
+          "ただ懲役に行かないで生きているばかりである。",
+          "　母が病気で死ぬ二三日前台所で宙返りをしてへっついの角で肋骨を撲って大いに痛かった。",
+          "母が大層怒って、お前のようなものの顔は見たくないと云うから、親類へ泊りに行っていた。",
+          "するととうとう死んだと云う報知が来た。",
+          "そう早く死ぬとは思わなかった。",
+          "そんな大病なら、もう少し大人しくすればよかったと思って帰って来た。",
+          "そうしたら例の兄がおれを親不孝だ、おれのために、おっかさんが早く死んだんだと云った。",
+          "口惜しかったから、兄の横っ面を張って大変叱られた。",
+          "　母が死んでからは、おやじと兄と三人で暮していた。",
+          "おやじは何にもせぬ男で、人の顔さえ見れば貴様は駄目だ駄目だと口癖のように云っていた。",
+          "何が駄目なんだか今に分らない。",
+          "妙なおやじがあったもんだ。",
+          "兄は実業家になるとか云ってしきりに英語を勉強していた。"
+        ]
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "metadata": {
+          "identifier": "000799_000148",
+          "title": "夢十夜",
+          "author": "夏目 漱石",
+          "ndc": "NDC 913",
+          "orthographic_style": "新字新仮名",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "第一夜",
+          "　こんな夢を見た。",
+          "　腕組をして枕元に坐っていると、仰向に寝た女が、静かな声でもう死にますと云う。",
+          "女は長い髪を枕に敷いて、輪郭の柔らかな瓜実顔をその中に横たえている。",
+          "真白な頬の底に温かい血の色がほどよく差して、唇の色は無論赤い。",
+          "とうてい死にそうには見えない。",
+          "しかし女は静かな声で、もう死にますと判然云った。",
+          "自分も確にこれは死ぬなと思った。",
+          "そこで、そうかね、もう死ぬのかね、と上から覗き込むようにして聞いて見た。",
+          "死にますとも、と云いながら、女はぱっちりと眼を開けた。",
+          "大きな潤のある眼で、長い睫に包まれた中は、ただ一面に真黒であった。",
+          "その真黒な眸の奥に、自分の姿が鮮に浮かんでいる。",
+          "　自分は透き徹るほど深く見えるこの黒眼の色沢を眺めて、これでも死ぬのかと思った。",
+          "それで、ねんごろに枕の傍へ口を付けて、死ぬんじゃなかろうね、大丈夫だろうね、とまた聞き返した。",
+          "すると女は黒い眼を眠そうに睜たまま、やっぱり静かな声で、でも、死ぬんですもの、仕方がないわと云った。",
+          "　じゃ、私の顔が見えるかいと一心に聞くと、見えるかいって、そら、そこに、写ってるじゃありませんかと、にこりと笑って見せた。",
+          "自分は黙って、顔を枕から離した。",
+          "腕組をしながら、どうしても死ぬのかなと思った。",
+          "　しばらくして、女がまたこう云った。",
+          "「死んだら、埋めて下さい。",
+          "大きな真珠貝で穴を掘って。",
+          "そうして天から落ちて来る星の破片を墓標に置いて下さい。",
+          "そうして墓の傍に待っていて下さい。",
+          "また逢いに来ますから」",
+          "　自分は、いつ逢いに来るかねと聞いた。",
+          "「日が出るでしょう。",
+          "それから日が沈むでしょう。",
+          "それからまた出るでしょう、そうしてまた沈むでしょう。",
+          "――赤い日が東から西へ、東から西へと落ちて行くうちに、――あなた、待っていられますか」",
+          "　自分は黙って首肯いた。",
+          "女は静かな調子を一段張り上げて、",
+          "「百年待っていて下さい」と思い切った声で云った。",
+          "「百年、私の墓の傍に坐って待っていて下さい。",
+          "きっと逢いに来ますから」",
+          "　自分はただ待っていると答えた。",
+          "すると、黒い眸のなかに鮮に見えた自分の姿が、ぼうっと崩れて来た。",
+          "静かな水が動いて写る影を乱したように、流れ出したと思ったら、女の眼がぱちりと閉じた。",
+          "長い睫の間から涙が頬へ垂れた。",
+          "――もう死んでいた。",
+          "　自分はそれから庭へ下りて、真珠貝で穴を掘った。"
+        ]
+      }
+    ],
+    "oracle_query": "wo_collocation :=\n  (?<collocate>\n    [unidic.pos1 in {名詞, 代名詞}]\n    [unidic.pos1=接尾辞 & unidic.pos2=名詞的]*)\n  [text=を & unidic.pos1=助詞 & unidic.pos2=格助詞]\n  [unidic.pos1 not in {動詞, 助動詞, 補助記号}\n    & unidic.pos2 not in {格助詞, 係助詞, 接続助詞}\n    & unidic.pos3!=サ変可能]{0,5}\n  (?<head>\n    [unidic.pos1=名詞 & unidic.pos3=サ変可能] [lemma=為る]\n    | [unidic.pos1=動詞]).\n",
+    "oracle_mecab": "GAP_POS1 = {\"動詞\", \"助動詞\", \"補助記号\"}\nGAP_POS2 = {\"格助詞\", \"係助詞\", \"接続助詞\"}\n\n\ndef collocate_start(tokens, marker):\n    start = marker - 1\n    while start >= 0 and tokens[start].pos1 == \"接尾辞\" and tokens[start].pos2 == \"名詞的\":\n        start -= 1\n    if start >= 0 and tokens[start].pos1 in {\"名詞\", \"代名詞\"}:\n        return start\n    return None\n\n\ndef head_end(tokens, marker):\n    index = marker + 1\n    skipped = 0\n    while (\n        skipped < 5\n        and index < len(tokens)\n        and tokens[index].pos1 not in GAP_POS1\n        and tokens[index].pos2 not in GAP_POS2\n        and tokens[index].pos3 != \"サ変可能\"\n    ):\n        index += 1\n        skipped += 1\n    if index >= len(tokens):\n        return None\n    token = tokens[index]\n    if token.pos1 == \"動詞\":\n        return index + 1\n    if (\n        token.pos1 == \"名詞\"\n        and token.pos3 == \"サ変可能\"\n        and index + 1 < len(tokens)\n        and tokens[index + 1].lemma == \"為る\"\n    ):\n        return index + 2\n    return None\n\n\ndef select(tokens, document):\n    for marker, token in enumerate(tokens):\n        if token.surface != \"を\" or token.pos1 != \"助詞\" or token.pos2 != \"格助詞\":\n            continue\n        start = collocate_start(tokens, marker)\n        end = head_end(tokens, marker)\n        if start is not None and end is not None:\n            yield start, end, \"wo_collocation\"\n",
+    "targets": [
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 2,
+        "start_char": 25,
+        "end_char": 30,
+        "surface": "腰を抜かし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 5,
+        "start_char": 7,
+        "end_char": 11,
+        "surface": "首を出し",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 8,
+        "start_char": 22,
+        "end_char": 25,
+        "surface": "眼をし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 8,
+        "start_char": 38,
+        "end_char": 43,
+        "surface": "腰を抜かす",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 9,
+        "start_char": 12,
+        "end_char": 18,
+        "surface": "ナイフを貰っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 11,
+        "start_char": 6,
+        "end_char": 10,
+        "surface": "指を切っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 16,
+        "start_char": 13,
+        "end_char": 17,
+        "surface": "背戸を出",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 16,
+        "start_char": 21,
+        "end_char": 25,
+        "surface": "奴を拾っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 19,
+        "start_char": 8,
+        "end_char": 14,
+        "surface": "垣を乗りこえ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 20,
+        "start_char": 19,
+        "end_char": 26,
+        "surface": "勘太郎を捕まえ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 21,
+        "start_char": 7,
+        "end_char": 13,
+        "surface": "逃げ路を失っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 25,
+        "start_char": 17,
+        "end_char": 21,
+        "surface": "手を振っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 27,
+        "start_char": 22,
+        "end_char": 27,
+        "surface": "足搦をかけ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 29,
+        "start_char": 7,
+        "end_char": 13,
+        "surface": "垣を半分崩し",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 33,
+        "start_char": 9,
+        "end_char": 13,
+        "surface": "角をつれ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 33,
+        "start_char": 20,
+        "end_char": 25,
+        "surface": "畠をあらし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 34,
+        "start_char": 34,
+        "end_char": 39,
+        "surface": "相撲をとり",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 35,
+        "start_char": 11,
+        "end_char": 16,
+        "surface": "井戸を埋め",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 35,
+        "start_char": 17,
+        "end_char": 23,
+        "surface": "尻を持ち込ま",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 36,
+        "start_char": 5,
+        "end_char": 9,
+        "surface": "節を抜い",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 37,
+        "start_char": 62,
+        "end_char": 66,
+        "surface": "飯を食っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 38,
+        "start_char": 3,
+        "end_char": 8,
+        "surface": "罰金を出し",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 41,
+        "start_char": 16,
+        "end_char": 20,
+        "surface": "真似をし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 42,
+        "start_char": 0,
+        "end_char": 5,
+        "surface": "おれを見る",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 48,
+        "start_char": 15,
+        "end_char": 20,
+        "surface": "宙返りをし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 48,
+        "start_char": 28,
+        "end_char": 33,
+        "surface": "肋骨を撲っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 54,
+        "start_char": 11,
+        "end_char": 17,
+        "surface": "横っ面を張っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000752_000148",
+        "sentence_ordinal": 59,
+        "start_char": 17,
+        "end_char": 23,
+        "surface": "英語を勉強し",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 1,
+        "start_char": 4,
+        "end_char": 7,
+        "surface": "夢を見",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 2,
+        "start_char": 1,
+        "end_char": 5,
+        "surface": "腕組をし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 9,
+        "start_char": 21,
+        "end_char": 25,
+        "surface": "眼を開け",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 12,
+        "start_char": 20,
+        "end_char": 25,
+        "surface": "色沢を眺め",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 13,
+        "start_char": 13,
+        "end_char": 17,
+        "surface": "口を付け",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 17,
+        "start_char": 0,
+        "end_char": 4,
+        "surface": "腕組をし",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 20,
+        "start_char": 7,
+        "end_char": 11,
+        "surface": "穴を掘っ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 30,
+        "start_char": 5,
+        "end_char": 14,
+        "surface": "調子を一段張り上げ",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 36,
+        "start_char": 10,
+        "end_char": 14,
+        "surface": "影を乱し",
+        "label": "wo_collocation"
+      },
+      {
+        "eval_document_id": "000799_000148",
+        "sentence_ordinal": 39,
+        "start_char": 18,
+        "end_char": 22,
+        "surface": "穴を掘っ",
+        "label": "wo_collocation"
+      }
+    ],
+    "revision": {
+      "instruction": "Pronoun collocates no longer count: the noun-phrase token before any suffixes must be 名詞, not 代名詞. The predicate must be one 動詞 token; a 名詞 with tertiary class サ変可能 followed by する no longer counts as a predicate. The gap rule between を and the predicate is unchanged.",
+      "oracle_query": "wo_collocation :=\n  (?<collocate>\n    [unidic.pos1=名詞]\n    [unidic.pos1=接尾辞 & unidic.pos2=名詞的]*)\n  [text=を & unidic.pos1=助詞 & unidic.pos2=格助詞]\n  [unidic.pos1 not in {動詞, 助動詞, 補助記号}\n    & unidic.pos2 not in {格助詞, 係助詞, 接続助詞}\n    & unidic.pos3!=サ変可能]{0,5}\n  (?<head> [unidic.pos1=動詞]).\n",
+      "oracle_mecab": "GAP_POS1 = {\"動詞\", \"助動詞\", \"補助記号\"}\nGAP_POS2 = {\"格助詞\", \"係助詞\", \"接続助詞\"}\n\n\ndef collocate_start(tokens, marker):\n    start = marker - 1\n    while start >= 0 and tokens[start].pos1 == \"接尾辞\" and tokens[start].pos2 == \"名詞的\":\n        start -= 1\n    if start >= 0 and tokens[start].pos1 == \"名詞\":\n        return start\n    return None\n\n\ndef head_end(tokens, marker):\n    index = marker + 1\n    skipped = 0\n    while (\n        skipped < 5\n        and index < len(tokens)\n        and tokens[index].pos1 not in GAP_POS1\n        and tokens[index].pos2 not in GAP_POS2\n        and tokens[index].pos3 != \"サ変可能\"\n    ):\n        index += 1\n        skipped += 1\n    if index >= len(tokens):\n        return None\n    token = tokens[index]\n    if token.pos1 == \"動詞\":\n        return index + 1\n    return None\n\n\ndef select(tokens, document):\n    for marker, token in enumerate(tokens):\n        if token.surface != \"を\" or token.pos1 != \"助詞\" or token.pos2 != \"格助詞\":\n            continue\n        start = collocate_start(tokens, marker)\n        end = head_end(tokens, marker)\n        if start is not None and end is not None:\n            yield start, end, \"wo_collocation\"\n",
+      "targets": [
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 2,
+          "start_char": 25,
+          "end_char": 30,
+          "surface": "腰を抜かし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 5,
+          "start_char": 7,
+          "end_char": 11,
+          "surface": "首を出し",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 8,
+          "start_char": 22,
+          "end_char": 25,
+          "surface": "眼をし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 8,
+          "start_char": 38,
+          "end_char": 43,
+          "surface": "腰を抜かす",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 9,
+          "start_char": 12,
+          "end_char": 18,
+          "surface": "ナイフを貰っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 11,
+          "start_char": 6,
+          "end_char": 10,
+          "surface": "指を切っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 16,
+          "start_char": 13,
+          "end_char": 17,
+          "surface": "背戸を出",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 16,
+          "start_char": 21,
+          "end_char": 25,
+          "surface": "奴を拾っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 19,
+          "start_char": 8,
+          "end_char": 14,
+          "surface": "垣を乗りこえ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 20,
+          "start_char": 19,
+          "end_char": 26,
+          "surface": "勘太郎を捕まえ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 21,
+          "start_char": 7,
+          "end_char": 13,
+          "surface": "逃げ路を失っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 25,
+          "start_char": 17,
+          "end_char": 21,
+          "surface": "手を振っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 27,
+          "start_char": 22,
+          "end_char": 27,
+          "surface": "足搦をかけ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 29,
+          "start_char": 7,
+          "end_char": 13,
+          "surface": "垣を半分崩し",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 33,
+          "start_char": 9,
+          "end_char": 13,
+          "surface": "角をつれ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 33,
+          "start_char": 20,
+          "end_char": 25,
+          "surface": "畠をあらし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 34,
+          "start_char": 34,
+          "end_char": 39,
+          "surface": "相撲をとり",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 35,
+          "start_char": 11,
+          "end_char": 16,
+          "surface": "井戸を埋め",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 35,
+          "start_char": 17,
+          "end_char": 23,
+          "surface": "尻を持ち込ま",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 36,
+          "start_char": 5,
+          "end_char": 9,
+          "surface": "節を抜い",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 37,
+          "start_char": 62,
+          "end_char": 66,
+          "surface": "飯を食っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 38,
+          "start_char": 3,
+          "end_char": 8,
+          "surface": "罰金を出し",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 41,
+          "start_char": 16,
+          "end_char": 20,
+          "surface": "真似をし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 48,
+          "start_char": 15,
+          "end_char": 20,
+          "surface": "宙返りをし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 48,
+          "start_char": 28,
+          "end_char": 33,
+          "surface": "肋骨を撲っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000752_000148",
+          "sentence_ordinal": 54,
+          "start_char": 11,
+          "end_char": 17,
+          "surface": "横っ面を張っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 1,
+          "start_char": 4,
+          "end_char": 7,
+          "surface": "夢を見",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 2,
+          "start_char": 1,
+          "end_char": 5,
+          "surface": "腕組をし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 9,
+          "start_char": 21,
+          "end_char": 25,
+          "surface": "眼を開け",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 12,
+          "start_char": 20,
+          "end_char": 25,
+          "surface": "色沢を眺め",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 13,
+          "start_char": 13,
+          "end_char": 17,
+          "surface": "口を付け",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 17,
+          "start_char": 0,
+          "end_char": 4,
+          "surface": "腕組をし",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 20,
+          "start_char": 7,
+          "end_char": 11,
+          "surface": "穴を掘っ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 30,
+          "start_char": 5,
+          "end_char": 14,
+          "surface": "調子を一段張り上げ",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 36,
+          "start_char": 10,
+          "end_char": 14,
+          "surface": "影を乱し",
+          "label": "wo_collocation"
+        },
+        {
+          "eval_document_id": "000799_000148",
+          "sentence_ordinal": 39,
+          "start_char": 18,
+          "end_char": 22,
+          "surface": "穴を掘っ",
+          "label": "wo_collocation"
+        }
+      ]
+    }
+  },
+  {
+    "id": "soranoha-ud-object-unanswerable",
+    "title": "Extract direct objects by their dependency relation",
+    "capability": "negative_evidence",
+    "phenomenon": "The documents are passages from works by 夏目漱石 with their Soranoha catalog metadata. Find every token that is the direct object of a verb according to the installed analysis: a token whose Universal Dependencies relation to its syntactic head is obj. Span only that token and label it ud_object. Do not approximate the relation from case particles or word order; use the dependency relation the analysis provides.",
+    "labels": [
+      "ud_object"
+    ],
+    "answerable": false,
+    "source": {
+      "kind": "soranoha",
+      "url": "https://soranoha.org/bulk/authors/soranoha-Natsume_Soseki-000148-plaintext.zip",
+      "sha256": "4f76eec8df33553a03ffb95e4817d9b30c77b24146ebcf99e50a88392bb59f67",
+      "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916",
+      "works": [
+        {
+          "identifier": "000799_000148",
+          "first_sentence": 0,
+          "sentence_count": 20
+        }
+      ]
+    },
+    "documents": [
+      {
+        "eval_document_id": "000799_000148",
+        "metadata": {
+          "identifier": "000799_000148",
+          "title": "夢十夜",
+          "author": "夏目 漱石",
+          "ndc": "NDC 913",
+          "orthographic_style": "新字新仮名",
+          "release": "c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916"
+        },
+        "sentences": [
+          "第一夜",
+          "　こんな夢を見た。",
+          "　腕組をして枕元に坐っていると、仰向に寝た女が、静かな声でもう死にますと云う。",
+          "女は長い髪を枕に敷いて、輪郭の柔らかな瓜実顔をその中に横たえている。",
+          "真白な頬の底に温かい血の色がほどよく差して、唇の色は無論赤い。",
+          "とうてい死にそうには見えない。",
+          "しかし女は静かな声で、もう死にますと判然云った。",
+          "自分も確にこれは死ぬなと思った。",
+          "そこで、そうかね、もう死ぬのかね、と上から覗き込むようにして聞いて見た。",
+          "死にますとも、と云いながら、女はぱっちりと眼を開けた。",
+          "大きな潤のある眼で、長い睫に包まれた中は、ただ一面に真黒であった。",
+          "その真黒な眸の奥に、自分の姿が鮮に浮かんでいる。",
+          "　自分は透き徹るほど深く見えるこの黒眼の色沢を眺めて、これでも死ぬのかと思った。",
+          "それで、ねんごろに枕の傍へ口を付けて、死ぬんじゃなかろうね、大丈夫だろうね、とまた聞き返した。",
+          "すると女は黒い眼を眠そうに睜たまま、やっぱり静かな声で、でも、死ぬんですもの、仕方がないわと云った。",
+          "　じゃ、私の顔が見えるかいと一心に聞くと、見えるかいって、そら、そこに、写ってるじゃありませんかと、にこりと笑って見せた。",
+          "自分は黙って、顔を枕から離した。",
+          "腕組をしながら、どうしても死ぬのかなと思った。",
+          "　しばらくして、女がまたこう云った。",
+          "「死んだら、埋めて下さい。"
+        ]
+      }
+    ],
+    "oracle_query": "ud_object := [dep.rel=obj].\n",
+    "oracle_mecab": "def select(tokens, document):\n    yield from ()\n",
+    "targets": []
+  }
+]

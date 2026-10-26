@@ -3,13 +3,13 @@ use thiserror::Error;
 use crate::token_match::TokenInfo;
 
 /// Maximum accepted UTF-8 byte length for one input sentence by default.
-pub const DEFAULT_MAX_SENTENCE_BYTES: usize = 64 * 1024;
+pub const DEFAULT_MAX_SENTENCE_BYTES: usize = DEFAULT_MAX_INPUT_RECORD_BYTES;
 /// Maximum number of sentences retained in one execution stage by default.
 ///
 /// Chosen so that [`DEFAULT_MAX_TOKENIZED_BYTES`] normally decides retained
 /// batch width before this count does.
 pub const DEFAULT_MAX_STAGE_SENTENCES: usize = 2048;
-/// Maximum input byte length retained in one execution stage by default.
+/// Target input byte length retained in one execution stage by default.
 pub const DEFAULT_MAX_STAGE_INPUT_BYTES: usize = 128 * 1024;
 /// Maximum accepted byte length for one physical input record by default.
 ///
@@ -43,7 +43,8 @@ pub struct ExecutionLimits {
     pub max_input_record_bytes: usize,
     /// Maximum number of sentences retained in one execution stage.
     pub max_stage_sentences: usize,
-    /// Maximum input byte length retained in one execution stage.
+    /// Target input byte length retained in one execution stage.
+    /// A larger accepted sentence runs alone so batching never splits a sentence.
     pub max_stage_input_bytes: usize,
     /// Maximum estimated resident bytes for one tokenized sentence and for
     /// each aggregate batch passed to [`crate::fsm::SentenceMatcher::match_all`].
@@ -78,27 +79,6 @@ impl ExecutionLimits {
                     message: "must be greater than zero".to_owned(),
                 });
             }
-        }
-
-        if self.max_stage_input_bytes < self.max_sentence_bytes {
-            return Err(ExecutionError::InvalidLimit {
-                field: "max_stage_input_bytes",
-                message:
-                    "must be at least max_sentence_bytes to allow an accepted sentence to progress"
-                        .to_owned(),
-            });
-        }
-
-        // A record holds at least one sentence, so a record bound below the
-        // sentence bound refuses input that the sentence bound admits — for a
-        // reason no diagnostic about sentences could explain.
-        if self.max_input_record_bytes < self.max_sentence_bytes {
-            return Err(ExecutionError::InvalidLimit {
-                field: "max_input_record_bytes",
-                message:
-                    "must be at least max_sentence_bytes to allow an accepted sentence to progress"
-                        .to_owned(),
-            });
         }
 
         Ok(())

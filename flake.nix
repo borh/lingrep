@@ -85,6 +85,10 @@
           # would fail at link time instead. ROCm has no Apple Silicon analogue
           # at all.
           linuxOnlyDevDeps = with pkgs; [
+            # Compose V2 provider for `podman compose`; Harbor's Podman
+            # environment preflight runs `podman compose ls`, which
+            # podman-compose does not implement.
+            docker-compose
             gdb
             perf
             chromium
@@ -128,8 +132,15 @@
                 # offline cache; filterCargoSources drops it, breaking any
                 # hermetic build of lingrep-web.
                 isSqlxCache = lib.hasPrefix "${toString ./.sqlx}/" (toString path);
+                isDictionaryLicense = lib.hasPrefix "${toString ./nix/dictionary-licenses}/" (toString path);
               in
-              isHtml || isSgx || isNdc9Data || isWebAsset || isSqlxCache || craneLib.filterCargoSources path type;
+              isHtml
+              || isSgx
+              || isNdc9Data
+              || isWebAsset
+              || isSqlxCache
+              || isDictionaryLicense
+              || craneLib.filterCargoSources path type;
           };
 
           cargoVendorDir = craneLib.vendorCargoDeps {
@@ -148,12 +159,7 @@
 
           commonArgs = {
             pname = "lingrep";
-            # Read from the workspace manifest rather than restated here: the
-            # package, the crates and `ling --version` cannot then name
-            # different versions, which is how the workspace sat at 0.1.0 while
-            # the newest tag was v0.2.3.
-            version =
-              (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
             inherit src;
             inherit cargoVendorDir;
             strictDeps = true;
@@ -328,14 +334,14 @@
             pname = "mecab-dic-converter";
             version = "0.1.0";
             src = inputs.mecab-dic-converter-src;
-            patches = [ ./nix/patches/mecab-dic-converter-vibrato-rkyv-0.7.12.patch ];
+            patches = [ ./nix/patches/mecab-dic-converter-vibrato-rkyv-0.7.18.patch ];
             postPatch = ''
               cp ${./nix/mecab-dic-converter/Cargo.lock} Cargo.lock
             '';
             cargoLock = {
               lockFile = ./nix/mecab-dic-converter/Cargo.lock;
               outputHashes = {
-                "vibrato-rkyv-0.7.12" = "sha256-fe52UCDFvHQ2UHfwOTcua4HL3eAdiT27nb4j5iLsF34=";
+                "vibrato-rkyv-0.7.18" = "sha256-3xirbGNxZBKAaow51pRH1IGpHEvoEQPilsEsFEel/Po=";
               };
             };
             buildFeatures = [ "vibrato-export" ];
@@ -360,6 +366,7 @@
             in
             pkgs.runCommand "vibrato-dict-${name}-202512"
               {
+                passthru.unidicSource = { inherit url hash; };
                 nativeBuildInputs = [
                   mecabDicConverter
                   pkgs.zstd
@@ -367,6 +374,9 @@
               }
               ''
                 mkdir -p "$out/share/vibrato"
+                mkdir -p "$out/share/licenses/unidic-${lib.removePrefix "unidic-" name}-202512"
+                cp -R ${./nix/dictionary-licenses + "/${lib.removePrefix "unidic-" name}"}/. \
+                  "$out/share/licenses/unidic-${lib.removePrefix "unidic-" name}-202512/"
                 target="$out/share/vibrato/${name}-202512.dic"
 
                 # Ship the dictionary uncompressed.
@@ -460,6 +470,9 @@
               }
               ''
                 mkdir -p "$out/share/vibrato"
+                mkdir -p "$out/share/licenses/unidic-${name}-202512"
+                cp -R ${./nix/dictionary-licenses + "/${name}"}/. \
+                  "$out/share/licenses/unidic-${name}-202512/"
                 zstd -q -d "$archive" -o "$out/share/vibrato/unidic-${name}-202512.dic"
               '';
 
@@ -574,6 +587,68 @@
             touch "$out"
           '';
 
+          spacyEnglishSource = pkgs.fetchurl {
+            url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0.tar.gz";
+            hash = "sha256-FKLzG8R2r4cBmBnqjJlI+r39RzpELt1rHLpivwwsD1U=";
+          };
+          spacyProfilePython = pkgs.python3.withPackages (ps: [
+            ps.spacy
+            ps.blake3
+          ]);
+          spacyModelEnCoreWebSm =
+            pkgs.runCommand "spacy-model-en-core-web-sm-3.8.0"
+              {
+                nativeBuildInputs = [ spacyProfilePython ];
+                meta.license = lib.licenses.mit;
+              }
+              ''
+                tar xf ${spacyEnglishSource}
+                model="$out/share/spacy/en_core_web_sm"
+                mkdir -p "$model"
+                cp -r en_core_web_sm-3.8.0/en_core_web_sm/en_core_web_sm-3.8.0/. "$model/"
+                cp en_core_web_sm-3.8.0/LICENSE "$model/"
+                PYTHONPATH=${./python/spacy-adapter/src}:${./python/adapter-protocol/src} python -m lingrep_spacy_adapter \
+                  --model-root "$model" --backend cpu --prepare \
+                  --boundary-component parser --probe-text "I was speaking. They listened." \
+                  --morphology-key feat.Aspect --morphology-key feat.Case \
+                  --morphology-key feat.Degree --morphology-key feat.Mood \
+                  --morphology-key feat.Number --morphology-key feat.Person \
+                  --morphology-key feat.Poss --morphology-key feat.PronType \
+                  --morphology-key feat.PunctType --morphology-key feat.Tense \
+                  --morphology-key feat.VerbForm
+              '';
+
+          spacyEnglishAnalyzer = pkgs.runCommand "spacy-analyzer-en-core-web-sm" { } ''
+            project="$out/lib/lingrep-spacy-adapter"
+            mkdir -p "$project" "$out/share/lingrep"
+            cp -r ${./python/adapter-protocol} "$out/lib/adapter-protocol"
+            cp -r ${./python/spacy-adapter/src} "$project/src"
+            cp -r ${./python/spacy-adapter/bin} "$project/bin"
+            cp ${./python/spacy-adapter/pyproject.toml} "$project/pyproject.toml"
+            cp ${./python/spacy-adapter/uv.lock} "$project/uv.lock"
+            cat > "$out/share/lingrep/english.toml" <<EOF
+            version = 1
+            kind = "spacy"
+            python = "${spacyProfilePython}/bin/python"
+            entrypoint = "$project/bin/lingrep-spacy-adapter"
+            model = "${spacyModelEnCoreWebSm}/share/spacy/en_core_web_sm"
+            backend = "cpu"
+            EOF
+          '';
+
+          spacyEnglishSmoke =
+            pkgs.runCommand "spacy-model-en-core-web-sm-smoke"
+              {
+                nativeBuildInputs = [ spacyProfilePython ];
+              }
+              ''
+                export LINGREP_SPACY_ENGLISH_MODEL=${spacyModelEnCoreWebSm}/share/spacy/en_core_web_sm
+                export PYTHONPATH=${./python/spacy-adapter/src}:${./python/adapter-protocol/src}
+                export PYTHONDONTWRITEBYTECODE=1
+                python -m unittest discover -s ${./python/spacy-adapter/tests} -k packaged_model
+                touch "$out"
+              '';
+
           stanzaResources = pkgs.fetchurl {
             url = "https://raw.githubusercontent.com/stanfordnlp/stanza-resources/9e22b9943b68a0c83bf9187131992825c1a3c829/resources_1.14.0.json";
             hash = "sha256-TkHB3xUhRvom7QwAagj+6npguzQUu21X29okrS48uZw=";
@@ -615,7 +690,7 @@
                 cp ${stanzaFrGsdPos} "$model/fr/pos/gsd_nocharlm.pt"
                 cp ${stanzaFrGsdLemma} "$model/fr/lemma/gsd_nocharlm.pt"
                 cp ${stanzaFrConll17Pretrain} "$model/fr/pretrain/conll17.pt"
-                PYTHONPATH=${./python/stanza-adapter/src} python - "$model" <<'PY'
+                PYTHONPATH=${./python/stanza-adapter/src}:${./python/adapter-protocol/src} python - "$model" <<'PY'
                 import sys
                 from pathlib import Path
                 from lingrep_stanza_adapter.bundle import canonical_json, declared_model_profile
@@ -649,7 +724,10 @@
           linguisticEvalImages = import ./nix/linguistic-eval {
             inherit pkgs;
             lingrep = self'.packages.lingrep;
-            vibratoDictionary = vibratoDictCwj;
+            vibratoDictionary = buildUnidicVibratoDict {
+              name = "unidic-cwj";
+              inherit (unidicSources.cwj) url hash;
+            };
           };
 
           lingrepApp = {
@@ -772,6 +850,8 @@
             sudachidict-core = sudachiDictCore;
             sudachidict-full = sudachiDictFull;
             sudachidictionaries = sudachiDictionaries;
+            spacy-analyzer-en-core-web-sm = spacyEnglishAnalyzer;
+            spacy-model-en-core-web-sm = spacyModelEnCoreWebSm;
             stanza-model-fr-gsd-morphology = stanzaModelFrGsdMorphology;
           }
           # The OCI images stuff host `pkgs` into a Linux image, so on darwin
@@ -835,6 +915,7 @@
 
             mecab-dic-converter = mecabDicConverter;
             sudachi-packages = sudachiPackagesSmoke;
+            spacy-model-en-core-web-sm = spacyEnglishSmoke;
             stanza-model-fr-gsd-morphology = stanzaModelSmoke;
           }
           // lib.optionalAttrs isLinux {

@@ -23,8 +23,9 @@ screen = [
     "lingrep-core/bench-instrumentation",
     "dep:lingrep",
     "dep:lingrep-corpus",
+    "dep:tikv-jemallocator",
 ]
-analysis = ["dep:lingrep-core", "lingrep-core/external-allocator"]
+analysis = ["dep:lingrep-core"]
 
 [dependencies]
 blake3 = { workspace = true }
@@ -51,3 +52,6 @@ required-features = ["analysis"]
 name = "sudachi-analysis"
 path = "src/bin/sudachi-analysis.rs"
 required-features = ["analysis"]
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }

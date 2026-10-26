@@ -37,10 +37,10 @@ fn repository_markdown_frontmatter_fits_ingestion_contract() {
         let Some(frontmatter) = leading_frontmatter(&source) else {
             continue;
         };
-        let value: serde_yaml::Value = serde_yaml::from_str(frontmatter)
+        let value: serde_json::Value = serde_saphyr::from_str(frontmatter)
             .unwrap_or_else(|error| panic!("parse {} frontmatter: {error}", path.display()));
         let mapping = value
-            .as_mapping()
+            .as_object()
             .unwrap_or_else(|| panic!("{} frontmatter must be a mapping", path.display()));
         parsed += 1;
         maxima.fields = maxima.fields.max(mapping.len());
@@ -50,9 +50,7 @@ fn repository_markdown_frontmatter_fits_ingestion_contract() {
             path.display()
         );
         for (key, value) in mapping {
-            let key = key
-                .as_str()
-                .unwrap_or_else(|| panic!("{} has a non-string metadata key", path.display()));
+            let key = key.as_str();
             maxima.key_bytes = maxima.key_bytes.max(key.len());
             assert!(
                 key.len() <= MAX_KEY_BYTES,
@@ -114,19 +112,19 @@ fn leading_frontmatter(source: &str) -> Option<&str> {
     panic!("unterminated leading YAML frontmatter");
 }
 
-fn measure_value(path: &Path, value: &serde_yaml::Value, maxima: &mut Maxima) {
+fn measure_value(path: &Path, value: &serde_json::Value, maxima: &mut Maxima) {
     match value {
-        serde_yaml::Value::Null => {}
-        serde_yaml::Value::Bool(value) => measure_scalar(path, value.to_string().len(), maxima),
-        serde_yaml::Value::Number(value) => measure_scalar(path, value.to_string().len(), maxima),
-        serde_yaml::Value::String(value) => measure_scalar(path, value.len(), maxima),
-        serde_yaml::Value::Sequence(values)
+        serde_json::Value::Null => {}
+        serde_json::Value::Bool(value) => measure_scalar(path, value.to_string().len(), maxima),
+        serde_json::Value::Number(value) => measure_scalar(path, value.to_string().len(), maxima),
+        serde_json::Value::String(value) => measure_scalar(path, value.len(), maxima),
+        serde_json::Value::Array(values)
             if values.iter().all(|value| {
                 matches!(
                     value,
-                    serde_yaml::Value::Bool(_)
-                        | serde_yaml::Value::Number(_)
-                        | serde_yaml::Value::String(_)
+                    serde_json::Value::Bool(_)
+                        | serde_json::Value::Number(_)
+                        | serde_json::Value::String(_)
                 )
             }) =>
         {
@@ -141,7 +139,7 @@ fn measure_value(path: &Path, value: &serde_yaml::Value, maxima: &mut Maxima) {
             }
         }
         _ => {
-            let bytes = serde_yaml::to_string(value)
+            let bytes = serde_json::to_string(value)
                 .expect("serialize YAML value")
                 .len();
             maxima.opaque_bytes = maxima.opaque_bytes.max(bytes);

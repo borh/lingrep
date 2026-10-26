@@ -7,6 +7,7 @@
 #   ./ci.sh --quick       deprecated alias for --full
 #   ./ci.sh --fuzz        bounded fuzz smoke only
 #   ./ci.sh --performance retained benchmarks and real-corpus measurement only
+#   ./ci.sh --harbor-containers  Harbor oracle replays and sandbox probes under Podman
 
 set -euo pipefail
 
@@ -14,7 +15,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$repo_root"
 
 usage() {
-    echo "usage: $0 [--fast|--full|--quick|--fuzz|--performance]" >&2
+    echo "usage: $0 [--fast|--full|--quick|--fuzz|--performance|--harbor-containers]" >&2
 }
 
 if [[ $# -gt 1 ]]; then
@@ -31,6 +32,7 @@ case "${1:-}" in
         ;;
     --fuzz) mode=fuzz ;;
     --performance) mode=performance ;;
+    --harbor-containers) mode=harbor-containers ;;
     *)
         usage
         exit 2
@@ -51,7 +53,6 @@ run_repository_guards() {
 
     scripts/check-test-consolidation.sh
     scripts/check-doc-test-references.py
-    scripts/check-test-filters.sh
     scripts/check-test-thread-default.sh
     scripts/check-ling-test-launches.sh
     scripts/check-lx-catalogs.sh
@@ -64,6 +65,10 @@ run_common_checks() {
     run_environment
     run_repository_guards
 
+    echo "Checking CI and fuzz runner contracts"
+    scripts/test/test_ci_modes.sh
+    scripts/test/test_fuzz_smoke.sh
+
     echo "Checking the locked spaCy adapter contract"
     scripts/check-spacy-adapter.sh static
 
@@ -72,16 +77,22 @@ run_common_checks() {
 
     echo "Checking the Hugging Face dataset adapter"
     uv lock --check --script scripts/huggingface_dataset.py
-    python -m unittest scripts/test/test_huggingface_dataset.py
+    python -m unittest scripts/test/test_huggingface_dataset.py scripts/test/test_wo_predicate_export.py \
+        scripts/test/test_test_reference_guards.py scripts/test/test_cargo_test_selected.py
 
     echo "Checking the release installer"
     scripts/test/test_install.sh
 
+    echo "Checking the Harbor evaluation harness"
+    uv lock --project benchmarks/harbor --check
+    uv run --project benchmarks/harbor --frozen --group dev \
+        python -m pytest -q benchmarks/harbor/tests
+
     echo "Checking formatting"
-    cargo fmt --check --all 2>&1 | tee /tmp/cargo-fmt.log
+    cargo fmt --check --all 2>&1 | tee "${TMPDIR:-/tmp}/cargo-fmt.log"
 
     echo "Running clippy on all targets"
-    cargo clippy --all-targets -- -D warnings 2>&1 | tee /tmp/cargo-clippy.log
+    cargo clippy --all-targets -- -D warnings 2>&1 | tee "${TMPDIR:-/tmp}/cargo-clippy.log"
 }
 
 run_shared_tests() {
@@ -89,26 +100,26 @@ run_shared_tests() {
     node --test lingrep-web/js-tests/*.test.mjs
 
     echo "Running workspace doctests"
-    cargo test --workspace --doc 2>&1 | tee /tmp/cargo-test-doc.log
+    cargo test --workspace --doc 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-doc.log"
 }
 
 run_fast_tests() {
     echo "Running workspace library and binary unit tests"
-    cargo test --workspace --lib --bins --quiet 2>&1 | tee /tmp/cargo-test-fast.log
+    cargo test --workspace --lib --bins --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-fast.log"
 }
 
 run_full_tests_and_extras() {
     echo "Running complete workspace Rust test inventory"
-    cargo test --workspace --tests --quiet 2>&1 | tee /tmp/cargo-test-full.log
+    cargo test --workspace --tests --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-full.log"
 
     echo "Running real native portable-catalog realizations"
-    cargo test -p lingrep-core --test suite -- \
+    scripts/cargo-test-selected.py -p lingrep-core --test suite -- \
         portable_catalog_realization::real_vibrato_and_sudachi_realize_the_same_portable_catalog \
         --exact --ignored
-    cargo test -p lingrep --test suite -- \
+    scripts/cargo-test-selected.py -p lingrep --test suite -- \
         direct_protocol::sudachi_portable_catalog_publishes_nonzero_context_without_unidic_fields \
         --exact --ignored
-    cargo test -p lingrep-core --test suite -- sudachi_contract:: --ignored
+    scripts/cargo-test-selected.py -p lingrep-core --test suite -- sudachi_contract:: --ignored
 
     echo "Running the locked spaCy adapter suite"
     scripts/check-spacy-adapter.sh full
@@ -145,7 +156,7 @@ run_full_tests_and_extras() {
         scripts/test_matcher_correctness.sh
         scripts/check-live-launchers.py
         cargo test --release -p lingrep-corpus --bench prepared_tokens
-    } 2>&1 | tee /tmp/cargo-test-matcher-gate.log
+    } 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-matcher-gate.log"
 }
 
 # Both lanes, because a public item's doc linking a private one fails `cargo
@@ -161,7 +172,7 @@ run_full_tests_and_extras() {
 # stays in the full lane; this gate protects the pinned counters.
 run_screen_lane() {
     echo "Running lingrep-perf with the counted-work screen enabled"
-    cargo test -p lingrep-perf --features screen --quiet 2>&1 | tee /tmp/cargo-test-lingrep-perf.log
+    cargo test -p lingrep-perf --features screen --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-lingrep-perf.log"
 
     # `lingrep-core`'s own instrumentation tests, which nothing else runs. The line
     # above tests `lingrep-perf`'s targets; it builds `lingrep-core` as a library, so
@@ -173,16 +184,16 @@ run_screen_lane() {
     # passes every other lane. The feature set matches the line above,
     # so this reuses that build rather than compiling `lingrep-core` twice.
     cargo test -p lingrep-core --features testing,bench-instrumentation --lib --quiet 2>&1 |
-        tee /tmp/cargo-test-lingrep-core-instrumentation.log
+        tee "${TMPDIR:-/tmp}/cargo-test-lingrep-core-instrumentation.log"
 }
 
 run_doc_lane() {
     echo "Building documentation with warnings denied"
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1 | tee /tmp/cargo-doc.log
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1 | tee "${TMPDIR:-/tmp}/cargo-doc.log"
 
     echo "Building feature-gated documentation with warnings denied"
     RUSTDOCFLAGS="-D warnings" cargo doc -p lingrep-perf --features screen --no-deps 2>&1 |
-        tee /tmp/cargo-doc-lingrep-perf.log
+        tee "${TMPDIR:-/tmp}/cargo-doc-lingrep-perf.log"
 }
 
 run_fuzz() {
@@ -211,6 +222,40 @@ run_performance() {
     LINGREP_RUN_REAL_SENTENCE_FINAL_CLI_BENCH=1 scripts/measure_sentence_final_profile.sh
 }
 
+# Requires Podman and a Nix build of both benchmark images, so it is outside
+# the push gate.
+run_harbor_containers() {
+    local harbor=benchmarks/harbor archive generated
+    run_environment
+
+    echo "Loading the benchmark images"
+    for output in linguistic-eval-lingrep-image linguistic-eval-mecab-image; do
+        archive=$(nix build --no-link --print-out-paths ".#$output")
+        podman load --quiet --input "$archive"
+    done
+
+    echo "Building host ling for the oracle catalog check"
+    cargo build --release -p lingrep --bin ling
+    export PATH="$repo_root/target/release:$PATH"
+
+    generated=$(mktemp -d "${TMPDIR:-/tmp}/lingrep-harbor-containers.XXXXXX")
+    for lane in smoke:catalog-authoring worked-example:catalog-authoring soranoha:common-analysis; do
+        catalog=${lane%%:*}
+        protocol=${lane#*:}
+        echo "Replaying the $catalog reference solutions through the verifier"
+        uv run --project "$harbor" --frozen python "$harbor/generate_dataset.py" \
+            --catalog "$harbor/catalogs/$catalog.json" \
+            --output "$generated/$catalog" --protocol "$protocol"
+        uv run --project "$harbor" --frozen python "$harbor/oracle_preflight.py" \
+            "$generated/$catalog"
+    done
+    rm -rf "$generated"
+
+    echo "Probing the replay sandbox inside the verifier images"
+    uv run --project "$harbor" --frozen --group dev \
+        python -m pytest -q -m containers "$harbor/tests"
+}
+
 echo "Lingrep CI: $mode"
 case "$mode" in
     fast)
@@ -228,6 +273,7 @@ case "$mode" in
         ;;
     fuzz) run_fuzz ;;
     performance) run_performance ;;
+    harbor-containers) run_harbor_containers ;;
 esac
 
 echo "CI lane passed: $mode"

@@ -67,6 +67,11 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(artifact.join("manifest.json")).unwrap()).unwrap();
 
+    assert_eq!(
+        manifest["analyzer"]["normalization_unicode_version"],
+        serde_json::json!([18, 0, 0])
+    );
+
     // Identity — the bytes a later run compares against.
     assert_eq!(
         manifest["source_identity"],
@@ -74,11 +79,11 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "876020ea11414790f9f7b165bb5ac45d25d13471660d268ce1d444ccef6df527"
+        "41d949c5a655e045ca65c371e29f96bed26fcee3a63190e08cfeaf537c62aa1f"
     );
     assert_eq!(
         manifest["reader_identity"],
-        "e6e3551c916214f19813eca5e74f734f70598ba643888cad52b459516ccf9d53"
+        "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1"
     );
     assert_eq!(
         manifest["admission_identity"],
@@ -117,7 +122,7 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     assert_eq!(components["locations.v1"]["length"], 376);
     assert_eq!(
         components["locations.v1"]["blake3"],
-        "5f297ddda32ff505c0874eedede8381d0b661834f0fd87d92f2440b5bb6af975"
+        "e9f167622c9fe69fa55f4b626e5be342fc7734d4bcdfdc67ea35213affc4dd0c"
     );
 }
 
@@ -164,7 +169,7 @@ fn the_prepared_tokens_decode_to_the_pinned_records() {
     let bytes = fs::read(artifact.join("tokens.v1.zst")).unwrap();
     assert_eq!(
         decompressed_tokens_digest(&bytes),
-        "ac47641caa5f9557f38e92c4de395a4e8345c0711111415b0f0f8d6ab0f5d8b5"
+        "adebf240e1c5e887f2c62f148ed402180a9295d0e08ce203b7f266ccaba804ba"
     );
 }
 
@@ -365,7 +370,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             0,
             "猫が来る。",
             &[(0, 3), (3, 6), (6, 15)],
-            "030787cc8ecd319bab161d9133d88338460c96515aa4d2612b3b255ff19f7559",
+            "4624ce1fd59cd3c6e7ba9a8017a9701bdf00003c59fc318a013771219c01289d",
         ),
         (
             "a.md",
@@ -373,7 +378,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             1,
             "猫が寝る。",
             &[(0, 3), (3, 6), (6, 15)],
-            "e5687d832fba4aed5eb769cca8067fa14d33bede6346e18e9c0240bca5e91dcf",
+            "43f7eb873d4a4f06a1fc927fdacda54b05794e3ec1dcdd150439287a7db9a01f",
         ),
         (
             "b.md",
@@ -381,7 +386,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             0,
             "犬が走る。",
             &[(0, 3), (3, 6), (6, 12), (12, 15)],
-            "54cef58b6233ebd461f96621deb88885eb353a82be7cca0b5d675653435cad99",
+            "0dfabd8b75909b872e459af0c39a3ee3d0c742262056e76cf6da4cf88ede752a",
         ),
     ];
     reader.block_on(async {
@@ -515,12 +520,8 @@ fn the_baseline_is_deterministic_across_builds() {
     );
 }
 
-/// The literals are what `ling` 0.3.2 records for this fixture, so a CoNLL-U
-/// artifact prepared by 0.3.2 is found and read by this build. A change to
-/// CoNLL-U decoding replaces `DECODER_REVISION` in `lingrep-core`'s
-/// `corpus/conllu.rs`, and then these literals.
 #[test]
-fn a_conllu_artifact_keeps_the_identity_0_3_2_recorded() {
+fn conllu_artifact_identity_includes_versioned_normalization() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("s.conllu");
     fs::copy(
@@ -553,6 +554,6 @@ fn a_conllu_artifact_keeps_the_identity_0_3_2_recorded() {
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "59c0a3711d4b4669b19310dc3e44c418d76bd009d755ad0fbd422dc1617e9779"
+        "1044950a50f581d79542858a347bd4e580e9c3dd73a2c455ae488d207021d966"
     );
 }

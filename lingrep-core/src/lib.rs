@@ -1,18 +1,3 @@
-#[cfg(all(
-    not(target_env = "msvc"),
-    not(test),
-    not(feature = "external-allocator")
-))]
-use tikv_jemallocator::Jemalloc;
-
-#[cfg(all(
-    not(target_env = "msvc"),
-    not(test),
-    not(feature = "external-allocator")
-))]
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
-
 pub mod analysis;
 pub mod corpus;
 pub mod dictionary;

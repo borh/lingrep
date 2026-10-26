@@ -1,7 +1,7 @@
 # The Markdown corpus dialect
 
-`--input-format markdown` reads a specific dialect, not general Markdown. This
-document is the contract. `lingrep-core` structured-corpus tests and `ling`
+`--input-format markdown` reads a specific dialect, not general Markdown.
+`lingrep-core` structured-corpus tests and `ling`
 direct/prepared protocol tests enforce it against repository fixtures.
 
 ## Flags
@@ -37,7 +37,7 @@ such a label prints a warning identifying the admitting flag.
   paragraph identity; a paragraph may span heading or div boundaries because
   blank lines, not presentation structure, define it.
 - **A leading `---` block is YAML frontmatter.** It is parsed as typed document
-  metadata. A `---` anywhere else is a thematic break.
+  metadata with unique mapping keys. A `---` anywhere else is a thematic break.
 - **`:::+ {.classes}` opens a region; a bare `:::+` closes it.** This follows
   pandoc's rule that a fence without attributes is always a closing fence. A
   colon fence that is neither is an error, not an open region.
@@ -54,10 +54,10 @@ such a label prints a warning identifying the admitting flag.
 ## Conversion-artifact recovery
 
 `--md-recover-conversion-artifacts` accepts a fixed set of artifacts that
-Markdown converters emit and that the strict read refuses:
+Markdown converters emit and that the strict reader rejects:
 
 - presentational HTML and `<si ...>` linguistic notation, which the strict
-  read refuses as raw HTML;
+  reader rejects as raw HTML;
 - div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 
@@ -81,8 +81,8 @@ tracked independently:
 | heading | `#{n} … {.class}` | the next heading at level ≤ n |
 
 The active labels of a line are every open div's labels plus the labels of the
-nearest labeled ancestor heading, counting only section labels, never
-[self-labels](#self-labels).
+nearest labeled ancestor heading. Only section labels contribute;
+[self-labels](#self-labels) do not.
 
 Heading resolution skips classless headings: `### (1) 課題` under
 `## 方法 {.methods}` leaves `methods` active. Labels of outer labeled headings
@@ -111,11 +111,9 @@ declares that every heading class introduces a section. (Contrast
 `--md-include-sections ""`, which is an error.)
 
 A self-label applies only to headings. `::: {.title}` still labels its content,
-and that content is selected or excluded by `title` like any other div label
-(`a_div_class_is_never_treated_as_a_self_label`). A heading that carries both a
-self-label and a section label keeps the section label: `{.title .methods}`
-labels its section `methods`
-(`a_heading_mixing_a_self_label_and_a_section_label_keeps_the_section_label`).
+and that content is selected or excluded by `title` like any other div label.
+A heading that carries both a self-label and a section label keeps the section label: `{.title .methods}`
+labels its section `methods`.
 
 Self-labels cannot be inferred from structure: `results` and `title` are both
 carried mostly by headings, at every heading level, so the distinction is
@@ -138,8 +136,6 @@ An empty list has different effects for inclusion and exclusion:
   exiting successfully, which can occur when an unset variable is passed in
   `--md-include-sections "$SECTIONS"`. Omit the flag to admit every label. A
   list that names no label after trimming (`"  ,  "`) is the same error.
-  `SectionPolicy::new` accepts `Some(empty)`, so a library caller that
-  constructs it directly reads an empty corpus.
 
 A non-empty include list drops unlabeled lines: a line with no active label
 matches no named label.

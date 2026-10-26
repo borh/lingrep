@@ -82,6 +82,12 @@ where
     ) -> Result<Option<ExecutionBatch>, ExecutionError> {
         limits.validate()?;
         let Some(batch) = self.source.next_batch(limits)? else {
+            self.analyzer
+                .finish()
+                .map_err(|error| ExecutionError::Source {
+                    ordinal: self.next_corpus_sentence,
+                    message: error.to_string(),
+                })?;
             return Ok(None);
         };
         let ExecutionBatch::Text(sentences) = batch else {

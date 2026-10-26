@@ -316,3 +316,19 @@ fn catalog_diff_reports_prepared_corpus_differences_and_refuses_failed_runs() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn human_check_reports_definitions_and_warnings_without_a_fingerprint() {
+    let output = lingrep_without_dictionary()
+        .args(["check", "--pattern", "[upos=NOUN]."])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let human = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(human, "catalog checked: 1 definition(s), 0 warning(s)\n");
+    let json = successful_check(&["check", "--json", "--pattern", "[upos=NOUN]."]);
+    assert_eq!(
+        json["data"]["catalog_fingerprint"].as_str().unwrap().len(),
+        64
+    );
+}

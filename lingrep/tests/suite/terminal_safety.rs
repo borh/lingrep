@@ -205,3 +205,65 @@ fn closed_progress_stderr_does_not_truncate_result_coverage() {
     assert_eq!(complete["type"], "complete");
     assert_eq!(complete["data"]["counters"]["sentences_matched"], 2_000);
 }
+
+#[cfg(unix)]
+#[test]
+fn auto_progress_follows_stderr_terminal_without_changing_stdout() {
+    use std::os::fd::FromRawFd;
+
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    let mut expected_stdout = None;
+    for terminal in [false, true] {
+        for mode in ["auto", "always", "never"] {
+            let mut command = lingrep_std();
+            command
+                .args(["matches", "--json", "--pattern", "[].", "--progress", mode])
+                .arg(&corpus);
+            let mut master = None;
+            if terminal {
+                let (mut master_fd, mut slave_fd) = (-1, -1);
+                assert_eq!(
+                    unsafe {
+                        libc::openpty(
+                            &raw mut master_fd,
+                            &raw mut slave_fd,
+                            std::ptr::null_mut(),
+                            std::ptr::null(),
+                            std::ptr::null(),
+                        )
+                    },
+                    0
+                );
+                master = Some(unsafe { fs::File::from_raw_fd(master_fd) });
+                command.stderr(unsafe { fs::File::from_raw_fd(slave_fd) });
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success());
+            let mut stderr = output.stderr;
+            if let Some(mut master) = master {
+                drop(command);
+                let _ = master.read_to_end(&mut stderr);
+            }
+            let stderr = String::from_utf8(stderr).unwrap();
+            assert_eq!(
+                stderr.contains("matched 1 sentences"),
+                mode == "always" || (mode == "auto" && terminal),
+                "{mode} terminal={terminal}: {stderr}"
+            );
+            let events = parse_jsonl(&output.stdout);
+            let semantic_events: Vec<_> = events
+                .iter()
+                .filter(|event| event["type"] == "match")
+                .map(|event| event["data"].clone())
+                .collect();
+            assert_eq!(semantic_events.len(), 1);
+            if let Some(expected) = &expected_stdout {
+                assert_eq!(&semantic_events, expected);
+            } else {
+                expected_stdout = Some(semantic_events);
+            }
+        }
+    }
+}

@@ -1,18 +1,6 @@
-# Passive-agent candidates by dependency relation.
-#
-# This catalog is the dependency-backed counterpart to surface heuristics for
-# Japanese passives. It asks which nominal fills the passive-subject slot and
-# which oblique nominal is attached to the same predicate. The relation key
-# keeps plain `obl` separate from the more explicit `obl:agent`: treating the
-# former as an agent is a research hypothesis to measure, not an assumption
-# hidden in the pattern.
-#
-# Two definitions cover the Japanese head-final orders in which the subject
-# and oblique may occur. They publish one output name and the same key shape.
-# The query is positive: it establishes two observed edges, but does not claim
-# that the predicate has no other arguments. It requires CoNLL-U-style
-# `dep.head` and `dep.rel` attributes and intentionally has no morphology-only
-# fallback.
+# Passive-agent candidates by dependency relation (`dep.head`, `dep.rel`).
+# Plain `obl` is kept separate from `obl:agent` in the key, and the two
+# head-final orders share one `output_name`.
 
 defaults
   status: "experimental"

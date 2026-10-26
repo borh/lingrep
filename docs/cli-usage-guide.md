@@ -12,7 +12,6 @@ ling corpus build|inspect|inventory|variants
 ling tokenize
 ling coverage
 ling explore
-ling sentence-final
 ling doctor
 ling describe [COMMAND]
 ling completions SHELL
@@ -20,7 +19,10 @@ ling manpages --output DIRECTORY
 ling contracts [CONTRACT]
 ```
 
-Use `ling <command> --help` for all bounds and formats.
+Use `ling <command> --help` for common options and `--help-all` for additional
+analyzer settings, resource limits, formatting and diagnostics. `ling check --help`
+also includes the pattern-language reference. JSON output retains full identifiers
+and protocol details; terminal output reports readable summaries.
 
 ## Choose a workflow
 
@@ -48,10 +50,10 @@ a file; the latter compiles one inline expression or document.
 language reference.
 
 ```bash
-ling check --patterns patterns/sfe.lx
-ling check --verify-examples --dict-path "$LINGREP_DICTIONARY_PATH" --patterns patterns/sfe.lx
+ling check --patterns patterns/sentence-final.lx
+ling check --verify-examples --dict-path "$LINGREP_DICTIONARY_PATH" --patterns patterns/sentence-final.lx
 ling matches --dict-path "$LINGREP_DICTIONARY_PATH" \
-  --patterns patterns/sfe.lx --json --context 2 corpus/
+  --patterns patterns/sentence-final.lx --json --context 2 corpus/
 ling summarize --dict-path "$LINGREP_DICTIONARY_PATH" \
   --pattern '[upos=VERB].' --tsv --top 50 corpus/
 ```
@@ -62,8 +64,8 @@ configuration, with one sentence per claim (`--segmentation input`). The report
 identifies the catalog, analyzer and resource, distinguishes zero checked claims,
 and includes malformed, expected/unexpected-match and post-policy failures.
 Violated claims exit 1; unavailable attributes and analysis failures cannot pass
-counterexamples. Passing examples confirms consistency with authored claims,
-not linguistic correctness or recall. External adapters are refused by this
+counterexamples. Successful example verification confirms consistency with authored
+claims, not linguistic correctness or recall. External adapters are rejected by this
 verification path.
 
 `matches` emits canonical per-match evidence. A published token carries only the
@@ -84,8 +86,8 @@ cannot be combined with `--limit`. No retained examples or successful completion
 are published after scan failure or cancellation. With `--sample`, totals cover
 that declared corpus sample rather than a corpus census.
 
-Closing human stdout with a pager or `head` is a successful early display
-termination. JSONL and TSV output treat a closed stdout as an error: the run
+For human output, closing stdout with a pager or `head` ends the run successfully.
+JSONL and TSV output treat a closed stdout as an error: the run
 reports `broken_pipe` and exits `1`.
 
 ### Human KWIC rendering
@@ -115,15 +117,15 @@ the terminal theme.
 
 ```bash
 # Keep all context dim.
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --context-color-depth 0 corpus/
 
 # Color the nearest three morphemes on each side.
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --context-color-depth 3 corpus/
 
 # Use the default depth explicitly and adapt for a light background.
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --context-color-depth 5 --context-color-theme light corpus/
 ```
 
@@ -133,11 +135,11 @@ place of the spaces around the hit:
 
 ```bash
 # Reproduce space-separated morphemes.
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --morpheme-separator ' ' corpus/
 
 # Make every morpheme boundary explicit.
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --morpheme-separator '|' corpus/
 ```
 
@@ -211,7 +213,7 @@ A tag source is a literal (`{aspect: perfective}`), a capture-presence mapping
 (`{aspect: {perf: perfective, prog: progressive}}`, where the named capture that
 participated supplies the value), or a projection off one capture
 (`{lemma: {$head: lemma}}`). A projection reads a single token, so the compiler
-refuses one whose capture can cover more than one token or can match more than
+rejects one whose capture can cover more than one token or can match more than
 once. `key:` accepts `$c.first.attr`, `$c.last.attr`, or `$c.span.attr` to
 select which reading of a wider capture is meant. `$c.attr` requires an
 exact-width-one capture. A bare `attr` projects the whole match and requires the
@@ -281,14 +283,12 @@ scanning, `--trace-policy` scans and reports per record. Long statement text is
 shortened on the trace line; compile diagnostics always quote the statement in
 full.
 
-`matches`, `summarize` and `sentence-final` all accept `--trace-policy` and
+`matches` and `summarize` accept `--trace-policy` and
 report the per-statement counters. `explore` has neither, because output
 written beneath the TUI would not be visible.
 
-On `summarize` and `sentence-final` the trace covers the policy program only.
-Each command applies further filtering of its own (the sentence-final
-predicate, the empty-surface skip, an unprojectable key), so a record whose
-trace ends in `kept` can still be absent from the output.
+On `summarize` the trace covers the policy program; records with empty surfaces
+or unprojectable keys can still be absent from the output.
 
 ### What `summarize` groups by
 
@@ -301,8 +301,9 @@ each coarser than the one above it:
    fixed `group` column. Field names and source order are part of the grouping
    identity in both encodings.
 2. **The rendered `unit`,** when a transform produced one.
-3. **The authored lexical term,** for an unkeyed lexicon occurrence. Lexicons
-   refuse transforms, so their reachable order is declared key, term, surface.
+3. **The authored lexical term,** for an unkeyed lexicon occurrence. Transforms
+   are not allowed in lexicons, so their grouping order is declared key, term,
+   surface.
 4. **The matched surface.**
 
 Rows are ordered by authored pattern and descending count. Equal counts use
@@ -325,7 +326,7 @@ authored term. Add `key: [term, segments(text)]` to count observed
 segmentations per term.
 
 Query JSONL includes `lexical: {term, matched_by}` and list-valued key fields.
-`matches --tsv` refuses lexicon catalogs because its fixed headerless row has
+`matches --tsv` rejects lexicon catalogs because its fixed headerless row has
 no place for variable-length `matched_by`; use JSON or human output.
 
 ### Cross-catalog drift
@@ -335,8 +336,8 @@ catalogs but whose bodies differ. The flag is repeatable and requires
 `--patterns`, because an inline `--pattern` has no catalog name to report.
 
 ```bash
-ling check --patterns patterns/sfe.lx \
-  --compare-with patterns/sfe.lx \
+ling check --patterns patterns/sentence-final.lx \
+  --compare-with patterns/sentence-final.lx \
   --compare-with patterns/sf-experimental.lx
 ```
 
@@ -372,7 +373,7 @@ python3 scripts/catalog_diff.py before.lx after.lx --examples --dict-path "$LING
 
 The JSON report labels definitions added, removed, changed or unchanged by
 reference-closed structural body and visibility; renames appear as removal and
-addition. It separately flags emitting-definition metadata changes. Expanded
+addition. It separately flags changes to metadata on emitting definitions. Expanded
 declarations are display text. Body identity follows the drift comparator's
 metadata-insensitive rules, so publication policy can change results without
 changing a body.
@@ -380,8 +381,9 @@ changing a body.
 `--corpus` compares two complete scans of the same prepared artifact. `--examples`
 uses the union of both catalogs' example/counterexample texts with Vibrato;
 zero or malformed claims fail instead of claiming coverage. Behavioral counts
-report published records exclusive to each revision, preserving multiplicity,
-captures, graph bindings, lexical identity, keys, tags and character positions.
+report published records exclusive to each revision. The comparison preserves
+multiplicity, captures, graph bindings, lexical identity, keys, tags and character
+positions.
 Stream sequence and query-dependent token/context projections are excluded from
 identity. Both runs' identities, counts and completion evidence accompany the
 report. Incomplete or failed scans publish no report. Memory use does not grow
@@ -397,12 +399,12 @@ absent, which is per-token absence applied to every token. Positive tests over
 it match nothing, `!=`/`!~`/`not in` match nothing either, and only the true
 complement `!(…)` holds. A `matches` or `summarize` run reports each such
 attribute as a `warning[attribute_unavailable]` on stderr, regardless of
-`--progress`, naming the referencing definitions and the corpus's token
-schema.
+`--progress`. The warning lists the referencing definitions and the corpus's
+token schema.
 
-Two bind-time refusals exit `2` as invalid invocations: a dependency `where`
-clause whose `dep.head`/`dep.rel` the corpus cannot supply, and a key the
-schema carries under a conflicting value kind.
+Binding fails with exit code `2` for two invalid invocations: a dependency `where`
+clause requiring `dep.head`/`dep.rel` that the corpus cannot supply, and an
+attribute key that the schema carries under a conflicting value kind.
 
 `check --schema SCHEMA` reports the same findings without a corpus, against a
 named declared schema: `unidic-morphology`, `sudachi-morphology`, `tokenize`
@@ -434,7 +436,7 @@ sentence. One clause applies uniformly to the whole catalog; there is no
 per-pattern form. It is available on `matches`, `summarize` and `coverage`.
 
 ```bash
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --where '@document.subject_area = 社会学 & (@document.year >= 2010 | @document.keywords contains 農学)' \
   corpus/
 ```
@@ -460,7 +462,7 @@ tokens, with `"…"` available for a value containing a delimiter or a space.
 `@section` tests the labels active at a sentence:
 
 ```bash
-ling matches --patterns patterns/sfe.lx --dict-path "$DICT" \
+ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
   --where '@section in {methods, results} & @document.year >= 2010' \
   markdown-corpus/
 ```
@@ -498,7 +500,7 @@ and names the flag. See [the dialect contract](markdown-corpus-dialect.md).
 
 `--md-recover-conversion-artifacts` is also a read-time flag. It admits the
 artifacts a corpus converter emits (presentational HTML, `<si …>` notation, and
-div imbalance at the document boundary), which the strict default refuses. Use
+div imbalance at the document boundary), which the strict default rejects. Use
 it when a tree fails to build on a few documents out of many; a malformed fence
 or an unterminated code block remains an error either way. The flag is part of
 `reader_tag`, so a recovered read names a different prepared artifact than a
@@ -515,8 +517,8 @@ for `--max-tokenized-bytes` does not fail a run that excludes it.
 A `@section` clause over a corpus that records no sections is refused before
 processing: JSONL input, or an artifact whose section coverage is empty. An
 empty label set there cannot distinguish "in no labelled section" from "this
-format records none". A label the corpus does not happen to record only warns,
-because one catalog can run over several corpora.
+format records none". If the corpus records sections but none with the requested
+label, the run reports a warning, because one catalog can run over several corpora.
 
 ### What each operator accepts
 
@@ -550,9 +552,9 @@ separately, so a scoped run reports four buckets:
 }
 ```
 
-Document and sentence counts can diverge. Under a section clause a document is
-counted admitted when its metadata did not exclude it, even if none of its
-sentences survives, so a run may report one admitted document and zero
+Document and sentence counts can diverge. Under a section clause, a document
+counts as admitted if its metadata did not exclude it, even if none of its
+sentences is admitted. A run may therefore report one admitted document and zero
 admitted sentences.
 
 Two complementary-looking scopes do not partition the corpus: `year < 2010` and
@@ -588,7 +590,7 @@ named in an unscoped run.
 
 A prepared document carrying no stored metadata is counted as a missing
 field. Stored metadata that does not parse, or that the typing rule rejects,
-violates an artifact invariant: the run fails, naming the document. A value of
+violates an artifact invariant: the run fails and reports the document. A value of
 the wrong shape is counted, not fatal.
 
 ## Sampling a corpus with `--sample`
@@ -599,12 +601,12 @@ at proportionally lower cost. It is off by default.
 ```bash
 # A quarter of one Soranoha author archive (see "Soranoha bulk archives"),
 # at the default seed.
-ling --json summarize --patterns patterns/sfe.lx \
+ling --json summarize --patterns patterns/sentence-final.lx \
   --dict-path "$DICT" --sample 0.25 \
   --input-format soranoha soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip
 
 # The same rate, a different sample.
-ling --json summarize --patterns patterns/sfe.lx \
+ling --json summarize --patterns patterns/sentence-final.lx \
   --dict-path "$DICT" --sample 0.25 --sample-seed 7 \
   --input-format soranoha soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip
 ```
@@ -687,28 +689,32 @@ Omitting a root is an invocation error. Pass `-` explicitly for stdin. A
 completed stdin run has a per-run stream ID and content digest but no reusable
 source or analysis identity.
 
-Direct filesystem roots resolved as Markdown receive one recovery behavior in
-`matches`: an admitted sentence larger than `--max-sentence-bytes` is skipped,
-the scan continues, and the command exits 1 with diagnostic code
-`oversized_sentences_skipped`. The skipped sentence retains its input ordinal,
-so later match locations contain a visible gap. JSONL and TSV may therefore
-publish later evidence but publish no `complete` record for the degraded run;
-human `--progress always` still prints processed sentence and match totals
-before the terminal diagnostic. Extensionless filesystem roots use Markdown
-inference and receive the same behavior.
+Long sentences normally run automatically in their own batch. Explicit limits
+have different failure behavior for three cases:
 
-Stdin, JSONL, plaintext, and every other command over direct input stop at the
-first oversized sentence with `sentence_too_large`. `summarize` publishes no
-total that silently omits a sentence.
+- **Direct Markdown `matches`.** For direct filesystem roots resolved as
+  Markdown, an admitted sentence larger than `--max-sentence-bytes` is skipped.
+  The scan continues, and the command exits 1 with diagnostic code
+  `oversized_sentences_skipped`. The skipped sentence retains its input ordinal,
+  so later match locations contain a visible gap. JSONL and TSV may therefore
+  publish later evidence but publish no `complete` record for the degraded run;
+  human `--progress always` still prints processed sentence and match totals
+  before the terminal diagnostic. Extensionless filesystem roots use Markdown
+  inference and receive the same behavior.
 
-Prepared input recovers in `matches` and `summarize` alike: a sentence over
-`--max-tokenized-bytes` is omitted and counted, and the run exits 1 with
-`oversized_sentences_skipped` and no `complete` record. Stopping at the first
-oversized sentence would make an already-built artifact unqueryable at that
-limit.
+- **Other direct input.** Stdin, JSONL, plaintext, and every other command over
+  direct input stop at the first sentence over `--max-sentence-bytes`, exit 1
+  with `sentence_too_large`, and publish no `complete` record. `summarize`
+  publishes no total that silently omits a sentence.
 
-Human progress defaults to `auto`. Pass `--progress always` or `never`
-explicitly; it never changes stdout or identity. Select machine-readable errors
+- **Prepared input.** Both `matches` and `summarize` omit and count a sentence
+  over `--max-tokenized-bytes`. The run exits 1 with
+  `oversized_sentences_skipped` and no `complete` record. Stopping at the first
+  oversized sentence would make an already-built artifact unqueryable at that
+  limit.
+
+Human progress defaults to `auto`, which enables it when stderr is a terminal.
+Pass `--progress always` or `never` explicitly; it never changes stdout or identity. Select machine-readable errors
 independently with `--json`.
 
 Direct commands resolve their dictionary from an explicit `--dict-path` first,
@@ -746,8 +752,8 @@ Known UD features are string-set `feat.*` attributes; all original FEATS and
 MISC entries are additionally retained in `conllu.feats` and `conllu.misc`.
 
 A dependency clause may classify a captured head by an identity-free dependent
-predicate. This emits the one-token verb once even when several objects satisfy
-the test:
+predicate. The following patterns each emit the one-token verb once, even when
+several objects satisfy the test:
 
 ```pattern
 key: [$verb.lemma]
@@ -841,14 +847,14 @@ match.
 
 Soranoha publishes its corpus as ZIP archives: the whole corpus, one author,
 one NDC class or subclass, and the children's material. Each archive carries
-one plaintext file per work and `catalog.csv` at its root. Declare the archive
-format with `--input-format soranoha`; a `.zip` is not inferred, because a ZIP
-names a container rather than a format:
+one plaintext or TEI file per work and `catalog.csv` at its root. Use
+`--input-format soranoha` for plaintext or `--input-format soranoha-tei` for TEI.
+ZIP input requires an explicit format:
 
 ```bash
 ling matches \
   --dict-path "$DICT" \
-  --patterns patterns/sfe.lx \
+  --patterns patterns/sentence-final.lx \
   --input-format soranoha \
   --where '@document.author = "芥川 竜之介" & @document.ndc = "NDC 913"' \
   --source-metadata @document.identifier \
@@ -884,17 +890,54 @@ The text is the plaintext projection: ruby readings and apparatus are absent,
 Aozora Bunko line breaks and source indentation are preserved, and sentences
 are framed with the same rule as `plain`, so the same member read as `plain`
 admits the same sentence texts. Paragraph structure is reported unavailable.
-A TEI archive is refused by name; use the plaintext archive.
+The TEI reader produces the same principal text and sentence boundaries as the
+paired Soranoha plaintext edition. It reads ruby bases and the single `lem` in
+an apparatus. Within `choice`, it reads all children of the first available type
+in `corr`, `reg`, `expan`, `sic`, `orig`, `abbr` priority order. Notes, running
+headers and figure descriptions are excluded. Line/page/column breaks become line breaks, empty gaiji become U+FFFC,
+and source indentation becomes U+3000. With the same analyzer configuration,
+ordinary tokenization and match/capture offsets follow the plaintext reading.
 
-One work is one input record, so `--max-record-bytes` (default 1 MiB) bounds a
-whole work. The largest works in the full corpus exceed that default, so raise
-it for a whole-corpus run:
+TEI input also supplies four string-set token attributes:
+
+| Attribute | Values |
+|---|---|
+| `tei.ruby` | Readings attached to the selected ruby base |
+| `tei.element` | Enclosing TEI element names, such as `hi`, `head` and `p` |
+| `tei.rend` | Whitespace-separated `rend` values |
+| `tei.source` | Literal source references from `source` attributes |
+
+For example, `p := [tei.ruby has ねこ].` searches readings and
+`p := [tei.rend has bouten].` searches emphasis. A value applies only when its
+range contains the complete analyzer surface token. Ruby readings are shared
+whole-base annotations, not inferred pronunciations of individual morphemes.
+Markup never forces a token boundary. Prepared artifacts preserve these attributes.
+Character offsets address sentence text; source references retain their XML values.
+If NFC normalization rejects an annotation boundary that splits a combining
+sequence, use `--normalization none`.
+
+`--input-format tei` reads an independent TEI P5 XML file or a directory of `.xml`
+files, including names with an uppercase extension. It requires the TEI namespace
+and one principal `text/body`; grouped texts and ambiguous apparatus or ruby targets
+produce errors. Generic TEI separates `p`, `head`, `l`, `ab` and `item` blocks at
+both boundaries. Soranoha vocabulary versions 1–3 use Soranoha's block-end policy
+to preserve its plaintext projection. The first header title and author become
+`title` and `author` document metadata; language identifiers and licence targets
+become the arrays `tei.languages` and `tei.licences`. Soranoha catalog values take
+precedence. The reader does not validate a complete TEI customization or fetch
+schemas, entities or linked documents. DTD declarations and foreign elements in
+the selected body produce errors. RelaxNG validation can check a corpus's
+structure separately; the reading policy determines which text is searched.
+
+For plaintext, `--max-record-bytes` (default 1 MiB) bounds each physical line;
+each inflated work has a separate 64 MiB memory guard. For TEI, the record limit
+bounds each sentence's text and annotations. These defaults support larger
+books when each record and the inflated work fit their respective limits:
 
 ```bash
 ling corpus build \
   --dict-path "$DICT" \
   --input-format soranoha \
-  --max-record-bytes 4194304 \
   --output soranoha.lingcorpus \
   soranoha-plaintext.zip
 ```
@@ -988,7 +1031,7 @@ scripts/huggingface_dataset.py OWNER/DATASET --inspect --config CONFIG
 ```bash
 scripts/huggingface_dataset.py hotchpotch/fineweb-2-edu-japanese \
   --config default --split train --text-field text --limit 1000 |
-  ling matches --input-format jsonl --patterns patterns/sfe.lx -
+  ling matches --input-format jsonl --patterns patterns/sentence-final.lx -
 ```
 
 Dot-separated fields select nested values. Only repeatable
@@ -1002,7 +1045,7 @@ scripts/huggingface_dataset.py Helsinki-NLP/opus-100 \
   --config en-ja --split train --text-field translation.ja \
   --metadata-field translation.en --revision COMMIT \
   --output opus-en-ja.jsonl
-ling summarize --cache --patterns patterns/sfe.lx opus-en-ja.jsonl
+ling summarize --cache --patterns patterns/sentence-final.lx opus-en-ja.jsonl
 ```
 
 `--output` publishes either format atomically and refuses to replace an
@@ -1015,8 +1058,7 @@ supplies the C++ runtime search path required by the locked Arrow/NumPy wheels.
 
 Direct `matches`, `summarize`, `tokenize`, and `coverage` runs, plus
 `corpus build`, accept three analyzer families. Vibrato is the default.
-Direct `explore` and `sentence-final` do not expose alternate analyzer
-selection.
+Direct `explore` does not expose alternate analyzer selection.
 
 The common analysis choices are:
 
@@ -1085,53 +1127,130 @@ sudachi_dictionary="$(nix build .#sudachidict-core \
   --no-link --print-out-paths)/share/sudachi/system_core.dic"
 ```
 
+### Inspect unexplained sentence endings
+
+`ling matches --ending-report endings.json --patterns patterns/sentence-final.lx ROOT`
+scans the full selected scope and writes exact groups of trailing surface-token
+sequences, including sentences with no published match. It ignores trailing
+`upos=PUNCT` tokens and uses the rightmost published match end; a match reaching
+the substantive end covers the sentence. Each group records occurrence and
+distinct-document counts and the first three examples with all sentence tokens,
+half-open token boundaries and preceding matches. Totals count observed sentences
+and documents in the selected scope. Token sequences do not preserve source spacing.
+
+The report describes gaps in published coverage: policy-suppressed matches can
+also cause them, so a gap does not prove a missing grammatical construction.
+Prepared queries decode unmatched sentences too. The report fails above 4096
+groups or a 32 MiB retained-data charge; narrow the scope when that happens.
+It is published only after a completed scan, never replaces a file, and cannot
+be combined with `--limit`, `--retain` or `--raw-matches`.
+
 ### Use an external protocol adapter
 
-An external analyzer must be an executable that implements the bounded
-`lingrep.external-morphology/v1` JSONL protocol. Pass its executable separately
-from each argument so no shell command string is interpreted:
+Select an external analyzer with one reusable TOML file. It applies to
+`tokenize`, `matches`, `summarize`, `coverage`, `check --verify-examples`, and
+`corpus build`; do not combine it with `--analyzer`, `--dict-path`, or other
+analyzer-specific flags.
 
-```bash
-ling tokenize \
-  --analyzer external \
-  --external-executable /absolute/path/to/adapter \
-  --external-arg adapter-option \
-  --profile morphology \
-  --segmentation input \
-  corpus.jsonl
+```toml
+version = 1
+kind = "spacy"
+python = "/path/to/pinned/environment/bin/python"
+entrypoint = "/path/to/spacy-adapter/bin/lingrep-spacy-adapter"
+model = "/path/to/sealed/en_core_web_sm"
+backend = "cpu"
 ```
 
-The adapter handshake declares its schema, resource identity, and supported
-profile and segmentation combinations. An incompatible request fails before
-corpus output is published.
-
-From a checkout inside `nix develop`, this runs the repository's pinned French
-Stanza adapter and model:
+The adapter wheels also provide `lingrep-spacy-setup` and `lingrep-stanza-setup`.
+They save a model, seal its profile, copy the adapter/protocol code into a verified
+bundle, and print the generated `analyzer.toml` path. With the three wheels from
+this revision in `dist/`, setup does not require a source checkout:
 
 ```bash
-stanza_python="$(uv run --project python/stanza-adapter --frozen \
-  --extra cpu python -c 'import sys; print(sys.executable)')"
-stanza_model="$(nix build .#stanza-model-fr-gsd-morphology \
-  --no-link --print-out-paths)/share/stanza/fr-gsd-morphology"
+uvx --from ./dist/lingrep_spacy_adapter-0.1.0-py3-none-any.whl \
+  --with ./dist/lingrep_adapter_protocol-0.1.0-py3-none-any.whl \
+  --with 'ja-ginza==5.2.0' lingrep-spacy-setup \
+  --model ja_ginza --probe-text '猫が走る。' --output ~/.local/share/lingrep/ginza
 
-ling tokenize \
-  --analyzer external \
-  --external-executable "$stanza_python" \
-  --external-arg=python/stanza-adapter/bin/lingrep-stanza-adapter \
-  --external-arg=--resource-root \
-  --external-arg="$stanza_model" \
-  --external-arg=--language \
-  --external-arg=fr \
-  --external-arg=--backend \
-  --external-arg=cpu \
-  --external-arg=--batch-size \
-  --external-arg=1 \
-  --profile morphology \
-  --segmentation input \
-  corpus.txt
+uvx --from ./dist/lingrep_stanza_adapter-0.1.0-py3-none-any.whl \
+  --with ./dist/lingrep_adapter_protocol-0.1.0-py3-none-any.whl \
+  --with 'torch==2.13.0+cpu' --index https://download.pytorch.org/whl/cpu \
+  --index-strategy unsafe-best-match lingrep-stanza-setup \
+  --language fr --package tokenize=gsd --package mwt=gsd \
+  --package pos=gsd_nocharlm --package lemma=gsd_nocharlm \
+  --probe-text 'Je mange du pain.' --output ~/.local/share/lingrep/stanza-fr
+
+ling matches --analyzer-config ~/.local/share/lingrep/ginza/analyzer.toml \
+  --patterns constructions.lx transcripts/
 ```
 
-The repository's spaCy and Stanza adapters live under `python/`.
+Repeating the same setup reuses the bundle. A different selection requires a new
+output directory. Stanza downloads the selected resources; `--resource-root DIR
+--offline` uses an existing resource tree. spaCy loads an installed model package
+or local directory; `uvx --with` acquires the model wheel. Both default to CPU;
+`--backend cuda|rocm` requires a matching runtime and available device. These
+examples are verified on CPU; GPU setup retains the adapters' backend checks.
+
+The generated bundle hashes all staged adapter/protocol code and model files.
+Its model resources include a receipt of the Python version and installed package
+versions, checked before direct analysis. This records the resolved uvx environment;
+it does not hash third-party library binaries or replace the packaged lock receipt.
+Keep the uvx Python environment: removing its cache invalidates the generated
+interpreter path, and setup must be rerun into a new directory. Prepared queries
+remain independent of that environment.
+
+Relative paths resolve from the TOML file's directory. The model must be sealed
+by setup or the repository adapter's `--prepare` command; its profile declares the
+language, schema, pipeline and sentence-boundary policy. For Stanza, set
+`kind = "stanza"` and point `model` at the sealed Stanza resource directory.
+The adapter entrypoint remains inside its project `bin/` directory beside the
+tracked source, `pyproject.toml` and `uv.lock`. Verification rejects incomplete
+file closures, nested symlinks and generated Python caches in a bundle.
+
+For the optional English CPU bundle, Nix supplies the runtime, existing adapter,
+sealed model and ready-to-use file:
+
+```bash
+analyzer="$(nix build .#spacy-analyzer-en-core-web-sm \
+  --no-link --print-out-paths)/share/lingrep/english.toml"
+
+ling tokenize --analyzer-config "$analyzer" transcripts/
+ling matches --analyzer-config "$analyzer" --patterns constructions.lx transcripts/
+ling corpus build --analyzer-config "$analyzer" --output transcripts.corpus transcripts/
+ling matches --corpus transcripts.corpus --patterns constructions.lx
+```
+
+The last command uses the prepared tokens and recorded analyzer identity without
+requiring the adapter, Python or model. For direct analysis, the runtime, adapter
+and model must already exist. An explicit config selects executable code;
+use a file and adapter you trust. The file is read only when direct analysis is
+required; prepared queries reject analysis options.
+
+One external process owns each run's bounded analysis batches; `--workers` still
+controls matching concurrency without loading one model per worker. Input errors,
+invalid handshakes, adapter failures and failed shutdowns terminate the command
+without a successful completion record. SIGINT and SIGTERM cancel the adapter
+process group as well as the query.
+
+The English bundle uses Explosion's MIT-licensed `en_core_web_sm` 3.8.0, pinned
+by URL and SHA-256 in `flake.nix`, and does not change the Japanese defaults.
+The sealed profile declares text, lemma, norm, UPOS, XPOS, morphological features
+and dependencies. Normalization defaults to `nfc`; use `--normalization none`
+when source text must remain unchanged. Segmentation defaults to `input`,
+retaining the caller's sentence boundaries; `--segmentation analyzer` uses the
+model's parser boundaries. Dependency labels use spaCy's model scheme (for
+example `dobj`), not a conversion to UD labels. The model is trained for
+[written web English](https://spacy.io/models/en#en_core_web_sm); integration
+tests do not establish accuracy on spontaneous speech or ASR transcripts.
+
+Custom adapters use `kind = "protocol"`, an explicit `language`, a `schema` array
+of `{ key, kind }` entries, and optional command-line arguments in `arguments`.
+The optional `implementation` and `resources` arrays contain file paths.
+Adapters must implement the bounded
+`lingrep.external-morphology/v1` protocol. `entrypoint` is included in the
+implementation manifest; the other paths declare its additional file closure.
+The generic adapter supports input segmentation. Known spaCy/Stanza adapters
+obtain these declarations from their sealed projects and models instead.
 
 ## Reusing and preparing a corpus from a query
 
@@ -1140,13 +1259,13 @@ directly by default. Add `--cache` to keep a reusable artifact on disk:
 
 ```bash
 # Direct: reads no neighboring artifact and writes none.
-ling summarize --patterns patterns/sfe.lx corpus.jsonl
+ling summarize --patterns patterns/sentence-final.lx corpus.jsonl
 
 # Cold cached: prepares the reusable artifact, then answers from it.
-ling summarize --patterns patterns/sfe.lx --cache corpus.jsonl
+ling summarize --patterns patterns/sentence-final.lx --cache corpus.jsonl
 
 # Warm cached: finds the same artifact.
-ling summarize --patterns patterns/sfe.lx --cache corpus.jsonl
+ling summarize --patterns patterns/sentence-final.lx --cache corpus.jsonl
 ```
 
 The cached artifact is larger than the source, but it serves repeated queries
@@ -1185,8 +1304,8 @@ ling corpus build --dict-path "$LINGREP_DICTIONARY_PATH" \
 ling corpus inspect corpus.lingcorpus
 ling corpus inspect --documents --verify corpus.lingcorpus
 ling --json corpus inspect --metadata corpus.lingcorpus
-ling matches --corpus corpus.lingcorpus --patterns patterns/sfe.lx
-ling summarize --corpus corpus.lingcorpus --patterns patterns/sfe.lx
+ling matches --corpus corpus.lingcorpus --patterns patterns/sentence-final.lx
+ling summarize --corpus corpus.lingcorpus --patterns patterns/sentence-final.lx
 ling tokenize --corpus corpus.lingcorpus
 ```
 
@@ -1203,7 +1322,7 @@ supported.
 Prepared artifacts are compressed. Prepared queries reject `--dict-path`.
 Publication requires an absent destination and never replaces an artifact. To
 rebuild at an explicit destination, verify and delete that exact artifact
-directory first; `ling` has no cleanup or expiration command.
+directory first. For obsolete formats, see [Discovering realizations](#discovering-realizations).
 
 `--output` is optional. Omitted, `corpus build` publishes to the canonical
 content-addressed path beside ROOT,
@@ -1214,8 +1333,10 @@ identity derivation are separate version axes. The required manifest field
 
 Analysis identity covers the analyzer's complete semantic configuration, not
 only the dictionary, so two builds that differ in Sudachi split mode or
-segmentation mode name two artifacts. The dictionary fingerprint is recorded
-for inspection.
+segmentation mode name two artifacts. NFC normalization includes its Unicode
+table version in the reader and analyzer identities. NFC artifacts with a
+missing or different table version must be rebuilt. The dictionary fingerprint
+is recorded for inspection.
 
 A second `corpus build` on unchanged input reuses that artifact without
 rebuilding and prints the same recorded inventory the publishing run printed,
@@ -1238,32 +1359,33 @@ error naming that path and the differing fields, not a rebuild. An explicit
 `--output` is taken as spelled, is never pre-scanned, and uses the same
 no-replace commit.
 
-`corpus build` truncates an oversized sentence rather than refusing it. A
-sentence longer than `--max-sentence-bytes` is cut to fit, and the run prints
-`warning[sentence_truncated]` naming every one: document, sentence ordinal,
-bytes retained of bytes seen. Truncating rather than skipping keeps the
-sentence present, because a prepared artifact addresses sentences by ordinal
-and dropping one would renumber every later sentence.
+Long sentences are handled automatically. A sentence larger than the raw batch
+budget runs on its own, with its full text and its original sentence ordinal.
+Cache creation never truncates a sentence. Direct and prepared searches retain
+the same sentence boundaries, including matches across internal tokenizer chunks.
 
-The bound is the smaller of the configured limit and the analyzer's limit. Vibrato has no
-maximum input length, so there `--max-sentence-bytes` applies alone. Sudachi
-accepts at most 49,149 bytes (`u16::MAX / 4 * 3`, because its offset tables
-are `u16`), which is below the 65,536-byte default. A build clamps to whichever
-is smaller and reports which one applied.
+Sudachi's underlying tokenizer accepts at most 49,149 bytes per call. The
+adapter splits longer sentences into UTF-8 chunks and joins the tokens back
+into one sentence. The adapter uses whitespace or comma-like punctuation in the
+latter half of each chunk when such a boundary exists. When that latter half
+contains neither kind of boundary, the adapter cuts between Unicode scalar
+values. Tokenization near a chunk boundary can differ from tokenization with
+unlimited context; the chunk policy is part of Sudachi's analysis identity.
+Vibrato analyzes the full sentence in one call.
 
-The manifest records truncation as `sentence_truncation: {count, limit}`. A
-later build requesting a different `--max-sentence-bytes` is refused rather
-than given the truncated corpus:
+Input remains bounded: `--max-record-bytes` defaults to a 1 MiB buffer per
+physical line or JSONL document, and `--max-tokenized-bytes` bounds resident tokens.
+In a Soranoha plaintext ZIP, the record bound applies per line; inflated books
+have a separate 64 MiB memory guard. TEI bounds each XML work and its projected
+reading to 64 MiB, limits XML nodes and reading depth, and charges sentence
+annotations against the input-record limit. Resource exhaustion still fails explicitly.
+`--max-sentence-bytes` is an optional stricter admission limit. An explicit limit
+that rejects a sentence aborts cache creation without publishing an artifact.
 
-```text
-the artifact at … truncated 2 sentence(s) at --max-sentence-bytes 65536, and
-this run specifies 262144, so it is a different corpus under the same identity;
-rerun with --max-sentence-bytes 65536, or remove that artifact, or pass an
-explicit --output
-```
-
-Analysis identity does not include the limit, so both builds would publish to
-the same path, and publication never overwrites.
+Older artifacts can record `sentence_truncation: {count, limit}`. A build rejects
+reuse of any artifact with a nonzero truncation count, even under the same limit.
+Queries also reject these artifacts; `corpus inspect` remains available. Remove
+the artifact or use an explicit `--output` to rebuild the complete corpus.
 
 ### Discovering realizations
 
@@ -1272,11 +1394,11 @@ ling corpus variants corpus.md.g2.a1.<identity>.locally-executed.lingcorpus
 ling corpus variants --json --limit all corpus/
 ```
 
-`corpus variants` reports every prepared realization beside one source. Given
-an artifact, every difference is expressed relative to it; given a source,
-realizations are reported on their own terms and grouped by the source content
-each records. It never builds or selects a realization, and it deletes only
-with `--prune`.
+`corpus variants` reports every prepared realization beside one source. When
+the target is an artifact, every difference is expressed relative to that
+artifact. When the target is a source, realizations are reported on their own
+terms and grouped by the source content that each realization records. It never
+builds or selects a realization, and it deletes only with `--prune`.
 
 "Beside" means the target's parent directory, for every kind of target. A
 realization is named with the source's own file name plus a suffix, so
@@ -1293,7 +1415,7 @@ policies can produce two valid artifacts without an analyzer difference.
 completion record always carries the complete total. The stream contract is
 `lingrep.variants/v1`.
 
-An artifact this build cannot open is listed as unreadable, with its size. It
+An artifact that this build cannot open is listed as unreadable, with its size. It
 is also marked prunable when it belongs to the target's source and was written
 in an earlier artifact generation, manifest schema or provenance schema than
 this build reads, so only a rebuild from source can replace it:
@@ -1303,7 +1425,7 @@ ling corpus variants corpus.md            # lists what --prune would delete
 ling corpus variants --prune corpus.md    # deletes it, printing each path and size
 ```
 
-`--prune` deletes nothing else: not an artifact this build can open, whatever
+`--prune` deletes nothing else: not an artifact that this build can open, whatever
 its identity; not one in a newer format, which a newer `ling` reads; not a
 damaged one; not another source's; and not a symbolic link or a directory
 whose name is not a canonical artifact name. `lingrep-web` never deletes
@@ -1322,12 +1444,12 @@ the build, because the destination name is derived from the source's observed
 identity together with the dictionary and reader identities; a different
 dictionary or section policy therefore names a different artifact. That pass
 tokenizes nothing, and `corpus build` prints no progress for either pass.
-Passing `--output` skips it. The default publishes and stages the artifact
-beside ROOT, so the directory containing ROOT must be writable: for a directory
-root that is its parent, not the root itself. A read-only location is reported
-late, after the dictionary load and the whole preflight read, because staging
-is created only once the destination is known; pass `--output` to write
-elsewhere.
+Passing `--output` skips it. By default, the build stages and publishes the
+artifact beside `ROOT`. The directory containing `ROOT` must therefore be
+writable. When `ROOT` is a directory, this means its parent directory. A
+read-only location is reported late, after the dictionary load and the whole
+preflight read, because staging is created only once the destination is known;
+pass `--output` to write elsewhere.
 
 The canonical path derives from ROOT as spelled, not from a resolved path;
 `lingrep-web` also uses the unresolved spelling. So `corpus build corpus/` from
@@ -1347,21 +1469,30 @@ fresh sibling.
 ```bash
 ling tokenize --dict-path "$LINGREP_DICTIONARY_PATH" --json corpus/
 ling explore --dict-path "$LINGREP_DICTIONARY_PATH" \
-  --patterns patterns/sfe.lx corpus/
-ling sentence-final --dict-path "$LINGREP_DICTIONARY_PATH" \
-  --patterns patterns/sfe.lx corpus/
+  --patterns patterns/sentence-final.lx corpus/
+ling summarize --top all --dict-path "$LINGREP_DICTIONARY_PATH" \
+  --patterns patterns/sentence-final.lx corpus/
 ```
 
-`tokenize` defaults to a bounded human view, exposes the canonical JSONL
-projection with `--json`, and offers the fixed `lingrep.tokenize-tsv/v1`
-projection with `--tsv`.
+`tokenize` publishes at most 100 sentences in human output by default. JSONL
+(`--json`) and `lingrep.tokenize-tsv/v1` (`--tsv`) output are unlimited by default.
+Use `--limit N` to cap any of these outputs at N whole sentences, or `--limit all`
+to remove the cap. A run stopped at the cap reports `coverage: "prefix"` and
+`termination: "result_limit"`; only a run that reaches EOF reports full coverage.
+
+Sentence-final selection belongs in the catalog policy. Use
+`admit all terminal: {exact: true, anchor: propositional_end}.` with a declared
+anchor that excludes `[upos=PUNCT]+` to allow only trailing punctuation.
+`matches` emits the selected occurrences; `summarize` counts them. The default
+`patterns/sentence-final.lx` catalog instead admits matches within five tokens
+of its anchor.
 
 ### Attribute coverage: `ling coverage`
 
 ```bash
 ling coverage --dict-path "$LINGREP_DICTIONARY_PATH" --json corpus/
 ling coverage --dict-path "$LINGREP_DICTIONARY_PATH" --json \
-  --patterns patterns/sfe.lx corpus/
+  --patterns patterns/sentence-final.lx corpus/
 ```
 
 `coverage` counts, for each attribute in the selected analyzer's token schema,
@@ -1402,7 +1533,7 @@ ling describe matches
 nix run .#lingrep -- describe matches
 ling contracts
 ling contracts lingrep.query/v2 --json
-ling doctor --dict-path "$DICT" --patterns patterns/sfe.lx \
+ling doctor --dict-path "$DICT" --patterns patterns/sentence-final.lx \
   --corpus artifact.lingcorpus
 ling manpages --output ./ling-manpages
 ```
@@ -1426,7 +1557,7 @@ not payload hashing; use `corpus inspect --verify` for full verification. Any
 failed probe exits 1 after all requested results are published.
 
 `--plan` is available on `matches`, `summarize`, `tokenize`, `coverage`,
-`sentence-final`, `corpus build`, `corpus inspect`, `corpus inventory`, and
+`corpus build`, `corpus inspect`, `corpus inventory`, and
 `corpus variants`; it validates bounded setup and never scans corpus records or
 recursively traverses a direct root.
 
@@ -1458,8 +1589,8 @@ lingrep-web \
 `.jsonl` or `.md` file, or a Markdown directory, read the same way as
 `--input`) or a prepared V1 artifact. A directory containing a `manifest.json`
 is treated as an artifact, and everything else as a source. For a source,
-`lingrep-web` prepares its own artifact, writing it beside the source file and
-reusing it on the next start.
+`lingrep-web` prepares its own artifact beside the source file and reuses it on
+the next start.
 
 A declared artifact is read in place and nothing beside it is written. The
 artifact records the reader that built it and no source is re-read, so
@@ -1478,19 +1609,19 @@ owned:
 
 - No reader configuration applies to an artifact. `--input-format` is refused
   for an artifact rather than ignored, because reader configuration is part of
-  artifact identity. The Markdown section flags likewise do not apply to an
+  artifact identity. The flags for selecting Markdown sections do not apply to an
   artifact; they were applied when it was built.
 - A declared artifact is never deleted. `lingrep-web` discards an artifact it
   built when that artifact is found corrupt, because the source is beside it
   and a retry rebuilds it. A declared artifact cannot be rebuilt from anything
-  `lingrep-web` holds, so a corrupt one marks the corpus failed and the bytes
-  stay on disk.
+  `lingrep-web` holds. If a declared artifact is corrupt, `lingrep-web` marks the
+  corpus as failed and retains the bytes on disk.
 
 Prefer `--corpus NAME=PATH` over `--input` for an artifact: the caption is the
 declared `NAME`, whereas `--input` captions a corpus by its file stem, and an
 artifact's stem is the whole content-addressed name.
 
-`NAME` is the key a shareable link carries, so it is constrained to
+`NAME` is the corpus key in a shareable link. It is constrained to
 `[A-Za-z0-9_-]`, at most 64 characters; it requires no URL escaping and exposes
 nothing about the filesystem. It is not a caption: a corpus file may be called
 `日本語コーパス.jsonl`, which is a valid filename and an invalid key. A

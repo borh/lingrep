@@ -2,7 +2,7 @@ use std::{fmt, ops::Range};
 
 use unicode_normalization::UnicodeNormalization;
 
-use super::TextUnitProvenance;
+use super::{AnalysisError, TextUnitProvenance};
 
 /// Stable identity of one bounded input unit within an admitted run.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -37,6 +37,33 @@ pub enum NormalizationPolicy {
 }
 
 impl NormalizationPolicy {
+    /// Unicode table version used by this policy, absent when text is unchanged.
+    #[must_use]
+    pub const fn unicode_version(self) -> Option<[u8; 3]> {
+        match self {
+            Self::None => None,
+            Self::Nfc => Some([
+                unicode_normalization::UNICODE_VERSION.0,
+                unicode_normalization::UNICODE_VERSION.1,
+                unicode_normalization::UNICODE_VERSION.2,
+            ]),
+        }
+    }
+
+    /// Identity encoding of the policy and its Unicode tables.
+    #[must_use]
+    pub const fn identity_bytes(self) -> &'static [u8] {
+        match self {
+            Self::None => &[0],
+            Self::Nfc => &[
+                1,
+                unicode_normalization::UNICODE_VERSION.0,
+                unicode_normalization::UNICODE_VERSION.1,
+                unicode_normalization::UNICODE_VERSION.2,
+            ],
+        }
+    }
+
     /// Applies this policy to admitted text.
     ///
     /// The single definition of what a policy *does*. [`TextUnit::admit`] calls
@@ -69,7 +96,7 @@ impl NormalizationPolicy {
     }
 }
 
-/// Content and policy identity of one admitted unit.
+/// Source annotations are excluded from the admitted-unit identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TextUnitIdentity([u8; 32]);
 
@@ -113,6 +140,7 @@ pub struct TextUnit {
     identity: TextUnitIdentity,
     provenance: TextUnitProvenance,
     text: String,
+    pub(super) annotations: Box<[super::TextAnnotation]>,
 }
 
 /// Why admitted text or a source-relative range is invalid.
@@ -152,6 +180,7 @@ impl TextUnit {
             identity,
             provenance,
             text,
+            annotations: Box::new([]),
         })
     }
 
@@ -161,6 +190,23 @@ impl TextUnit {
         normalization: NormalizationPolicy,
     ) -> Result<Self, TextUnitError> {
         Self::admit(id, TextUnitKind::Sentence, text, normalization)
+    }
+
+    pub fn annotated(
+        id: InputUnitId,
+        kind: TextUnitKind,
+        text: super::AnnotatedText,
+        normalization: NormalizationPolicy,
+    ) -> Result<Self, AnalysisError> {
+        let (text, annotations) = text.normalize(normalization)?.into_parts();
+        let mut unit = Self::admit(id, kind, text, normalization)
+            .map_err(|_| AnalysisError::InvalidSourceRange)?;
+        unit.annotations = annotations;
+        Ok(unit)
+    }
+
+    pub fn annotations(&self) -> &[super::TextAnnotation] {
+        &self.annotations
     }
 
     #[must_use]
@@ -237,10 +283,7 @@ fn identity(
         TextUnitKind::Sentence => 0,
         TextUnitKind::Segment => 1,
     }]);
-    hasher.update(&[match normalization {
-        NormalizationPolicy::None => 0,
-        NormalizationPolicy::Nfc => 1,
-    }]);
+    hasher.update(normalization.identity_bytes());
     provenance.hash_into(&mut hasher);
     hasher.update(&(text.len() as u64).to_le_bytes());
     hasher.update(text.as_bytes());
@@ -274,6 +317,16 @@ mod tests {
         assert_eq!(none.text().as_bytes(), decomposed.as_bytes());
         assert_eq!(nfc.text(), "é");
         assert_ne!(none.identity(), nfc.identity());
+    }
+
+    #[test]
+    fn nfc_reorders_new_unicode18_combining_marks() {
+        let input = "\u{315}\u{300}\u{5c8}";
+        assert_eq!(
+            NormalizationPolicy::Nfc.apply(input.into()),
+            "\u{5c8}\u{300}\u{315}"
+        );
+        assert_eq!(NormalizationPolicy::None.apply(input.into()), input);
     }
 
     #[test]

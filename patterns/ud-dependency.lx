@@ -1,15 +1,6 @@
-# UD dependency exemplar: the `where` clause.
-#
-# The stress and validation catalog for capture-to-capture relation
-# constraints. It exercises every shipped clause shape: a single edge, two edges sharing a
-# head, two edges chained through one operand, edges alongside `[]*` gaps, and
-# a label set carrying all three term forms.
-#
-# It binds only against a corpus carrying `dep.head` and `dep.rel` — CoNLL-U
-# input or a dependency-parsing analyzer — and is refused at binding
-# otherwise. The pinned witness sentence is
-# lingrep/tests/fixtures/ud-ja-gsd-sample.conllu (UD Japanese GSD,
-# 先生の理想は限りなく高い。).
+# Exemplar for the `where` clause over CoNLL-U (`dep.head`, `dep.rel`).
+# Witnesses are in `lingrep/tests/fixtures/ud-ja-gsd-sample.conllu` and
+# `lingrep-core/tests/fixtures/ud-dependency-witness.conllu`.
 
 defaults
   status: "exemplar"
@@ -20,56 +11,29 @@ schema
   status: string required in {"exemplar"}
 end
 
-# Scenario 1 of the 2026-08-27 experiment, with binding: a nominal subject
-# and the adjectival predicate that governs it, both captured.
-# GSD witness: 理想は限りなく高い (nsubj(高い, 理想)).
 layer: "dependency"
 pattern adjectival_predicate_subject :=
   (?<s> [dep.rel=nsubj & upos=NOUN]) []* (?<p> [upos=ADJ])
   where $p -[nsubj]-> $s.
 
-# One edge between adjacent captures: a nominal and its case particle.
-# GSD witnesses: 先生の, 理想は.
 layer: "dependency"
 pattern case_marked_nominal :=
   (?<n> [upos=NOUN]) (?<c> [upos=ADP])
   where $n -[case]-> $c.
 
-# Two edges chained through one operand: the modifier heads its particle
-# while the head nominal governs the modifier. GSD witness: 先生の理想.
 layer: "dependency"
 pattern genitive_modifier :=
   (?<m> [dep.rel=nmod]) (?<c> [text=の]) (?<h> [upos=NOUN])
   where $h -[nmod]-> $m, $m -[case]-> $c.
 
-# Two edges sharing a head, with the arguments scrambled: the OSV witness
-# shape from the experiment. Its SOV counterpart is the same clause over the
-# opposite linear order; together they classify argument order by edge, not
-# by word list. No GSD witness in the pinned excerpt — the pattern is the
-# stress case for a clause whose operands sit far apart.
 layer: "dependency"
 pattern scrambled_arguments :=
   (?<o> [dep.rel=obj]) []* (?<s> [dep.rel=nsubj]) []* (?<v> [upos=VERB])
   where $v -[nsubj]-> $s, $v -[obj]-> $o.
 
-# The core argument labels, named once. A `set` is a value in the one `@`
-# namespace, so this resolves in a relation bracket exactly where it would
-# resolve in `[dep.rel in @CORE_ARGUMENT]`.
 set CORE_ARGUMENT := {nsubj, obj, iobj}.
 
-# One edge whose bracket carries all three term forms: a `@set` reference, a
-# literal, and a subtype wildcard. It asks the argument-order question the
-# patterns above ask by label, but without fixing the role — the nominal is
-# an argument of the verb, whichever argument it is.
-#
-# `obl` and `obl:*` are two labels, and the wildcard deliberately excludes the
-# unsubtyped form, so admitting either is written as both terms. Neither has a
-# witness here: no committed sentence carries an oblique, let alone a subtyped
-# one. That is the point of the pair rather than an omission — a portable
-# argument query cannot know whether the treebank it meets subtypes `obl`.
-# Witnesses for the set half: 猫が…食べる and 魚を…食べる, in both argument
-# orders, plus the shadow sentence, where 犬 is an argument of 走る and not of
-# 鳴く and so contributes one match rather than two.
+# `obl:*` does not match bare `obl`, so both are listed.
 layer: "dependency"
 pattern verbal_argument :=
   (?<a> [upos=NOUN]) []* (?<v> [upos=VERB])

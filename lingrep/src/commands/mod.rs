@@ -8,6 +8,7 @@ mod corpus_metadata;
 pub mod describe;
 pub mod dictionary;
 pub mod doctor;
+mod ending_report;
 pub mod explain;
 pub mod explore;
 pub mod manpages;
@@ -19,7 +20,6 @@ pub(crate) mod query_scope;
 pub(crate) mod query_source;
 pub(crate) mod query_support;
 pub mod schema;
-pub mod sentence_final;
 pub mod summarize;
 pub mod tokenize;
 pub mod variants;
@@ -46,7 +46,7 @@ pub fn dispatch(
 ) -> Result<CommandOutcome, CliError> {
     let output = cli.output_mode();
     if explain::requested(cli) {
-        return explain::run(cli);
+        return explain::run(cli, config);
     }
     match &cli.command {
         Command::Doctor(args) => doctor::run(args, output),
@@ -71,7 +71,6 @@ pub fn dispatch(
             })
         }
         Command::Explore(args) => explore::run(args, config, terminal),
-        Command::SentenceFinal(args) => sentence_final::run(args, config, terminal, output),
         Command::Describe(args) => describe::run(args, output),
         Command::Completions(args) => completions::run(args, output),
         Command::Manpages(args) => manpages::run(args, output),

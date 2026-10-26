@@ -4,7 +4,6 @@ use crate::protocol::OutputError;
 
 pub const MATCHES_CONTRACT: &str = crate::protocol::ContractId::MatchesTsv.as_str();
 pub const SUMMARY_CONTRACT: &str = crate::protocol::ContractId::SummarizeTsv.as_str();
-pub const SENTENCE_FINAL_CONTRACT: &str = crate::protocol::ContractId::SentenceFinalTsv.as_str();
 pub const TOKENIZE_CONTRACT: &str = crate::protocol::ContractId::TokenizeTsv.as_str();
 pub const SOURCES_CONTRACT: &str = crate::protocol::ContractId::SourcesTsv.as_str();
 
@@ -72,18 +71,6 @@ pub(crate) fn summarize_contract() -> crate::protocol::discovery::ContractSpec {
     )
 }
 
-pub(crate) fn sentence_final_contract() -> crate::protocol::discovery::ContractSpec {
-    crate::protocol::discovery::tsv_contract(
-        crate::protocol::ContractId::SentenceFinalTsv,
-        &["sentence-final"],
-        "Headerless sentence-final frequency rows.",
-        columns!["pattern", "surface", "count"],
-        "Pattern then UTF-8 surface order.",
-        "Exact aggregate after successful execution.",
-        &["sentence-final/catalog-file-direct-root"],
-    )
-}
-
 pub(crate) fn tokenize_contract() -> crate::protocol::discovery::ContractSpec {
     crate::protocol::discovery::tsv_contract(
         crate::protocol::ContractId::TokenizeTsv,
@@ -147,13 +134,6 @@ pub struct SummaryTsvRow {
     pub pattern: String,
     pub rank: u64,
     pub group: String,
-    pub count: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SentenceFinalTsvRow {
-    pub pattern: String,
-    pub surface: String,
     pub count: u64,
 }
 
@@ -260,14 +240,6 @@ pub fn write_summary_tsv<W: Write>(writer: &mut W, row: &SummaryTsvRow) -> Resul
     }
     writer.write_all(b"\n")?;
     Ok(())
-}
-
-pub fn write_sentence_final_tsv<W: Write>(
-    writer: &mut W,
-    row: &SentenceFinalTsvRow,
-) -> Result<(), OutputError> {
-    let count = row.count.to_string();
-    write_tsv_row(writer, &[&row.pattern, &row.surface, &count])
 }
 
 pub fn write_tokenize_tsv<W: Write>(

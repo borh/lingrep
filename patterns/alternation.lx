@@ -6,11 +6,6 @@ end
 analyzer: { family: "vibrato", resource: "unidic-cwj", segmentation: ["input", "analyzer"] }
 analyzer: { family: "vibrato", resource: "unidic-csj", segmentation: ["input", "analyzer"] }
 
-# The catalog's own key schema. `alternation`, `member`, `slot` and `examples`
-# sit on every emitting pattern and on none of the fragments, so `required` is
-# scoped by visibility. `alternation` is closed to the three families this
-# catalog defines, because it is also the `partition:` dimension of the policy
-# block below: a fourth value would silently create a fourth resolution class.
 schema
   pattern alternation: string required in {"light_verb", "conditional", "negation"}
   pattern member: string required
@@ -22,183 +17,34 @@ schema
   source: string
 end
 
-# Distinctive collexeme analysis — competing constructions over one slot.
-#
-# WHAT THIS IS. The distinctive design (Gries & Stefanowitsch 2004) contrasts
-# two or more near-synonymous constructions and asks which lexemes prefer which
-# member. Its input is not one frequency list but a table: filler × member.
-# `patterns/collexeme.lx` produces the single-construction lists; this catalog
-# produces the contrast tables, and the two are separate files because the
-# analyses consume them separately.
-#
-# Three families, tagged `alternation:`, with members that genuinely share a
-# slot filler:
-#
-#   light_verb   Nをする / Nを行う / Nする      slot: the サ変可能 noun
-#   conditional  と / ば / たら / なら          slot: the antecedent predicate
-#   negation     Vない / Vず                    slot: the verb
-#
-# `member` names the competing text; `alternation` names the family. Both are
-# metadata, and `alternation` serves two required roles — it is the policy
-# block's `partition:` dimension and the derivation predicate of `%conditional`
-# — which is why the schema closes it to exactly three values.
-#
-# ------------------------------------------------------------------------
-# WHY THERE IS NO `potential` FAMILY
-# ------------------------------------------------------------------------
-#
-# ことができる versus the morphological potential is the textbook Japanese
-# alternation, and it cannot be written here. UniDic lexicalizes the 可能動詞:
-# 読める is ONE token, `動詞-一般`, `lemma=読む`, `unidic.orthbase=読める`. Detecting
-# it means asking whether `orthbase` differs from `lemma`, and no attribute
-# operator compares two attributes — `=` and `!=` take literals, `in` takes
-# sets, `~` takes a literal or a regex. A regex over `orthbase` alone cannot
-# do it either: 考える and 見える end the same way and are not potentials.
-#
-# For the 一段 verbs the problem is worse, not better: 食べられる is 食べ +
-# られる, the same two tokens as the passive, so even a token-shape rule would
-# be counting passives. `koto_ga_dekiru` therefore lives in
-# `patterns/collexeme.lx` as a construction with no partner, and this catalog
-# says why rather than shipping a family that measures the wrong thing.
-#
-# ------------------------------------------------------------------------
-# WHAT UNIDIC ACTUALLY EMITS — verified by tokenizing
-# ------------------------------------------------------------------------
-#
-#   する IS `lemma=為る`. Not する, which matches nothing; `orthbase` is する.
-#     `patterns/sketch-grammar.lx` records the same trap.
-#
-#   たら AND なら ARE `助動詞`, NOT PARTICLES. 帰ったら gives たら with
-#     `lemma=た` and `unidic.cform=仮定形-一般`; 行くなら gives なら with `lemma=だ`
-#     and `unidic.cform=仮定形-一般`. Only と and ば are `助詞`. A conditional family
-#     written as four particles would find two of the four.
-#     `patterns/concord.lx` hit this first.
-#
-#   ぬ CARRIES `lemma=ず`. 及ぼさぬ gives ぬ with `lemma=ず` and
-#     `unidic.orthbase=ぬ`, so one predicate on `lemma` covers both spellings.
-#
-#   なければ IS TWO CONSTRUCTIONS, OVERLAPPING. 行わなければ tokenizes as
-#     行わ(未然形) + なけれ(`助動詞`, `lemma=ない`, `仮定形`) + ば. `neg_nai`
-#     spans 行わ〜なけれ and `cond_ba` spans なけれ〜ば. They share なけれ.
-#     This is not a defect and is the reason the policy block partitions; see
-#     below.
-#
-#   と IS NOT RELIABLY `接続助詞`. 春になると tags と as `接続助詞`, but
-#     研究を進めると tags the same conditional と as `格助詞` — the tagger
-#     prefers a quotative reading after a 終止形 predicate. `cond_to` therefore
-#     tests `unidic.orthbase=と & unidic.pos1=助詞` and accepts both, and the quotative
-#     over-generation that follows is answered by the policy block rather than
-#     by a predicate that would drop half the real conditionals.
-#
-# ------------------------------------------------------------------------
-# THE POLICY BLOCK
-# ------------------------------------------------------------------------
-#
-# Three statements. This is the second tracked catalog to declare a policy
-# block; `patterns/sf-experimental.lx` is the first, and its eight statements
-# translate an upstream pipeline. These three do not translate anything — they
-# are the publication decisions distinctive collexeme analysis needs in order
-# for its contrast table to be countable.
-#
-#   1. `resolve all partition: alternation, rank: [longest, start, end, pattern]`
-#
-#      TWO problems in one statement, which is why `partition:` earns its place.
-#
-#      WITHIN a family, a multi-token nominal produces nested records:
-#      研究発表をする matches `lv_wo_suru` at 研究発表 AND at 発表, because
-#      both nouns are サ変可能. Counting both double-counts one construction
-#      token, and `longest` picks 研究発表.
-#
-#      ACROSS families, records overlap without competing. 実験を行わなければ
-#      contains `neg_nai` over 行わ〜なけれ and `cond_ba` over なけれ〜ば,
-#      which overlap on なけれ and are the same length. An unpartitioned
-#      `resolve` ranks them against each other, `longest` ties, `start` breaks
-#      the tie, and the conditional is deleted — a negation observation would
-#      silently cost a conditional observation. `partition: alternation` runs
-#      the contest once per family, so the nesting is resolved and the
-#      cross-family overlap is left alone.
-#
-#   2. `exclude @cond_to with: @al_quotative_verb, relation: after, evidence: raw`
-#
-#      The と over-generation the tagset forces on `cond_to`. A quotative と is
-#      followed IMMEDIATELY by the verb that governs the quote, and `after` is
-#      exactly adjacency (`operand.start == subject.end`), so
-#      ことができると言った is dropped while 進めると分かる is kept. The
-#      operand is a fragment and therefore forces `evidence: raw`.
-#
-#      This exclusion cannot be expressed as a counterexample on `cond_to`:
-#      `examples:` and `counterexamples:` are claims about `find_matches`,
-#      which is the raw match set, and the policy runs at the publication seam
-#      afterwards. The quotative sentence matches raw and must not be
-#      published, and only a test that evaluates published records can verify this —
-#      which is what `alternation_lx_test` tests.
-#
-#   3. `require %conditional with: @al_final_predicate, relation: in_sentence, evidence: raw`
-#
-#      A conditional antecedent whose sentence never reaches a sentence-final
-#      predicate is not a countable observation of the construction: either the
-#      sentence was truncated, or the consequent is not verbal and the four
-#      members stop being comparable. MEASURED at 18,079 records on the
-#      reference corpus — cond_to 9,515, cond_ba 6,931, cond_tara 858,
-#      cond_nara 775 — which is 15.9% of what the four members would otherwise
-#      publish. That is the size of the effect, not a claim about its cause;
-#      the two cases are not separated here. `@al_final_predicate` is
-#      anchored with `$` so that it names a SENTENCE-FINAL predicate rather
-#      than any predicate: without the anchor the antecedent of `cond_to` and
-#      `cond_nara` would satisfy the requirement itself, both being 終止形, and
-#      the statement would be vacuous for two of the four members.
-#
-#      `%conditional` is DERIVED — `group conditional := alternation =
-#      "conditional".` — rather than a literal `groups:` list, because
-#      membership here is a function of a key the schema already requires.
-#      `light_verb` and `negation` need no group and declare none.
-#
-# There is no `detach`. Nothing in this catalog matches more than it publishes:
-# every pattern's span is the construction, and the consequent that licenses a
-# conditional is tested by `require` rather than matched and trimmed.
-#
-# STATUS: inhabited, not measured. Every claim below is executed against the
-# real dictionary by `catalog_examples.rs`; the publication behaviour of the
-# three statements is pinned by `alternation_lx_test`; and each member has
-# been confirmed non-empty on the reference corpus. No association measure is
-# computed here and none is claimed.
-
-# --- Shared token predicates --------------------------------------------
+# Distinctive collexeme analysis (Gries & Stefanowitsch 2004): competing
+# constructions over one slot, tagged by `alternation:` and `member:`.
+# UniDic makes 読める one token with `lemma=読む`, and 食べられる has the same
+# token shape as the passive, so no potential family is included.
 
 role: "helper"
 fragment al_wo := [unidic.orthbase=を & unidic.pos1=助詞 & unidic.pos2=格助詞].
 
-# `lemma=為る`, not する; see the header.
 role: "helper"
 fragment al_suru := [unidic.pos1=動詞 & lemma=為る].
 
 role: "helper"
 fragment al_okonau := [unidic.pos1=動詞 & lemma=行う].
 
-# A nominal ending in a サ変可能 noun. The leading run is what makes
-# 研究発表をする a nested pair of records rather than a single one, and the
-# `resolve` above is what picks between them.
 role: "helper"
 fragment al_sahen_noun :=
   ([unidic.pos1=名詞])*
   [unidic.pos1=名詞 & unidic.pos3=サ変可能].
 
-# The verbs that govern a quotative と. Operand of statement 2.
 role: "helper"
 fragment al_quotative_verb :=
   [unidic.pos1=動詞 & lemma in {言う, 思う, 考える, 述べる, 感じる, 記す}].
 
-# A sentence-final predicate. The `$` anchor is load-bearing; see the header.
 role: "helper"
 fragment al_final_predicate :=
   [unidic.pos1 in {動詞, 形容詞, 助動詞} & unidic.cform ~ /\A終止形/]
   ([unidic.pos1=補助記号 & unidic.pos2=句点])?
   $.
-
-# --- light_verb ----------------------------------------------------------
-#
-# Three realizations of one predication. The slot is the noun, and it is the
-# same noun in all three, which is what makes them comparable.
 
 alternation: "light_verb"
 member: "Nをする"
@@ -227,15 +73,8 @@ key: [$noun.span.norm]
 pattern lv_compound :=
   (?<noun> @al_sahen_noun) @al_suru.
 
-# --- conditional ---------------------------------------------------------
-#
-# Four markers over one antecedent slot. と and ば take 助詞; たら and なら
-# take 助動詞 in the 仮定形. The antecedent is restricted to a verbal or
-# adjectival predicate throughout, which deliberately leaves なら's nominal
-# antecedent (学生なら) outside the frame: a family whose members admitted
-# different filler types would not be comparable, which is the whole point of
-# the design.
-
+# UniDic tags conditional と as 格助詞 after some 終止形 predicates
+# (研究を進めると), so `pos2` is omitted.
 alternation: "conditional"
 member: "と"
 slot: "antecedent"
@@ -273,13 +112,6 @@ pattern cond_nara :=
   (?<antecedent> [unidic.pos1 in {動詞, 形容詞} & unidic.cform ~ /\A終止形/])
   [unidic.pos1=助動詞 & lemma=だ & unidic.cform ~ /\A仮定形/].
 
-# --- negation ------------------------------------------------------------
-#
-# The ない/ず alternation is a register contrast rather than a semantic one,
-# which makes it a clean distinctive-collexeme test case: the members are
-# truth-conditionally interchangeable, so any lexical preference is the
-# association the analysis is looking for.
-
 alternation: "negation"
 member: "ない"
 slot: "verb"
@@ -300,17 +132,10 @@ pattern neg_zu :=
   (?<verb> [unidic.pos1=動詞 & unidic.cform ~ /\A未然形/])
   [unidic.pos1=助動詞 & lemma=ず].
 
-# `%conditional` is the only group this catalog needs, and it is derived from
-# the key the schema already requires rather than restated as a literal list.
 group conditional := alternation = "conditional".
 
 policy
-  # Nested light-verb nominals within a family; overlapping negation and
-  # conditional records across families. See the header for both.
   resolve all partition: alternation, rank: [longest, start, end, pattern].
-  # The quotative と the tagset cannot distinguish. `after` is adjacency.
   exclude @cond_to with: @al_quotative_verb, relation: after, evidence: raw.
-  # A conditional antecedent with no sentence-final consequent is a truncated
-  # fragment, which this corpus produces; see the linguistic corpus audit.
   require %conditional with: @al_final_predicate, relation: in_sentence, evidence: raw.
 end

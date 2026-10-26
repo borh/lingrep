@@ -42,6 +42,15 @@ For each case, read the phenomenon definition, declared `labels` vocabulary, and
 every sentence before marking any target. Emit every and only span that satisfies
 the definition. Every target label must be copied exactly from that vocabulary.
 
+A case lists `documents`, each with an `eval_document_id`, its `sentences`, and
+optional `metadata` (work title, author, NDC class, first publication) that the
+phenomenon may refer to. A target names its `eval_document_id`, and
+`sentence_ordinal` counts within that document. A case may carry a `driver`: further
+documents scored as hidden input. Annotate them in `driver_targets` by the same
+rules. The template has `driver_targets` only for such cases. A case with a
+`revision` has a second target list annotated under the changed condition against the
+same documents.
+
 Each target contains:
 
 - `sentence_ordinal`: zero-based sentence position in the case;
@@ -57,7 +66,9 @@ NFC-normalized before annotation; copy the surface from the selected range and d
 not normalize it again.
 
 Use `status: "annotate"` for a usable case. An empty `targets` list is a valid
-negative annotation. Use `status: "exclude"` only when the task itself is unsuitable;
+negative annotation. A case marked `answerable: false` asks something the material
+and analysis cannot decide; its `targets` are empty and the scored answer is that
+judgement. Use `status: "exclude"` only when the task itself is unsuitable;
 leave `targets` empty and explain the reason in `notes`.
 
 Exclude rather than guess when the supplied context does not resolve a distinction,
@@ -118,6 +129,20 @@ and this guide's digest. Do not change the task wording, sentences, labels, or t
 after the experiment begins. A correction after trials requires a new catalog
 identity and a reported regrade; it must not silently replace the original gold.
 
+Record each adjudication in `adjudication.json` beside the comparison:
+
+```json
+{"schema": "lingrep-linguistic-eval.adjudication/v1",
+ "packet_sha256": "...", "comparison_sha256": "...", "adjudicator_id": "...",
+ "cases": [{"id": "...", "status": "retain", "targets": [...],
+            "driver_targets": [...], "rationale": "..."}]}
+```
+
+Only cases marked `adjudication_required` may appear. `status` is `retain` or
+`exclude`; `driver_targets` is present when the case has a driver; `rationale` is
+required.
+
 The annotation gate is complete only when two distinct records cover every retained
 case, all disagreements have an explicit adjudication, and the final catalog passes
-the generator's span validation.
+the generator's span validation. `python review.py validate REVIEW_DIR FINAL_CATALOG`
+performs these checks; `run.py --review-evidence` runs it before generating tasks.

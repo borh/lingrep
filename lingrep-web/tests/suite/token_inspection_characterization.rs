@@ -1,5 +1,5 @@
+use crate::v6_support::RevisionTestExt;
 use std::sync::Arc;
-use std::time::Instant;
 
 use axum::{Router, body::Body, http::Request};
 use http_body_util::BodyExt;
@@ -96,7 +96,6 @@ async fn compact_kwic_defers_token_inspection_and_decodes_retained_rows() {
     assert!(!html.contains("hx-get=\"api/inspect/"));
     assert!(after > before, "primary KWIC must decode retained rows");
 
-    let before_hit_detail = cache.decoded_block_count();
     let hit_detail = app
         .clone()
         .oneshot(
@@ -117,10 +116,8 @@ async fn compact_kwic_defers_token_inspection_and_decodes_retained_rows() {
             .to_vec(),
     )
     .unwrap();
-    let after_hit_detail = cache.decoded_block_count();
     assert!(hit_detail_html.contains("hx-get=\"api/inspect/"));
 
-    let before_inspection = cache.decoded_block_count();
     let inspection = app
         .clone()
         .oneshot(
@@ -141,39 +138,21 @@ async fn compact_kwic_defers_token_inspection_and_decodes_retained_rows() {
             .to_vec(),
     )
     .unwrap();
-    let after_inspection = cache.decoded_block_count();
     assert!(inspection_html.contains("Base pronunciation"));
     assert!(
         inspection_html.contains("6 of 32 fields available"),
         "{inspection_html}"
     );
-    let mut warm_micros = Vec::with_capacity(100);
-    for _ in 0..100 {
-        let started = Instant::now();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/inspect/inspection/1/0/0/0")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let _ = response.into_body().collect().await.unwrap();
-        warm_micros.push(started.elapsed().as_micros());
-    }
-    warm_micros.sort_unstable();
-    eprintln!(
-        "pattern_detail_bytes={} pattern_detail_decoded_blocks={} hit_detail_bytes={} hit_detail_decoded_blocks={} token_inspector_bytes={} token_inspector_decoded_blocks={} retained_refs=1 available_fields=6 warm_token_p50_us={} warm_token_p95_us={}",
-        html.len(),
-        after - before,
-        hit_detail_html.len(),
-        after_hit_detail - before_hit_detail,
-        inspection_html.len(),
-        after_inspection - before_inspection,
-        warm_micros[49],
-        warm_micros[94],
-    );
+    let repeated = app
+        .oneshot(
+            Request::builder()
+                .uri("/inspect/inspection/1/0/0/0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated.status(), axum::http::StatusCode::OK);
+    let repeated_html = repeated.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(repeated_html.as_ref(), inspection_html.as_bytes());
 }

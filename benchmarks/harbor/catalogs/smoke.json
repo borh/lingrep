@@ -4,13 +4,45 @@
     "title": "Identify common-noun tokens",
     "capability": "feature_lookup",
     "phenomenon": "Find every token used as a common noun (普通名詞). Label it common_noun.",
-    "labels": ["common_noun"],
-    "sentences": ["私は猫を見る。", "静かな庭で鳥が鳴く。"],
+    "labels": [
+      "common_noun"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "私は猫を見る。",
+          "静かな庭で鳥が鳴く。"
+        ]
+      }
+    ],
     "oracle_query": "common_noun := [unidic.pos1=名詞 & unidic.pos2=普通名詞].\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens):\n        if token.pos1 == \"名詞\" and token.pos2 == \"普通名詞\":\n            yield index, index + 1, \"common_noun\"\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 2, "end_char": 3, "surface": "猫", "label": "common_noun"},
-      {"sentence_ordinal": 1, "start_char": 3, "end_char": 4, "surface": "庭", "label": "common_noun"},
-      {"sentence_ordinal": 1, "start_char": 5, "end_char": 6, "surface": "鳥", "label": "common_noun"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 2,
+        "end_char": 3,
+        "surface": "猫",
+        "label": "common_noun"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 3,
+        "end_char": 4,
+        "surface": "庭",
+        "label": "common_noun"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 5,
+        "end_char": 6,
+        "surface": "鳥",
+        "label": "common_noun"
+      }
     ]
   },
   {
@@ -18,12 +50,37 @@
     "title": "Extract possibility expressions",
     "capability": "sequence_composition",
     "phenomenon": "Find complete multi-token expressions that mark epistemic possibility. Label them epistemic_possibility.",
-    "labels": ["epistemic_possibility"],
-    "sentences": ["明日は雨かもしれない。", "彼も参加するかもしれません。"],
+    "labels": [
+      "epistemic_possibility"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "明日は雨かもしれない。",
+          "彼も参加するかもしれません。"
+        ]
+      }
+    ],
     "oracle_query": "epistemic_possibility := [text=か] [text=も] [text=しれ] [upos=AUX]+.\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index in range(len(tokens) - 3):\n        if [token.surface for token in tokens[index:index + 3]] == [\"か\", \"も\", \"しれ\"]:\n            end = auxiliary_run(tokens, index + 3)\n            if end > index + 3:\n                yield index, end, \"epistemic_possibility\"\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 4, "end_char": 10, "surface": "かもしれない", "label": "epistemic_possibility"},
-      {"sentence_ordinal": 1, "start_char": 6, "end_char": 13, "surface": "かもしれません", "label": "epistemic_possibility"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 4,
+        "end_char": 10,
+        "surface": "かもしれない",
+        "label": "epistemic_possibility"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 6,
+        "end_char": 13,
+        "surface": "かもしれません",
+        "label": "epistemic_possibility"
+      }
     ]
   },
   {
@@ -31,12 +88,39 @@
     "title": "Classify sentence-final particles",
     "capability": "context_disambiguation",
     "phenomenon": "Find sentence-final particles. Label よ as assertion_particle and ね as confirmation_particle.",
-    "labels": ["assertion_particle", "confirmation_particle"],
-    "sentences": ["彼が来るよ。", "今日は寒いね。", "猫がいる。"],
+    "labels": [
+      "assertion_particle",
+      "confirmation_particle"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "彼が来るよ。",
+          "今日は寒いね。",
+          "猫がいる。"
+        ]
+      }
+    ],
     "oracle_query": "assertion_particle := [text=よ] followed_by([upos=PUNCT] $).\nconfirmation_particle := [text=ね] followed_by([upos=PUNCT] $).\n",
+    "oracle_mecab": "LABELS = {\"よ\": \"assertion_particle\", \"ね\": \"confirmation_particle\"}\n\n\ndef select(tokens, document):\n    for index, token in enumerate(tokens):\n        if token.pos2 == \"終助詞\" and token.surface in LABELS and sentence_final(tokens, index):\n            yield index, index + 1, LABELS[token.surface]\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 4, "end_char": 5, "surface": "よ", "label": "assertion_particle"},
-      {"sentence_ordinal": 1, "start_char": 5, "end_char": 6, "surface": "ね", "label": "confirmation_particle"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 4,
+        "end_char": 5,
+        "surface": "よ",
+        "label": "assertion_particle"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 5,
+        "end_char": 6,
+        "surface": "ね",
+        "label": "confirmation_particle"
+      }
     ]
   },
   {
@@ -44,12 +128,38 @@
     "title": "Distinguish existential and necessity uses",
     "capability": "context_disambiguation",
     "phenomenon": "Find いる/ある predicates. Label a living-subject existential as animate_existence and the complete 必要がある construction as necessity_construction. Do not emit the embedded ある separately.",
-    "labels": ["animate_existence", "necessity_construction"],
-    "sentences": ["庭に猫がいる。", "確認する必要がある。"],
+    "labels": [
+      "animate_existence",
+      "necessity_construction"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "庭に猫がいる。",
+          "確認する必要がある。"
+        ]
+      }
+    ],
     "oracle_query": "animate_existence := [text=いる & upos=AUX].\nnecessity_construction := [text=必要] [text=が] [lemma=有る].\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens):\n        if token.lemma == \"居る\" and index > 0 and tokens[index - 1].surface == \"が\":\n            yield index, index + 1, \"animate_existence\"\n        if (\n            token.surface == \"必要\"\n            and index + 2 < len(tokens)\n            and tokens[index + 1].surface == \"が\"\n            and tokens[index + 2].lemma == \"有る\"\n        ):\n            yield index, index + 3, \"necessity_construction\"\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 4, "end_char": 6, "surface": "いる", "label": "animate_existence"},
-      {"sentence_ordinal": 1, "start_char": 4, "end_char": 9, "surface": "必要がある", "label": "necessity_construction"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 4,
+        "end_char": 6,
+        "surface": "いる",
+        "label": "animate_existence"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 4,
+        "end_char": 9,
+        "surface": "必要がある",
+        "label": "necessity_construction"
+      }
     ]
   },
   {
@@ -57,11 +167,29 @@
     "title": "Extract passive predicates",
     "capability": "sequence_composition",
     "phenomenon": "Find the complete predicate carrying passive voice, including its inflection. Label it passive_predicate.",
-    "labels": ["passive_predicate"],
-    "sentences": ["その本は学生に読まれた。", "窓が風で開いた。"],
+    "labels": [
+      "passive_predicate"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "その本は学生に読まれた。",
+          "窓が風で開いた。"
+        ]
+      }
+    ],
     "oracle_query": "passive_predicate := [unidic.cform=未然形-一般] [text=れ] [upos=AUX]+.\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if token.pos1 == \"動詞\" and tokens[index + 1].ctype == \"助動詞-レル\":\n            yield predicate_start(tokens, index), auxiliary_run(tokens, index + 1), \"passive_predicate\"\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 7, "end_char": 11, "surface": "読まれた", "label": "passive_predicate"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 7,
+        "end_char": 11,
+        "surface": "読まれた",
+        "label": "passive_predicate"
+      }
     ]
   },
   {
@@ -69,12 +197,60 @@
     "title": "Classify の by grammatical function",
     "capability": "context_disambiguation",
     "phenomenon": "Find each の functioning as either a nominalizer or an explanatory construction marker. Label it nominalizer or explanatory_no.",
-    "labels": ["nominalizer", "explanatory_no"],
-    "sentences": ["毎朝走るのが好きだ。", "彼が来るのだ。", "私の本だ。"],
+    "labels": [
+      "nominalizer",
+      "explanatory_no"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "毎朝走るのが好きだ。",
+          "彼が来るのだ。",
+          "私の本だ。"
+        ]
+      }
+    ],
     "oracle_query": "nominalizer := [text=の & unidic.pos2=準体助詞] followed_by([text in {が, は, を, も, か}]).\nexplanatory_no := [text=の & unidic.pos2=準体助詞] followed_by([upos=AUX]).\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if token.surface == \"の\" and token.pos2 == \"準体助詞\":\n            if tokens[index + 1].pos1 == \"助詞\":\n                yield index, index + 1, \"nominalizer\"\n            elif tokens[index + 1].pos1 == \"助動詞\":\n                yield index, index + 1, \"explanatory_no\"\n",
     "targets": [
-      {"sentence_ordinal": 0, "start_char": 4, "end_char": 5, "surface": "の", "label": "nominalizer"},
-      {"sentence_ordinal": 1, "start_char": 4, "end_char": 5, "surface": "の", "label": "explanatory_no"}
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 0,
+        "start_char": 4,
+        "end_char": 5,
+        "surface": "の",
+        "label": "nominalizer"
+      },
+      {
+        "eval_document_id": "doc-001",
+        "sentence_ordinal": 1,
+        "start_char": 4,
+        "end_char": 5,
+        "surface": "の",
+        "label": "explanatory_no"
+      }
     ]
+  },
+  {
+    "id": "passive-absent-negative",
+    "title": "Report that no predicate is passive",
+    "capability": "negative_evidence",
+    "phenomenon": "Find the complete predicate carrying passive voice, including its inflection. Label it passive_predicate. Emit nothing when no predicate is passive.",
+    "labels": [
+      "passive_predicate"
+    ],
+    "documents": [
+      {
+        "eval_document_id": "doc-001",
+        "sentences": [
+          "窓が風で開いた。",
+          "彼は本を読んだ。"
+        ]
+      }
+    ],
+    "oracle_query": "passive_predicate := [unidic.cform=未然形-一般] [text=れ] [upos=AUX]+.\n",
+    "oracle_mecab": "def select(tokens, document):\n    for index, token in enumerate(tokens[:-1]):\n        if token.pos1 == \"動詞\" and tokens[index + 1].ctype == \"助動詞-レル\":\n            yield predicate_start(tokens, index), auxiliary_run(tokens, index + 1), \"passive_predicate\"\n",
+    "targets": []
   }
 ]

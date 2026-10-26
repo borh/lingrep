@@ -2,26 +2,10 @@ defaults
   status: "experimental"
 end
 
-# Reduplication and V-に-V emphatic repetition, using same_as with a
-# by=unidic.orthbase projection.
-#
-# Every predicate below was checked against what UniDic-CWJ 202512 actually
-# emits (`ling tokenize`):
-#   * もっともっと and ずっとずっと are two 副詞 tokens each, kana モット/
-#     ズット on both halves — so the width-1 capture consumes exactly one
-#     token and same_as consumes exactly one more, equal by kana.
-#   * The V-に-V first slot is verb-tagged only where UniDic has not
-#     lexicalized a deverbal noun: 頑張り and 煮詰まり carry unidic.pos1=動詞,
-#     unidic.cform=連用形-一般, orthbase 頑張る/煮詰まる. 泣きに泣いた and
-#     待ちに待った tokenize their first element as 名詞 (orthbase 泣き/待ち
-#     — not the verb's 泣く/待つ), so those instances of the construction
-#     escape this pattern; the counterexamples below pin that boundary
-#     rather than leaving it to be rediscovered.
-#   * by=unidic.orthbase is a projection, not a spelling of orth: 頑張り and 頑張っ
-#     differ in orth and agree on orthbase (頑張る). 頑張りに行った matches
-#     the capture and the particle and fails only the orthbase equality
-#     (行っ carries orthbase 行く), which is what makes it the sharp
-#     counterexample.
+# Reduplication and V-に-V emphatic repetition. In UniDic-CWJ 202512, the
+# V-に-V first slot is tagged 動詞 only where a deverbal noun is not
+# lexicalized: 泣きに泣いた and 待ちに待った tag their first element as 名詞
+# (`orthbase` 泣き/待ち rather than 泣く/待つ).
 
 category: "重複・強調"
 examples: ["もっともっと知りたい", "ずっとずっと待っていた"]
