@@ -230,8 +230,8 @@ fn auto_progress_follows_stderr_terminal_without_changing_stdout() {
                             &raw mut master_fd,
                             &raw mut slave_fd,
                             std::ptr::null_mut(),
-                            std::ptr::null(),
-                            std::ptr::null(),
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
                         )
                     },
                     0
