@@ -53,6 +53,12 @@ jobs:
       - name: Fetch the dictionary
         run: nix build --no-link .#vibrato-dict-cwj
 
+      - name: Check the CLI package source
+        run: |
+          source="$(nix eval --raw .#lingrep.src)"
+          cmp python/spacy-adapter/requirements-ginza.txt "$source/python/spacy-adapter/requirements-ginza.txt"
+          cmp python/stanza-adapter/requirements-cpu.txt "$source/python/stanza-adapter/requirements-cpu.txt"
+
       # The lane `.githooks/pre-push` already runs, in the shell the repository
       # documents. A green run here and a green push therefore mean the same
       # thing.

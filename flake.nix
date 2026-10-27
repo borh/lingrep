@@ -133,6 +133,10 @@
                 # hermetic build of lingrep-web.
                 isSqlxCache = lib.hasPrefix "${toString ./.sqlx}/" (toString path);
                 isDictionaryLicense = lib.hasPrefix "${toString ./nix/dictionary-licenses}/" (toString path);
+                isAnalyzerRequirements = lib.elem (toString path) [
+                  (toString ./python/spacy-adapter/requirements-ginza.txt)
+                  (toString ./python/stanza-adapter/requirements-cpu.txt)
+                ];
               in
               isHtml
               || isSgx
@@ -140,6 +144,7 @@
               || isWebAsset
               || isSqlxCache
               || isDictionaryLicense
+              || isAnalyzerRequirements
               || craneLib.filterCargoSources path type;
           };
 
