@@ -1,6 +1,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod analyzer_prepare;
 mod annotation_export;
 mod artifact_fingerprint_golden;
 mod attributes;

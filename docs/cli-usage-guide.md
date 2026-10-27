@@ -1161,70 +1161,40 @@ model = "/path/to/sealed/en_core_web_sm"
 backend = "cpu"
 ```
 
-The adapter wheels provide `lingrep-spacy-setup` and `lingrep-stanza-setup`.
-These commands prepare the model and adapter/protocol code in a verified bundle
-and print its `analyzer.toml` path. The examples use Python 3.14; `uvx` downloads
-the interpreter if needed.
-
-Download the three wheels and checksums from the same release as `ling`.
-The v0.5.0 release has no adapter wheels; upgrade `ling` to a release with
-`.whl` assets before following these steps:
+With `uv` installed, prepare a CPU analyzer in a directory you choose:
 
 ```bash
-version=$(ling --version | awk '{print $2}')
-base="https://github.com/borh/lingrep/releases/download/v$version"
-mkdir -p dist
-for package in lingrep_adapter_protocol lingrep_spacy_adapter lingrep_stanza_adapter; do
-  wheel="$package-$version-py3-none-any.whl"
-  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
-    "$base/$wheel" -o "dist/$wheel"
-done
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
-  "$base/SHA256SUMS" -o dist/SHA256SUMS
-(cd dist && grep '\.whl$' SHA256SUMS |
-  if command -v sha256sum >/dev/null; then sha256sum -c -; else shasum -a 256 -c -; fi)
-```
+ling analyzer prepare ginza --output ./analyzers/ginza
 
-Prepare a CPU analyzer under `./analyzers/`. Use an absolute `--analyzer-config`
-path when querying from another directory:
-
-```bash
-uvx --python 3.14 --from "./dist/lingrep_spacy_adapter-$version-py3-none-any.whl[spacy,ginza]" \
-  --with "./dist/lingrep_adapter_protocol-$version-py3-none-any.whl" \
-  lingrep-spacy-setup \
-  --model ja_ginza --probe-text '猫が走る。' --output ./analyzers/ginza
-
-uvx --python 3.14 --from "./dist/lingrep_stanza_adapter-$version-py3-none-any.whl[cpu]" \
-  --with "./dist/lingrep_adapter_protocol-$version-py3-none-any.whl" \
-  --index https://download.pytorch.org/whl/cpu \
-  --index-strategy unsafe-best-match lingrep-stanza-setup \
+ling analyzer prepare stanza --output ./analyzers/stanza-fr \
   --language fr --package tokenize=gsd --package mwt=gsd \
   --package pos=gsd_nocharlm --package lemma=gsd_nocharlm \
-  --probe-text 'Je mange du pain.' --output ./analyzers/stanza-fr
+  --probe-text 'Je mange du pain.'
 
 ling matches --analyzer-config ./analyzers/ginza/analyzer.toml \
   --patterns constructions.lx transcripts/
 ```
 
-Repeating setup with the same adapter files, model and runtime reuses the bundle.
-Use a new output directory to change the adapter, model or runtime. Upgrading
-`ling` leaves existing bundles unchanged.
+Preparation downloads the release's adapter wheels, checks their SHA-256
+checksums, and installs Python 3.14, dependencies and the selected model under
+`--output`. Keep that directory at its original path. Deleting download caches
+does not break the analyzer. Use an absolute `--analyzer-config` path when
+querying from another directory.
 
-Stanza downloads the selected resources; `--resource-root DIR --offline` uses
-an existing resource tree. spaCy loads an installed model package
-or local directory; the `ginza` extra acquires the pinned model wheel. The Stanza
-`cpu` extra selects the unsuffixed macOS Torch wheel or the `+cpu` build on Linux.
-Both default to CPU; `--backend cuda|rocm` requires a matching runtime and
-available device. These examples are verified on CPU; GPU setup retains the
-adapters' backend checks.
+Repeating the same preparation checks and reuses the directory. Use a new output
+directory to change the model, packages or release. Upgrading `ling` alone leaves
+existing bundles unchanged. Queries read the explicit configuration without
+installing or updating anything; prepared-corpus queries do not require Python.
 
-The generated bundle hashes all staged adapter/protocol code and model files.
-Its model resources include a receipt of the Python version and installed package
-versions, checked before direct analysis. This records the resolved uvx environment;
-it does not hash third-party library binaries or replace the packaged lock receipt.
-Keep the uvx Python environment: removing its cache invalidates the generated
-interpreter path, and setup must be rerun into a new directory. Prepared queries
-remain independent of that environment.
+For wheels downloaded separately, pass `--wheels DIR` with the matching release's
+wheels and `SHA256SUMS`. The v0.5.0 release has no adapter wheels; upgrade `ling`
+to use this preparation command. The standalone `lingrep-spacy-setup` and
+`lingrep-stanza-setup` wheel entry points remain available for custom model and
+GPU setup, with a caller-managed Python environment.
+
+The bundle hashes staged adapter/protocol code and model files. Its runtime
+receipt checks Python and installed package versions, without hashing third-party
+library binaries.
 
 Relative paths resolve from the TOML file's directory. The model must be sealed
 by setup or the repository adapter's `--prepare` command; its profile declares the
@@ -1278,6 +1248,29 @@ Adapters must implement the bounded
 implementation manifest; the other paths declare its additional file closure.
 The generic adapter supports input segmentation. Known spaCy/Stanza adapters
 obtain these declarations from their sealed projects and models instead.
+
+#### Analyzer storage and cleanup
+
+Each `ling analyzer prepare --output DIR` directory contains its own Python
+runtime, dependencies and model. Keep source corpora and prepared artifacts
+outside it. Temporary model-download files are removed after preparation.
+To remove the GiNZA analyzer from the example:
+
+```bash
+rm -rf ./analyzers/ginza
+```
+
+Shared downloads are stored separately in uv's cache. Show its location and
+clear it with:
+
+```bash
+uv cache dir
+uv cache clean
+```
+
+Cache cleanup affects uv's shared cache for all projects, but does not break
+analyzers created by `ling analyzer prepare`. Prepared corpora remain queryable
+after their analyzer directory is deleted.
 
 ## Reusing and preparing a corpus from a query
 

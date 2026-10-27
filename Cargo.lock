@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anstyle",
  "assert_cmd",
@@ -2587,6 +2587,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "signal-hook",
  "tempfile",
  "terminal_size",
@@ -2606,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-cli-common"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "clap",
  "lingrep-core",
@@ -2614,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aho-corasick",
  "blake3",
@@ -2663,7 +2664,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-corpus"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "compact_str",
@@ -2687,7 +2688,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-perf"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "clap",
@@ -2701,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-web"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "askama",
  "axum",

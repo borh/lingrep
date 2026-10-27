@@ -12,7 +12,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.95"
 # All workspace crates inherit this version.
-version = "0.5.0"
+version = "0.5.1"
 license = "MIT"
 repository = "https://github.com/borh/lingrep"
 

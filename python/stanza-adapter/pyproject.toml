@@ -1,12 +1,12 @@
 [project]
 name = "lingrep-stanza-adapter"
-version = "0.5.0"
+version = "0.5.1"
 description = "Generic Stanza morphology adapter for lingrep"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "lingrep-adapter-protocol==0.5.0",
+    "lingrep-adapter-protocol==0.5.1",
     "stanza==1.14.0",
 ]
 

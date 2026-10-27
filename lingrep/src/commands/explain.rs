@@ -27,6 +27,7 @@ pub fn requested(cli: &Cli) -> bool {
         },
         Command::Doctor(_)
         | Command::Dictionary(_)
+        | Command::Analyzer(_)
         | Command::Check(_)
         | Command::Explore(_)
         | Command::Describe(_)

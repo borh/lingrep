@@ -107,6 +107,7 @@ same version. Refresh the lockfiles and run the checks:
 
 ```bash
 cargo update --workspace
+cargo update --manifest-path lingrep-core/fuzz/Cargo.toml --workspace
 uv lock --project python/spacy-adapter
 uv lock --project python/stanza-adapter
 ./ci.sh --fast

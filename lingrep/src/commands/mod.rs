@@ -1,5 +1,6 @@
 //! Command dispatch boundaries.
 
+mod analyzer;
 pub(crate) mod attributes;
 pub mod check;
 pub mod completions;
@@ -27,7 +28,9 @@ pub mod variants;
 use lingrep_core::corpus::admission_identity_digest;
 use lingrep_corpus::AdmissionIdentity;
 
-use crate::cli::{Cli, Command, CorpusCommand, DictionaryCommand, ExecutionCliConfig};
+use crate::cli::{
+    AnalyzerCommand, Cli, Command, CorpusCommand, DictionaryCommand, ExecutionCliConfig,
+};
 use crate::error::CliError;
 use crate::terminal::TerminalArbiter;
 
@@ -49,6 +52,9 @@ pub fn dispatch(
         return explain::run(cli, config);
     }
     match &cli.command {
+        Command::Analyzer(args) => match &args.command {
+            AnalyzerCommand::Prepare(args) => analyzer::run(args, config, output),
+        },
         Command::Doctor(args) => doctor::run(args, output),
         Command::Dictionary(args) => match &args.command {
             DictionaryCommand::Install(args) => dictionary::run_install(args, output),

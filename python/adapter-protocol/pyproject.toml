@@ -1,6 +1,6 @@
 [project]
 name = "lingrep-adapter-protocol"
-version = "0.5.0"
+version = "0.5.1"
 description = "Bounded morphology protocol framing for lingrep analyzers"
 license = "MIT"
 license-files = ["LICENSE"]

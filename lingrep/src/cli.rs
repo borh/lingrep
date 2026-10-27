@@ -204,6 +204,8 @@ pub enum Command {
     Check(CheckArgs),
     /// Download a UniDic dictionary for Japanese analysis.
     Dictionary(DictionaryArgs),
+    /// Prepare a Python analyzer in a directory you choose.
+    Analyzer(AnalyzerArgs),
     /// Check that a dictionary, catalog and prepared corpus load.
     Doctor(DoctorArgs),
     /// Show a command's arguments, examples and output formats.
@@ -266,6 +268,53 @@ pub struct DictionaryInstallArgs {
     /// Dictionary to install.
     #[arg(value_enum, default_value = "cwj")]
     pub name: crate::packaged_dictionaries::DictionaryName,
+}
+
+#[derive(Debug, Args)]
+pub struct AnalyzerArgs {
+    #[command(subcommand)]
+    pub command: AnalyzerCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AnalyzerCommand {
+    /// Download Python, dependencies and a model for CPU analysis.
+    #[command(
+        after_help = "Each output contains a separate Python runtime and model. Delete that directory to remove the analyzer. Locate shared downloads with `uv cache dir`; clear them with `uv cache clean`."
+    )]
+    Prepare(AnalyzerPrepareArgs),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum AnalyzerProvider {
+    Ginza,
+    Stanza,
+}
+
+#[derive(Debug, Args)]
+pub struct AnalyzerPrepareArgs {
+    /// GiNZA for Japanese; Stanza for the selected language and packages.
+    #[arg(value_enum)]
+    pub provider: AnalyzerProvider,
+    /// Directory for the Python runtime, model and analyzer.toml.
+    #[arg(long, value_name = "DIR")]
+    pub output: PathBuf,
+    /// Stanza language code.
+    #[arg(long, required_if_eq("provider", "stanza"))]
+    pub language: Option<String>,
+    /// Stanza processor and package; repeat for each processor.
+    #[arg(
+        long = "package",
+        value_name = "PROCESSOR=PACKAGE",
+        required_if_eq("provider", "stanza")
+    )]
+    pub packages: Vec<String>,
+    /// Text used to verify model preparation.
+    #[arg(long, value_name = "TEXT")]
+    pub probe_text: Option<String>,
+    /// Read release wheels and SHA256SUMS from this directory.
+    #[arg(long, value_name = "DIR", hide_short_help = true)]
+    pub wheels: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1569,6 +1618,7 @@ impl Cli {
             Command::Attributes(args) => args.tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Corpus(_)
             | Command::Explore(_)
@@ -1594,6 +1644,7 @@ impl Cli {
             Command::Attributes(args) if args.tsv => OutputMode::Tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Matches(_)
             | Command::Summarize(_)
@@ -1646,6 +1697,7 @@ impl Cli {
             }) => ResourceArgs::with_traversal(args.traversal.clone(), args.progress),
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Analyzer(_)
             | Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Inspect(_) | CorpusCommand::Variants(_),
             })

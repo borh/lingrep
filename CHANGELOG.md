@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-27
+
 ### Added
 
 - Downloadable Python wheels and checksums for spaCy and Stanza setup,
   including the shared protocol package.
+- `ling analyzer prepare` for GiNZA and Stanza CPU analyzers. The chosen output
+  directory contains Python, dependencies, model and configuration, so clearing
+  download caches does not break queries.
 
 ### Changed
 

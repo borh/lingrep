@@ -250,6 +250,20 @@ static SEMANTICS: &[CommandSemantics] = &[
         },
     },
     CommandSemantics {
+        command: "analyzer",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "examples belong to analyzer prepare",
+        },
+    },
+    CommandSemantics {
+        command: "analyzer prepare",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "preparation downloads Python, dependencies and models",
+        },
+    },
+    CommandSemantics {
         command: "dictionary",
         input_modes: &[],
         examples: ExamplePublication::Omitted {

@@ -13,6 +13,7 @@ Commands:
   corpus       Save analyzed corpora for reuse, inspect them, and list corpus sources
   check        Validate patterns without reading a corpus; --help lists the syntax
   dictionary   Download a UniDic dictionary for Japanese analysis
+  analyzer     Prepare a Python analyzer in a directory you choose
   doctor       Check that a dictionary, catalog and prepared corpus load
   describe     Show a command's arguments, examples and output formats
   contracts    List or show the JSONL and TSV output formats
