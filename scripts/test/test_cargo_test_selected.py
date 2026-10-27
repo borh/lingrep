@@ -51,6 +51,24 @@ class SelectedCargoTests(unittest.TestCase):
                         self.assertIn("fixture failure", result.stdout + result.stderr)
                         self.assertNotIn("no tests executed", result.stdout + result.stderr)
 
+    def test_terminal_colored_summaries_count_as_executed_tests(self):
+        for label, summary in [
+            ("terminfo sgr0", r"test result: \x1b[32mok\x1b(B\x1b[m. 1 passed;"),
+            ("plain reset", r"test result: \x1b[32mok\x1b[0m. 1 passed;"),
+        ]:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                cargo = Path(temporary) / "cargo"
+                cargo.write_text(f"#!{sys.executable}\nprint('{summary}')\n")
+                cargo.chmod(0o755)
+                result = subprocess.run(
+                    [sys.executable, str(RUNNER), "selected"],
+                    env=os.environ | {"PATH": temporary + os.pathsep + os.environ["PATH"]},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("no tests executed", result.stderr)
+
     def test_flushed_progress_is_visible_before_the_child_finishes(self):
         with tempfile.TemporaryDirectory() as temporary:
             cargo = Path(temporary) / "cargo"

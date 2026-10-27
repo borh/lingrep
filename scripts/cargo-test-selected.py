@@ -7,6 +7,14 @@ import sys
 
 
 SUMMARY = re.compile(rb"^test result: ok\. (\d+) passed;")
+# CSI sequences (ECMA-48) and the ESC ( B charset reset that libtest's
+# terminfo colors emit around "ok".
+ESCAPE = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|[()][0-~])")
+
+
+def passed_count(line):
+    summary = SUMMARY.match(ESCAPE.sub(b"", line))
+    return int(summary.group(1)) if summary else 0
 
 
 def main():
@@ -20,12 +28,8 @@ def main():
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
             *lines, pending = (pending + chunk).split(b"\n")
-            passed += sum(
-                int(summary.group(1)) for line in lines
-                if (summary := SUMMARY.match(line))
-            )
-        if summary := SUMMARY.match(pending):
-            passed += int(summary.group(1))
+            passed += sum(passed_count(line) for line in lines)
+        passed += passed_count(pending)
         status = process.wait()
     if status:
         return status if status > 0 else 128 - status
