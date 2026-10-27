@@ -1177,8 +1177,9 @@ ling matches --analyzer-config ./analyzers/ginza/analyzer.toml \
 
 Preparation downloads the release's adapter wheels, checks their SHA-256
 checksums, and installs Python 3.14, dependencies and the selected model under
-`--output`. Keep that directory at its original path. Deleting download caches
-does not break the analyzer. Use an absolute `--analyzer-config` path when
+`--output`. Package versions come from the release locks, with hashes
+checked during installation. Keep that directory at its original path. Deleting
+download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
 querying from another directory.
 
 Repeating the same preparation checks and reuses the directory. Use a new output
@@ -1194,7 +1195,8 @@ GPU setup, with a caller-managed Python environment.
 
 The bundle hashes staged adapter/protocol code and model files. Its runtime
 receipt checks Python and installed package versions, without hashing third-party
-library binaries.
+library binaries. Managed analyzer identity does not depend on the output
+directory.
 
 Relative paths resolve from the TOML file's directory. The model must be sealed
 by setup or the repository adapter's `--prepare` command; its profile declares the

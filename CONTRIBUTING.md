@@ -110,6 +110,7 @@ cargo update --workspace
 cargo update --manifest-path lingrep-core/fuzz/Cargo.toml --workspace
 uv lock --project python/spacy-adapter
 uv lock --project python/stanza-adapter
+python3 scripts/check-adapter-wheels.py --update-exports
 ./ci.sh --fast
 ```
 

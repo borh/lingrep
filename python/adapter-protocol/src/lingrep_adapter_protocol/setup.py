@@ -52,6 +52,29 @@ def _stage_code(root: Path, kind: str) -> None:
     )
 
 
+def _runtime_receipt(resource_root: Path) -> dict:
+    python = sys.executable
+    try:
+        Path(python).relative_to(resource_root.parent.parent)
+    except ValueError:
+        pass
+    else:
+        python = os.path.relpath(python, resource_root)
+    return {
+        "python": python,
+        "python_version": sys.version,
+        "packages": sorted(
+            (distribution.metadata["Name"], distribution.version)
+            for distribution in importlib.metadata.distributions()
+        ),
+    }
+
+
+def _runtime_python(resource_root: Path) -> Path:
+    receipt = json.loads((resource_root / "lingrep-runtime.json").read_text())
+    return resource_root / receipt["python"]
+
+
 def _packages(values: list[str]) -> dict[str, str]:
     result = {}
     for value in values:
@@ -100,11 +123,7 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
                     "output belongs to a different setup; "
                     "choose a new --output directory"
                 )
-            if not Path(
-                json.loads((output / "model" / "lingrep-runtime.json").read_text())[
-                    "python"
-                ]
-            ).is_file():
+            if not _runtime_python(output / "model").is_file():
                 raise ValueError(
                     "cached Python environment was removed; "
                     "choose a new --output and rerun setup"
@@ -165,14 +184,7 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
                     probe_text=args.probe_text,
                     packages=packages,
                 )
-            runtime = {
-                "python": sys.executable,
-                "python_version": sys.version,
-                "packages": sorted(
-                    (d.metadata["Name"], d.version)
-                    for d in importlib.metadata.distributions()
-                ),
-            }
+            runtime = _runtime_receipt(output / "model")
             (model / "lingrep-runtime.json").write_text(
                 json.dumps(runtime, sort_keys=True)
             )

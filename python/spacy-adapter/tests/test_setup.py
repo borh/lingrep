@@ -4,9 +4,16 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from lingrep_adapter_protocol.resources import validate_runtime
-from lingrep_adapter_protocol.setup import _packages, _stage_code, setup
+from lingrep_adapter_protocol.setup import (
+    _packages,
+    _runtime_python,
+    _runtime_receipt,
+    _stage_code,
+    setup,
+)
 
 
 class SetupTests(unittest.TestCase):
@@ -88,3 +95,35 @@ class SetupTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "runtime changed"):
                 validate_runtime(root)
+
+
+class RuntimeLocationTests(unittest.TestCase):
+    def test_managed_runtime_receipts_do_not_include_the_output_location(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            receipts = []
+            for name in ("first", "second"):
+                root = base / name
+                python = root / "runtime" / "bin" / "python"
+                python.parent.mkdir(parents=True)
+                python.touch()
+                model = root / "bundle" / "model"
+                model.mkdir(parents=True)
+                with patch("sys.executable", str(python)):
+                    receipt = _runtime_receipt(model)
+                (model / "lingrep-runtime.json").write_text(json.dumps(receipt))
+                self.assertEqual(_runtime_python(model).resolve(), python.resolve())
+                receipts.append(receipt)
+            self.assertEqual(receipts[0], receipts[1])
+            (model / "lingrep-runtime.json").write_text(
+                json.dumps({"python": str(python)})
+            )
+            self.assertEqual(_runtime_python(model), python)
+
+    def test_external_runtime_receipt_retains_its_absolute_reference(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            python = root / "external" / "bin" / "python"
+            with patch("sys.executable", str(python)):
+                receipt = _runtime_receipt(root / "project" / "analyzer" / "model")
+            self.assertEqual(receipt["python"], str(python))

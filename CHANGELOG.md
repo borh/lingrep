@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Managed analyzer preparation uses hash-pinned dependency exports from the
+  release locks and restricts the PyTorch index to PyTorch packages. Analyzer
+  identity is independent of the output directory.
 - Adapter packages use the CLI release version. Preparing a bundle with a later
   release's wheels changes its analyzer identity and the identities of corpora
   prepared with it, even when the adapter code is unchanged. Upgrading `ling` alone

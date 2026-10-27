@@ -187,6 +187,24 @@ fn provision(
             .args(["venv", "--managed-python", "--python", "3.14"])
             .arg(root.join("runtime")),
     )?;
+    let locked = match args.provider {
+        AnalyzerProvider::Ginza => {
+            include_str!("../../../python/spacy-adapter/requirements-ginza.txt")
+        }
+        AnalyzerProvider::Stanza => {
+            include_str!("../../../python/stanza-adapter/requirements-cpu.txt")
+        }
+    };
+    let mut requirements = locked.to_owned();
+    for (name, digest) in &wheels {
+        let path = root.join("wheels").join(name);
+        let url = reqwest::Url::from_file_path(&path)
+            .map_err(|()| failed(format!("invalid wheel path: {}", path.display())))?;
+        let package = name.split('-').next().expect("wheel package name");
+        requirements.push_str(&format!("{package} @ {url} --hash=sha256:{digest}\n"));
+    }
+    let requirements_path = root.join("requirements.txt");
+    fs::write(&requirements_path, requirements)?;
     let mut install = uv(root);
     install
         .args([
@@ -194,32 +212,24 @@ fn provision(
             "install",
             "--link-mode",
             "copy",
-            "--exclude-newer",
-            "P3D",
+            "--require-hashes",
+            "--no-deps",
+            "--only-binary",
+            ":all:",
             "--python",
         ])
         .arg(root.join("runtime/bin/python"))
-        .arg(
-            root.join("wheels")
-                .join(wheel_name("lingrep_adapter_protocol")),
-        );
-    let (adapter, extras) = match args.provider {
-        AnalyzerProvider::Ginza => ("lingrep_spacy_adapter", "spacy,ginza"),
-        AnalyzerProvider::Stanza => ("lingrep_stanza_adapter", "cpu"),
-    };
-    install.arg(format!(
-        "{}[{extras}]",
-        root.join("wheels").join(wheel_name(adapter)).display()
-    ));
-    if args.provider == AnalyzerProvider::Stanza {
-        install.args([
-            "--index",
-            "https://download.pytorch.org/whl/cpu",
-            "--index-strategy",
-            "unsafe-best-match",
-        ]);
+        .arg("--requirements")
+        .arg(&requirements_path);
+    if args.provider == AnalyzerProvider::Stanza && !cfg!(target_os = "macos") {
+        install.args(["--torch-backend", "cpu"]);
     }
     checked(&mut install)?;
+    checked(
+        uv(root)
+            .args(["pip", "check", "--python"])
+            .arg(root.join("runtime/bin/python")),
+    )?;
     let python = root.join("runtime/bin/python").canonicalize()?;
     if !python.starts_with(root.join("python")) {
         return Err(failed("prepared Python is outside the analyzer directory"));
@@ -340,12 +350,18 @@ pub(crate) fn run(
             }
             let ready = fs::read(output.join("prepare.json")).map_err(|_| {
                 CliError::InvalidArgs(format!(
-                    "incomplete analyzer directory {}; choose a new --output",
+                    "incomplete analyzer directory {}; if this was an interrupted preparation, delete it before retrying; otherwise choose a new --output",
                     output.display()
                 ))
             })?;
             let prepared: Prepared = serde_json::from_slice(&ready)
                 .map_err(|error| failed(format!("invalid preparation receipt: {error}")))?;
+            if prepared.request.release != request.release {
+                return Err(CliError::InvalidArgs(format!(
+                    "output was prepared with ling {}; this is ling {}; choose a new --output to use this release",
+                    prepared.request.release, request.release
+                )));
+            }
             if prepared.request != request {
                 return Err(CliError::InvalidArgs(
                     "output belongs to a different preparation; choose a new --output".into(),

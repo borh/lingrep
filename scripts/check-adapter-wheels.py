@@ -8,6 +8,39 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = ("adapter-protocol", "spacy-adapter", "stanza-adapter")
+ENVIRONMENTS = {
+    "spacy-adapter": ("requirements-ginza.txt", ("spacy", "ginza")),
+    "stanza-adapter": ("requirements-cpu.txt", ("cpu",)),
+}
+
+
+def check_exports(update=False):
+    for project, (name, extras) in ENVIRONMENTS.items():
+        subprocess.run(
+            ["uv", "lock", "--project", str(ROOT / "python" / project), "--check"],
+            check=True,
+        )
+        command = [
+            "uv",
+            "export",
+            "--project",
+            str(ROOT / "python" / project),
+            "--frozen",
+            "--no-dev",
+            "--no-emit-local",
+            "--no-header",
+            "--no-annotate",
+        ]
+        for extra in extras:
+            command.extend(("--extra", extra))
+        exported = subprocess.run(command, check=True, capture_output=True).stdout
+        path = ROOT / "python" / project / name
+        if update:
+            path.write_bytes(exported)
+        require(
+            exported == path.read_bytes(),
+            f"{project}/{name} differs from uv.lock; run this script with --update-exports",
+        )
 
 
 def require(condition, message):
@@ -54,6 +87,8 @@ def check_wheel(directory, project):
             source / "pyproject.toml"
         ).read_bytes()
         if project != "adapter-protocol":
+            requirements = ENVIRONMENTS[project][0]
+            expected[f"{name}/{requirements}"] = (source / requirements).read_bytes()
             expected[f"{name}/uv.lock"] = (source / "uv.lock").read_bytes()
             expected[f"{name}/_project/bin/lingrep-{project}"] = (
                 source / "bin" / f"lingrep-{project}"
@@ -99,8 +134,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     parser.add_argument("--tag")
+    parser.add_argument(
+        "--update-exports",
+        action="store_true",
+        help="Regenerate runtime requirements from the adapter locks.",
+    )
     args = parser.parse_args()
     check_versions(args.tag)
+    check_exports(args.update_exports)
     with tempfile.TemporaryDirectory(prefix="lingrep-wheel-check-") as temporary:
         directory = args.output.resolve() if args.output else Path(temporary) / "dist"
         for project in PROJECTS:

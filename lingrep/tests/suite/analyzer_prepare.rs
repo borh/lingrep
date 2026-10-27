@@ -97,6 +97,67 @@ fn failed_preparation_removes_only_its_new_directory() {
 }
 
 #[test]
+fn invalid_reuse_receipts_fail_before_python_without_changing_files() {
+    use serde_json::json;
+    #[derive(Clone, Copy, Debug)]
+    enum Case {
+        Release,
+        Selection,
+        WheelSet,
+        WheelHash,
+    }
+    for case in [
+        Case::Release,
+        Case::Selection,
+        Case::WheelSet,
+        Case::WheelHash,
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir(root.join("wheels")).unwrap();
+        let mut receipt = json!({
+            "request": {"release": env!("CARGO_PKG_VERSION"), "provider": "ginza", "language": null, "packages": [], "probe_text": "猫が走る。"},
+            "wheels": {}, "semantic_identity": vec![0; 32]
+        });
+        let expected = match case {
+            Case::Release => {
+                receipt["request"]["release"] = json!("0.4.0");
+                "prepared with ling 0.4.0"
+            }
+            Case::Selection => {
+                receipt["request"]["probe_text"] = json!("different");
+                "different preparation"
+            }
+            Case::WheelSet => "invalid wheel set",
+            Case::WheelHash => {
+                for package in ["lingrep_adapter_protocol", "lingrep_spacy_adapter"] {
+                    let name = format!("{package}-{}-py3-none-any.whl", env!("CARGO_PKG_VERSION"));
+                    std::fs::write(root.join("wheels").join(&name), b"changed").unwrap();
+                    receipt["wheels"][name] = json!("0".repeat(64));
+                }
+                "checksum mismatch"
+            }
+        };
+        let bytes = serde_json::to_vec(&receipt).unwrap();
+        std::fs::write(root.join("prepare.json"), &bytes).unwrap();
+        let result = lingrep_without_dictionary()
+            .args(["analyzer", "prepare", "ginza", "--output"])
+            .arg(root)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(expected),
+            "{case:?}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(std::fs::read(root.join("prepare.json")).unwrap(), bytes);
+        assert!(!root.join("analyzer.toml").exists());
+    }
+}
+
+#[test]
 #[ignore = "downloads Python and models; requires uv and LINGREP_ADAPTER_WHEELS"]
 fn analyzer_directories_survive_cache_removal() {
     for (provider, selection, text) in [
@@ -133,17 +194,17 @@ fn analyzer_directories_survive_cache_removal() {
                 .env_remove("UV_OFFLINE");
             command
         };
-        let prepare = || {
+        let prepare = |destination: &std::path::Path| {
             let mut command = command();
             command
                 .args(["analyzer", "prepare", provider, "--output"])
-                .arg(&output)
+                .arg(destination)
                 .args(&selection)
                 .arg("--wheels")
                 .arg(&wheels);
             command
         };
-        let initial = prepare().output().unwrap();
+        let initial = prepare(&output).output().unwrap();
         assert!(
             initial.status.success(),
             "{}",
@@ -163,6 +224,21 @@ fn analyzer_directories_survive_cache_removal() {
                 .starts_with("downloads-")
         }));
         let receipt = std::fs::read(output.join("prepare.json")).unwrap();
+        let second = root.join("second analyzer");
+        let repeated = prepare(&second).output().unwrap();
+        assert!(
+            repeated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&repeated.stderr)
+        );
+        let first_receipt: serde_json::Value = serde_json::from_slice(&receipt).unwrap();
+        let second_receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(second.join("prepare.json")).unwrap()).unwrap();
+        assert_eq!(
+            first_receipt["semantic_identity"], second_receipt["semantic_identity"],
+            "{provider}: analyzer identity depends on output location"
+        );
+        std::fs::remove_dir_all(&second).unwrap();
         let input = root.join("input.txt");
         std::fs::write(&input, text).unwrap();
         let query = || {
@@ -194,7 +270,7 @@ fn analyzer_directories_survive_cache_removal() {
         let before = query();
         assert!(!before.is_empty());
         std::fs::remove_dir_all(&cache).unwrap();
-        let reused = prepare()
+        let reused = prepare(&output)
             .env("PATH", "")
             .env("UV_OFFLINE", "1")
             .output()

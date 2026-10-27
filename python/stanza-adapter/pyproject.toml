@@ -89,3 +89,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "uv.lock" = "lingrep_stanza_adapter/uv.lock"
 "pyproject.toml" = "lingrep_stanza_adapter/_project/pyproject.toml"
 "bin/lingrep-stanza-adapter" = "lingrep_stanza_adapter/_project/bin/lingrep-stanza-adapter"
+"requirements-cpu.txt" = "lingrep_stanza_adapter/requirements-cpu.txt"

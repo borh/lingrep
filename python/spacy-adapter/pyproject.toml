@@ -129,3 +129,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "uv.lock" = "lingrep_spacy_adapter/uv.lock"
 "pyproject.toml" = "lingrep_spacy_adapter/_project/pyproject.toml"
 "bin/lingrep-spacy-adapter" = "lingrep_spacy_adapter/_project/bin/lingrep-spacy-adapter"
+"requirements-ginza.txt" = "lingrep_spacy_adapter/requirements-ginza.txt"
