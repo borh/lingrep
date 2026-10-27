@@ -620,12 +620,16 @@
 
           spacyEnglishAnalyzer = pkgs.runCommand "spacy-analyzer-en-core-web-sm" { } ''
             project="$out/lib/lingrep-spacy-adapter"
-            mkdir -p "$project" "$out/share/lingrep"
-            cp -r ${./python/adapter-protocol} "$out/lib/adapter-protocol"
+            protocol="$out/lib/adapter-protocol"
+            mkdir -p "$project" "$protocol" "$out/share/lingrep"
+            cp -r ${./python/adapter-protocol/src} "$protocol/src"
+            cp ${./python/adapter-protocol/pyproject.toml} "$protocol/pyproject.toml"
+            cp ${./LICENSE} "$protocol/LICENSE"
             cp -r ${./python/spacy-adapter/src} "$project/src"
             cp -r ${./python/spacy-adapter/bin} "$project/bin"
             cp ${./python/spacy-adapter/pyproject.toml} "$project/pyproject.toml"
             cp ${./python/spacy-adapter/uv.lock} "$project/uv.lock"
+            cp ${./LICENSE} "$project/LICENSE"
             cat > "$out/share/lingrep/english.toml" <<EOF
             version = 1
             kind = "spacy"
@@ -642,6 +646,10 @@
                 nativeBuildInputs = [ spacyProfilePython ];
               }
               ''
+                for project in adapter-protocol lingrep-spacy-adapter; do
+                  test -e ${spacyEnglishAnalyzer}/lib/"$project"/LICENSE
+                  cmp ${./LICENSE} ${spacyEnglishAnalyzer}/lib/"$project"/LICENSE
+                done
                 export LINGREP_SPACY_ENGLISH_MODEL=${spacyModelEnCoreWebSm}/share/spacy/en_core_web_sm
                 export PYTHONPATH=${./python/spacy-adapter/src}:${./python/adapter-protocol/src}
                 export PYTHONDONTWRITEBYTECODE=1

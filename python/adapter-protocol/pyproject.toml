@@ -1,12 +1,14 @@
 [project]
 name = "lingrep-adapter-protocol"
-version = "0.1.0"
+version = "0.5.0"
 description = "Bounded morphology protocol framing for lingrep analyzers"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14,<3.15"
 dependencies = ["blake3>=1.0.8,<2"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

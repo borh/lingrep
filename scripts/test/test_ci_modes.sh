@@ -45,6 +45,9 @@ for command_name in uv python; do
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s:%s\n' "${0##*/}" "$*" >>"$LINGREP_CI_TEST_LOG"
+if [[ ${LINGREP_CI_FAIL_STEP:-} == "${0##*/}:$*" ]]; then
+    exit 42
+fi
 EOF
     chmod +x "$temporary/bin/$command_name"
 done
@@ -111,6 +114,7 @@ assert_lacks_prefix() {
 }
 
 assert_full_contract() {
+    assert_has "python:scripts/check-adapter-wheels.py"
     assert_has "cargo:test --workspace --tests --quiet"
     assert_has "script:cargo-test-selected.py"
     [[ $(grep -Fxc "cargo:test --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
@@ -134,6 +138,7 @@ assert_full_contract
 grep -F "deprecated" "$temporary/stderr.log" >/dev/null
 
 run_mode --fast
+assert_has "python:scripts/check-adapter-wheels.py"
 assert_has "script:check-build-env.sh"
 assert_has "script:test_ci_modes.sh"
 assert_has "script:test_fuzz_smoke.sh"
@@ -170,6 +175,7 @@ if (cd "$temporary" && "$temporary/ci.sh" --fast extra) >/dev/null 2>&1; then
 fi
 
 for failure in \
+    'python:scripts/check-adapter-wheels.py' \
     check-test-consolidation.sh \
     cargo-test-selected.py \
     'cargo:fmt --check --all' \

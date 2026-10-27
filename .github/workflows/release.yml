@@ -106,9 +106,36 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  adapters:
+    name: Python analyzer wheels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.1"
+          python-version: "3.14"
+
+      - name: Build and check the adapter wheels
+        env:
+          UV_EXCLUDE_NEWER: "P3D"
+        run: |
+          python3 scripts/check-adapter-wheels.py --output dist --tag "${{ inputs.tag || github.ref_name }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-adapters
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, adapters]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -139,9 +166,9 @@ jobs:
           scripts/render-installer.sh "${tag#v}" dist/install.sh
           cd dist
           if command -v sha256sum > /dev/null; then
-            sha256sum ./*.tar.gz ./install.sh > ../release/SHA256SUMS
+            sha256sum ./*.tar.gz ./*.whl ./install.sh > ../release/SHA256SUMS
           else
-            shasum -a 256 ./*.tar.gz ./install.sh > ../release/SHA256SUMS
+            shasum -a 256 ./*.tar.gz ./*.whl ./install.sh > ../release/SHA256SUMS
           fi
           cat ../release/SHA256SUMS
 
@@ -154,4 +181,4 @@ jobs:
             --title "lingrep ${tag#v}" \
             --notes-file release/notes.md \
             --verify-tag \
-            ./dist/*.tar.gz ./dist/*.sha256 ./dist/install.sh ./release/SHA256SUMS
+            ./dist/*.tar.gz ./dist/*.sha256 ./dist/*.whl ./dist/install.sh ./release/SHA256SUMS

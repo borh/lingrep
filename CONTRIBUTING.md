@@ -99,6 +99,22 @@ grammar and this repository's compiler. Follow the complete checklist in
 including the runtime lowerer, compiler-contract tests, installed CLI reference,
 browser assets, and grammar pin.
 
+## Prepare a release
+
+Set the release version in `Cargo.toml` and all three `python/*/pyproject.toml`
+files. Update both adapters' `lingrep-adapter-protocol==` dependencies to the
+same version. Refresh the lockfiles and run the checks:
+
+```bash
+cargo update --workspace
+uv lock --project python/spacy-adapter
+uv lock --project python/stanza-adapter
+./ci.sh --fast
+```
+
+Write `docs/release-notes/v<VERSION>.md` before creating the tag. Pushing a
+`v<VERSION>` tag publishes the release automatically.
+
 ## Commits
 
 Use a short imperative subject that states the outcome, for example:

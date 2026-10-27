@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Downloadable Python wheels and checksums for spaCy and Stanza setup,
+  including the shared protocol package.
+
+### Changed
+
+- Adapter packages use the CLI release version. Preparing a bundle with a later
+  release's wheels changes its analyzer identity and the identities of corpora
+  prepared with it, even when the adapter code is unchanged. Upgrading `ling` alone
+  does not require setup or rebuilding existing corpora, provided their format
+  remains supported.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added

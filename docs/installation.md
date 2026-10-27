@@ -54,7 +54,7 @@ fpath=("${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions" $fpath)
 
 ## Download an archive
 
-Each [release](https://github.com/borh/lingrep/releases) has one archive per
+Each [release](https://github.com/borh/lingrep/releases) has one CLI archive per
 platform. An archive unpacks to a single directory containing `bin/ling`, shell
 completions, manual pages, the license, and third-party notices.
 
@@ -69,6 +69,10 @@ tar xzf "ling-$version-$target.tar.gz"
 export PATH="$PWD/ling-$version-$target/bin:$PATH"
 ling --version
 ```
+
+Python adapter wheels use the release's `SHA256SUMS`. See
+[external analyzer setup](cli-usage-guide.md#use-an-external-protocol-adapter)
+for GiNZA and Stanza.
 
 ## Nix
 

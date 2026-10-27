@@ -490,7 +490,7 @@ wheels = [
 
 [[package]]
 name = "lingrep-adapter-protocol"
-version = "0.1.0"
+version = "0.5.0"
 source = { editable = "../adapter-protocol" }
 dependencies = [
     { name = "blake3" },
@@ -501,7 +501,7 @@ requires-dist = [{ name = "blake3", specifier = ">=1.0.8,<2" }]
 
 [[package]]
 name = "lingrep-spacy-adapter"
-version = "0.1.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "lingrep-adapter-protocol" },

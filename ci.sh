@@ -83,6 +83,9 @@ run_common_checks() {
     echo "Checking the release installer"
     scripts/test/test_install.sh
 
+    echo "Building and checking release adapter wheels"
+    UV_EXCLUDE_NEWER=P3D python scripts/check-adapter-wheels.py
+
     echo "Checking the Harbor evaluation harness"
     uv lock --project benchmarks/harbor --check
     uv run --project benchmarks/harbor --frozen --group dev \

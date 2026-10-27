@@ -1161,35 +1161,62 @@ model = "/path/to/sealed/en_core_web_sm"
 backend = "cpu"
 ```
 
-The adapter wheels also provide `lingrep-spacy-setup` and `lingrep-stanza-setup`.
-They save a model, seal its profile, copy the adapter/protocol code into a verified
-bundle, and print the generated `analyzer.toml` path. With the three wheels from
-this revision in `dist/`, setup does not require a source checkout:
+The adapter wheels provide `lingrep-spacy-setup` and `lingrep-stanza-setup`.
+These commands prepare the model and adapter/protocol code in a verified bundle
+and print its `analyzer.toml` path. The examples use Python 3.14; `uvx` downloads
+the interpreter if needed.
+
+Download the three wheels and checksums from the same release as `ling`.
+The v0.5.0 release has no adapter wheels; upgrade `ling` to a release with
+`.whl` assets before following these steps:
 
 ```bash
-uvx --from ./dist/lingrep_spacy_adapter-0.1.0-py3-none-any.whl \
-  --with ./dist/lingrep_adapter_protocol-0.1.0-py3-none-any.whl \
-  --with 'ja-ginza==5.2.0' lingrep-spacy-setup \
-  --model ja_ginza --probe-text '猫が走る。' --output ~/.local/share/lingrep/ginza
+version=$(ling --version | awk '{print $2}')
+base="https://github.com/borh/lingrep/releases/download/v$version"
+mkdir -p dist
+for package in lingrep_adapter_protocol lingrep_spacy_adapter lingrep_stanza_adapter; do
+  wheel="$package-$version-py3-none-any.whl"
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+    "$base/$wheel" -o "dist/$wheel"
+done
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+  "$base/SHA256SUMS" -o dist/SHA256SUMS
+(cd dist && grep '\.whl$' SHA256SUMS |
+  if command -v sha256sum >/dev/null; then sha256sum -c -; else shasum -a 256 -c -; fi)
+```
 
-uvx --from ./dist/lingrep_stanza_adapter-0.1.0-py3-none-any.whl \
-  --with ./dist/lingrep_adapter_protocol-0.1.0-py3-none-any.whl \
-  --with 'torch==2.13.0+cpu' --index https://download.pytorch.org/whl/cpu \
+Prepare a CPU analyzer under `./analyzers/`. Use an absolute `--analyzer-config`
+path when querying from another directory:
+
+```bash
+uvx --python 3.14 --from "./dist/lingrep_spacy_adapter-$version-py3-none-any.whl[spacy,ginza]" \
+  --with "./dist/lingrep_adapter_protocol-$version-py3-none-any.whl" \
+  lingrep-spacy-setup \
+  --model ja_ginza --probe-text '猫が走る。' --output ./analyzers/ginza
+
+uvx --python 3.14 --from "./dist/lingrep_stanza_adapter-$version-py3-none-any.whl[cpu]" \
+  --with "./dist/lingrep_adapter_protocol-$version-py3-none-any.whl" \
+  --index https://download.pytorch.org/whl/cpu \
   --index-strategy unsafe-best-match lingrep-stanza-setup \
   --language fr --package tokenize=gsd --package mwt=gsd \
   --package pos=gsd_nocharlm --package lemma=gsd_nocharlm \
-  --probe-text 'Je mange du pain.' --output ~/.local/share/lingrep/stanza-fr
+  --probe-text 'Je mange du pain.' --output ./analyzers/stanza-fr
 
-ling matches --analyzer-config ~/.local/share/lingrep/ginza/analyzer.toml \
+ling matches --analyzer-config ./analyzers/ginza/analyzer.toml \
   --patterns constructions.lx transcripts/
 ```
 
-Repeating the same setup reuses the bundle. A different selection requires a new
-output directory. Stanza downloads the selected resources; `--resource-root DIR
---offline` uses an existing resource tree. spaCy loads an installed model package
-or local directory; `uvx --with` acquires the model wheel. Both default to CPU;
-`--backend cuda|rocm` requires a matching runtime and available device. These
-examples are verified on CPU; GPU setup retains the adapters' backend checks.
+Repeating setup with the same adapter files, model and runtime reuses the bundle.
+Use a new output directory to change the adapter, model or runtime. Upgrading
+`ling` leaves existing bundles unchanged.
+
+Stanza downloads the selected resources; `--resource-root DIR --offline` uses
+an existing resource tree. spaCy loads an installed model package
+or local directory; the `ginza` extra acquires the pinned model wheel. The Stanza
+`cpu` extra selects the unsuffixed macOS Torch wheel or the `+cpu` build on Linux.
+Both default to CPU; `--backend cuda|rocm` requires a matching runtime and
+available device. These examples are verified on CPU; GPU setup retains the
+adapters' backend checks.
 
 The generated bundle hashes all staged adapter/protocol code and model files.
 Its model resources include a receipt of the Python version and installed package
