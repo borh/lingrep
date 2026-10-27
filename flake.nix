@@ -133,6 +133,8 @@
                 # hermetic build of lingrep-web.
                 isSqlxCache = lib.hasPrefix "${toString ./.sqlx}/" (toString path);
                 isDictionaryLicense = lib.hasPrefix "${toString ./nix/dictionary-licenses}/" (toString path);
+                # `ling analyzer` include_str!s the hash-locked adapter runtime
+                # requirements.
                 isAnalyzerRequirements = lib.elem (toString path) [
                   (toString ./python/spacy-adapter/requirements-ginza.txt)
                   (toString ./python/stanza-adapter/requirements-cpu.txt)
@@ -301,19 +303,20 @@
           # The full development shell: profiling, browser and GPU extras
           # included, because that is what a developer reaches for and what
           # `.githooks/pre-push` enters.
+          fullDevPackages =
+            buildDeps
+            ++ runtimeDeps
+            ++ devDeps
+            ++ [ pkgs.cargo-fuzz ]
+            # valgrind is marked broken on aarch64-darwin — there is no
+            # working arm64-macOS port — so it joins the gated set rather
+            # than the common one.
+            ++ lib.optionals isLinux [ pkgs.valgrind ];
           mkDevShell =
             rustToolchain:
             mkDevShellWith {
               inherit rustToolchain;
-              packages =
-                buildDeps
-                ++ runtimeDeps
-                ++ devDeps
-                ++ [ pkgs.cargo-fuzz ]
-                # valgrind is marked broken on aarch64-darwin — there is no
-                # working arm64-macOS port — so it joins the gated set rather
-                # than the common one.
-                ++ lib.optionals isLinux [ pkgs.valgrind ];
+              packages = fullDevPackages;
             };
 
           # `rust-toolchain.toml` is the one toolchain for development, CI and
@@ -875,6 +878,18 @@
           };
 
           devShells.default = mkDevShell pinnedToolchain;
+
+          # The full shell plus the packaged `ling` and `lingrep-web`, built
+          # from the git-tracked source as it stood when the shell was entered.
+          # Kept out of `default` so direnv does not rebuild the workspace on
+          # every source change.
+          devShells.packaged = mkDevShellWith {
+            rustToolchain = pinnedToolchain;
+            packages = fullDevPackages ++ [
+              self'.packages.lingrep
+              self'.packages.lingrep-web
+            ];
+          };
 
           # What CI enters. See `ciDevDeps` for what it leaves out and why.
           devShells.ci = mkDevShellWith {

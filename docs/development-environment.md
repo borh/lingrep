@@ -14,7 +14,7 @@ The default shell uses the Rust toolchain that `rust-toolchain.toml` pins,
 which is also the toolchain CI and release builds use; rustup reads the same
 file outside Nix. A commit that updates the pin also fixes the new compiler
 and Clippy warnings the updated toolchain reports.
-Five shells are available:
+Six shells are available:
 
 | Shell | Purpose |
 | --- | --- |
@@ -23,6 +23,7 @@ Five shells are available:
 | `nix develop .#stable` | The newest stable in the locked `rust-overlay` |
 | `nix develop .#msrv` | Workspace MSRV compatibility |
 | `nix develop .#ci` | The GitHub workflow's shell: the pinned toolchain and only what `./ci.sh --fast` invokes |
+| `nix develop .#packaged` | User workflows: the default shell plus the packaged `ling` and `lingrep-web` on `PATH` |
 
 `.#ci` omits Chromium and ChromeDriver, `perf`, `gdb`, `valgrind`, and the
 ROCm stack so that it fits on a CI runner alongside the CWJ dictionary and a

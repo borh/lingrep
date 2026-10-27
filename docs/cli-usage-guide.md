@@ -1561,7 +1561,7 @@ ling manpages --output ./ling-manpages
 ```
 
 `nix run .` is the equivalent default-app spelling. Use direct `ling`
-after installation or inside the repository development shell.
+after installation or inside `nix develop .#packaged`.
 
 `describe [COMMAND]` reports a command's arguments together with examples and
 the contracts that command exposes. The contract index does not include every
