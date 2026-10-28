@@ -5,13 +5,17 @@ use std::io::{self, Write};
 use lingrep_core::execution::ExecutionError;
 use rand::random;
 
-use crate::cli::ExecutionCliConfig;
+use crate::cli::{DiagnosticFormat, ExecutionCliConfig};
 use crate::direct_source::encode_digest;
 use crate::error::CliError;
 use crate::output::sanitize_terminal;
 use crate::protocol::OutputError;
+use crate::protocol::diagnostic::{
+    DiagnosticData, DiagnosticEnvelope, DiagnosticEvent, DiagnosticSeverity, DiagnosticStage,
+};
 use crate::protocol::query::{ExecutionLimits, InventoryStats, QueryEnvelope, TraversalLimits};
 use crate::protocol::write_jsonl;
+use crate::terminal::RunStderr;
 
 pub(crate) fn execution_output_error(error: OutputError) -> ExecutionError {
     let kind = match &error {
@@ -22,6 +26,44 @@ pub(crate) fn execution_output_error(error: OutputError) -> ExecutionError {
         kind,
         message: error.to_string(),
     }
+}
+
+/// Writes one warning to the run's stderr: a `warning[code]:` line, or a
+/// diagnostic record when `format` is JSON.
+pub(crate) fn write_warning(
+    stderr: &RunStderr,
+    format: DiagnosticFormat,
+    stage: DiagnosticStage,
+    code: &str,
+    message: String,
+    run_id: Option<&str>,
+    suggestions: Vec<String>,
+) -> io::Result<()> {
+    stderr.diagnostic(|writer| match format {
+        DiagnosticFormat::Human => {
+            writeln!(writer, "warning[{code}]: {}", sanitize_terminal(&message))
+        }
+        DiagnosticFormat::Json => write_jsonl(
+            writer,
+            &DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(DiagnosticData {
+                run_id: run_id.map(str::to_owned),
+                observed_input_digest: None,
+                stage,
+                severity: DiagnosticSeverity::Warning,
+                code: code.to_owned(),
+                message,
+                suggestions,
+                usage: None,
+                retry: None,
+                location: None,
+                related_locations: Vec::new(),
+            })),
+        )
+        .map_err(|error| match error {
+            OutputError::Io(error) => error,
+            error => io::Error::other(error),
+        }),
+    })
 }
 
 pub(crate) fn execution_output_io(error: io::Error) -> ExecutionError {
@@ -109,6 +151,7 @@ fn token_schema_digest_mismatch(recorded: &[u8; 32], current: &[u8; 32]) -> Opti
 pub(crate) fn write_token_schema_notice(
     analyzer: &lingrep_corpus::AnalyzerRecord,
     inputs: &lingrep_corpus::AnalysisInputs,
+    config: &ExecutionCliConfig,
 ) -> Result<(), CliError> {
     let mut expected = analyzer.declared_token_schema();
     let normalization = match analyzer.normalization.as_str() {
@@ -135,30 +178,37 @@ pub(crate) fn write_token_schema_notice(
     }) else {
         return Ok(());
     };
-    writeln!(
-        io::stderr().lock(),
-        "warning[featurization_policy_mismatch]: {}",
-        sanitize_terminal(&message)
+    write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Input,
+        "featurization_policy_mismatch",
+        message,
+        None,
+        Vec::new(),
     )
-    .map_err(execution_output_io)
-    .map_err(CliError::from)
+    .map_err(CliError::Io)
 }
 
 pub(crate) fn write_binding_notice(
     matcher: &lingrep_core::fsm::CompiledCatalog,
     dictionary_path: &str,
+    config: &ExecutionCliConfig,
 ) -> Result<(), CliError> {
     let Some(message) = crate::dictionary_binding::binding_mismatch(matcher, dictionary_path)
     else {
         return Ok(());
     };
-    writeln!(
-        io::stderr().lock(),
-        "warning[dictionary_binding_mismatch]: {}",
-        sanitize_terminal(&message)
+    write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Catalog,
+        "dictionary_binding_mismatch",
+        message,
+        None,
+        Vec::new(),
     )
-    .map_err(execution_output_io)
-    .map_err(CliError::from)
+    .map_err(CliError::Io)
 }
 
 pub(crate) fn random_id() -> String {

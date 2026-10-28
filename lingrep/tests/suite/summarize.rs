@@ -1060,6 +1060,25 @@ fn a_catalog_bound_to_another_dictionary_warns_without_failing() {
         stderr.contains("resource `mini`") && stderr.contains("loaded as `mini`"),
         "the notice must name the loaded analyzer resource; got {stderr}"
     );
+
+    let json = lingrep()
+        .arg("summarize")
+        .arg("--patterns")
+        .arg(&patterns)
+        .args(["--dict-path"])
+        .arg(dictionary.path())
+        .args(["--json"])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert_success(&json);
+    let diagnostics = crate::support::parse_jsonl(&json.stderr);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0]["data"]["code"],
+        "dictionary_binding_mismatch"
+    );
+    assert_eq!(diagnostics[0]["data"]["severity"], "warning");
 }
 
 /// The common case must stay quiet, or the notice trains people to ignore it.

@@ -55,7 +55,7 @@ pub fn dispatch(
         Command::Analyzer(args) => match &args.command {
             AnalyzerCommand::Prepare(args) => analyzer::run(args, config, output),
         },
-        Command::Doctor(args) => doctor::run(args, output),
+        Command::Doctor(args) => doctor::run(args, config, output),
         Command::Dictionary(args) => match &args.command {
             DictionaryCommand::Install(args) => dictionary::run_install(args, output),
         },

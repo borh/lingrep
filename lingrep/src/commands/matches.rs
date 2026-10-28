@@ -29,7 +29,9 @@ use crate::output::{
     ColorPolicy, ContextColorPalette, HumanKwicRow, HumanMatchLayout, HumanRenderer,
     MIN_HUMAN_MATCH_WIDTH, MatchTsvRow, TerminalColorCapability, write_match_tsv,
 };
-use crate::presentation::{ColorMode, OutputMode, resolve_match_context, resolve_match_limit};
+use crate::presentation::{
+    ColorMode, OutputMode, ResultDelivery, resolve_match_context, resolve_match_limit,
+};
 use crate::protocol::query::{
     Capture, CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, DefinitionBody,
     DefinitionData, GraphBinding as ProtocolGraphBinding,
@@ -217,7 +219,7 @@ pub fn run(
         &args.input.markdown,
         config,
         terminal,
-        &mut io::stderr(),
+        output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
     let char_offsets_available = output != OutputMode::Tsv;
@@ -294,7 +296,7 @@ pub fn run(
     scope.warn_before_run(
         scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
-        config.diagnostic_format,
+        config,
         &run_id,
     )?;
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
@@ -401,17 +403,19 @@ pub fn run(
         // The trace request rides in with the selection rather than as another
         // argument to `execute`, so every other surface still passes a bare
         // `PolicySelection`.
+        // `--trace-policy 0` prints only the run totals, which every run counts.
         let publication = match args.trace_policy {
-            Some(capacity) => Publication::from(selection).with_trace(capacity),
-            None => Publication::from(selection),
+            Some(capacity) if capacity > 0 => Publication::from(selection).with_trace(capacity),
+            _ => Publication::from(selection),
         };
         let mut sink = direct;
         let progress_mode = config.progress;
-        let presentation_progress = PresentationProgress::stderr();
-        // The run record's declaration makes a saved file diagnosable. This
-        // makes a live run *loud*, at the one moment a researcher can still
-        // act on it — a `jq` script reading an attribute this catalog never
-        // names gets nothing, silently.
+        let presentation_progress = PresentationProgress::stderr(
+            &config.stderr,
+            progress_mode,
+            output,
+            ResultDelivery::Streaming,
+        );
         if progress_mode == ProgressMode::Always {
             presentation_progress.write_line(&format!(
                 "publishing token attributes: {}",
@@ -422,12 +426,10 @@ pub fn run(
         let mut progress =
             move |progress: lingrep_core::execution::ExecutionProgress,
                   _sink: &DirectMatchSink<'_, io::BufWriter<io::StdoutLock<'_>>>| {
-                if progress_mode == ProgressMode::Always {
-                    progress_writer.write_line(&format!(
-                        "matched {} sentences, found {} matches",
-                        progress.sentences_matched, progress.matches_found
-                    ));
-                }
+                let (sentences, matches) = (progress.sentences_matched, progress.matches_found);
+                progress_writer.snapshot(move || {
+                    format!("matched {sentences} sentences, found {matches} matches")
+                });
             };
         let mut max_tokenized_bytes = 0usize;
         let mut observer = |observation: lingrep_core::execution::TokenizedBatchObservation| {
@@ -463,53 +465,19 @@ pub fn run(
             RunOutcome::Completed(report) => report,
             RunOutcome::Cancelled(_) => return Ok(CommandOutcome::Cancelled),
         };
-        // What policy removed is a run fact and uses the same reporting
-        // channel as other run facts. Reported only when policy actually
-        // applied and actually removed something — a line of zeroes on every
-        // policy-free run is noise that trains the reader to skip it.
-        //
-        // One figure for the run; the per-*statement* counts follow below.
-        let policy_stats = report.policy_stats;
-        let reporting_policy =
-            selection == PolicySelection::Apply && progress_mode == ProgressMode::Always;
-        if reporting_policy && policy_stats != lingrep_core::fsm::PolicyStats::default() {
-            let captures = policy_stats.captures_dropped;
-            presentation_progress.write_line(&format!(
-                "policy dropped {captures} capture{}",
-                if captures == 1 { "" } else { "s" }
-            ));
-        }
-        // Per statement, in authored order, named by the text the researcher
-        // wrote. Shared with `summarize`, which publishes
-        // through the same block and had no way to say what it did.
-        if reporting_policy {
-            crate::policy_report::write_per_statement(
-                &presentation_progress,
+        presentation_progress.finish();
+        if args.trace_policy.is_some() {
+            crate::policy_report::write_requested(
+                &config.stderr,
                 compiled.matcher.catalog_policy(),
+                report.policy_stats.captures_dropped,
                 report.program_stats.per_operation(),
-            );
+                report.trace.as_ref(),
+            )?;
         }
-        // The per-record explanation, when `--trace-policy` asked for one.
-        //
-        // Printed whatever `--progress` says, unlike everything above it. Those
-        // are unrequested run facts and stay behind `--progress always`; this
-        // one was typed out loud, and a flag that answered nothing unless a
-        // second flag agreed would be a flag that looks broken.
-        if let Some(trace) = report.trace.as_ref() {
-            crate::policy_report::write_trace(
-                &presentation_progress,
-                compiled.matcher.catalog_policy(),
-                trace,
-            );
-        }
-        presentation_progress.finish().map_err(CliError::Io)?;
         let limited = limit.is_some_and(|limit| sink.emitted == limit);
-        let scope_report = scope.report_after_run(
-            scope_clause.as_ref(),
-            limited,
-            config.diagnostic_format,
-            &run_id,
-        )?;
+        let scope_report =
+            scope.report_after_run(scope_clause.as_ref(), limited, config, &run_id)?;
         let coverage = if limited {
             Coverage::Prefix
         } else {

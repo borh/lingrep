@@ -14,7 +14,7 @@ Commands:
   check        Validate patterns without reading a corpus; --help lists the syntax
   dictionary   Download a UniDic dictionary for Japanese analysis
   analyzer     Prepare a Python analyzer in a directory you choose
-  doctor       Check that a dictionary, catalog and prepared corpus load
+  doctor       Check the named dictionary, catalog and prepared corpus
   describe     Show a command's arguments, examples and output formats
   contracts    List or show the JSONL and TSV output formats
   completions  Print a shell completion script

@@ -616,11 +616,12 @@ fn conllu_treebank_directory_is_discovered_recursively_for_direct_and_prepared_q
     assert_eq!(match_events(&prepared), direct_matches);
 }
 
-/// A catalog referencing an attribute this corpus's token schema does not
-/// carry runs to completion, publishes its zero matches, and outputs a warning to
-/// stderr — on both execution paths.
+/// With a catalog that references an attribute which the corpus's token schema
+/// does not carry, the run completes, publishes zero matches, and writes a
+/// warning to stderr, as a diagnostic record under `--json` on both execution
+/// paths.
 #[test]
-fn an_unavailable_attribute_warns_and_the_run_still_completes() {
+fn an_unavailable_attribute_produces_a_warning_and_the_run_completes() {
     let directory = TempDir::new().unwrap();
     let input = directory.path().join("sample.conllu");
     std::fs::copy(
@@ -636,18 +637,32 @@ fn an_unavailable_attribute_warns_and_the_run_still_completes() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let diagnostics = parse_jsonl(&output.stderr);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let warning = &diagnostics[0]["data"];
+        assert_eq!(warning["code"], "attribute_unavailable");
+        assert_eq!(warning["severity"], "warning");
+        let message = warning["message"].as_str().unwrap();
         assert!(
-            stderr.contains("warning[attribute_unavailable]:"),
-            "{stderr}"
+            message.contains("`unidic.pos1` is referenced by `p` (inline.lx:1)"),
+            "{message}"
         );
-        assert!(
-            stderr.contains("`unidic.pos1` is referenced by `p` (inline.lx:1)"),
-            "{stderr}"
-        );
-        assert!(stderr.contains("(pretokenized syntax)"), "{stderr}");
+        assert!(message.contains("(pretokenized syntax)"), "{message}");
         assert_eq!(match_events(output).len(), 0);
     };
+
+    let human = lingrep()
+        .args(["matches", "--pattern", pattern])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8_lossy(&human.stderr)
+            .starts_with("warning[attribute_unavailable]: `unidic.pos1` is referenced by `p`"),
+        "{}",
+        String::from_utf8_lossy(&human.stderr)
+    );
 
     let direct = lingrep()
         .args(["--json", "matches", "--pattern", pattern, "--limit", "all"])

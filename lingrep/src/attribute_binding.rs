@@ -10,13 +10,12 @@
 //! error explaining what to change, rather than reporting a setup failure as
 //! a read failure.
 
-use std::io::{self, Write};
-
 use lingrep_core::fsm::{BoundCatalog, CatalogAnalysis, SchemaBindError};
 use lingrep_core::token_match::AttributeKey;
 
+use crate::cli::ExecutionCliConfig;
 use crate::error::CliError;
-use crate::output::sanitize_terminal;
+use crate::protocol::diagnostic::DiagnosticStage;
 
 /// How many referencing definitions one notice names before eliding.
 const NAMED_REFERRERS: usize = 3;
@@ -90,21 +89,20 @@ pub(crate) fn write_unavailable_attribute_notices(
     bound: &BoundCatalog,
     analysis: &CatalogAnalysis,
     schema: &str,
+    config: &ExecutionCliConfig,
 ) -> Result<(), CliError> {
-    let messages = unavailable_attribute_messages(bound.unavailable_attributes(), analysis, schema);
-    if messages.is_empty() {
-        return Ok(());
-    }
-    let stderr = io::stderr();
-    let mut writer = stderr.lock();
-    for message in messages {
-        writeln!(
-            writer,
-            "warning[attribute_unavailable]: {}",
-            sanitize_terminal(&message)
+    for message in unavailable_attribute_messages(bound.unavailable_attributes(), analysis, schema)
+    {
+        crate::commands::query_support::write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Catalog,
+            "attribute_unavailable",
+            message,
+            None,
+            Vec::new(),
         )
-        .map_err(crate::commands::query_support::execution_output_io)
-        .map_err(CliError::from)?;
+        .map_err(CliError::Io)?;
     }
     Ok(())
 }

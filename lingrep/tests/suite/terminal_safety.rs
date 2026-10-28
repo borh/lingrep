@@ -206,64 +206,324 @@ fn closed_progress_stderr_does_not_truncate_result_coverage() {
     assert_eq!(complete["data"]["counters"]["sentences_matched"], 2_000);
 }
 
-#[cfg(unix)]
 #[test]
-fn auto_progress_follows_stderr_terminal_without_changing_stdout() {
-    use std::os::fd::FromRawFd;
+fn matches_exits_one_when_writing_a_warning_to_closed_stderr_fails() {
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(
+        &corpus,
+        "1\t猫\t猫\tNOUN\t名詞\t_\t0\troot\t_\t_\n2\t。\t。\tPUNCT\t補助記号\t_\t1\tpunct\t_\t_\n\n",
+    )
+    .unwrap();
+    // The CoNLL-U token schema lacks `unidic.pos1`, so `ling` writes
+    // `warning[attribute_unavailable]` for `b` before it writes `a`'s match.
+    let patterns = directory.path().join("patterns.lx");
+    fs::write(&patterns, "a := [upos=NOUN].\nb := [unidic.pos1=名詞].\n").unwrap();
 
+    for format in [None, Some("--tsv"), Some("--json")] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let output = lingrep_std()
+            .args(["matches", "--progress", "never", "--patterns"])
+            .arg(&patterns)
+            .arg(&corpus)
+            .args(format)
+            .stderr(writer)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{format:?}");
+        if format == Some("--json") {
+            assert!(
+                parse_jsonl(&output.stdout)
+                    .iter()
+                    .all(|event| event["type"] != "complete"),
+                "{format:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn matches_exits_one_when_writing_a_requested_policy_report_to_closed_stderr_fails() {
     let directory = TempDir::new().unwrap();
     let corpus = directory.path().join("one.conllu");
     fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
-    let mut expected_stdout = None;
-    for terminal in [false, true] {
-        for mode in ["auto", "always", "never"] {
-            let mut command = lingrep_std();
-            command
-                .args(["matches", "--json", "--pattern", "[].", "--progress", mode])
-                .arg(&corpus);
-            let mut master = None;
-            if terminal {
-                let (mut master_fd, mut slave_fd) = (-1, -1);
-                assert_eq!(
-                    unsafe {
-                        libc::openpty(
-                            &raw mut master_fd,
-                            &raw mut slave_fd,
-                            std::ptr::null_mut(),
-                            std::ptr::null_mut(),
-                            std::ptr::null_mut(),
-                        )
-                    },
-                    0
-                );
-                master = Some(unsafe { fs::File::from_raw_fd(master_fd) });
-                command.stderr(unsafe { fs::File::from_raw_fd(slave_fd) });
+
+    for format in [None, Some("--tsv"), Some("--json")] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let output = lingrep_std()
+            .args(["matches", "--pattern", "[].", "--trace-policy", "0"])
+            .arg(&corpus)
+            .args(format)
+            .stderr(writer)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{format:?}");
+    }
+}
+
+#[cfg(unix)]
+fn open_pty() -> (fs::File, fs::File) {
+    use std::os::fd::FromRawFd;
+
+    let (mut master, mut slave) = (-1, -1);
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &raw mut master,
+                &raw mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    unsafe { (fs::File::from_raw_fd(master), fs::File::from_raw_fd(slave)) }
+}
+
+/// Everything the child wrote to a pty, with the line discipline's `\r\n`
+/// mapped back to `\n`. Reading ends with `EIO` once no slave is open.
+#[cfg(unix)]
+fn read_pty(mut master: fs::File) -> String {
+    let mut bytes = Vec::new();
+    let _ = master.read_to_end(&mut bytes);
+    String::from_utf8(bytes)
+        .expect("pty output is UTF-8")
+        .replace("\r\n", "\n")
+}
+
+/// A stdout stream with its run id and elapsed times removed.
+fn without_volatile_fields(stdout: &str) -> String {
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("run_id");
+                map.remove("elapsed_millis");
+                map.values_mut().for_each(strip);
             }
-            let output = command.output().unwrap();
-            assert!(output.status.success());
-            let mut stderr = output.stderr;
-            if let Some(mut master) = master {
-                drop(command);
-                let _ = master.read_to_end(&mut stderr);
-            }
-            let stderr = String::from_utf8(stderr).unwrap();
-            assert_eq!(
-                stderr.contains("matched 1 sentences"),
-                mode == "always" || (mode == "auto" && terminal),
-                "{mode} terminal={terminal}: {stderr}"
-            );
-            let events = parse_jsonl(&output.stdout);
-            let semantic_events: Vec<_> = events
-                .iter()
-                .filter(|event| event["type"] == "match")
-                .map(|event| event["data"].clone())
-                .collect();
-            assert_eq!(semantic_events.len(), 1);
-            if let Some(expected) = &expected_stdout {
-                assert_eq!(&semantic_events, expected);
+            serde_json::Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    stdout
+        .lines()
+        .map(|line| {
+            if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(line) {
+                strip(&mut value);
+                value.to_string()
+            } else if let Some((head, _)) = line.split_once("completed in ") {
+                format!("{head}completed in <elapsed>")
             } else {
-                expected_stdout = Some(semantic_events);
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(unix)]
+#[test]
+fn progress_output_follows_mode_format_delivery_and_terminals_without_changing_stdout() {
+    const ERASE: &str = "\r\x1b[2K";
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    let artifact = directory.path().join("one.lingcorpus");
+    let built = lingrep_std()
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{built:?}");
+    let corpus = corpus.to_str().unwrap();
+    let artifact = artifact.to_str().unwrap();
+
+    // (arguments, results deferred until the run ends, counter line)
+    let commands: [(&[&str], bool, &str); 4] = [
+        (
+            &["matches", "--pattern", "[].", corpus],
+            false,
+            "matched 1 sentences, found 1 matches",
+        ),
+        (
+            &["summarize", "--pattern", "[].", corpus],
+            true,
+            "matched 1 sentences, found 1 matches",
+        ),
+        (
+            &["coverage", corpus],
+            true,
+            "observed 1 sentences, 1 tokens",
+        ),
+        (
+            &["tokenize", "--corpus", artifact],
+            false,
+            "tokenized 1 prepared sentences, emitted 1 tokens",
+        ),
+    ];
+    let terminals = [
+        (false, false, "xterm"),
+        (true, false, "xterm"),
+        (false, true, "xterm"),
+        (true, true, "xterm"),
+        (true, true, "dumb"),
+    ];
+    let mut stdout_by_case = std::collections::HashMap::new();
+    for (arguments, deferred, counter) in commands {
+        for format in [None, Some("--json"), Some("--tsv")] {
+            for (stdout_terminal, stderr_terminal, term) in terminals {
+                for mode in ["auto", "always", "never"] {
+                    let label = format!(
+                        "{arguments:?} {format:?} stdout={stdout_terminal} \
+                         stderr={stderr_terminal} TERM={term} --progress {mode}"
+                    );
+                    let mut command = lingrep_std();
+                    command
+                        .args(arguments)
+                        .args(format)
+                        .args(["--progress", mode])
+                        .env("TERM", term)
+                        .env("NO_COLOR", "1");
+                    let stdout_pty = stdout_terminal.then(|| {
+                        let (master, slave) = open_pty();
+                        command.stdout(slave);
+                        master
+                    });
+                    let stderr_pty = stderr_terminal.then(|| {
+                        let (master, slave) = open_pty();
+                        command.stderr(slave);
+                        master
+                    });
+                    let output = command.output().unwrap();
+                    drop(command);
+                    assert!(output.status.success(), "{label}: {output:?}");
+                    let stdout = stdout_pty.map_or_else(
+                        || String::from_utf8(output.stdout.clone()).unwrap(),
+                        read_pty,
+                    );
+                    let stderr = stderr_pty.map_or_else(
+                        || String::from_utf8(output.stderr.clone()).unwrap(),
+                        read_pty,
+                    );
+
+                    let transient = format.is_none()
+                        && deferred
+                        && stdout_terminal
+                        && stderr_terminal
+                        && term != "dumb";
+                    match mode {
+                        "always" if transient => {
+                            assert!(
+                                stderr.contains(&format!("{ERASE}{counter}")),
+                                "{label}: {stderr:?}"
+                            );
+                            assert!(stderr.ends_with(ERASE), "{label}: {stderr:?}");
+                        }
+                        "always" => {
+                            assert!(
+                                stderr.contains(&format!("{counter}\n")),
+                                "{label}: {stderr:?}"
+                            );
+                            assert!(!stderr.contains('\x1b'), "{label}: {stderr:?}");
+                        }
+                        // The run ends before auto's one-second delay.
+                        _ => assert_eq!(stderr, "", "{label}"),
+                    }
+
+                    let key = (arguments[0], format, stdout_terminal, term);
+                    let stdout = without_volatile_fields(&stdout);
+                    let expected = stdout_by_case.entry(key).or_insert_with(|| stdout.clone());
+                    assert_eq!(&stdout, expected, "{label}");
+                }
             }
         }
     }
+}
+
+#[test]
+fn never_suppresses_progress_but_not_a_warning() {
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    let output = lingrep_std()
+        .args([
+            "matches",
+            "--progress",
+            "never",
+            "--pattern",
+            "[unidic.pos1=名詞].",
+        ])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.starts_with("warning[attribute_unavailable]: "),
+        "{stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+}
+
+#[test]
+fn a_closed_stderr_does_not_fail_a_run_that_writes_only_progress() {
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    for command in ["matches", "summarize"] {
+        for format in [None, Some("--json"), Some("--tsv")] {
+            let (reader, writer) = std::io::pipe().unwrap();
+            drop(reader);
+            let output = lingrep_std()
+                .args([command, "--progress", "always", "--pattern", "[]."])
+                .arg(&corpus)
+                .args(format)
+                .stderr(writer)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(0), "{command} {format:?}");
+            assert!(!output.stdout.is_empty(), "{command} {format:?}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_warning_written_during_transient_status_starts_on_an_erased_line() {
+    const ERASE: &str = "\r\x1b[2K";
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.conllu");
+    fs::write(&corpus, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    // An empty directory at a canonical artifact path is a sibling artifact
+    // that cannot be read.
+    fs::create_dir(lingrep_corpus::canonical_artifact_path(
+        &directory.path().join("other.conllu"),
+        &lingrep_corpus::AnalysisIdentity::from_bytes([0xab; 32]),
+        lingrep_corpus::TrustClass::LocallyExecuted,
+    ))
+    .unwrap();
+    let (stdout_master, stdout_slave) = open_pty();
+    let (stderr_master, stderr_slave) = open_pty();
+    let mut command = lingrep_std();
+    command
+        .args(["corpus", "build", "--progress", "always"])
+        .arg(&corpus)
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .stdout(stdout_slave)
+        .stderr(stderr_slave);
+    let output = command.output().unwrap();
+    drop(command);
+    assert!(output.status.success(), "{output:?}");
+    drop(read_pty(stdout_master));
+    let stderr = read_pty(stderr_master);
+    assert!(
+        stderr.starts_with(&format!(
+            "{ERASE}identity pass: read 1 sources{ERASE}warning: ignoring unreadable artifact at "
+        )),
+        "{stderr:?}"
+    );
 }

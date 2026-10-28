@@ -88,19 +88,19 @@ impl QueryScope {
         &self,
         clause: Option<&ScopeClause>,
         self_labels: &[String],
-        format: crate::cli::DiagnosticFormat,
+        config: &crate::cli::ExecutionCliConfig,
         run_id: &str,
     ) -> Result<(), CliError> {
         use crate::section_diagnostics::{
             warn_read_time_excluded, warn_self_label_no_ops, warn_unused_labels,
         };
-        warn_self_label_no_ops(self_labels, format, run_id)?;
+        warn_self_label_no_ops(self_labels, config, run_id)?;
         if let Some(clause) = clause {
             if let Some(policy) = &self.read_time_policy {
-                warn_read_time_excluded(clause, policy, format, run_id)?;
+                warn_read_time_excluded(clause, policy, config, run_id)?;
             }
             if self.markdown_diagnostics.is_none() {
-                warn_unused_labels(clause, &self.section_labels, format, run_id)?;
+                warn_unused_labels(clause, &self.section_labels, config, run_id)?;
             }
         }
         Ok(())
@@ -110,14 +110,14 @@ impl QueryScope {
         &self,
         clause: Option<&ScopeClause>,
         limited: bool,
-        format: crate::cli::DiagnosticFormat,
+        config: &crate::cli::ExecutionCliConfig,
         run_id: &str,
     ) -> Result<Option<crate::protocol::query::ScopeReport>, CliError> {
         if let (Some(clause), Some(diagnostics)) = (clause, &self.markdown_diagnostics) {
             crate::section_diagnostics::warn_unused_labels(
                 clause,
                 &diagnostics.observed_labels(),
-                format,
+                config,
                 run_id,
             )?;
         }
@@ -172,6 +172,7 @@ pub(crate) fn resolve_matching_query(
             &bound,
             &compiled.analysis,
             &analyzer_name,
+            config,
         )?;
         let provenance = if scope_clause.is_some() || metadata_projection.is_some() {
             Some(artifact.provenance_reader()?)
@@ -234,7 +235,7 @@ pub(crate) fn resolve_matching_query(
             QueryMode::Summarize => None,
         };
         let analysis = artifact.analysis_inputs()?;
-        write_token_schema_notice(artifact.analyzer(), &analysis)?;
+        write_token_schema_notice(artifact.analyzer(), &analysis, config)?;
         let source_identity = encode_digest(artifact.source_identity().as_bytes());
         let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
         let inventory = protocol_inventory(*artifact.inventory_stats());
@@ -299,7 +300,7 @@ pub(crate) fn resolve_matching_query(
         let dictionary_digest = resolved.resource_identity();
         let analyzer_plan = resolved.into_native_plan();
         if let Some(dictionary_path) = dict_path.as_ref().and_then(|path| path.to_str()) {
-            write_binding_notice(&compiled.matcher, dictionary_path)?;
+            write_binding_notice(&compiled.matcher, dictionary_path, config)?;
         }
         let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
         let analyzer_run = AnalyzerRun::new(&analyzer_record, "locally-executed", &schema);
@@ -318,6 +319,7 @@ pub(crate) fn resolve_matching_query(
             &bound,
             &compiled.analysis,
             &analyzer_name,
+            config,
         )?;
         crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
 

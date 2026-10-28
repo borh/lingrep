@@ -51,6 +51,7 @@ pub(crate) struct ExternalPlan {
     limits: lingrep_core::execution::ExecutionLimits,
     cancellation: lingrep_core::execution::CancellationFlag,
     diagnostic_format: crate::cli::DiagnosticFormat,
+    stderr: crate::terminal::RunStderr,
 }
 
 fn invalid(error: impl std::fmt::Display) -> CliError {
@@ -383,10 +384,12 @@ impl ExternalPlan {
             limits: config.limits,
             cancellation: cancellation.clone(),
             diagnostic_format: config.diagnostic_format,
+            stderr: config.stderr.clone(),
         })
     }
     pub(crate) fn session(&self) -> ExternalAnalyzerSession {
         let format = self.diagnostic_format;
+        let stderr = self.stderr.clone();
         ExternalAnalyzerSession::new(
             self.command.clone(),
             self.manifest.clone(),
@@ -394,32 +397,17 @@ impl ExternalPlan {
             self.schema.clone(),
             self.limits,
             Arc::new(move |bytes| {
-                use crate::protocol::diagnostic::*;
-                use std::io::Write;
-                let raw = String::from_utf8_lossy(bytes);
-                let message = lingrep_cli_common::sanitize_terminal(&raw);
-                let mut stderr = std::io::stderr().lock();
-                if format == crate::cli::DiagnosticFormat::Json {
-                    let diagnostic =
-                        DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(DiagnosticData {
-                            run_id: None,
-                            observed_input_digest: None,
-                            stage: DiagnosticStage::Input,
-                            severity: DiagnosticSeverity::Warning,
-                            code: "external_analyzer".into(),
-                            message: message.into_owned(),
-                            suggestions: vec![],
-                            usage: None,
-                            retry: None,
-                            location: None,
-                            related_locations: vec![],
-                        }));
-                    crate::protocol::write_jsonl(&mut stderr, &diagnostic)
-                        .map_err(|e| e.to_string())
-                } else {
-                    writeln!(stderr, "warning[external_analyzer]: {message}")
-                        .map_err(|e| e.to_string())
-                }
+                crate::commands::query_support::write_warning(
+                    &stderr,
+                    format,
+                    crate::protocol::diagnostic::DiagnosticStage::Input,
+                    "external_analyzer",
+                    lingrep_cli_common::sanitize_terminal(&String::from_utf8_lossy(bytes))
+                        .into_owned(),
+                    None,
+                    Vec::new(),
+                )
+                .map_err(|e| e.to_string())
             }),
             ExternalAdapterCancellation::from_flag(&self.cancellation),
         )

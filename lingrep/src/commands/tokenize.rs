@@ -20,14 +20,14 @@ use super::query_support::{
 };
 use super::{CommandOutcome, admission_identity};
 use crate::analyzer_selection::resolve_native;
-use crate::cli::{ExecutionCliConfig, ProgressMode, TokenizeArgs};
+use crate::cli::{ExecutionCliConfig, TokenizeArgs};
 use crate::direct_source::{
     FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source, encode_digest,
     source_from_events,
 };
 use crate::error::CliError;
 use crate::output::{TokenizeTsvRow, write_tokenize_tsv};
-use crate::presentation::{OutputMode, resolve_match_limit};
+use crate::presentation::{OutputMode, ResultDelivery, resolve_match_limit};
 use crate::protocol::query::{
     AnalyzerRun, CompleteCorpus, Coverage, PublishedProjection, ResourceHighWater, RunCorpus,
     TemporaryStorageLimits, Termination,
@@ -152,14 +152,19 @@ pub fn run(
         &args.input.markdown,
         config,
         terminal,
-        &mut io::stderr(),
+        output,
     )?;
     if let Some(artifact) = resolved_corpus.corpus.as_deref() {
         return run_prepared(artifact, config, terminal, output, limit);
     }
 
     let started = Instant::now();
-    let presentation_progress = PresentationProgress::stderr();
+    let presentation_progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        output,
+        ResultDelivery::Streaming,
+    );
     let dict_path = matches!(&config.analyzer, crate::cli::AnalyzerCliConfig::Vibrato)
         .then(|| args.input.direct_dictionary_path())
         .transpose()?;
@@ -297,18 +302,18 @@ pub fn run(
             &limits,
             terminal,
             |sentences_emitted, tokens_emitted| {
-                if config.progress == ProgressMode::Always {
-                    presentation_progress.write_line(&format!(
+                presentation_progress.snapshot(move || {
+                    format!(
                         "tokenized {sentences_emitted} sentences, emitted {tokens_emitted} tokens"
-                    ));
-                }
+                    )
+                });
             },
             "native tokenization source returned non-bound data",
         )?
         else {
             return Ok(CommandOutcome::Cancelled);
         };
-        presentation_progress.finish().map_err(CliError::Io)?;
+        presentation_progress.finish();
 
         let (coverage, filesystem_completion) = match termination {
             Termination::Eof => (Coverage::Full, FilesystemCompletion::Full),
@@ -358,10 +363,15 @@ fn run_prepared(
     limit: Option<u64>,
 ) -> Result<CommandOutcome, CliError> {
     let started = Instant::now();
-    let presentation_progress = PresentationProgress::stderr();
     let artifact = CorpusArtifact::open(path)?;
     let analysis = artifact.analysis_inputs()?;
-    write_token_schema_notice(artifact.analyzer(), &analysis)?;
+    write_token_schema_notice(artifact.analyzer(), &analysis, config)?;
+    let presentation_progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        output,
+        ResultDelivery::Streaming,
+    );
     let source_identity = encode_digest(artifact.source_identity().as_bytes());
     let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
     let inventory = protocol_inventory(*artifact.inventory_stats());
@@ -423,14 +433,12 @@ fn run_prepared(
                 stream_id: None,
                 limit,
             }).stream(&mut source, &limits, terminal, |sentences_emitted, tokens_emitted| {
-                if config.progress == ProgressMode::Always {
-                    presentation_progress.write_line(&format!(
-                        "tokenized {sentences_emitted} prepared sentences, emitted {tokens_emitted} tokens"
-                    ));
-                }
+                presentation_progress.snapshot(move || format!(
+                    "tokenized {sentences_emitted} prepared sentences, emitted {tokens_emitted} tokens"
+                ));
             }, "prepared tokenization source returned raw text")?
         else { return Ok(CommandOutcome::Cancelled); };
-        presentation_progress.finish().map_err(CliError::Io)?;
+        presentation_progress.finish();
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
         }

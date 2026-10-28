@@ -7,17 +7,18 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<DoctorEnvelope>(
         super::ContractId::Doctor,
         &["doctor"],
-        "Ordered runtime-readiness probe results.",
+        "Ordered results of the checks that the invocation's inputs select.",
         StreamShape::Single {
             events: &["doctor"],
         },
         Channel::Stdout,
         "Dictionary, catalog, corpus, then binding probe order.",
-        "All explicitly requested probes run independently; the binding probe \
-         joins them when a catalog and a corpus are both supplied and both \
-         admitted.",
+        "Selected probes run independently. Without --corpus, the default \
+         dictionary is probed unless --dict-path names one; with --corpus, only \
+         an explicit --dict-path is probed. The binding probe joins them when a \
+         catalog and a corpus are both supplied and both admitted.",
         "A closed pipe is a machine-output failure.",
-        "0 all probes pass, 1 any probe or output fails, 2 invalid invocation.",
+        "0 all selected probes pass, 1 any probe or output fails, 2 invalid invocation.",
         &["doctor/explicit-inputs"],
     )
 }
@@ -47,6 +48,8 @@ pub enum DoctorEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DoctorData {
+    /// True when every probe in `probes` passed; `probes` holds only the checks
+    /// that the invocation's inputs selected.
     pub ready: bool,
     pub probes: Vec<ProbeData>,
 }

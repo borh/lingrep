@@ -20,17 +20,15 @@ use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
 use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
-    random_id,
+    random_id, write_warning,
 };
 use crate::catalog_input::load_and_compile;
-use crate::cli::{DiagnosticFormat, ExecutionCliConfig, ProgressMode, SummarizeArgs};
+use crate::cli::{ExecutionCliConfig, SummarizeArgs};
 use crate::direct_source::matched_surface;
 use crate::error::{CliError, FailureCode};
 use crate::output::{SummaryTsvRow, sanitize_terminal, write_summary_tsv};
-use crate::presentation::{OutputMode, resolve_summary_top};
-use crate::protocol::diagnostic::{
-    DiagnosticData, DiagnosticEnvelope, DiagnosticEvent, DiagnosticSeverity, DiagnosticStage,
-};
+use crate::presentation::{OutputMode, ResultDelivery, resolve_summary_top};
+use crate::protocol::diagnostic::DiagnosticStage;
 use crate::protocol::query::{
     Coverage, DefinitionBody, DefinitionData, InventoryStats, MatchOrder, ProtocolKeyField,
     QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters,
@@ -181,7 +179,7 @@ pub fn run(
         &args.input.markdown,
         config,
         terminal,
-        &mut io::stderr(),
+        output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
     let ResolvedMatchingQuery {
@@ -212,7 +210,7 @@ pub fn run(
     scope.warn_before_run(
         scope_clause.as_ref(),
         &args.input.markdown.self_label_no_ops(),
-        config.diagnostic_format,
+        config,
         &run_id,
     )?;
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
@@ -303,17 +301,19 @@ pub fn run(
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
         };
-        let progress_mode = config.progress;
-        let presentation_progress = PresentationProgress::stderr();
+        let presentation_progress = PresentationProgress::stderr(
+            &config.stderr,
+            config.progress,
+            output,
+            ResultDelivery::Deferred,
+        );
         let progress_writer = presentation_progress.clone();
         let mut progress = move |progress: lingrep_core::execution::ExecutionProgress,
                                  _sink: &SummarySink<'_>| {
-            if progress_mode == ProgressMode::Always {
-                progress_writer.write_line(&format!(
-                    "matched {} sentences, found {} matches",
-                    progress.sentences_matched, progress.matches_found
-                ));
-            }
+            let (sentences, matches) = (progress.sentences_matched, progress.matches_found);
+            progress_writer.snapshot(move || {
+                format!("matched {sentences} sentences, found {matches} matches")
+            });
         };
         let mut max_tokenized_bytes = 0usize;
         let mut observer = |observation: lingrep_core::execution::TokenizedBatchObservation| {
@@ -342,8 +342,10 @@ pub fn run(
             // `summarize` has no `--raw-matches`: a summary of the raw stream
             // would count records the catalog does not publish.
             match args.trace_policy {
-                Some(capacity) => Publication::from(PolicySelection::Apply).with_trace(capacity),
-                None => Publication::from(PolicySelection::Apply),
+                Some(capacity) if capacity > 0 => {
+                    Publication::from(PolicySelection::Apply).with_trace(capacity)
+                }
+                _ => Publication::from(PolicySelection::Apply),
             },
             scope
                 .prepared_scope
@@ -363,24 +365,16 @@ pub fn run(
             RunOutcome::Completed(report) => report,
             RunOutcome::Cancelled(_) => return Ok(CommandOutcome::Cancelled),
         };
-        // What the policy program did, which a summary otherwise cannot show:
-        // its output is a total per pattern, and a total that came out lower
-        // than expected has no visible cause in it.
-        if progress_mode == ProgressMode::Always {
-            crate::policy_report::write_per_statement(
-                &presentation_progress,
+        presentation_progress.finish();
+        if args.trace_policy.is_some() {
+            crate::policy_report::write_requested(
+                &config.stderr,
                 compiled.matcher.catalog_policy(),
+                report.policy_stats.captures_dropped,
                 report.program_stats.per_operation(),
-            );
+                report.trace.as_ref(),
+            )?;
         }
-        if let Some(trace) = report.trace.as_ref() {
-            crate::policy_report::write_trace(
-                &presentation_progress,
-                compiled.matcher.catalog_policy(),
-                trace,
-            );
-        }
-        presentation_progress.finish().map_err(CliError::Io)?;
         let aggregation = sink
             .aggregation
             .take()
@@ -411,7 +405,7 @@ pub fn run(
             .as_ref()
             .filter(|stats| stats.alias_documents != 0)
         {
-            write_alias_warning(config.diagnostic_format, &run_id, inventory)?;
+            write_alias_warning(config, &run_id, inventory)?;
         }
 
         let pattern_names = descriptors
@@ -420,12 +414,7 @@ pub fn run(
             .collect::<Vec<_>>();
         // `summarize` publishes no per-match prefix, so it always runs to
         // completion: its basis is the corpus on both paths.
-        let scope_report = scope.report_after_run(
-            scope_clause.as_ref(),
-            false,
-            config.diagnostic_format,
-            &run_id,
-        )?;
+        let scope_report = scope.report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
         let sentences_proven_absent = run_facts.filter_stats.as_ref().map_or(
             0,
             lingrep_corpus::PreparedFilterStats::sentences_proven_absent,
@@ -849,7 +838,7 @@ impl MatchSink for SummarySink<'_> {
 }
 
 fn write_alias_warning(
-    format: DiagnosticFormat,
+    config: &ExecutionCliConfig,
     run_id: &str,
     inventory: &InventoryStats,
 ) -> Result<(), CliError> {
@@ -861,35 +850,16 @@ fn write_alias_warning(
         inventory.documents,
         inventory.distinct_targets
     );
-    let stderr = io::stderr();
-    let mut writer = stderr.lock();
-    match format {
-        DiagnosticFormat::Human => writeln!(
-            writer,
-            "warning[aliased_source_documents]: {}",
-            sanitize_terminal(&message)
-        )
-        .map_err(execution_output_io)
-        .map_err(CliError::from),
-        DiagnosticFormat::Json => write_jsonl(
-            &mut writer,
-            &DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(DiagnosticData {
-                run_id: Some(run_id.to_owned()),
-                observed_input_digest: None,
-                stage: DiagnosticStage::Aggregation,
-                severity: DiagnosticSeverity::Warning,
-                code: "aliased_source_documents".into(),
-                message,
-                suggestions: Vec::new(),
-                usage: None,
-                retry: None,
-                location: None,
-                related_locations: Vec::new(),
-            })),
-        )
-        .map_err(execution_output_error)
-        .map_err(CliError::from),
-    }
+    write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Aggregation,
+        "aliased_source_documents",
+        message,
+        Some(run_id),
+        Vec::new(),
+    )
+    .map_err(CliError::Io)
 }
 
 #[cfg(test)]

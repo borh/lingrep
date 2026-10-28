@@ -183,19 +183,21 @@ result, and each is omitted when the catalog derives nothing for it:
 | `key` | `key: [pos1, $capture.span.norm, …]` | typed ordered scalar fields |
 | `tags` | `tags: {name: source, …}` | `[{"name": …, "value": …}]`, by tag name |
 
-Under `--progress always`, a run that applied policy and removed captures
-writes one line, `policy dropped N capture(s)`, followed by one line per policy
-statement the catalog declares:
+`--trace-policy 0` writes the run's policy totals to stderr: a header with the
+statement count and, when policy removed captures, the number dropped, then one
+line per policy statement the catalog declares:
 
 ```text
+policy totals (2 statements, 3 captures dropped)
   resolve %heads rank: [longest, start, end, pattern]. (7)  → dropped 4, narrowed 0
   detach %trailing_copula with: @DA, relation: at_end, evidence: raw. (8)  → dropped 0, narrowed 13
 ```
 
 Each line quotes the statement's text and its catalog line number. Every
 declared statement is reported, including one that changed nothing, so an
-inert statement is visible. A run that removed nothing writes no
-`policy dropped` line.
+inert statement is visible. The totals cover the records the run processed,
+including under `--limit`, sampling and scope filters. Use `--trace-policy`
+to request these totals; `--progress` does not print them.
 
 Key fields keep their authored order through matching, aggregation, JSONL, TSV,
 and human output. Tags keep their own canonical ordering.
@@ -247,9 +249,9 @@ that mapping and preserves incomplete execution as a partial or failed layer.
 
 ### Explaining one record: `--trace-policy N`
 
-The per-statement counters above summarize a whole run. `--trace-policy N`
-reports, for at most `N` published records, which policy statements shaped
-each record or removed it:
+The per-statement totals above summarize a whole run. A positive
+`--trace-policy N` prints those totals and then reports, for at most `N`
+published records, which policy statements shaped each record or removed it:
 
 ```text
 policy trace (400 records)
@@ -284,7 +286,7 @@ shortened on the trace line; compile diagnostics always quote the statement in
 full.
 
 `matches` and `summarize` accept `--trace-policy` and
-report the per-statement counters. `explore` has neither, because output
+report the per-statement totals. `explore` has neither, because output
 written beneath the TUI would not be visible.
 
 On `summarize` the trace covers the policy program; records with empty surfaces
@@ -398,7 +400,8 @@ Vibrato/UniDic. That is not an error: the attribute binds as universally
 absent, which is per-token absence applied to every token. Positive tests over
 it match nothing, `!=`/`!~`/`not in` match nothing either, and only the true
 complement `!(…)` holds. A `matches` or `summarize` run reports each such
-attribute as a `warning[attribute_unavailable]` on stderr, regardless of
+attribute as a `warning[attribute_unavailable]` on stderr, or as a
+`lingrep.diagnostic/v1` warning record under `--json`, regardless of
 `--progress`. The warning lists the referencing definitions and the corpus's
 token schema.
 
@@ -713,9 +716,23 @@ have different failure behavior for three cases:
   oversized sentence would make an already-built artifact unqueryable at that
   limit.
 
-Human progress defaults to `auto`, which enables it when stderr is a terminal.
-Pass `--progress always` or `never` explicitly; it never changes stdout or identity. Select machine-readable errors
-independently with `--json`.
+With the default `--progress auto`, deferred human output, such as a
+`summarize` table, can show one status line on stderr at the next count update
+after one second. Both stdout and stderr must be terminals, and `TERM` must
+be set to a value other than `dumb`. During streaming query execution
+(`matches`, `tokenize`), and for JSON, TSV or redirected stdout, `auto` shows
+no progress. Artifact preparation with `--cache` can show status before
+streaming results begin.
+
+`--progress always` shows the first available status immediately. It redraws
+in place for deferred human output on capable terminals; otherwise it prints
+ordinary lines, at most one intermediate update every five seconds plus the
+latest final count if it has not already been printed. `never` disables
+progress. Warnings, errors, creation receipts and requested `--trace-policy`
+reports remain visible in every mode. A failed status erasure before
+warnings or results is ignored; a failed progress write does not fail the run.
+Progress does not change stdout or identity. Select JSON diagnostics with
+`--json`.
 
 Direct commands resolve their dictionary from an explicit `--dict-path` first,
 then from `LINGREP_DICTIONARY_PATH`, then from the `cwj` dictionary that
@@ -1315,7 +1332,10 @@ so an input a direct query handles can still make `--cache` fail. That failure i
 reported; the run does not fall back to direct execution. An explicitly
 addressed `--corpus` is likewise strict.
 
-`--progress always` reports which path answered. The `run` record distinguishes
+A human-format query that prepares an artifact prints
+`prepared corpus: PATH` to stderr in every `--progress` mode. Reusing an
+artifact emits no creation receipt. `--progress always` reports the selected
+path. The `run` record distinguishes
 `prepared`, with the artifact's source and analysis identity, from `direct`.
 
 ## Prepared V1 corpora
@@ -1465,7 +1485,10 @@ Omitting `--output` costs one extra read-and-hash pass over the source before
 the build, because the destination name is derived from the source's observed
 identity together with the dictionary and reader identities; a different
 dictionary or section policy therefore names a different artifact. That pass
-tokenizes nothing, and `corpus build` prints no progress for either pass.
+tokenizes nothing. `corpus build --progress always` counts the sources that
+pass reads as `identity pass: read N sources`, and the sentences the build
+stores as `build pass: stored N sentences`; reusing an artifact runs no build
+pass.
 Passing `--output` skips it. By default, the build stages and publishes the
 artifact beside `ROOT`. The directory containing `ROOT` must therefore be
 writable. When `ROOT` is a directory, this means its parent directory. A
@@ -1568,15 +1591,27 @@ the contracts that command exposes. The contract index does not include every
 JSON Schema; selecting one contract returns its record schema together with
 stream ordering, coverage, pipe, and exit semantics.
 
-`doctor` always probes a dictionary, then independently probes an explicit
-catalog and artifact. When a catalog and a corpus are both supplied and both
-admitted, a derived **binding probe** follows: it binds the catalog against the
-corpus's stored token schema, the same set a `matches` run binds, and names
-every referenced attribute the corpus cannot supply (`ok`, with evidence),
-while a dependency `where` clause the corpus cannot satisfy fails the probe
-with the missing edge keys. Its corpus check is bounded structural admission,
-not payload hashing; use `corpus inspect --verify` for full verification. Any
-failed probe exits 1 after all requested results are published.
+`doctor` checks only the inputs supplied to it. Without `--corpus`, `doctor`
+probes the default dictionary or the dictionary named by `--dict-path`. With
+`--corpus`, `doctor` probes a dictionary only when `--dict-path` names one,
+because queries over a prepared corpus read its stored tokens. A supplied
+catalog is compiled and a supplied artifact is opened as separate probes, and
+`ready` reports whether every selected probe passed. When both a catalog and a
+readable dictionary are checked and the catalog's `analyzer:` declaration does
+not admit the dictionary, `doctor` writes `warning[dictionary_binding_mismatch]`
+to stderr, or a diagnostic record under `--json`, in the same form as `matches`.
+This warning does not change `ready`. When a
+catalog and a corpus are both supplied and both admitted, a derived **binding
+probe** follows: it binds the catalog against the corpus's stored token schema,
+the same set a `matches` run binds, and names every referenced attribute the
+corpus cannot supply (`ok`, with evidence), while a dependency `where` clause
+the corpus cannot satisfy fails the probe with the missing edge keys. Its corpus
+check is bounded structural admission, not payload hashing; use `corpus inspect
+--verify` for full verification. Human output marks a passing probe as `warning`
+when the catalog compiled with warnings or the binding names unavailable
+attributes, and lists at most three attributes and three definitions for each;
+`--json` carries the complete evidence. Any failed probe exits 1 after all
+requested results are published.
 
 `--plan` is available on `matches`, `summarize`, `tokenize`, `coverage`,
 `corpus build`, `corpus inspect`, `corpus inventory`, and

@@ -393,3 +393,34 @@ fn human_prepared_corpus_output_names_the_location_size_and_verification_result(
     let inspect = String::from_utf8(inspect.stdout).unwrap();
     assert!(inspect.contains("content verified"), "{inspect}");
 }
+
+#[test]
+fn inventory_progress_counts_emitted_sources_only_when_always_is_requested() {
+    let directory = TempDir::new().unwrap();
+    fs::write(directory.path().join("a.md"), "a").unwrap();
+    fs::write(directory.path().join("b.md"), "b").unwrap();
+    let mut first_rows = None;
+    for (mode, expected) in [
+        ("always", "listed 1 sources\nlisted 2 sources\n"),
+        ("auto", ""),
+        ("never", ""),
+    ] {
+        let output = lingrep()
+            .args(["corpus", "inventory", "--tsv", "--progress", mode])
+            .arg(directory.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode}: {output:?}");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            expected,
+            "{mode}"
+        );
+        let rows = output.stdout;
+        assert_eq!(
+            first_rows.get_or_insert_with(|| rows.clone()),
+            &rows,
+            "{mode}"
+        );
+    }
+}

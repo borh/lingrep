@@ -1,6 +1,5 @@
 //! Public `ling` command tree and bounded-resource arguments.
 
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
@@ -206,7 +205,7 @@ pub enum Command {
     Dictionary(DictionaryArgs),
     /// Prepare a Python analyzer in a directory you choose.
     Analyzer(AnalyzerArgs),
-    /// Check that a dictionary, catalog and prepared corpus load.
+    /// Check the named dictionary, catalog and prepared corpus.
     Doctor(DoctorArgs),
     /// Show a command's arguments, examples and output formats.
     Describe(DescribeArgs),
@@ -221,10 +220,11 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Dictionary to load; overrides LINGREP_DICTIONARY_PATH.
+    /// Dictionary to check; overrides LINGREP_DICTIONARY_PATH. Without it, the
+    /// default dictionary is checked unless --corpus is given.
     #[arg(short = 'd', long, value_name = "PATH")]
     pub dict_path: Option<PathBuf>,
-    /// lingrep patterns catalog to compile as an independent readiness probe.
+    /// lingrep patterns catalog to compile as an independent check.
     #[arg(short = 'f', long, value_name = "FILE", help_heading = "Catalog")]
     pub patterns: Option<PathBuf>,
     /// Verify that this prepared artifact opens; do not hash stored content.
@@ -498,7 +498,8 @@ pub struct MatchesArgs {
     #[arg(long, help_heading = "Matching", hide_short_help = true)]
     pub raw_matches: bool,
 
-    /// Run the query and report policy decisions for at most N published records.
+    /// Run the query, report per-statement policy totals, and explain the policy
+    /// decisions for at most N published records; 0 reports the totals only.
     /// `--plan` only validates and prints the invocation.
     #[arg(
         long,
@@ -544,7 +545,8 @@ pub struct SummarizeArgs {
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
 
-    /// Run the query and report policy decisions for at most N published records.
+    /// Run the query, report per-statement policy totals, and explain the policy
+    /// decisions for at most N published records; 0 reports the totals only.
     /// `--plan` only validates and prints the invocation.
     #[arg(
         long,
@@ -678,7 +680,10 @@ pub struct CorpusSourcesArgs {
 
     /// Show progress while a command runs.
     ///
-    /// Progress is written to stderr, separately from the results.
+    /// Progress is written to stderr, separately from the results. `auto` shows
+    /// delayed status for deferred human output on capable terminals; `always`
+    /// also enables progress for streaming and redirected output; `never`
+    /// disables progress, and warnings remain visible.
     #[arg(long, value_enum, default_value_t)]
     pub progress: ProgressMode,
 
@@ -1299,7 +1304,10 @@ pub struct RuntimeArgs {
 
     /// Show progress while a command runs.
     ///
-    /// Progress is written to stderr, separately from the results.
+    /// Progress is written to stderr, separately from the results. `auto` shows
+    /// delayed status for deferred human output on capable terminals; `always`
+    /// also enables progress for streaming and redirected output; `never`
+    /// disables progress, and warnings remain visible.
     #[arg(long, value_enum, default_value_t, help_heading = "Execution")]
     pub progress: ProgressMode,
 }
@@ -1504,7 +1512,7 @@ pub enum MatchFormat {
     Human,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ExecutionCliConfig {
     pub traversal: TraversalLimits,
     pub normalization: lingrep_core::analysis::NormalizationPolicy,
@@ -1519,6 +1527,7 @@ pub struct ExecutionCliConfig {
     pub workers: usize,
     pub progress: ProgressMode,
     pub diagnostic_format: DiagnosticFormat,
+    pub(crate) stderr: crate::terminal::RunStderr,
 }
 
 fn prepared_input_conflict(matches: &clap::ArgMatches) -> Option<&'static str> {
@@ -1813,8 +1822,9 @@ impl Cli {
             limits,
             max_temp_bytes: resources.max_temp_bytes,
             workers: resources.workers,
-            progress: resources.progress.resolve(std::io::stderr().is_terminal()),
+            progress: resources.progress,
             diagnostic_format: self.diagnostic_format(),
+            stderr: crate::terminal::RunStderr::new(std::io::stderr()),
         })
     }
 }

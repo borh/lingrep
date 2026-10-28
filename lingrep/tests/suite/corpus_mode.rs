@@ -116,6 +116,55 @@ fn tokenize_populates_the_explicit_cache_and_attributes_reuses_it() {
 }
 
 #[test]
+fn a_human_query_prints_the_prepared_artifact_path_once_and_reuse_writes_no_stderr() {
+    let dictionary = MiniDictionary::new();
+    let run = |root: &std::path::Path, progress: &str| {
+        let output = lingrep()
+            .args([
+                "matches",
+                "--cache",
+                "--pattern",
+                "[text=猫].",
+                "--dict-path",
+            ])
+            .arg(dictionary.path())
+            .args(["--progress", progress])
+            .arg(root)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        String::from_utf8(output.stderr).unwrap()
+    };
+
+    for progress in ["never", "always"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("corpus.txt");
+        fs::write(&root, "猫。\n").unwrap();
+
+        let prepared = run(&root, progress);
+        let published = artifacts_beside(&root);
+        assert_eq!(published.len(), 1);
+        let receipt = format!("prepared corpus: {}\n", published[0].display());
+        assert_eq!(
+            prepared.matches("prepared").count(),
+            1,
+            "{progress}: {prepared}"
+        );
+        if progress == "never" {
+            assert_eq!(prepared, receipt);
+        } else {
+            let passes = "identity pass: read 1 sources\nbuild pass: stored 1 sentences\n";
+            assert!(
+                prepared.starts_with(&format!("{passes}{receipt}")),
+                "{progress}: {prepared}"
+            );
+        }
+
+        assert_eq!(run(&root, "auto"), "", "reuse under auto");
+    }
+}
+
+#[test]
 fn cache_rejects_stdin_before_reading_it() {
     let dictionary = MiniDictionary::new();
     let output = lingrep()

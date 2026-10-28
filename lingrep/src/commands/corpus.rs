@@ -31,14 +31,14 @@ use crate::direct_source::{encode_digest, execution_discovery_error};
 use crate::error::CliError;
 use crate::output::{SourceTsvRow, write_source_tsv};
 use crate::prepared_source::{PreparedBuildEvents, corpus_format_for_validated_root};
-use crate::presentation::OutputMode;
+use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::query::{Coverage, Termination, TraversalLimits};
 use crate::protocol::sources::{
     AggregateState, ArtifactVerification, ComponentVerification, SourceData, SourcesComplete,
     SourcesEnvelope, SourcesEvent, SourcesKind, SourcesRun, TraversalHighWater,
 };
 use crate::protocol::write_jsonl;
-use crate::terminal::TerminalArbiter;
+use crate::terminal::{PresentationProgress, TerminalArbiter};
 
 /// Stream the bounded ordered inventory admitted from a live filesystem root.
 pub fn run_sources(
@@ -73,14 +73,13 @@ pub fn run_build(
     };
     let runtime = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
     runtime.block_on(async {
-        let mut progress = io::stderr();
         match ensure_artifact(
             &request,
             config,
             terminal,
             true,
             PublicationRole::RunCompletion,
-            &mut progress,
+            output,
         )
         .await?
         {
@@ -129,9 +128,15 @@ pub(crate) async fn ensure_artifact(
     terminal: &TerminalArbiter,
     create: bool,
     role: PublicationRole,
-    progress_sink: &mut impl io::Write,
+    output: OutputMode,
 ) -> Result<Option<EnsuredArtifact>, CliError> {
     let args = request;
+    let progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        output,
+        ResultDelivery::Deferred,
+    );
     let root = request.root.as_path();
     let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
         .map_err(|error| execution_discovery_error(&error))?;
@@ -190,7 +195,7 @@ pub(crate) async fn ensure_artifact(
         terminal,
         &analysis,
         &analyzer_record,
-        progress_sink,
+        &progress,
     )?;
     let destination = match resolved {
         None => return Ok(None),
@@ -247,6 +252,7 @@ pub(crate) async fn ensure_artifact(
     // admission independently of this window.
     let mut window: Vec<(Vec<SourceDocument>, Option<AdmittedCorpusEvent>)> = Vec::new();
     let mut reached_end = false;
+    let mut stored_sentences = 0_u64;
     while !reached_end {
         if terminal.cancellation().is_cancelled() {
             return Ok(None);
@@ -335,6 +341,9 @@ pub(crate) async fn ensure_artifact(
                 .and_then(|_| analyzed.next());
             let bound_words = sentence.and_then(|sentence| sentence.words.clone());
             let location = builder.push_corpus_event(&event).await?;
+            if sentence.is_some() {
+                stored_sentences += 1;
+            }
             if let (Some(location), Some(analyzed)) = (location.as_ref(), analyzed_sentence) {
                 builder
                     .push_analyzed_sentence(location, analyzed, &projection)
@@ -346,7 +355,9 @@ pub(crate) async fn ensure_artifact(
                     .await?;
             }
         }
+        progress.snapshot(move || format!("build pass: stored {stored_sentences} sentences"));
     }
+    progress.finish();
     if terminal.cancellation().is_cancelled() {
         return Ok(None);
     }
@@ -429,12 +440,14 @@ fn resolve_destination(
     terminal: &TerminalArbiter,
     analysis: &AnalysisInputs,
     analyzer: &lingrep_corpus::AnalyzerRecord,
-    progress: &mut impl std::io::Write,
+    status: &PresentationProgress<io::Stderr>,
 ) -> Result<Option<Destination>, CliError> {
     if let Some(path) = output {
         return Ok(Some(Destination::Fresh(path.to_path_buf())));
     }
-    let Some(observed) = observe_root(root, config, reader_config, terminal.cancellation())? else {
+    let Some(observed) =
+        observe_root(root, config, reader_config, terminal.cancellation(), status)?
+    else {
         return Ok(None);
     };
     let analysis_identity = derive_analysis_identity(&observed, analysis);
@@ -471,12 +484,16 @@ fn resolve_destination(
     for (path, error) in &report.diagnostics {
         // A damaged sibling is reported and stepped over. It must not fail
         // this build, and it must not hide the realizations beside it.
-        writeln!(
-            progress,
-            "warning: ignoring unreadable artifact at {}: {error}",
-            path.display()
-        )
-        .map_err(CliError::Io)?;
+        config
+            .stderr
+            .diagnostic(|writer| {
+                writeln!(
+                    writer,
+                    "warning: ignoring unreadable artifact at {}: {error}",
+                    path.display()
+                )
+            })
+            .map_err(CliError::Io)?;
     }
     let request = RealizationRequest {
         source_identity: *observed.source_identity(),
@@ -504,13 +521,17 @@ fn resolve_destination(
         }
         BuildOutcome::SiblingOf(siblings) => {
             for sibling in &siblings {
-                writeln!(
-                    progress,
-                    "note: {} realizes the same source under a different analysis ({})",
-                    sibling.path.display(),
-                    describe_difference(sibling, analysis, analyzer)
-                )
-                .map_err(CliError::Io)?;
+                config
+                    .stderr
+                    .diagnostic(|writer| {
+                        writeln!(
+                            writer,
+                            "note: {} realizes the same source under a different analysis ({})",
+                            sibling.path.display(),
+                            describe_difference(sibling, analysis, analyzer)
+                        )
+                    })
+                    .map_err(CliError::Io)?;
             }
             Ok(Some(Destination::Fresh(destination)))
         }
@@ -834,7 +855,9 @@ fn observe_root(
     config: &ExecutionCliConfig,
     reader_config: &CorpusReadConfig,
     cancellation: &CancellationFlag,
+    progress: &PresentationProgress<io::Stderr>,
 ) -> Result<Option<ObservedSources>, CliError> {
+    let mut read_sources = 0_u64;
     let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
         .map_err(|error| execution_discovery_error(&error))?;
     let observation = SourceObservation::new();
@@ -852,11 +875,16 @@ fn observe_root(
             return Ok(None);
         }
         let event = events.next().transpose().map_err(build_input_error)?;
-        documents.drain()?;
+        let drained = documents.drain()?.len() as u64;
+        if drained > 0 {
+            read_sources += drained;
+            progress.snapshot(move || format!("identity pass: read {read_sources} sources"));
+        }
         if event.is_none() {
             break;
         }
     }
+    progress.end_stage();
 
     let discovery = report
         .lock()
@@ -918,6 +946,12 @@ fn run_sources_to<W: Write>(
         aggregate_state: AggregateState::Pending,
     }));
     let started = Instant::now();
+    let progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        output,
+        ResultDelivery::Streaming,
+    );
 
     let result = (|| {
         publish_projected(writer, &run, output)?;
@@ -928,7 +962,7 @@ fn run_sources_to<W: Write>(
         if matches!(reader_config, CorpusReadConfig::Bccwj) {
             let discovery = BccwjSourcesDiscovery::new(&args.root, &config.traversal)
                 .map_err(|error| execution_discovery_error(&error))?;
-            return stream_discovery(discovery, terminal, writer, started, output);
+            return stream_discovery(discovery, terminal, writer, started, output, &progress);
         }
         let file_kind = reader_config
             .directory_file_kind()
@@ -941,6 +975,7 @@ fn run_sources_to<W: Write>(
             writer,
             started,
             output,
+            &progress,
         )
     })();
 
@@ -1007,7 +1042,9 @@ fn stream_discovery<W: Write, D: SourceDiscovery>(
     writer: &mut W,
     started: Instant,
     output: OutputMode,
+    progress: &PresentationProgress<io::Stderr>,
 ) -> Result<CommandOutcome, CliError> {
+    let mut listed = 0_u64;
     loop {
         if terminal.cancellation().is_cancelled() {
             return Ok(CommandOutcome::Cancelled);
@@ -1028,7 +1065,10 @@ fn stream_discovery<W: Write, D: SourceDiscovery>(
             &SourcesEnvelope::new(SourcesEvent::Source(protocol_source(document))),
             output,
         )?;
+        listed += 1;
+        progress.snapshot(move || format!("listed {listed} sources"));
     }
+    progress.finish();
     let report = discovery
         .finish()
         .map_err(|error| execution_discovery_error(&error))?;
@@ -1241,6 +1281,12 @@ mod tests {
                 &mut output,
                 Instant::now(),
                 OutputMode::Jsonl,
+                &PresentationProgress::stderr(
+                    &crate::terminal::RunStderr::new(io::stderr()),
+                    crate::presentation::ProgressMode::Never,
+                    OutputMode::Jsonl,
+                    ResultDelivery::Streaming,
+                ),
             )
             .unwrap();
 
@@ -1279,6 +1325,12 @@ mod tests {
             &mut output,
             Instant::now(),
             OutputMode::Jsonl,
+            &PresentationProgress::stderr(
+                &crate::terminal::RunStderr::new(io::stderr()),
+                crate::presentation::ProgressMode::Never,
+                OutputMode::Jsonl,
+                ResultDelivery::Streaming,
+            ),
         )
         .unwrap();
 

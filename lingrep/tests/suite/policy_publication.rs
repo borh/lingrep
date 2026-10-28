@@ -421,45 +421,37 @@ fn a_prepared_run_caches_the_attributes_only_the_policy_reads() {
     );
 }
 
-/// The run reports what it knows.
-///
-/// It counts suppressions per statement, on this same channel, one line per
-/// authored statement; this catalog declares no `policy` block, so the
-/// capture figure is the whole of what it has to say.
 #[test]
-fn the_policy_progress_line_reports_only_dropped_captures() {
+fn trace_policy_zero_reports_the_dropped_capture_total() {
     let fixture = DerivingFixture::new();
 
     // `cop` covers the trailing AUX, which the `drop_edge` transform removes —
     // so the capture leaves the published span and is dropped. A `detach`
     // would not serve: it counts into `ProgramStats` per statement, and
     // `PolicyStats::captures_dropped` is the transforms' counter.
-    let output = fixture.run(&["matches", "--progress", "always"]);
-    assert_success(&output, "matches --progress always");
-    let progress = String::from_utf8_lossy(&output.stderr);
+    let output = fixture.run(&["matches", "--trace-policy", "0"]);
+    assert_success(&output, "matches --trace-policy 0");
+    let report = String::from_utf8_lossy(&output.stderr);
 
-    assert!(
-        progress.contains("policy dropped 1 capture"),
-        "the policy line must report the dropped capture: {progress}"
-    );
-    assert!(
-        !progress.contains("suppressed"),
-        "no category of suppression is counted any more: {progress}"
+    assert_eq!(
+        report,
+        "policy totals (0 statements, 1 capture dropped)\n  \
+         This catalog declares no policy statements.\n"
     );
 }
 
-/// Each statement reports what it did, named by its own source text.
+/// The totals line for each statement carries its source text and its counts.
 ///
 /// A researcher asking "did my `detach` do anything" is asking about one
 /// statement, and a per-run total cannot answer it. The label comes from the
 /// catalog rather than from this formatter, so a statement the author rewords
 /// reports under the new text without this command being touched.
 #[test]
-fn the_progress_output_names_each_statement_and_what_it_did() {
+fn the_totals_report_each_statement_by_its_source_text_and_counts() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
-    let output = fixture.run(&["matches", "--progress", "always"]);
-    assert_success(&output, "matches --progress always");
+    let output = fixture.run(&["matches", "--trace-policy", "0"]);
+    assert_success(&output, "matches --trace-policy 0");
     let progress = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -483,8 +475,8 @@ fn the_progress_output_names_each_statement_and_what_it_did() {
 fn an_inert_statement_still_reports_its_line() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
-    let output = fixture.run(&["matches", "--progress", "always"]);
-    assert_success(&output, "matches --progress always");
+    let output = fixture.run(&["matches", "--trace-policy", "0"]);
+    assert_success(&output, "matches --trace-policy 0");
     let progress = String::from_utf8_lossy(&output.stderr);
 
     // The `resolve` contests a field of one, so it can drop nothing.
@@ -511,38 +503,23 @@ policy
 end
 "#;
 
-/// The trace reaches the progress channel, and the record stream is untouched.
-///
-/// A JSONL or TSV consumer's contract is the record. Putting an explanation
-/// into it would change a published contract to serve a debugging affordance,
-/// and every downstream reader would have to learn to skip it. Both halves are
-/// asserted: the explanation appears on stderr, and stdout is byte-for-byte
-/// what the same run publishes without the flag.
-///
-/// Run without `--progress always`, deliberately. The per-statement counters
-/// are unrequested run facts and stay behind that flag; `--trace-policy` was
-/// typed out loud, and a flag that answered nothing unless a second flag agreed
-/// would be a flag that looks broken.
 #[test]
-fn the_trace_goes_to_progress_and_never_to_the_record_stream() {
+fn policy_trace_is_written_to_stderr_without_changing_match_records() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
     let traced = fixture.run(&["matches", "--trace-policy", "10"]);
     assert_success(&traced, "matches --trace-policy 10");
-    let progress = String::from_utf8_lossy(&traced.stderr);
+    let stderr = String::from_utf8_lossy(&traced.stderr);
 
     assert!(
-        progress.contains("policy trace (1 record)"),
-        "the trace must reach the progress channel: {progress}"
+        stderr.contains("policy trace (1 record)"),
+        "missing policy trace on stderr: {stderr}"
     );
     assert!(
-        progress.contains("detach @derived with: @COP, relation: at_end, evidence: raw."),
-        "named by the statement's own text, as the counters are: {progress}"
+        stderr.contains("detach @derived with: @COP, relation: at_end, evidence: raw."),
+        "missing statement text: {stderr}"
     );
-    assert!(
-        progress.contains("→ 0..1"),
-        "and reporting the span the detach left: {progress}"
-    );
+    assert!(stderr.contains("→ 0..1"), "missing narrowed span: {stderr}");
 
     let untraced = fixture.run(&["matches"]);
     assert_success(&untraced, "matches");
@@ -593,7 +570,9 @@ fn a_long_statement_is_elided_on_its_trace_line() {
 
     let output = fixture.run(&["matches", "--trace-policy", "10"]);
     assert_success(&output, "matches --trace-policy 10");
-    let progress = String::from_utf8_lossy(&output.stderr);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The totals above the trace quote each statement in full.
+    let progress = &stderr[stderr.find("policy trace (").expect("a trace")..];
 
     assert!(
         progress.contains(
@@ -644,8 +623,8 @@ fn every_publishing_surface_reports_what_policy_did() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
 
     for surface in ["matches", "summarize"] {
-        let counters = fixture.run(&[surface, "--progress", "always"]);
-        assert_success(&counters, &format!("{surface} --progress always"));
+        let counters = fixture.run(&[surface, "--trace-policy", "0"]);
+        assert_success(&counters, &format!("{surface} --trace-policy 0"));
         let progress = String::from_utf8_lossy(&counters.stderr);
         assert!(
             progress.contains("detach @derived with: @COP, relation: at_end, evidence: raw."),
@@ -672,23 +651,36 @@ fn every_publishing_surface_reports_what_policy_did() {
 }
 
 #[test]
-fn the_trace_does_not_wait_for_progress_always() {
+fn trace_policy_capacity_selects_totals_or_totals_and_trace_under_every_progress_mode() {
     let fixture = DerivingFixture::with_catalog(STATEMENT_CATALOG);
+    let totals = "policy totals (2 statements)\n  \
+         resolve all rank: [longest, start, end, pattern]. (5) → dropped 0, narrowed 0\n  \
+         detach @derived with: @COP, relation: at_end, evidence: raw. (6) → dropped 0, narrowed 1\n";
 
     for surface in ["matches", "summarize"] {
-        let output = fixture.run(&[surface, "--trace-policy", "10"]);
-        assert_success(&output, &format!("{surface} --trace-policy 10"));
-        let progress = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            progress.contains("policy trace ("),
-            "{surface} traces without --progress always: {progress}"
-        );
-        // The counters are the half that must stay quiet, and they are
-        // recognizable by the phrasing only they use.
-        assert!(
-            !progress.contains("→ dropped 0, narrowed"),
-            "{surface} must not print unrequested run facts: {progress}"
-        );
+        for progress in ["auto", "always", "never"] {
+            let label = format!("{surface} --progress {progress}");
+            let zero = fixture.run(&[surface, "--progress", progress, "--trace-policy", "0"]);
+            assert_success(&zero, &label);
+            let stderr = String::from_utf8_lossy(&zero.stderr);
+            assert!(stderr.ends_with(totals), "{label}: {stderr}");
+            assert!(!stderr.contains("policy trace"), "{label}: {stderr}");
+
+            let traced = fixture.run(&[surface, "--progress", progress, "--trace-policy", "10"]);
+            assert_success(&traced, &label);
+            let stderr = String::from_utf8_lossy(&traced.stderr);
+            let report = &stderr[stderr.find("policy totals").expect(&label)..];
+            assert!(report.starts_with(totals), "{label}: {stderr}");
+            assert!(
+                report[totals.len()..].starts_with("policy trace (1 record)\n"),
+                "{label}: {stderr}"
+            );
+
+            let unrequested = fixture.run(&[surface, "--progress", progress]);
+            assert_success(&unrequested, &label);
+            let stderr = String::from_utf8_lossy(&unrequested.stderr);
+            assert!(!stderr.contains("policy"), "{label}: {stderr}");
+        }
     }
 }
 

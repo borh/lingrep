@@ -6,20 +6,14 @@
 //! only knowable afterwards — Markdown, which is structurally able to carry
 //! labels — the run warns and names what the corpus did record.
 
-use std::collections::BTreeSet;
-use std::io::{self, Write};
-
 use lingrep_core::corpus::{DEFAULT_EXCLUDED_SECTIONS, SectionPolicy};
 use lingrep_core::scope::ScopeClause;
+use std::collections::BTreeSet;
 
-use crate::cli::DiagnosticFormat;
-use crate::commands::query_support::{execution_output_error, execution_output_io};
+use crate::cli::ExecutionCliConfig;
+use crate::commands::query_support::write_warning;
 use crate::error::CliError;
-use crate::output::sanitize_terminal;
-use crate::protocol::diagnostic::{
-    DiagnosticData, DiagnosticEnvelope, DiagnosticEvent, DiagnosticSeverity, DiagnosticStage,
-};
-use crate::protocol::write_jsonl;
+use crate::protocol::diagnostic::DiagnosticStage;
 
 /// Refuses a section clause against an input that records no section labels.
 ///
@@ -63,7 +57,7 @@ pub(crate) fn refuse_unanswerable(
 pub(crate) fn warn_unused_labels(
     clause: &ScopeClause,
     observed: &BTreeSet<String>,
-    format: DiagnosticFormat,
+    config: &ExecutionCliConfig,
     run_id: &str,
 ) -> Result<(), CliError> {
     let unused: Vec<&str> = clause
@@ -95,7 +89,7 @@ pub(crate) fn warn_unused_labels(
             render(&observed.iter().map(String::as_str).collect::<Vec<_>>())
         }
     );
-    emit(message, suggestions, format, run_id)
+    emit(message, suggestions, config, run_id)
 }
 
 /// Warns that the active read-time policy excludes a label the clause names.
@@ -117,7 +111,7 @@ pub(crate) fn warn_unused_labels(
 pub(crate) fn warn_read_time_excluded(
     clause: &ScopeClause,
     policy: &SectionPolicy,
-    format: DiagnosticFormat,
+    config: &ExecutionCliConfig,
     run_id: &str,
 ) -> Result<(), CliError> {
     let excluded: Vec<&str> = clause
@@ -139,7 +133,7 @@ pub(crate) fn warn_read_time_excluded(
              --md-include-sections"
                 .to_owned(),
         ],
-        format,
+        config,
         run_id,
     )
 }
@@ -159,7 +153,7 @@ fn render(labels: &[&str]) -> String {
 /// Returns an error if the diagnostic stream cannot be written.
 pub(crate) fn warn_self_label_no_ops(
     labels: &[String],
-    format: DiagnosticFormat,
+    config: &ExecutionCliConfig,
     run_id: &str,
 ) -> Result<(), CliError> {
     if labels.is_empty() {
@@ -172,7 +166,7 @@ pub(crate) fn warn_self_label_no_ops(
              emitted as a sentence, so selecting it matches nothing"
         ),
         vec!["redeclare the set with --md-self-labels to make it a section label".to_owned()],
-        format,
+        config,
         run_id,
     )
 }
@@ -180,36 +174,17 @@ pub(crate) fn warn_self_label_no_ops(
 fn emit(
     message: String,
     suggestions: Vec<String>,
-    format: DiagnosticFormat,
+    config: &ExecutionCliConfig,
     run_id: &str,
 ) -> Result<(), CliError> {
-    let stderr = io::stderr();
-    let mut writer = stderr.lock();
-    match format {
-        DiagnosticFormat::Human => writeln!(
-            writer,
-            "warning[unused_section_labels]: {}",
-            sanitize_terminal(&message)
-        )
-        .map_err(execution_output_io)
-        .map_err(CliError::from),
-        DiagnosticFormat::Json => write_jsonl(
-            &mut writer,
-            &DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(DiagnosticData {
-                run_id: Some(run_id.to_owned()),
-                observed_input_digest: None,
-                stage: DiagnosticStage::Input,
-                severity: DiagnosticSeverity::Warning,
-                code: "unused_section_labels".into(),
-                message,
-                suggestions,
-                usage: None,
-                retry: None,
-                location: None,
-                related_locations: Vec::new(),
-            })),
-        )
-        .map_err(execution_output_error)
-        .map_err(CliError::from),
-    }
+    write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Input,
+        "unused_section_labels",
+        message,
+        Some(run_id),
+        suggestions,
+    )
+    .map_err(CliError::Io)
 }

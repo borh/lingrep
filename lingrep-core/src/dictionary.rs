@@ -123,6 +123,11 @@ pub fn dictionary_identity(dict_path: &str) -> Result<[u8; 32], PipelineError> {
     if let Some(memo) = memo.as_deref()
         && let Some(digest) = read_identity_memo(memo)
     {
+        File::open(dict_path).map_err(|error| {
+            PipelineError::Dictionary(format!(
+                "Failed to open dictionary file {dict_path:?}: {error}"
+            ))
+        })?;
         return Ok(digest);
     }
     // An uncompressed dictionary is answered by mapping the file itself. A

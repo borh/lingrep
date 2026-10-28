@@ -176,6 +176,66 @@ fn doctor_probe_failure_is_runtime_failure_not_usage() {
 }
 
 #[test]
+fn doctor_dictionary_evidence_matches_the_dictionary_identity() {
+    let dictionary = dict_path();
+    let output = lingrep_without_dictionary()
+        .args(["doctor", "--json", "--dict-path"])
+        .arg(&dictionary)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let record = &parse_jsonl(&output.stdout)[0];
+    let probe = &record["data"]["probes"][0];
+    assert_eq!(probe["kind"], "dictionary");
+    let identity =
+        lingrep_core::dictionary::dictionary_identity(dictionary.to_str().unwrap()).unwrap();
+    assert_eq!(
+        probe["evidence"]["blake3"],
+        blake3::Hash::from(identity).to_hex().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_rejects_an_unreadable_dictionary_with_a_cached_identity() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let cache = tempfile::tempdir().unwrap();
+    for path in [dictionary.path(), dictionary.compressed_path()] {
+        let doctor = || {
+            lingrep_without_dictionary()
+                .env("XDG_CACHE_HOME", cache.path())
+                .args(["doctor", "--json", "--dict-path"])
+                .arg(path)
+                .output()
+                .unwrap()
+        };
+        let initial = doctor();
+        assert_eq!(initial.status.code(), Some(0));
+        let initial = parse_jsonl(&initial.stdout);
+        let permissions = std::fs::metadata(path).unwrap().permissions();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let access_error = std::fs::File::open(path).err();
+        let unreadable = doctor();
+        std::fs::set_permissions(path, permissions).unwrap();
+        let Some(access_error) = access_error else {
+            eprintln!("Skipping permission rejection: this account can read mode-000 files");
+            continue;
+        };
+        assert_eq!(access_error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(unreadable.status.code(), Some(1));
+        let unreadable = parse_jsonl(&unreadable.stdout);
+        assert_eq!(unreadable[0]["data"]["ready"], false);
+        assert_eq!(unreadable[0]["data"]["probes"][0]["ok"], false);
+        assert_eq!(unreadable[0]["data"]["probes"][0]["code"], "dictionary");
+        let restored = doctor();
+        assert_eq!(restored.status.code(), Some(0));
+        assert_eq!(parse_jsonl(&restored.stdout), initial);
+    }
+}
+
+#[test]
 fn doctor_runs_explicit_probes_in_order_after_independent_failures() {
     let temp = tempfile::tempdir().unwrap();
     let artifact = temp.path().join("artifact");
@@ -425,6 +485,205 @@ fn doctor_corpus_is_bounded_open_not_full_verification() {
         parse_jsonl(&verify.stderr)[0]["data"]["code"],
         "component_checksum_mismatch"
     );
+}
+
+fn conllu_artifact(directory: &std::path::Path) -> std::path::PathBuf {
+    let input = directory.join("one.conllu");
+    std::fs::write(
+        &input,
+        "1\t猫\t猫\tNOUN\t名詞\t_\t0\troot\t_\t_\n2\t。\t。\tPUNCT\t補助記号\t_\t1\tpunct\t_\t_\n\n",
+    )
+    .unwrap();
+    let artifact = directory.join("one.lingcorpus");
+    let built = lingrep_without_dictionary()
+        .env_remove("LINGREP_DICTIONARY_PATH")
+        .args(["corpus", "build", "--output"])
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    artifact
+}
+
+#[test]
+fn doctor_selects_checks_from_explicit_inputs() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_home = tempfile::tempdir().unwrap();
+    let artifact = conllu_artifact(temp.path());
+    let catalog = crate::support::fixture("one.lx");
+    let missing_dictionary = temp.path().join("missing.dic");
+    let patterns = ["--patterns", catalog.to_str().unwrap()];
+    let corpus = ["--corpus", artifact.to_str().unwrap()];
+    let explicit = ["--dict-path", missing_dictionary.to_str().unwrap()];
+
+    for (inputs, kinds, oks) in [
+        (vec![], vec!["dictionary"], vec![false]),
+        (
+            patterns.to_vec(),
+            vec!["dictionary", "catalog"],
+            vec![false, true],
+        ),
+        (corpus.to_vec(), vec!["corpus"], vec![true]),
+        (
+            [patterns, corpus].concat(),
+            vec!["catalog", "corpus", "binding"],
+            vec![true, true, true],
+        ),
+        (
+            [explicit, corpus].concat(),
+            vec!["dictionary", "corpus"],
+            vec![false, true],
+        ),
+    ] {
+        let output = lingrep_without_dictionary()
+            .env_remove("LINGREP_DICTIONARY_PATH")
+            .env("XDG_DATA_HOME", data_home.path())
+            .args(["doctor", "--json"])
+            .args(&inputs)
+            .output()
+            .unwrap();
+        let record = &parse_jsonl(&output.stdout)[0];
+        let probes = record["data"]["probes"].as_array().unwrap();
+        assert_eq!(
+            probes
+                .iter()
+                .map(|probe| probe["kind"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            kinds,
+            "{inputs:?}"
+        );
+        assert_eq!(
+            probes
+                .iter()
+                .map(|probe| probe["ok"].as_bool().unwrap())
+                .collect::<Vec<_>>(),
+            oks,
+            "{inputs:?}"
+        );
+        let ready = oks.iter().all(|ok| *ok);
+        assert_eq!(record["data"]["ready"], ready, "{inputs:?}");
+        assert_eq!(output.status.code(), Some(i32::from(!ready)), "{inputs:?}");
+    }
+}
+
+#[test]
+fn doctor_human_output_counts_checks_and_renders_warnings() {
+    let temp = tempfile::tempdir().unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let artifact = conllu_artifact(temp.path());
+    let catalog = temp.path().join("warned.lx");
+    std::fs::write(
+        &catalog,
+        "p := [unidic.pos1=名詞].\nfragment f := [upos=NOUN].\n",
+    )
+    .unwrap();
+    let run = |json: bool| {
+        let mut command = lingrep_without_dictionary();
+        command.arg("doctor");
+        if json {
+            command.arg("--json");
+        }
+        command
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .arg("--patterns")
+            .arg(&catalog)
+            .arg("--corpus")
+            .arg(&artifact)
+            .output()
+            .unwrap()
+    };
+
+    let human = run(false);
+    assert_eq!(human.status.code(), Some(0));
+    let catalog = catalog.display();
+    let artifact = artifact.display();
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        format!(
+            "ling doctor: 4 checks passed\n  \
+             ok dictionary [{}]: dictionary readable; identity available\n  \
+             warning catalog [{catalog}]: catalog compiled with 1 warning; run `ling check` for details\n  \
+             ok corpus [{artifact}]: artifact admitted without full content verification\n  \
+             warning binding [{catalog} against {artifact}]: never supplied by this corpus: `unidic.pos1` (referenced by p)\n",
+            dictionary.path().display()
+        )
+    );
+
+    let json = run(true);
+    assert_eq!(json.status.code(), Some(0));
+    assert_eq!(parse_jsonl(&json.stdout)[0]["data"]["ready"], true);
+}
+
+#[test]
+fn doctor_human_output_counts_failed_checks() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("missing.dic");
+    let output = lingrep_without_dictionary()
+        .args(["doctor", "--dict-path"])
+        .arg(&missing)
+        .arg("--patterns")
+        .arg(crate::support::fixture("one.lx"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("ling doctor: 1 of 2 checks failed"));
+    let failure = lines.next().unwrap();
+    assert!(failure.starts_with("  FAIL dictionary ["), "{failure}");
+    assert_eq!(failure.matches("Dictionary error:").count(), 1, "{failure}");
+}
+
+#[test]
+fn doctor_reports_a_dictionary_resource_mismatch_as_a_warning() {
+    let temp = tempfile::tempdir().unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let catalog = temp.path().join("csj.lx");
+    std::fs::write(
+        &catalog,
+        "analyzer: { family: \"vibrato\", resource: \"unidic-csj\" }\np := [text=猫].\n",
+    )
+    .unwrap();
+    for (explicit, json) in [(true, false), (false, false), (true, true)] {
+        let mut command = lingrep_without_dictionary();
+        command.arg("doctor");
+        if json {
+            command.arg("--json");
+        }
+        if explicit {
+            command.arg("--dict-path").arg(dictionary.path());
+        } else {
+            command.env("LINGREP_DICTIONARY_PATH", dictionary.path());
+        }
+        let output = command.arg("--patterns").arg(&catalog).output().unwrap();
+        let label = format!("explicit={explicit} json={json}");
+        assert_eq!(output.status.code(), Some(0), "{label}");
+        if json {
+            let diagnostics = parse_jsonl(&output.stderr);
+            assert_eq!(diagnostics.len(), 1, "{label}");
+            assert_eq!(
+                diagnostics[0]["data"]["code"],
+                "dictionary_binding_mismatch"
+            );
+            assert_eq!(diagnostics[0]["data"]["severity"], "warning");
+            let records = parse_jsonl(&output.stdout);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["data"]["ready"], true);
+        } else {
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                stderr.starts_with("warning[dictionary_binding_mismatch]: ")
+                    && stderr.contains("`mini`"),
+                "{label}: {stderr}"
+            );
+        }
+    }
 }
 
 #[test]

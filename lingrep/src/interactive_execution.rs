@@ -294,6 +294,7 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
         workers: 1,
         progress: crate::cli::ProgressMode::Never,
         diagnostic_format: crate::cli::DiagnosticFormat::Human,
+        stderr: crate::terminal::RunStderr::new(std::io::stderr()),
     };
     static TOKENIZER: OnceLock<Arc<Tokenizer>> = OnceLock::new();
     let tokenizer = Arc::clone(TOKENIZER.get_or_init(|| {

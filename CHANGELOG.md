@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `--progress auto`, the default, omits routine corpus announcements and the
+  published-attribute list. Streaming query execution, JSON, TSV and redirected
+  stdout show no automatic progress. Warnings are unaffected.
+- `--trace-policy 0` prints per-statement policy totals instead of an empty
+  `policy trace (0 records)`. A positive `--trace-policy N` prints the same
+  totals before its trace. `--progress always` no longer prints policy totals.
+  A failed write of the requested report fails the run.
+- A human-format query that prepares an artifact with `--cache` prints
+  `prepared corpus: PATH` to stderr in every `--progress` mode.
+- Deferred human output can show a transient status line under `--progress
+  auto` after one second on capable terminals, including during `--cache`
+  preparation. `always` shows status immediately: it redraws for deferred human
+  output on capable terminals and otherwise prints ordinary lines, at most one
+  intermediate update every five seconds plus the latest unprinted final count.
+  A failed progress write does not fail the run.
+- `ling corpus inventory --progress always` prints the number of sources
+  listed so far. In 0.5.1 the option was accepted and ignored.
+- `ling corpus build`, and a query that prepares an artifact with `--cache`,
+  report progress for the identity pass over the source and for the build
+  pass. In 0.5.1 the option was accepted and ignored.
+- `ling doctor --corpus` no longer checks the default dictionary, so a prepared
+  corpus passes on a machine without one; `--dict-path` still adds a dictionary
+  check. Without `--corpus`, including with `--patterns` alone, the default
+  dictionary is checked as before. `ready` covers only the selected checks.
+- `ling doctor` human output counts the checks that passed or failed, marks
+  catalog warnings and unavailable binding attributes as `warning` rows, and
+  reports the dictionary as readable instead of loaded. A catalog whose
+  `analyzer:` declaration does not admit the checked dictionary produces
+  `warning[dictionary_binding_mismatch]` on stderr, as a diagnostic record
+  under `--json`.
+
+### Fixed
+
+- Under `--json`, the `attribute_unavailable`, `dictionary_binding_mismatch`
+  and `featurization_policy_mismatch` warnings are `lingrep.diagnostic/v1`
+  records on stderr, like other warnings, instead of plain text lines.
+- A human-format query whose stderr warning cannot be written exits 1. In
+  0.5.1 it exited 0, although the write failure aborted the run before its
+  results were printed.
+- `ling doctor` reports a dictionary failure with one `Dictionary error:`
+  prefix instead of two.
+- `ling doctor` reuses cached dictionary identities while checking that the
+  dictionary can still be opened, avoiding repeated hashing on cache hits.
+
 ## [0.5.1] - 2026-10-27
 
 ### Added

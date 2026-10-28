@@ -29,14 +29,14 @@ use super::query_support::{
 };
 use crate::analyzer_selection::resolve_input;
 use crate::catalog_input::load_and_compile;
-use crate::cli::{AnalyzerCliConfig, AttributesArgs, ExecutionCliConfig, ProgressMode};
+use crate::cli::{AnalyzerCliConfig, AttributesArgs, ExecutionCliConfig};
 use crate::direct_source::{
     BoxSentenceSource, FilesystemCorpusEvents, admitted_filesystem_events, boxed_direct_source,
     encode_digest, scoped, source_from_events,
 };
 use crate::error::CliError;
 use crate::output::{AttributesTsvRow, write_attributes_tsv};
-use crate::presentation::OutputMode;
+use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::attributes::{
     AttributesEnvelope, AttributesEvent, CoverageData, ExclusionData, ProjectionData, ScopeData,
 };
@@ -88,7 +88,7 @@ pub fn run(
         &args.input.markdown,
         config,
         terminal,
-        &mut io::stderr(),
+        output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
     let stdin = selected_corpus.is_none() && root.is_none_or(|path| path == Path::new("-"));
@@ -111,7 +111,7 @@ pub fn run(
                 resolution
             });
             let inputs = artifact.analysis_inputs()?;
-            write_token_schema_notice(artifact.analyzer(), &inputs)?;
+            write_token_schema_notice(artifact.analyzer(), &inputs, config)?;
             let documents = artifact.document_count();
             let admission = prepared_scope
                 .as_ref()
@@ -247,7 +247,12 @@ pub fn run(
     limits.validate()?;
 
     let run_id = random_id();
-    let presentation_progress = PresentationProgress::stderr();
+    let presentation_progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        output,
+        ResultDelivery::Deferred,
+    );
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let mut coverage = AttributeCoverage::new(&schema);
         let mut admitted_sentences = 0_u64;
@@ -273,16 +278,12 @@ pub fn run(
                     .checked_add(1)
                     .ok_or(ExecutionError::ResourceAccounting)?;
             }
-            if config.progress == ProgressMode::Always {
-                presentation_progress.write_line(&format!(
-                    "observed {admitted_sentences} sentences, {} tokens",
-                    coverage.admitted_tokens()
-                ));
-            }
+            let tokens = coverage.admitted_tokens();
+            presentation_progress.snapshot(move || {
+                format!("observed {admitted_sentences} sentences, {tokens} tokens")
+            });
         }
-        presentation_progress
-            .finish()
-            .map_err(execution_output_io)?;
+        presentation_progress.finish();
 
         // Every count is final before the first record is written: this is an
         // aggregate, and a partially-observed corpus cannot answer "is this

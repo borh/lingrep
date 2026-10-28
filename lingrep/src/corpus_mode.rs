@@ -9,6 +9,7 @@
 //! request `corpus build` states. The two agree on which artifact answers to a
 //! source by construction rather than by convention.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use lingrep_cli_common::MarkdownReaderArgs;
@@ -16,7 +17,8 @@ use lingrep_cli_common::MarkdownReaderArgs;
 use crate::cli::{CacheArgs, ExecutionCliConfig, QueryInputArgs};
 use crate::commands::corpus::{BuildRequest, EnsuredArtifact, PublicationRole, ensure_artifact};
 use crate::error::CliError;
-use crate::presentation::ProgressMode;
+use crate::output::sanitize_terminal;
+use crate::presentation::{OutputMode, ProgressMode};
 use crate::terminal::TerminalArbiter;
 
 /// Which corpus the run will read, and how that was decided.
@@ -59,28 +61,44 @@ pub fn resolve(
     markdown: &MarkdownReaderArgs,
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
-    progress: &mut impl std::io::Write,
+    output: OutputMode,
 ) -> Result<ResolvedCorpus, CliError> {
-    let resolved = decide(input, cache, markdown, config, terminal, progress)?;
-    if config.progress == ProgressMode::Always {
-        match (&resolved.corpus, resolved.origin) {
-            (Some(path), CorpusOrigin::Reused) => writeln!(
-                progress,
-                "corpus: reusing the prepared artifact at {}",
-                path.display()
-            ),
-            (Some(path), CorpusOrigin::Prepared) => {
-                writeln!(progress, "corpus: prepared and reading {}", path.display())
-            }
-            (Some(path), CorpusOrigin::Addressed) => {
-                writeln!(progress, "corpus: reading {}", path.display())
-            }
-            (_, _) => writeln!(
-                progress,
-                "corpus: analyzing the input directly; no prepared artifact was read or written"
-            ),
-        }
-        .map_err(CliError::Io)?;
+    let resolved = decide(input, cache, markdown, config, terminal, output)?;
+    // A human-format run that creates an artifact prints its path in every
+    // `--progress` mode.
+    if let (Some(path), CorpusOrigin::Prepared, OutputMode::Human) =
+        (&resolved.corpus, resolved.origin, output)
+    {
+        config
+            .stderr
+            .diagnostic(|stderr| {
+                writeln!(
+                    stderr,
+                    "prepared corpus: {}",
+                    sanitize_terminal(&path.display().to_string())
+                )
+            })
+            .map_err(CliError::Io)?;
+    } else if config.progress == ProgressMode::Always {
+        let _ = config
+            .stderr
+            .diagnostic(|stderr| match (&resolved.corpus, resolved.origin) {
+                (Some(path), CorpusOrigin::Reused) => writeln!(
+                    stderr,
+                    "corpus: reusing the prepared artifact at {}",
+                    path.display()
+                ),
+                (Some(path), CorpusOrigin::Prepared) => {
+                    writeln!(stderr, "corpus: prepared and reading {}", path.display())
+                }
+                (Some(path), CorpusOrigin::Addressed) => {
+                    writeln!(stderr, "corpus: reading {}", path.display())
+                }
+                (_, _) => writeln!(
+                    stderr,
+                    "corpus: analyzing the input directly; no prepared artifact was read or written"
+                ),
+            });
     }
     Ok(resolved)
 }
@@ -132,7 +150,7 @@ fn decide(
     markdown: &MarkdownReaderArgs,
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
-    progress: &mut impl std::io::Write,
+    output: OutputMode,
 ) -> Result<ResolvedCorpus, CliError> {
     if cache.cache && input.root.as_deref() == Some(Path::new("-")) {
         return Err(CliError::InvalidArgs(
@@ -158,7 +176,7 @@ fn decide(
         terminal,
         true,
         PublicationRole::IntermediateCommit,
-        progress,
+        output,
     ));
     // Caching is explicit, so lookup and preparation failures must be visible
     // rather than silently changing the requested execution mode.

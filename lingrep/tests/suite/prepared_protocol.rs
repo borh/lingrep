@@ -2600,3 +2600,39 @@ fn default_execution_preserves_a_sentence_larger_than_a_batch() {
     assert_eq!(manifest["sentence_truncation"], Value::Null);
     assert_eq!(manifest["token_count"], 33_002);
 }
+
+#[test]
+fn corpus_build_progress_labels_the_identity_pass_and_the_build_pass() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("one.conllu");
+    fs::write(&root, "1\tdone\tdo\tVERB\tVBN\t_\t0\troot\t_\t_\n\n").unwrap();
+    let build = |extra: &[&str], progress: &str| {
+        let output = lingrep_without_dictionary()
+            .args(["corpus", "build", "--json", "--progress", progress])
+            .args(extra)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let explicit = directory.path().join("explicit.lingcorpus");
+    let explicit = explicit.to_str().unwrap();
+
+    assert_eq!(build(&["--output", explicit], "auto"), "");
+    fs::remove_dir_all(explicit).unwrap();
+    assert_eq!(
+        build(&["--output", explicit], "always"),
+        "build pass: stored 1 sentences\n",
+        "--output skips the identity pass"
+    );
+    assert_eq!(
+        build(&[], "always"),
+        "identity pass: read 1 sources\nbuild pass: stored 1 sentences\n"
+    );
+    assert_eq!(
+        build(&[], "always"),
+        "identity pass: read 1 sources\n",
+        "reuse runs no build pass"
+    );
+}
