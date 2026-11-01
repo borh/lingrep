@@ -13,6 +13,9 @@ dev = ["pytest==9.1.1"]
 
 [tool.uv]
 exclude-newer = "3 days"
+# GHSA-rfpc-qcw5-3pc4 and 12 other filelock advisories are fixed in 4.2.1;
+# litellm 1.104 and later cap filelock below 4.
+constraint-dependencies = ["filelock>=4.2.1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
