@@ -814,7 +814,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         &mut self,
         node: Node<'_>,
     ) -> Result<(CompactString, LoweredEntry), CompileError> {
-        self.check_recovery_node(node)?;
+        self.check_recovery_subtree(node)?;
         self.charge_metadata_bytes(node)?;
 
         let key_node = required_field(self.source, &self.source_label, node, "key", "identifier")?;

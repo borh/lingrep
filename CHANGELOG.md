@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `linguistic-eval-*` flake outputs moved to the `lingrep-harbor` repository,
   which consumes this flake's `lingrep` and `vibrato-dict-cwj`.
 
+### Fixed
+
+- A metadata map key that is not an identifier, such as `markdown-it-py`,
+  `a.b` or `x+y`, fails compilation with a syntax error at the key. In 0.6.0 it
+  was published cut at the first such character (`{"markdown": …}`) with no
+  diagnostic.
+
 ## [0.6.0] - 2026-10-29
 
 ### Added

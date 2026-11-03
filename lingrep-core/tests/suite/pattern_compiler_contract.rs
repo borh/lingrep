@@ -4284,6 +4284,35 @@ p := [text=a]."#;
 }
 
 #[test]
+fn a_map_key_that_is_not_an_identifier_fails_with_a_syntax_error_at_the_key() {
+    for (source, key) in [
+        (
+            "mining: {markdown-it-py: \"4\"}\np := [text=a].\n",
+            "markdown-it-py",
+        ),
+        ("mining: {a.b: \"4\"}\np := [text=a].\n", "a.b"),
+        ("mining: {x+y: \"4\"}\np := [text=a].\n", "x+y"),
+        ("mining: [{outer: {in-ner: 1}}]\np := [text=a].\n", "in-ner"),
+        ("defaults\n  mining: {a-b: 1}\nend\np := [text=a].\n", "a-b"),
+    ] {
+        let Err(error) = compile_catalog(
+            PatternSource::named("map-key.lx", source),
+            CompileLimits::default(),
+        ) else {
+            panic!("{source}: a truncated map key must not be published");
+        };
+        let diagnostic = error.diagnostics.first().expect("a diagnostic is present");
+        assert_eq!(diagnostic.code(), DiagnosticCode::Syntax, "{source}");
+        let key_start = source.find(key).expect("fixture contains the key");
+        let range = diagnostic.location().byte_range();
+        assert!(
+            range.start >= key_start && range.end <= key_start + key.len(),
+            "{source}: diagnostic at {range:?} is not inside `{key}`"
+        );
+    }
+}
+
+#[test]
 fn whole_document_and_multi_call_builder_are_equivalent() {
     let document = r#"category: "shared"
 p := [text=a].
