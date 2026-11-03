@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -95,6 +96,28 @@ def verdict(estimate, ceiling, completed, expected):
     return "inconclusive"
 
 
+def sample_until_exit(process, sample, period):
+    """Calls `sample` every `period` seconds until `process` exits.
+
+    Returns the exit code and the monotonic time at which `wait` returned.
+    """
+    exited = threading.Event()
+    result = []
+
+    def wait():
+        code = process.wait()
+        result.append((code, time.monotonic()))
+        exited.set()
+
+    waiter = threading.Thread(target=wait, daemon=True)
+    waiter.start()
+    while not exited.is_set():
+        sample()
+        exited.wait(period)
+    waiter.join()
+    return result[0]
+
+
 def collect(plan_path, run, receipt, limit):
     plan = json.loads(plan_path.read_text())
     group = Path("/sys/fs/cgroup") / Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1].lstrip("/")
@@ -115,28 +138,28 @@ def collect(plan_path, run, receipt, limit):
     start = time.monotonic()
     with receipt.with_suffix(".build.log").open("w") as log, receipt.with_suffix(".samples.jsonl").open("w") as samples:
         process = subprocess.Popen(argv, stdout=log, stderr=log, env={**os.environ, "TMPDIR": str(run)})
+
+        def sample():
+            row = {"seconds": time.monotonic() - start,
+                   "memory_current": int((group / "memory.current").read_text()),
+                   "memory_stat": counters(group, "memory.stat")}
+            try:
+                row["process_kib"] = {
+                    key: int(value.split()[0]) for key, value in
+                    (line.split(":", 1) for line in Path(f"/proc/{process.pid}/status").read_text().splitlines())
+                    if key in {"VmRSS", "RssAnon", "RssFile", "RssShmem"}}
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+            samples.write(json.dumps(row) + "\n")
+            samples.flush()
         try:
-            while process.poll() is None:
-                row = {"seconds": time.monotonic() - start,
-                       "memory_current": int((group / "memory.current").read_text()),
-                       "memory_stat": counters(group, "memory.stat")}
-                try:
-                    row["process_kib"] = {
-                        key: int(value.split()[0]) for key, value in
-                        (line.split(":", 1) for line in Path(f"/proc/{process.pid}/status").read_text().splitlines())
-                        if key in {"VmRSS", "RssAnon", "RssFile", "RssShmem"}}
-                except (FileNotFoundError, ProcessLookupError):
-                    pass
-                samples.write(json.dumps(row) + "\n")
-                samples.flush()
-                time.sleep(0.25)
-            code = process.wait()
+            code, ended = sample_until_exit(process, sample, 0.25)
         finally:
             if process.poll() is None:
                 process.kill()
                 process.wait()
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    row = {"argv": argv, "exit": code, "wall": time.monotonic() - start,
+    row = {"argv": argv, "exit": code, "wall": ended - start,
            "user": usage.ru_utime, "sys": usage.ru_stime, "rss_kib": usage.ru_maxrss,
            "memory_peak": int((group / "memory.peak").read_text()),
            "memory_events": counters(group, "memory.events"),

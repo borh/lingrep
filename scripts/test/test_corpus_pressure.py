@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 import tempfile
 import shutil
+import subprocess
+import sys
+import time
 from unittest import mock
 import unittest
 
@@ -82,6 +85,15 @@ class PressureTests(unittest.TestCase):
         self.assertEqual(pressure.verdict({**estimate, "ratio": 1.12, "low": 1.11, "high": 1.13}, 1.10, 12, 12), "regressed")
         with self.assertRaises(ValueError):
             pressure.verdict(estimate, 1.10, 8, 12)
+
+    def test_wall_ends_at_child_exit_not_at_the_next_sample(self):
+        start = time.monotonic()
+        process = subprocess.Popen([sys.executable, "-c", "pass"])
+        samples = []
+        code, ended = pressure.sample_until_exit(process, lambda: samples.append(1), 5.0)
+        self.assertEqual(code, 0)
+        self.assertLess(ended - start, 2.5)
+        self.assertGreaterEqual(len(samples), 1)
 
     def test_unverified_service_stop_preserves_its_files(self):
         with tempfile.TemporaryDirectory() as directory:
