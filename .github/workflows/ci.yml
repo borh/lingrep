@@ -85,7 +85,7 @@ jobs:
           key: macos-ci
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build -p lingrep

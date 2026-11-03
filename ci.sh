@@ -99,8 +99,8 @@ run_common_checks() {
     echo "Checking formatting"
     cargo fmt --check --all 2>&1 | tee "${TMPDIR:-/tmp}/cargo-fmt.log"
 
-    echo "Running clippy on all targets"
-    cargo clippy --all-targets -- -D warnings 2>&1 | tee "${TMPDIR:-/tmp}/cargo-clippy.log"
+    echo "Running clippy on all targets and features"
+    cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee "${TMPDIR:-/tmp}/cargo-clippy.log"
 }
 
 run_shared_tests() {
@@ -144,14 +144,6 @@ run_full_tests_and_extras() {
     echo "Running lingrep-web browser layout checks"
     scripts/run_lingrep_web_layout_e2e.sh
 
-    # lingrep-perf's screen is behind a feature because taking `lingrep-core` with
-    # `bench-instrumentation` unconditionally would unify that feature into the
-    # shipping binaries. Feature-gated code is invisible to `cargo clippy
-    # --all-targets`, which selects targets and not features, so without this
-    # step the screen would be neither compiled nor linted by any lane. Tests
-    # run in `run_screen_lane`; feature-specific linting stays here.
-    cargo clippy -p lingrep-perf --features screen --all-targets -- -D warnings
-
     # The orchestrator's own refusals and its ABBA balancing. No timing — this
     # runs in about a second and never measures anything, which is what makes
     # it admissible here at all. Without it the shell half of the tooling is
@@ -173,11 +165,9 @@ run_full_tests_and_extras() {
 #
 # The second invocation is not redundant. `cargo doc --no-deps` selects
 # targets, not features, so every `#[cfg(feature = "screen")]` module is
-# invisible to it, including `lingrep_perf::orchestrate`. This mirrors the
-# feature-gated clippy lane above.
+# invisible to it, including `lingrep_perf::orchestrate`.
 # Both lanes, because the counted-work pin is what a matcher change moves and a
-# matcher change is exactly what gets pushed after `--fast`. The clippy half
-# stays in the full lane; this gate protects the pinned counters.
+# matcher change is exactly what gets pushed after `--fast`.
 run_screen_lane() {
     echo "Running lingrep-perf with the counted-work screen enabled"
     cargo test -p lingrep-perf --features screen --quiet 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-lingrep-perf.log"
@@ -186,7 +176,7 @@ run_screen_lane() {
     # above tests `lingrep-perf`'s targets; it builds `lingrep-core` as a library, so
     # every `#[cfg(feature = "bench-instrumentation")]` test module inside
     # `lingrep-core` is neither compiled nor run — the same target-versus-feature
-    # gap as the doc and clippy lanes below, one level further in.
+    # gap as the doc lane below, one level further in.
     #
     # Without this lane, a change that moves a matcher pin under these features
     # passes every other lane. The feature set matches the line above,
