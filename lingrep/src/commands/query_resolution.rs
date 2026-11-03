@@ -76,11 +76,11 @@ pub(crate) struct ResolvedMatchingQuery {
 
 #[derive(Default)]
 pub(crate) struct QueryScope {
-    scope_observation: ScopeObservation,
+    pub(crate) scope_observation: ScopeObservation,
     pub(crate) prepared_scope: Option<ScopeResolution>,
-    section_labels: BTreeSet<String>,
-    markdown_diagnostics: Option<lingrep_core::corpus::MarkdownDiagnostics>,
-    read_time_policy: Option<lingrep_core::corpus::SectionPolicy>,
+    pub(crate) section_labels: BTreeSet<String>,
+    pub(crate) markdown_diagnostics: Option<lingrep_core::corpus::MarkdownDiagnostics>,
+    pub(crate) read_time_policy: Option<lingrep_core::corpus::SectionPolicy>,
 }
 
 impl QueryScope {

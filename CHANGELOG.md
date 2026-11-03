@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ling coverage --where` prints `warning[unused_section_labels]` for a section
+  label the corpus does not record or that the read-time section policy
+  excludes, as `matches` and `summarize` do. In 0.6.0 it printed no warning.
 - A metadata map key that is not an identifier, such as `markdown-it-py`,
   `a.b` or `x+y`, fails compilation with a syntax error at the key. In 0.6.0 it
   was published cut at the first such character (`{"markdown": …}`) with no

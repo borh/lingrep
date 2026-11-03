@@ -200,6 +200,65 @@ fn a_clause_admitting_nothing_reports_unknown() {
     assert!(exclusion.contains(r#""status":"unknown""#), "{exclusion}");
 }
 
+/// The `unused_section_labels` warning `matches` and `summarize` emit, over
+/// files read directly and over a prepared artifact.
+#[test]
+fn coverage_warns_about_a_section_label_the_corpus_does_not_record() {
+    let directory = TempDir::new().unwrap();
+    let documents = directory.path().join("documents");
+    std::fs::create_dir(&documents).unwrap();
+    std::fs::write(
+        documents.join("a.md"),
+        "# Methods {.methods}\n\n猫が走った。\n",
+    )
+    .unwrap();
+    let build = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dict_path())
+        .arg(&documents)
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let artifact = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "lingcorpus")
+        })
+        .expect("corpus build writes an artifact beside its source");
+
+    for source in [
+        vec![
+            "--dict-path".into(),
+            dict_path().into_os_string(),
+            documents.clone().into_os_string(),
+        ],
+        vec!["--corpus".into(), artifact.into_os_string()],
+    ] {
+        let output = lingrep()
+            .arg("coverage")
+            .args(&source)
+            .args(["--where", "@section = nosuch"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{source:?}: {stderr}");
+        assert!(
+            stderr.contains(
+                "warning[unused_section_labels]: --where names section `nosuch` this corpus \
+                 does not record; it records `methods`"
+            ),
+            "{source:?}: {stderr}"
+        );
+    }
+}
+
 /// `--plan` must report the catalog a real run would compile, or it
 /// describes a different invocation than the one it is explaining.
 #[test]

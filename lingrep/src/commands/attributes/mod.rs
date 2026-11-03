@@ -8,13 +8,10 @@
 
 pub(crate) mod report;
 
-use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::Path;
 
-use lingrep_core::corpus::{
-    AdmittedCorpus, CorpusReadConfig, ScopeObservation, resolve_input_format,
-};
+use lingrep_core::corpus::{AdmittedCorpus, CorpusReadConfig, resolve_input_format};
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionError, SentenceAdmission, SentenceBatchSource,
 };
@@ -22,7 +19,8 @@ use lingrep_corpus::CorpusArtifact;
 
 use self::report::{AttributeCoverage, exclusion_record};
 use super::CommandOutcome;
-use super::query_scope::{build_scope_report, parse_scope, resolve_prepared_scope};
+use super::query_resolution::QueryScope;
+use super::query_scope::{parse_scope, resolve_prepared_scope};
 use super::query_support::{
     execution_output_error, execution_output_io, random_id, write_token_schema_notice,
 };
@@ -40,7 +38,6 @@ use crate::protocol::attributes::{
     AttributesEnvelope, AttributesEvent, CoverageData, ExclusionData, ProjectionData, ScopeData,
 };
 use crate::protocol::write_jsonl;
-use crate::scope_precompute::ScopeResolution;
 use crate::section_diagnostics::refuse_unanswerable;
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
@@ -76,9 +73,7 @@ pub fn run(
     let catalog_fingerprint = catalog.as_ref().map(|catalog| catalog.fingerprint.clone());
 
     let scope_clause = parse_scope(args.selection.clause.as_deref())?;
-    let scope_observation = ScopeObservation::default();
-    let mut prepared_scope: Option<ScopeResolution> = None;
-    let mut section_labels = BTreeSet::new();
+    let mut scope = QueryScope::default();
 
     let root = args.input.root.as_deref();
     let resolved_corpus = crate::corpus_mode::resolve(
@@ -105,14 +100,15 @@ pub fn run(
                     resolve_prepared_scope(&reader, clause)
                 })
                 .transpose()?;
-            prepared_scope = resolved.map(|(resolution, labels)| {
-                section_labels = labels;
+            scope.prepared_scope = resolved.map(|(resolution, labels)| {
+                scope.section_labels = labels;
                 resolution
             });
             let inputs = artifact.analysis_inputs()?;
             write_token_schema_notice(artifact.analyzer(), &inputs, config)?;
             let documents = artifact.document_count();
-            let admission = prepared_scope
+            let admission = scope
+                .prepared_scope
                 .as_ref()
                 .map_or(SentenceAdmission::All, |resolved| {
                     resolved.admission.clone()
@@ -182,6 +178,7 @@ pub fn run(
                 .resolve()
                 .map_err(CliError::InvalidArgs)?
                 .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
+            scope.read_time_policy = Some(markdown_config.policy.clone());
             let reader_config = CorpusReadConfig::new(format, markdown_config);
             let (source, stats) = if stdin {
                 // No completion observation: a stream digest is not a corpus
@@ -194,7 +191,7 @@ pub fn run(
                     source_from_events(scoped(
                         AdmittedCorpus::new(events),
                         scope_clause.as_ref(),
-                        &scope_observation,
+                        &scope.scope_observation,
                     ))
                     .with_normalization(config.normalization)
                     .with_segmentation(config.segmentation)
@@ -202,17 +199,18 @@ pub fn run(
                 ))
             } else {
                 let root = root.expect("filesystem root");
-                let (events, _observation, _diagnostics) = FilesystemCorpusEvents::new(
+                let (events, _observation, diagnostics) = FilesystemCorpusEvents::new(
                     root,
                     reader_config,
                     config.traversal.clone(),
                     config.limits.max_input_record_bytes,
                 )?;
+                scope.markdown_diagnostics = Some(diagnostics);
                 boxed_direct_source(Box::new(
                     source_from_events(scoped(
                         admitted_filesystem_events(events),
                         scope_clause.as_ref(),
-                        &scope_observation,
+                        &scope.scope_observation,
                     ))
                     .with_normalization(config.normalization)
                     .with_segmentation(config.segmentation)
@@ -246,6 +244,12 @@ pub fn run(
     limits.validate()?;
 
     let run_id = random_id();
+    scope.warn_before_run(
+        scope_clause.as_ref(),
+        &args.input.markdown.self_label_no_ops(),
+        config,
+        &run_id,
+    )?;
     let presentation_progress = PresentationProgress::stderr(
         &config.stderr,
         config.progress,
@@ -287,12 +291,7 @@ pub fn run(
         // Every count is final before the first record is written: this is an
         // aggregate, and a partially-observed corpus cannot answer "is this
         // attribute absent anywhere?".
-        let scope_report = build_scope_report(
-            scope_clause.as_ref(),
-            prepared_scope.as_ref(),
-            &scope_observation,
-            false,
-        )?;
+        let scope_report = scope.report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
         }

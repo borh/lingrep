@@ -240,7 +240,6 @@ wildcard_imports = "allow"
 # --- Nursery group: denied, with an allow-list of the lints that have findings.
 nursery = { level = "deny", priority = -1 }
 branches_sharing_code = "allow"
-collection_is_never_read = "allow"
 derive_partial_eq_without_eq = "allow"
 equatable_if_let = "allow"
 future_not_send = "allow"
