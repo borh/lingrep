@@ -149,6 +149,16 @@ class AdapterMappingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must be strings"):
                     analyze_document(doc, projection(), "input")
 
+    def test_ud_features_split_comma_joined_values_and_provider_fields_keep_them(
+        self,
+    ) -> None:
+        token = FakeToken(
+            "，", 0, morph=FakeMorph({"Number": "Sing,Plur", "Reading": ","})
+        )
+        doc = FakeDoc("，", [token], [FakeSpan((token,), 0, 1)])
+        values = analyze_document(doc, projection(), "input")[0]["values"]
+        self.assertEqual(values[5:], [[], ["Plur", "Sing"], [","]])
+
     def test_morphology_names_use_ud_or_provider_namespaces(self) -> None:
         self.assertEqual(morph_attribute_key("Number"), "feat.Number")
         self.assertEqual(morph_attribute_key("Gender[psor]"), "feat.Gender[psor]")

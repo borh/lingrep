@@ -695,8 +695,10 @@ def _canonical_morphology(values: Mapping[str, Any]) -> dict[str, list[str]]:
                 f"spaCy morphology names {owners[key]!r} and {source_name!r} collide"
             )
         owners[key] = source_name
-        if isinstance(raw_values, str):
+        if isinstance(raw_values, str) and key.startswith("feat."):
             members = raw_values.split(",") if raw_values else []
+        elif isinstance(raw_values, str):
+            members = [raw_values] if raw_values else []
         else:
             members = list(raw_values or [])
         if any(not isinstance(member, str) or not member for member in members):

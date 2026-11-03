@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `a.b` or `x+y`, fails compilation with a syntax error at the key. In 0.6.0 it
   was published cut at the first such character (`{"markdown": …}`) with no
   diagnostic.
+- With GiNZA, the spaCy adapter publishes `,` as the `spacy.morph.reading` of a
+  comma token. In 0.6.0 any text containing a comma failed with `morphology
+  values for 'Reading' must be strings`. A `spacy.morph.*` value is one member;
+  only `feat.*` values are split on commas.
 
 ## [0.6.0] - 2026-10-29
 
