@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `schema` block can declare `map` for a key whose value is a map, such as
+  `mining: map required`. A schema line with an unknown type name fails with
+  an error that names the type and lists the valid ones; in 0.6.0 it failed
+  with a generic syntax error.
+
 ### Removed
 
 - The Harbor evaluation harness (`benchmarks/harbor`), its task images

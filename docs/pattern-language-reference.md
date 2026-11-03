@@ -370,7 +370,8 @@ annotation's top level, is a compile error.
 
 Without a `schema` block, any key is accepted. A `schema` block closes the
 catalog's descriptive key set, so an undeclared key is refused; an empty `schema`
-block closes it to compiler-owned keys alone. Compiler-owned keys —
+block closes it to compiler-owned keys alone. A declaration names one of the
+five value types; `map` admits any map, whatever its keys. Compiler-owned keys —
 `output_name`, `groups`, `priority_order`, `key`, `publish`, `transform`, `tags`,
 `render`, `dictionary`, `anchor` and `max_nesting` — are admitted without
 declaration and are an error to declare. `examples` and `counterexamples` are

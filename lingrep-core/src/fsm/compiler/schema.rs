@@ -22,28 +22,29 @@ use std::collections::HashMap;
 
 use super::model::{DefinitionVisibility, ParsedDefinition, SourceSpan};
 
-/// The four value shapes a catalog may declare.
-///
-/// Deliberately not a `map`: a declared `map` would have to say what its keys
-/// are to be worth more than "some object", and that is a schema language, not
-/// a type. The three compiler-owned map-valued keys are typed by the compiler.
+/// The value shapes a catalog may declare.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MetadataType {
     String,
     Number,
     Boolean,
     List,
+    Map,
 }
 
 impl MetadataType {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::String,
+        Self::Number,
+        Self::Boolean,
+        Self::List,
+        Self::Map,
+    ];
+
     pub(crate) fn parse(text: &str) -> Option<Self> {
-        Some(match text {
-            "string" => Self::String,
-            "number" => Self::Number,
-            "boolean" => Self::Boolean,
-            "list" => Self::List,
-            _ => return None,
-        })
+        Self::ALL
+            .into_iter()
+            .find(|declared| declared.name() == text)
     }
 
     pub(crate) const fn name(self) -> &'static str {
@@ -52,6 +53,7 @@ impl MetadataType {
             Self::Number => "number",
             Self::Boolean => "boolean",
             Self::List => "list",
+            Self::Map => "map",
         }
     }
 
@@ -61,6 +63,7 @@ impl MetadataType {
             Self::Number => value.is_number(),
             Self::Boolean => value.is_boolean(),
             Self::List => value.is_array(),
+            Self::Map => value.is_object(),
         }
     }
 }
@@ -384,6 +387,32 @@ mod tests {
             range.start > SOURCE.find("\nend").expect("block ends"),
             "the annotation is reported, not the declaration"
         );
+    }
+
+    #[test]
+    fn a_map_declaration_admits_a_map_value() {
+        accept(
+            "schema\n  mining: map required\nend\n\nmining: {corpus: \"a\", tokens: 3}\np := x.\n",
+        );
+    }
+
+    #[test]
+    fn a_map_declaration_rejects_a_non_map_value_at_the_key() {
+        const SOURCE: &str = "schema\n  mining: map\nend\n\nmining: [1]\np := x.\n";
+        let message = refuse(SOURCE);
+        assert!(message.contains("declared `map`"), "{message}");
+        assert_eq!(refuse_at(SOURCE), "mining");
+    }
+
+    #[test]
+    fn an_unknown_metadata_type_is_named_at_the_type() {
+        const SOURCE: &str = "schema\n  layer: strng\nend\np := x.\n";
+        let message = refuse(SOURCE);
+        assert!(
+            message.contains("unknown metadata type `strng`"),
+            "{message}"
+        );
+        assert_eq!(refuse_at(SOURCE), "strng");
     }
 
     #[test]

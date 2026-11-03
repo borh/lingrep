@@ -242,7 +242,7 @@ default. There is no `null` value.
   end
 
 One `defaults` block and one `schema` block may appear before the first
-definition. Schema types are `string`, `number`, `boolean`, and `list`.
+definition. Schema types are `string`, `number`, `boolean`, `list`, and `map`.
 
 ANALYZER REQUIREMENTS AND RESULT KEYS
 

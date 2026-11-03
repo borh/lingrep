@@ -715,11 +715,17 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             "type",
             "metadata_type",
         )?;
-        let declared = MetadataType::parse(self.text(type_node)?).ok_or_else(|| {
+        let type_name = self.text(type_node)?;
+        let declared = MetadataType::parse(type_name).ok_or_else(|| {
             self.error(
                 type_node,
                 DiagnosticCode::UnknownNode,
-                "unknown metadata type",
+                format!(
+                    "unknown metadata type `{type_name}`; expected one of {}",
+                    MetadataType::ALL
+                        .map(|declared| format!("`{}`", declared.name()))
+                        .join(", ")
+                ),
             )
         })?;
         let required = node.child_by_field_name("required").is_some();
