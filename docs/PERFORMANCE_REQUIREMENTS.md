@@ -27,18 +27,33 @@ Baseline: 200K-300K tokens/sec (single-threaded, no cache)
 **Forbidden patterns:**
 - ❌ Loading entire corpus into memory before processing
 - ❌ Collecting all sentences in Vec before matching
-- ❌ O(n) memory growth where n = corpus size
+- ❌ Owned allocations that grow linearly with the corpus
 
-**Required patterns:**
+**Supported bounded-memory patterns:**
 - ✅ Streaming processing (constant memory)
 - ✅ Chunked processing (sub-linear memory)
 - ✅ Lazy loading (load only referenced data)
 - ✅ Memory-mapped files (OS-managed memory)
 
-**Working-set budget:** peak RSS must stay under max(2× the input file
-size, the declared working-set budget). The default working-set budget is
-2 GiB; a command that exposes a budget knob may be run above or below it,
-and the knob's value is then the declared budget for that run.
+**Working-set budget:** complete under an enforced memory limit of
+max(2× the input file size, the declared working-set budget), without OOM
+termination or swapping. The default working-set budget is 2 GiB; an
+explicitly declared budget replaces it for that run. The upper 95%
+confidence bound on wall time under the limit, relative to an unconstrained
+run of the same binary and workload, must be at most 1.10. Use a fixed,
+predeclared balanced comparison with matched workers, affinity and storage.
+Completion alone does not establish budget compliance.
+
+On Linux, use cgroup v2 with `memory.max` set to the limit and
+`memory.swap.max=0`. Record `memory.peak`, `memory.events`, `memory.stat`
+and memory pressure stall information (PSI). Use fresh private input and dictionary inodes in both arms:
+file pages charged to another cgroup can conceal memory consumption.
+On other platforms, use equivalent enforced controls or report capacity as
+unverified. See [the pressure harness](PERFORMANCE_GUIDE.md#qualify-a-corpus-build-under-memory-pressure).
+
+Report anonymous, file-backed and shared residency separately when making
+memory claims. Lower process RSS alone does not establish lower total
+memory consumption or improved capacity under pressure.
 
 The invariant being protected is the forbidden list above — memory must not
 grow with the corpus. A bounded, corpus-independent working set (resident
@@ -90,7 +105,7 @@ sentence-local, so no window crosses a sentence boundary.
 
 `ling summarize --patterns patterns/sentence-final.lx` is the supported
 sentence-final workflow. It should stream bounded batches, aim to exceed 300K tokens/sec
-end-to-end, and keep peak RSS below both 2 GiB and 2× the input-file size.
+end-to-end, and satisfy the working-set budget above.
 Long-running invocations report progress at least every 100K sentences.
 
 ---
@@ -124,6 +139,12 @@ performance change still requires all of the following:
 3. A minimum useful effect and guardrails chosen before final measurement.
 4. Correctness evidence proportional to the semantic risk.
 5. At least one end-to-end comparison from a legitimate optimized build.
+
+Predeclare the sample size, stopping rule and interval method. With few
+pairs, justify the interval method and its distributional assumptions; a
+percentile bootstrap alone cannot establish a tight guard.
+Treat unplanned sample extensions as exploratory. A near-threshold guard
+requires an independent fixed-size confirmation or a valid sequential method.
 
 Choose the evidence tier before the final campaign:
 
@@ -180,9 +201,9 @@ Before retaining a matcher optimization:
 4. For Tier 3, run at least five balanced paired blocks on the primary and at
    least three on every other substantive catalog.
 5. A guardrail whose interval admits a regression beyond its predeclared
-   ceiling is unresolved even when its mean passes. Gather more evidence on
-   that catalog — escalation is per catalog, not per campaign — or reject the
-   candidate; do not call it neutral.
+   ceiling is unresolved even when its mean passes. Follow the sampling
+   rule above; escalation is per catalog, not per campaign. Do not call an
+   unresolved result neutral.
 6. Report every catalog separately and report an equal-weight geometric mean
    across the substantive catalogs. The aggregate describes broad effectiveness
    but never overrides a per-catalog regression guardrail.
@@ -260,6 +281,8 @@ is the same check either way, because both emit `lingrep.query/v2`.
 
 `suite` measures every catalog to the coverage its tier requires and continues
 while the verdict names a catalog requiring escalation (3 → 8 → 20 blocks).
+If escalation clears a guardrail, a resulting improvement is reported as pending
+a fresh, fixed-size confirmation campaign.
 `verdict` renders a measurement report for an external evidence archive and
 leaves two sections for the author to fill in: where the bound went, and what
 was ruled out.

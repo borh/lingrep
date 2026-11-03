@@ -22,6 +22,7 @@
 //! crate in this workspace takes `lingrep-core/testing` as a *dev*-dependency to
 //! avoid the same hazard.
 
+pub mod calibration;
 pub mod campaign;
 pub mod plan;
 pub mod report;

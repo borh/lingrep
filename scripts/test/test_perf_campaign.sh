@@ -68,9 +68,7 @@ expect_refusal "default corpus $scratch/no-default.lingcorpus does not exist" \
     "$script" new --dir "$scratch/missing-default" --campaign x --baseline HEAD \
     --corpus "$scratch/no-default.lingcorpus"
 
-# --affinity defaults to a pinned range and taskset is Linux-only, so without
-# this the first sign of trouble on any other host is exit 127 from the first
-# measured command -- after both arms are built and the manifest is sealed.
+# Explicit CPU affinity requires taskset before either arm is built.
 # Simulated by dropping every PATH entry that supplies taskset -- every one,
 # because `command -v` reports only the first and the refusal must not be
 # satisfied by a later duplicate.
@@ -81,10 +79,10 @@ path_without_taskset=$(
 )
 [ -z "$(PATH=$path_without_taskset command -v taskset 2>/dev/null)" ] ||
     { echo "test bug: taskset still reachable on the filtered PATH" >&2; exit 1; }
-expect_refusal "--affinity needs taskset" \
+expect_refusal "--affinity requires taskset" \
     env PATH="$path_without_taskset" "$script" new --dir "$scratch/no-taskset" \
-    --campaign x --baseline HEAD --corpus "$scratch/default.lingcorpus"
-expect_refusal "--digest-affinity needs taskset" \
+    --campaign x --baseline HEAD --corpus "$scratch/default.lingcorpus" --affinity 0-7
+expect_refusal "--digest-affinity requires taskset" \
     env PATH="$path_without_taskset" "$script" new --dir "$scratch/no-taskset-digest" \
     --campaign x --baseline HEAD --corpus "$scratch/default.lingcorpus" \
     --affinity '' --digest-affinity 0-3
@@ -101,6 +99,16 @@ expect_refusal "--blocks N or --screen is required" \
 expect_refusal "is not a campaign directory" \
     "$script" run --dir "$scratch/nope" --catalog patterns/sfe.lx --blocks 3
 expect_refusal "--dir is required" "$script" verdict
+
+mkdir -p "$scratch/legacy"
+touch "$scratch/legacy/campaign.json"
+expect_refusal "campaign has no frozen measurement helper" \
+    "$script" run --dir "$scratch/legacy" --catalog patterns/sfe.lx --blocks 3
+
+cp "$repo_root/scripts/perf_measure.py" "$scratch/legacy/measure.py"
+printf '%s\n' '{}' > "$scratch/legacy/host.json"
+expect_refusal "measurement backend changed" \
+    "$script" run --dir "$scratch/legacy" --catalog patterns/sfe.lx --blocks 3
 
 # Balancing. Always starting with A leaves the first position confounded with
 # the arm, which is the one thing balancing exists to remove.
@@ -143,18 +151,6 @@ grep -qF -- '--default-corpus "$corpus"' "$script"
 grep -qF -- 'workload_flags+=(--catalog-corpus "$entry")' "$script"
 if grep -qF -- 'TARGET_FLAGS' "$script"; then
     echo "the command must come from the manifest, not from workload.env" >&2
-    exit 1
-fi
-
-# The streaming pipeline must judge both processes. `$?` alone is the hasher's,
-# so a failed run whose hasher succeeded records as good; `PIPESTATUS[0]` alone
-# is the target's, so a hasher that died after consuming its input lets an
-# empty digest be recorded against a run that succeeded.
-grep -qF -- 'PIPESTATUS[@]' "$script"
-grep -qF -- 'statuses[0]' "$script"
-grep -qF -- 'statuses[1]' "$script"
-if grep -qF -- '${PIPESTATUS[0]}' "$script"; then
-    echo "the streaming pipeline must require both statuses, not only the target's" >&2
     exit 1
 fi
 

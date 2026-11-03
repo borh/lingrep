@@ -133,6 +133,50 @@ pub fn render(campaign: &Campaign, adjudication: &Adjudication) -> String {
         manifest.build.profile, manifest.build.lto, manifest.build.codegen_units
     );
     let _ = writeln!(out, "Manifest digest `{}`.", campaign.manifest_digest);
+    let _ = writeln!(out, "Calibration: {}.", adjudication.calibration);
+    if let crate::calibration::CalibrationAssessment::Checked {
+        passed,
+        checks,
+        declared_at_unix_seconds,
+    } = &adjudication.calibration
+    {
+        let _ = writeln!(
+            out,
+            "A/A calibration passed: {passed}.\n\n| calibration check | result |\n|---|---|"
+        );
+        for (field, matched) in checks {
+            let _ = writeln!(
+                out,
+                "| {field} | {} |",
+                if *matched {
+                    "match"
+                } else {
+                    "mismatch or unknown"
+                }
+            );
+        }
+        if let Some(time) = declared_at_unix_seconds {
+            let _ = writeln!(out, "Calibration declared at Unix second {time}.");
+            if let Some(age) = manifest
+                .declared_at_unix_seconds
+                .and_then(|declared| declared.checked_sub(*time))
+            {
+                let _ = writeln!(
+                    out,
+                    "Calibration age at comparison declaration: {age} seconds."
+                );
+            }
+        } else {
+            let _ = writeln!(out, "Calibration declaration time: unknown.");
+        }
+    }
+    if let Some(reference) = &manifest.calibration {
+        let _ = writeln!(
+            out,
+            "Calibration manifest digest `{}`.",
+            reference.manifest_digest
+        );
+    }
     let machine = &manifest.machine;
     let _ = writeln!(
         out,

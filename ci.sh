@@ -78,7 +78,19 @@ run_common_checks() {
     echo "Checking the Hugging Face dataset adapter"
     uv lock --check --script scripts/huggingface_dataset.py
     python -m unittest scripts/test/test_huggingface_dataset.py scripts/test/test_wo_predicate_export.py \
-        scripts/test/test_test_reference_guards.py scripts/test/test_cargo_test_selected.py
+        scripts/test/test_test_reference_guards.py scripts/test/test_cargo_test_selected.py \
+        scripts/test/test_corpus_pressure.py
+
+    if ! command -v python3 >/dev/null; then
+        echo "python3 is required for performance campaign tests" >&2
+        exit 2
+    fi
+    echo "Checking performance campaign measurements and warm-ups"
+    cargo build -p lingrep-perf --bin lingrep-perf --quiet
+    local perf_target=${CARGO_TARGET_DIR:-target}
+    [[ $perf_target = /* ]] || perf_target="$repo_root/$perf_target"
+    LINGREP_PERF_TEST_BIN="$perf_target/debug/lingrep-perf" \
+        python3 -m unittest scripts/test/test_perf_measure.py
 
     echo "Checking the release installer"
     scripts/test/test_install.sh

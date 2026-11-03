@@ -40,11 +40,14 @@ for script in "$repo_root"/scripts/*.sh "$repo_root"/scripts/*.py "$repo_root"/s
     make_script_stub "${script#"$repo_root/scripts/"}"
 done
 
-for command_name in uv python; do
+for command_name in uv python python3; do
     cat >"$temporary/bin/$command_name" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s:%s\n' "${0##*/}" "$*" >>"$LINGREP_CI_TEST_LOG"
+if [[ ${0##*/} == python3 ]]; then
+    printf 'warmup-estimator:%s\n' "${LINGREP_PERF_TEST_BIN:-missing}" >>"$LINGREP_CI_TEST_LOG"
+fi
 if [[ ${LINGREP_CI_FAIL_STEP:-} == "${0##*/}:$*" ]]; then
     exit 42
 fi
@@ -115,6 +118,9 @@ assert_lacks_prefix() {
 
 assert_full_contract() {
     assert_has "python:scripts/check-adapter-wheels.py"
+    assert_has "cargo:build -p lingrep-perf --bin lingrep-perf --quiet"
+    assert_has "warmup-estimator:$temporary/target/debug/lingrep-perf"
+    [[ $(grep -Fxc "python3:-m unittest scripts/test/test_perf_measure.py" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
     assert_has "cargo:test --workspace --tests --quiet"
     assert_has "script:cargo-test-selected.py"
     [[ $(grep -Fxc "cargo:test --workspace --tests --quiet" "$LINGREP_CI_TEST_LOG") -eq 1 ]]
@@ -176,6 +182,7 @@ fi
 
 for failure in \
     'python:scripts/check-adapter-wheels.py' \
+    'cargo:build -p lingrep-perf --bin lingrep-perf --quiet' \
     check-test-consolidation.sh \
     cargo-test-selected.py \
     'cargo:fmt --check --all' \
@@ -210,3 +217,12 @@ if run_mode --full; then
 fi
 export PATH=$original_path
 grep -F "full CI requires chromium and chromedriver" "$temporary/stderr.log" >/dev/null
+
+rm "$temporary/bin/python3"
+export PATH="$temporary/bin"
+if run_mode --fast; then
+    echo "missing python3 must fail the campaign test lane" >&2
+    exit 1
+fi
+export PATH=$original_path
+grep -F "python3 is required for performance campaign tests" "$temporary/stderr.log" >/dev/null

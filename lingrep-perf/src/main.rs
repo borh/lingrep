@@ -29,6 +29,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Estimate a ratio and 95% interval from fixed ABBA blocks [a0, a1, b0, b1].
+    Estimate { file: std::path::PathBuf },
     /// Report counted execution work for every tracked catalog.
     Work {
         /// Screen one catalog only, by repository-relative path.
@@ -131,7 +133,7 @@ enum Command {
         /// The campaign JSON to read.
         #[arg(long, value_name = "FILE")]
         campaign: std::path::PathBuf,
-        /// Print the verdict alone rather than the full results document.
+        /// Print the optimization verdict and calibration status only.
         #[arg(long)]
         verdict_only: bool,
     },
@@ -187,6 +189,18 @@ struct DeclareArgs {
     /// Block counts to escalate through. Defaults to the tier's ladder.
     #[arg(long, value_name = "N", value_delimiter = ',')]
     ladder: Vec<usize>,
+    /// A/A wall acceptance band in percent; requires one fixed --ladder value.
+    #[arg(long, value_name = "PCT", requires = "ladder")]
+    calibration_wall_tolerance_pct: Option<f64>,
+    /// Untimed executions per arm before each run or resume.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    warmup_runs_per_arm: u32,
+    /// CPU affinity for every warm-up and measured run; empty means unpinned.
+    #[arg(long, default_value = "")]
+    affinity: String,
+    /// Local A/A evidence to seal into the comparison reference.
+    #[arg(long, conflicts_with = "calibration_wall_tolerance_pct")]
+    calibration: Option<std::path::PathBuf>,
     /// An absolute goal whose achievement is a reason to stop.
     #[arg(long, value_name = "PATH", requires = "target_below")]
     target_catalog: Option<String>,
@@ -317,6 +331,7 @@ struct RecordArgs {
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Estimate { file } => run_estimate(&file),
         Command::Work {
             catalog,
             all,
@@ -341,6 +356,42 @@ fn main() -> std::process::ExitCode {
             campaign,
             verdict_only,
         } => run_adjudicate(&campaign, verdict_only),
+    }
+}
+
+fn run_estimate(path: &std::path::Path) -> std::process::ExitCode {
+    let result = (|| -> Result<_, String> {
+        let source = std::fs::read(path).map_err(|error| error.to_string())?;
+        let values: Vec<[f64; 4]> =
+            serde_json::from_slice(&source).map_err(|error| error.to_string())?;
+        if values.len() < 2 {
+            return Err("at least two balanced blocks are required".into());
+        }
+        let blocks: Vec<_> = values
+            .into_iter()
+            .map(|[a0, a1, b0, b1]| lingrep_perf::stats::Block {
+                a: [a0, a1],
+                b: [b0, b1],
+            })
+            .collect();
+        lingrep_perf::stats::paired_effect(&blocks, 1)
+            .map_err(|error| format!("invalid block measurements: {error:?}"))
+    })();
+    match result {
+        Ok(effect) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ratio": effect.ratio, "low": effect.low,
+                    "high": effect.high, "blocks": effect.blocks
+                })
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("lingrep-perf: {error}");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
@@ -454,6 +505,32 @@ fn run_adjudicate(path: &std::path::Path, verdict_only: bool) -> std::process::E
         Err(code) => return code,
     };
 
+    if let Some(tolerance) = campaign.manifest.calibration_wall_tolerance_pct {
+        return match lingrep_perf::campaign::calibration_effect(&campaign) {
+            Ok(effect) => {
+                let low = 1.0 - tolerance / 100.0;
+                let high = 1.0 + tolerance / 100.0;
+                let qualified = effect.low >= low && effect.high <= high;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "calibration": if qualified { "qualified" } else { "not-qualified" },
+                        "blocks": effect.blocks, "ratio": effect.ratio, "low": effect.low,
+                        "high": effect.high, "acceptable_interval": [low, high]
+                    })
+                );
+                if qualified {
+                    std::process::ExitCode::SUCCESS
+                } else {
+                    std::process::ExitCode::FAILURE
+                }
+            }
+            Err(error) => {
+                eprintln!("lingrep-perf: calibration rejected: {error}");
+                std::process::ExitCode::from(2)
+            }
+        };
+    }
     match adjudicate(&campaign) {
         // A refusal is its own exit status, distinct from every verdict. An
         // invalid campaign must not read as a decision.
@@ -461,9 +538,13 @@ fn run_adjudicate(path: &std::path::Path, verdict_only: bool) -> std::process::E
             eprintln!("lingrep-perf: refused to adjudicate: {refusal}");
             std::process::ExitCode::from(2)
         }
-        Ok(adjudication) => {
+        Ok(mut adjudication) => {
+            adjudication.calibration = lingrep_perf::calibration::assess(&campaign);
             if verdict_only {
-                println!("{:?}", adjudication.verdict);
+                println!(
+                    "{:?}; calibration: {}",
+                    adjudication.verdict, adjudication.calibration
+                );
             } else {
                 print!("{}", lingrep_perf::report::render(&campaign, &adjudication));
             }
@@ -506,6 +587,15 @@ fn build_declaration(
         other => return Err(format!("--tier: {other} is not 1, 2 or 3")),
     };
     let primary_metric: Metric = parse_enum("primary-metric", &args.primary_metric)?;
+    if let Some(tolerance) = args.calibration_wall_tolerance_pct
+        && (!tolerance.is_finite()
+            || tolerance <= 0.0
+            || tolerance >= 100.0
+            || args.ladder.len() != 1
+            || args.ladder[0] < 3)
+    {
+        return Err("calibration requires a finite tolerance between 0 and 100 and one fixed --ladder value of at least 3".to_owned());
+    }
 
     let mut command_template = Vec::with_capacity(args.command_template.len());
     for token in &args.command_template {
@@ -629,6 +719,14 @@ fn build_declaration(
             } else {
                 args.ladder.clone()
             },
+            calibration_wall_tolerance_pct: args.calibration_wall_tolerance_pct,
+            warmup_runs_per_arm: args.warmup_runs_per_arm,
+            affinity: args.affinity.clone(),
+            calibration: args
+                .calibration
+                .as_deref()
+                .map(lingrep_perf::calibration::CalibrationReference::from_file)
+                .transpose()?,
             build: read_build_profile(&root, &args.build_profile).map_err(|e| e.to_string())?,
             workload,
             command_template,

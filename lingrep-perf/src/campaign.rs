@@ -340,6 +340,18 @@ pub struct Manifest {
     pub minimum_useful_effect_pct: f64,
     pub guardrail_ceilings_pct: BTreeMap<Metric, f64>,
     pub escalation_ladder: Vec<usize>,
+    /// A/A wall acceptance band, expressed as a percentage on either side of one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration_wall_tolerance_pct: Option<f64>,
+    /// Untimed executions of each arm before measuring, including on resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warmup_runs_per_arm: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_rig: Option<crate::calibration::MeasurementRig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_at_unix_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<crate::calibration::CalibrationReference>,
     pub build: BuildProfile,
     pub machine: Machine,
     pub arms: Arms,
@@ -700,11 +712,18 @@ pub fn wall_planning_estimate(campaign: &Campaign) -> Option<String> {
 /// Distinct from every verdict, and returned before any arithmetic runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
+    InvalidCalibration,
     /// A run the orchestrator itself marked failed, or a nonsense measurement.
-    FailedRun { catalog: String, block: usize },
+    FailedRun {
+        catalog: String,
+        block: usize,
+    },
     /// An observation is bound to a different manifest than the one it sits
     /// beside — the manifest was edited after the fact.
-    ManifestDigestMismatch { catalog: String, found: String },
+    ManifestDigestMismatch {
+        catalog: String,
+        found: String,
+    },
     /// The recorded digest is not the digest of the manifest beside it. The
     /// manifest was edited after it was declared, so nothing it says about
     /// what was measured can be trusted.
@@ -717,19 +736,32 @@ pub enum Refusal {
     /// A bar the verdict is measured against is not a finite number. Every
     /// comparison against it would be false, so the campaign would adjudicate
     /// confidently and wrongly.
-    NonFiniteThreshold { field: String },
+    NonFiniteThreshold {
+        field: String,
+    },
     /// Two runs of the same catalog and arm executed different things.
-    ExecFingerprintDiffers { catalog: String, arm: String },
+    ExecFingerprintDiffers {
+        catalog: String,
+        arm: String,
+    },
     /// Two runs of the same catalog saw different inputs, command lines,
     /// environments or machines — including across the two arms, which is the
     /// comparison `ExecFingerprintDiffers` structurally cannot make.
-    InputFingerprintDiffers { catalog: String },
+    InputFingerprintDiffers {
+        catalog: String,
+    },
     /// A campaign that measures a workload must say which one.
     WorkloadNotDeclared,
     /// A catalog's arms disagree on output, so parity does not hold.
-    OutputParityBroken { catalog: String, digests: usize },
+    OutputParityBroken {
+        catalog: String,
+        digests: usize,
+    },
     /// Unequal run counts, or an ordering that is not balanced.
-    UnbalancedArms { catalog: String, block: usize },
+    UnbalancedArms {
+        catalog: String,
+        block: usize,
+    },
     /// A catalog has fewer blocks or screen pairs than its tier requires.
     CoverageShort {
         catalog: String,
@@ -737,26 +769,42 @@ pub enum Refusal {
         found: usize,
     },
     /// A catalog in the descriptor set was never measured.
-    CatalogNotMeasured { catalog: String },
+    CatalogNotMeasured {
+        catalog: String,
+    },
     /// The ladder is absent, non-increasing, or starts below the tier floor.
-    InvalidLadder { ladder: Vec<usize> },
+    InvalidLadder {
+        ladder: Vec<usize>,
+    },
     /// The arms were not built in the shipping release configuration.
-    NotAReleaseBuild { profile: String },
+    NotAReleaseBuild {
+        profile: String,
+    },
     /// The bound was named but the profile that named it was not recorded.
     BoundWithoutProfileEvidence,
     /// Reselecting the metric already in force. Nothing was learned.
-    SelectionRepeatsMetric { metric: Metric },
+    SelectionRepeatsMetric {
+        metric: Metric,
+    },
     /// A selection was recorded without saying why.
     SelectionReasonEmpty,
     /// Tier 1 declared a mode it never measured.
-    ModeNotMeasured { mode: String },
+    ModeNotMeasured {
+        mode: String,
+    },
     /// The primary catalog is not in the descriptor set.
-    UnknownPrimaryCatalog { catalog: String },
+    UnknownPrimaryCatalog {
+        catalog: String,
+    },
 }
 
 impl std::fmt::Display for Refusal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidCalibration => write!(
+                formatter,
+                "calibration requires identical binaries, one wall-time catalog, a finite tolerance in (0, 100), and exactly the declared fixed blocks"
+            ),
             Self::FailedRun { catalog, block } => write!(
                 formatter,
                 "{catalog} block {block} contains a failed or nonsense run; \
@@ -1116,6 +1164,7 @@ fn externally_paced(streams: &[Stream]) -> Vec<ExternallyPaced> {
 /// A complete adjudication.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Adjudication {
+    pub calibration: crate::calibration::CalibrationAssessment,
     pub verdict: Verdict,
     pub streams: Vec<Stream>,
     /// Equal-weight geometric mean over substantive catalogs on the primary
@@ -1390,6 +1439,46 @@ fn blocks_for(observations: &BTreeMap<usize, Vec<&Observation>>, metric: Metric)
     blocks
 }
 
+/// Estimate primary wall time for a fixed A/A plan; reject mixed binaries and oversampling.
+///
+/// # Errors
+///
+/// Returns [`Refusal`] for an invalid seal, plan, observation, or output mismatch.
+pub fn calibration_effect(campaign: &Campaign) -> Result<crate::stats::Effect, Refusal> {
+    let manifest = &campaign.manifest;
+    let mut grouped: BTreeMap<String, BTreeMap<usize, Vec<&Observation>>> = BTreeMap::new();
+    for observation in &campaign.observations {
+        grouped
+            .entry(observation.catalog.clone())
+            .or_default()
+            .entry(observation.block)
+            .or_default()
+            .push(observation);
+    }
+    check_refusals(campaign, &grouped)?;
+    let tolerance = manifest
+        .calibration_wall_tolerance_pct
+        .ok_or(Refusal::InvalidCalibration)?;
+    if !tolerance.is_finite()
+        || tolerance <= 0.0
+        || tolerance >= 100.0
+        || manifest.escalation_ladder.len() != 1
+        || manifest.escalation_ladder[0] < 3
+        || manifest.catalogs.len() != 1
+        || manifest.primary_metric != Metric::Wall
+        || manifest.arms.a.binary_digest != manifest.arms.b.binary_digest
+        || campaign.observations.len() != manifest.escalation_ladder[0].saturating_mul(4)
+        || grouped.len() != 1
+    {
+        return Err(Refusal::InvalidCalibration);
+    }
+    let observations = grouped
+        .get(&manifest.primary_catalog)
+        .ok_or(Refusal::InvalidCalibration)?;
+    paired_effect(&blocks_for(observations, Metric::Wall), 1)
+        .map_err(|_| Refusal::InvalidCalibration)
+}
+
 /// Adjudicate `campaign`.
 ///
 /// # Errors
@@ -1398,6 +1487,9 @@ fn blocks_for(observations: &BTreeMap<usize, Vec<&Observation>>, metric: Metric)
 /// produced in that case, which is the whole point: an invalid campaign must
 /// not yield a confident answer.
 pub fn adjudicate(campaign: &Campaign) -> Result<Adjudication, Refusal> {
+    if campaign.manifest.calibration_wall_tolerance_pct.is_some() {
+        return Err(Refusal::InvalidCalibration);
+    }
     let manifest = &campaign.manifest;
 
     let mut grouped: BTreeMap<String, BTreeMap<usize, Vec<&Observation>>> = BTreeMap::new();
@@ -1467,6 +1559,11 @@ pub fn adjudicate(campaign: &Campaign) -> Result<Adjudication, Refusal> {
     let externally_paced = externally_paced(&streams);
 
     Ok(Adjudication {
+        calibration: if manifest.calibration.is_some() {
+            crate::calibration::CalibrationAssessment::NotChecked
+        } else {
+            crate::calibration::CalibrationAssessment::Missing
+        },
         verdict,
         streams,
         aggregate: geometric_mean(&built.aggregate_ratios),

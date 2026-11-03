@@ -69,6 +69,11 @@ fn manifest() -> Manifest {
         .into_iter()
         .collect(),
         escalation_ladder: vec![3, 8, 20],
+        calibration_wall_tolerance_pct: None,
+        warmup_runs_per_arm: None,
+        measurement_rig: None,
+        declared_at_unix_seconds: None,
+        calibration: None,
         build: BuildProfile {
             profile: "release".to_owned(),
             lto: "fat".to_owned(),
@@ -1346,4 +1351,52 @@ fn a_screen_pair_is_never_paced() {
             .any(|entry| entry.catalog == "patterns/unaffected.lx"
                 || entry.catalog == "patterns/floor.lx")
     );
+}
+
+pub(crate) fn calibration() -> Campaign {
+    let mut campaign = campaign_with(1.0);
+    campaign.manifest.calibration_wall_tolerance_pct = Some(2.0);
+    campaign.manifest.escalation_ladder = vec![3];
+    campaign
+        .manifest
+        .catalogs
+        .retain(|catalog| catalog.path == campaign.manifest.primary_catalog);
+    campaign.manifest.arms.b.binary_digest = campaign.manifest.arms.a.binary_digest.clone();
+    campaign
+        .observations
+        .retain(|observation| observation.catalog == campaign.manifest.primary_catalog);
+    seal(campaign)
+}
+
+#[test]
+fn fixed_calibration_uses_identical_binaries_and_checks_output_parity() {
+    let campaign = calibration();
+    let effect = calibration_effect(&campaign).unwrap();
+    assert_eq!(effect.blocks, 3);
+    assert_eq!(effect.ratio, 1.0);
+    assert!(adjudicate(&campaign).is_err());
+    let mut changed = campaign.clone();
+    changed.manifest.arms.b.binary_digest = "different".to_owned();
+    assert!(calibration_effect(&seal(changed)).is_err());
+    let mut changed = campaign;
+    changed.observations[0].output_digest = "different".to_owned();
+    assert!(calibration_effect(&changed).is_err());
+}
+
+#[test]
+fn calibration_rejects_changed_seals_and_extended_or_incomplete_samples() {
+    let campaign = calibration();
+    let mut changed = campaign.clone();
+    changed.manifest.calibration_wall_tolerance_pct = Some(3.0);
+    assert!(calibration_effect(&changed).is_err());
+    let mut changed = campaign.clone();
+    changed.observations.pop();
+    assert!(calibration_effect(&changed).is_err());
+    let mut changed = campaign;
+    changed.observations.extend(
+        blocks("patterns/primary.lx", 4, 1.0)
+            .into_iter()
+            .filter(|observation| observation.block == 3),
+    );
+    assert!(calibration_effect(&changed).is_err());
 }

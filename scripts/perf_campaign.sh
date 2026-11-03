@@ -64,18 +64,12 @@ build_tool() {
         cargo build --release -p lingrep-perf --features screen --quiet
 }
 
-# The GNU `time` that reports maximum resident set size. The shell builtin
-# does not, and a campaign without a memory guardrail is a campaign that buys
-# latency with RSS and reports it as a win.
 find_time_bin() {
     local candidate=${TIME_BIN:-$(type -P time || true)}
-    if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
-        die "GNU time not found; set TIME_BIN"
+    if [ -z "$candidate" ] || ! "$candidate" -v true >/dev/null 2>&1; then
+        die "GNU time required; set TIME_BIN"
     fi
-    if ! "$candidate" -v true >/dev/null 2>&1; then
-        die "$candidate does not support -v; set TIME_BIN to GNU time"
-    fi
-    echo "$candidate"
+    printf '%s\n' "$candidate"
 }
 
 # ABBA on even blocks, BAAB on odd. Alternating matters: always starting with
@@ -123,8 +117,19 @@ freeze_arm() {
     echo "$frozen"
 }
 
+remove_baseline_worktree() {
+    [ -n "${BASELINE_WORKTREE:-}" ] || return 0
+    if [ -n "$(git -C "$BASELINE_WORKTREE" status --porcelain)" ]; then
+        echo "perf_campaign: retained modified baseline worktree $BASELINE_WORKTREE" >&2
+        return 0
+    fi
+    git -C "$repo_root" worktree remove --force "$BASELINE_WORKTREE"
+    BASELINE_WORKTREE=""
+}
+
 cmd_new() {
-    local dir="" baseline="" corpus="" input="" affinity="0-7" workers=""
+    local dir="" baseline="" corpus="" input="" affinity="" workers=""
+    if [ "$(uname -s)" = Linux ]; then affinity=0-7; fi
     local -a declare_args=() target_flags=() catalog_corpora=()
     local template=matches
     local stream_output=0 digest_affinity=
@@ -214,21 +219,18 @@ cmd_new() {
         *) die "--template takes matches or summarize, not '$template'" ;;
     esac
 
-    # taskset is Linux-only and --affinity defaults to a pinned range, so
-    # elsewhere every measured command dies at 127 -- after both arms are
-    # built and the manifest is sealed. Refused here, where a declaration
-    # error is cheap. `--affinity ''` measures unpinned: a weaker campaign,
-    # not a broken one, and the only honest option on a host with no
-    # affinity API.
     if ! command -v taskset >/dev/null; then
         [ -z "$affinity" ] || die \
-            "--affinity needs taskset, which this host lacks; pass --affinity '' to measure unpinned"
+            "--affinity requires taskset, which is not installed on this host; pass --affinity '' to measure unpinned"
         [ -z "$digest_affinity" ] || die \
-            "--digest-affinity needs taskset, which this host lacks"
+            "--digest-affinity requires taskset, which is not installed on this host"
     fi
 
     build_tool
     mkdir -p "$dir/arms"
+    cp "$repo_root/scripts/perf_measure.py" "$dir/measure.py"
+    python3 "$dir/measure.py" host > "$dir/host.json"
+    cp "$(find_time_bin)" "$dir/gnu-time"
 
     # Arm B first, from the working tree, because that is the change under
     # test and its build failing is the common case.
@@ -243,12 +245,15 @@ cmd_new() {
     local worktree="$dir/.baseline-worktree"
     echo "perf_campaign: building the baseline arm from $baseline" >&2
     git -C "$repo_root" worktree add --detach "$worktree" "$baseline" >/dev/null
+    BASELINE_WORKTREE=$worktree
+    trap remove_baseline_worktree EXIT
     local baseline_commit
     baseline_commit=$(git -C "$worktree" rev-parse --short HEAD)
     (cd "$worktree" && cargo build --release -p lingrep --quiet)
     local arm_a
     arm_a=$(freeze_arm "$worktree/target/release/ling" "$dir/arms")
-    git -C "$repo_root" worktree remove --force "$worktree"
+    remove_baseline_worktree
+    trap - EXIT
 
     local candidate_commit
     candidate_commit=$(git -C "$repo_root" rev-parse --short HEAD)
@@ -366,6 +371,10 @@ ENV
 
     "$tool" declare \
         --out "$dir/campaign.json" \
+        --affinity "$affinity" \
+        --workload-file "$dir/host.json" \
+        --workload-file "$dir/measure.py" \
+        --workload-file "$dir/gnu-time" \
         --arm-a "$arm_a" --arm-a-commit "$baseline_commit" \
         --arm-b "$arm_b" --arm-b-commit "$candidate_commit" \
         "${workload_flags[@]}" \
@@ -393,7 +402,7 @@ cmd_suite() {
         esac
     done
     [ -n "$dir" ] || die "--dir is required"
-    [ -f "$dir/campaign.json" ] || die "$dir is not a campaign directory; run `new` first"
+    [ -f "$dir/campaign.json" ] || die "$dir is not a campaign directory; run new first"
     build_tool
 
     # Looped, because escalation is discovered rather than known in advance:
@@ -452,11 +461,26 @@ cmd_run() {
     fi
     [ -f "$dir/campaign.json" ] || die "$dir is not a campaign directory; run \`new\` first"
 
+    [ -f "$dir/measure.py" ] || die "campaign has no frozen measurement helper; declare a new campaign"
+    local backend
+    backend=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("measurement_backend", ""))' "$dir/host.json")
+    [ "$backend" = gnu-time ] || die "measurement backend changed; declare a new campaign"
+    [ -x "$dir/gnu-time" ] || die "campaign has no frozen GNU time"
+    local calibration_blocks
+    calibration_blocks=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))["manifest"]; print(m["escalation_ladder"][0] if m.get("calibration_wall_tolerance_pct") is not None else "")' "$dir/campaign.json")
+    if [ -n "$calibration_blocks" ]; then
+        [ "$screen" -eq 0 ] && [ "$blocks" = "$calibration_blocks" ] || die "calibration block count is fixed by its manifest"
+    fi
     build_tool
     # shellcheck disable=SC1091
     source "$dir/workload.env"
-    local time_bin
-    time_bin=$(find_time_bin)
+
+    python3 - "$dir/campaign.json" "$AFFINITY" "$backend" <<'PYRIG' || die "execution settings differ from the sealed measurement rig"
+import json, sys
+rig = json.load(open(sys.argv[1]))["manifest"].get("measurement_rig")
+if rig is not None and (rig["affinity"] != sys.argv[2] or rig["backend"] != sys.argv[3]):
+    sys.exit("affinity or backend differs from the manifest")
+PYRIG
 
     [ -n "${LINGREP_DICTIONARY_PATH:-}" ] || die "LINGREP_DICTIONARY_PATH is unset; run inside \`nix develop\`"
 
@@ -482,10 +506,10 @@ and its runs cannot be reproduced from it"
     # runs while the recorder counted two, and the third was refused as out of
     # sequence.
     local plan_row kind required complete partial next_block next_order next_width
-    local guard=0
+    local guard=0 warmed=0
     while true; do
         plan_row=$("$tool" plan --campaign "$dir/campaign.json" |
-            grep -P "^\Q$catalog\E\t" || true)
+            awk -F '\t' -v catalog="$catalog" '$1 == catalog' || true)
         [ -n "$plan_row" ] || die "$catalog is not in this campaign's suite"
         IFS=$'\t' read -r _ kind required complete partial next_block next_order next_width _ \
             <<< "$plan_row"
@@ -494,7 +518,7 @@ and its runs cannot be reproduced from it"
         # error. Found exactly that way.
         [ "$(awk -F'\t' '{print NF}' <<< "$plan_row")" -eq 9 ] ||
             die "the plan row for $catalog has $(awk -F'\t' '{print NF}' <<< "$plan_row") \
-fields, not 9; the `lingrep-perf` build in $tool_target is stale"
+fields, not 9; the lingrep-perf build in $tool_target is stale"
 
         # `--blocks N` and `--screen` are what the caller asked for; the plan
         # says what the campaign owes. Take the larger, so a caller can
@@ -509,6 +533,26 @@ fields, not 9; the `lingrep-perf` build in $tool_target is stale"
             return 0
         fi
 
+        if [ "$warmed" -eq 0 ]; then
+            local warmups phase=warmup session
+            warmups=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))["manifest"]; n=m.get("warmup_runs_per_arm"); print(n if type(n) is int and n > 0 else sys.exit("campaign has no positive sealed warm-up count; declare a new campaign"))' "$dir/campaign.json") || die "declare a campaign with a positive sealed warm-up count"
+            if [ "$next_block" -gt 0 ] || [ "$next_order" -gt 0 ] || compgen -G "$dir/warmups/$(basename "$catalog").*" >/dev/null; then
+                phase=resumed-warmup
+            fi
+            mkdir -p "$dir/warmups"
+            session=$(mktemp -d "$dir/warmups/$(basename "$catalog").$phase.XXXXXX")
+            local arm index expected actual
+            for arm in a b; do
+                expected=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["manifest"]["arms"][sys.argv[2]]["binary_digest"])' "$dir/campaign.json" "$arm")
+                case "$arm" in a) actual=$("$tool" digest "$ARM_A");; b) actual=$("$tool" digest "$ARM_B");; esac
+                [ "$actual" = "$expected" ] || die "arm $arm binary differs from the sealed warm-up binary"
+                for ((index = 0; index < warmups; index++)); do
+                    run_one "$dir" "$catalog" "$arm" "$next_block" "$index" "$mode" "$session/$arm-$index" "$phase" || die "warm-up failed for arm $arm; receipts in $session; no further runs recorded"
+                done
+            done
+            warmed=1
+        fi
+
         local -a arms
         if [ "$next_width" -eq 2 ]; then
             arms=(a b)
@@ -518,8 +562,7 @@ fields, not 9; the `lingrep-perf` build in $tool_target is stale"
 
         local order
         for ((order = next_order; order < next_width; order++)); do
-            if ! run_one "$dir" "$catalog" "${arms[order]}" "$next_block" "$order" "$mode" \
-                "$time_bin"; then
+            if ! run_one "$dir" "$catalog" "${arms[order]}" "$next_block" "$order" "$mode"; then
                 die "stopping at $catalog block $next_block order $order; nothing further \
 is measured until the reason above is resolved"
             fi
@@ -531,8 +574,19 @@ is measured until the reason above is resolved"
     done
 }
 
+stop_measurement() {
+    local code=$1
+    if [ -n "${CAMPAIGN_MEASURE_PID:-}" ]; then
+        kill -TERM "$CAMPAIGN_MEASURE_PID" 2>/dev/null || true
+        wait "$CAMPAIGN_MEASURE_PID" || true
+    fi
+    rm -rf -- "${CAMPAIGN_RUN_TMP:-}"
+    exit "$code"
+}
+
 run_one() {
-    local dir=$1 catalog=$2 arm=$3 block=$4 order=$5 mode=$6 time_bin=$7
+    local dir=$1 catalog=$2 arm=$3 block=$4 order=$5 mode=$6
+    local warmup_receipt=${7:-} phase=${8:-}
 
     local binary
     case "$arm" in
@@ -542,8 +596,19 @@ run_one() {
     esac
 
     local timing errors
-    timing=$(mktemp)
-    errors=$(mktemp)
+    local measurements="$dir/measurements"
+    mkdir -p "$measurements"
+    timing="$measurements/$(basename "$catalog")-block$block-order$order.json"
+    errors="$measurements/$(basename "$catalog")-block$block-order$order.stderr"
+    if [ -n "$warmup_receipt" ]; then
+        timing="$warmup_receipt.json"
+        errors="$warmup_receipt.stderr"
+    fi
+    CAMPAIGN_RUN_TMP=$(mktemp -d "$dir/.run.XXXXXX")
+    trap 'rm -rf -- "${CAMPAIGN_RUN_TMP:-}"' EXIT
+    trap 'stop_measurement 130' INT
+    trap 'stop_measurement 143' TERM
+    trap 'stop_measurement 129' HUP
 
     # Exactly what the manifest seals, read once by the caller. `record`
     # reconstructs it independently and refuses a mismatch, so a wrapper that
@@ -553,6 +618,8 @@ run_one() {
     local -a pin=()
     [ -n "$AFFINITY" ] && pin=(taskset -c "$AFFINITY")
 
+    local -a timer_flags=()
+    [ ! -x "$dir/gnu-time" ] || timer_flags=(--gnu-time "$dir/gnu-time")
     local ok=1
     local -a output_flag=()
     if [ "${STREAM_OUTPUT:-0}" -eq 1 ]; then
@@ -560,29 +627,18 @@ run_one() {
         # digest from an earlier run recorded against this one would make the
         # two arms compare equal on output they never produced.
         local digest_file
-        digest_file=$(mktemp)
-        local -a digest_pin=()
+        digest_file=$(mktemp "$CAMPAIGN_RUN_TMP/digest.XXXXXX")
+        local -a digest_flags=(--digest-tool "$tool")
         if [ -n "${DIGEST_AFFINITY:-}" ]; then
-            digest_pin=(taskset -c "$DIGEST_AFFINITY")
+            digest_flags+=(--digest-affinity "$DIGEST_AFFINITY")
         fi
+        python3 "$dir/measure.py" run --output "$timing" "${timer_flags[@]}" \
+            "${digest_flags[@]}" -- "${pin[@]}" "$binary" "${argv[@]}" \
+            > "$digest_file" 2>"$errors" &
+        CAMPAIGN_MEASURE_PID=$!
+        wait "$CAMPAIGN_MEASURE_PID" || ok=0
+        CAMPAIGN_MEASURE_PID=""
 
-        # `set +e` so the pipeline's failure does not end the script before
-        # `PIPESTATUS` is read, and `PIPESTATUS` captured by the very next
-        # command, because any simple command replaces it.
-        set +e
-        "$time_bin" -o "$timing" -v \
-            "${pin[@]}" "$binary" "${argv[@]}" 2>"$errors" |
-            "${digest_pin[@]}" "$tool" digest-stream > "$digest_file"
-        local -a statuses=("${PIPESTATUS[@]}")
-        set -e
-
-        # Both. `$?` alone is the hasher's, so a failed run whose hasher
-        # succeeded records as good; `PIPESTATUS[0]` alone is the target's, so
-        # a hasher that died after consuming its input lets an empty or
-        # partial digest be recorded against a run that succeeded.
-        if [ "${statuses[0]}" -ne 0 ] || [ "${statuses[1]}" -ne 0 ]; then
-            ok=0
-        fi
         if [ "$ok" -eq 1 ]; then
             output_flag=(--output-digest "$(cat "$digest_file")")
         else
@@ -595,18 +651,38 @@ run_one() {
         rm -f "$digest_file"
     else
         local out
-        out=$(mktemp)
-        "$time_bin" -o "$timing" -v \
-            "${pin[@]}" "$binary" "${argv[@]}" > "$out" 2>"$errors" || ok=0
+        out=$(mktemp "$CAMPAIGN_RUN_TMP/output.XXXXXX")
+        python3 "$dir/measure.py" run --output "$timing" "${timer_flags[@]}" -- \
+            "${pin[@]}" "$binary" "${argv[@]}" > "$out" 2>"$errors" &
+        CAMPAIGN_MEASURE_PID=$!
+        wait "$CAMPAIGN_MEASURE_PID" || ok=0
+        CAMPAIGN_MEASURE_PID=""
         output_flag=(--output "$out")
     fi
 
+    if [ -n "$warmup_receipt" ]; then
+        python3 - "$timing" "$phase" "$arm" "$catalog" "$dir/campaign.json" "$AFFINITY" <<'PYMETA'
+import json, os, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+row = json.loads(path.read_text())
+row.update(phase=sys.argv[2], arm=sys.argv[3], catalog=sys.argv[4],
+           manifest_digest=json.loads(Path(sys.argv[5]).read_text()).get("manifest_digest"),
+           affinity=sys.argv[6], environment={"LINGREP_DICTIONARY_PATH": os.environ["LINGREP_DICTIONARY_PATH"]})
+path.write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
+PYMETA
+        local status=$?
+        rm -rf -- "$CAMPAIGN_RUN_TMP"
+        CAMPAIGN_RUN_TMP=""
+        [ "$status" -eq 0 ] && [ "$ok" -eq 1 ]
+        return $?
+    fi
+
     local wall user sys rss
-    wall=$(awk -F': ' '/Elapsed \(wall clock\)/ {print $NF}' "$timing" |
-        awk -F: '{ if (NF==3) print $1*3600+$2*60+$3; else if (NF==2) print $1*60+$2; else print $1 }')
-    user=$(awk -F': ' '/User time/ {print $NF}' "$timing")
-    sys=$(awk -F': ' '/System time/ {print $NF}' "$timing")
-    rss=$(awk -F': ' '/Maximum resident set size/ {print $NF}' "$timing")
+    IFS=$'\t' read -r wall user sys rss < <(
+        python3 "$dir/measure.py" fields "$timing"
+    )
+    [ -n "$wall" ] && [ -n "$rss" ] || return 1
 
     local -a extra=()
     [ "$ok" -eq 0 ] && extra+=(--failed)
@@ -639,7 +715,8 @@ run_one() {
         echo "perf_campaign: that run exited non-zero; stderr in $kept" >&2
         tail -n 3 "$errors" >&2
     fi
-    rm -f "${out:-}" "$timing" "$errors"
+    rm -rf -- "$CAMPAIGN_RUN_TMP"
+    CAMPAIGN_RUN_TMP=""
     # `set -e` does not apply inside a function invoked as an `if` condition,
     # so a refused `record` would otherwise be swallowed and the block
     # reported complete. It refuses precisely when the run must not be

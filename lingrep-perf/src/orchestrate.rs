@@ -414,6 +414,16 @@ pub fn stream_digest(input: &mut dyn std::io::BufRead) -> Result<String, Orchest
     }
 }
 
+fn observe_hostname() -> Result<String, OrchestrateError> {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or(OrchestrateError::MachineUnobservable { field: "hostname" })
+}
+
 /// The machine this process is running on, as far as it can be observed.
 ///
 /// `rustc` is provenance rather than a pin: it identifies the toolchain that
@@ -723,6 +733,10 @@ pub struct Declaration {
     pub minimum_useful_effect_pct: f64,
     pub guardrail_ceilings_pct: BTreeMap<Metric, f64>,
     pub escalation_ladder: Vec<usize>,
+    pub calibration_wall_tolerance_pct: Option<f64>,
+    pub warmup_runs_per_arm: u32,
+    pub affinity: String,
+    pub calibration: Option<crate::calibration::CalibrationReference>,
     pub build: BuildProfile,
     pub arms: Arms,
     /// What this campaign measures over. Sealed by the manifest digest,
@@ -764,7 +778,10 @@ pub fn declare_with_catalog_corpora(
     if declaration.command_template.is_empty() {
         return Err(OrchestrateError::CommandTemplateMissing);
     }
-    let catalogs = campaign_catalogs();
+    let mut catalogs = campaign_catalogs();
+    if declaration.calibration_wall_tolerance_pct.is_some() {
+        catalogs.retain(|catalog| catalog.path == declaration.primary_catalog);
+    }
     if !catalogs
         .iter()
         .any(|catalog| catalog.path == declaration.primary_catalog)
@@ -839,6 +856,20 @@ pub fn declare_with_catalog_corpora(
         minimum_useful_effect_pct: declaration.minimum_useful_effect_pct,
         guardrail_ceilings_pct: declaration.guardrail_ceilings_pct,
         escalation_ladder: declaration.escalation_ladder,
+        calibration_wall_tolerance_pct: declaration.calibration_wall_tolerance_pct,
+        warmup_runs_per_arm: Some(declaration.warmup_runs_per_arm),
+        measurement_rig: Some(crate::calibration::MeasurementRig {
+            hostname: observe_hostname()?,
+            affinity: declaration.affinity,
+            backend: "gnu-time".to_owned(),
+        }),
+        declared_at_unix_seconds: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| OrchestrateError::MachineUnobservable { field: "clock" })?
+                .as_secs(),
+        ),
+        calibration: declaration.calibration,
         build: declaration.build,
         machine: observe_machine()?,
         arms: declaration.arms,
@@ -1045,6 +1076,24 @@ pub fn record(
         }
     }
 
+    if let Some(rig) = &campaign.manifest.measurement_rig {
+        for (field, declared, observed) in [
+            ("hostname", rig.hostname.as_str(), observe_hostname()?),
+            (
+                "affinity",
+                rig.affinity.as_str(),
+                execution.affinity.to_owned(),
+            ),
+        ] {
+            if declared != observed {
+                return Err(OrchestrateError::MachineChanged {
+                    field,
+                    declared: declared.to_owned(),
+                    observed,
+                });
+            }
+        }
+    }
     let workload = observe_workload(&campaign.manifest)?;
     let observation = Observation {
         manifest_digest: campaign.manifest_digest.clone(),

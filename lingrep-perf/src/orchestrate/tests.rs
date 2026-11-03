@@ -218,6 +218,11 @@ fn manifest_with(workload: Vec<crate::campaign::WorkloadInput>) -> Manifest {
         minimum_useful_effect_pct: 1.0,
         guardrail_ceilings_pct: BTreeMap::new(),
         escalation_ladder: vec![3],
+        calibration_wall_tolerance_pct: None,
+        warmup_runs_per_arm: None,
+        measurement_rig: None,
+        declared_at_unix_seconds: None,
+        calibration: None,
         build: BuildProfile {
             profile: "release".to_owned(),
             lto: "fat".to_owned(),
@@ -444,6 +449,10 @@ fn declaration(template: Vec<TemplateArg>, binary: &Path) -> Declaration {
         minimum_useful_effect_pct: 5.0,
         guardrail_ceilings_pct: BTreeMap::new(),
         escalation_ladder: vec![3],
+        calibration_wall_tolerance_pct: None,
+        warmup_runs_per_arm: 1,
+        affinity: String::new(),
+        calibration: None,
         build: BuildProfile {
             profile: "release".to_owned(),
             lto: "fat".to_owned(),
@@ -471,7 +480,7 @@ fn two_campaigns_measuring_different_commands_do_not_share_a_seal() {
     write(&binary, "binary");
 
     let digest = |limit: &str| {
-        declare(declaration(
+        let mut manifest = declare(declaration(
             vec![
                 TemplateArg::Literal("matches".to_owned()),
                 TemplateArg::Literal("--patterns".to_owned()),
@@ -482,7 +491,9 @@ fn two_campaigns_measuring_different_commands_do_not_share_a_seal() {
             &binary,
         ))
         .expect("a sealed declaration")
-        .manifest_digest
+        .manifest;
+        manifest.declared_at_unix_seconds = Some(100);
+        manifest.digest().unwrap()
     };
 
     assert_ne!(
@@ -904,4 +915,30 @@ fn an_output_digest_that_is_not_one_is_refused() {
             "{bad:?} must not be accepted as a digest",
         );
     }
+}
+
+#[test]
+fn calibration_seals_the_tolerance_and_only_the_primary_catalog() {
+    let dir = scratch("calibration-plan");
+    let binary = dir.join("arm");
+    write(&binary, "binary");
+    let mut plan = declaration(vec![TemplateArg::Catalog], &binary);
+    plan.calibration_wall_tolerance_pct = Some(2.0);
+    plan.escalation_ladder = vec![6];
+    let campaign = declare(plan).unwrap();
+    assert_eq!(campaign.manifest.catalogs.len(), 1);
+    assert_eq!(
+        campaign.manifest.catalogs[0].path,
+        campaign.manifest.primary_catalog
+    );
+    assert_eq!(campaign.manifest.calibration_wall_tolerance_pct, Some(2.0));
+    assert_eq!(campaign.manifest.escalation_ladder, vec![6]);
+    assert_eq!(campaign.manifest.warmup_runs_per_arm, Some(1));
+    let mut warmup_changed = campaign.manifest.clone();
+    warmup_changed.warmup_runs_per_arm = Some(2);
+    assert_ne!(warmup_changed.digest().unwrap(), campaign.manifest_digest);
+    let mut changed = campaign.manifest.clone();
+    changed.calibration_wall_tolerance_pct = Some(3.0);
+    assert_ne!(changed.digest().unwrap(), campaign.manifest_digest);
+    std::fs::remove_dir_all(dir).unwrap();
 }
