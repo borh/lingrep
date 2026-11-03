@@ -676,17 +676,16 @@ impl CoordinatorRegistry {
             match victim {
                 Some((id, _)) => {
                     if let Some(entry) = entries.remove(&id) {
-                        if let Some(cancel) = entry
+                        let cancellation = entry
                             .cancellation
                             .lock()
                             .expect("cancellation mutex poisoned")
-                            .take()
-                        {
+                            .take();
+                        if let Some(cancel) = cancellation {
                             cancel.cancel();
                         }
-                        if let Some(handle) =
-                            entry.handle.lock().expect("handle mutex poisoned").take()
-                        {
+                        let handle = entry.handle.lock().expect("handle mutex poisoned").take();
+                        if let Some(handle) = handle {
                             handle.abort();
                         }
                     }
@@ -736,12 +735,12 @@ impl CoordinatorRegistry {
         let accepted = state.accept(revision, source.as_str().into(), readiness_view(&readiness));
         assert!(accepted, "coordinator-allocated revision must be monotonic");
         let cancellation = CancellationFlag::new();
-        if let Some(cancel) = entry
+        let previous_cancellation = entry
             .cancellation
             .lock()
             .expect("cancellation mutex poisoned")
-            .replace(cancellation.clone())
-        {
+            .replace(cancellation.clone());
+        if let Some(cancel) = previous_cancellation {
             cancel.cancel();
         }
         entry.publish(&state, ExecutionProgress::default());
@@ -764,12 +763,12 @@ impl CoordinatorRegistry {
         // The swapped cancellation flag already signalled the prior task to
         // stop; aborting its handle here reclaims it deterministically so
         // a superseded revision cannot linger and block eviction later.
-        if let Some(previous) = entry
+        let previous_handle = entry
             .handle
             .lock()
             .expect("handle mutex poisoned")
-            .replace(handle)
-        {
+            .replace(handle);
+        if let Some(previous) = previous_handle {
             previous.abort();
         }
         Ok(revision)
@@ -1031,15 +1030,16 @@ impl CoordinatorRegistry {
     pub async fn shutdown(&self) {
         let mut handles = Vec::new();
         for entry in self.inner.entries.lock().await.values() {
-            if let Some(cancel) = entry
+            let cancellation = entry
                 .cancellation
                 .lock()
                 .expect("cancellation mutex poisoned")
-                .as_ref()
-            {
+                .clone();
+            if let Some(cancel) = cancellation {
                 cancel.cancel();
             }
-            if let Some(handle) = entry.handle.lock().expect("handle mutex poisoned").take() {
+            let handle = entry.handle.lock().expect("handle mutex poisoned").take();
+            if let Some(handle) = handle {
                 handles.push(handle);
             }
         }

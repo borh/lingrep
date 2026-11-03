@@ -1352,12 +1352,12 @@ impl ExternalAdapterProcess {
                 ExternalProtocolError::new_for_execution("state", message, None),
             ));
         }
-        if let Some(message) = self
+        let diagnostic_failure = self
             .diagnostic_failure
             .lock()
             .expect("diagnostic failure mutex poisoned")
-            .take()
-        {
+            .take();
+        if let Some(message) = diagnostic_failure {
             return Err(ExternalProcessError::Diagnostic(message));
         }
         Ok(())
