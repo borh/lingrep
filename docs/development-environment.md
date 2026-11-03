@@ -11,17 +11,17 @@ nix develop
 ```
 
 The default shell uses the Rust toolchain that `rust-toolchain.toml` pins,
-which is also the toolchain CI and release builds use; rustup reads the same
-file outside Nix. A commit that updates the pin also fixes the new compiler
-and Clippy warnings the updated toolchain reports.
-Six shells are available:
+which is also the toolchain CI, release and Nix package builds use; rustup
+reads the same file outside Nix. The workspace `rust-version` is the pin's
+minor version. A commit that updates the pin also raises `rust-version` and
+fixes the new compiler and Clippy warnings the updated toolchain reports.
+Five shells are available:
 
 | Shell | Purpose |
 | --- | --- |
 | `nix develop` | Daily development and repository gates, on the pinned toolchain |
 | `nix develop .#nightly` | Sanitizer fuzzing (`LINGREP_FUZZ_SANITIZER=address`) |
 | `nix develop .#stable` | The newest stable in the locked `rust-overlay` |
-| `nix develop .#msrv` | Workspace MSRV compatibility |
 | `nix develop .#ci` | The GitHub workflow's shell: the pinned toolchain and only what `./ci.sh --fast` invokes |
 | `nix develop .#packaged` | User workflows: the default shell plus the packaged `ling` and `lingrep-web` on `PATH` |
 

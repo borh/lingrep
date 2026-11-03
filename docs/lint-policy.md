@@ -99,5 +99,5 @@ nix develop .#ci -c ./ci.sh --fast
 
 `.githooks/pre-push` runs the same lane through the default shell, which uses
 the same toolchain, as does the `macos` CI job's Clippy with `-D warnings`.
-`.#stable` and `.#msrv` are compatibility shells for checking that the code
-builds on those toolchains.
+`.#stable` is a compatibility shell for checking that the code builds on the
+newest stable in the locked `rust-overlay`.

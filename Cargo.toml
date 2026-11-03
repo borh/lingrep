@@ -10,7 +10,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.95"
+rust-version = "1.99"
 # All workspace crates inherit this version.
 version = "0.6.0"
 license = "MIT"
@@ -185,6 +185,7 @@ expl_impl_clone_on_copy    = "allow"
 # still enforces every currently-CLEAN pedantic lint going forward (regression
 # prevention on the clean set). Per-lint elevation to warn+fix is a follow-up
 # ratchet; see docs/lint-policy.md.
+assert_is_empty = "allow"
 assigning_clones = "allow"
 case_sensitive_file_extension_comparisons = "allow"
 cast_lossless = "allow"
@@ -223,6 +224,7 @@ unnecessary_join = "allow"
 unnecessary_wraps = "allow"
 unreadable_literal = "allow"
 unused_async = "allow"
+unused_async_trait_impl = "allow"
 unused_self = "allow"
 used_underscore_binding = "allow"
 # Ratcheted 2026-10-19: `duration_suboptimal_units`, `ignore_without_reason`,

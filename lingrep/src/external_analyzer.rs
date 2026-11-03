@@ -98,7 +98,7 @@ fn hex(value: &str) -> Result<[u8; 32], CliError> {
         return Err(invalid("profile digest must contain 64 hexadecimal digits"));
     }
     let mut result = [0; 32];
-    for (byte, pair) in result.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+    for (byte, pair) in result.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
         *byte =
             u8::from_str_radix(std::str::from_utf8(pair).map_err(invalid)?, 16).map_err(invalid)?;
     }

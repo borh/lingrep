@@ -104,9 +104,7 @@
             ++ lib.optionals isLinux linuxOnlyDevDeps
             ++ lib.optionals (!isLinux) darwinOnlyDevDeps;
 
-          msrv = "1.95.0";
-
-          craneLib = inputs.crane.mkLib pkgs;
+          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain pinnedToolchain;
 
           src = lib.cleanSourceWith {
             name = "lingrep-src";
@@ -206,7 +204,7 @@
           # appended to `packages`. `craneLib.devShell` puts its own toolchain in
           # `nativeBuildInputs`, which precede `packages` on PATH, so a toolchain
           # added to `packages` is shadowed: every shell silently served the
-          # nixpkgs rustc and `.#nightly` / `.#msrv` were indistinguishable from
+          # nixpkgs rustc and `.#nightly` was indistinguishable from
           # `.#stable`.
           mkDevShellWith =
             {
@@ -315,8 +313,8 @@
               packages = fullDevPackages;
             };
 
-          # `rust-toolchain.toml` is the one toolchain for development, CI and
-          # release builds; rustup reads the same file outside Nix.
+          # `rust-toolchain.toml` is the one toolchain for development, CI,
+          # release and Nix package builds; rustup reads the same file outside Nix.
           pinnedToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
           # `devShells.ci` exists because a GitHub runner has to hold the shell,
@@ -889,9 +887,6 @@
           devShells.stable = mkDevShell (
             pkgs.rust-bin.stable.latest.default.override { extensions = [ "rust-src" ]; }
           );
-          devShells.msrv = mkDevShell (
-            pkgs.rust-bin.stable.${msrv}.default.override { extensions = [ "rust-src" ]; }
-          );
 
           # Merged for the same reason `packages` is: the two Linux-only checks
           # must be absent on darwin, not present-and-undefined.
@@ -908,23 +903,6 @@
                 doCheck = false;
               }
             );
-
-            # MSRV gate: builds the whole workspace on the pinned 1.95.0 toolchain,
-            # so any crate that stops compiling on the declared MSRV fails CI. The toolchain is
-            # overridden for the dependency build too, or this would silently test
-            # the default toolchain instead of 1.95.0.
-            msrv-build =
-              let
-                msrvCrane = craneLib.overrideToolchain pkgs.rust-bin.stable.${msrv}.default;
-              in
-              msrvCrane.buildPackage (
-                commonArgs
-                // {
-                  pname = "lingrep-msrv";
-                  cargoArtifacts = msrvCrane.buildDepsOnly commonArgs;
-                  doCheck = false;
-                }
-              );
 
             mecab-dic-converter = mecabDicConverter;
             sudachi-packages = sudachiPackagesSmoke;

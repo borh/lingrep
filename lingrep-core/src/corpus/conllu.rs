@@ -290,17 +290,14 @@ impl EnhancedEmptyNode {
             .map(|values| values.iter().map(CompactString::as_str))
     }
 
-    #[must_use]
     pub fn feature_names(&self) -> impl ExactSizeIterator<Item = &str> {
         self.features.iter().map(|(name, _)| name.as_str())
     }
 
-    #[must_use]
     pub fn raw_features(&self) -> impl ExactSizeIterator<Item = &str> {
         self.raw_features.iter().map(CompactString::as_str)
     }
 
-    #[must_use]
     pub fn misc(&self) -> impl ExactSizeIterator<Item = &str> {
         self.misc.iter().map(CompactString::as_str)
     }
