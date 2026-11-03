@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-29
+
+### Added
+
+- `ling check --diagram` renders Unicode and ASCII railroad diagrams and
+  standalone SVG without a dictionary or corpus. Select definitions with
+  `--name`, expand references with `--expand`, and set layout columns with
+  `--width`. Complete labels and constraints remain visible in legends and
+  numbered subdiagrams when they cannot fit inline.
+
 ### Changed
 
 - `--progress auto`, the default, omits routine corpus announcements and the
@@ -42,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Web diagrams share the CLI recognition model: intersection means all operands
+  match the same span, and unordered matching shows its distinct operand and gap
+  rules. Compound diagrams retain component order and every dependency clause.
+  Embedded diagrams follow the application theme; standalone SVG includes its
+  own styles.
 - Under `--json`, the `attribute_unavailable`, `dictionary_binding_mismatch`
   and `featurization_policy_mismatch` warnings are `lingrep.diagnostic/v1`
   records on stderr, like other warnings, instead of plain text lines.

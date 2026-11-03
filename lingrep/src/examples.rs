@@ -64,12 +64,25 @@ static ROOT_EXAMPLES: &[CommandExample] = &[CommandExample {
     argv: &["check", "--pattern", "[]."],
     placeholders: &[],
 }];
-static CHECK_EXAMPLES: &[CommandExample] = &[CommandExample {
-    id: "check/inline-pattern",
-    purpose: "Validate one inline pattern.",
-    argv: &["check", "--pattern", "[]."],
-    placeholders: &[],
-}];
+static CHECK_EXAMPLES: &[CommandExample] = &[
+    CommandExample {
+        id: "check/inline-pattern",
+        purpose: "Validate one inline pattern.",
+        argv: &["check", "--pattern", "[]."],
+        placeholders: &[],
+    },
+    CommandExample {
+        id: "check/diagram",
+        purpose: "Draw the recognition flow of an inline pattern.",
+        argv: &[
+            "check",
+            "--pattern",
+            "([upos=NOUN] | [upos=PROPN]) [upos=VERB]+.",
+            "--diagram",
+        ],
+        placeholders: &[],
+    },
+];
 static DOCTOR_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "doctor/explicit-inputs",
     purpose: "Probe an explicit dictionary, catalog, and prepared artifact.",

@@ -42,8 +42,8 @@ pub struct DefinitionExpansion {
     pub expanded: Option<String>,
     /// The names substituted, in first-appearance order, each once.
     pub references: Box<[String]>,
-    /// A left-to-right railroad / state-flow SVG diagram of the expanded
-    /// definition's expression, when it is a pattern or fragment.
+    /// A recognition-flow SVG of the expanded pattern or fragment, using
+    /// application theme styles.
     pub diagram: Option<String>,
 }
 
@@ -66,6 +66,8 @@ pub enum ExpandError {
     SourceTooLarge { actual: usize, maximum: usize },
     #[error("expanding {name} exceeds {maximum} bytes")]
     ExpansionTooLarge { name: String, maximum: usize },
+    #[error("expanding {name} exceeds {maximum} reference levels")]
+    ExpansionTooDeep { name: String, maximum: usize },
     #[error("undefined reference @{name}")]
     UnresolvedReference { name: String },
     #[error("reference cycle: {}", names.join(" -> "))]
@@ -133,6 +135,7 @@ pub fn expand_pattern_definition(
         out: String::with_capacity(entry.declaration.len()),
         path: vec![entry.name],
         references: Vec::new(),
+        max_reference_depth: usize::MAX,
     };
     render_definition(entry, &index, text, limits, &mut state)?;
 
@@ -199,6 +202,37 @@ fn index_definitions<'tree, 'source>(
         });
     }
     entries
+}
+
+pub(super) fn expand_indexed_declaration(
+    root: Node<'_>,
+    text: &str,
+    limits: CompileLimits,
+    name: &str,
+    max_reference_depth: usize,
+) -> Result<String, ExpandError> {
+    let index = index_definitions(root, text);
+    let entry = index
+        .iter()
+        .find(|entry| entry.name == name)
+        .ok_or_else(|| ExpandError::UnresolvedReference {
+            name: name.to_owned(),
+        })?;
+    let mut state = Expansion {
+        subject: entry.name,
+        out: String::new(),
+        path: vec![entry.name],
+        references: Vec::new(),
+        max_reference_depth,
+    };
+    render_definition(entry, &index, text, limits, &mut state)?;
+    if state.out.len() > limits.max_source_bytes() {
+        return Err(ExpandError::ExpansionTooLarge {
+            name: name.to_owned(),
+            maximum: limits.max_source_bytes(),
+        });
+    }
+    Ok(state.out)
 }
 
 /// A `pattern_definition` carries an optional `definition_kind`; a bare
@@ -371,6 +405,12 @@ fn render_node<'source>(
             names.push(name.to_owned());
             return Err(ExpandError::ReferenceCycle { names });
         }
+        if state.path.len() >= state.max_reference_depth {
+            return Err(ExpandError::ExpansionTooDeep {
+                name: state.subject.to_owned(),
+                maximum: state.max_reference_depth,
+            });
+        }
 
         if !state.references.iter().any(|seen| seen == name) {
             state.references.push(name.to_owned());
@@ -439,6 +479,7 @@ struct Expansion<'source> {
     out: String,
     path: Vec<&'source str>,
     references: Vec<String>,
+    max_reference_depth: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -493,410 +534,10 @@ fn slice(text: &str, at: (usize, usize)) -> &str {
     &text[at.0..at.1]
 }
 
-// ---------------------------------------------------------------------------
-// Railroad / state-flow SVG diagram for expanded pattern definitions
-// ---------------------------------------------------------------------------
-
-const MAX_DIAGRAM_NODES: usize = 64;
-
-#[derive(Clone)]
-struct DiagramBox {
-    width: i64,
-    height: i64,
-    mid_y: i64,
-    svg: String,
-}
-
-/// Render a left-to-right railroad / state-flow SVG diagram for a snippet of
-/// expanded `lingrep` pattern definitions. When the snippet contains multiple
-/// `pattern_definition` statements, their bodies are chained in sequence.
+/// Returns an SVG using application theme styles, chaining definitions in source
+/// order, or `None` if parsing or rendering fails.
 pub fn render_definition_diagram(source: &str) -> Option<String> {
-    let parser_source = parser_text(source);
-    let text = parser_source.as_ref();
-    let tree = parse(text).ok()?;
-    let root = tree.root_node();
-    let mut cursor = root.walk();
-    let defs: Vec<Node<'_>> = root
-        .children(&mut cursor)
-        .filter(|child| child.kind() == "pattern_definition")
-        .collect();
-    if defs.is_empty() {
-        return None;
-    }
-    let mut budget = MAX_DIAGRAM_NODES;
-    let mut parts = Vec::with_capacity(defs.len());
-    for def in &defs {
-        let body = def.child_by_field_name("pattern")?;
-        parts.push(layout_expr(body, text, &mut budget)?);
-    }
-    let content = layout_sequence(&parts)?;
-
-    let pad_x = 16;
-    let pad_y = 14;
-    let start_r = 5;
-    let end_r = 6;
-    let lead = 18;
-    let start_cx = pad_x + start_r;
-    let content_x = start_cx + start_r + lead;
-    let end_cx = content_x + content.width + lead + end_r;
-    let total_w = end_cx + end_r + pad_x;
-    let total_h = (content.height + pad_y * 2).max(44);
-    let offset_y = (total_h - content.height) / 2;
-    let line_y = offset_y + content.mid_y;
-
-    let mut where_badge = String::new();
-    let mut final_h = total_h;
-    if let Some(where_node) = defs
-        .first()
-        .and_then(|def| def.child_by_field_name("where"))
-    {
-        let raw = slice(text, span(where_node)).trim();
-        let label = collapse_ws(raw);
-        let truncated = truncate_chars(&label, 84);
-        let badge_y = total_h + 4;
-        final_h = total_h + 26;
-        where_badge = format!(
-            r#"<text class="fsm-where-note" x="{pad_x}" y="{}" font-size="11"><title>{}</title>{}</text>"#,
-            badge_y + 13,
-            escape_xml(&label),
-            escape_xml(&truncated),
-        );
-    }
-
-    let x1 = start_cx + start_r;
-    let body_svg = &content.svg;
-    let x_out = content_x + content.width;
-    let x_end = end_cx - end_r;
-    let ax = x_end - 5;
-    let ay_top = line_y - 3;
-    let ay_bot = line_y + 3;
-    Some(format!(
-        r#"<svg class="pattern-fsm-svg" viewBox="0 0 {total_w} {final_h}" width="{total_w}" height="{final_h}" role="img" aria-label="Expanded pattern state machine"><circle class="fsm-start" cx="{start_cx}" cy="{line_y}" r="{start_r}"/><line class="fsm-edge" x1="{x1}" y1="{line_y}" x2="{content_x}" y2="{line_y}"/><g transform="translate({content_x},{offset_y})">{body_svg}</g><line class="fsm-edge" x1="{x_out}" y1="{line_y}" x2="{x_end}" y2="{line_y}"/><polygon class="fsm-arrow" points="{x_end},{line_y} {ax},{ay_top} {ax},{ay_bot}"/><circle class="fsm-accept-outer" cx="{end_cx}" cy="{line_y}" r="{end_r}"/><circle class="fsm-accept-inner" cx="{end_cx}" cy="{line_y}" r="3"/>{where_badge}</svg>"#
-    ))
-}
-
-fn layout_expr(node: Node<'_>, text: &str, budget: &mut usize) -> Option<DiagramBox> {
-    if *budget == 0 {
-        return None;
-    }
-    *budget -= 1;
-
-    match node.kind() {
-        "parenthesized_pattern" => {
-            let mut cursor = node.walk();
-            let inner = node
-                .named_children(&mut cursor)
-                .find(|child| child.kind() != "comment")?;
-            layout_expr(inner, text, budget)
-        }
-        "pattern_sequence" => {
-            let mut cursor = node.walk();
-            let mut items = Vec::new();
-            for child in node.named_children(&mut cursor) {
-                if child.kind() != "comment" {
-                    items.push(layout_expr(child, text, budget)?);
-                }
-            }
-            layout_sequence(&items)
-        }
-        "alternation" | "intersection" | "any_order" => {
-            let mut cursor = node.walk();
-            let mut branches = Vec::new();
-            for child in node.named_children(&mut cursor) {
-                if child.kind() != "comment" {
-                    branches.push(layout_expr(child, text, budget)?);
-                }
-            }
-            let badge = match node.kind() {
-                "intersection" => Some("&"),
-                "any_order" => Some("any_order"),
-                _ => None,
-            };
-            layout_parallel(&branches, badge)
-        }
-        "quantified_pattern" => {
-            let mut cursor = node.walk();
-            let mut expr_node = None;
-            let mut quant_node = None;
-            for child in node.named_children(&mut cursor) {
-                if child.kind() == "quantifier" {
-                    quant_node = Some(child);
-                } else if child.kind() != "comment" {
-                    expr_node = Some(child);
-                }
-            }
-            let inner = layout_expr(expr_node?, text, budget)?;
-            let quant = slice(text, span(quant_node?)).trim();
-            Some(layout_quantified(&inner, quant))
-        }
-        "named_group" => {
-            let name_node = node.child_by_field_name("name")?;
-            let pattern_node = node.child_by_field_name("pattern")?;
-            let name = slice(text, span(name_node));
-            let inner = layout_expr(pattern_node, text, budget)?;
-            Some(layout_group(&inner, &format!("${name}"), "fsm-capture-box"))
-        }
-        "preceded_by" | "not_preceded_by" | "followed_by" | "not_followed_by" => {
-            let body_node = node.child_by_field_name("body")?;
-            let inner = layout_expr(body_node, text, budget)?;
-            let label = match node.kind() {
-                "preceded_by" => "⇐ preceded_by",
-                "not_preceded_by" => "⇐ ¬preceded_by",
-                "followed_by" => "⇒ followed_by",
-                _ => "⇒ ¬followed_by",
-            };
-            Some(layout_group(&inner, label, "fsm-lookaround-box"))
-        }
-        "sentence_start" => Some(layout_pill("^", "Sentence start (^)", "fsm-anchor-node")),
-        "sentence_end" => Some(layout_pill("$", "Sentence end ($)", "fsm-anchor-node")),
-        "same_as" => {
-            let full = collapse_ws(slice(text, span(node)));
-            let short = truncate_chars(&full, 28);
-            Some(layout_pill(&short, &full, "fsm-same-as-node"))
-        }
-        "node_pattern" | "bare_element" | "pattern_reference" => {
-            let full = collapse_ws(slice(text, span(node)));
-            let display = if full == "[]" {
-                "any token []".to_owned()
-            } else {
-                truncate_chars(&full, 30)
-            };
-            Some(layout_pill(&display, &full, "fsm-token-node"))
-        }
-        _ => {
-            let full = collapse_ws(slice(text, span(node)));
-            let short = truncate_chars(&full, 28);
-            Some(layout_pill(&short, &full, "fsm-token-node"))
-        }
-    }
-}
-
-fn layout_pill(label: &str, full_tooltip: &str, class: &str) -> DiagramBox {
-    let text_w = advance_width(label);
-    let width = (text_w + 20).max(38);
-    let height = 28;
-    let mid_y = 14;
-    let rx = if class == "fsm-anchor-node" { 14 } else { 5 };
-    let cx = width / 2;
-    let tip = escape_xml(full_tooltip);
-    let lbl = escape_xml(label);
-    let svg = format!(
-        r#"<g class="fsm-node {class}"><title>{tip}</title><rect x="0" y="0" width="{width}" height="{height}" rx="{rx}"/><text x="{cx}" y="18" text-anchor="middle">{lbl}</text></g>"#
-    );
-    DiagramBox {
-        width,
-        height,
-        mid_y,
-        svg,
-    }
-}
-
-fn layout_sequence(items: &[DiagramBox]) -> Option<DiagramBox> {
-    if items.is_empty() {
-        return None;
-    }
-    if items.len() == 1 {
-        return Some(items[0].clone());
-    }
-    let gap = 18;
-    let max_above = items.iter().map(|b| b.mid_y).max().unwrap_or(14);
-    let max_below = items.iter().map(|b| b.height - b.mid_y).max().unwrap_or(14);
-    let height = max_above + max_below;
-    let mid_y = max_above;
-
-    let mut x = 0;
-    let mut svg = String::new();
-    for (idx, item) in items.iter().enumerate() {
-        if idx > 0 {
-            let x1 = x - gap;
-            let x2 = x;
-            let ax = x2 - 5;
-            let ay_top = mid_y - 3;
-            let ay_bot = mid_y + 3;
-            svg.push_str(&format!(
-                r#"<line class="fsm-edge" x1="{x1}" y1="{mid_y}" x2="{x2}" y2="{mid_y}"/><polygon class="fsm-arrow" points="{x2},{mid_y} {ax},{ay_top} {ax},{ay_bot}"/>"#
-            ));
-        }
-        let y = mid_y - item.mid_y;
-        svg.push_str(&format!(
-            r#"<g transform="translate({x},{y})">{}</g>"#,
-            item.svg
-        ));
-        x += item.width + gap;
-    }
-    let width = x - gap;
-    Some(DiagramBox {
-        width,
-        height,
-        mid_y,
-        svg,
-    })
-}
-
-fn layout_parallel(branches: &[DiagramBox], badge: Option<&str>) -> Option<DiagramBox> {
-    if branches.is_empty() {
-        return None;
-    }
-    if branches.len() == 1 && badge.is_none() {
-        return Some(branches[0].clone());
-    }
-    let pad_x = 18;
-    let row_gap = 8;
-    let top_pad = if badge.is_some() { 16 } else { 0 };
-    let inner_w = branches.iter().map(|b| b.width).max().unwrap_or(40);
-    let total_w = inner_w + pad_x * 2;
-    let total_h: i64 = top_pad
-        + branches.iter().map(|b| b.height).sum::<i64>()
-        + row_gap * (branches.len().saturating_sub(1) as i64);
-    let mid_y = top_pad + (total_h - top_pad) / 2;
-
-    let mut svg = String::new();
-    if let Some(op) = badge {
-        svg.push_str(&format!(
-            r#"<rect class="fsm-group-frame" x="4" y="2" width="{}" height="{}" rx="6"/><text class="fsm-group-label" x="10" y="13">{}</text>"#,
-            total_w - 8,
-            total_h - 4,
-            escape_xml(op),
-        ));
-    }
-
-    let mut cur_y = top_pad;
-    for branch in branches {
-        let by = cur_y + branch.mid_y;
-        let bx = pad_x + (inner_w - branch.width) / 2;
-        let bx_end = bx + branch.width;
-        let c1 = pad_x / 2;
-        let c2 = total_w - pad_x / 2;
-        let b_svg = &branch.svg;
-        svg.push_str(&format!(
-            r#"<path class="fsm-edge" d="M 0,{mid_y} C {c1},{mid_y} {c1},{by} {bx},{by}"/><g transform="translate({bx},{cur_y})">{b_svg}</g><path class="fsm-edge" d="M {bx_end},{by} C {c2},{by} {c2},{mid_y} {total_w},{mid_y}"/>"#
-        ));
-        cur_y += branch.height + row_gap;
-    }
-
-    Some(DiagramBox {
-        width: total_w,
-        height: total_h,
-        mid_y,
-        svg,
-    })
-}
-
-fn layout_quantified(inner: &DiagramBox, quant: &str) -> DiagramBox {
-    let optional = quant == "?" || quant == "*" || quant.starts_with("{0,");
-    let repeating = quant == "+"
-        || quant == "*"
-        || (quant.starts_with('{') && quant != "{0,1}" && quant != "{1}");
-
-    let pad_x = 16;
-    let top_extra = if optional { 14 } else { 4 };
-    let bottom_extra = if repeating { 20 } else { 6 };
-    let width = inner.width + pad_x * 2;
-    let height = inner.height + top_extra + bottom_extra;
-    let mid_y = top_extra + inner.mid_y;
-    let bx = pad_x;
-    let bx_end = pad_x + inner.width;
-
-    let b_svg = &inner.svg;
-    let mut svg = format!(
-        r#"<line class="fsm-edge" x1="0" y1="{mid_y}" x2="{bx}" y2="{mid_y}"/><g transform="translate({bx},{top_extra})">{b_svg}</g><line class="fsm-edge" x1="{bx_end}" y1="{mid_y}" x2="{width}" y2="{mid_y}"/>"#
-    );
-
-    if optional {
-        let bypass_y = 4;
-        let rx1 = width - 12;
-        let rx2 = width - 2;
-        svg.push_str(&format!(
-            r#"<path class="fsm-edge fsm-bypass" d="M 2,{mid_y} Q 2,{bypass_y} 12,{bypass_y} L {rx1},{bypass_y} Q {rx2},{bypass_y} {rx2},{mid_y}"/>"#
-        ));
-    }
-
-    if repeating {
-        let loop_y = height - 6;
-        let lx1 = width - 6;
-        let lx2 = width - 14;
-        let cx = width / 2;
-        let ty = loop_y - 2;
-        let q = escape_xml(quant);
-        svg.push_str(&format!(
-            r#"<path class="fsm-edge fsm-loop" d="M {lx1},{mid_y} Q {lx1},{loop_y} {lx2},{loop_y} L 14,{loop_y} Q 6,{loop_y} 6,{mid_y}"/><text class="fsm-quant-label" x="{cx}" y="{ty}" text-anchor="middle">{q}</text>"#
-        ));
-    } else if optional {
-        let cx = width / 2;
-        let q = escape_xml(quant);
-        svg.push_str(&format!(
-            r#"<text class="fsm-quant-label" x="{cx}" y="12" text-anchor="middle">{q}</text>"#
-        ));
-    }
-
-    DiagramBox {
-        width,
-        height,
-        mid_y,
-        svg,
-    }
-}
-
-fn layout_group(inner: &DiagramBox, label: &str, class: &str) -> DiagramBox {
-    let label_w = advance_width(label) + 16;
-    let inner_w = inner.width.max(label_w);
-    let pad_x = 10;
-    let top_pad = 18;
-    let bottom_pad = 8;
-    let width = inner_w + pad_x * 2;
-    let height = inner.height + top_pad + bottom_pad;
-    let mid_y = top_pad + inner.mid_y;
-    let bx = pad_x + (inner_w - inner.width) / 2;
-    let bx_end = bx + inner.width;
-
-    let lbl = escape_xml(label);
-    let b_svg = &inner.svg;
-    let svg = format!(
-        r#"<g class="{class}"><rect class="fsm-group-frame" x="0" y="0" width="{width}" height="{height}" rx="6"/><text class="fsm-group-label" x="8" y="13">{lbl}</text><line class="fsm-edge" x1="0" y1="{mid_y}" x2="{bx}" y2="{mid_y}"/><g transform="translate({bx},{top_pad})">{b_svg}</g><line class="fsm-edge" x1="{bx_end}" y1="{mid_y}" x2="{width}" y2="{mid_y}"/></g>"#
-    );
-
-    DiagramBox {
-        width,
-        height,
-        mid_y,
-        svg,
-    }
-}
-
-fn advance_width(text: &str) -> i64 {
-    text.chars()
-        .map(|ch| if ch.is_ascii() { 7 } else { 13 })
-        .sum()
-}
-
-fn collapse_ws(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let count = text.chars().count();
-    if count <= max_chars {
-        text.to_owned()
-    } else {
-        let mut s: String = text.chars().take(max_chars.saturating_sub(1)).collect();
-        s.push('…');
-        s
-    }
-}
-
-fn escape_xml(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(ch),
-        }
-    }
-    out
+    super::diagram::render_embedded_definition_diagram(source).ok()
 }
 
 #[cfg(test)]

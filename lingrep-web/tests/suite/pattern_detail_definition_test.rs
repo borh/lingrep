@@ -29,6 +29,34 @@ const CATALOG: &str = concat!(
     "pattern 単独 := [upos=VERB].\n",
 );
 
+#[test]
+fn web_diagrams_distinguish_intersection_and_unordered_matching() {
+    let source = "fragment A := [text=a].\nintersect := (@A []*) & ([] [text=b]).\nunordered := any_order((?<a> [text=a]), (?<b> [text=b])).";
+    for (name, label) in [("intersect", "ALL: same span"), ("unordered", "UNORDERED")] {
+        let expansion = expand_web_pattern(source, name).unwrap().unwrap();
+        let svg = expansion.diagram.unwrap();
+        assert!(svg.contains(label), "{svg}");
+        assert!(svg.contains("pattern-fsm-svg"));
+        assert!(
+            !svg.contains("<style>"),
+            "embedded colors come from the application theme"
+        );
+        assert!(!svg.contains("#fff"));
+    }
+}
+
+#[test]
+fn compound_diagrams_keep_component_order_and_every_dependency_clause() {
+    let source = "first := (?<v> [upos=VERB]) (?<n> [text=first]) where $v -[obj]-> $n.\nsecond := (?<a> [upos=ADJ]) (?<n> [text=second]) where $a -[amod]-> $n.";
+    let expansion = expand_compound_pattern(source, "chain", &["second", "first"])
+        .unwrap()
+        .unwrap();
+    let svg = expansion.diagram.unwrap();
+    assert!(svg.find("[text=second]").unwrap() < svg.find("[text=first]").unwrap());
+    assert!(svg.contains("amod"), "{svg}");
+    assert!(svg.contains("obj"), "{svg}");
+}
+
 fn render(definition: Option<PatternDefinitionView>) -> String {
     let hits = vec![RetainedHitText {
         reference_ordinal: 0,

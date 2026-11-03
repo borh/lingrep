@@ -141,6 +141,14 @@ def japanese_doc() -> FakeDoc:
 
 
 class AdapterMappingTests(unittest.TestCase):
+    def test_sentence_mapping_rejects_invalid_morphology_members(self) -> None:
+        for members in ([7], [""], ["猫", None]):
+            with self.subTest(members=members):
+                token = FakeToken("猫", 0, morph=FakeMorph({"Reading": members}))
+                doc = FakeDoc("猫", [token], [FakeSpan((token,), 0, 1)])
+                with self.assertRaisesRegex(ValueError, "must be strings"):
+                    analyze_document(doc, projection(), "input")
+
     def test_morphology_names_use_ud_or_provider_namespaces(self) -> None:
         self.assertEqual(morph_attribute_key("Number"), "feat.Number")
         self.assertEqual(morph_attribute_key("Gender[psor]"), "feat.Gender[psor]")

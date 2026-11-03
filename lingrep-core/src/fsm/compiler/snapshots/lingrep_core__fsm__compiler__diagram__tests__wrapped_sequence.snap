@@ -1,0 +1,18 @@
+---
+source: lingrep-core/src/fsm/compiler/diagram.rs
+expression: "diagram.render_text(width, false).unwrap()"
+---
+p
+    ┌──────────┐
+●───┤ [text=a] ├─┐
+    └──────────┘ │
+                 │
+  ┌───────◀──────┘
+  │ ┌──────────┐
+  └▶┤ [text=b] ├─┐
+    └──────────┘ │
+                 │
+  ┌───────◀──────┘
+  │ ┌──────────┐
+  └▶┤ [text=c] ├───◎
+    └──────────┘

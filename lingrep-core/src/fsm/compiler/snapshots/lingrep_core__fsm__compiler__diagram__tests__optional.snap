@@ -1,0 +1,13 @@
+---
+source: lingrep-core/src/fsm/compiler/diagram.rs
+expression: "diagram.render_text(width, false).unwrap()"
+---
+p
+  ┌─────────▶────────┐
+  │                  │
+  │ ┌─repeat 0..1──┐ │
+  │ │              │ │
+  │ │ ┌──────────┐ │ │   ┌──────────┐
+●─┴─┼─┤ [text=a] ├─┼─┴──▶┤ [text=b] ├─◎
+    │ └──────────┘ │     └──────────┘
+    └──────────────┘

@@ -43,6 +43,9 @@ pub fn run(
         ));
     }
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
+    if args.diagram {
+        return super::check_diagram::run(args, &catalog, terminal);
+    }
     let definitions = catalog
         .authored_definitions()?
         .into_iter()

@@ -32,11 +32,12 @@ pub use binding::{BoundCatalog, BoundExecutionError, SchemaBindError};
 pub use compiler::{
     AttributeReferenceSite, CatalogAnalysis, CatalogDriftReport, CompileError, CompileLimits,
     CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic, DiagnosticCode,
-    DiagnosticLocation, DiagnosticSeverity, DriftBody, DriftCarrier, DriftDefinitionKind,
-    DriftEntry, ExclusionSite, ExpandError, ExpandedDefinitionKind, FormatError, FormatOutcome,
-    LexiconProjectionSite, PatternSource, RelatedDiagnosticLocation, SentenceFilter,
-    SentenceFilterTerm, compile_catalog, expand_pattern_definition, format_pattern_source,
-    render_definition_diagram, render_diagnostics, render_pattern_error, report_catalog_drift,
+    DiagnosticLocation, DiagnosticSeverity, DiagramCatalog, DiagramError, DriftBody, DriftCarrier,
+    DriftDefinitionKind, DriftEntry, ExclusionSite, ExpandError, ExpandedDefinitionKind,
+    FormatError, FormatOutcome, LexiconProjectionSite, PatternDiagram, PatternSource,
+    RelatedDiagnosticLocation, SentenceFilter, SentenceFilterTerm, compile_catalog,
+    expand_pattern_definition, format_pattern_source, render_definition_diagram,
+    render_diagnostics, render_pattern_error, report_catalog_drift,
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,

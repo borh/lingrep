@@ -36,6 +36,139 @@ use lingrep::protocol::validate_diagnostic_jsonl;
 
 use crate::support::{fixture, lingrep, lingrep_std, parse_jsonl};
 
+#[test]
+fn check_diagrams_keep_stdout_separate_from_check_reports() {
+    for format in ["unicode", "ascii", "svg"] {
+        let output = crate::support::lingrep_without_dictionary()
+            .args([
+                "check",
+                "--pattern",
+                "[upos=VERB]+ [text=。].",
+                "--diagram",
+                "--diagram-format",
+                format,
+            ])
+            .env_remove("LINGREP_DICTIONARY_PATH")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("catalog checked:"));
+        assert!(stdout.contains("[upos=VERB]"));
+        assert!(!stdout.contains("Catalog publication policy"));
+        assert!(output.stderr.is_empty());
+        if format == "svg" {
+            assert!(stdout.starts_with("<svg xmlns="));
+            assert!(stdout.trim_end().ends_with("</svg>"));
+        }
+    }
+}
+
+#[test]
+fn diagram_policy_note_is_printed_once_per_output() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patterns/alternation.lx");
+    let note = "Catalog publication policy applies separately from recognition.";
+    for (format, selected, expanded) in [
+        ("unicode", false, false),
+        ("ascii", false, true),
+        ("unicode", true, true),
+        ("svg", true, true),
+    ] {
+        let mut command = crate::support::lingrep_without_dictionary();
+        command
+            .args([
+                "check",
+                "--diagram",
+                "--diagram-format",
+                format,
+                "--patterns",
+            ])
+            .arg(&path);
+        if selected {
+            command.args(["--name", "al_wo"]);
+        }
+        if expanded {
+            command.arg("--expand");
+        }
+        if format != "svg" {
+            command.args(["--width", "32"]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(normalized.matches(note).count(), 1, "{format}: {stdout}");
+        assert!(stdout.contains("al_wo"));
+        if !selected {
+            assert!(stdout.contains("al_suru"));
+        }
+    }
+}
+
+#[test]
+fn diagram_options_reject_hidden_reports_and_ambiguous_svg() {
+    for extra in [
+        vec!["--diagram-format", "svg"],
+        vec!["--diagram", "--json"],
+        vec!["--diagram", "--schema", "tokenize"],
+        vec!["--diagram", "--verify-examples"],
+        vec!["--diagram", "--width", "31"],
+    ] {
+        let output = crate::support::lingrep_without_dictionary()
+            .args(["check", "--pattern", "[]."])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("catalog.lx");
+    std::fs::write(&path, "fragment f := [upos=VERB]. p := @f+.").unwrap();
+    let output = crate::support::lingrep_without_dictionary()
+        .args([
+            "check",
+            "--diagram",
+            "--diagram-format",
+            "svg",
+            "--patterns",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--name"));
+    let selected = crate::support::lingrep_without_dictionary()
+        .args([
+            "check",
+            "--diagram",
+            "--diagram-format",
+            "svg",
+            "--name",
+            "p",
+            "--expand",
+            "--patterns",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&selected.stdout).contains("@f"));
+}
+
 fn json_diagnostic_code(stderr: &[u8]) -> String {
     parse_jsonl(stderr)[0]["data"]["code"]
         .as_str()

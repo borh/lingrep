@@ -342,6 +342,32 @@ pub enum CompletionShell {
 
 #[derive(Debug, Args)]
 pub struct CheckArgs {
+    /// Show recognition flow instead of the check report; references stay named unless --expand is set.
+    #[arg(long, conflicts_with_all = ["json", "compare_with", "verify_examples", "schema"], help_heading = "Diagrams")]
+    pub diagram: bool,
+    /// Definition to draw. Repeat to select more; defaults to all patterns and fragments in source order.
+    #[arg(
+        long = "name",
+        requires = "diagram",
+        value_name = "NAME",
+        help_heading = "Diagrams"
+    )]
+    pub diagram_names: Vec<String>,
+    /// Diagram output format. SVG requires exactly one selected definition.
+    #[arg(
+        long,
+        requires = "diagram",
+        value_enum,
+        default_value = "unicode",
+        help_heading = "Diagrams"
+    )]
+    pub diagram_format: DiagramFormat,
+    /// Layout columns (32–240). Defaults to terminal width, or 80 when piped.
+    #[arg(long = "width", requires = "diagram", value_name = "COLUMNS", value_parser = clap::value_parser!(u16).range(32..=240), help_heading = "Diagrams")]
+    pub diagram_width: Option<u16>,
+    /// Substitute references in diagrams, including named token tests and sets.
+    #[arg(long, requires = "diagram", help_heading = "Diagrams")]
+    pub expand: bool,
     /// Execute examples and counterexamples with the selected native analyzer.
     #[arg(long, conflicts_with = "schema")]
     pub verify_examples: bool,
@@ -369,6 +395,13 @@ pub struct CheckArgs {
     /// clauses on a schema without `dep.*`) fail the check.
     #[arg(long, value_enum, value_name = "SCHEMA", help_heading = "Diagnostics")]
     pub schema: Option<CheckSchemaArg>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum DiagramFormat {
+    Unicode,
+    Ascii,
+    Svg,
 }
 
 /// The declared token schemas `check --schema` can bind against.

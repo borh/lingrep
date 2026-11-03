@@ -3,6 +3,7 @@
 mod analyzer;
 pub(crate) mod attributes;
 pub mod check;
+mod check_diagram;
 pub mod completions;
 pub mod corpus;
 mod corpus_metadata;

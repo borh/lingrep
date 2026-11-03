@@ -8,6 +8,7 @@ mod capture_key;
 #[cfg(test)]
 mod detach_parity;
 mod diagnostic;
+mod diagram;
 mod drift;
 mod expand;
 mod format;
@@ -37,6 +38,7 @@ pub use diagnostic::{
     CompileError, Diagnostic, DiagnosticCode, DiagnosticLocation, DiagnosticSeverity,
     RelatedDiagnosticLocation,
 };
+pub use diagram::{DiagramCatalog, DiagramError, PatternDiagram};
 pub use drift::{
     CatalogDriftReport, DriftBody, DriftCarrier, DriftDefinitionKind, DriftEntry,
     report_catalog_drift,

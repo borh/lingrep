@@ -68,6 +68,34 @@ counterexamples. Successful example verification confirms consistency with autho
 claims, not linguistic correctness or recall. External adapters are rejected by this
 verification path.
 
+### Pattern diagrams
+
+`check --diagram` displays recognition flow instead of the check report. No
+dictionary or corpus is required. By default, it draws every pattern and fragment
+in source order; repeat `--name NAME` to select definitions. References stay named
+unless `--expand` substitutes them.
+
+```bash
+ling check --pattern '[upos=NOUN]? [upos=VERB]+.' --diagram
+ling check --patterns patterns/double-wo.lx --diagram --name double_wo_candidate \
+  --expand --width 80
+ling check --patterns patterns/double-wo.lx --diagram --name double_wo_candidate \
+  --diagram-format svg >double-wo.svg
+```
+
+`--diagram-format` selects `unicode` (the default), `ascii` connectors or a
+standalone `svg`. SVG output requires exactly one selected definition.
+`--width COLUMNS` accepts 32–240 columns; the default is the terminal width within
+that range, or 80 when piped. Wide sequences continue on connected rows. Numbered
+labels and subdiagrams retain text that cannot fit inline; dependency constraints
+and publication annotations appear separately from recognition flow.
+
+Diagram mode cannot be combined with `--json`, `--compare-with`,
+`--verify-examples` or `--schema`. Compiler warnings go to stderr. `ling` exits 0
+for a closed text-output pipe; an incomplete SVG write exits 1.
+
+### Matching and summaries
+
 `matches` emits canonical per-match evidence. A published token carries only the
 attributes the run projects: the catalog's own, plus `text`, plus those its
 policy projects. The `run` record lists them in `published_attributes`.
