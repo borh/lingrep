@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The Harbor evaluation harness (`benchmarks/harbor`), its task images
+  (`nix/linguistic-eval`), the `ci.sh` harness lanes and the
+  `linguistic-eval-*` flake outputs moved to the `lingrep-harbor` repository,
+  which consumes this flake's `lingrep` and `vibrato-dict-cwj`.
+
 ## [0.6.0] - 2026-10-29
 
 ### Added

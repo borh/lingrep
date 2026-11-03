@@ -23,29 +23,11 @@ pub fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Repository-relative directories that hold generated output, not sources.
-///
-/// The skip list below turns away whole *classes* of directory by name. This
-/// one names paths, because `benchmarks/harbor/jobs/` is ordinary-looking and
-/// its contents are not: a harbor run writes each agent's tool invocations
-/// there, and an agent asked to author lingrep patterns writes `.lx` files among them. The
-/// repository already declares it generated — `benchmarks/harbor/.gitignore`
-/// carries `jobs/` — so this restates that boundary for a walk that cannot
-/// read it.
-///
-/// Left unskipped, one benchmark run turned seventeen tests red at once, all
-/// of them pins over "every tracked catalog": a duplicate definition and a
-/// syntax error in someone's generated `patterns/0.lx` were reported as
-/// defects in this repository's catalogs.
-const GENERATED_DIRECTORIES: &[&str] = &["benchmarks/harbor/jobs"];
-
 /// Every `.lx` file the repository ships, found rather than listed.
 ///
-/// Deliberately not `git ls-files`: the inventory must work in a source
-/// archive with no git directory. The trade is that an untracked scratch
-/// catalog under `patterns/` would be included too, which is the safe
-/// direction to err — there. It is not the safe direction under a tree of
-/// generated output, which is what [`GENERATED_DIRECTORIES`] is for.
+/// Walks the filesystem rather than running `git ls-files`, so the inventory
+/// works in a source archive with no git directory. An untracked catalog under
+/// `patterns/` is therefore included and must pass the catalog pins.
 pub fn tracked_catalogs() -> Vec<PathBuf> {
     let root = repository_root();
     let mut catalogs = Vec::new();
@@ -66,22 +48,13 @@ pub fn tracked_catalogs() -> Vec<PathBuf> {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if path.is_dir() {
-                // Dot-directories hold other checkouts of this repository, not
-                // this one's sources: `.direnv` caches a pinned flake input
-                // that is a *snapshot of this repo at an older revision*, whose
-                // catalogs may target an older compiler and must not be judged
-                // by this checkout. `.git` and `.worktrees` are the
-                // same hazard. Build output and vendored third-party trees
-                // carry no first-party catalogs. `GENERATED_DIRECTORIES` adds
-                // the trees that look like sources and are not.
-                let generated = path.strip_prefix(&root).is_ok_and(|relative| {
-                    GENERATED_DIRECTORIES
-                        .iter()
-                        .any(|generated| Path::new(generated) == relative)
-                });
-                let skipped = generated
-                    || name.starts_with('.')
-                    || matches!(name.as_ref(), "target" | "node_modules");
+                // Dot-directories hold other revisions of this repository, whose
+                // catalogs may target an older compiler: `.direnv` caches a
+                // pinned flake input with a snapshot of the repository, and
+                // `.git` and `.worktrees` hold other checkouts. `target` and
+                // `node_modules` hold build output and third-party packages.
+                let skipped =
+                    name.starts_with('.') || matches!(name.as_ref(), "target" | "node_modules");
                 if !skipped {
                     directories.push(path);
                 }

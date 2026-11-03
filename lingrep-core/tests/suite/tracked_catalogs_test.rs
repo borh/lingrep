@@ -458,34 +458,6 @@ fn tracked_pattern_execution_attributes_are_pinned() {
 /// and drifted: `collexeme.lx` compiles lookaround — one of only four
 /// catalogs that do — and was outside the suite when a lookaround optimization
 /// was measured against it, as were `alternation.lx` and `sfe.lx`.
-/// Discovery must not reach into a tree of generated output.
-///
-/// "Found rather than listed" is what keeps catalog coverage from drifting
-/// behind the tree, and it cuts the other way too: anything `.lx`-shaped
-/// anywhere becomes a repository catalog that every pin is judged against. A
-/// harbor benchmark run writes each agent's tool invocations under
-/// `benchmarks/harbor/jobs/`, and an agent asked to author lingrep patterns leaves `.lx`
-/// files there. One run turned seventeen tests red at once — a duplicate
-/// definition and a syntax error in a generated `patterns/0.lx` reported as
-/// defects in *this* repository's catalogs.
-///
-/// Asserted over the discovered set rather than by unit-testing the skip list,
-/// because the property that matters is "no generated file reached a pin", not
-/// "the constant contains this string".
-#[test]
-fn discovery_ignores_generated_output_trees() {
-    let offenders: Vec<String> = tracked_catalog_sources()
-        .into_iter()
-        .map(|(name, _)| name)
-        .filter(|name| name.starts_with("benchmarks/harbor/jobs/"))
-        .collect();
-
-    assert!(
-        offenders.is_empty(),
-        "generated benchmark output reached catalog discovery: {offenders:?}"
-    );
-}
-
 #[test]
 fn every_pattern_catalog_has_a_pinned_guardrail_role() {
     let descriptors = catalog_campaign_descriptors();

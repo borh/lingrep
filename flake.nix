@@ -85,10 +85,6 @@
           # would fail at link time instead. ROCm has no Apple Silicon analogue
           # at all.
           linuxOnlyDevDeps = with pkgs; [
-            # Compose V2 provider for `podman compose`; Harbor's Podman
-            # environment preflight runs `podman compose ls`, which
-            # podman-compose does not implement.
-            docker-compose
             gdb
             perf
             chromium
@@ -737,15 +733,6 @@
             touch "$out"
           '';
 
-          linguisticEvalImages = import ./nix/linguistic-eval {
-            inherit pkgs;
-            lingrep = self'.packages.lingrep;
-            vibratoDictionary = buildUnidicVibratoDict {
-              name = "unidic-cwj";
-              inherit (unidicSources.cwj) url hash;
-            };
-          };
-
           lingrepApp = {
             type = "app";
             program = lib.getExe self'.packages.lingrep;
@@ -873,8 +860,6 @@
           # The OCI images stuff host `pkgs` into a Linux image, so on darwin
           # they would package Mach-O binaries rather than cross-compile.
           // lib.optionalAttrs isLinux {
-            linguistic-eval-lingrep-image = linguisticEvalImages.lingrep;
-            linguistic-eval-mecab-image = linguisticEvalImages.mecab;
           };
 
           devShells.default = mkDevShell pinnedToolchain;
@@ -949,7 +934,6 @@
           // lib.optionalAttrs isLinux {
             # The standard-shell smoke needs bubblewrap, which is Linux-only
             # by construction (user namespaces).
-            linguistic-eval-standard-shell = linguisticEvalImages.shellSmoke;
 
             # Smoke test for the NixOS module. Buildable in any sandbox; boot
             # needs KVM. CI runs `nix flake check --no-build`, which reaches

@@ -7,7 +7,6 @@
 #   ./ci.sh --quick       deprecated alias for --full
 #   ./ci.sh --fuzz        bounded fuzz smoke only
 #   ./ci.sh --performance retained benchmarks and real-corpus measurement only
-#   ./ci.sh --harbor-containers  Harbor oracle replays and sandbox probes under Podman
 
 set -euo pipefail
 
@@ -15,7 +14,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$repo_root"
 
 usage() {
-    echo "usage: $0 [--fast|--full|--quick|--fuzz|--performance|--harbor-containers]" >&2
+    echo "usage: $0 [--fast|--full|--quick|--fuzz|--performance]" >&2
 }
 
 if [[ $# -gt 1 ]]; then
@@ -32,7 +31,6 @@ case "${1:-}" in
         ;;
     --fuzz) mode=fuzz ;;
     --performance) mode=performance ;;
-    --harbor-containers) mode=harbor-containers ;;
     *)
         usage
         exit 2
@@ -97,11 +95,6 @@ run_common_checks() {
 
     echo "Building and checking release adapter wheels"
     UV_EXCLUDE_NEWER=P3D python scripts/check-adapter-wheels.py
-
-    echo "Checking the Harbor evaluation harness"
-    uv lock --project benchmarks/harbor --check
-    uv run --project benchmarks/harbor --frozen --group dev \
-        python -m pytest -q benchmarks/harbor/tests
 
     echo "Checking formatting"
     cargo fmt --check --all 2>&1 | tee "${TMPDIR:-/tmp}/cargo-fmt.log"
@@ -237,40 +230,6 @@ run_performance() {
     LINGREP_RUN_REAL_SENTENCE_FINAL_CLI_BENCH=1 scripts/measure_sentence_final_profile.sh
 }
 
-# Requires Podman and a Nix build of both benchmark images, so it is outside
-# the push gate.
-run_harbor_containers() {
-    local harbor=benchmarks/harbor archive generated
-    run_environment
-
-    echo "Loading the benchmark images"
-    for output in linguistic-eval-lingrep-image linguistic-eval-mecab-image; do
-        archive=$(nix build --no-link --print-out-paths ".#$output")
-        podman load --quiet --input "$archive"
-    done
-
-    echo "Building host ling for the oracle catalog check"
-    cargo build --release -p lingrep --bin ling
-    export PATH="$repo_root/target/release:$PATH"
-
-    generated=$(mktemp -d "${TMPDIR:-/tmp}/lingrep-harbor-containers.XXXXXX")
-    for lane in smoke:catalog-authoring worked-example:catalog-authoring soranoha:common-analysis; do
-        catalog=${lane%%:*}
-        protocol=${lane#*:}
-        echo "Replaying the $catalog reference solutions through the verifier"
-        uv run --project "$harbor" --frozen python "$harbor/generate_dataset.py" \
-            --catalog "$harbor/catalogs/$catalog.json" \
-            --output "$generated/$catalog" --protocol "$protocol"
-        uv run --project "$harbor" --frozen python "$harbor/oracle_preflight.py" \
-            "$generated/$catalog"
-    done
-    rm -rf "$generated"
-
-    echo "Probing the replay sandbox inside the verifier images"
-    uv run --project "$harbor" --frozen --group dev \
-        python -m pytest -q -m containers "$harbor/tests"
-}
-
 echo "Lingrep CI: $mode"
 case "$mode" in
     fast)
@@ -288,7 +247,6 @@ case "$mode" in
         ;;
     fuzz) run_fuzz ;;
     performance) run_performance ;;
-    harbor-containers) run_harbor_containers ;;
 esac
 
 echo "CI lane passed: $mode"
