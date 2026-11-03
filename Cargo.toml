@@ -237,12 +237,56 @@ used_underscore_binding = "allow"
 # exceptions that stay clean because the code avoids them by choice, not by luck.
 wildcard_imports = "allow"
 
-# --- Developing lints: ABSENT from this table (Decision 12) ---
-#   `nursery` stays at its default `allow` (not listed); elevation needs a
-#   toolchain pin. Default-on lints are OMITTED (Decision 7). Inert deferred
-#   restriction/nursery lints (indexing_slicing, arithmetic_side_effects,
-#   as_conversions, mem_forget, float_cmp_const, lossy_float_literal, rc_mutex,
-#   dbg_macro, allow_attributes, allow_attributes_without_reason, ...) are
-#   ABSENT and listed in docs/lint-policy.md as deferred-candidate targets;
-#   raising one is a future per-lint debt-paydown task that re-adds it at `warn`
-#   with a measured justification and a ratchet (Decision 10).
+# --- Nursery group: denied, with an allow-list of the lints that have findings.
+nursery = { level = "deny", priority = -1 }
+branches_sharing_code = "allow"
+collection_is_never_read = "allow"
+derive_partial_eq_without_eq = "allow"
+equatable_if_let = "allow"
+future_not_send = "allow"
+iter_on_single_items = "allow"
+iter_with_drain = "allow"
+large_stack_frames = "allow"
+literal_string_with_formatting_args = "allow"
+missing_const_for_fn = "allow"
+needless_collect = "allow"
+needless_pass_by_ref_mut = "allow"
+option_if_let_else = "allow"
+or_fun_call = "allow"
+redundant_clone = "allow"
+redundant_pub_crate = "allow"
+significant_drop_in_scrutinee = "allow"
+significant_drop_tightening = "allow"
+string_lit_as_bytes = "allow"
+suboptimal_flops = "allow"
+suspicious_operation_groupings = "allow"
+too_long_first_doc_paragraph = "allow"
+trivial_regex = "allow"
+tuple_array_conversions = "allow"
+unused_peekable = "allow"
+use_self = "allow"
+useless_let_if_seq = "allow"
+
+# --- Restriction lints with no findings, denied to keep them at zero.
+dbg_macro = "deny"
+empty_enum_variants_with_brackets = "deny"
+empty_structs_with_brackets = "deny"
+float_cmp_const = "deny"
+infinite_loop = "deny"
+lossy_float_literal = "deny"
+mem_forget = "deny"
+mixed_read_write_in_expression = "deny"
+rc_mutex = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+string_lit_chars_any = "deny"
+try_err = "deny"
+unnecessary_self_imports = "deny"
+
+[workspace.lints.rust]
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+redundant_lifetimes = "deny"
+unit_bindings = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"

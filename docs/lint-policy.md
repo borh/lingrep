@@ -79,13 +79,18 @@ use a non-panicking form. `.expect("msg")` requires no header.
 
 ## Lints absent from `Cargo.toml`
 
-A default-off `restriction` or `nursery` lint that no enabled group turns on is
-left out rather than listed as `allow`: `indexing_slicing`,
-`arithmetic_side_effects`, `as_conversions`, `mem_forget`, `float_cmp_const`,
-`lossy_float_literal`, `rc_mutex`, `dbg_macro`, `allow_attributes`,
-`allow_attributes_without_reason`. Adding one requires fixing its findings
-first. Enabling the `nursery` group requires a `rust-toolchain.toml` pin in the
-same change.
+The `nursery` group is denied with an allow-list, like `pedantic`. Its lints
+change between Clippy releases, so a toolchain update can add findings; the
+commit that updates the pin fixes them or adds their `allow` lines.
+
+A default-off `restriction` lint is listed as `deny` only when it has no
+findings. Lints left out because they have findings include
+`indexing_slicing`, `arithmetic_side_effects`, `as_conversions`,
+`allow_attributes`, `allow_attributes_without_reason` and
+`undocumented_unsafe_blocks`. Adding one requires fixing its findings first.
+
+`[workspace.lints.rust]` denies the default-allow rustc lints that have no
+findings.
 
 ## Enforcement and toolchains
 
