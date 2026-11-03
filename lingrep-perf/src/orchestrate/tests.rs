@@ -245,8 +245,8 @@ fn manifest_with(workload: Vec<crate::campaign::WorkloadInput>) -> Manifest {
         catalog_corpora: BTreeMap::new(),
         workers: None,
         output_capture: OutputCapture::File,
-        // Deliberately unsealed: this is also the campaign shape declared
-        // before the command was sealed, and `record` must still accept one.
+        // Unsealed: this matches the campaign shape declared before command
+        // sealing, which `record` continues to accept.
         command_template: Vec::new(),
     }
 }

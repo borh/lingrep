@@ -20,7 +20,7 @@ use tempfile::TempDir;
 use crate::support::{dict_path, fixture, lingrep, lingrep_std};
 
 /// No dictionary entry can supply `pron` for this, so every attribute the
-/// dictionary would have carried is genuinely absent on its tokens.
+/// dictionary would have carried is absent on its tokens.
 const OUT_OF_VOCABULARY: &str = "これはqwertyzxcvです";
 
 struct Corpus {

@@ -256,7 +256,7 @@ impl AnalyzerDescriptor {
     }
 }
 
-/// Execution facts deliberately excluded from semantic analysis identity.
+/// Execution facts excluded from semantic analysis identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionProvenance {
     pub backend: Box<str>,

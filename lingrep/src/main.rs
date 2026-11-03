@@ -41,7 +41,7 @@ fn run_process() -> i32 {
         }
     };
 
-    // Suite and resource validation is deliberately first: an unsupported
+    // Suite and resource validation runs first: an unsupported
     // suite cannot select any output namespace and therefore publishes no
     // command output.
     let config = match cli.execution_config() {

@@ -155,7 +155,7 @@ pub enum SpanConvention {
     HalfOpenToken,
 }
 
-/// Corpus information available when a run starts. Direct scans deliberately
+/// Corpus information available when a run starts. Direct scans
 /// have no durable identity yet; stdin has only its run-local stream identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "corpus_kind", rename_all = "snake_case")]
@@ -378,11 +378,10 @@ pub struct SourceSpan {
 
 /// A half-open range of Unicode code points within the sentence's own text.
 ///
-/// Deliberately not a [`SourceSpan`]. That type already carries two different
-/// quantities — half-open token ordinals on a match, and `.lx` byte offsets on
-/// a definition — and a third meaning on one type is how a consumer ends up
-/// assuming the unit. The name carries the unit instead; the origin is declared
-/// once on the `run` record, beside `span_convention`.
+/// Distinct from [`SourceSpan`], which carries half-open token ordinals on a
+/// match and `.lx` byte offsets on a definition. The struct name carries the
+/// unit (`CharSpan`), and origin is declared on the `run` record beside
+/// `span_convention`.
 ///
 /// Code points rather than UTF-8 bytes because every consumer this exists for
 /// counts characters. On an all-BMP corpus the two are indistinguishable from

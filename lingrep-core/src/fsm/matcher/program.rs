@@ -355,7 +355,7 @@ impl Program {
                 >(predicates, tokens, start, assertions)
                 .into_iter()
                 .filter(|candidate| candidate.position > start)
-                // Before the longest-candidate selection below, deliberately:
+                // Filters relations before longest-candidate selection below:
                 // filtering after it would let a failing longer candidate
                 // shadow a passing shorter one at the same start, and the
                 // shadow would be unobservable.

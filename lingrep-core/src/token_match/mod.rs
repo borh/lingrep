@@ -633,8 +633,8 @@ fn featurize_selected(
         }
     }
 
-    // Computed after the fallback above, and deliberately unchanged by it: the
-    // rule is "the normalized lemma if present, else the surface", and the
+    // Computed after the fallback above and unchanged by it: the rule is
+    // "the normalized lemma if present, else the surface", and the
     // fallback sets lemma to exactly that surface. This is the established
     // local convention the fallback generalises, not a new one.
     if requested[Norm as usize] {

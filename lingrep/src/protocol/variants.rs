@@ -159,12 +159,10 @@ pub enum VariantDifference {
 
 /// The analyzer semantics a manifest recorded.
 ///
-/// Deliberately not `query::AnalyzerRun`: that type carries the stored token
+/// Distinct from `query::AnalyzerRun`: that type carries the stored token
 /// schema, which lives in the token component rather than the manifest.
-/// Including it would force the scan to open every candidate's token file,
-/// turning a bounded manifest read into a full artifact open per sibling — for
-/// a field this command never needed. These are exactly the fields the
-/// manifest has.
+/// Using `query::AnalyzerRun` would force scanning every candidate's token file
+/// instead of reading only the manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct VariantAnalyzer {
     pub family: String,

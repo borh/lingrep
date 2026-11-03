@@ -618,7 +618,7 @@ fn binding_failures_precede_independent_whole_match_width_errors() {
 // plausible value. Form (b), capture *presence*, is exempt below and says why.
 //
 // A tag projection stays single-token. `key:`'s `{first|last|span}` spelling is
-// deliberately not extended here: the measurement that justified components
+// not extended here: the measurement that justified components
 // was about keys, and a second copy of the vocabulary would have to be kept in
 // step with `substitute`'s unreconciled `component:` for no witnessed demand.
 // ---------------------------------------------------------------------------

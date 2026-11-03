@@ -273,7 +273,7 @@ pub fn run(
             max_temp_bytes: config.max_temp_bytes,
         },
         traversal_limits: protocol_traversal_limits(config),
-        // Direct tokenization is deliberately ordered and sentence-at-a-time
+        // Direct tokenization is ordered and sentence-at-a-time,
         // so its resident-token bound is exact. Report that effective
         // execution width rather than the shared CLI's requested pool size.
         worker_count: 1,

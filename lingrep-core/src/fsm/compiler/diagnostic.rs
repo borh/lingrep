@@ -40,7 +40,7 @@ pub enum DiagnosticCode {
     /// The sibling of [`Self::SpanEqualityInsideLookaround`], and refused for
     /// the same underlying reason: a lookaround is answered by a boundary
     /// sweep that records only *which boundaries an accepting path reaches*,
-    /// deliberately discarding the other endpoint. Intersection is a statement
+    /// discarding the other endpoint. Intersection is a statement
     /// about both endpoints of one span, which that representation cannot
     /// carry. The reverse nesting — a lookaround inside `&` — is fine, and
     /// stays allowed.
@@ -205,9 +205,8 @@ pub enum DiagnosticCode {
     ///
     /// Nothing is narrowed, because escape decoding runs after tokenization —
     /// `|` reaches every position a bare literal can occupy, so a value
-    /// that genuinely holds a pipe stays writable. It is silent on every
-    /// tracked catalog, which is why the promotion breaks nothing that ships
-    /// here.
+    /// containing a pipe character remains writable. The check produces no
+    /// diagnostic on any tracked catalog.
     PipeInBareValue,
     /// An unquoted attribute value or `set` member wrapped in double quotes.
     ///
@@ -225,18 +224,18 @@ pub enum DiagnosticCode {
     /// because the two name different recoveries for different mistakes.
     ///
     /// An **error**, on the same argument: escape decoding runs after
-    /// tokenization, so a literal that genuinely begins and ends with a double
-    /// quote stays writable as `\u0022…\u0022`. It is silent on every tracked
-    /// catalog.
+    /// tokenization, so a literal that begins and ends with a double quote
+    /// remains writable as `\u0022…\u0022`. The check produces no diagnostic on
+    /// any tracked catalog.
     QuotedAttributeValue,
     /// A `key: none` annotation for a key no `defaults` block supplies.
     ///
     /// `none` is not a value: it deletes the entry the `defaults` block would
     /// have materialized onto the annotated definition. With no default to
-    /// delete, the annotation asks for nothing that omitting the key would not
-    /// already do — and an accepted no-op here would silently become a real
-    /// unset the day someone adds the default. Fatal, and points at the key
-    /// that carried the `none`, per the metadata-diagnostic rule.
+    /// delete, the annotation has no effect beyond omitting the key — and
+    /// accepting an ineffective annotation would change behavior if a default
+    /// is added later. Fatal, and points at the key that carried the `none`,
+    /// per the metadata-diagnostic rule.
     UnsetWithoutDefault,
     /// A `none` anywhere but the top level of a per-definition annotation
     /// entry — inside a list or map, or as a `defaults` entry's value.
@@ -270,8 +269,8 @@ pub enum DiagnosticCode {
     ///
     /// A fragment never emits, so its clause could act only through inclusion
     /// — and inclusion-time capture renaming is its own design, deferred until
-    /// witnessed. The grammar parses the clause here deliberately; a sentence
-    /// naming the refusal beats an `ERROR` node.
+    /// witnessed. The grammar parses the clause here to report a descriptive
+    /// diagnostic rather than an `ERROR` node.
     WhereOnFragment,
     /// A `where` operand naming no capture in the definition's materialized
     /// expression.
@@ -304,8 +303,8 @@ pub enum DiagnosticCode {
     ///
     /// A token carries exactly one `dep.rel`, so disjoint sets on one
     /// dependent can never both hold and the pattern would silently never
-    /// match — the `WhereSelfEdge` defect class. Sound and deliberately
-    /// incomplete: nested captures legally bind one token, so a shared
+    /// match — the `WhereSelfEdge` defect class. Sound but incomplete:
+    /// nested captures legally bind one token, so a shared
     /// dependent whose sets *do* intersect stays legal.
     WhereContradictoryLabels,
     /// Positive and negative anonymous edge existence constraints on the same
@@ -323,11 +322,11 @@ pub enum DiagnosticCode {
     /// definition silently never matches. The `WhereSelfEdge` defect class in
     /// its third spelling.
     ///
-    /// "Single-entry" is load-bearing and is the whole analysis: an
-    /// alternation under a repetition that can run twice is entered once per
-    /// iteration, so two iterations legally bind two branches' captures.
-    /// Sound and deliberately incomplete — exclusion arising from disjoint
-    /// token predicates is a satisfiability question and is not decided here.
+    /// Single-entry alternation analysis: an alternation under a repetition
+    /// that can run twice is entered once per iteration, so two iterations
+    /// legally bind two branches' captures. Sound but incomplete: exclusion
+    /// arising from disjoint token predicates is a satisfiability question and
+    /// is not decided here.
     WhereExclusiveCaptures,
     /// An enhanced graph binding reuses a surface or graph binding name.
     EnhancedGraphBindingDuplicate,

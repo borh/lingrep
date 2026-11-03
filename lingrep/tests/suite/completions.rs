@@ -121,10 +121,9 @@ const SHELL_PROMPT: &str = "% ";
 /// guessed wall-clock window. These retries remain for the Zsh and Elvish pty
 /// integrations.
 ///
-/// A screen without the prompt therefore says the shell never got far enough to
-/// complete anything, which is a fact about the harness and not about the script
-/// under test: retry it. A screen *with* the prompt is a real completion result
-/// and is returned whatever it says, so a genuinely wrong completion still fails
+/// A screen without the prompt indicates the shell did not complete
+/// initialization: retry it. A screen *with* the prompt is a completion result
+/// and is returned without retry, so an incorrect completion still fails
 /// on the first attempt rather than being retried into a green run.
 #[cfg(unix)]
 fn complete_after_the_shell_is_ready(

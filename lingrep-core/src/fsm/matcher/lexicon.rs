@@ -399,8 +399,8 @@ mod tests {
             .collect()
     }
 
-    /// Deliberately enumerates spans and projections; it shares no production
-    /// automaton, byte-boundary map, hit table, or sort helper.
+    /// Enumerates spans and projections directly without using production
+    /// automata, byte-boundary maps, hit tables, or sort helpers.
     fn oracle(
         definition: &CompiledLexiconDefinition,
         tokens: &[TokenInfo],

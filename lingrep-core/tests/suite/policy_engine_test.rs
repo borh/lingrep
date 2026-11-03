@@ -340,8 +340,7 @@ fn an_anchor_free_catalog_yields_an_empty_but_compatible_position_set() {
 /// (`lingrep-core/tests/fixtures/catalogs/apparatus-depth2.lx`) rather than
 /// inlining it keeps the two from drifting apart.
 ///
-/// Dictionary-backed and deliberately not `#[ignore]`d, for the reason
-/// `policy_helpers::verify_claims` gives: `nix develop` sets
+/// Dictionary-backed and executed by default: `nix develop` sets
 /// `LINGREP_DICTIONARY_PATH`.
 #[test]
 fn the_recorded_depth_two_transcript_is_reproduced() {

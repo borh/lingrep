@@ -134,7 +134,7 @@ pub(crate) struct Manifest {
     ///
     /// **This is the one recorded fact that makes a resource limit semantic.**
     /// Every other limit either rejects a corpus or is invisible, which is why
-    /// limits are deliberately absent from identity: two limits that both
+    /// limits are omitted from identity: two limits that both
     /// complete emit the same corpus. Truncation breaks that — two limits that
     /// both complete emit *different* corpora — so an artifact that truncated
     /// anything must record the limit it truncated at, or a later build under

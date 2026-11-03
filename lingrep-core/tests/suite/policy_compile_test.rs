@@ -122,9 +122,8 @@ renamed := [text=a].
 
 #[test]
 fn a_policy_reference_to_no_definition_fails_compilation() {
-    // Reuses the body-level code deliberately: an operand naming `@missing` and
-    // a body-level `@missing` are the same mistake, and a consumer filtering
-    // `UndefinedReference` must see both.
+    // Reuses the body-level error code: an operand naming `@missing` and
+    // a body-level `@missing` both produce `UndefinedReference`.
     let error = compile_err(
         "dangling := [text=a].\n\
          policy\n  exclude @dangling with: @missing, relation: within, evidence: raw.\nend\n",
@@ -1860,9 +1859,9 @@ fn a_misspelled_max_nesting_is_suggested() {
 /// a fragment no anchor excludes.
 ///
 /// The asymmetry with `read_anchor_declarations`' `already_read` is the point.
-/// Two identical `anchor: {name: a, exclude: F}` values genuinely say the same
-/// thing wherever they are written, because the declaration names its own
-/// subject. A claim does not — its subject is the definition carrying it.
+/// Two identical `anchor: {name: a, exclude: F}` declarations express matching
+/// semantics wherever written because the declaration names its own subject.
+/// A claim does not — its subject is the definition carrying it.
 #[test]
 fn an_identical_claim_in_a_separate_block_is_still_unreferenced() {
     let source = PUNCT_ANCHOR.to_owned()

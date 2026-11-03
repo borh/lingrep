@@ -45,10 +45,8 @@ pub fn admission_identity_digest() -> [u8; 32] {
 ///
 /// An identity pin, not a description of "this build's schema": every Vibrato
 /// artifact on disk records this digest, so moving it invalidates all of them.
-/// It is deliberately not the answer to "would this build reproduce that
-/// artifact's tokens" — that question is per analyzer, and reading a single
-/// constant for it reported every Sudachi artifact as stale. Ask
-/// [`declared_token_schema`](crate::analysis::declared_token_schema) instead.
+/// This digest does not determine whether a build reproduces a given analyzer's
+/// tokens; query [`declared_token_schema`](crate::analysis::declared_token_schema) instead.
 #[must_use]
 pub fn token_schema_identity_digest() -> [u8; 32] {
     *TokenSchema::unidic_morphology().digest().as_bytes()

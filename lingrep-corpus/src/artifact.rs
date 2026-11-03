@@ -776,7 +776,7 @@ impl CorpusBuilder {
 
     /// Registers the discovery record paired with the next admitted document.
     ///
-    /// Physical paths and filesystem identities are deliberately discarded.
+    /// Physical paths and filesystem identities are discarded.
     pub fn register_source_document(&mut self, source: &SourceDocument) -> Result<(), CorpusError> {
         self.register_discovered_source(source)?;
         self.register_admitted_document_from_source(source.ordinal, &source.logical_name, source)

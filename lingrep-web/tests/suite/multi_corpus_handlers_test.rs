@@ -51,8 +51,8 @@ use crate::v6_support::{ArtifactFixture, ready_fixture};
 /// Byte offset of block 0's payload in `tokens.v1.zst`, per
 /// `inspect_corruption_teardown_test`.
 /// The token that appears in corpus `key`'s only sentence and in no other
-/// corpus. Deliberately not `A`/`B`: a single ASCII letter occurs all over
-/// rendered HTML, so it could not distinguish a body.
+/// corpus. Uses distinct tokens rather than `A`/`B`: a single ASCII letter occurs
+/// throughout rendered HTML and cannot distinguish response bodies.
 fn marker(key: &str) -> &'static str {
     match key {
         "a" => "甲",

@@ -10,7 +10,7 @@
 //!
 //! # Why only a token predicate
 //!
-//! The guard grammar is deliberately narrower than the expression grammar, on
+//! The guard grammar is narrower than the expression grammar, on
 //! two independent grounds.
 //!
 //! Every v1 op judges **one token at a time**: `drop_edge` walks inward token

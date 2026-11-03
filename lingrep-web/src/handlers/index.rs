@@ -159,7 +159,7 @@ pub fn parse_wire_for_test(raw: &str) -> Option<WireParams<'_>> {
     parse_wire(raw)
 }
 
-/// What the request target asked for, once parsed.
+/// The parsed request target.
 enum Target<'a> {
     /// A bare `/`: no shared link at all.
     Bare,

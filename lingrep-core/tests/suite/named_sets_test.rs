@@ -764,7 +764,7 @@ fn a_policy_operand_naming_a_set_says_so_rather_than_calling_it_undeclared() {
     assert_eq!(note.location().line(), 1, "which is line 1: {rendered}");
 }
 
-/// The set arm does not swallow a genuinely undeclared operand.
+/// The set arm does not match an undeclared operand.
 ///
 /// Discriminates against a fix that reports every unresolved policy name as a
 /// set: `@NOPE` is declared nowhere, and the original message is the right one.

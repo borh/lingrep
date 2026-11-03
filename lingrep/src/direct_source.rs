@@ -1479,7 +1479,7 @@ pub(crate) fn stdin_events(
 /// format-typed events with the diagnostics sink (direct seam only).
 ///
 /// The seam **loops** that feed this stay separate: their side channels
-/// genuinely differ (the `DiscoveredDocuments` queue in prepare, lazy versus
+/// differ (the `DiscoveredDocuments` queue in prepare, lazy versus
 /// eager discovery open, error styles), and extracting the loop would force
 /// a callback interface larger than either existing one.
 pub(crate) fn open_corpus_document(

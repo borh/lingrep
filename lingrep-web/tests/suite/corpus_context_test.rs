@@ -103,8 +103,7 @@ async fn corpus_context_partial_route_serves_the_strip() {
 /// The poll must observe the corpus the page *selected*. A `k` naming a corpus
 /// this server does not declare is a lookup miss, not a validation error, and is
 /// answered as an unavailable corpus rather than by silently describing the
-/// default — which would tell the reader a corpus is ready when the one they
-/// asked for does not exist.
+/// default — which would report readiness when the requested corpus does not exist.
 #[tokio::test]
 async fn the_poll_answers_for_its_key_and_refuses_an_undeclared_one() {
     let app = app_router(store_with_corpus_path("/x/demo-corpus.jsonl"));

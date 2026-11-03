@@ -167,7 +167,7 @@ pub struct ProvenanceCache {
 impl ProvenanceCache {
     /// The view for `identity`, opening and caching it on first use.
     ///
-    /// The lock is deliberately held across the open. That makes the cache
+    /// The lock is held across the open operation. That makes the cache
     /// single-flight: N requests arriving together against a cold corpus run
     /// one validating scan between them rather than N concurrent ones.
     async fn get_or_open(

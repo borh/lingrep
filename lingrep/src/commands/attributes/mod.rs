@@ -2,10 +2,9 @@
 //! exclusions that presence exposes.
 //!
 //! Shares `tokenize`'s token source and the query scope machinery. It reads
-//! the **unprojected** prepared source deliberately: projecting
-//! `required_attributes` — right for `summarize` — would report every
-//! unprojected attribute absent, which is the wrong answer in the alarming
-//! direction from a command whose whole subject is absence.
+//! the **unprojected** prepared source: projecting
+//! `required_attributes` — used by `summarize` — would report every
+//! unprojected attribute absent.
 
 pub(crate) mod report;
 

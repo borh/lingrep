@@ -1,8 +1,8 @@
 //! Per-sentence raw-candidate and publication outcome pairing.
 //!
-//! This is deliberately an opt-in observation value. Normal corpus execution
-//! keeps using the lean publication seam; consumers that need to explain a
-//! single sentence can retain the raw match that led to each visible result.
+//! An opt-in diagnostic value. Production corpus execution uses the direct
+//! publication seam; consumers that require per-sentence explanation retain
+//! the raw match that led to each visible result.
 
 use super::Match;
 

@@ -400,9 +400,6 @@ pub fn run(
         } else {
             PolicySelection::Apply
         };
-        // The trace request rides in with the selection rather than as another
-        // argument to `execute`, so every other surface still passes a bare
-        // `PolicySelection`.
         // `--trace-policy 0` prints only the run totals, which every run counts.
         let publication = match args.trace_policy {
             Some(capacity) if capacity > 0 => Publication::from(selection).with_trace(capacity),
@@ -1024,8 +1021,7 @@ mod tests {
     use super::*;
     use lingrep_core::token_match::TokenInfo;
 
-    /// A counting writer: what reached the destination, and how often the
-    /// sink asked for it to be made durable.
+    /// A counting writer tracking bytes written, write count, and flush count.
     #[derive(Default)]
     struct CountingWriter {
         bytes: Vec<u8>,

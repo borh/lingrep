@@ -44,7 +44,7 @@ pub struct SurfaceTail {
     /// The tail's share of the listed total, in tenths of a percent. The
     /// denominator is the sum of every variation's count, which is the one
     /// figure the reader can check against the rows above it — and, in exact
-    /// mode, is deliberately not a sentence count, since one sentence can
+    /// mode, is a variation count rather than a sentence count, since one sentence can
     /// carry two variations of the same pattern.
     pub share_percentage_tenths: usize,
 }
@@ -940,8 +940,8 @@ mod tests {
         }
     }
 
-    /// The count order and the rate order genuinely disagree here, which is
-    /// the misleading reading the rate exists to remove: `results` has four
+    /// Count order and rate order differ here to verify that rate calculation
+    /// prevents misleading conclusions from raw hit counts: `results` has four
     /// times the hits and a quarter of the rate.
     #[test]
     fn a_bigger_section_with_more_hits_can_still_have_the_lower_rate() {

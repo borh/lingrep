@@ -1,4 +1,4 @@
-//! The span stream's contract against a real, and a deliberately malformed,
+//! The span stream's contract against a valid, and an invalid,
 //! provenance sidecar.
 //!
 //! `ORDER BY span_id` is `first_sentence` order only because the *writer* opens

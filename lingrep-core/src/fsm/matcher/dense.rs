@@ -109,8 +109,8 @@ impl DenseMachine {
 
     /// Whether executing this machine ever consults a general lookaround.
     ///
-    /// A `PreviousToken` assertion is deliberately excluded: the specialization
-    /// answers it from the token slice, with no assertion session at all.
+    /// A `PreviousToken` assertion is excluded: the specialization evaluates
+    /// it directly from the token slice without an assertion session.
     pub(crate) fn queries_lookaround(&self) -> bool {
         self.has_lookaround_assertion
     }

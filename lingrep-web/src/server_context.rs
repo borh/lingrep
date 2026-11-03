@@ -96,8 +96,8 @@ impl ServerContext {
     /// decompressing 1.31 GB; this mutex keeps the answer for the process on
     /// top of it.
     ///
-    /// A failure is deliberately not memoized: `CorpusRuntime::retry` exists so
-    /// an operator can fix a bad `--dict-path` and retry without a restart.
+    /// Failures are not memoized: `CorpusRuntime::retry` allows an operator
+    /// to fix an invalid `--dict-path` and retry without restarting the process.
     pub fn dictionary_fingerprint(&self) -> Result<[u8; 32], PipelineError> {
         let mut guard = self.fingerprint.lock().expect("fingerprint mutex poisoned");
         if let Some(existing) = *guard {

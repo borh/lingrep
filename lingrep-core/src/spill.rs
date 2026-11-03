@@ -829,8 +829,8 @@ impl RunWriter {
             )
         })?;
         self.frame[..RECORD_LENGTH_PREFIX_LEN].copy_from_slice(&prefix.to_le_bytes());
-        // Deliberately no `Encoder::flush` here: it would end a block and
-        // cost compression ratio for no benefit.
+        // Omits `Encoder::flush`: flushing ends a block and degrades
+        // compression ratio without benefit.
         self.encoder.write_all(&self.frame)?;
         metrics.records_written_total += 1;
         Ok(())
@@ -1602,8 +1602,8 @@ mod tests {
         //
         // A single small record cannot fail under a stream codec — the
         // encoder buffers it and no byte reaches the budget — so the failure
-        // is provoked where it genuinely occurs, when a block is emitted
-        // under a tight budget. The counter must then equal exactly the
+        // is provoked directly when a block is emitted under a tight budget.
+        // The counter must then equal exactly the
         // number of pushes that succeeded, never one more.
         let directory = TempDir::new().unwrap();
         let budget = Arc::new(TempBudget::new(1024));

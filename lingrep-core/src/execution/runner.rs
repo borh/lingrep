@@ -106,7 +106,7 @@ pub struct ExecutionReport {
     /// to report policy activity cannot reach into a decorator it does not
     /// construct.
     pub program_stats: crate::fsm::ProgramStats,
-    /// The per-record explanation trace, when the caller asked for one.
+    /// The per-record explanation trace, or `None` when tracing is disabled.
     ///
     /// `None` unless the publication request carried a capacity, and bounded by
     /// that capacity when present — which is what keeps the struct's opening
@@ -305,9 +305,9 @@ pub trait MatchSink {
     ///
     /// The caller-owned pool is part of this seam so a decorator may prepare
     /// independent sentences in parallel without constructing another pool.
-    /// The default deliberately ignores it and retains the sentence-at-a-time
-    /// behavior of [`Self::push`]. Cancellation is checked at the same
-    /// boundaries as [`Self::push`], and a stopping sink is never
+    /// The default implementation ignores the pool and keeps the
+    /// sentence-at-a-time behavior of [`Self::push`]. Cancellation is checked
+    /// at the same boundaries as [`Self::push`], and a stopping sink is never
     /// offered a later sentence.
     fn push_partition<V: TokenSequence + Sync>(
         &mut self,

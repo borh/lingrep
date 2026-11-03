@@ -365,8 +365,8 @@ pub(crate) enum ParsedDefinitionBody {
 /// and `obl:tmod` are two different labels and [`Self::Exact`] tells them
 /// apart. [`Self::SubtypeOf`] is the family form authored `obl:*`: it holds
 /// for any label that is the prefix followed by `:` and a nonempty subtype,
-/// and deliberately **not** for the bare prefix — a wildcard that quietly
-/// included the unsubtyped label would make `obl|obl:*` mean `obl:*`.
+/// and not for the bare prefix: matching the unsubtyped label would make
+/// `obl|obl:*` equivalent to `obl:*`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelationLabel {
     Exact(CompactString),
@@ -476,8 +476,8 @@ pub(crate) enum ParsedRelationTarget<T> {
 /// The bound dependent side of a `where` edge.
 ///
 /// `Captured` preserves the existing exact-edge constraint. `Anonymous` asks
-/// only whether some matching dependent exists and deliberately allocates no
-/// capture identity or result field. `Predicate` likewise allocates no
+/// only whether a matching dependent exists without allocating a capture
+/// identity or result field. `Predicate` likewise allocates no
 /// identity, but requires or excludes a witness satisfying one branch of its
 /// normalized one-token test.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -945,10 +945,9 @@ impl ExecutionExpr {
     /// exists to remove.
     ///
     /// A lookaround that lowered to `PositionAssertion::PreviousToken` is
-    /// deliberately not counted: the specialization answers it from the token
-    /// slice with no session at all. Nor is one reachable only from a *fragment*
-    /// — an anchor's `exclude`, say — since materialization expands the
-    /// non-fragment definitions and never reaches it.
+    /// not counted: the specialization answers it from the token slice with
+    /// no session at all. Nor is one reachable only from a fragment — an
+    /// anchor's `exclude`, say — since materialization never expands it.
     ///
     /// Exhaustive, with no `_` arm, so that a new [`ExecutionExpr`] variant
     /// carrying a body is a compile error here rather than a silently unsearched

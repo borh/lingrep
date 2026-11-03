@@ -19,9 +19,8 @@
 //! specific quantities and a change may move them for a reason other than the
 //! intended one.
 //!
-//! Durations are deliberately absent. A duration is not portable, and the one
-//! property that makes this screen usable on any machine is that every number
-//! it reports is a count.
+//! Durations are omitted: durations are not portable across machines, and this
+//! screen requires counts that reproduce across environments.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

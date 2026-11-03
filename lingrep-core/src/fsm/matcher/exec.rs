@@ -1017,8 +1017,8 @@ impl Matcher {
     /// The emitted multiset is unchanged. Within a group a seed already at
     /// `entry_position == position` is the same tuple an epsilon hop would
     /// derive, so it claims its id up front; a seed at `entry_position !=
-    /// position` does not, because the derived tuple is genuinely distinct and
-    /// both are kept. Order does change: seeds are grouped rather than
+    /// position` does not, because the derived tuple is distinct and both are
+    /// retained. Order does change: seeds are grouped rather than
     /// visited in hash order. Frontier order is not observable --- successors
     /// land in a deduplicating `next_states`, and matches land in a
     /// `MatchSink` keyed on `(pattern, start, end)`.

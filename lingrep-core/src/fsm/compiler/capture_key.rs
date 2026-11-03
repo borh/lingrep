@@ -296,16 +296,16 @@ fn check(
 /// How many of a capture's tokens the site that referenced it can read.
 #[derive(Clone, Copy)]
 enum WidthRule {
-    /// `key:`, whose component says which reading of a wide capture is meant.
+    /// `key:`, whose component selects which reading of a wide capture is used.
     Component(KeyComponent),
-    /// `tags:` form (c), which reads one token and has no spelling for more.
+    /// `tags:` form (c), which reads one token and has no syntax for more.
     ///
-    /// Deliberately not `Component(KeyComponent::Sole)`: the refusal must not
-    /// offer `{first|last|span}`, because `tags:` does not accept them.
+    /// Distinct from `Component(KeyComponent::Sole)` so that the rejection
+    /// does not offer `{first|last|span}`, which `tags:` does not accept.
     SingleToken,
     /// A `transform:` `scope:`, which names a span to rewrite rather than a
-    /// value to read. Any width does, so long as there is something there:
-    /// a zero-width scope would make every operation in the step a no-op.
+    /// value to read. Any nonzero width is accepted: a zero-width scope would
+    /// make every operation in the step a no-op.
     Scope,
 }
 
@@ -399,9 +399,8 @@ fn collect(expr: &ExecutionExpr, name: &str, repeated: bool, found: &mut Vec<Occ
 
 /// The most tokens an expression can consume, or `None` when unbounded.
 ///
-/// Deliberately an over-approximation: it never reports a width smaller than
-/// the true maximum, so a body that passes really does cover one token. Being
-/// wrong in the other direction would let a multi-token key through.
+/// Over-approximates maximum width: never reports a width smaller than the true
+/// maximum, ensuring that an accepted body covers at most one token.
 fn max_width(expr: &ExecutionExpr) -> Option<usize> {
     match expr {
         ExecutionExpr::Token(_) => Some(1),

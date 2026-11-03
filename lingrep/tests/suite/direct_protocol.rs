@@ -2457,11 +2457,11 @@ fn wait_until_parked_on_backpressure(reader: &BufReader<std::process::ChildStdou
 /// A configured `--limit` must not let a cancelled run claim completion.
 ///
 /// The ordering here is established by backpressure rather than by racing the
-/// signal against the run, because the race has no correct answer: a run that
-/// genuinely finishes before the signal lands is *entitled* to exit 0, so a
+/// signal against the run, because the race has no predictable order: a run that
+/// finishes before the signal lands exits 0, so a
 /// test that signals a short run and asserts 130 pins an interleaving and not a
-/// contract. It failed exactly that way — `--limit 1` over a matching corpus
-/// completes in the time it takes to deliver a signal.
+/// contract. `--limit 1` over a matching corpus completes in the time it takes
+/// to deliver a signal.
 ///
 /// So the child is parked mid-publication instead: its result set is far larger
 /// than the pipe can hold, it blocks writing, and it stays blocked until this

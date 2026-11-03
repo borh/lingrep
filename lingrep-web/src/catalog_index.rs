@@ -40,7 +40,7 @@ impl CatalogIndex {
     /// Walk `root` for `*.lx` files and read each into memory, ordered by
     /// relative path.
     ///
-    /// Deliberately infallible: an unreadable or absent root yields an empty
+    /// Infallible: an unreadable or absent root yields an empty
     /// index and a warning, because lingrep-web must start regardless of the
     /// directory a relative default resolves against.
     #[must_use]

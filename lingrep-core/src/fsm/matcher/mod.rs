@@ -51,12 +51,11 @@ pub use pool::clear_pools;
 /// opposite directions: one guards the `exclude` with a lookaround, the other
 /// adds one to the pattern.
 ///
-/// A duplicate of the integration suite's `policy_helpers::PUNCT_ANCHOR`, and
-/// deliberately: it cannot be imported from there, because
+/// Duplicates the integration suite's `policy_helpers::PUNCT_ANCHOR` because
 /// [`assertion::AssertionSession`] and [`assertion::AssertionProgramId`] are
-/// `pub(crate)` and the tests using this therefore cannot live in the
-/// integration suite. The `max_nesting:` claim is mandatory for declared
-/// anchors, so the fixture must carry one.
+/// `pub(crate)` and tests using this cannot live in the integration suite.
+/// The `max_nesting:` claim is mandatory for declared anchors, so the fixture
+/// must carry one.
 /// The claim itself is executed by the suite's copy, in `anchor_claim_test`;
 /// nothing here has a dictionary.
 #[cfg(test)]

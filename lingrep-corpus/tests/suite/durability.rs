@@ -100,7 +100,7 @@ async fn every_retained_fixture_opens_inspects_and_answers_a_query() {
             "{name}"
         );
 
-        // Full component verification, which `open` deliberately does not do.
+        // Performs full component verification, which `open` omits.
         let report = artifact
             .verify_integrity()
             .await

@@ -9,8 +9,8 @@
 //! `counterexamples:` list would be a false claim about the language rather
 //! than a true one about publication.
 //!
-//! Each test below therefore contrasts raw against published, which is the
-//! only way to state "this record exists and is deliberately withheld".
+//! Each test below contrasts raw against published records to verify that
+//! matches are withheld by policy as expected.
 
 use lingrep_core::fsm::{CompileLimits, CompiledCatalog, Match, PatternSource, compile_catalog};
 use lingrep_core::testing::tokenize_japanese;

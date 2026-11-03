@@ -12,7 +12,7 @@
 //! has to exist before the migration rather than after — afterwards there is
 //! nothing left to compare against.
 //!
-//! Deliberately built from `pattern_metadata_pairs`, the function the server
+//! Built directly from `pattern_metadata_pairs`, the function the server
 //! itself calls, rather than a re-implementation of the conversion. A baseline
 //! that pinned a copy would stay green while the real path broke.
 

@@ -388,8 +388,8 @@ fn selected(
 
 /// Decides an association, one subject record at a time.
 ///
-/// Unlike a contest, this is genuinely per-record: whether an operand stands in
-/// the relation to *this* record answers for that record alone. The set-wide
+/// Evaluates association per record: whether an operand satisfies the relation
+/// to this record is decided for that record alone. The set-wide
 /// signature is what `resolve` needs, not what every verb needs.
 ///
 fn decide_associate(
@@ -623,8 +623,8 @@ fn contest(
 /// matched.
 ///
 /// Total on rank cohorts when the rank ends `[…, Start, End, Pattern]`.
-/// Enhanced graph assignments can deliberately share those surface fields;
-/// they tie and survive or lose together rather than being selected by
+/// Enhanced graph assignments may share surface fields; they tie and survive
+/// or lose together rather than being selected by
 /// producer order. The property test below is the standing proof.
 fn compare_by_rank(
     left: &Candidate,

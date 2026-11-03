@@ -129,7 +129,7 @@ impl std::fmt::Debug for CompiledGuard {
 
 impl PartialEq for CompiledGuard {
     /// Two guards are equal when they constrain tokens identically. The source
-    /// is deliberately excluded: `[upos=AUX]` and `[ upos = AUX ]` are one guard,
+    /// is excluded: `[upos=AUX]` and `[ upos = AUX ]` are one guard,
     /// and a policy comparison should not turn on whitespace.
     fn eq(&self, other: &Self) -> bool {
         self.attrs == other.attrs
@@ -341,11 +341,9 @@ pub struct PatternPolicy {
     /// `[upos=VERB & !(conllu.misc has __never__)]`, which works only because
     /// the true complement holds for a missing attribute and reads as a typo.
     ///
-    /// Declared per definition and unioned across the catalog, exactly as
-    /// `key:` is: the run's projection is one set, so an attribute one pattern
-    /// publishes rides on every record. That is the existing shape rather than
-    /// a new one, and narrowing it per pattern would be a protocol change
-    /// nothing has asked for.
+    /// Declared per definition and unioned across the catalog, matching `key:`:
+    /// the run's projection is one set, so an attribute published by any pattern
+    /// is included on all published records.
     ///
     /// It contributes no *required* value kind, because nothing reads it: an
     /// attribute is carried at whatever kind the schema declares, and a schema
@@ -354,10 +352,8 @@ pub struct PatternPolicy {
     pub publish: Vec<AttributeKey>,
     /// Ordered record transformations, applied exactly once each.
     ///
-    /// Crate-internal deliberately: the vocabulary is the engine's, and what a
-    /// consumer needs is the *result* — [`PublishedRecord`]'s `unit`, `key` and
-    /// `tags`, which are public. Exposing the op list would make every
-    /// downstream crate a party to changes in how a unit gets built.
+    /// Crate-internal: the vocabulary belongs to the engine, while consumers
+    /// observe the result fields on [`PublishedRecord`] (`unit`, `key`, and `tags`).
     pub transform: Vec<TransformStep>,
     /// Per-instance annotations, in catalog order.
     pub tags: Vec<(CompactString, TagSource)>,
@@ -570,15 +566,14 @@ impl PatternPolicy {
 ///
 /// Unkeyed BLAKE3, matching the workspace's V6 artifact convention.
 ///
-/// **Structural, not per-instance, and that is the point.** An anchor position
-/// is a pure function of the sentence's tokens and the `exclude` expression, so
-/// two independently compiled catalogs declaring the same anchors are genuinely
-/// interchangeable; an instance identity would refuse a substitution that cannot
-/// change an answer. Clone-stable by construction.
+/// Structural rather than per-instance: an anchor position depends only on the
+/// sentence's tokens and the anchor's `exclude` expression, so two
+/// independently compiled catalogs that declare the same anchors are
+/// interchangeable.
 ///
-/// [`Self::default`] is the identity of a catalog that declares **no** anchors,
-/// and is deliberately not the hash of an empty walk: declaring nothing must
-/// leave a catalog bit-identical to one written before anchors existed.
+/// [`Self::default`] is the identity of a catalog that declares no anchors. It
+/// is not the hash of an empty walk, so declaring no anchors leaves a catalog's
+/// identity unchanged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnchorSetDigest([u8; 32]);
 
@@ -601,17 +596,16 @@ impl AnchorSetDigest {
 ///
 /// A caller with a user-facing surface should wrap these rather than print
 /// them, which is where remediation phrased for that surface belongs.
-/// [`AnchorResolutionError`] is the engine's own wrapper, and adds the one fact
-/// no reader of this type can recover: which anchor was asked for.
+/// [`AnchorResolutionError`] wraps this error to record the requested anchor name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AnchorError {
-    /// The positions were computed by a catalog declaring a different anchor
-    /// set, so the position asked for would mean something else.
+    /// The positions were computed by a catalog that declares a different
+    /// anchor set, so the requested name could refer to a different anchor.
     #[error("anchor positions were computed by a catalog declaring a different anchor set")]
     CatalogMismatch,
     /// The catalog declares no anchor by this name.
     ///
-    /// Deliberately not a fall back to the raw sentence end; see
+    /// Lookup does not fall back to the raw sentence end; see
     /// [`AnchorPositions`].
     ///
     /// Reachable only for a name that came from neither catalog. Past the digest
@@ -625,11 +619,8 @@ pub enum AnchorError {
 
 /// A declaration whose anchor position could not be read.
 ///
-/// What [`apply_policy`] fails with, and the reason it does not simply return
-/// [`AnchorError`]: the engine knows *which anchor* was asked for, and nothing
-/// downstream can recover that. `AnchorError` is the accessor's answer to
-/// "could this position be read?" and stays that; this is the engine's answer
-/// to "which declaration went unanswered?".
+/// Produced by [`apply_policy`] when anchor resolution fails: records the
+/// requested anchor name alongside the underlying [`AnchorError`].
 ///
 /// An `admit` statement is the only thing that names an anchor at publication,
 /// so the message names one without an identifier: a statement has no name, and
@@ -661,13 +652,9 @@ pub struct AnchorResolutionError {
 
 /// One sentence's derived anchor positions.
 ///
-/// Opaque, and deliberately without a `Default` or a public constructor. An
-/// earlier design made this a plain map and told anchor-free callers to pass an
-/// empty one, which left nothing preventing an *anchored* catalog from being
-/// handed that same empty value and silently admitting against the raw sentence
-/// end. A missing
-/// entry is an [`AnchorError::Unknown`], never a fallback, and the only way to
-/// obtain a value is to ask a compiled catalog for one.
+/// Opaque, without `Default` or a public constructor: instances are produced
+/// exclusively by compiled catalogs. A missing entry is an [`AnchorError::Unknown`]
+/// rather than a fallback to sentence end.
 ///
 /// The carried [`AnchorSetDigest`] is *structural*, so positions from a second
 /// compilation of the same source are accepted. That is not a weakening: an
@@ -1149,8 +1136,8 @@ impl CatalogPolicy {
     /// from `CompiledCatalog::patterns()`, because a published record carries this
     /// name and a sink seeded the other way will not recognize it.
     ///
-    /// The mapping is deliberately many-to-one: several definitions may
-    /// publish under one name, which is how a catalog merges surface variants
+    /// The mapping is many-to-one: several definitions may publish under one
+    /// name, merging surface variants
     /// under a single label. Consumers building a name list must therefore
     /// deduplicate — see [`Self::published_names`].
     #[must_use]
@@ -1314,10 +1301,10 @@ pub fn strip_hidden(policy: &CatalogPolicy, matches: &[Match]) -> Vec<Match> {
 /// `None` has two causes a caller must not conflate, and which it separates by
 /// consulting the policy itself:
 ///
-/// * the pattern declares no `key:` — nothing was asked for;
-/// * it declares one, but a named capture did not participate in *this* match
-///   (an alternation branch that skipped it). That record is genuinely
-///   unkeyable and must be dropped from keyed output and **counted**, never
+/// * the pattern declares no `key:`;
+/// * it declares a key, but a referenced capture did not participate in this
+///   match (skipped by an alternation branch). That record cannot be keyed
+///   and must be dropped from keyed output and counted, never
 ///   folded in under a partial key — a partial key would
 ///   collide with some other pattern's complete one.
 ///
@@ -1853,7 +1840,7 @@ pub(crate) fn apply_transforms<S: TokenSequence + ?Sized>(
 /// The attribute `join` renders a token as when nothing substituted it.
 ///
 /// The written form, not a base form: `join` reconstructs a unit from the
-/// sentence, and any normalization is a `substitute` the author asked for.
+/// sentence, and normalization occurs via author-specified `substitute` steps.
 pub(crate) fn unit_surface() -> &'static AttributeKey {
     static FORM: std::sync::LazyLock<AttributeKey> =
         std::sync::LazyLock::new(|| AttributeKey::new("text").expect("form is canonical"));
@@ -2276,10 +2263,10 @@ pub(crate) fn levenshtein_at_most_one(a: &str, b: &str) -> bool {
             short_index += 1;
         }
     }
-    // One guard, deliberately. An early `if edits > 1 { return false }` is a
-    // pure optimization on keys this short, and having both meant neither
-    // could be broken alone — a mutation of either still passed, because the
-    // other caught it. Whatever remains unconsumed is an insertion or
+    // One guard only. An early `if edits > 1 { return false }` is only an
+    // optimization on keys this short, and with both guards neither could be
+    // broken alone — a mutation of either still passed, because the other
+    // caught it. Whatever remains unconsumed is an insertion or
     // deletion, so it counts toward the same budget.
     edits + (long.len() - long_index) + (short.len() - short_index) <= 1
 }
@@ -2318,8 +2305,8 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 
 /// Whether the compiler, rather than the catalog, owns this key's schema.
 ///
-/// Deliberately not the complement of the typo detector's non-policy set: that
-/// answers which spellings the detector must leave alone, and so groups
+/// Distinct from the complement of the typo detector's non-policy set: that
+/// answers which spellings the detector leaves alone, and so groups
 /// `examples`/`counterexamples` — authored content that must stay declarable —
 /// with the compiler-owned keys.
 ///

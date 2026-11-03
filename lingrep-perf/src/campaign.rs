@@ -98,7 +98,7 @@ impl Metric {
     ///
     /// Peak RSS participates in verdicts so a performance win cannot ignore a
     /// memory regression.
-    /// System time is deliberately absent — it is reported, never adjudicated.
+    /// System time is excluded — it is reported, never adjudicated.
     pub const VERDICT_BEARING: [Self; 3] = [Self::Wall, Self::User, Self::PeakRss];
 
     #[must_use]
@@ -1113,7 +1113,7 @@ pub enum Verdict {
 /// between 0.67 and 0.89; re-run without streaming, the same catalogs moved to
 /// 0.65-0.97.
 ///
-/// Deliberately threshold-free. It asks only whether the two intervals
+/// Threshold-free: evaluates only whether the two intervals
 /// disagree about parity, so it needs no calibrated bytes-per-second and it
 /// catches pacing this tool does not know about — an un-streamed campaign
 /// whose catalog is bound by writing its own output flags identically.
@@ -1415,7 +1415,7 @@ fn blocks_for(observations: &BTreeMap<usize, Vec<&Observation>>, metric: Metric)
             .collect();
         // Once a catalog has been promoted, its original screen no longer
         // enters the estimate. It is what triggered promotion, not one of the
-        // blocks the rung asked for, and mixing an un-drift-corrected pair
+        // blocks scheduled for the rung, and mixing an un-drift-corrected pair
         // into drift-corrected blocks would make the reported block count
         // mean two different things.
         if promoted && ordered.len() < 4 {

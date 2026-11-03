@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# `emcc` was required here until this line was checked. `tree-sitter build
-# --wasm` builds through wasi-sdk, which it downloads into `~/.cache/tree-sitter`
-# on first use, so emscripten is not consulted: building the pinned revision with
-# every emscripten entry removed from `PATH` produces a byte-identical WASM.
-#
-# The undeclared dependency is therefore the opposite one — this needs network
-# access for the wasi-sdk fetch as well as for the clone below, and a check for a
-# tool it does not use hid that behind a requirement that always passed.
+# Requires network access for the clone below and for `tree-sitter build --wasm`,
+# which downloads wasi-sdk into `~/.cache/tree-sitter` on first use. Emscripten
+# is not used.
 for tool in tree-sitter git jq sha256sum; do command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }; done
 asset_root=$(cd "$(dirname "$0")" && pwd -P)
 repo_root=$(git -C "$asset_root" rev-parse --show-toplevel)

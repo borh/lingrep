@@ -118,8 +118,8 @@ fn a_config_without_observed_labels_is_equal_to_an_equivalent_one() {
 
 #[test]
 fn diagnostics_sinks_do_not_compare_equal_even_when_empty() {
-    // Two sinks are not meaningfully equal: identity != content, and a sink
-    // accumulates observations the type deliberately keeps out of equality.
+    // Two sinks are not equal by value: identity != content, and a sink
+    // accumulates observations excluded from equality.
     // This pins that `MarkdownDiagnostics` does not derive `PartialEq` by
     // asserting the API the type exposes rather than a comparison that would
     // not compile.

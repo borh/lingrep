@@ -66,10 +66,9 @@ fn test_and_three_constraints() {
 
 #[test]
 fn test_and_three_constraints_all_match() {
-    // Positive control for the three-constraint flattening: when all three
-    // constraints genuinely match (pos=VERB, cform prefix 終止形, cform suffix
-    // -一般), the conjunction yields exactly one match. This proves the fix
-    // did not over-correct into rejecting everything.
+    // Positive control for three-constraint flattening: when all three
+    // constraints match (pos=VERB, cform prefix 終止形, cform suffix
+    // -一般), the conjunction yields exactly one match.
     let matcher =
         compile_test_pattern("[upos=VERB & unidic.cform~/終止形.*/ & unidic.cform~/.*一般$/]");
 

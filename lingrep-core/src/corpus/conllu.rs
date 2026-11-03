@@ -26,8 +26,8 @@ const MAX_SENTENCE_SOURCE_BYTES: usize = 64 << 20;
 /// `# sent_id` comment, under UD's own bare spelling. Declared statically so
 /// `--where 'sent_id = …'` is answered per sentence even over a file that
 /// never wrote the comment, keeping the direct and prepared paths on one
-/// grain. `newdoc id` is deliberately absent: it becomes *document* metadata
-/// (`newdoc_id`), not a sentence value.
+/// grain. `newdoc id` is excluded because it maps to document metadata
+/// (`newdoc_id`) rather than sentence metadata.
 pub const SENTENCE_METADATA_KEYS: [&str; 1] = ["sent_id"];
 
 /// The UD v2 feature inventory used by the in-process reader and checked
@@ -558,9 +558,9 @@ impl EnhancedGraphObservation {
     }
 }
 
-/// One decoded syntactic sentence. Original CoNLL-U token IDs are deliberately
-/// absent: integer word rows are validated as `1..=n`, so matcher ordinals plus
-/// one are the same identity without publishing a second identifier. The
+/// One decoded syntactic sentence. Original CoNLL-U token IDs are omitted:
+/// integer word rows are validated as `1..=n`, so matcher ordinals plus one
+/// yield the same identity without publishing a second identifier. The
 /// sentence-level `# sent_id` comment is a *sentence* identity, not a token
 /// one, and is carried.
 #[derive(Clone, Debug, Eq, PartialEq)]

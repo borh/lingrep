@@ -46,12 +46,9 @@ fn non_utf8_names_supported(directory: &std::path::Path) -> bool {
             true
         }
         Err(error) => {
-            // Deliberately the `stderr()` handle and not `eprintln!`. libtest
-            // captures the macro and replays it only for a *failing* test, so
-            // a notice printed that way from a passing one is discarded — the
-            // silently-green outcome this probe exists to avoid. Writing the
-            // handle bypasses the capture and reaches the run's stderr.
-            // Verified both ways before choosing.
+            // Writes directly to the `stderr()` handle rather than `eprintln!`:
+            // libtest captures `eprintln!` and displays it only for failing tests,
+            // whereas writing directly to stderr bypasses test capture.
             use std::io::Write;
             let _ = writeln!(
                 std::io::stderr(),

@@ -1,6 +1,6 @@
 //! Public output projections for `ling`.
 //!
-//! JSONL is the authoritative protocol. TSV and aligned output are deliberately
+//! JSONL is the authoritative protocol. TSV and aligned output are
 //! separate projections so neither terminal escaping nor lossy TSV fallbacks
 //! can alter machine evidence.
 

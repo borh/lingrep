@@ -14,9 +14,9 @@ pub enum AttributeKind {
 
 /// Physical provider for one logical token attribute.
 ///
-/// Provider identity is deliberately absent from [`TokenSchemaDigest`]: the
-/// digest describes the logical values a source supplies, while this enum
-/// describes how one implementation obtains them.
+/// Provider identity is omitted from [`TokenSchemaDigest`]: the digest describes
+/// the logical values a source supplies, while this enum describes how one
+/// implementation obtains them.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AttributeProvider {
     /// Values arrive already projected from a dynamic or prepared token row.

@@ -4,11 +4,9 @@
 //! evaluated per document and section scope per sentence. Performance bars and
 //! measurements live in `docs/PERFORMANCE_REQUIREMENTS.md`.
 //!
-//! The metadata-only bar is the load-bearing one. A clause naming no section
-//! takes the same branch it took before section scope existed, so a regression
-//! there means the two-pass split is wrong rather than slow — and there is
-//! deliberately no pre-committed remedy for it, because there is nothing to
-//! optimise.
+//! The metadata-only bar matters most. A clause naming no section does not
+//! use the section-scope pass, so a regression in that bar means the two-pass
+//! split is wrong, not slow, and has no optimization remedy.
 //!
 //! The three original cases isolate the reader: they drive `AdmittedCorpus`
 //! directly and count admitted sentences, so tokenization is not in the

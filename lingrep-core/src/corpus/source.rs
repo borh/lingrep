@@ -14,9 +14,8 @@
 //! Markdown source one shared [`MarkdownDiagnostics`] sink accumulates labels
 //! across every selected file rather than resetting per file.
 //!
-//! This module deliberately knows nothing about the on-disk token cache or the
-//! provenance database; those concerns stay with the web runtime that owns the
-//! cache lifecycle.
+//! This module does not access the on-disk token cache or the provenance
+//! database; the web runtime owns the cache lifecycle.
 
 use std::fs::{self, File};
 use std::io::{self, BufReader};

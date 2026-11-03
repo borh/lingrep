@@ -548,7 +548,7 @@ pub struct AdmittedSentence {
     pub metadata: Metadata,
 }
 
-/// `Sentence` is far larger than its siblings, and deliberately so.
+/// `Sentence` is far larger than its sibling variants and is not boxed.
 ///
 /// `clippy::large_enum_variant` fires when the largest variant exceeds the
 /// second largest by more than 200 bytes, and `AdmittedSentence` sat exactly
@@ -557,9 +557,8 @@ pub struct AdmittedSentence {
 /// its author never touched. The lint's own remedy is boxing, which reaches
 /// roughly nine production sites plus `lingrep-corpus`'s suites and a bench, and
 /// buys one heap allocation per sentence on a path that moves an event per
-/// sentence through the reader iterators. That trade is worth measuring rather
-/// than making incidentally, and until it is measured the size is the
-/// deliberate choice. Allowed here rather than raising
+/// sentence through the reader iterators. That cost has not been measured, so
+/// the variant stays unboxed until it is. Allowed here rather than raising
 /// `enum-variant-size-threshold` in `clippy.toml`, which would weaken the lint
 /// for every other enum in the workspace to answer a fact about this one.
 #[allow(

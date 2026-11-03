@@ -107,8 +107,8 @@ pub enum GuardrailRole {
 
 /// A runtime mechanism a campaign can be scoped by.
 ///
-/// These are **machine tags**, deliberately separate from the prose in
-/// [`CatalogDescriptor::description`]. A campaign declares the regimes its
+/// Machine tags distinct from the prose in [`CatalogDescriptor::description`].
+/// A campaign declares the regimes its
 /// change can affect and the adjudicator selects catalogs by set membership;
 /// prose descriptions are unique per catalog, so selecting on them would mean
 /// substring matching against sentences nobody guaranteed to be stable.

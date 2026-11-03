@@ -411,8 +411,8 @@ fn every_unquoted_literal_position_is_covered() {
 /// it is the evidence for the promotion now: the observation is the same, and
 /// what changed is the judgement that a diagnostic which lets a
 /// match-nothing catalog through is not a mitigation. The escape `|`
-/// keeps every literal that genuinely contains a pipe writable, so the
-/// refusal costs a spelling and no capability.
+/// keeps every literal containing a pipe character writable, so the
+/// rejection requires an escape but removes no capability.
 #[test]
 fn no_tracked_catalog_contains_a_bare_value_with_a_pipe() {
     for (name, text) in lingrep_core::testing::catalogs::tracked_catalog_sources() {
@@ -665,8 +665,8 @@ fn a_catalog_amplifying_a_deep_chain_across_many_tokens_is_refused_promptly() {
     );
     // Thirty thousand copies of a 1,023-node chain is 30.7M resolved nodes;
     // the document budget stops at 262,144, two orders of magnitude fewer.
-    // The bound is deliberately loose against a slow or loaded machine and is
-    // still far below the minutes an unbounded expansion costs here.
+    // The bound accommodates slow or loaded test machines while remaining
+    // well below the duration of unbounded expansion.
     assert!(
         elapsed < std::time::Duration::from_secs(15),
         "refusal must not wait for the full expansion; took {elapsed:?}"

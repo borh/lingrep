@@ -211,7 +211,7 @@ pub fn declared_corpora(
 }
 
 /// Reads the seed grammar for the index-page pattern editor. A read failure is
-/// deliberately non-fatal: the server starts with an empty editor and logs a
+/// non-fatal: the server starts with an empty editor and logs a
 /// warning, so lingrep-web runs regardless of the directory the default relative
 /// path resolves against.
 #[must_use]
@@ -373,8 +373,8 @@ mod tests {
         let args = super::Args::try_parse_from(["lingrep-web", "--dict-path", "/tmp/d"])
             .expect("defaults should parse");
         assert_eq!(args.max_record_bytes, DEFAULT_MAX_INPUT_RECORD_BYTES);
-        // Deliberately not the stage batch budget: a document larger than one
-        // batch is ordinary and must not be refused for that reason.
+        // Distinct from the stage batch budget: a document larger than one
+        // batch is ordinary and must not be rejected for that reason.
         assert_ne!(
             args.max_record_bytes,
             lingrep_core::execution::DEFAULT_MAX_STAGE_INPUT_BYTES

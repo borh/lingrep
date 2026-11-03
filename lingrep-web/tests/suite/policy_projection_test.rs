@@ -43,8 +43,8 @@ authored := [text=a].
 
 #[test]
 fn definitions_sharing_a_published_name_collapse_to_one_descriptor() {
-    // The catalog is deliberately merging surface variants under one label, so
-    // two descriptors under one name would be two rows nothing can tell apart
+    // The catalog merges surface variants under one label, so
+    // two descriptors under one name would produce indistinguishable rows
     // — and would collide in the sink's name-to-index map.
     let matcher = compile(
         r#"

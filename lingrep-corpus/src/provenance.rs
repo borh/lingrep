@@ -117,8 +117,8 @@ CREATE INDEX region_span_label ON region_spans(label);
 
 /// Rich, sentence-scoped context that supplements authoritative locations.
 ///
-/// Location ownership remains with `locations.v1`; this type deliberately
-/// cannot expose a source name or document ordinal.
+/// Location ownership remains with `locations.v1`; this type does not expose
+/// a source name or document ordinal.
 ///
 /// ```compile_fail
 /// use lingrep_corpus::RichSentenceMetadata;
@@ -2548,8 +2548,7 @@ impl ProvenanceView {
     /// One indexed query per label, against `region_span_label`. A scope clause
     /// names a handful of labels and the reference corpus records sixteen in
     /// total, so a loop beats assembling a dynamic `IN` list — and it keeps what
-    /// is read tied to what the caller asked for rather than to the table's
-    /// size.
+    /// is read tied to requested labels rather than to table size.
     ///
     /// Labels this corpus does not record simply contribute no rows. Whether
     /// that is worth a diagnostic is the caller's question, not this reader's:

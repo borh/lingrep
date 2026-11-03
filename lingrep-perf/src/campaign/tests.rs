@@ -7,8 +7,8 @@ use super::*;
 
 /// Stamp a campaign with the digest of its own manifest.
 ///
-/// Every observation carries it too, so a test that edits a manifest must
-/// reseal deliberately — which is exactly what `ManifestAltered` is for.
+/// Every observation carries it too, so tests that edit a manifest must
+/// reseal explicitly; `ManifestAltered` verifies this invariant.
 pub(crate) fn seal(mut campaign: Campaign) -> Campaign {
     let digest = campaign
         .manifest

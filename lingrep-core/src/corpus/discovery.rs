@@ -1,7 +1,7 @@
 //! Bounded, deterministic discovery of corpus documents.
 //!
 //! Discovery follows ordinary and symlinked directories in lexical depth-first
-//! order. It deliberately retains only the active directory ancestry, one
+//! order. Discovery retains only the active directory ancestry, one
 //! directory's sorted relevant entries, and a bounded file-identity map.
 
 use std::collections::HashMap;

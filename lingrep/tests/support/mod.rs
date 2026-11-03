@@ -208,7 +208,7 @@ pub fn dict_path() -> PathBuf {
 /// Build the smallest valid prepared corpus used by command-semantics tests.
 ///
 /// Tests of artifact identity, inventory, encoding, or publication construct
-/// their own artifact instead; this helper deliberately fixes those details so
+/// their own artifact instead; this helper fixes those details so
 /// callers state only the sentence and token evidence relevant to the command.
 #[allow(dead_code)]
 pub async fn build_single_sentence_artifact(destination: &Path, text: &str, tokens: &[TokenInfo]) {

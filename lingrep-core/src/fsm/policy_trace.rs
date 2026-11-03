@@ -67,9 +67,9 @@ pub struct TracedRecord {
 
 /// A capacity-bounded collector for per-record explanations.
 ///
-/// Opt-in: nothing constructs one unless a caller asked for a trace. See the
-/// module header for why the bound is on records and why the sentence is a
-/// caller-supplied label.
+/// Opt-in: constructed only when tracing is requested. See the module header
+/// for why the bound is on records and why the sentence is a caller-supplied
+/// label.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyTrace {
     capacity: usize,

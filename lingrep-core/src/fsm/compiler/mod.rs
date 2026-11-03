@@ -707,12 +707,8 @@ fn unused_fragment_warnings(
 /// the two must not drift: a key verified there but absent here would have its
 /// malformed cases pass silently without a dictionary.
 ///
-/// `max_nesting:` is deliberately **not** here, and adding it would be wrong
-/// twice over. It is a compound value rather than a string list, and it belongs
-/// on a `fragment` — so the two complaints `unverifiable_examples_warnings`
-/// raises are both false of it, and the first would tell its author to move it
-/// to a pattern, which is the opposite of the rule. `policy::read_nesting_claims`
-/// is its dictionary-free check, and it is fatal rather than a warning.
+/// `max_nesting:` is not included in `CLAIM_KEYS`: it is a compound value
+/// on a `fragment` and is checked separately by `policy::read_nesting_claims`.
 const CLAIM_KEYS: &[&str] = &["examples", "counterexamples"];
 
 /// Warn about a documented claim that can never be executed.

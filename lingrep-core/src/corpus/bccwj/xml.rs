@@ -228,11 +228,11 @@ fn local_name_str(name: quick_xml::name::LocalName<'_>) -> io::Result<String> {
 /// tree (verified: the `\n` between C-XML tags never reaches
 /// `walk-and-emit`), so a faithful port must not either.
 ///
-/// The dropped class is **ASCII** whitespace only, and deliberately not
-/// Rust's `str::trim`. The rule exists to discard the newline-plus-indent
-/// runs between C-XML tags, which are ASCII; `str::trim` spans Unicode
-/// `White_Space`, so it would additionally delete a run made only of
-/// U+3000 IDEOGRAPHIC SPACE or U+00A0 NBSP — corpus text in a Japanese
+/// The dropped class is ASCII whitespace only, not the Unicode whitespace that
+/// `str::trim` removes. The rule discards newline-plus-indent runs between
+/// C-XML tags, which are ASCII; `str::trim` spans Unicode `White_Space`, so it
+/// would also delete a run made only of U+3000 IDEOGRAPHIC SPACE or U+00A0
+/// NBSP — corpus text in a Japanese
 /// corpus, kept by every Java whitespace predicate the reference could be
 /// using (`String.trim` strips only chars ≤ U+0020;
 /// `Character.isWhitespace` excludes the non-breaking spaces). Deleting

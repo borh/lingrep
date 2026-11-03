@@ -13,10 +13,10 @@
 //! below.
 //!
 //! Substitution walks the parse tree and is re-spaced by [`super::format`],
-//! which is why this module knows nothing about binding. The preflight lowers
-//! the document — syntax and shape — and deliberately stops there: reference
-//! resolution belongs to `bind`, so an undefined name and a reference cycle are
-//! both refused *here*, by the recursion, and named in the error.
+//! which is why this module does not depend on binding. The preflight lowers
+//! the document — syntax and shape — and stops there: reference resolution
+//! belongs to `bind`, so an undefined name and a reference cycle are both
+//! rejected during expansion and named in the error.
 
 use tree_sitter::{Node, Parser};
 use tree_sitter_lingrep::LANGUAGE;

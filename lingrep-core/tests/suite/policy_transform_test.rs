@@ -438,7 +438,7 @@ fn tag_form_b_omits_the_tag_when_no_named_capture_participated() {
 
 #[test]
 fn tag_form_b_omits_the_tag_when_several_named_captures_participated() {
-    // Zero and two-or-more get the same disposition, deliberately. Resolving an
+    // Zero and two-or-more receive the same disposition. Resolving an
     // ambiguity by declaration order would invent a winner out of what is really
     // an authoring mistake — and under a map-valued metadata key, "declaration
     // order" is not even stable across builds (see `PatternPolicy::key`).
@@ -485,10 +485,9 @@ fn tag_form_c_projects_an_attribute_off_a_named_capture() {
 
 #[test]
 fn tag_form_c_omits_the_tag_when_the_token_lacks_the_attribute() {
-    // The tag analogue of the third unkeyed cause, and deliberately a
-    // *different* disposition: a key is an identity, so a missing field
-    // invalidates the record; a tag is an annotation, so a missing source is
-    // simply no annotation.
+    // The tag analogue of the third unkeyed cause, with a different disposition:
+    // a key is an identity, so a missing field invalidates the record; a tag is an
+    // annotation, so a missing source omits the annotation.
     let tokens = [Token(vec![
         (TokenAttributeIndex::Orth, CompactString::new("々")),
         (TokenAttributeIndex::Pos, CompactString::new("NOUN")),
@@ -631,7 +630,7 @@ fn the_unscoped_form_drops_the_captures_its_own_key_needs() {
     );
     // And the second half of the defect: `join` renders the record span, so
     // the unit is the noun phrase and the verb together rather than the verb
-    // the author asked for.
+    // specified by the author.
     assert_eq!(record.unit.as_deref(), Some("規則に基づく"));
 }
 

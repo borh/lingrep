@@ -272,9 +272,8 @@ mod tests {
         ]
     }
 
-    /// Evaluate a tree directly, so the oracle never shares code with the
-    /// normalizer it checks. Deliberately a different formulation: recursion
-    /// over the tree versus DNF's distribution.
+    /// Evaluates a tree directly via recursion, avoiding code sharing with
+    /// the DNF distribution normalizer under test.
     fn evaluate_tree(test: &ResolvedTest, token: &TestToken) -> bool {
         match test {
             ResolvedTest::Atom(atom) => atom_holds(atom, token),

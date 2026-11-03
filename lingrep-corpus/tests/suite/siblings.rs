@@ -75,8 +75,8 @@ struct Built {
 /// The name is derived from the identity the build recorded, so the fixture
 /// exercises real addressing rather than a hand-placed directory. A current
 /// fixture is produced by editing the published manifest: nothing in this
-/// package derives a current identity, deliberately, so a stored current shape
-/// is the only way one exists.
+/// package derives a current identity, so a stored current shape is the only
+/// way one exists.
 async fn build_realization(
     directory: &Path,
     root: &Path,

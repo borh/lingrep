@@ -411,8 +411,8 @@ pub struct MarkdownReaderConfig {
 /// The caller retains its own clone; the reader writes into the shared
 /// `Arc<Mutex<…>>`, and the caller reads
 /// [`MarkdownDiagnostics::observed_labels`] after the stream completes. Two
-/// sinks are deliberately not `PartialEq`: the identity of a sink is not the
-/// content it accumulated, and a sink is a write-target, not a value.
+/// sinks do not implement `PartialEq`: the identity of a sink is not the
+/// accumulated content, and a sink is a write-target rather than a value.
 #[derive(Debug, Clone, Default)]
 pub struct MarkdownDiagnostics(ObservedLabels);
 
@@ -475,8 +475,8 @@ impl MarkdownReaderConfig {
     /// Two runs differing only in any one of them read two different corpora,
     /// and each omission has already served one run's cache to the other.
     ///
-    /// `max_frontmatter_bytes` is deliberately not semantic identity. It is a
-    /// resource guard: a value can reject a document, but two sufficiently
+    /// `max_frontmatter_bytes` is excluded from semantic identity. As a
+    /// resource guard, a value can reject a document, but two sufficiently
     /// large values that both complete emit the same corpus and must select the
     /// same reader and analysis identities.
     ///
@@ -1874,7 +1874,7 @@ mod reader_tests {
         // Precedence, restated with line numbers. The `::: {.inner}` on line 4
         // is inside the fence and was never counted, so the div depth is a
         // symptom; the fence is the cause. The named line is the fence's (3),
-        // not the genuinely-open `.caption` div's (1).
+        // not the unclosed `.caption` div's (1).
         let markdown = "::: {.caption}\n\n```rust\n::: {.inner}\ncode\n";
         let error = read(markdown, permissive()).expect_err("unclosed fence");
         let message = error.to_string();

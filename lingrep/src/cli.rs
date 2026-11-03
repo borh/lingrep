@@ -1065,8 +1065,8 @@ pub(crate) fn validate_format_root(
 impl QueryInputArgs {
     /// Resolve the dictionary for a direct-input execution.
     ///
-    /// Environment fallback is deliberately resolved here rather than by
-    /// clap: a prepared artifact must ignore `LINGREP_DICTIONARY_PATH` entirely,
+    /// Environment fallback is resolved here rather than by
+    /// clap: a prepared artifact ignores `LINGREP_DICTIONARY_PATH` entirely,
     /// including when the inherited value is invalid.
     pub fn direct_dictionary_path(&self) -> Result<PathBuf, CliError> {
         self.dict_path

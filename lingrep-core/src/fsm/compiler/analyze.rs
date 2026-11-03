@@ -499,8 +499,8 @@ pub(crate) fn width(
         // bounds nothing above, so it contributes no maximum rather than
         // erasing another operand's.
         //
-        // The emptiness test is sound but deliberately incomplete: disjoint
-        // intervals prove there is no span both operands could match, while
+        // The emptiness test is sound but incomplete: disjoint intervals prove
+        // there is no span both operands could match, while
         // overlapping intervals prove nothing at all — two operands can agree
         // on every width and still share no string. Refusing more than this
         // would need language emptiness, which is not a width question.

@@ -226,7 +226,7 @@ impl LoweredEntry {
 /// not the walker's, so they live here — once each, as a decision that returns
 /// a [`DraftRefusal`] rather than as an effect.
 ///
-/// Deliberately free of `tree_sitter` types: a refusal names a span, and the
+/// Free of `tree_sitter` types: a refusal names a span, and the
 /// lowerer renders it. That is what keeps the ordering rules testable without
 /// a syntax tree, and what stops a rule from acquiring a rendering concern.
 #[derive(Default)]
@@ -445,7 +445,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     // so a second block in one document is caught here and a
                     // second block across two documents is caught at
                     // `DefinitionAccumulator::build`. Placement is
-                    // deliberately unconstrained: unlike `defaults` and
+                    // unconstrained: unlike `defaults` and
                     // `schema`, a policy block declares nothing that a later
                     // definition could inherit, so there is nothing for a
                     // placement rule to protect.
@@ -2739,7 +2739,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// `has any` and a `set` member. Regex operands never arrive here, so
     /// `[text~/"/]` is untouched.
     ///
-    /// A literal that genuinely begins and ends with a double quote stays
+    /// A literal that begins and ends with a double quote remains
     /// expressible, because escape decoding runs after tokenization.
     fn refuse_quoted_value(&self, node: Node<'_>, text: &str) -> Result<(), CompileError> {
         // `strip_suffix` after `strip_prefix` is what makes a lone `"` not a
@@ -2962,8 +2962,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             previous = previous.prev_named_sibling()?;
         }
 
-        // The absorbed header must start on a LATER line than the term ends.
-        // Two definitions on one line are genuinely ambiguous; stay generic.
+        // The absorbed header must start on a later line than the term ends.
+        // Two definitions on one line are ambiguous; retain generic diagnostics.
         if name.start_position().row <= previous.end_position().row {
             return None;
         }

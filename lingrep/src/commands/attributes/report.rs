@@ -110,7 +110,7 @@ impl AttributeCoverage {
     }
 }
 
-/// What this run can say about one exclusion. Deliberately never says a match
+/// What this run can say about one exclusion. Never says a match
 /// was lost: see the spec's *Exposure is not impact*.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExclusionStatus {

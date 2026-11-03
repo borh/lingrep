@@ -44,18 +44,15 @@ pub struct PolicySink<'a, S> {
     /// Owned here rather than per sentence because that is the whole point of
     /// the shape: one slot per authored operation, whatever the corpus size.
     program_stats: ProgramStats,
-    /// The per-record explanation trace, when a caller asked for one.
-    ///
-    /// `None` by default and on every surface that did not opt in, so the
-    /// engine's tracing branch is not merely cheap but unreached.
+    /// The per-record explanation trace. `None` unless the caller selected
+    /// tracing, so the engine's tracing branch is not executed.
     trace: Option<PolicyTrace>,
 }
 
 /// A caller's choice at the publication seam.
 ///
-/// Deliberately two-valued and deliberately not defaulted: "no seam" is not a
-/// choice a caller can express, because being able to express it is what let
-/// `summarize` ship without one.
+/// Two-valued and non-defaulted: callers must select [`PolicySelection::Apply`]
+/// or [`PolicySelection::Raw`] explicitly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicySelection {
     /// Publish post-policy records — the default on every execution surface.
@@ -98,7 +95,7 @@ impl Publication {
         self.selection
     }
 
-    /// How many records to explain, if the caller asked for an explanation.
+    /// How many records to explain, or `None` when tracing is not selected.
     #[must_use]
     pub fn trace_capacity(&self) -> Option<usize> {
         self.trace_capacity
@@ -196,12 +193,8 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
         }
     }
 
-    /// Selects between the two constructors above from a caller's choice.
-    ///
-    /// [`crate::execution::execute`] owns the publication seam and needs to
-    /// build it from whatever the caller asked for. The caller's choice is
-    /// genuinely two-valued — `Passthrough` is derived, never selected — so
-    /// this takes [`PolicySelection`] rather than exposing the internal mode.
+    /// Calls [`Self::new`] for [`PolicySelection::Apply`] and [`Self::raw`]
+    /// for [`PolicySelection::Raw`].
     pub fn with_selection(
         inner: S,
         policy: CatalogPolicy,

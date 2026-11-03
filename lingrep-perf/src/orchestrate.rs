@@ -503,9 +503,9 @@ fn sysctl(name: &'static str, field: &'static str) -> Result<String, Orchestrate
 /// Everything both arms must have shared: argv, environment, affinity,
 /// workers, the freshly observed input digests, and the machine.
 ///
-/// Deliberately excludes the binary. That exclusion is the point: the two arms
-/// differ only in the binary, so this is the one identity that can be compared
-/// *across* them — and a one-pair screen has no other cross-arm check at all.
+/// Excludes the binary. The two arms differ only in the binary, so this is the
+/// one identity that can be compared *across* them — and a one-pair screen has
+/// no other cross-arm check at all.
 fn shared_fingerprint(
     execution: &Execution<'_>,
     machine: &Machine,
@@ -1003,8 +1003,8 @@ pub fn record(
     //
     // The failure it catches is a wrapper that mangles argv between reading
     // the seal and executing it — the class the runner's quoting bug was in.
-    // It is deliberately *not* the check for an edited manifest: editing the
-    // template moves the manifest digest, so `adjudicate` refuses that with
+    // Distinct from checking for an edited manifest: editing the template
+    // changes the manifest digest, which `adjudicate` rejects with
     // `ManifestAltered`, and duplicating the check here would leave two
     // answers to one question.
     let expected = campaign

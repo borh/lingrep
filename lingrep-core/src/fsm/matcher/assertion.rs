@@ -724,8 +724,8 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
     /// [`ReverseSeed::EveryBoundary`] here fails only the two
     /// `suffix_start_ignores_…` tests below, and the other six still pass.
     ///
-    /// The answer is deliberately **not** memoized into `self.rows`. That table
-    /// holds one row per program answering `evaluate`'s question, and a program
+    /// Suffix results are not memoized into `self.rows`. That table holds one
+    /// row per program answering `evaluate`, and a program
     /// is shared by body: an anchor's `exclude` and a `followed_by` over the same
     /// fragment intern to one id. Writing a suffix answer there would hand
     /// `holds` a row meaning something else.
@@ -1245,8 +1245,8 @@ mod tests {
     ///
     /// [`suffix_start_ignores_a_match_that_does_not_end_at_the_sentence_end`]
     /// separates the two readings by `Some`/`None`, which a pass that never
-    /// reached the end at all would also satisfy. Here a suffix genuinely
-    /// exists at 2, and [`ReverseSeed::EveryBoundary`] reports 0 instead — so
+    /// reached the end at all would also satisfy. Here a suffix match exists
+    /// at index 2, and [`ReverseSeed::EveryBoundary`] reports 0 instead — so
     /// the assertion pins the seed rather than the emptiness.
     #[test]
     fn suffix_start_ignores_an_earlier_run_that_stops_short() {

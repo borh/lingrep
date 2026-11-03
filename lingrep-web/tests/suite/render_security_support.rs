@@ -12,8 +12,8 @@ pub(crate) fn security_payload(prefix: &str, delimiter: char, suffix: &str) -> S
 
 /// The HTML text-context rule used as the security oracle in render tests.
 ///
-/// Keep this deliberately independent of Askama and production rendering: the
-/// five substitutions below are derived directly from HTML delimiter rules.
+/// Implemented independently of Askama and production rendering: the
+/// substitutions below derive directly from HTML delimiter rules.
 pub(crate) fn expected_html_text(raw: &str) -> String {
     let mut escaped = String::with_capacity(raw.len());
     for character in raw.chars() {

@@ -33,7 +33,7 @@ fn location() -> SentenceLocation {
     }
 }
 
-/// Records exactly what it was handed, plus the demand it was asked for.
+/// Records received matches and requested demand.
 #[derive(Default)]
 struct Recording {
     pushed: Vec<Vec<Match>>,
@@ -89,8 +89,8 @@ fn anchor_free() -> AnchorEvaluator<'static> {
 ///
 /// Compiled rather than hand-built, because admission is a bound `admit`
 /// statement now and a test cannot install a program on a
-/// `CatalogPolicyBuilder` — `install_program` is crate-private, deliberately,
-/// so a policy's program is always the one its own compilation produced.
+/// `CatalogPolicyBuilder` — `install_program` is crate-private, so a policy's
+/// program is always produced by its own compilation.
 ///
 /// The bodies are arbitrary: every test here pushes hand-built records, so what
 /// the definitions match never runs. `carrier` exists only to give the `detach`

@@ -1035,8 +1035,7 @@ fn normal_inspect_is_lazy_but_verify_rejects_a_corrupt_token_payload() {
 /// the artifact and the other stopped at sentence 338066 and published
 /// nothing. Same artifact, same limit, opposite answers.
 ///
-/// The narrow *direct*-markdown recovery is deliberately `matches`-only and
-/// stays that way; this is about the prepared path alone.
+/// The direct-markdown recovery is `matches`-only; this test exercises the prepared path.
 #[test]
 fn matches_and_summarize_recover_from_a_poisoned_artifact_the_same_way() {
     let runtime = tokio::runtime::Runtime::new().unwrap();

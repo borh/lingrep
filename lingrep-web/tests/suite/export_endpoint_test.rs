@@ -40,7 +40,7 @@ const SPREADSHEET_MIME: &str = "application/vnd.openxmlformats-officedocument.sp
 /// Build a store over `sentence_count` one-token VERB sentences, backed by a
 /// `from_ready` cache. `corpus_path`/`dict_path` are path-shaped so the trust
 /// boundary is exercised: only their stems and the identity digest may surface.
-/// The identity itself is deliberately path-bearing.
+/// The identity itself contains the path.
 async fn store_with_verbs(sentence_count: usize, max_kwic: usize) -> (RequestStore, TempDir) {
     let sentence = vec![TokenInfo::default().with_orth("食べる").with_pos("VERB")];
     let (fixture, runtime) = runtime_fixture(

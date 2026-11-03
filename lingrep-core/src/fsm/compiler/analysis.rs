@@ -56,8 +56,8 @@ pub struct LexiconProjectionSite {
 /// sit (lookaround bodies included), `same_as` projections, `where`-clause
 /// edge attributes, and lexicon `by` keys — so a diagnostic about an
 /// attribute the corpus cannot supply can name the definitions that wrote it.
-/// Publication-policy projections (`key:`, `transform:`) are deliberately not
-/// definition sites; a caller reporting on them names the policy.
+/// Publication-policy projections (`key:`, `transform:`) are excluded from
+/// definition sites; diagnostics on them identify the policy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttributeReferenceSite {
     /// The definition whose body contains the reference — never a referrer.
@@ -130,7 +130,7 @@ fn collect_predicate(predicate: &TokenPredicate, into: &mut BTreeMap<AttributeKe
     }
 }
 
-/// Walks one definition's own body. Deliberately does not follow
+/// Walks one definition's own body without following
 /// [`BoundExpr::Definition`]: a reference belongs to the definition that
 /// declares it, and following it would report a fragment's operator once per
 /// referrer.

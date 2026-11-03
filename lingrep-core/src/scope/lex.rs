@@ -108,10 +108,9 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Lexed>, LexError> {
                         cursor += consumed;
                         continue;
                     }
-                    // `@` is deliberately not a delimiter: a bare word already
-                    // runs to the next delimiter or whitespace, so `@section`
-                    // arrives here whole, and making it one would split a
-                    // value like `a@b`.
+                    // `@` is not a delimiter: a bare word runs to the next
+                    // delimiter or whitespace, preserving `@section` whole
+                    // without splitting values such as `a@b`.
                     _ if word.starts_with('@') => {
                         if word.starts_with("@document.") || word.starts_with("@sentence.") {
                             (Token::Identifier(word.to_owned()), width)

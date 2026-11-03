@@ -82,7 +82,7 @@ fn the_sentence_end_anchor_needs_no_declaration() {
 ///
 /// Asserting "no declarations, and publication succeeded" would prove nothing:
 /// a catalog with no declared anchor has nothing for `get` to reject either
-/// way. Deliberately mismatched positions are what discriminate — the reserved
+/// way. Mismatched positions discriminate — the reserved
 /// anchor still succeeds, and a *declared* anchor under the same positions
 /// fails with `CatalogMismatch`, which is the control.
 #[test]
@@ -954,10 +954,8 @@ fn per_operation_statistics_are_bounded_by_operation_count() {
 
 /// §8: the published set does not depend on the order the raw stream arrives in.
 ///
-/// The reversed slice deliberately violates `apply_policy_records`'s documented
-/// canonical input order. That is the point: the seam's *callers* always supply
-/// canonical order, so nothing here would notice a contest that walked the
-/// candidate list instead of the rank.
+/// The reversed slice violates `apply_policy_records`'s documented canonical
+/// input order to test that policy resolution depends on rank rather than input order.
 ///
 /// The three spans are `(0, 3)`, `(1, 2)` and `(2, 5)`, which is the smallest
 /// arrangement that is **not** symmetric under reversal. Walked forwards, the

@@ -494,7 +494,7 @@ pub struct CoordinatorView {
     pub progress: ExecutionProgress,
     /// Provisional exact totals for the current revision's scanned prefix.
     ///
-    /// This is deliberately separate from the immutable completed snapshot:
+    /// Kept separate from the immutable completed snapshot:
     /// partial scans cannot back detail or export requests.
     pub live_summary: Option<LiveSummary>,
 }

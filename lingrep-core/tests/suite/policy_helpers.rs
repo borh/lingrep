@@ -5,7 +5,7 @@
 //! These live in their own module rather than in one of the test files that
 //! uses them, so that an importing module gets an honest path: a token builder
 //! reached as `policy_compile_test::tokens_with_pos` would be claiming a
-//! provenance it does not have. They are deliberately *not* in
+//! provenance it does not have. They are not in
 //! `tests/support/`, because they are policy-suite helpers rather than shared
 //! integration-test infrastructure.
 //!
@@ -222,7 +222,7 @@ pub(crate) fn no_anchors() -> AnchorPositions {
 
 /// Every declared anchor's `max_nesting` claim, executed.
 ///
-/// Dictionary-backed and deliberately not `#[ignore]`d: `nix develop` sets
+/// Dictionary-backed and executed by default: `nix develop` sets
 /// `LINGREP_DICTIONARY_PATH`, so this runs in CI exactly as the suite's other
 /// `tokenize_japanese` tests do. A claim states where a bounded recognizer
 /// lands and how deep its sentences nest, and neither question has an answer

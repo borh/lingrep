@@ -283,13 +283,11 @@ fn records(output: &Output) -> Vec<(String, u64, u64, String)> {
 
 /// The published sentences, by content rather than by number.
 ///
-/// The ordinal fields are deliberately dropped. Under a scope clause the direct
+/// The ordinal fields are dropped before comparison. Under a scope clause the direct
 /// path renumbers over admitted sentences while a prepared artifact keeps the
 /// numbering it was built with, so the same sentence carries different ordinals
 /// on the two paths — documented behaviour, pinned by
-/// `the_two_paths_number_the_same_sentences_differently`, and nothing to do
-/// with which sentences a clause admits. Comparing on it would make an
-/// agreement test fail for a reason it is not about.
+/// `the_two_paths_number_the_same_sentences_differently`.
 ///
 /// The pattern is `[].`, so one admitted sentence yields one record per token,
 /// and reassembling them in span order recovers the sentence.
@@ -321,9 +319,9 @@ fn published(output: &Output) -> Vec<(String, String)> {
 /// second copy of the clause semantics — which is the failure `ActiveLabels`
 /// exists to prevent.
 ///
-/// The clause is deliberately mixed: `old.md` is decided from metadata alone
-/// and never reaches pass two, while `recent.md` is decided per sentence. A
-/// path that got either grain wrong would show up here as a difference.
+/// The clause mixes metadata and sentence evaluation: `old.md` is decided from
+/// metadata alone and never reaches pass two, while `recent.md` is decided per
+/// sentence. A discrepancy in either grain causes a difference here.
 #[test]
 fn the_direct_and_prepared_paths_admit_the_same_sentences() {
     let fixture = AgreementFixture::new();

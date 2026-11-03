@@ -183,7 +183,7 @@ impl Compiler<'_> {
     /// that mean the same thing share one program however they were written —
     /// an anchor's `exclude` fragment and a lookaround body over that same
     /// fragment intern to a single entry. `span` is the site to blame in a
-    /// limits diagnostic, and deliberately not part of the key.
+    /// limits diagnostic, and is excluded from the key.
     ///
     /// `body` is walked with `nested = true` first, and here rather than at each
     /// call site. Anything interned *is* an assertion body, where the
@@ -265,7 +265,7 @@ impl Compiler<'_> {
     /// one of them first.
     ///
     /// The synthesized occurrences are always [`LookPolarity::Positive`] and
-    /// are deliberately absent from `occurrence_by_span`. Polarity stays on the
+    /// are omitted from `occurrence_by_span`. Polarity stays on the
     /// occurrence the author wrote: negating the union is `not (A or B)`, and
     /// negating each member first would compute `(not A) or (not B)`.
     ///
@@ -285,10 +285,9 @@ impl Compiler<'_> {
         children: &[BoundExpr],
         span: SourceSpan,
     ) -> Result<AssertionProgramId, CompileError> {
-        // The union is a node the source asked for, so it is charged like one.
-        // Without this a catalog's expansion work would *fall* when an
-        // alternation body is split, and a source the limits refused before
-        // would quietly begin to compile — a loosening nothing asked for.
+        // The union is charged as a source node. Otherwise splitting an
+        // alternation body would lower a catalog's expansion work, and a source
+        // that exceeded the limits could begin to compile.
         self.charge_expansion(span)?;
 
         let mut members = BTreeSet::new();

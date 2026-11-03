@@ -40,7 +40,8 @@ fn v8_attribute_keys_reject_aliases_case_drift_and_malformed_paths() {
     }
 }
 
-/// V1 makes `AttributeKey` case-sensitive. This test is deleted deliberately then.
+/// Pins the current case-insensitive lookup. Delete this test when V1 makes
+/// `AttributeKey` case-sensitive.
 #[test]
 fn attribute_lookup_is_currently_case_insensitive() {
     assert_eq!(

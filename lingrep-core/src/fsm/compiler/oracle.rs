@@ -1708,8 +1708,8 @@ mod tests {
     /// Protocol check 6 for `&`: complete canonical `Match` values from the
     /// production pipeline agree with the independent interpreter.
     ///
-    /// The two are genuinely independent here, which is what makes the check
-    /// worth running. `program.rs` evaluates operands left to right and retains
+    /// The two implementations are independent. `program.rs` evaluates
+    /// operands left to right and retains
     /// the first's candidates by position; `evaluate_execution` folds the
     /// operands' end-position *sets* and filters afterwards. Same operator, two
     /// formulations, and only one of them was written while looking at the

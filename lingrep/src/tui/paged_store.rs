@@ -87,8 +87,8 @@ pub(crate) struct PagedStore<T> {
 struct PagedStoreInner {
     data: Mutex<NamedTempFile>,
     index: Mutex<NamedTempFile>,
-    // Reservations deliberately live beside their files. Dropping the last
-    // Arc closes/unlinks both files and returns both charges atomically from
+    // Reservations live beside their files so dropping the last Arc
+    // closes/unlinks both files and returns both charges atomically from
     // the explorer's perspective.
     data_reservation: TempReservation,
     index_reservation: TempReservation,
@@ -216,7 +216,7 @@ fn frame_bounds(file: &mut std::fs::File, offset: u64, data_len: u64) -> io::Res
     let mut length = [0_u8; std::mem::size_of::<u64>()];
     file.read_exact(&mut length)?;
     let length = u64::from_le_bytes(length);
-    // This check is deliberately before usize conversion/allocation.
+    // Checked before usize conversion and allocation.
     let frame_end = header_end
         .checked_add(length)
         .ok_or_else(|| corruption("paged frame length overflow"))?;

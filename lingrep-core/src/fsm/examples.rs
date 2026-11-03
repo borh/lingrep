@@ -16,9 +16,9 @@
 //! catalog-independent so every catalog is verified, not only one with its own
 //! test file.
 //!
-//! Both take a tokenizer because claim verification needs a dictionary and the
-//! compiler deliberately has none. Consequently, the dictionary-free
-//! `ling check` command calls neither function and does not verify claims.
+//! Both accept a tokenizer because claim verification requires a dictionary
+//! and the compiler runs without one. `ling check`, which runs without a
+//! dictionary, therefore calls neither function and does not verify claims.
 
 use crate::fsm::CompiledCatalog;
 use crate::fsm::policy::NestingEntry;
@@ -312,9 +312,8 @@ fn token_index_at_char<T: TokenInfoTrait>(tokens: &[T], offset: usize) -> Option
 
 /// Check every documented claim against the definition that carries it.
 ///
-/// Tokenization is injected because it needs a dictionary and this crate's
-/// compiler deliberately does not: `check` without a dictionary must stay
-/// dictionary-free and fast.
+/// Tokenization is injected because claim checking requires a dictionary
+/// while pattern compilation does not.
 ///
 /// Fragments are not reachable here — they never emit and so never appear in
 /// `patterns()`. A claim attached to one is either reported by the compiler or,

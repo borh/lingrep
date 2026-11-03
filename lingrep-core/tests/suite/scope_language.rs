@@ -260,8 +260,8 @@ fn an_admitted_document_needs_no_reason_even_with_an_unmet_disjunct() {
 
 #[test]
 fn an_unmet_predicate_is_reported_even_when_an_earlier_one_was_cleanly_false() {
-    // The case that forbids short-circuiting. `year >= 2020` is genuinely
-    // false, so `all()` would stop there and report `Predicate`, never
+    // This case rules out short-circuiting. `year >= 2020` is false, so
+    // short-circuiting would report `Predicate`, never
     // reaching the missing `absent`. Then one clause with one answer would
     // report two different reasons depending on the order its predicates were
     // written in. Evaluation visits every branch so the reason is a property

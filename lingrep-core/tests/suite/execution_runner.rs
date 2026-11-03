@@ -312,9 +312,9 @@ fn prepared_bound_batches_execute_without_an_analyzer_session() {
 /// `TokenSchema::unidic_morphology()` and then rejected its own batches:
 /// `corpus build --analyzer sudachi` published a well-formed artifact that
 /// every read of failed with `bound lingrep patterns schema does not match the analyzer
-/// schema`. The schema here is deliberately neither Vibrato's nor any
-/// analyzer this build can construct — the property is that the *run* names
-/// it, not that the executor recognizes it.
+/// schema`. The schema here belongs to no analyzer this build can construct:
+/// the test checks that the run carries the schema, not that the executor
+/// recognizes it.
 #[test]
 fn a_prepared_run_executes_under_its_own_non_vibrato_schema() {
     let schema = TokenSchema::new([

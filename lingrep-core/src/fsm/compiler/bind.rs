@@ -818,9 +818,9 @@ struct BindCtx<'a> {
 /// from a budget of its own: resolved-node construction is expression-visit
 /// work of exactly the kind that budget already names, and it is wide enough
 /// that no catalog is narrowed — all five tracked catalogs *together* resolve
-/// 459 nodes against its 262,144 default, a factor of 570. It is deliberately
-/// not charged into [`super::CompilerStats::expansion_work`], which is a
-/// published compile metric folded into catalog identity.
+/// 459 nodes against its 262,144 default, a factor of 570. This count is not
+/// recorded in [`super::CompilerStats::expansion_work`], which is a published
+/// compile metric folded into catalog identity.
 ///
 /// `reported` is here rather than on [`TestResolution`] so an exhausted
 /// document budget produces one diagnostic instead of one per remaining `[…]`.

@@ -1,6 +1,6 @@
 //! The ordered policy program, authored and bound.
 //!
-//! Two representations, deliberately:
+//! Provides two representations:
 //!
 //! * [`Program`] is what the author wrote — names and spans, suitable for
 //!   diagnostics that must point at a statement.

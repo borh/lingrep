@@ -19,7 +19,7 @@ pub mod policy;
 mod policy_engine;
 pub mod policy_program;
 /// The per-record explanation trace: opt-in, capacity-bounded, and public
-/// because a caller that asked for one has to be able to read it.
+/// so callers can inspect execution traces.
 pub mod policy_trace;
 mod sentence_matcher;
 mod state_machine;

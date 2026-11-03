@@ -94,9 +94,8 @@ fn artifact_directories(parent: &Path) -> Vec<PathBuf> {
 /// **one** identity — a plumbing claim. Re-deriving the three formulas locally
 /// made it also a formula characterization it was never meant to be, so a
 /// domain bump broke it for a reason unrelated to what it checks.
-/// `lingrep-corpus/tests/identity.rs` owns the framing characterization and
-/// re-derives deliberately; here, calling the real functions is what makes the
-/// comparison meaningful.
+/// `lingrep-corpus/tests/identity.rs` characterizes framing independently;
+/// here, invoking production functions ensures the comparison is representative.
 fn direct_analysis_inputs(config: &CorpusReadConfig, dictionary: &[u8]) -> AnalysisInputs {
     AnalysisInputs::new(
         ReaderIdentity::derive(config, lingrep_core::analysis::NormalizationPolicy::Nfc),
@@ -780,8 +779,8 @@ async fn a_declared_artifact_is_served_without_building_anything() {
 /// is reproducible: the source is right there and `retry` rebuilds it. A
 /// declared artifact is **not** reproducible from anything lingrep-web holds, so the
 /// same deletion would destroy the operator's data with no way back. The
-/// runtime still flips to `Failed` — it genuinely cannot serve corrupt bytes —
-/// but the bytes stay on disk.
+/// runtime transitions to `Failed` upon encountering corrupt bytes, but the
+/// bytes remain on disk.
 #[tokio::test]
 async fn a_declared_artifact_survives_corruption_invalidation() {
     let fixture =

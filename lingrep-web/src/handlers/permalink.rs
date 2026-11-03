@@ -58,7 +58,7 @@ async fn create_permalink(
     // The lookup must stay FALLIBLE. `resolve(None)` cannot miss for a validated
     // configuration, but the key arrives from the client, and an undeclared or
     // malformed one resolves to `None`. Panicking here would then be a panicking
-    // request handler — a trivial denial of service. `resolve` is deliberately
+    // request handler — a trivial denial of service. `resolve` is
     // two-valued, so both cases are one lookup miss: startup owns validation.
     let Some(slot) = store.corpora.resolve(form.corpus.as_deref()) else {
         return error(StatusCode::NOT_FOUND, "unknown_corpus");
@@ -68,12 +68,12 @@ async fn create_permalink(
     // nothing to assert — emitting `k` alone is the correct answer, and is what
     // lets the selector switch to a corpus that has never been built.
     //
-    // Deliberately NOT a `start_or_observe` site, unlike the landing page, the
+    // Does not call `start_or_observe`, unlike the landing page, the
     // search POST and the context poll. Those three either await readiness or
-    // promise the reader progress, so a slot they leave Idle hangs. Minting a
-    // link neither waits nor promises: it reads the current identity and
-    // answers. Starting a build here would make copying a link kick off a
-    // multi-gigabyte build the reader never asked for.
+    // report progress, so leaving a slot Idle hangs. Generating a
+    // link neither waits nor reports progress: it reads the current identity and
+    // returns. Triggering a build here would cause link generation to start an
+    // unsolicited multi-gigabyte build.
     let ready = slot.runtime.ready().await;
     let digest = ready.as_ref().map(|ready| identity_digest(&ready.identity));
     // A query-only response keeps the browser on the current mount: the codec

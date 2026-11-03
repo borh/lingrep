@@ -14,12 +14,12 @@
 //! dictionary is a deliberate experiment as often as it is a mistake. Report
 //! divergence for the researcher to adjudicate without changing exit status.
 //!
-//! # What is compared, and what deliberately is not
+//! # What is compared, and what is omitted
 //!
 //! Compatibility is a spectrum, not a match on a file name:
 //!
 //! * `unidic-cwj` and `unidic-csj` differ in **weights only** — same
-//!   vocabulary, same tagset. A catalog is genuinely valid for both.
+//!   vocabulary, same tagset. A catalog remains valid for both.
 //! * `unidic-kinsei-edo`, `unidic-kindai-bungo` and the other historical
 //!   variants differ in vocabulary **and** in closed-class grammatical and
 //!   morphological analysis, by varying amounts.

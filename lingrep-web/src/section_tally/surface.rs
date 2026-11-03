@@ -27,7 +27,7 @@ use crate::snapshot::PatternKey;
 /// Measured against `patterns/sf-experimental.lx` over a 2,000-document
 /// corpus: 73 patterns carried 942 distinct surfaces, median 4 each and 12 at
 /// the 90th percentile, with two outliers at 252 and 322. The limit is set
-/// above the bulk and below the outliers deliberately — those two are
+/// above the bulk and below the outliers: those two are
 /// productive morphological patterns whose surface inventory belongs to the
 /// language rather than to the corpus, and no panel lists 322 rows.
 pub const SURFACE_VOCABULARY_LIMIT: usize = 64;
@@ -46,9 +46,9 @@ pub const SURFACE_CEILING_BYTES: usize = 262_144;
 pub enum SurfaceRefusal {
     /// The pattern carried more than [`SURFACE_VOCABULARY_LIMIT`] surfaces.
     TooManySurfaces { limit: usize },
-    /// [`SURFACE_CEILING_BYTES`] was already spent when this pattern needed a
-    /// new surface. Order-dependent, and deliberately so: the alternative is
-    /// predicting a vocabulary that does not exist yet.
+    /// [`SURFACE_CEILING_BYTES`] was already spent when this pattern required a
+    /// new surface. Order-dependent: the alternative requires predicting
+    /// vocabulary in advance.
     BudgetExhausted,
 }
 

@@ -15,10 +15,10 @@ pub const DEFAULT_MAX_STAGE_INPUT_BYTES: usize = 128 * 1024;
 ///
 /// A record is one line of a corpus source — a JSONL document, or a plaintext
 /// or Markdown line — and its length is a property of the corpus, not of how
-/// the pipeline batches work. It is deliberately separate from
+/// the pipeline batches work. This limit is distinct from
 /// [`DEFAULT_MAX_STAGE_INPUT_BYTES`]: a document larger than one execution
-/// batch is ordinary and simply feeds several batches, so bounding a record by
-/// the batch budget would refuse corpora for a reason unrelated to residency.
+/// batch feeds several batches, so bounding a record by the batch budget
+/// would reject corpora for a reason unrelated to residency.
 pub const DEFAULT_MAX_INPUT_RECORD_BYTES: usize = 1024 * 1024;
 /// Default resident-byte cap for one tokenized sentence or aggregate matching batch.
 pub const DEFAULT_MAX_TOKENIZED_BYTES: usize = 32 * 1024 * 1024;

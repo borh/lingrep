@@ -1,6 +1,6 @@
 //! The declared corpora and their per-corpus state.
 //!
-//! Per-corpus state is deliberately narrow: a runtime and a context memo. Every
+//! Per-corpus state is kept minimal: a runtime and a context memo. Every
 //! expensive resource lives on `ServerContext`, which is what makes a slot cheap
 //! enough to construct for every declared corpus at startup and build lazily.
 
@@ -173,7 +173,7 @@ impl CorpusSet {
             // `slots` was validated by `parse`/`parse_declared` at construction,
             // so an unvalidated key cannot equal one — an invalid key simply
             // misses the map. That is the behaviour the handlers want: `resolve`
-            // is deliberately two-valued, so a malformed key and an undeclared
+            // is two-valued, so a malformed key and an undeclared
             // key are one answer, `None`, and startup owns validation.
             //
             // Validating here would buy nothing and cost a scan of client data

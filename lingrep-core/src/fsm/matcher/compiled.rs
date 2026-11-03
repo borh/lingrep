@@ -149,8 +149,7 @@ pub struct CompiledCatalog {
     /// span-equality plan. Narrowing it to those would make the answer correct
     /// only because the recognition machine happens to cover the rest — exactly
     /// the cross-half argument [`CompiledCatalog::requires_assertion_session`]
-    /// exists to avoid — so the scan is deliberately wider than the plans it is
-    /// named for.
+    /// exists to avoid — so the scan covers more plans than its name suggests.
     ///
     /// Only half the answer; see that method for the other half.
     execution_queries_lookaround: bool,
@@ -636,8 +635,8 @@ impl CompiledCatalog {
 
     /// Freezes the attribute projection after every execution context is installed.
     ///
-    /// This deliberately runs after both assertion and execution installation: either
-    /// can introduce attributes that do not occur on the recognition NFA.
+    /// Executes after both assertion and execution installation because either
+    /// can introduce attributes not present on the recognition NFA.
     pub(crate) fn finalize_required_attributes(&mut self) {
         self.required_attributes = self
             .dense
@@ -1223,13 +1222,13 @@ impl AnchorEvaluator<'_> {
     /// end is its end. That is a computed answer and not the fallback
     /// [`AnchorPositions`] refuses: a *missing* anchor stays an error there.
     ///
-    /// The session is built unconditionally, and deliberately without consulting
+    /// The session is built unconditionally, without checking
     /// `CompiledCatalog::requires_assertion_session`. That predicate answers a
     /// different question — whether any *pattern* queries a lookaround — and an
     /// anchor's `exclude` is reachable from no pattern, so it is `false` for the
     /// common anchored catalog, `PUNCT_ANCHOR` included. Gating on it would skip
     /// every anchor. This pass needs the session because that is where the
-    /// programs live, not because a pattern asked for one.
+    /// programs reside, regardless of pattern lookaround requirements.
     ///
     /// A catalog declaring no anchor returns before building either session, so
     /// it pays nothing per sentence. That guard is not an optimization needing a

@@ -419,10 +419,8 @@ fn double_wo_catalog_partitions_exact_raw_matches() {
 /// second independent `orthBase` exclusion) and from
 /// `double_wo_fragment_boundary` (which requires unidic.pos1=空白).
 ///
-/// Characterization only: this records observed behaviour at a token class the
-/// partition cases do not cover. It is deliberately separate from
-/// `double_wo_catalog_partitions_exact_raw_matches` so that whatever it finds
-/// cannot weaken the established partition contract.
+/// Characterization test for token behavior not covered by partition cases.
+/// Maintained separately from `double_wo_catalog_partitions_exact_raw_matches`.
 #[test]
 fn double_wo_classification_at_ideographic_space_not_tagged_blank() {
     let tokens = vec![
@@ -657,7 +655,7 @@ fn canonical_metadata(value: &serde_json::Value) -> serde_json::Value {
 
 /// One statement, rendered semantically.
 ///
-/// **`PolicySpan` is deliberately absent.** It is a byte range into whatever
+/// **`PolicySpan` is omitted.** It is a byte range into whatever
 /// document happened to carry the block, so rendering it would make a
 /// reformatted catalog, an added comment, or a different assembly order change
 /// a *semantic* fingerprint — and this is the authority a reader consults to
@@ -3107,7 +3105,7 @@ fn where_clause_static_refusals_each_carry_their_own_code() {
 /// What branch exclusivity must **not** refuse.
 ///
 /// The refusal is sound because a single-entry alternation takes one branch,
-/// and deliberately incomplete everywhere else. Each shape here has a live
+/// and incomplete everywhere else. Each shape here has a live
 /// precedent, so a rule that over-refused would delete a legal query rather
 /// than merely annoy someone.
 #[test]
@@ -3235,7 +3233,7 @@ fn where_clause_requires_dependency_attributes_at_binding() {
     );
 }
 
-/// The contradictory-labels refusal is sound but deliberately incomplete: it
+/// The contradictory-labels rejection is sound but incomplete: it
 /// keys on disjoint label *sets*, not on a repeated dependent, because nested
 /// captures legally bind one token and two constraints over one dependent can
 /// then be two spellings of one satisfiable edge.
@@ -3391,7 +3389,7 @@ fn a_named_set_term_matches_what_the_inline_spelling_matches() {
     assert_eq!(inline, vec!["subtyped", "plain"]);
 }
 
-/// `obl:*` is a family matcher over the subtype and deliberately excludes the
+/// `obl:*` matches subtypes of `obl` and excludes the
 /// unsubtyped label: `obl` and `obl:tmod` are two labels, and a wildcard that
 /// quietly included the bare form would make `obl|obl:*` mean `obl:*`.
 #[test]
@@ -3563,9 +3561,9 @@ fn capture_binding_enforces_source_order_and_definite_assignment() {
 
 #[test]
 fn repository_catalogs_use_no_regex_operand_with_equals() {
-    // Deliberately the same expression as `scripts/check-lx-catalogs.sh`, and
-    // it must stay that way: two guards over the same property that disagree
-    // about what they forbid are worse than one, because whichever is looser
+    // Must use the same expression as `scripts/check-lx-catalogs.sh`: two
+    // guards over the same property that disagree about what they forbid are
+    // worse than one, because whichever is looser
     // makes the stricter one look like a false alarm.
     //
     // `\s*` matters — a `contains("=/")` check would wave through the spaced
@@ -3821,7 +3819,7 @@ fn the_top_level_reserved_names_are_exactly_the_four_measured() {
 /// either number.
 ///
 /// Scoped to the definition graph, because a `policy_block` is the one place
-/// where the two questions genuinely differ rather than disagree: it spells its
+/// where the two questions differ rather than disagree: it spells its
 /// subjects and operands with the same `pattern_reference` node, and those name
 /// a definition without adding an edge to expand. See
 /// [`count_definition_graph_references`]. Widening the compiler's counter to

@@ -7,8 +7,8 @@ use rayon::prelude::*;
 
 /// Schedules independent sentence matches on a caller-owned Rayon pool.
 ///
-/// This is deliberately batch-scoped: streaming callers pass only their current
-/// chunk rather than collecting an entire corpus before matching.
+/// Batch-scoped: streaming callers pass only their current chunk rather than
+/// collecting an entire corpus before matching.
 pub struct SentenceMatcher<'a> {
     matcher: &'a CompiledCatalog,
 }

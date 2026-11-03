@@ -1,8 +1,8 @@
 //! Reading declared result policy off a compiled catalog.
 //!
 //! The vocabulary and the engine live in [`crate::fsm::policy`]; this is the
-//! compiler half, which needs three things that module deliberately does not
-//! depend on: every definition's name, its visibility, and its source span.
+//! compiler half, which requires three properties that `fsm::policy` does not
+//! track: definition names, visibility, and source spans.
 //!
 //! Extraction runs on the **parsed** program, before binding. Every input it
 //! needs — names, visibility, metadata, spans — is already present there, and
@@ -2166,8 +2166,8 @@ fn find_capture_or_same_as(
 ///   rejects one);
 /// * each nested lookaround's direction, **polarity**, and body.
 ///
-/// Source spans are deliberately absent: the digest asks whether two catalogs
-/// compute the same positions, and inserting a comment does not change that.
+/// Source spans are omitted: the digest verifies whether two catalogs compute
+/// identical positions, which comments do not affect.
 pub(crate) fn anchor_set_digest(
     anchors: &BTreeMap<CompactString, DefinitionId>,
     bound: &BoundProgram,

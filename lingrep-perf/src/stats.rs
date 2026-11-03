@@ -173,7 +173,7 @@ pub fn geometric_mean(ratios: &[f64]) -> Option<f64> {
 /// metric is computed and reported on every run whether or not the campaign
 /// declared it. See [`crate::campaign::Campaign::decisions`].
 ///
-/// Bonferroni is chosen over a true group-sequential boundary deliberately. A
+/// Uses Bonferroni correction rather than group-sequential boundaries: a
 /// Pocock boundary is not determined by the look count alone — it depends on
 /// the correlation between cumulative looks, normally parameterized by
 /// information fractions — so "the Pocock constant for K" is not a

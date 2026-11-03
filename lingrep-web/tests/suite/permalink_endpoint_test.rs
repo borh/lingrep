@@ -333,7 +333,7 @@ async fn an_undeclared_corpus_is_not_found() {
 }
 
 /// A malformed key is a lookup miss, not a validation error: `resolve` is
-/// deliberately two-valued so startup owns validation.
+/// two-valued so startup owns validation.
 #[tokio::test]
 async fn a_malformed_corpus_key_is_not_found() {
     let (status, _) = post_permalink(

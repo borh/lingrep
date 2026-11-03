@@ -114,7 +114,7 @@ async fn query_library_asset_is_served_as_a_module() {
     let javascript = response.into_body().collect().await.unwrap().to_bytes();
     let javascript = std::str::from_utf8(&javascript).unwrap();
     assert!(javascript.contains("openQueryDatabase"));
-    // These tokens deliberately pin the cross-module event protocol: history
+    // These tokens pin the cross-module event protocol: history
     // captures released htmx requests, and explicit runs use the ordinary form.
     assert!(javascript.contains("htmx:beforeRequest"));
     assert!(javascript.contains("form[data-corpus-search]"));

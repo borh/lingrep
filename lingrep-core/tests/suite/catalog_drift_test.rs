@@ -1,7 +1,7 @@
 //! Repository acceptance for cross-catalog drift.
 //!
 //! Pins selected divergences over the retained researcher catalogs. The full
-//! drift set is deliberately not
+//! drift set is not
 //! pinned here: a name beyond ARU/NAI reporting distinct bodies is a *finding*
 //! for the researcher to adjudicate, recorded in the baseline results
 //! doc, not a test failure.
@@ -10,7 +10,7 @@ use lingrep_core::fsm::{CatalogDriftReport, PatternSource, report_catalog_drift}
 
 /// The research surfaces. The fixture catalogs (`patterns/test-simple.lx`,
 /// `tests/fixtures/*`, `lingrep/tests/fixtures/*`) are not research surfaces
-/// and are deliberately excluded.
+/// and are excluded.
 const RESEARCHER_CATALOGS: [&str; 3] = [
     "patterns/double-wo.lx",
     "patterns/sf-experimental.lx",
@@ -48,7 +48,7 @@ fn tracked_catalogs_report_the_spec_enumerated_drift() {
 
     let entry = |name: &str| report.entries.iter().find(|entry| entry.name == name);
 
-    // The retained catalog and sf-experimental still deliberately differ on
+    // The retained catalog and sf-experimental differ on
     // these shared helper definitions.
     assert_eq!(
         entry("ARU")

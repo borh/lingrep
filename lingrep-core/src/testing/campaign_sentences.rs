@@ -7,8 +7,8 @@
 //! nobody wrote as an example would pass unseen; the committed fixtures are
 //! the sentences this repository has that nobody wrote for that purpose.
 //!
-//! **Two fixture shapes, deliberately kept apart.** The `r7_*` fixtures are
-//! pre-tokenized transcripts: each `type: "sentence"` line carries the
+//! **Two fixture shapes.** The `r7_*` fixtures are pre-tokenized transcripts:
+//! each `type: "sentence"` line carries the
 //! tokenizer's full output, and reading it is the point — the caller does not
 //! get to decide what a token carries. `synthetic.jsonl` is text with
 //! `"tokens": null` and must go through the tokenizer like a catalog example.

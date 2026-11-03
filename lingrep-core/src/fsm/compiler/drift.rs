@@ -19,7 +19,7 @@
 //! reference-occurrence numbering, which is derived rather than authored.
 //! Metadata never participates: comparison is metadata-insensitive.
 //!
-//! ## Alternation branch order is deliberately NOT sorted
+//! ## Alternation branch order is preserved
 //!
 //! Branch order is observable output. `named_groups_test.rs`'s
 //! `capture_selection_is_source_ordered_greedy_and_last_participating`
@@ -394,10 +394,10 @@ enum CanonicalRelationTarget {
 
 /// `PositionAssertion` normalized the same way a token predicate is.
 ///
-/// `Lookaround(AssertionOccurrenceId)` is deliberately absent: the id is an
-/// occurrence index assigned per catalog, so it would make every lookaround
-/// drift against an identical one in another catalog. Bound lookaround bodies
-/// are carried by `BoundExpr::Lookaround`, which is canonicalized structurally.
+/// `Lookaround(AssertionOccurrenceId)` is omitted: the id is an occurrence
+/// index assigned per catalog, which would make identical lookarounds in
+/// separate catalogs drift. Bound lookaround bodies are carried by
+/// `BoundExpr::Lookaround`, which is canonicalized structurally.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum CanonicalAssertion {
     SentenceStart,
