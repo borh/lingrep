@@ -223,7 +223,7 @@ fn validate_record_metadata(
     values: Option<&serde_json::Map<String, serde_json::Value>>,
     metadata_keys: &[String],
 ) -> Result<(), ProtocolError> {
-    let agrees = match values {
+    let conforms = match values {
         None => metadata_keys.is_empty(),
         Some(values) => {
             !metadata_keys.is_empty()
@@ -231,12 +231,12 @@ fn validate_record_metadata(
                     .is_ok_and(|projection| projection.validate_output(values).is_ok())
         }
     };
-    if agrees {
+    if conforms {
         Ok(())
     } else {
         Err(ProtocolError::InvalidSourceMetadata {
             message: format!(
-                "{record} metadata does not agree with the run projection or exceeds 64 KiB"
+                "{record} metadata does not conform to the run projection or exceeds 64 KiB"
             ),
         })
     }
