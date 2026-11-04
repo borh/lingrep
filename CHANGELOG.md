@@ -7,35 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- A `schema` block can declare `map` for a key whose value is a map, such as
-  `mining: map required`. A schema line with an unknown type name fails with
-  an error that names the type and lists the valid ones; in 0.6.0 it failed
-  with a generic syntax error.
-
-### Removed
-
-- The Harbor evaluation harness (`benchmarks/harbor`), its task images
-  (`nix/linguistic-eval`), the `ci.sh` harness lanes and the
-  `linguistic-eval-*` flake outputs moved to the `lingrep-harbor` repository,
-  which consumes this flake's `lingrep` and `vibrato-dict-cwj`.
-
-### Fixed
-
-- `ling coverage --where` prints `warning[unused_section_labels]` for a section
-  label the corpus does not record or that the read-time section policy
-  excludes, as `matches` and `summarize` do. In 0.6.0 it printed no warning.
-- A metadata map key that is not an identifier, such as `markdown-it-py`,
-  `a.b` or `x+y`, fails compilation with a syntax error at the key. In 0.6.0 it
-  was published cut at the first such character (`{"markdown": …}`) with no
-  diagnostic.
-- With GiNZA, the spaCy adapter publishes `,` as the `spacy.morph.reading` of a
-  comma token. In 0.6.0 any text containing a comma failed with `morphology
-  values for 'Reading' must be strings`. A `spacy.morph.*` value is one member;
-  only `feat.*` values are split on commas.
-
-## [0.6.0] - 2026-10-29
+## [0.6.0] - 2026-11-04
 
 ### Added
 
@@ -44,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--name`, expand references with `--expand`, and set layout columns with
   `--width`. Complete labels and constraints remain visible in legends and
   numbered subdiagrams when they cannot fit inline.
+- A `schema` block can declare `map` for a key whose value is a map, such as
+  `mining: map required`. A schema line with an unknown type name fails with
+  an error that names the type and lists the valid ones. In 0.5.1 a `map`
+  declaration and an unknown type name both failed with a generic syntax error.
 
 ### Changed
 
@@ -78,8 +54,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `warning[dictionary_binding_mismatch]` on stderr, as a diagnostic record
   under `--json`.
 
+### Removed
+
+- The Harbor evaluation harness (`benchmarks/harbor`), its task images
+  (`nix/linguistic-eval`), the `ci.sh` harness lanes and the
+  `linguistic-eval-*` flake outputs moved to the `lingrep-harbor` repository,
+  which consumes this flake's `lingrep` and `vibrato-dict-cwj`.
+
 ### Fixed
 
+- `ling coverage --where` prints `warning[unused_section_labels]` for a section
+  label the corpus does not record or that the read-time section policy
+  excludes, as `matches` and `summarize` do. In 0.5.1 it printed no warning.
+- A metadata map key that is not an identifier, such as `markdown-it-py`,
+  `a.b` or `x+y`, fails compilation with a syntax error at the key. In 0.5.1 it
+  was published cut at the first such character (`{"markdown": …}`) with no
+  diagnostic.
+- With GiNZA, the spaCy adapter publishes `,` as the `spacy.morph.reading` of a
+  comma token. In 0.5.1 any text containing a comma failed with `morphology
+  values for 'Reading' must be strings`. A `spacy.morph.*` value is one member;
+  only `feat.*` values are split on commas.
 - Web diagrams share the CLI recognition model: intersection means all operands
   match the same span, and unordered matching shows its distinct operand and gap
   rules. Compound diagrams retain component order and every dependency clause.
