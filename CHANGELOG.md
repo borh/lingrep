@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `run` record of `ling --json corpus build` and `corpus inspect` names the
+  artifact in `artifact_path`. Without `--output`, `corpus build ROOT` reuses or
+  builds the artifact that `--cache` queries read, so a caller can resolve ROOT
+  once and use `--corpus PATH` afterwards.
 - A catalog file can declare, per attribute, the label set its literals belong
   to: `labels: { upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn" }`,
   or an explicit `{…}` set. A literal outside its declared set is a compile

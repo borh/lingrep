@@ -109,6 +109,10 @@ pub struct SourcesRun {
     pub admission_policy_identity: String,
     pub traversal_limits: TraversalLimits,
     pub aggregate_state: AggregateState,
+    /// The prepared artifact's path; present only from `corpus build` and
+    /// `corpus inspect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1167,6 +1167,7 @@ fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
                 admission_policy_identity: "admission/v1".into(),
                 traversal_limits: traversal_limits(),
                 aggregate_state: AggregateState::Pending,
+                artifact_path: None,
             }))),
         ),
         (

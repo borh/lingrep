@@ -1384,7 +1384,10 @@ skips source observation.
 
 The artifact is `corpus build`'s artifact: same identity, same canonical path,
 same refusal to overwrite. `corpus build` and `--cache` queries reuse artifacts
-published by one another.
+published by one another. Without `--output`, `ling --json corpus build ROOT`
+reuses or builds that artifact and names it in the `run` record's
+`artifact_path`, so a caller observes ROOT once and passes the path to
+`--corpus` on later runs.
 
 Stdin has no reopenable logical name and rejects `--cache`. On a scoped first
 run, preparation admits the complete corpus and `--where` is then applied to the

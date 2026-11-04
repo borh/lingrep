@@ -776,6 +776,7 @@ async fn inspect_artifact(
                 aggregate_state: AggregateState::Known {
                     inventory: protocol_inventory(report.inventory),
                 },
+                artifact_path: Some(args.artifact.display().to_string()),
             })),
             output,
         )?;
@@ -944,6 +945,7 @@ fn run_sources_to<W: Write>(
         admission_policy_identity: encode_digest(admission_identity().as_bytes()),
         traversal_limits: protocol_traversal_limits(config),
         aggregate_state: AggregateState::Pending,
+        artifact_path: None,
     }));
     let started = Instant::now();
     let progress = PresentationProgress::stderr(

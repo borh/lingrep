@@ -165,6 +165,61 @@ fn a_human_query_prints_the_prepared_artifact_path_once_and_reuse_writes_no_stde
 }
 
 #[test]
+fn json_corpus_build_names_the_artifact_that_cache_queries_reuse() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("corpus.txt");
+    fs::write(&root, "猫。\n").unwrap();
+    let artifact_path = |args: &[&std::ffi::OsStr]| {
+        let output = lingrep().arg("--json").args(args).output().unwrap();
+        assert_success(&output);
+        let run: serde_json::Value = serde_json::from_str(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(run["type"], "run");
+        run["data"]["artifact_path"].as_str().unwrap().to_owned()
+    };
+    let build = || {
+        artifact_path(&[
+            "corpus".as_ref(),
+            "build".as_ref(),
+            "--dict-path".as_ref(),
+            dictionary.path().as_os_str(),
+            root.as_os_str(),
+        ])
+    };
+
+    let built = build();
+    assert_eq!(artifacts_beside(&root), [std::path::PathBuf::from(&built)]);
+    assert_eq!(build(), built, "a second build reuses the artifact");
+
+    let query = lingrep()
+        .args([
+            "matches",
+            "--cache",
+            "--pattern",
+            "[text=猫].",
+            "--dict-path",
+        ])
+        .arg(dictionary.path())
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_success(&query);
+    assert_eq!(artifacts_beside(&root), [std::path::PathBuf::from(&built)]);
+
+    assert_eq!(
+        artifact_path(&["corpus".as_ref(), "inspect".as_ref(), built.as_ref()]),
+        built
+    );
+}
+
+#[test]
 fn cache_rejects_stdin_before_reading_it() {
     let dictionary = MiniDictionary::new();
     let output = lingrep()
