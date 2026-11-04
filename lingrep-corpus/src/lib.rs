@@ -43,6 +43,7 @@ mod postings;
 pub use postings::PreparedFilterStats;
 mod provenance;
 mod publication;
+pub use publication::rename_noreplace;
 mod scratch;
 mod siblings;
 mod tokens;

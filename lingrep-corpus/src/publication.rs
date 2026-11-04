@@ -138,8 +138,11 @@ fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
+/// Renames `from` to `to` in one step, failing with `EEXIST` or `ENOTEMPTY`
+/// instead of replacing an existing `to`. Where no no-replace rename exists,
+/// the error is `ENOSYS`, `EINVAL` or `EOPNOTSUPP` and nothing is renamed.
 #[cfg(target_os = "linux")]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     let from = path_argument(from, "staging path contains a NUL byte")?;
     let to = path_argument(to, "destination path contains a NUL byte")?;
     // SAFETY: both pointers are valid NUL-terminated path strings for the
@@ -167,7 +170,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 /// publication depends on. Staging is always a sibling of the destination, so
 /// the absence of a directory-relative form here costs nothing.
 #[cfg(target_os = "macos")]
-fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     let from = path_argument(from, "staging path contains a NUL byte")?;
     let to = path_argument(to, "destination path contains a NUL byte")?;
     // SAFETY: both pointers are valid NUL-terminated path strings for the
@@ -181,7 +184,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn rename_noreplace(_from: &Path, _to: &Path) -> io::Result<()> {
+pub fn rename_noreplace(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::Error::from_raw_os_error(libc::ENOSYS))
 }
 

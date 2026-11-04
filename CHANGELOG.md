@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record gives the source name and admitted sentence and token counts of every
   document with an admitted sentence, with `@document.KEY` fields selected by `--source-metadata`. It
   requires `--json`.
+- `check --diagram --diagram-format svg --output-dir DIR` writes one SVG file
+  per selected pattern and fragment into a new directory `DIR` and prints each
+  definition name with its file path. Files are named by source-order position
+  and a bounded, filesystem-safe form of the name. `ling` creates `DIR` only
+  after every selected definition renders; an existing `DIR` is rejected and left
+  unchanged.
 
 ## [0.6.0] - 2026-11-04
 

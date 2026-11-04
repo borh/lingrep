@@ -81,14 +81,30 @@ ling check --patterns patterns/double-wo.lx --diagram --name double_wo_candidate
   --expand --width 80
 ling check --patterns patterns/double-wo.lx --diagram --name double_wo_candidate \
   --diagram-format svg >double-wo.svg
+ling check --patterns patterns/double-wo.lx --diagram --diagram-format svg \
+  --output-dir double-wo-diagrams
 ```
 
 `--diagram-format` selects `unicode` (the default), `ascii` connectors or a
-standalone `svg`. SVG output requires exactly one selected definition.
-`--width COLUMNS` accepts 32–240 columns; the default is the terminal width within
-that range, or 80 when piped. Wide sequences continue on connected rows. Numbered
-labels and subdiagrams retain text that cannot fit inline; dependency constraints
-and publication annotations appear separately from recognition flow.
+standalone `svg`. SVG on stdout requires exactly one selected definition.
+`--output-dir DIR` writes one SVG file per selected definition instead, and
+requires `--diagram-format svg`. `DIR` must not exist: `ling` writes the files
+into a hidden staging directory beside it and renames that directory to `DIR`
+only after every selected definition renders, without replacing a file or
+directory that another process created at `DIR` in the meantime. If `DIR`
+exists, `ling` exits with status 1 and leaves it unchanged; a failed or
+interrupted export removes its staging directory and leaves no `DIR`. Files are
+named `ORDINAL-STEM.svg`: `ORDINAL` is the 1-based source-order position, padded
+to the width of the largest ordinal, and `STEM` is at most 64 bytes of the
+definition name, with each character other than a letter, digit or `_` replaced
+by `_`. `ling` prints each definition name and its file path to stdout,
+separated by a tab, in source order. Publication requires a filesystem with a
+no-replace rename (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` on
+macOS). `--width COLUMNS` accepts 32–240 columns; the default is the terminal
+width within that range, or 80 when piped or writing `--output-dir` files. Wide
+sequences continue on connected rows. Numbered labels and subdiagrams retain
+text that cannot fit inline; dependency constraints and publication annotations
+appear separately from recognition flow.
 
 Diagram mode cannot be combined with `--json`, `--compare-with`,
 `--verify-examples` or `--schema`. Compiler warnings go to stderr. `ling` exits 0

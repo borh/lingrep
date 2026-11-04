@@ -12,6 +12,7 @@ mod cli_shape;
 mod completions;
 mod corpus_mode;
 mod corpus_sources;
+mod diagram_export;
 mod direct_protocol;
 mod examples;
 mod explore_characterization;

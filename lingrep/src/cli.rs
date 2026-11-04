@@ -353,7 +353,7 @@ pub struct CheckArgs {
         help_heading = "Diagrams"
     )]
     pub diagram_names: Vec<String>,
-    /// Diagram output format. SVG requires exactly one selected definition.
+    /// Diagram output format. SVG on stdout requires exactly one selected definition.
     #[arg(
         long,
         requires = "diagram",
@@ -362,12 +362,20 @@ pub struct CheckArgs {
         help_heading = "Diagrams"
     )]
     pub diagram_format: DiagramFormat,
-    /// Layout columns (32–240). Defaults to terminal width, or 80 when piped.
+    /// Layout columns (32–240). Defaults to terminal width, or 80 when piped or with --output-dir.
     #[arg(long = "width", requires = "diagram", value_name = "COLUMNS", value_parser = clap::value_parser!(u16).range(32..=240), help_heading = "Diagrams")]
     pub diagram_width: Option<u16>,
     /// Substitute references in diagrams, including named token tests and sets.
     #[arg(long, requires = "diagram", help_heading = "Diagrams")]
     pub expand: bool,
+    /// Write one SVG file per selected definition into DIR, which must not exist, and list each name with its file.
+    #[arg(
+        long,
+        requires = "diagram",
+        value_name = "DIR",
+        help_heading = "Diagrams"
+    )]
+    pub output_dir: Option<PathBuf>,
     /// Execute examples and counterexamples with the selected native analyzer.
     #[arg(long, conflicts_with = "schema")]
     pub verify_examples: bool,
