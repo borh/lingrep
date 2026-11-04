@@ -45,6 +45,9 @@ pub enum DiagnosticCode {
     /// carry. The reverse nesting — a lookaround inside `&` — is fine, and
     /// stays allowed.
     IntersectionInsideLookaround,
+    /// A `skip:` on a definition that the rewrite does not support: a fragment, a
+    /// lexicon, or a pattern that references a definition or uses `same_as`.
+    SkipUnsupported,
     /// A capture inside an operand of `&`.
     CaptureInsideIntersection,
     /// A `same_as` inside an operand of `&`.
@@ -377,6 +380,7 @@ impl DiagnosticCode {
             Self::CaptureInsideLookaround => "CaptureInsideLookaround",
             Self::SpanEqualityInsideLookaround => "SpanEqualityInsideLookaround",
             Self::IntersectionInsideLookaround => "IntersectionInsideLookaround",
+            Self::SkipUnsupported => "SkipUnsupported",
             Self::CaptureInsideIntersection => "CaptureInsideIntersection",
             Self::SpanEqualityInsideIntersection => "SpanEqualityInsideIntersection",
             Self::EmptyIntersection => "EmptyIntersection",

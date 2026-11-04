@@ -2321,7 +2321,7 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 /// `resolve` statement needed a total order over the same layers.
 #[must_use]
 pub fn compiler_owned_key(key: &str) -> bool {
-    POLICY_KEYS.contains(&key) || matches!(key, ANCHOR_KEY | MAX_NESTING_KEY)
+    POLICY_KEYS.contains(&key) || matches!(key, ANCHOR_KEY | MAX_NESTING_KEY | "skip")
 }
 
 /// Returns the first match in [`POLICY_KEYS`] order, which is stable, so a key

@@ -95,6 +95,7 @@ mod sentence_metadata_scope;
 mod sf_experimental_lx_test;
 mod sfe_catalog_contract;
 mod simple_matching_test;
+mod skip_test;
 mod span_equality_test;
 mod spill_counts;
 mod sudachi_contract;

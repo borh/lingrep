@@ -69,6 +69,44 @@ fn check_diagrams_keep_stdout_separate_from_check_reports() {
 }
 
 #[test]
+fn a_skip_pattern_diagram_shows_the_authored_pattern_and_its_skip_test() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("skip.lx");
+    std::fs::write(
+        &path,
+        "test punct := upos=PUNCT.\n\
+         skip: @punct\n\
+         pattern p := [text=a] (?<c> [text=b]+) [text=d]? $.\n",
+    )
+    .unwrap();
+    for (format, expanded) in [("unicode", false), ("unicode", true), ("svg", false)] {
+        let mut command = crate::support::lingrep_without_dictionary();
+        command
+            .args([
+                "check",
+                "--diagram",
+                "--diagram-format",
+                format,
+                "--patterns",
+            ])
+            .arg(&path);
+        if expanded {
+            command.arg("--expand");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{format}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("skip: @punct"), "{format}: {stdout}");
+        assert!(stdout.contains("[text=a]"), "{format}: {stdout}");
+        assert!(!stdout.contains("@punct &"), "{format}: {stdout}");
+    }
+}
+
+#[test]
 fn diagram_policy_note_is_printed_once_per_output() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patterns/alternation.lx");
     let note = "Catalog publication policy applies separately from recognition.";

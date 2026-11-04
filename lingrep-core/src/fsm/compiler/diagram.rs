@@ -5,7 +5,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::expand::expand_indexed_declaration;
-use super::lower::lower_document;
+use super::lower::lower_authored_document;
 use super::model::{LookDirection, LookPolarity, ParsedDefinitionBody, ParsedExpr, ParsedProgram};
 use super::source_text::parser_text;
 use super::{CompileError, CompileLimits, ExpandError, PatternSource};
@@ -44,7 +44,7 @@ pub struct DiagramCatalog {
 impl DiagramCatalog {
     /// Checks source syntax and shape; callers requiring reference binding must compile the catalog first.
     pub fn parse(source: PatternSource<'_>, limits: CompileLimits) -> Result<Self, DiagramError> {
-        let program = lower_document(&source, &limits)?;
+        let program = lower_authored_document(&source, &limits)?;
         let source = parser_text(source.text).into_owned();
         let mut parser = Parser::new();
         parser
@@ -167,6 +167,12 @@ impl DiagramCatalog {
         existing: &[String],
     ) -> Vec<String> {
         let mut result = existing.to_vec();
+        if let Some(test) = &definition.skip_test {
+            let label = format!("skip: @{test}");
+            if !result.contains(&label) {
+                result.push(label);
+            }
+        }
         for key in ["transform", "render"] {
             if let Some(entry) = definition.metadata.get(key) {
                 let label = format!("publication {key}: {}", metadata_text(&entry.value));

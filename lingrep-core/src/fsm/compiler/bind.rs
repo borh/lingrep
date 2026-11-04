@@ -985,11 +985,11 @@ fn resolve_test(
                 // for a typo.
                 let message = match ctx.symbols.get(name) {
                     Some(id) => format!(
-                        "`@{name}` is a {}; only a test can appear inside `[…]`",
+                        "`@{name}` is a {}; only a test can appear inside `[…]` or after `skip:`",
                         ctx.visibilities[id.index()].map_or("lexicon", DefinitionVisibility::name)
                     ),
                     None if ctx.set_members.contains_key(name) => format!(
-                        "`@{name}` is a set; only a test can appear inside `[…]`, and a set \
+                        "`@{name}` is a set; only a test can appear inside `[…]` or after `skip:`, and a set \
                          is an operand of `in`"
                     ),
                     None => format!("undefined test @{name}"),
@@ -1840,6 +1840,7 @@ fn semantic_error(mut diagnostics: Vec<PendingDiagnostic>) -> CompileError {
             .then_with(|| left.code.cmp(&right.code))
             .then_with(|| left.referenced_name.cmp(&right.referenced_name))
     });
+    diagnostics.dedup_by(|right, left| right.diagnostic == left.diagnostic);
     CompileError {
         diagnostics: diagnostics
             .into_iter()
@@ -1942,6 +1943,7 @@ mod tests {
             },
             metadata: metadata(),
             key: None,
+            skip_test: None,
             span: span(source, start, start + name.len()),
         }
     }
@@ -2130,6 +2132,7 @@ mod tests {
             },
             metadata: shared_metadata.clone(),
             key: None,
+            skip_test: None,
             span: span(0, 0, 4),
         };
         let shared = definition("shared", token(), 0, 10);
@@ -2341,6 +2344,7 @@ mod set_sharing_tests {
             },
             metadata: metadata(),
             key: None,
+            skip_test: None,
             span: span(start, start + name.len()),
         };
 

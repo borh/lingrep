@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `skip: @T` makes a pattern match as if the tokens satisfying the test `T`
+  were absent, so `[text=for] [text=example]` matches `for “ example`. Elements,
+  lookarounds, `^` and `$` step over skipped tokens, and a match or capture
+  neither starts nor ends on one. A `defaults` block may supply `skip:` for every
+  pattern in a file.
 - Either endpoint of a basic `where` edge can be a graph-node binder, so
   `(?<d> []) where (?<h> []) -[*]-> $d` matches every basic dependency edge once,
   whatever the distance or order between head and dependent, and
@@ -35,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a bounded, filesystem-safe form of the name. `ling` creates `DIR` only
   after every selected definition renders; an existing `DIR` is rejected and left
   unchanged.
+
+### Changed
+
+- `skip` is a reserved word. A `skip:` entry must name a test or be `none`, so
+  `ling` rejects a catalog that uses `skip` as a descriptive metadata key, as in
+  `skip: true`, with a syntax error, and a metadata schema cannot declare
+  `skip`.
 
 ## [0.6.0] - 2026-11-04
 

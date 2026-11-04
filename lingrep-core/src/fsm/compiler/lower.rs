@@ -17,8 +17,8 @@ use super::model::{
     LookaroundExpr, Metadata, MetadataEntry, ParsedAnalyzerConstraint, ParsedAttr, ParsedAttrValue,
     ParsedDefinition, ParsedDefinitionBody, ParsedExpr, ParsedGroupDecl, ParsedKey,
     ParsedLabelDeclaration, ParsedLabelTerm, ParsedProgram, ParsedRelation, ParsedRelationTarget,
-    ParsedSet, ParsedTest, ParsedTestDecl, RelationLabel, RelationLabels, RelationPolarity,
-    SourceId, SourceRegistry, SourceSpan,
+    ParsedSet, ParsedSkip, ParsedTest, ParsedTestDecl, RelationLabel, RelationLabels,
+    RelationPolarity, SourceId, SourceRegistry, SourceSpan,
 };
 use super::policy_program;
 use super::schema::{self, CatalogSchema, MetadataType, SchemaEntry};
@@ -55,11 +55,28 @@ pub(super) struct LoweredDefinition {
     pub(super) warnings: Vec<Diagnostic>,
 }
 
+/// Lowers one complete lingrep patterns document as written: a pattern with
+/// `skip:` keeps its authored expression instead of the rewritten one.
+pub(super) fn lower_authored_document(
+    source: &PatternSource<'_>,
+    limits: &CompileLimits,
+) -> Result<ParsedProgram, CompileError> {
+    lower_document_in(source, limits, false).map(|output| output.program)
+}
+
 /// Lowers one complete lingrep patterns document and returns measurements made while
 /// validating the strict syntax tree.
 pub(super) fn lower_document_with_stats(
     source: &PatternSource<'_>,
     limits: &CompileLimits,
+) -> Result<LoweredProgram, CompileError> {
+    lower_document_in(source, limits, true)
+}
+
+fn lower_document_in(
+    source: &PatternSource<'_>,
+    limits: &CompileLimits,
+    rewrite_skip: bool,
 ) -> Result<LoweredProgram, CompileError> {
     let source_bytes = source
         .text
@@ -93,7 +110,8 @@ pub(super) fn lower_document_with_stats(
         )
     })?;
     let root = tree.root_node();
-    let lowerer = Lowerer::new(source, limits, sources, source_label, source_bytes);
+    let mut lowerer = Lowerer::new(source, limits, sources, source_label, source_bytes);
+    lowerer.rewrite_skip = rewrite_skip;
 
     if root.kind() != "source_file" {
         return Err(lowerer.error(
@@ -187,6 +205,7 @@ struct Lowerer<'a, 'src> {
     metadata_bytes: usize,
     regex_bytes: usize,
     warnings: Vec<Diagnostic>,
+    rewrite_skip: bool,
 }
 
 /// One lowered `metadata_entry`: a value to materialize, or an unset.
@@ -201,6 +220,7 @@ struct Lowerer<'a, 'src> {
 enum LoweredEntry {
     MetadataSet(MetadataEntry),
     KeySet(ParsedKey),
+    SkipSet(ParsedSkip),
     Unset { span: SourceSpan },
 }
 
@@ -210,6 +230,7 @@ impl LoweredEntry {
         match self {
             Self::MetadataSet(entry) => entry.span,
             Self::KeySet(key) => key.source_span,
+            Self::SkipSet(skip) => skip.key_span,
             Self::Unset { span } => *span,
         }
     }
@@ -328,33 +349,48 @@ impl DocumentDraft {
     /// see an unexpanded default. An unset key is simply absent, exactly as if
     /// the file had no default; an `Unset` with nothing to delete was already
     /// refused by [`Self::admit_annotation`].
-    fn materialize_metadata(&mut self) -> (Metadata, Option<ParsedKey>) {
+    fn materialize_metadata(&mut self) -> (Metadata, Option<ParsedKey>, Option<ParsedSkip>) {
         let mut effective = self.defaults.clone().unwrap_or_default();
         if let Some(LoweredEntry::KeySet(key)) = effective.get_mut("key") {
             key.inherited = true;
+        }
+        if let Some(LoweredEntry::SkipSet(skip)) = effective.get_mut("skip") {
+            skip.inherited = true;
         }
         for (key, entry) in std::mem::take(&mut self.run) {
             match entry {
                 LoweredEntry::Unset { .. } => {
                     effective.remove(&key);
                 }
-                LoweredEntry::MetadataSet(_) | LoweredEntry::KeySet(_) => {
+                LoweredEntry::MetadataSet(_)
+                | LoweredEntry::KeySet(_)
+                | LoweredEntry::SkipSet(_) => {
                     effective.insert(key, entry);
                 }
             }
         }
         let key = effective.remove("key").and_then(|entry| match entry {
             LoweredEntry::KeySet(key) => Some(key),
-            LoweredEntry::MetadataSet(_) | LoweredEntry::Unset { .. } => None,
+            LoweredEntry::MetadataSet(_)
+            | LoweredEntry::SkipSet(_)
+            | LoweredEntry::Unset { .. } => None,
+        });
+        let skip = effective.remove("skip").and_then(|entry| match entry {
+            LoweredEntry::SkipSet(skip) => Some(skip),
+            LoweredEntry::MetadataSet(_) | LoweredEntry::KeySet(_) | LoweredEntry::Unset { .. } => {
+                None
+            }
         });
         let metadata: HashMap<CompactString, MetadataEntry> = effective
             .into_iter()
             .filter_map(|(name, entry)| match entry {
                 LoweredEntry::MetadataSet(entry) => Some((name, entry)),
-                LoweredEntry::KeySet(_) | LoweredEntry::Unset { .. } => None,
+                LoweredEntry::KeySet(_) | LoweredEntry::SkipSet(_) | LoweredEntry::Unset { .. } => {
+                    None
+                }
             })
             .collect();
-        (Arc::new(metadata), key)
+        (Arc::new(metadata), key, skip)
     }
 
     /// The catalog this document declares, plus the source registry the
@@ -393,6 +429,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             metadata_bytes: 0,
             regex_bytes: 0,
             warnings: Vec::new(),
+            rewrite_skip: true,
         }
     }
 
@@ -403,7 +440,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         for child in root.named_children(&mut cursor) {
             match child.kind() {
                 "comment" => {}
-                "metadata_entry" | "key_entry" => {
+                "metadata_entry" | "key_entry" | "skip_entry" => {
                     let (key, entry) = self.lower_entry(child)?;
                     draft
                         .admit_annotation(key, entry)
@@ -511,10 +548,10 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
                 "pattern_definition" | "lexicon_definition" => {
                     draft.saw_definition = true;
-                    let (metadata, key) = draft.materialize_metadata();
+                    let (metadata, key, skip) = draft.materialize_metadata();
                     draft
                         .definitions
-                        .push(self.lower_definition_node(child, metadata, key)?);
+                        .push(self.lower_definition_node(child, metadata, key, skip)?);
                 }
                 _ => {
                     return Err(self.error(
@@ -877,11 +914,12 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         for child in block.named_children(&mut cursor) {
             match child.kind() {
                 "comment" => {}
-                "metadata_entry" | "key_entry" => {
+                "metadata_entry" | "key_entry" | "skip_entry" => {
                     let (key, entry) = self.lower_entry(child)?;
                     let entry = match entry {
                         LoweredEntry::MetadataSet(entry) => LoweredEntry::MetadataSet(entry),
                         LoweredEntry::KeySet(key) => LoweredEntry::KeySet(key),
+                        LoweredEntry::SkipSet(skip) => LoweredEntry::SkipSet(skip),
                         LoweredEntry::Unset { .. } => {
                             return Err(self.error_at_key(
                                 child,
@@ -959,12 +997,62 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         match node.kind() {
             "metadata_entry" => self.lower_metadata_entry(node),
             "key_entry" => self.lower_key_entry(node),
+            "skip_entry" => self.lower_skip_entry(node),
             _ => Err(self.error(
                 node,
                 DiagnosticCode::UnknownNode,
                 "unknown annotation entry",
             )),
         }
+    }
+
+    /// Rejects a `skip:` written on a definition that never matches on its
+    /// own. One inherited from `defaults` does not apply there.
+    fn reject_explicit_skip(
+        &self,
+        skip: Option<&ParsedSkip>,
+        kind: &str,
+    ) -> Result<(), CompileError> {
+        match skip {
+            Some(skip) if !skip.inherited => Err(self.error_at_span(
+                skip.key_span,
+                DiagnosticCode::SkipUnsupported,
+                format!("`skip:` applies only to patterns, not to {kind}"),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn lower_skip_entry(
+        &mut self,
+        node: Node<'_>,
+    ) -> Result<(CompactString, LoweredEntry), CompileError> {
+        self.check_recovery_subtree(node)?;
+        self.charge_metadata_bytes(node)?;
+        let key_node = required_field(self.source, &self.source_label, node, "key", "identifier")?;
+        let value_node = node
+            .child_by_field_name("value")
+            .ok_or_else(|| self.error(node, DiagnosticCode::Syntax, "skip entry has no value"))?;
+        let key_span = self.span_of(key_node)?;
+        if value_node.kind() == "metadata_none" {
+            return Ok(("skip".into(), LoweredEntry::Unset { span: key_span }));
+        }
+        let name_node = value_node.named_child(0).ok_or_else(|| {
+            self.error(
+                value_node,
+                DiagnosticCode::Syntax,
+                "skip entry names no test",
+            )
+        })?;
+        Ok((
+            "skip".into(),
+            LoweredEntry::SkipSet(ParsedSkip {
+                test: self.text(name_node)?.into(),
+                test_span: self.span_of(value_node)?,
+                key_span,
+                inherited: false,
+            }),
+        ))
     }
 
     fn lower_key_entry(
@@ -1461,6 +1549,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         node: Node<'_>,
         metadata: Metadata,
         key: Option<ParsedKey>,
+        skip: Option<ParsedSkip>,
     ) -> Result<ParsedDefinition, CompileError> {
         self.check_recovery_node(node)?;
         self.definitions = self.definitions.checked_add(1).ok_or_else(|| {
@@ -1481,6 +1570,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         let name_node =
             required_field(self.source, &self.source_label, node, "name", "identifier")?;
         if node.kind() == "lexicon_definition" {
+            self.reject_explicit_skip(skip.as_ref(), "a lexicon")?;
             let mut by = Vec::new();
             let mut members = Vec::new();
             let mut seen_by = HashSet::new();
@@ -1549,6 +1639,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 },
                 metadata,
                 key,
+                skip_test: None,
                 span: self.span_of(node)?,
             });
         }
@@ -1597,16 +1688,50 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             }
         };
 
+        let mut expr = self.lower_expr(pattern_node, 1)?;
+        let mut skip_test = None;
+        match (visibility, skip) {
+            (_, None) => {}
+            (DefinitionVisibility::Fragment, Some(skip)) => {
+                self.reject_explicit_skip(Some(&skip), "a fragment")?;
+            }
+            (DefinitionVisibility::Pattern, Some(skip)) if !self.rewrite_skip => {
+                skip_test = Some(skip.test);
+            }
+            (DefinitionVisibility::Pattern, Some(skip)) => {
+                skip_test = Some(skip.test.clone());
+                expr =
+                    super::skip::SkipRewrite::new(&skip)
+                        .pattern(expr)
+                        .map_err(|unsupported| {
+                            let (span, message) = match unsupported {
+                                super::skip::Unsupported::Reference { name, span } => (
+                                    span,
+                                    format!(
+                                        "`skip:` cannot rewrite the reference to `{name}`; write \
+                                     the body of `{name}` in place of the reference"
+                                    ),
+                                ),
+                                super::skip::Unsupported::SameAs { span } => {
+                                    (span, "`skip:` cannot be combined with `same_as`".to_owned())
+                                }
+                            };
+                            self.error_at_span(span, DiagnosticCode::SkipUnsupported, message)
+                        })?;
+            }
+        }
+
         Ok(ParsedDefinition {
             name: self.text(name_node)?.into(),
             body: ParsedDefinitionBody::Pattern {
                 visibility,
-                expr: self.lower_expr(pattern_node, 1)?,
+                expr,
                 relations,
                 enhanced_relations,
             },
             metadata,
             key,
+            skip_test,
             span: SourceSpan::new(self.source_id, node.byte_range()).map_err(|_| {
                 self.error(
                     node,

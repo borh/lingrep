@@ -393,7 +393,7 @@ Without a `schema` block, any key is accepted. A `schema` block closes the
 catalog's descriptive key set, so an undeclared key is refused; an empty `schema`
 block closes it to compiler-owned keys alone. A declaration names one of the
 five value types; `map` admits any map, whatever its keys. Compiler-owned keys —
-`output_name`, `groups`, `priority_order`, `key`, `publish`, `transform`, `tags`,
+`output_name`, `groups`, `priority_order`, `key`, `skip`, `publish`, `transform`, `tags`,
 `render`, `dictionary`, `anchor` and `max_nesting` — are admitted without
 declaration and are an error to declare. `examples` and `counterexamples` are
 authored content, not compiler-owned, and stay declarable. A `pattern` or
@@ -427,6 +427,31 @@ inherited key, and is an error when there is no default to remove.
 A `key:` projecting the written form reads what a `substitute` wrote, and reads
 it only there: `$vb.span.text` renders the substitution, `$vb.span.lemma` reports
 what the tokens carry.
+
+### `skip:`
+
+`skip: @T` makes a pattern match as if the tokens satisfying the test `T` were
+absent from the sentence:
+
+```pattern
+test dropped := text ~ /\A\W\z/.
+
+skip: @dropped
+pattern for_example := [text=for] [text=example].
+```
+
+`for “ example` matches, and the match span includes the quote. No element of
+the pattern, `[]` included, matches a skipped token, and neither a match nor a
+capture starts or ends on one; spans and captures report sentence positions.
+Lookarounds, `^` and `$` step over skipped tokens, so `^ [text=well]` matches
+after a leading quote. `any_order` already admits any tokens between its
+operands. A pattern without `skip:` matches the skipped tokens like any other token.
+
+A `defaults` block may supply `skip:`, which then applies to every pattern and
+to no fragment or lexicon; `skip: none` removes it from one pattern. A `skip:`
+written on a fragment or a lexicon is a compile error (`SkipUnsupported`), as
+is a pattern with `skip:` that references another definition or uses
+`same_as`.
 
 ### `publish:`
 

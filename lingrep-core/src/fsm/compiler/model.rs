@@ -352,6 +352,7 @@ pub(crate) struct ParsedDefinition {
     pub(crate) body: ParsedDefinitionBody,
     pub(crate) metadata: Metadata,
     pub(crate) key: Option<ParsedKey>,
+    pub(crate) skip_test: Option<CompactString>,
     pub(crate) span: SourceSpan,
 }
 
@@ -630,6 +631,15 @@ impl ParsedDefinition {
 pub(crate) struct ParsedKey {
     pub(crate) projections: Vec<KeyProjection>,
     pub(crate) source_span: SourceSpan,
+    pub(crate) inherited: bool,
+}
+
+/// A `skip: @T` entry: the test whose tokens a pattern steps over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedSkip {
+    pub(crate) test: CompactString,
+    pub(crate) test_span: SourceSpan,
+    pub(crate) key_span: SourceSpan,
     pub(crate) inherited: bool,
 }
 

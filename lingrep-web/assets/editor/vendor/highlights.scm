@@ -6,6 +6,7 @@
 ; its type rather than the whole region fading to a documentation comment.
 (metadata_entry key: (identifier) @property)
 (key_entry key: (identifier) @property)
+(skip_entry key: (identifier) @property)
 (match_key_projection attribute: (attribute_key) @property)
 (capture_key_projection
   capture: (capture_reference

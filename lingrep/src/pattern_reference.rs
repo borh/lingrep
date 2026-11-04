@@ -270,6 +270,13 @@ Repeat `analyzer:` to declare alternatives. A result key is an ordered list:
 Lexicons may also project `term` and `segments(ATTR)`. `key: none` removes a
 default key.
 
+`skip: @T` makes a pattern match as if the tokens satisfying test `T` were
+absent: they may lie between its elements, no element matches one, and a match
+or capture neither starts nor ends on one. Lookarounds, `^` and `$` step over
+them. A `defaults` block may supply it for every pattern, and `skip: none`
+removes it from one. A pattern with `skip:` may not reference another
+definition or use `same_as`.
+
 LABEL SETS
 
   labels: {upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn",

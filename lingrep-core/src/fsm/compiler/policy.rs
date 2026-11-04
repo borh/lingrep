@@ -1803,6 +1803,7 @@ pub(crate) fn synthesize_hidden_emitters(
             },
             metadata: Metadata::default(),
             key: None,
+            skip_test: None,
             span,
         });
         policy.hidden.insert(hidden, fragment);
