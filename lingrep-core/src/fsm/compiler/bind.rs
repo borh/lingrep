@@ -1796,6 +1796,7 @@ fn bind_enhanced_relations(
                 diagnostics,
             );
             BoundEnhancedRelation {
+                layer: relation.layer,
                 polarity: relation.polarity,
                 head: bind_endpoint(&relation.head, uses, diagnostics),
                 labels,

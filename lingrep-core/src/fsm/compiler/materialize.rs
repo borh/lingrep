@@ -326,9 +326,7 @@ impl Materializer<'_> {
                 return Err(self.at(
                     *span,
                     DiagnosticCode::EnhancedGraphBindingDuplicate,
-                    &format!(
-                        "enhanced graph binding `${name}` duplicates another surface or graph binding"
-                    ),
+                    &format!("graph binding `${name}` duplicates another surface or graph binding"),
                 ));
             }
             graph_bindings.insert(name.as_str(), (predicates.clone(), *span));
@@ -392,9 +390,7 @@ impl Materializer<'_> {
                         return Err(self.at(
                             *span,
                             DiagnosticCode::EnhancedGraphBindingUndefined,
-                            &format!(
-                                "enhanced graph binding `${name}` is referenced before it is declared"
-                            ),
+                            &format!("graph binding `${name}` is referenced before it is declared"),
                         ));
                     }
                     BoundEnhancedEndpoint::Reference { .. }
@@ -443,6 +439,7 @@ impl Materializer<'_> {
         let mut resolved = Vec::with_capacity(relations.len());
         for relation in relations {
             resolved.push(ExecutionEnhancedRelation {
+                layer: relation.layer,
                 polarity: relation.polarity,
                 head: resolve(&relation.head, self)?,
                 labels: relation.labels.clone(),

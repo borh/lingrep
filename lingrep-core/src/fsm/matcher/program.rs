@@ -6,9 +6,9 @@ use super::predicate::{
 };
 use crate::corpus::conllu::{EnhancedGraph, EnhancedHead, EnhancedNodeId};
 use crate::fsm::compiler::model::{
-    CaptureId, CaptureProjection, ExecutionDefinition, ExecutionEnhancedEndpoint, ExecutionExpr,
-    ExecutionGraphBindingDecl, RelationLabel, RelationLabels, RelationPolarity, RelationTarget,
-    TokenPredicate,
+    CaptureId, CaptureProjection, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
+    ExecutionExpr, ExecutionGraphBindingDecl, RelationLabel, RelationLabels, RelationPolarity,
+    RelationTarget, TokenPredicate,
 };
 use crate::fsm::{AttrValueType, Capture, GraphBinding, GraphNodeAttribute, PositionAssertion};
 use crate::token_match::{
@@ -56,11 +56,23 @@ enum RuntimeRelationTarget {
 
 #[derive(Clone)]
 struct RuntimeEnhancedRelation {
+    layer: RuntimeLayer,
     polarity: RelationPolarity,
     head: RuntimeEnhancedEndpoint,
     labels: RelationLabels<RelationLabel>,
     edge: Option<compact_str::CompactString>,
     dependent: RuntimeEnhancedEndpoint,
+}
+
+/// Where a graph relation reads its edges: the tokens' basic `dep.head` and
+/// `dep.rel`, or the sentence's enhanced graph.
+#[derive(Clone)]
+enum RuntimeLayer {
+    Basic {
+        head_attribute: AttributeLocator,
+        relation_attribute: AttributeLocator,
+    },
+    Enhanced,
 }
 
 #[derive(Clone)]
@@ -210,6 +222,13 @@ impl Program {
             .enhanced_relations
             .iter()
             .map(|relation| RuntimeEnhancedRelation {
+                layer: match relation.layer {
+                    DependencyLayer::Basic => RuntimeLayer::Basic {
+                        head_attribute: AttributeLocator::symbolic(dependency_head_key()),
+                        relation_attribute: AttributeLocator::symbolic(dependency_relation_key()),
+                    },
+                    DependencyLayer::Enhanced => RuntimeLayer::Enhanced,
+                },
                 polarity: relation.polarity,
                 head: compile_enhanced_endpoint(&relation.head),
                 labels: relation.labels.clone(),
@@ -236,7 +255,18 @@ impl Program {
     }
 
     pub(crate) fn has_enhanced_relations(&self) -> bool {
-        !self.enhanced_relations.is_empty()
+        self.has_graph_relations_on(DependencyLayer::Enhanced)
+    }
+
+    pub(crate) fn has_basic_graph_relations(&self) -> bool {
+        self.has_graph_relations_on(DependencyLayer::Basic)
+    }
+
+    fn has_graph_relations_on(&self, layer: DependencyLayer) -> bool {
+        self.definition
+            .enhanced_relations
+            .iter()
+            .any(|relation| relation.layer == layer)
     }
 
     pub(crate) fn bind_attributes(&mut self, projection: &BoundProjection) {
@@ -265,6 +295,18 @@ impl Program {
             }
         }
         for relation in &mut self.enhanced_relations {
+            if let RuntimeLayer::Basic {
+                head_attribute,
+                relation_attribute,
+            } = &mut relation.layer
+            {
+                for attribute in [head_attribute, relation_attribute] {
+                    let ordinal = projection
+                        .ordinal_for_key(attribute.key())
+                        .expect("schema binding projected every basic graph-relation key");
+                    attribute.bind(ordinal);
+                }
+            }
             for endpoint in [&mut relation.head, &mut relation.dependent] {
                 let RuntimeEnhancedEndpoint::BasicHead { head_attribute, .. } = endpoint else {
                     continue;
@@ -504,9 +546,9 @@ impl Program {
         if self.enhanced_relations.is_empty() {
             return vec![GraphAssignment::default()];
         }
-        let Some(graph) = graph else {
+        if graph.is_none() && self.has_enhanced_relations() {
             return Vec::new();
-        };
+        }
         let mut assignments = enhanced_assignments_from(
             &self.enhanced_relations,
             0,
@@ -516,12 +558,12 @@ impl Program {
             &GraphAssignment::default(),
         );
         assignments.sort_by(|left, right| {
-            self.public_graph_bindings(left, tokens, Some(graph))
-                .cmp(&self.public_graph_bindings(right, tokens, Some(graph)))
+            self.public_graph_bindings(left, tokens, graph)
+                .cmp(&self.public_graph_bindings(right, tokens, graph))
         });
         assignments.dedup_by(|left, right| {
-            self.public_graph_bindings(left, tokens, Some(graph))
-                == self.public_graph_bindings(right, tokens, Some(graph))
+            self.public_graph_bindings(left, tokens, graph)
+                == self.public_graph_bindings(right, tokens, graph)
         });
         assignments
     }
@@ -562,8 +604,14 @@ impl Program {
                 }
             }
         }
-        if !self.enhanced_relations.is_empty() {
+        if self.has_enhanced_relations() {
             attributes.push(enhanced_graph_key());
+        }
+        if self.has_basic_graph_relations() {
+            attributes.push(dependency_head_key());
+            attributes.push(dependency_relation_key());
+        }
+        if !self.enhanced_relations.is_empty() {
             for relation in &self.definition.enhanced_relations {
                 for endpoint in [&relation.head, &relation.dependent] {
                     match endpoint {
@@ -656,9 +704,6 @@ impl Program {
         tokens: &S,
         graph: Option<&EnhancedGraph>,
     ) -> Box<[GraphBinding]> {
-        let Some(graph) = graph else {
-            return Box::default();
-        };
         self.definition
             .graph_bindings
             .iter()
@@ -772,7 +817,7 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
     index: usize,
     candidate: &Candidate,
     tokens: &S,
-    graph: &EnhancedGraph,
+    graph: Option<&EnhancedGraph>,
     assignment: &GraphAssignment,
 ) -> Vec<GraphAssignment> {
     if index == relations.len() {
@@ -792,14 +837,10 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             assignment,
         );
     }
-    graph
-        .edges()
-        .iter()
-        .flat_map(|edge| {
-            let EnhancedHead::Node(head) = edge.head() else {
-                return Vec::new();
-            };
-            if !relation_label_matches(&relation.labels, edge.relation()) {
+    layer_edges(&relation.layer, tokens, graph)
+        .into_iter()
+        .flat_map(|(head, dependent, label)| {
+            if !relation_label_matches(&relation.labels, label) {
                 return Vec::new();
             }
             let mut next = assignment.clone();
@@ -812,7 +853,7 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
                 &mut next.nodes,
             ) || !enhanced_endpoint_accepts(
                 &relation.dependent,
-                edge.dependent(),
+                dependent,
                 candidate,
                 tokens,
                 graph,
@@ -821,7 +862,7 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
                 return Vec::new();
             }
             if let Some(name) = &relation.edge {
-                let value = (head, edge.dependent(), edge.relation().into());
+                let value = (head, dependent, label.into());
                 if next
                     .edges
                     .get(name)
@@ -836,11 +877,62 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
         .collect()
 }
 
+/// Every `(head, dependent, label)` edge of one layer, root attachments
+/// excluded.
+///
+/// A basic edge comes from a token whose `dep.head` parses as a word number
+/// of this sentence; an enhanced relation has no edges without a complete
+/// enhanced graph.
+fn layer_edges<'a, S: TokenSequence + ?Sized>(
+    layer: &RuntimeLayer,
+    tokens: &'a S,
+    graph: Option<&'a EnhancedGraph>,
+) -> Vec<(EnhancedNodeId, EnhancedNodeId, &'a str)> {
+    match layer {
+        RuntimeLayer::Basic {
+            head_attribute,
+            relation_attribute,
+        } => (0..tokens.len())
+            .filter_map(|token_index| {
+                let Some(AttributeValueRef::Scalar(head)) =
+                    tokens.value_locator(token_index, head_attribute)
+                else {
+                    return None;
+                };
+                let head = head.parse::<usize>().ok()?;
+                if !(1..=tokens.len()).contains(&head) {
+                    return None;
+                }
+                let Some(AttributeValueRef::Scalar(label)) =
+                    tokens.value_locator(token_index, relation_attribute)
+                else {
+                    return None;
+                };
+                Some((
+                    EnhancedNodeId::Word {
+                        token_index: head - 1,
+                    },
+                    EnhancedNodeId::Word { token_index },
+                    label,
+                ))
+            })
+            .collect(),
+        RuntimeLayer::Enhanced => graph
+            .into_iter()
+            .flat_map(EnhancedGraph::edges)
+            .filter_map(|edge| match edge.head() {
+                EnhancedHead::Node(head) => Some((head, edge.dependent(), edge.relation())),
+                EnhancedHead::Root => None,
+            })
+            .collect(),
+    }
+}
+
 fn enhanced_negative_relations_hold<S: TokenSequence + ?Sized>(
     relations: &[RuntimeEnhancedRelation],
     candidate: &Candidate,
     tokens: &S,
-    graph: &EnhancedGraph,
+    graph: Option<&EnhancedGraph>,
     assignment: &GraphAssignment,
 ) -> bool {
     relations
@@ -857,11 +949,13 @@ fn enhanced_negative_relations_hold<S: TokenSequence + ?Sized>(
             else {
                 return false;
             };
-            !graph.edges().iter().any(|edge| {
-                matches!(edge.head(), EnhancedHead::Node(actual_head) if actual_head == head)
-                    && edge.dependent() == dependent
-                    && relation_label_matches(&relation.labels, edge.relation())
-            })
+            !layer_edges(&relation.layer, tokens, graph).into_iter().any(
+                |(actual_head, actual_dependent, label)| {
+                    actual_head == head
+                        && actual_dependent == dependent
+                        && relation_label_matches(&relation.labels, label)
+                },
+            )
         })
 }
 
@@ -896,7 +990,7 @@ fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
     node: EnhancedNodeId,
     candidate: &Candidate,
     tokens: &S,
-    graph: &EnhancedGraph,
+    graph: Option<&EnhancedGraph>,
     assignments: &mut BTreeMap<compact_str::CompactString, EnhancedNodeId>,
 ) -> bool {
     match endpoint {
@@ -952,12 +1046,14 @@ fn derived_basic_head<S: TokenSequence + ?Sized>(
 fn graph_node_predicate_matches<S: TokenSequence + ?Sized>(
     node: EnhancedNodeId,
     tokens: &S,
-    graph: &EnhancedGraph,
+    graph: Option<&EnhancedGraph>,
     predicate: &TokenPredicate,
 ) -> bool {
     let empty = match node {
         EnhancedNodeId::Word { .. } => None,
-        EnhancedNodeId::Empty { .. } => graph.empty_nodes().iter().find(|empty| empty.id() == node),
+        EnhancedNodeId::Empty { .. } => {
+            graph.and_then(|graph| graph.empty_nodes().iter().find(|empty| empty.id() == node))
+        }
     };
     predicate.iter().all(|atom| {
         let held = match atom.attr.as_str() {
@@ -1048,7 +1144,7 @@ fn set_value_matches<'a>(actual: impl Iterator<Item = &'a str>, expected: &AttrV
 fn graph_node_scalar_attributes<S: TokenSequence + ?Sized>(
     node: EnhancedNodeId,
     tokens: &S,
-    graph: &EnhancedGraph,
+    graph: Option<&EnhancedGraph>,
 ) -> Box<[GraphNodeAttribute]> {
     const SCALARS: [&str; 4] = ["text", "lemma", "upos", "xpos"];
     let mut attributes = Vec::new();
@@ -1076,7 +1172,9 @@ fn graph_node_scalar_attributes<S: TokenSequence + ?Sized>(
             }
         }
         EnhancedNodeId::Empty { .. } => {
-            let Some(empty) = graph.empty_nodes().iter().find(|empty| empty.id() == node) else {
+            let Some(empty) =
+                graph.and_then(|graph| graph.empty_nodes().iter().find(|empty| empty.id() == node))
+            else {
                 return Box::default();
             };
             for (spelling, value) in [

@@ -1254,6 +1254,67 @@ fn where_clause_filters_candidate_matches_by_dependency_edges() {
 }
 
 #[test]
+fn a_basic_edge_with_a_node_binder_matches_each_non_root_edge_once() {
+    let sentence = "1\tThe\tthe\tDET\t_\t_\t2\tdet\t_\t_\n\
+                    2\tdog\tdog\tNOUN\t_\t_\t5\tnsubj\t_\t_\n\
+                    3\tthat\tthat\tPRON\t_\t_\t4\tnsubj\t_\t_\n\
+                    4\tbarked\tbark\tVERB\t_\t_\t2\tacl:relcl\t_\t_\n\
+                    5\tran\trun\tVERB\t_\t_\t0\troot\t_\t_\n\
+                    6\thome\thome\tADV\t_\t_\t5\tadvmod\t_\t_\n";
+    let edges = |source: &str| {
+        let compiled = compile_catalog(
+            PatternSource::named("basic-binder.lx", source),
+            CompileLimits::default(),
+        )
+        .expect("a basic edge with a node binder compiles")
+        .matcher;
+        let bound = compiled
+            .bind(&lingrep_core::corpus::conllu::token_schema())
+            .expect("the CoNLL-U schema carries dep.head and dep.rel");
+        assert!(!bound.requires_enhanced_graph());
+        bound
+            .find_matches(&conllu_sentence(sentence, &bound))
+            .expect("schema matches")
+            .into_iter()
+            .map(|matched| {
+                let capture = &matched.captures[0];
+                let node = match &matched.graph_bindings[..] {
+                    [
+                        lingrep_core::fsm::GraphBinding::Node {
+                            node: lingrep_core::corpus::conllu::EnhancedNodeId::Word { token_index },
+                            ..
+                        },
+                    ] => *token_index,
+                    other => panic!("one word binding expected, got {other:?}"),
+                };
+                (capture.name.to_string(), capture.start, node)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        edges("pattern p := (?<d> []) where (?<h> []) -[*]-> $d."),
+        [(0, 1), (1, 4), (2, 3), (3, 1), (5, 4)].map(|(dependent, head)| (
+            "d".to_owned(),
+            dependent,
+            head
+        ))
+    );
+    assert_eq!(
+        edges("pattern p := (?<h> []) where $h -[*]-> (?<d> [])."),
+        [(1, 0), (1, 3), (3, 2), (4, 1), (4, 5)].map(|(head, dependent)| (
+            "h".to_owned(),
+            head,
+            dependent
+        ))
+    );
+    assert_eq!(
+        edges("pattern p := (?<d> []) where (?<h> [upos=VERB]) -[nsubj|acl:*]-> $d."),
+        [(1, 4), (2, 3)].map(|(dependent, head)| ("d".to_owned(), dependent, head))
+    );
+}
+
+#[test]
 fn enhanced_where_clause_reaches_empty_nodes_from_a_surface_anchor() {
     let source = "# text = I saw\n1\tI\tI\tPRON\t_\t_\t2\tnsubj\t2:nsubj\t_\n2\tsaw\tsee\tVERB\t_\t_\t0\troot\t0:root\t_\n2.1\tpro\tpro\tPRON\t_\t_\t_\t_\t2:obj\t_\n2.2\tthere\tthere\tADV\t_\t_\t_\t_\t2.1:dep\t_\n";
     let compiled = compile_catalog(
@@ -1316,7 +1377,7 @@ fn enhanced_where_clause_reaches_empty_nodes_from_a_surface_anchor() {
 }
 
 #[test]
-fn enhanced_where_clause_refuses_ambiguous_or_unanchored_bindings() {
+fn graph_where_clause_rejects_ambiguous_or_unanchored_bindings() {
     let cases = [
         (
             "pattern p := (?<v> [upos=VERB]) where $v -[enhanced obj]-> (?<v> [upos=NOUN]).",
@@ -1342,13 +1403,21 @@ fn enhanced_where_clause_refuses_ambiguous_or_unanchored_bindings() {
             "pattern p := (?<v> [upos=VERB]) where $v -[enhanced obj as $v]-> (?<a> [upos=NOUN]).",
             DiagnosticCode::EnhancedGraphBindingDuplicate,
         ),
+        (
+            "pattern p := (?<d> []) where $d -[*]-> (?<h> []), (?<h> []) -[*]-> $d.",
+            DiagnosticCode::EnhancedGraphBindingDuplicate,
+        ),
+        (
+            "pattern p := (?<d> [upos=NOUN]+) where (?<h> []) -[*]-> $d.",
+            DiagnosticCode::WhereCaptureNotSingleToken,
+        ),
     ];
     for (source, expected) in cases {
         let error = match compile_catalog(
-            PatternSource::named("enhanced-refusal.lx", source),
+            PatternSource::named("graph-binding-rejection.lx", source),
             CompileLimits::default(),
         ) {
-            Ok(_) => panic!("invalid enhanced binding must be refused"),
+            Ok(_) => panic!("an invalid graph binding compiled: {source}"),
             Err(error) => error,
         };
         assert!(

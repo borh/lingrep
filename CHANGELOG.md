@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Either endpoint of a basic `where` edge can be a graph-node binder, so
+  `(?<d> []) where (?<h> []) -[*]-> $d` matches every basic dependency edge once,
+  whatever the distance or order between head and dependent, and
+  `key: [$h.lemma, $d.lemma]` counts edges by both ends.
 - The `run` record of `ling --json corpus build` and `corpus inspect` names the
   artifact in `artifact_path`. Without `--output`, `corpus build ROOT` reuses or
   builds the artifact that `--cache` queries read, so a caller can resolve ROOT

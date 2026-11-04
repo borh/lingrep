@@ -201,13 +201,33 @@ observation described above.
 
 `$head -[labels]-> $dependent` holds when the dependent token's `dep.rel` is
 matched by the bracket and its `dep.head` designates the head capture's token.
-Both operands must be captures of statically exactly one token. A fragment may
+Both operands must be captures of statically exactly one token, except for the
+binder form below. A fragment may
 not declare a clause, an operand may not name itself, and each violation has its
 own diagnostic.
 
 `not $head -[labels]-> $dependent` holds when both captures bind and no matching
 edge connects their final token assignments. It requires the complete
 basic-dependency observation described above.
+
+### A graph-node binder at one endpoint
+
+Either endpoint of a positive basic edge may be a graph-node binder
+`(?<name> [TOKEN_TEST])` instead of a capture reference. The binder binds one
+word anywhere in the sentence and has no surface span; the other endpoint must
+be a capture of statically exactly one token:
+
+```pattern
+key: [$h.lemma, $d.dep.rel, $d.lemma]
+pattern edge := (?<d> []) where (?<h> []) -[*]-> $d.
+```
+
+Each binding is a separate match, so `edge` matches every basic edge of the
+sentence once, regardless of the distance or order between head and dependent.
+A token whose `dep.head` is `0`, missing, unparseable, or outside the sentence
+contributes no edge, and the sentence root cannot be bound. A key reads a binder's `text`,
+`lemma`, `upos`, `xpos`, `node.id` and `node.kind`. Only one endpoint may be a
+binder, and the form has no `not` polarity.
 
 The bracket is either `*`, meaning any present basic `dep.rel`, or one or more
 terms joined by `|`. The any-label form is written `-[*]->`, does not match a

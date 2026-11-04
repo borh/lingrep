@@ -11,7 +11,7 @@ use compact_str::CompactString;
 
 use super::model::{
     BoundDefinitionBody, BoundEnhancedEndpoint, BoundExpr, BoundProgram, DefinitionId,
-    RelationTarget, TokenPredicate,
+    DependencyLayer, RelationTarget, TokenPredicate,
 };
 use crate::fsm::types::AttrValueType;
 use crate::token_match::AttributeKey;
@@ -223,9 +223,15 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
             }
         }
         if !definition.enhanced_relations().is_empty() {
-            let key = AttributeKey::new("dep.enhanced").expect("enhanced key is canonical");
-            *referenced.entry(key).or_default() += definition.enhanced_relations().len();
             for relation in definition.enhanced_relations() {
+                let keys: &[&str] = match relation.layer {
+                    DependencyLayer::Basic => &["dep.head", "dep.rel"],
+                    DependencyLayer::Enhanced => &["dep.enhanced"],
+                };
+                for key in keys {
+                    let key = AttributeKey::new(key).expect("dependency keys are canonical");
+                    *referenced.entry(key).or_default() += 1;
+                }
                 for endpoint in [&relation.head, &relation.dependent] {
                     match endpoint {
                         BoundEnhancedEndpoint::Binding { predicates, .. } => {

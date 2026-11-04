@@ -1126,7 +1126,9 @@ impl CompiledCatalog {
             .values()
             .map(|plan| &plan.0)
             .chain(self.evaluated_plans.iter().map(|plan| &plan.0));
-        let basic = programs.clone().any(Program::has_relations);
+        let basic = programs
+            .clone()
+            .any(|program| program.has_relations() || program.has_basic_graph_relations());
         let enhanced = programs.clone().any(Program::has_enhanced_relations);
         let derived_basic_head = programs.any(Program::has_basic_head_endpoints);
         let mut attributes = Vec::new();

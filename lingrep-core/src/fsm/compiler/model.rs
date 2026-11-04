@@ -555,8 +555,17 @@ pub(crate) enum ParsedEnhancedEndpoint {
     },
 }
 
+/// The dependency graph a graph relation reads: basic `dep.head` and
+/// `dep.rel`, or `dep.enhanced`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DependencyLayer {
+    Basic,
+    Enhanced,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedEnhancedRelation {
+    pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: ParsedEnhancedEndpoint,
     pub(crate) labels: RelationLabels<ParsedLabelTerm>,
@@ -584,6 +593,7 @@ pub(crate) enum BoundEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoundEnhancedRelation {
+    pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: BoundEnhancedEndpoint,
     pub(crate) labels: RelationLabels<RelationLabel>,
@@ -1071,6 +1081,7 @@ pub(crate) enum ExecutionEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionEnhancedRelation {
+    pub(crate) layer: DependencyLayer,
     pub(crate) polarity: RelationPolarity,
     pub(crate) head: ExecutionEnhancedEndpoint,
     pub(crate) labels: RelationLabels<RelationLabel>,

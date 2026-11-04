@@ -90,7 +90,7 @@ pub(crate) fn analyze_program(
                         sources,
                         span,
                         DiagnosticCode::WhereCaptureNotSingleToken,
-                        "an enhanced graph surface or `basic_head` endpoint must derive from a capture that is statically exactly one token",
+                        "a graph-relation surface or `basic_head` endpoint must derive from a capture that is statically exactly one token",
                     ));
                 }
             }
@@ -187,7 +187,10 @@ pub(crate) fn analyze_program(
         }
         for (index, relation) in definition.enhanced_relations.iter().enumerate() {
             for other in &definition.enhanced_relations[index + 1..] {
-                if relation.head != other.head || relation.dependent != other.dependent {
+                if relation.layer != other.layer
+                    || relation.head != other.head
+                    || relation.dependent != other.dependent
+                {
                     continue;
                 }
                 let contradictory = if relation.polarity == RelationPolarity::Negative

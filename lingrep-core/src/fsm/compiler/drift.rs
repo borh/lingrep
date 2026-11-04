@@ -219,6 +219,7 @@ pub fn report_catalog_drift(
                                 }
                             };
                             CanonicalEnhancedRelation {
+                                layer: relation.layer,
                                 polarity: relation.polarity,
                                 head: endpoint(&relation.head),
                                 labels,
@@ -359,6 +360,7 @@ enum CanonicalEnhancedEndpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CanonicalEnhancedRelation {
+    layer: super::model::DependencyLayer,
     polarity: super::model::RelationPolarity,
     head: CanonicalEnhancedEndpoint,
     labels: RelationLabels<super::model::RelationLabel>,

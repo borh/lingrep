@@ -57,7 +57,8 @@ constraints over its named captures:
 
 `$head -[label]-> $dependent` holds when the dependent token's `dep.rel`
 matches the bracket and its `dep.head` designates the head token. Both
-operands must be captures of statically exactly one token; a fragment may not
+operands must be captures of statically exactly one token, except for the
+binder form below; a fragment may not
 declare a clause, and an operand may not relate a capture to itself. The
 clause filters candidate matches before publication filtering, so a shorter
 passing match survives a longer failing one. Binding a relation-bearing catalog
@@ -67,6 +68,17 @@ matches basic edges only; `dep.enhanced` is not consulted.
 
 `not $head -[labels]-> $dependent` holds when both captures bind and no matching
 edge connects their final token assignments.
+
+Either endpoint of a positive basic edge may instead be a graph-node binder,
+which binds one word anywhere in the sentence:
+
+  key: [$h.lemma, $d.dep.rel, $d.lemma]
+  pattern edge := (?<d> []) where (?<h> []) -[*]-> $d.
+
+Each binding is a separate match, so `edge` matches every basic edge once,
+whatever the distance or order. A root attachment or an unusable `dep.head`
+contributes no edge. The other endpoint must be a one-token capture; a key reads
+the binder's `text`, `lemma`, `upos`, `xpos`, `node.id` and `node.kind`.
 
 Use `_` when only existence matters, not the dependent's identity:
 
