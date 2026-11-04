@@ -404,7 +404,7 @@ fn inspect_expr(
     };
     preflight.enter_node(expression_span)?;
     match expr {
-        ParsedExpr::Token(_) | ParsedExpr::Assertion(_) | ParsedExpr::SameAs { .. } => {}
+        ParsedExpr::Token(..) | ParsedExpr::Assertion(_) | ParsedExpr::SameAs { .. } => {}
         ParsedExpr::Lookaround(lookaround) => inspect_expr(
             &lookaround.body,
             definition_span,
@@ -707,7 +707,7 @@ fn collect_capture_names(expr: &ParsedExpr, names: &mut BTreeSet<CompactString>)
             collect_capture_names(expr, names)
         }
         ParsedExpr::Lookaround(lookaround) => collect_capture_names(&lookaround.body, names),
-        ParsedExpr::Token(_)
+        ParsedExpr::Token(..)
         | ParsedExpr::Assertion(_)
         | ParsedExpr::SameAs { .. }
         | ParsedExpr::Reference { .. } => {}
@@ -762,7 +762,7 @@ fn collect_capture_declarations(
         ParsedExpr::Lookaround(lookaround) => {
             collect_capture_declarations(&lookaround.body, sources, declarations, diagnostics)
         }
-        ParsedExpr::Token(_)
+        ParsedExpr::Token(..)
         | ParsedExpr::Assertion(_)
         | ParsedExpr::SameAs { .. }
         | ParsedExpr::Reference { .. } => {}
@@ -1183,7 +1183,7 @@ fn bind_expr(
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> BoundExpr {
     match expr {
-        ParsedExpr::Token(test) => {
+        ParsedExpr::Token(test, _) => {
             let branches = bind_token_test(&test, ctx, uses, diagnostics);
             if branches.len() == 1 {
                 BoundExpr::Token(branches.into_vec().pop().expect("one branch"))
@@ -1918,7 +1918,7 @@ mod tests {
     fn token() -> ParsedExpr {
         // The any-token predicate: an empty conjunction distributes to exactly
         // one empty branch.
-        ParsedExpr::Token(ParsedTest::And(Vec::new()))
+        ParsedExpr::Token(ParsedTest::And(Vec::new()), span(0, 0, 0))
     }
 
     fn reference(name: &str) -> ParsedExpr {
@@ -2325,14 +2325,17 @@ mod set_sharing_tests {
             .expect("test source registers");
 
         let site = |start: usize, negated: bool| {
-            ParsedExpr::Token(ParsedTest::Attr(ParsedAttr {
-                attr: TokenAttributeIndex::Pos1.into(),
-                value: ParsedAttrValue::Set {
-                    name: "S".into(),
-                    negated,
-                    span: span(start, start + 2),
-                },
-            }))
+            ParsedExpr::Token(
+                ParsedTest::Attr(ParsedAttr {
+                    attr: TokenAttributeIndex::Pos1.into(),
+                    value: ParsedAttrValue::Set {
+                        name: "S".into(),
+                        negated,
+                        span: span(start, start + 2),
+                    },
+                }),
+                span(start, start + 2),
+            )
         };
         let definition = |name: &str, expr: ParsedExpr, start: usize| ParsedDefinition {
             name: name.into(),

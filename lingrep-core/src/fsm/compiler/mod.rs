@@ -930,19 +930,18 @@ fn remap_test_body_source(test: &mut ParsedTest, source: SourceId) {
 
 fn remap_expr_source(expr: &mut ParsedExpr, source: SourceId) {
     match expr {
-        // A token used to carry no span, which is why this arm was empty. A
-        // deferred set operand carries one, and it is what an undefined-set
-        // diagnostic points at.
-        ParsedExpr::Token(test) => remap_test_body_source(test, source),
+        ParsedExpr::Token(test, span) => {
+            *span = span.with_source(source);
+            remap_test_body_source(test, source);
+        }
         ParsedExpr::Assertion(_) => {}
         ParsedExpr::Sequence(expressions) | ParsedExpr::Alternation(expressions) => {
             for expression in expressions {
                 remap_expr_source(expression, source);
             }
         }
-        // The operator's own span is remapped too, for the reason the token arm
-        // above documents: left alone it would resolve against whichever
-        // document sits at `SourceId(0)`, and name the wrong file confidently.
+        // A span that is not remapped resolves against the document at
+        // `SourceId(0)`, so a diagnostic would name the wrong file.
         ParsedExpr::Intersection { operands, span } => {
             *span = span.with_source(source);
             for operand in operands {
@@ -1095,7 +1094,7 @@ fn measure_expr(
     stats.max_depth = stats.max_depth.max(depth);
 
     match expr {
-        ParsedExpr::Token(test) => charge_test_regex_bytes(test, stats)?,
+        ParsedExpr::Token(test, _) => charge_test_regex_bytes(test, stats)?,
         ParsedExpr::Assertion(assertion) => {
             if let crate::fsm::PositionAssertion::PreviousToken(predicate) = assertion {
                 charge_regex_bytes(predicate, stats)?;

@@ -78,7 +78,7 @@ pub(super) fn compile_guard(source: &str) -> Result<CompiledGuard, String> {
             .expr()
             .expect("guard source lowers to an ordinary pattern"),
     ) {
-        ParsedExpr::Token(test) => Ok(CompiledGuard::new(
+        ParsedExpr::Token(test, _) => Ok(CompiledGuard::new(
             flatten_guard_conjunction(test)?
                 .into_iter()
                 .map(resolve_guard_attr)

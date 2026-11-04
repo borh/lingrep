@@ -75,7 +75,7 @@ impl SkipRewrite {
 
     fn gap(&self) -> ParsedExpr {
         ParsedExpr::Repeat {
-            expr: Box::new(ParsedExpr::Token(self.skipped())),
+            expr: Box::new(ParsedExpr::Token(self.skipped(), self.test_span)),
             min: 0,
             max: None,
         }
@@ -114,7 +114,7 @@ impl SkipRewrite {
                 Synthesized::LeadingBoundary,
                 LookDirection::FollowedBy,
                 LookPolarity::Negative,
-                ParsedExpr::Token(self.skipped()),
+                ParsedExpr::Token(self.skipped(), self.test_span),
             ));
         }
         items.push(expr);
@@ -123,7 +123,7 @@ impl SkipRewrite {
                 Synthesized::TrailingBoundary,
                 LookDirection::PrecededBy,
                 LookPolarity::Negative,
-                ParsedExpr::Token(self.skipped()),
+                ParsedExpr::Token(self.skipped(), self.test_span),
             ));
         }
         let guarded = ParsedExpr::Sequence(items);
@@ -136,8 +136,8 @@ impl SkipRewrite {
 
     fn rewrite(&self, expr: ParsedExpr) -> Result<ParsedExpr, Unsupported> {
         Ok(match expr {
-            ParsedExpr::Token(test) => {
-                ParsedExpr::Token(ParsedTest::And(vec![test, self.not_skipped()]))
+            ParsedExpr::Token(test, span) => {
+                ParsedExpr::Token(ParsedTest::And(vec![test, self.not_skipped()]), span)
             }
             ParsedExpr::Assertion(PositionAssertion::SentenceStart) => self.lookaround(
                 Synthesized::SentenceStart,
@@ -256,7 +256,7 @@ impl SkipRewrite {
     /// its first or last consumed token can be a gap token.
     fn edges(&self, expr: &ParsedExpr) -> Edges {
         match expr {
-            ParsedExpr::Token(test) => {
+            ParsedExpr::Token(test, _) => {
                 let gap = self.is_gap_token(test);
                 Edges {
                     nullable: false,
@@ -368,7 +368,7 @@ impl Edges {
 fn zero_width(expr: &ParsedExpr) -> bool {
     match expr {
         ParsedExpr::Assertion(_) | ParsedExpr::Lookaround(_) => true,
-        ParsedExpr::Token(_)
+        ParsedExpr::Token(..)
         | ParsedExpr::AnyOrder { .. }
         | ParsedExpr::SameAs { .. }
         | ParsedExpr::Reference { .. } => false,
@@ -384,7 +384,7 @@ fn zero_width(expr: &ParsedExpr) -> bool {
 fn contains_capture(expr: &ParsedExpr) -> bool {
     match expr {
         ParsedExpr::NamedGroup { .. } => true,
-        ParsedExpr::Token(_)
+        ParsedExpr::Token(..)
         | ParsedExpr::Assertion(_)
         | ParsedExpr::Lookaround(_)
         | ParsedExpr::SameAs { .. }

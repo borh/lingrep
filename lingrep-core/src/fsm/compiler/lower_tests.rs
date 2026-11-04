@@ -480,12 +480,22 @@ fn only_expr(source: &str) -> ParsedExpr {
     }
 }
 
-fn token(text: &str) -> ParsedExpr {
-    ParsedExpr::Token(ParsedTest::Attr(resolved_attr(AttrValue {
-        attr: TokenAttributeIndex::Orth,
-        value: AttrValueType::Single(text.into()),
-        complement: false,
-    })))
+/// The literal-text token `text`, authored as `authored` at its first
+/// occurrence in `source`.
+fn token(source: &str, authored: &str, text: &str) -> ParsedExpr {
+    ParsedExpr::Token(
+        ParsedTest::Attr(resolved_attr(AttrValue {
+            attr: TokenAttributeIndex::Orth,
+            value: AttrValueType::Single(text.into()),
+            complement: false,
+        })),
+        span_of(source, authored),
+    )
+}
+
+fn span_of(source: &str, authored: &str) -> SourceSpan {
+    let start = source.find(authored).expect("fixture contains the token");
+    SourceSpan::new(SourceId::new(0), start..start + authored.len()).expect("fixture span is valid")
 }
 
 /// The parsed test a bracketed conjunction of `attributes` lowers to.
@@ -517,47 +527,52 @@ fn assert_diagnostic(
 
 #[test]
 fn lowers_each_core_expression_shape_without_fallbacks() {
-    let regex = regex::Regex::new(r"^(食べる|見る)$").expect("test regex is valid");
-    let cases = [
-        ("literal", "p := 猫.", token("猫")),
+    let cases: [(&str, &str, fn(&str) -> ParsedExpr); 4] = [
+        ("literal", "p := 猫.", |source| token(source, "猫", "猫")),
         (
             "three-way attribute conjunction",
             "p := [upos=VERB & unidic.cform=終止形 & lemma~/^(食べる|見る)$/].",
-            ParsedExpr::Token(conjunction(vec![
-                resolved_attr(AttrValue {
-                    attr: TokenAttributeIndex::Pos,
-                    value: AttrValueType::Single("VERB".into()),
-                    complement: false,
-                }),
-                resolved_attr(AttrValue {
-                    attr: TokenAttributeIndex::CForm,
-                    value: AttrValueType::Single("終止形".into()),
-                    complement: false,
-                }),
-                resolved_attr(AttrValue {
-                    attr: TokenAttributeIndex::Lemma,
-                    value: AttrValueType::Regex(regex),
-                    complement: false,
-                }),
-            ])),
+            |source| {
+                let regex = regex::Regex::new(r"^(食べる|見る)$").expect("test regex is valid");
+                ParsedExpr::Token(
+                    conjunction(vec![
+                        resolved_attr(AttrValue {
+                            attr: TokenAttributeIndex::Pos,
+                            value: AttrValueType::Single("VERB".into()),
+                            complement: false,
+                        }),
+                        resolved_attr(AttrValue {
+                            attr: TokenAttributeIndex::CForm,
+                            value: AttrValueType::Single("終止形".into()),
+                            complement: false,
+                        }),
+                        resolved_attr(AttrValue {
+                            attr: TokenAttributeIndex::Lemma,
+                            value: AttrValueType::Regex(regex),
+                            complement: false,
+                        }),
+                    ]),
+                    span_of(source, &source[5..source.len() - 1]),
+                )
+            },
         ),
-        (
-            "sequence",
-            "p := 猫 が いる.",
-            ParsedExpr::Sequence(vec![token("猫"), token("が"), token("いる")]),
-        ),
-        (
-            "alternation precedence",
-            "p := a b | c d.",
+        ("sequence", "p := 猫 が いる.", |source| {
+            ParsedExpr::Sequence(vec![
+                token(source, "猫", "猫"),
+                token(source, "が", "が"),
+                token(source, "いる", "いる"),
+            ])
+        }),
+        ("alternation precedence", "p := a b | c d.", |source| {
             ParsedExpr::Alternation(vec![
-                ParsedExpr::Sequence(vec![token("a"), token("b")]),
-                ParsedExpr::Sequence(vec![token("c"), token("d")]),
-            ]),
-        ),
+                ParsedExpr::Sequence(vec![token(source, "a", "a"), token(source, "b", "b")]),
+                ParsedExpr::Sequence(vec![token(source, "c", "c"), token(source, "d", "d")]),
+            ])
+        }),
     ];
 
     for (label, source, expected) in cases {
-        assert_eq!(only_expr(source), expected, "case: {label}");
+        assert_eq!(only_expr(source), expected(source), "case: {label}");
     }
 }
 
@@ -565,27 +580,34 @@ fn lowers_each_core_expression_shape_without_fallbacks() {
 fn classifies_only_complete_slash_delimited_leaf_values_as_regex() {
     assert_eq!(
         only_expr("p := [text~/a+/]."),
-        ParsedExpr::Token(conjunction(vec![resolved_attr(AttrValue {
-            attr: TokenAttributeIndex::Orth,
-            value: AttrValueType::Regex(regex::Regex::new("a+").expect("test regex is valid"),),
-            complement: false,
-        })]))
+        ParsedExpr::Token(
+            conjunction(vec![resolved_attr(AttrValue {
+                attr: TokenAttributeIndex::Orth,
+                value: AttrValueType::Regex(regex::Regex::new("a+").expect("test regex is valid"),),
+                complement: false,
+            })]),
+            span_of("p := [text~/a+/].", "[text~/a+/]")
+        )
     );
     assert_eq!(
         only_expr("p := [text=and/or]."),
-        ParsedExpr::Token(conjunction(vec![resolved_attr(AttrValue {
-            attr: TokenAttributeIndex::Orth,
-            value: AttrValueType::Single("and/or".into()),
-            complement: false,
-        })]))
+        ParsedExpr::Token(
+            conjunction(vec![resolved_attr(AttrValue {
+                attr: TokenAttributeIndex::Orth,
+                value: AttrValueType::Single("and/or".into()),
+                complement: false,
+            })]),
+            span_of("p := [text=and/or].", "[text=and/or]")
+        )
     );
 }
 
 #[test]
 fn lowers_every_pinned_quantifier_form_to_checked_bounds() {
-    let actual = only_expr("p := a? b* c+ d{2} e{3,} f{4,5}.");
+    let source = "p := a? b* c+ d{2} e{3,} f{4,5}.";
+    let actual = only_expr(source);
     let repeat = |text, min, max| ParsedExpr::Repeat {
-        expr: Box::new(token(text)),
+        expr: Box::new(token(source, text, text)),
         min,
         max,
     };
@@ -625,7 +647,7 @@ fn preserves_references_parentheses_named_groups_and_unicode_names() {
                     )
                     .unwrap(),
                 },
-                token("猫")
+                token(source, "猫", "猫")
             ],)))),
             span: SourceSpan::new(
                 SourceId::new(0),
@@ -674,7 +696,11 @@ fn lowers_capture_spans_and_span_equality_projection() {
 
 #[test]
 fn same_as_remains_available_as_an_attribute_value() {
-    assert_eq!(only_expr("pattern p := [text=same_as]."), token("same_as"));
+    let source = "pattern p := [text=same_as].";
+    assert_eq!(
+        only_expr(source),
+        token(source, "[text=same_as]", "same_as")
+    );
 }
 
 #[test]
@@ -720,9 +746,9 @@ fn lowers_all_regular_lookaround_forms_with_direction_polarity_body_and_span() {
                 direction,
                 polarity,
                 body: Box::new(ParsedExpr::Sequence(vec![
-                    token("a"),
+                    token(&source, "[text=a]", "a"),
                     ParsedExpr::Repeat {
-                        expr: Box::new(token("b")),
+                        expr: Box::new(token(&source, "[text=b]", "b")),
                         min: 0,
                         max: None,
                     },
@@ -1066,9 +1092,12 @@ fn lowers_real_document_to_exact_definition_catalog_and_metadata() {
         definition("かもしれない").metadata["category"].value,
         "かもしれない"
     );
+    let ParsedExpr::Token(test, _) = definition("う").expr().expect("pattern") else {
+        panic!("う must lower to a single token");
+    };
     assert_eq!(
-        definition("う").expr().expect("pattern"),
-        &ParsedExpr::Token(conjunction(vec![
+        test,
+        &conjunction(vec![
             resolved_attr(AttrValue {
                 attr: TokenAttributeIndex::CForm,
                 value: AttrValueType::Single("意志推量形".into()),
@@ -1079,7 +1108,7 @@ fn lowers_real_document_to_exact_definition_catalog_and_metadata() {
                 value: AttrValueType::Single("う".into()),
                 complement: false,
             }),
-        ]))
+        ])
     );
 
     let mut attributes = BTreeSet::new();
@@ -1105,7 +1134,7 @@ fn lowers_real_document_to_exact_definition_catalog_and_metadata() {
 
 fn collect_attributes(expr: &ParsedExpr, attributes: &mut BTreeSet<AttributeKey>) {
     match expr {
-        ParsedExpr::Token(test) => collect_test_attributes(test, attributes),
+        ParsedExpr::Token(test, _) => collect_test_attributes(test, attributes),
         ParsedExpr::Sequence(exprs) | ParsedExpr::Alternation(exprs) => {
             for expr in exprs {
                 collect_attributes(expr, attributes);
@@ -1256,7 +1285,8 @@ fn single_literal(source: &str) -> String {
     let [definition] = &program.definitions[..] else {
         panic!("fixture must have exactly one definition");
     };
-    let ParsedExpr::Token(ParsedTest::Attr(attribute)) = definition.expr().expect("pattern") else {
+    let ParsedExpr::Token(ParsedTest::Attr(attribute), _) = definition.expr().expect("pattern")
+    else {
         panic!("fixture must lower to a single token predicate");
     };
     let ParsedAttrValue::Resolved(AttrValueType::Single(value)) = &attribute.value else {

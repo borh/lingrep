@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use tree_sitter::{Node, Parser, Tree};
 use tree_sitter_lingrep::LANGUAGE;
 use unicode_segmentation::UnicodeSegmentation;
@@ -6,7 +6,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::expand::expand_indexed_declaration;
 use super::lower::lower_authored_document;
-use super::model::{LookDirection, LookPolarity, ParsedDefinitionBody, ParsedExpr, ParsedProgram};
+use super::model::{
+    LookDirection, LookPolarity, ParsedDefinitionBody, ParsedExpr, ParsedProgram, SourceSpan,
+};
 use super::source_text::parser_text;
 use super::{CompileError, CompileLimits, ExpandError, PatternSource};
 use crate::fsm::PositionAssertion;
@@ -136,16 +138,8 @@ impl DiagramCatalog {
             .root_node()
             .named_descendant_for_byte_range(range.start as usize, range.end as usize)
             .ok_or(DiagramError::SourceShape)?;
-        let body = node
-            .child_by_field_name("pattern")
-            .ok_or(DiagramError::SourceShape)?;
-        let mut labels = VecDeque::new();
-        collect_token_labels(body, &self.source, &mut labels)?;
         let mut count = 0;
-        let expression = flow(expr, &self.source, &mut labels, &mut count, 0)?;
-        if !labels.is_empty() {
-            return Err(DiagramError::SourceShape);
-        }
+        let expression = flow(expr, &self.source, &mut count, 0)?;
         let annotations = node
             .child_by_field_name("where")
             .map(|n| raw(&self.source, n))
@@ -339,26 +333,17 @@ fn raw(source: &str, node: Node<'_>) -> Result<String, DiagramError> {
         .ok_or(DiagramError::SourceShape)
 }
 
-fn collect_token_labels(
-    node: Node<'_>,
-    source: &str,
-    labels: &mut VecDeque<String>,
-) -> Result<(), DiagramError> {
-    if matches!(node.kind(), "node_pattern" | "bare_element") {
-        labels.push_back(raw(source, node)?);
-    } else {
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            collect_token_labels(child, source, labels)?;
-        }
-    }
-    Ok(())
+fn source_text(source: &str, span: SourceSpan) -> Result<String, DiagramError> {
+    let range = span.byte_range();
+    source
+        .get(range.start as usize..range.end as usize)
+        .map(str::to_owned)
+        .ok_or(DiagramError::SourceShape)
 }
 
 fn flow(
     expr: &ParsedExpr,
     source: &str,
-    labels: &mut VecDeque<String>,
     count: &mut usize,
     depth: usize,
 ) -> Result<Flow, DiagramError> {
@@ -369,19 +354,12 @@ fn flow(
     if depth > MAX_DEPTH {
         return Err(DiagramError::Budget("128 levels"));
     }
-    let mut child = |expr| flow(expr, source, labels, count, depth + 1);
+    let mut child = |expr| flow(expr, source, count, depth + 1);
     Ok(match expr {
-        ParsedExpr::Token(_) => Flow::Leaf(labels.pop_front().ok_or(DiagramError::SourceShape)?),
-        ParsedExpr::Reference { name, .. } => Flow::Leaf(format!("@{name}")),
-        ParsedExpr::SameAs { span, .. } => {
-            let range = span.byte_range();
-            Flow::Leaf(
-                source
-                    .get(range.start as usize..range.end as usize)
-                    .ok_or(DiagramError::SourceShape)?
-                    .to_owned(),
-            )
+        ParsedExpr::Token(_, span) | ParsedExpr::SameAs { span, .. } => {
+            Flow::Leaf(source_text(source, *span)?)
         }
+        ParsedExpr::Reference { name, .. } => Flow::Leaf(format!("@{name}")),
         ParsedExpr::Assertion(assertion) => Flow::Leaf(match assertion {
             PositionAssertion::SentenceStart => "^ (zero-width)".into(),
             PositionAssertion::SentenceEnd => "$ (zero-width)".into(),

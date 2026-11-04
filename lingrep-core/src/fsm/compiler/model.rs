@@ -703,7 +703,7 @@ pub(crate) enum ParsedExpr {
     /// Distribution to a one-token alternation happens at bind, so this is the
     /// last layer that still knows how the researcher spelled it — which is
     /// what a diagnostic about the test has to point at.
-    Token(ParsedTest),
+    Token(ParsedTest, SourceSpan),
     Assertion(PositionAssertion),
     Lookaround(LookaroundExpr<ParsedExpr>),
     Sequence(Vec<ParsedExpr>),

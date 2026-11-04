@@ -2103,14 +2103,17 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 self.enter_expr(node, depth)?;
                 let identifier =
                     only_named_child(self.source, &self.source_label, node, "identifier")?;
-                Ok(self.literal_token(identifier)?)
+                Ok(ParsedExpr::Token(
+                    self.literal_test(identifier)?,
+                    self.span_of(node)?,
+                ))
             }
             "node_pattern" => {
                 self.enter_expr(node, depth)?;
                 let test = self
                     .lower_token_test(node, depth)
                     .map_err(|diagnostic| CompileError::from_diagnostics(vec![diagnostic]))?;
-                Ok(ParsedExpr::Token(test))
+                Ok(ParsedExpr::Token(test, self.span_of(node)?))
             }
             "sentence_start" => {
                 self.enter_expr(node, depth)?;
@@ -3055,14 +3058,12 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             .map_err(|_| self.error(node, DiagnosticCode::InvalidRegex, "invalid Rust regex"))
     }
 
-    fn literal_token(&self, node: Node<'_>) -> Result<ParsedExpr, CompileError> {
-        Ok(ParsedExpr::Token(ParsedTest::Attr(resolved_attr(
-            AttrValue {
-                attr: TokenAttributeIndex::Orth,
-                value: AttrValueType::Single(self.text(node)?.into()),
-                complement: false,
-            },
-        ))))
+    fn literal_test(&self, node: Node<'_>) -> Result<ParsedTest, CompileError> {
+        Ok(ParsedTest::Attr(resolved_attr(AttrValue {
+            attr: TokenAttributeIndex::Orth,
+            value: AttrValueType::Single(self.text(node)?.into()),
+            complement: false,
+        })))
     }
 
     fn enter_expr(&mut self, node: Node<'_>, depth: usize) -> Result<(), CompileError> {
