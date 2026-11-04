@@ -32,7 +32,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                 },
                 StreamPhase {
                     name: "results",
-                    events: &["match", "document", "summary"],
+                    events: &["match", "document", "section", "summary"],
                     min: 0,
                     max: None,
                 },
@@ -90,6 +90,7 @@ pub enum QueryEvent {
     Match(MatchData),
     Summary(SummaryData),
     Document(DocumentData),
+    Section(SectionData),
     Complete(QueryComplete),
 }
 
@@ -104,6 +105,7 @@ impl QueryEvent {
             Self::Match(_) => "match",
             Self::Summary(_) => "summary",
             Self::Document(_) => "document",
+            Self::Section(_) => "section",
             Self::Complete(_) => "complete",
         }
     }
@@ -766,6 +768,28 @@ pub struct DocumentData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "source_metadata_schema")]
     pub source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
+}
+
+/// One section label in a `--by-section` summary, published when at least one
+/// admitted sentence carries it. A sentence carrying several labels is counted
+/// under each of them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionData {
+    /// The section label; `null` for admitted sentences that carry no label.
+    pub label: Option<String>,
+    pub sentences_admitted: u64,
+    pub tokens_admitted: u64,
+    /// Every published pattern, in catalog order, including those with no
+    /// match in this section.
+    pub patterns: Vec<SectionPatternCount>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionPatternCount {
+    pub pattern: String,
+    pub matches: u64,
+    /// Admitted sentences in this section with at least one match.
+    pub sentences_matched: u64,
 }
 
 #[derive(

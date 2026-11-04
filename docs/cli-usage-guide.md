@@ -386,6 +386,29 @@ ling --json summarize --by-document --source-metadata @document.id \
 Over a prepared corpus `--by-document` reads every sentence, because the
 posting index has no per-document token counts.
 
+### Counting per section
+
+`--by-section` counts, for every section label of a prepared corpus, each
+pattern's matches and the admitted sentences with at least one match. It
+requires `--json` and `--corpus` or `--cache`, and cannot be combined with
+`--by-document`. The run publishes one `section` record per label with at
+least one admitted sentence, in the artifact's coverage order: its `label`,
+`sentences_admitted`, `tokens_admitted`, and `patterns`, which lists every
+published pattern in catalog order with `matches` and `sentences_matched`. A
+sentence carrying several labels is counted under each label, as
+`--where '@section = X'` admits it under each. Admitted sentences with no label
+are counted in a final record whose `label` is `null`. The `summary` rows are
+the same as without the flag. An artifact that records no section labels is
+rejected with exit code `2`.
+
+```bash
+ling --json summarize --by-section --corpus paper.lingcorpus \
+  --patterns patterns/sentence-final.lx
+```
+
+`--where` applies first, so `sentences_admitted` is the section's size within
+the scope. Like `--by-document`, `--by-section` reads every sentence.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term

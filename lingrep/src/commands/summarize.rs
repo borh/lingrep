@@ -11,6 +11,7 @@ use lingrep_core::execution::{
 use lingrep_core::fsm::{CatalogPolicy, Match, PublishedRecord, RecordView};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
+use roaring::RoaringTreemap;
 use serde::Serialize;
 use serde::ser::SerializeMap;
 
@@ -37,8 +38,8 @@ use crate::protocol::query::{
 };
 use crate::protocol::write_jsonl;
 use crate::summary::{
-    AggregationGroup, AggregationInput, FinalizedSummary, OwnedAggregationInput, SummaryAggregator,
-    SummaryPartition, SummaryRow, shard_hash,
+    AggregationGroup, AggregationInput, FinalizedSummary, OwnedAggregationInput, SectionTally,
+    SummaryAggregator, SummaryPartition, SummaryRow, shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -177,6 +178,11 @@ pub fn run(
             "--by-document requires --json".to_owned(),
         ));
     }
+    if args.by_section && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "--by-section requires --json".to_owned(),
+        ));
+    }
     if let Some(key) = args
         .source_metadata
         .iter()
@@ -206,6 +212,16 @@ pub fn run(
         output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
+    let sections = if args.by_section {
+        let Some(path) = selected_corpus else {
+            return Err(CliError::InvalidArgs(
+                "--by-section requires a prepared corpus: pass --corpus or --cache".to_owned(),
+            ));
+        };
+        Some(section_labels(path)?)
+    } else {
+        None
+    };
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -228,7 +244,7 @@ pub fn run(
         sample.filter(|_| args.sample.blocks),
         // A sentence the posting index skips still counts toward its
         // document's admitted tokens.
-        sample.is_none() && scope_clause.is_none() && !args.by_document,
+        sample.is_none() && scope_clause.is_none() && !args.by_document && !args.by_section,
     )?;
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
@@ -319,16 +335,20 @@ pub fn run(
                 message: format!("failed to create worker pool: {error}"),
             })?;
         let limits = config.limits;
+        let aggregation = SummaryAggregator::new(config.max_temp_bytes, config.workers.clamp(1, 8))
+            .map_err(CliError::Aggregation)?;
+        let sections = sections
+            .map(|labels| SectionTally::new(labels, aggregation.temp_budget()))
+            .transpose()
+            .map_err(CliError::Aggregation)?;
         let mut sink = SummarySink {
-            aggregation: Some(
-                SummaryAggregator::new(config.max_temp_bytes, config.workers.clamp(1, 8))
-                    .map_err(CliError::Aggregation)?,
-            ),
+            aggregation: Some(aggregation),
             aggregation_error: None,
             pattern_ordinals: &pattern_ordinals,
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
             documents: args.by_document.then(BTreeMap::new),
+            sections,
         };
         let presentation_progress = PresentationProgress::stderr(
             &config.stderr,
@@ -424,10 +444,20 @@ pub fn run(
             .expect("summary aggregation remains available after successful execution");
         let records_unkeyed = sink.records_unkeyed;
         let documents = sink.documents.take();
+        let sections = sink.sections.take();
         drop(sink);
 
         let (complete_corpus, inventory) = lifecycle.complete(FilesystemCompletion::Full)?;
+        let pattern_names = descriptors
+            .iter()
+            .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
+            .collect::<Vec<_>>();
         let mut finalized = aggregation.finalize().map_err(CliError::Aggregation)?;
+        let published = pattern_ordinals.values().copied().collect::<Vec<_>>();
+        let mut sections = sections
+            .map(|sections| sections.into_records(&published, &pattern_names))
+            .transpose()
+            .map_err(CliError::Aggregation)?;
         let temp_high_water = finalized.peak_temp_bytes();
 
         if !terminal.try_claim_completion() {
@@ -452,10 +482,6 @@ pub fn run(
             write_alias_warning(config, &run_id, inventory)?;
         }
 
-        let pattern_names = descriptors
-            .iter()
-            .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
-            .collect::<Vec<_>>();
         // `summarize` publishes no per-match prefix, so it always runs to
         // completion: its basis is the corpus on both paths.
         let scope_report = scope.report_after_run(scope_clause.as_ref(), false, config, &run_id)?;
@@ -514,6 +540,14 @@ pub fn run(
                 })),
             )?;
         }
+        if let Some(sections) = sections.as_mut() {
+            while let Some(section) = sections.next_record().map_err(CliError::Aggregation)? {
+                publish_query_jsonl(
+                    &mut writer,
+                    &QueryEnvelope::new(QueryEvent::Section(section)),
+                )?;
+            }
+        }
         let mut event_writer = MachineSummaryEventWriter {
             writer: &mut writer,
             output,
@@ -547,6 +581,47 @@ struct SummarySink<'a> {
     records_unkeyed: u64,
     /// Per-document admission under `--by-document`, keyed by document ordinal.
     documents: Option<BTreeMap<u64, DocumentTally>>,
+    sections: Option<SectionTally>,
+}
+
+/// Each section label of the artifact at `path`, with the corpus sentence
+/// ordinals it covers.
+fn section_labels(path: &std::path::Path) -> Result<Vec<(String, RoaringTreemap)>, CliError> {
+    let provenance = lingrep_corpus::CorpusArtifact::open(path)?.provenance_reader()?;
+    let (coverage, spans) = provenance.block_on(async {
+        let view = provenance.view();
+        let coverage = view
+            .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
+            .await?;
+        let names = coverage
+            .iter()
+            .map(|entry| entry.label.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let spans = view.region_spans_for(&names).await?;
+        Ok::<_, lingrep_corpus::CorpusError>((coverage, spans))
+    })?;
+    if coverage.is_empty() {
+        return Err(CliError::InvalidArgs(
+            "--by-section requires section labels, but this artifact records none".to_owned(),
+        ));
+    }
+    let mut labels = coverage
+        .into_iter()
+        .map(|entry| (entry.label, RoaringTreemap::new()))
+        .collect::<Vec<_>>();
+    let position = labels
+        .iter()
+        .enumerate()
+        .map(|(index, (label, _))| (label.clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    for span in spans {
+        if let Some(index) = position.get(&span.label) {
+            labels[*index]
+                .1
+                .insert_range(span.first_sentence..span.end_sentence);
+        }
+    }
+    Ok(labels)
 }
 
 struct DocumentTally {
@@ -814,6 +889,38 @@ impl SummarySink<'_> {
             .collect()
     }
 
+    fn observe_sections(
+        &mut self,
+        location: &lingrep_core::execution::SentenceLocation,
+        tokens: usize,
+        groups: &[(SummaryPartition, Option<(OwnedAggregationInput, u64)>)],
+    ) -> Result<(), ExecutionError> {
+        self.observe_section_patterns(
+            location,
+            tokens,
+            groups
+                .iter()
+                .map(|(partition, _)| partition.pattern_ordinal),
+        )
+    }
+
+    fn observe_section_patterns(
+        &mut self,
+        location: &lingrep_core::execution::SentenceLocation,
+        tokens: usize,
+        patterns: impl Iterator<Item = u64>,
+    ) -> Result<(), ExecutionError> {
+        let Some(sections) = self.sections.as_mut() else {
+            return Ok(());
+        };
+        if let Err(error) = sections.observe(location.corpus_sentence_ordinal, tokens, patterns) {
+            let message = error.to_string();
+            self.aggregation_error = Some(error);
+            return Err(ExecutionError::Sink(message));
+        }
+        Ok(())
+    }
+
     fn add_owned_groups(
         &mut self,
         groups: Vec<(SummaryPartition, Option<(OwnedAggregationInput, u64)>)>,
@@ -846,17 +953,21 @@ impl SummarySink<'_> {
     ) -> Result<SinkControl, ExecutionError> {
         self.observe_sentence(location, sentence.len())?;
         let mut records_emitted = 0usize;
+        let mut matched = Vec::new();
         for record in records {
             records_emitted += 1;
-            let Some(grouped) = self.grouping(location, sentence, record)? else {
-                self.records_unkeyed += 1;
-                continue;
-            };
             let pattern_ordinal = self
                 .pattern_ordinals
                 .get(record.pattern)
                 .copied()
                 .ok_or_else(|| ExecutionError::Sink("unknown summary pattern".into()))?;
+            if self.sections.is_some() {
+                matched.push(pattern_ordinal);
+            }
+            let Some(grouped) = self.grouping(location, sentence, record)? else {
+                self.records_unkeyed += 1;
+                continue;
+            };
             let partition = self.partition(pattern_ordinal, location);
             if let Err(error) = self
                 .aggregation
@@ -869,6 +980,7 @@ impl SummarySink<'_> {
                 return Err(ExecutionError::Sink(message));
             }
         }
+        self.observe_section_patterns(location, sentence.len(), matched.into_iter())?;
         // Every match is folded into the aggregation; nothing is skipped.
         Ok(SinkControl::Continue { records_emitted })
     }
@@ -896,6 +1008,7 @@ impl MatchSink for SummarySink<'_> {
     ) -> Result<SinkControl, ExecutionError> {
         self.observe_sentence(location, sentence.len())?;
         let groups = self.group_owned_records(location, sentence, records)?;
+        self.observe_sections(location, sentence.len(), &groups)?;
         let records_emitted = self.add_owned_groups(groups)?;
         Ok(SinkControl::Continue { records_emitted })
     }
@@ -942,7 +1055,9 @@ impl MatchSink for SummarySink<'_> {
                 return Ok((controls, true));
             }
             self.observe_sentence(location, sentence.len())?;
-            let records_emitted = self.add_owned_groups(groups?)?;
+            let groups = groups?;
+            self.observe_sections(location, sentence.len(), &groups)?;
+            let records_emitted = self.add_owned_groups(groups)?;
             controls.push(SinkControl::Continue { records_emitted });
             if cancel.is_cancelled() {
                 return Ok((controls, true));

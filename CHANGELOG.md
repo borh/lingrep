@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `summarize --by-section` counts each pattern's matches and matched
+  sentences under every section label of a prepared corpus in one scan. A new
+  query/v2 `section` record gives the label, or `null` for unlabelled
+  sentences, its admitted sentence and token counts, and per-pattern
+  `matches` and `sentences_matched`. It requires `--json` and `--corpus` or
+  `--cache`.
+
 ### Changed
 
 - The query/v2 `complete` record's `counters.tokens_matched` is renamed

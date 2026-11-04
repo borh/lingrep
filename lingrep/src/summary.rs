@@ -1,4 +1,5 @@
-//! Exact bounded aggregation for `(authored pattern, document, typed group)` keys.
+//! Exact bounded aggregation for `(authored pattern, document, typed group)` keys,
+//! and for `(section label, authored pattern)` counts.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -11,8 +12,10 @@ use compact_str::CompactString;
 use crossbeam_channel::{Receiver, Sender};
 use indexmap::IndexSet;
 use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, ProjectedKeyField};
-use lingrep_core::spill::{SortedRunCounts, TempBudget};
+use lingrep_core::spill::{SortedDrain, SortedRunCounts, TempBudget};
 use serde::{Deserialize, Serialize};
+
+use crate::protocol::query::{SectionData, SectionPatternCount};
 
 /// Keys held in the scan's sorted buffer before it spills a run.
 ///
@@ -1011,6 +1014,11 @@ impl SummaryAggregator {
         self.add_group(partition, group, Some(hash))
     }
 
+    /// The temporary-storage budget this aggregator's spilled runs reserve from.
+    pub fn temp_budget(&self) -> Arc<TempBudget> {
+        Arc::clone(&self.budget)
+    }
+
     fn add_group(
         &mut self,
         partition: SummaryPartition,
@@ -1244,5 +1252,188 @@ fn materialize_group(
             }
             Ok(AggregationGroup::LexicalKey(fields))
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+enum SectionCount {
+    Matches,
+    SentencesMatched,
+}
+
+/// `(slot, pattern ordinal, count)`. Slots are label positions, then one slot
+/// for sentences that carry no label.
+type SectionCountKey = (u32, u64, SectionCount);
+
+/// Per-section counts for `summarize --by-section`.
+///
+/// Counts only the (slot, pattern) pairs that occur, spilling them to sorted
+/// runs under the budget; one sentence-range bitmap and two totals per label
+/// stay resident.
+pub struct SectionTally {
+    labels: Vec<(String, roaring::RoaringTreemap)>,
+    /// Admitted sentences and tokens per slot.
+    totals: Vec<(u64, u64)>,
+    counts: SortedRunCounts<SectionCountKey>,
+    active: Vec<u32>,
+    matched: Vec<u64>,
+}
+
+impl SectionTally {
+    /// `labels` pairs each section label with the corpus sentence ordinals it
+    /// covers; spilled runs reserve from `budget`.
+    pub fn new(
+        labels: Vec<(String, roaring::RoaringTreemap)>,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        Self::with_limits(labels, DEFAULT_RESIDENT_KEYS, DEFAULT_MERGE_FAN_IN, budget)
+    }
+
+    pub fn with_limits(
+        labels: Vec<(String, roaring::RoaringTreemap)>,
+        resident_key_limit: usize,
+        merge_fan_in: usize,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        if u32::try_from(labels.len()).is_err() {
+            return Err(io::Error::other("section label count exceeds u32"));
+        }
+        Ok(Self {
+            totals: vec![(0, 0); labels.len() + 1],
+            labels,
+            counts: SortedRunCounts::new_budgeted(resident_key_limit, merge_fan_in, budget)?,
+            active: Vec::new(),
+            matched: Vec::new(),
+        })
+    }
+
+    /// Counts one admitted sentence under every label covering it, or under
+    /// the unlabelled slot, with one pattern ordinal per published match.
+    pub fn observe(
+        &mut self,
+        sentence: u64,
+        tokens: usize,
+        matched_patterns: impl Iterator<Item = u64>,
+    ) -> io::Result<()> {
+        let overflow = || io::Error::other("section count overflow");
+        self.active.clear();
+        for (slot, (_, covered)) in (0u32..).zip(&self.labels) {
+            if covered.contains(sentence) {
+                self.active.push(slot);
+            }
+        }
+        if self.active.is_empty() {
+            self.active.push(self.labels.len() as u32);
+        }
+        self.matched.clear();
+        self.matched.extend(matched_patterns);
+        self.matched.sort_unstable();
+        let tokens = tokens as u64;
+        for &slot in &self.active {
+            let (sentences, slot_tokens) = &mut self.totals[slot as usize];
+            *sentences = sentences.checked_add(1).ok_or_else(overflow)?;
+            *slot_tokens = slot_tokens.checked_add(tokens).ok_or_else(overflow)?;
+            for run in self.matched.chunk_by(|left, right| left == right) {
+                let pattern = run[0];
+                self.counts
+                    .add((slot, pattern, SectionCount::Matches), run.len())?;
+                self.counts
+                    .add((slot, pattern, SectionCount::SentencesMatched), 1)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Merges any spilled runs and returns the records in slot order, one per
+    /// slot with at least one admitted sentence. `published` lists the pattern
+    /// ordinals to report, each named by `pattern_names[ordinal]`.
+    pub fn into_records<'a>(
+        self,
+        published: &[u64],
+        pattern_names: &'a [&'a str],
+    ) -> io::Result<SectionRecords<'a>> {
+        let mut published = published.to_vec();
+        published.sort_unstable();
+        Ok(SectionRecords {
+            labels: self
+                .labels
+                .into_iter()
+                .map(|(label, _)| label)
+                .collect::<Vec<_>>()
+                .into_iter(),
+            totals: self.totals,
+            next_slot: 0,
+            drain: self.counts.into_sorted_drain()?,
+            pending: None,
+            published,
+            pattern_names,
+        })
+    }
+}
+
+/// The section records of a [`SectionTally`], produced one slot at a time.
+pub struct SectionRecords<'a> {
+    labels: std::vec::IntoIter<String>,
+    totals: Vec<(u64, u64)>,
+    next_slot: usize,
+    drain: SortedDrain<SectionCountKey>,
+    pending: Option<(SectionCountKey, usize)>,
+    published: Vec<u64>,
+    pattern_names: &'a [&'a str],
+}
+
+impl SectionRecords<'_> {
+    pub fn next_record(&mut self) -> io::Result<Option<SectionData>> {
+        while self.next_slot < self.totals.len() {
+            let slot = self.next_slot;
+            self.next_slot += 1;
+            let label = self.labels.next();
+            let (sentences_admitted, tokens_admitted) = self.totals[slot];
+            if sentences_admitted == 0 {
+                continue;
+            }
+            let mut patterns = Vec::with_capacity(self.published.len());
+            for index in 0..self.published.len() {
+                let ordinal = self.published[index];
+                let mut count = SectionPatternCount {
+                    pattern: (*self.pattern_names.get(ordinal as usize).ok_or_else(|| {
+                        io::Error::other("section pattern ordinal is out of range")
+                    })?)
+                    .to_owned(),
+                    matches: 0,
+                    sentences_matched: 0,
+                };
+                while let Some(((entry_slot, pattern, kind), value)) = self.peek()? {
+                    if (entry_slot as usize, pattern) > (slot, ordinal) {
+                        break;
+                    }
+                    self.pending = None;
+                    if (entry_slot as usize, pattern) < (slot, ordinal) {
+                        // An unpublished pattern, of this slot or an earlier one.
+                        continue;
+                    }
+                    let value = value as u64;
+                    match kind {
+                        SectionCount::Matches => count.matches = value,
+                        SectionCount::SentencesMatched => count.sentences_matched = value,
+                    }
+                }
+                patterns.push(count);
+            }
+            return Ok(Some(SectionData {
+                label,
+                sentences_admitted,
+                tokens_admitted,
+                patterns,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn peek(&mut self) -> io::Result<Option<(SectionCountKey, usize)>> {
+        if self.pending.is_none() {
+            self.pending = self.drain.next_entry()?;
+        }
+        Ok(self.pending)
     }
 }

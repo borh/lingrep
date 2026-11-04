@@ -181,6 +181,10 @@ where
                 validate_result_mode(run_mode.expect("run mode set"), "summary")?;
                 set_result_kind(&mut result_kind, "summary")?;
             }
+            query::QueryEvent::Section(_) => {
+                validate_result_mode(run_mode.expect("run mode set"), "summary")?;
+                set_result_kind(&mut result_kind, "summary")?;
+            }
             query::QueryEvent::Document(record) => {
                 validate_record_metadata(
                     "document",
@@ -414,6 +418,7 @@ pub fn validate_query_jsonl(bytes: &[u8]) -> Result<(), ProtocolError> {
             "definition",
             "match",
             "document",
+            "section",
             "summary",
             "complete",
         ],

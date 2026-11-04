@@ -15,11 +15,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use lingrep::direct_source::matched_surface;
+use lingrep::protocol::query::{SectionData, SectionPatternCount};
 use lingrep::protocol::validate_query_jsonl;
 use lingrep::summary::{
-    AggregationGroup, AggregationInput, SummaryAggregator, SummaryPartition, SummaryRow,
+    AggregationGroup, AggregationInput, SectionTally, SummaryAggregator, SummaryPartition,
+    SummaryRow,
 };
 use lingrep_core::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
 use lingrep_core::corpus::DocumentId;
@@ -31,9 +34,11 @@ use lingrep_core::execution::{
 use lingrep_core::fsm::{
     CompileLimits, CompiledCatalog, Match, PatternSource, ProjectedKeyField, compile_catalog,
 };
+use lingrep_core::spill::TempBudget;
 use lingrep_core::testing::MiniDictionary;
 use lingrep_core::token_match::{TokenInfo, TokenSequence};
 use lingrep_corpus::CorpusArtifact;
+use roaring::RoaringTreemap;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -992,6 +997,207 @@ fn by_document_rejects_output_and_metadata_it_cannot_publish() {
         assert!(!output.status.success(), "{case}");
         assert_eq!(output.status.code(), Some(2), "{case}");
     }
+}
+
+fn sectioned_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
+    let root = directory.path().join("corpus");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("paper.md"),
+        "猫と犬。\n\n\
+         # Methods {.methods}\n\n猫が鳥を見る。\n犬も鳥を見る。\n\n\
+         # Results {.results}\n\n猫は犬である。\n\n\
+         ::: {.discussion}\n猫が猫を見る。\n:::\n",
+    )
+    .unwrap();
+    let artifact = directory.path().join("sections.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    artifact
+}
+
+#[test]
+fn by_section_counts_matches_and_matched_sentences_under_every_active_label() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = sectioned_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("catalog.lx");
+    fs::write(
+        &catalog,
+        "pattern cat := [text=猫].\npattern bird := [text=鳥].\n",
+    )
+    .unwrap();
+    let output = lingrep_without_dictionary()
+        .args(["--json", "summarize", "--by-section", "--corpus"])
+        .arg(&artifact)
+        .arg("--patterns")
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    validate_query_jsonl(&output.stdout).unwrap();
+    let events = parse_jsonl(&output.stdout);
+    let sections = events
+        .iter()
+        .filter(|record| record["type"] == "section")
+        .map(|record| record["data"].clone())
+        .collect::<Vec<_>>();
+    let pattern = |name: &str, matches: u64, sentences: u64| serde_json::json!({"pattern": name, "matches": matches, "sentences_matched": sentences});
+    let tokens = |label: Option<&str>| {
+        sections
+            .iter()
+            .find(|section| section["label"].as_str() == label)
+            .unwrap()["tokens_admitted"]
+            .clone()
+    };
+    assert_eq!(
+        sections,
+        [
+            serde_json::json!({
+                "label": "methods", "sentences_admitted": 2, "tokens_admitted": tokens(Some("methods")),
+                "patterns": [pattern("cat", 1, 1), pattern("bird", 2, 2)],
+            }),
+            serde_json::json!({
+                "label": "results", "sentences_admitted": 2, "tokens_admitted": tokens(Some("results")),
+                "patterns": [pattern("cat", 3, 2), pattern("bird", 0, 0)],
+            }),
+            serde_json::json!({
+                "label": "discussion", "sentences_admitted": 1, "tokens_admitted": tokens(Some("discussion")),
+                "patterns": [pattern("cat", 2, 1), pattern("bird", 0, 0)],
+            }),
+            serde_json::json!({
+                "label": null, "sentences_admitted": 1, "tokens_admitted": tokens(None),
+                "patterns": [pattern("cat", 1, 1), pattern("bird", 0, 0)],
+            }),
+        ]
+    );
+    for section in &sections {
+        assert!(
+            section["tokens_admitted"].as_u64().unwrap() > 0,
+            "{section}"
+        );
+    }
+    let complete = &event(&events, "complete")["data"]["counters"];
+    assert_eq!(complete["sentences_admitted"], 5);
+    assert_eq!(complete["matches_found"], 7);
+}
+
+#[test]
+fn by_section_rejects_tsv_output_direct_input_and_by_document() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = sectioned_artifact(&directory, &dictionary);
+    let direct = directory.path().join("corpus");
+    for (case, json, prepared, extra) in [
+        ("tsv output", false, true, &["--by-section"][..]),
+        ("direct input", true, false, &["--by-section"][..]),
+        (
+            "with --by-document",
+            true,
+            true,
+            &["--by-section", "--by-document"][..],
+        ),
+    ] {
+        let mut command = lingrep();
+        if json {
+            command.arg("--json");
+        }
+        command
+            .args(["summarize", "--pattern", "cat := [text=猫]."])
+            .args(extra);
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command
+                .arg("--dict-path")
+                .arg(dictionary.path())
+                .arg(&direct);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{case}");
+        assert!(output.stdout.is_empty(), "{case}");
+    }
+}
+
+#[test]
+fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
+    let labels = || {
+        let mut methods = RoaringTreemap::new();
+        methods.insert_range(1..3);
+        let mut results = RoaringTreemap::new();
+        results.insert_range(2..5);
+        vec![
+            ("methods".to_owned(), methods),
+            ("results".to_owned(), results),
+            ("empty".to_owned(), RoaringTreemap::new()),
+        ]
+    };
+    // (sentence, tokens, pattern ordinal per match). Sentence 2 carries both
+    // labels, sentences 0 and 5 carry none, and pattern 3 is not published.
+    let sentences: [(u64, usize, &[u64]); 6] = [
+        (0, 3, &[0]),
+        (1, 4, &[1, 1, 2]),
+        (2, 5, &[0, 2, 0]),
+        (3, 2, &[]),
+        (4, 6, &[3, 1]),
+        (5, 1, &[2]),
+    ];
+    let names = ["cat", "bird", "dog", "hidden"];
+    let run = |resident_key_limit: Option<usize>| {
+        let budget = Arc::new(TempBudget::new(u64::MAX));
+        let mut tally = match resident_key_limit {
+            Some(limit) => SectionTally::with_limits(labels(), limit, 2, Arc::clone(&budget)),
+            None => SectionTally::new(labels(), Arc::clone(&budget)),
+        }
+        .unwrap();
+        for (sentence, tokens, patterns) in sentences {
+            tally
+                .observe(sentence, tokens, patterns.iter().copied())
+                .unwrap();
+        }
+        let mut records = tally.into_records(&[2, 0, 1], &names).unwrap();
+        let mut published = Vec::new();
+        while let Some(record) = records.next_record().unwrap() {
+            published.push(record);
+        }
+        (published, budget.peak_used_bytes())
+    };
+    let (resident, resident_temp_bytes) = run(None);
+    let (spilled, spilled_temp_bytes) = run(Some(1));
+    assert_eq!(resident_temp_bytes, 0);
+    assert!(spilled_temp_bytes > 0, "a one-key buffer writes runs");
+    assert_eq!(spilled, resident);
+    let section = |label: Option<&str>, sentences, tokens, counts: [(u64, u64); 3]| SectionData {
+        label: label.map(str::to_owned),
+        sentences_admitted: sentences,
+        tokens_admitted: tokens,
+        patterns: ["cat", "bird", "dog"]
+            .into_iter()
+            .zip(counts)
+            .map(
+                |(pattern, (matches, sentences_matched))| SectionPatternCount {
+                    pattern: pattern.to_owned(),
+                    matches,
+                    sentences_matched,
+                },
+            )
+            .collect(),
+    };
+    assert_eq!(
+        resident,
+        [
+            section(Some("methods"), 2, 9, [(2, 1), (2, 1), (2, 2)]),
+            section(Some("results"), 3, 13, [(2, 1), (1, 1), (1, 1)]),
+            section(None, 2, 4, [(1, 1), (0, 0), (1, 1)]),
+        ]
+    );
 }
 
 fn summary_events(events: &[Value]) -> Vec<&Value> {

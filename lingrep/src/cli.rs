@@ -588,6 +588,12 @@ pub struct SummarizeArgs {
     #[arg(long, help_heading = "Output")]
     pub by_document: bool,
 
+    /// Count each pattern's matches and matched sentences under every section
+    /// label of a prepared corpus, and publish them as `section` records
+    /// (requires --json and --corpus or --cache).
+    #[arg(long, conflicts_with = "by_document", help_heading = "Output")]
+    pub by_section: bool,
+
     /// Publish @document.KEY on each `document` record (repeatable).
     #[arg(
         long = "source-metadata",
