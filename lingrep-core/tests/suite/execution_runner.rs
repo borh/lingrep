@@ -808,6 +808,7 @@ fn expected_report(
         policy_stats: lingrep_core::fsm::PolicyStats::default(),
         program_stats: lingrep_core::fsm::ProgramStats::default(),
         trace: None,
+        out_of_set_labels: Vec::new(),
         sentences_admitted,
         sentences_matched,
         tokens_matched,

@@ -308,6 +308,9 @@ pub(crate) struct ParsedProgram {
     pub(crate) policy: Option<crate::fsm::policy_program::Program>,
     /// Structured analyzer declarations, retained as catalog-wide alternatives.
     pub(crate) analyzers: Vec<ParsedAnalyzerConstraint>,
+    /// The fields of the document's `labels:` entry; they apply to the
+    /// literals of the definitions in the same document.
+    pub(crate) labels: Vec<ParsedLabelDeclaration>,
     /// The document's `set` declarations, in source order.
     ///
     /// Authored, not resolved: a reference may name a set from another
@@ -325,6 +328,13 @@ pub(crate) struct ParsedProgram {
     /// is derived over the accumulated catalog's definitions, so a predicate
     /// declared in one document selects patterns from another.
     pub(crate) groups: Vec<ParsedGroupDecl>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedLabelDeclaration {
+    pub(crate) attribute: AttributeKey,
+    pub(crate) set: crate::fsm::labels::LabelSet,
+    pub(crate) span: SourceSpan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

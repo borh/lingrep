@@ -111,6 +111,8 @@ pub(super) fn bind(
         // shares nothing with the `@` names this function adjudicates.
         groups: _,
         analyzers: _,
+        // Taken by `compile_program` before binding.
+        labels: _,
     } = program;
     enforce_definition_budget(&definitions, &sources, limits)?;
 
@@ -1978,6 +1980,7 @@ mod tests {
             sources,
             policy: None,
             analyzers: Vec::new(),
+            labels: Vec::new(),
             sets: Vec::new(),
             tests: Vec::new(),
             groups: Vec::new(),
@@ -2351,6 +2354,7 @@ mod set_sharing_tests {
                 sources,
                 policy: None,
                 analyzers: Vec::new(),
+                labels: Vec::new(),
                 tests: Vec::new(),
                 sets: vec![ParsedSet {
                     name: "S".into(),

@@ -13,6 +13,7 @@ mod drift;
 mod expand;
 mod format;
 mod guard;
+mod label_check;
 mod limits;
 mod lower;
 mod materialize;
@@ -142,6 +143,7 @@ pub(crate) struct DefinitionAccumulator {
     /// so a declaration in one document selects patterns from another.
     groups: Vec<ParsedGroupDecl>,
     analyzers: Vec<model::ParsedAnalyzerConstraint>,
+    labels: Vec<model::ParsedLabelDeclaration>,
     sources: SourceRegistry,
     stats: CompilerStats,
     /// Every non-fatal lowering diagnostic contributed so far.
@@ -173,6 +175,7 @@ impl DefinitionAccumulator {
             tests: Vec::new(),
             groups: Vec::new(),
             analyzers: Vec::new(),
+            labels: Vec::new(),
             sources: SourceRegistry::default(),
             stats: CompilerStats::default(),
             lowering_warnings: Vec::new(),
@@ -195,6 +198,7 @@ impl DefinitionAccumulator {
             // through `add_document`.
             policy: None,
             analyzers: Vec::new(),
+            labels: Vec::new(),
             sets: Vec::new(),
             tests: Vec::new(),
             groups: Vec::new(),
@@ -259,6 +263,11 @@ impl DefinitionAccumulator {
         self.tests.extend(program.tests);
         self.groups.extend(program.groups);
         self.analyzers.extend(program.analyzers);
+        self.labels
+            .extend(program.labels.into_iter().map(|mut declaration| {
+                declaration.span = declaration.span.with_source(source_id);
+                declaration
+            }));
         self.lowering_warnings.extend(lowered.warnings);
         self.stats = next_stats;
         Ok(())
@@ -282,6 +291,7 @@ impl DefinitionAccumulator {
                 sources: self.sources,
                 policy,
                 analyzers: self.analyzers,
+                labels: self.labels,
                 sets: self.sets,
                 tests: self.tests,
                 groups: self.groups,
@@ -299,6 +309,7 @@ fn compile_program(
     stats: &mut CompilerStats,
     lowering_warnings: Vec<Diagnostic>,
 ) -> Result<CompileOutput, CompileError> {
+    let parsed_labels = std::mem::take(&mut program.labels);
     let analyzer_constraints = program
         .analyzers
         .iter()
@@ -405,6 +416,11 @@ fn compile_program(
     // downstream of here can change the answer.
     let (mut diagnostics, evaluated) = unused_fragment_warnings(&bound, &catalog_policy);
     let analysis = analysis::analyze(&bound, &evaluated);
+    let label_declarations = label_check::label_declarations(&parsed_labels, &bound);
+    let label_errors = label_check::literal_errors(&parsed_labels, &label_declarations, &bound);
+    if !label_errors.is_empty() {
+        return Err(CompileError::from_diagnostics(label_errors));
+    }
 
     let match_projection_errors =
         capture_key::match_projection_errors(&catalog_policy, &bound.definitions, &bound.sources);
@@ -473,6 +489,9 @@ fn compile_program(
     lowered
         .matcher
         .install_analyzer_constraints(analyzer_constraints);
+    lowered
+        .matcher
+        .install_label_declarations(label_declarations);
     lowered.matcher.finalize_required_attributes();
     // Strictly after the attribute projection is frozen: the synthesized
     // emitters must keep matching, so only the public catalog is filtered.

@@ -463,6 +463,12 @@ pub fn run(
             RunOutcome::Cancelled(_) => return Ok(CommandOutcome::Cancelled),
         };
         presentation_progress.finish();
+        crate::attribute_binding::write_out_of_set_label_notices(
+            compiled.matcher.label_declarations(),
+            &report.out_of_set_labels,
+            config,
+            &run_id,
+        )?;
         if args.trace_policy.is_some() {
             crate::policy_report::write_requested(
                 &config.stderr,

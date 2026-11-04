@@ -16,9 +16,9 @@ use super::model::{
     CaptureProjection, DefinitionVisibility, GroupOperator, LookDirection, LookPolarity,
     LookaroundExpr, Metadata, MetadataEntry, ParsedAnalyzerConstraint, ParsedAttr, ParsedAttrValue,
     ParsedDefinition, ParsedDefinitionBody, ParsedExpr, ParsedGroupDecl, ParsedKey,
-    ParsedLabelTerm, ParsedProgram, ParsedRelation, ParsedRelationTarget, ParsedSet, ParsedTest,
-    ParsedTestDecl, RelationLabel, RelationLabels, RelationPolarity, SourceId, SourceRegistry,
-    SourceSpan,
+    ParsedLabelDeclaration, ParsedLabelTerm, ParsedProgram, ParsedRelation, ParsedRelationTarget,
+    ParsedSet, ParsedTest, ParsedTestDecl, RelationLabel, RelationLabels, RelationPolarity,
+    SourceId, SourceRegistry, SourceSpan,
 };
 use super::policy_program;
 use super::schema::{self, CatalogSchema, MetadataType, SchemaEntry};
@@ -126,6 +126,7 @@ pub(super) fn lower_definition_with_stats(
         // Catalog-level declarations are admitted only by `add_document`.
         policy: _,
         analyzers: _,
+        labels: _,
         sets: _,
         tests: _,
         groups: _,
@@ -240,6 +241,7 @@ struct DocumentDraft {
     schema: Option<CatalogSchema>,
     policy: Option<crate::fsm::policy_program::Program>,
     analyzers: Vec<ParsedAnalyzerConstraint>,
+    labels: Vec<ParsedLabelDeclaration>,
     sets: Vec<ParsedSet>,
     tests: Vec<ParsedTestDecl>,
     groups: Vec<ParsedGroupDecl>,
@@ -363,6 +365,7 @@ impl DocumentDraft {
             sources,
             policy: self.policy,
             analyzers: self.analyzers,
+            labels: self.labels,
             sets: self.sets,
             tests: self.tests,
             groups: self.groups,
@@ -477,6 +480,23 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     }
                     draft.analyzers.push(self.lower_analyzer_entry(child)?);
                 }
+                "labels_entry" => {
+                    if !draft.labels.is_empty() {
+                        return Err(self.error(
+                            child,
+                            DiagnosticCode::Syntax,
+                            "a catalog file may declare at most one `labels:` entry",
+                        ));
+                    }
+                    if !draft.headers_allowed() {
+                        return Err(self.error(
+                            child,
+                            DiagnosticCode::Syntax,
+                            "a `labels:` entry must precede annotations and definitions",
+                        ));
+                    }
+                    draft.labels = self.lower_labels_entry(child)?;
+                }
                 "set_definition" => {
                     self.refuse_dangling_run(&draft)?;
                     draft.sets.push(self.lower_set_definition(child)?);
@@ -542,6 +562,88 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             metadata_bytes: self.metadata_bytes,
             warnings: self.warnings,
         })
+    }
+
+    fn lower_labels_entry(
+        &mut self,
+        node: Node<'_>,
+    ) -> Result<Vec<ParsedLabelDeclaration>, CompileError> {
+        self.check_recovery_subtree(node)?;
+        let map = required_field(self.source, &self.source_label, node, "value", "labels_map")?;
+        let mut declarations: Vec<ParsedLabelDeclaration> = Vec::new();
+        let mut cursor = map.walk();
+        for field in map.named_children(&mut cursor) {
+            let attribute_node = required_field(
+                self.source,
+                &self.source_label,
+                field,
+                "attribute",
+                "attribute_key",
+            )?;
+            let attribute_name = self.text(attribute_node)?;
+            let attribute = AttributeKey::new(attribute_name).map_err(|error| {
+                self.error(
+                    attribute_node,
+                    DiagnosticCode::Syntax,
+                    format!("invalid token attribute `{attribute_name}`: {error}"),
+                )
+            })?;
+            if declarations
+                .iter()
+                .any(|declared| declared.attribute == attribute)
+            {
+                return Err(self.error(
+                    attribute_node,
+                    DiagnosticCode::Syntax,
+                    format!("`labels:` declares `{attribute_name}` twice"),
+                ));
+            }
+            let value = field.child_by_field_name("value").ok_or_else(|| {
+                self.error(field, DiagnosticCode::Syntax, "labels field has no value")
+            })?;
+            let set = match value.kind() {
+                "metadata_string" | "labels_name_list" => {
+                    let names: Vec<Node<'_>> = if value.kind() == "metadata_string" {
+                        vec![value]
+                    } else {
+                        let mut names_cursor = value.walk();
+                        value.named_children(&mut names_cursor).collect()
+                    };
+                    let mut sets: Vec<&'static crate::fsm::labels::NamedLabelSet> = Vec::new();
+                    for name_node in names {
+                        let name = self.metadata_string_text(name_node)?;
+                        let set = crate::fsm::labels::named_label_set(&name, &attribute).map_err(
+                            |message| self.error(name_node, DiagnosticCode::Syntax, message),
+                        )?;
+                        if sets.contains(&set) {
+                            return Err(self.error(
+                                name_node,
+                                DiagnosticCode::Syntax,
+                                format!("`labels:` names the set \"{name}\" twice"),
+                            ));
+                        }
+                        sets.push(set);
+                    }
+                    crate::fsm::labels::LabelSet::Named(sets.into_boxed_slice())
+                }
+                "value_set" => {
+                    crate::fsm::labels::LabelSet::explicit(self.lower_finite_values(value, false)?)
+                }
+                _ => {
+                    return Err(self.error(
+                        value,
+                        DiagnosticCode::UnknownNode,
+                        "labels field has an unknown value node",
+                    ));
+                }
+            };
+            declarations.push(ParsedLabelDeclaration {
+                attribute,
+                set,
+                span: self.span_of(field)?,
+            });
+        }
+        Ok(declarations)
     }
 
     fn lower_analyzer_entry(

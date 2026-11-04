@@ -6,6 +6,7 @@ mod annotation_export;
 mod artifact_fingerprint_golden;
 mod attributes;
 mod catalog_input;
+mod catalog_labels;
 mod cli;
 mod cli_shape;
 mod completions;

@@ -335,6 +335,9 @@ pub enum DiagnosticCode {
     /// An enhanced graph component has no exact-width-one surface anchor.
     EnhancedGraphComponentUnanchored,
     LimitExceeded,
+    /// An attribute literal outside the label set its file's `labels:` entry
+    /// declares for that attribute.
+    LabelOutsideDeclaredSet,
 }
 
 impl DiagnosticCode {
@@ -413,6 +416,7 @@ impl DiagnosticCode {
             Self::DuplicateGroupDefinition => "DuplicateGroupDefinition",
             Self::LiteralEntryForDerivedGroup => "LiteralEntryForDerivedGroup",
             Self::LimitExceeded => "LimitExceeded",
+            Self::LabelOutsideDeclaredSet => "LabelOutsideDeclaredSet",
         }
     }
 }

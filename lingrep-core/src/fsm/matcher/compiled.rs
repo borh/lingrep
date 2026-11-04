@@ -157,6 +157,7 @@ pub struct CompiledCatalog {
     required_attributes: Box<[AttributeKey]>,
     catalog_policy: crate::fsm::policy::CatalogPolicy,
     analyzer_constraints: Box<[CatalogAnalyzerConstraint]>,
+    label_declarations: Box<[crate::fsm::LabelDeclaration]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -311,6 +312,7 @@ impl CompiledCatalog {
             required_attributes: Box::default(),
             catalog_policy: crate::fsm::policy::CatalogPolicy::default(),
             analyzer_constraints: Box::default(),
+            label_declarations: Box::default(),
         }
     }
 
@@ -364,6 +366,18 @@ impl CompiledCatalog {
         constraints: Vec<CatalogAnalyzerConstraint>,
     ) {
         self.analyzer_constraints = constraints.into_boxed_slice();
+    }
+
+    pub(crate) fn install_label_declarations(
+        &mut self,
+        declarations: Vec<crate::fsm::LabelDeclaration>,
+    ) {
+        self.label_declarations = declarations.into_boxed_slice();
+    }
+
+    /// The catalog's `labels:` fields, in source order.
+    pub fn label_declarations(&self) -> &[crate::fsm::LabelDeclaration] {
+        &self.label_declarations
     }
 
     pub fn analyzer_constraints(&self) -> &[CatalogAnalyzerConstraint] {
@@ -1080,13 +1094,19 @@ impl CompiledCatalog {
         self.required_attributes.to_vec()
     }
 
-    /// Attributes that matching or compiled catalog policy can read.
+    /// Attributes that matching, compiled catalog policy, or the label-set count
+    /// can read.
     #[must_use]
     pub fn execution_attributes(&self) -> Vec<AttributeKey> {
         self.required_attributes
             .iter()
             .cloned()
             .chain(self.catalog_policy.projected_attributes())
+            .chain(
+                self.label_declarations
+                    .iter()
+                    .map(|declaration| declaration.attribute().clone()),
+            )
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()

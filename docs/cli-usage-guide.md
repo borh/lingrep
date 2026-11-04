@@ -480,6 +480,20 @@ Unavailable attributes never change the exit status; a refusal (a
 corpus; see
 [Discovery, explanation, and completion](#discovery-explanation-and-completion).
 
+### Values outside a catalog's label sets
+
+A corpus can carry an attribute under a different annotation scheme from the
+one the catalog's literals use. A catalog that tests ClearNLP's `dobj` over a
+UD parse, which writes `obj`, matches nothing, and `attribute_unavailable` does
+not report it because the attribute is present. When the catalog declares its
+label sets with `labels:` (see
+[Label sets](pattern-language-reference.md#label-sets)), a `matches` or
+`summarize` run whose corpus has values outside a declared set ends with
+`warning[label_outside_declared_set]`. The warning names the attribute, the
+set, and up to eight values with token counts, and does not change the exit
+status. The counts cover the sentences the run reads, which over a prepared
+corpus can be only those that the posting index selects.
+
 ## Scope conditioning with `--where`
 
 `--where` restricts the sentences presented to matching by document and

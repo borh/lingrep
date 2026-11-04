@@ -10,6 +10,7 @@ pub mod examples;
 pub mod explanation;
 mod identity;
 pub mod inline;
+pub(crate) mod labels;
 pub mod matcher;
 pub mod policy;
 /// Private: its only public surface is [`ProgramStats`] and
@@ -48,6 +49,7 @@ pub use identity::{
     COMPILER_SCHEMA_IDENTITY, GRAMMAR_SEMANTICS_REVISION, POLICY_SEMANTICS_IDENTITY,
 };
 pub use inline::normalize_inline_pattern;
+pub use labels::{LabelDeclaration, OutOfSetValues};
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
     CompiledLexiconDefinition, FsmBuilder, PredicateDigest, clear_pools,

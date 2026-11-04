@@ -28,6 +28,7 @@ mod bound_projection_contract;
 mod capture_key_test;
 mod catalog_drift_test;
 mod catalog_examples;
+mod catalog_labels_test;
 mod collexeme_lx_test;
 mod concord_lx_test;
 mod corpus_discovery;

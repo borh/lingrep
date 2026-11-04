@@ -30,10 +30,11 @@ duplicate definitions, undefined references, and cycles are compile errors.
 
 ## Reserved names
 
-`pattern`, `fragment`, `lexicon`, `set`, `test`, `group`, `defaults`, and `schema`
-cannot name a bare definition: `schema := …` parses as the block keyword and is a
-syntax error. An explicit declaration avoids the collision — `pattern schema := …`
-is legal. `set`, `test`, and `group` also cannot be metadata keys. `metadata` and
+`pattern`, `fragment`, `lexicon`, `set`, `test`, `group`, `defaults`, `schema`,
+`analyzer`, and `labels` cannot name a bare definition: `schema := …` parses as
+the block keyword and is a syntax error. An explicit declaration avoids the
+collision — `pattern schema := …` is legal. `set`, `test`, `group`, `analyzer`,
+and `labels` also cannot be metadata keys. `metadata` and
 `begin` are not keywords and are legal names.
 
 ## Sets
@@ -469,6 +470,52 @@ variable-length `matched_by` list; `summarize --tsv` carries terms and typed
 segment lists. `resolve` and `detach` may not
 select one, and lexicons may not declare `transform:` or `render:`. The policy
 subject `patterns` selects ordinary patterns and excludes lexicons.
+
+## Label sets
+
+A `labels:` entry declares, per attribute, the label set the file's literals
+belong to. It precedes every annotation and definition, and a file has at most
+one.
+
+```pattern
+labels: {
+  upos: "ud-v2",
+  dep.rel: ["clearnlp", "ud-v2"],
+  xpos: "penn",
+  feat.VerbForm: {Fin, Ger, Inf, Part}
+}
+
+pattern passive := (?<v> [upos=VERB]) (?<s> []) where $v -[nsubjpass | nsubj:pass]-> $s.
+```
+
+A value is a named set, a list of named sets whose union applies, or an
+explicit `{…}` set:
+
+| Name | Attribute | Values |
+|---|---|---|
+| `ud-v2` | `upos` | the 17 UD v2 universal POS tags |
+| `spacy` | `upos` | `ud-v2` and `SPACE`, which spaCy assigns to whitespace tokens |
+| `ud-v2` | `dep.rel` | the 37 UD v2 universal relations; a subtype such as `nsubj:pass` is checked by its base |
+| `clearnlp` | `dep.rel` | the relations of spaCy's English parsers, with the root as `ROOT` or `root` |
+| `penn` | `xpos` | the Penn Treebank tags of spaCy's English taggers |
+
+Every literal of a declared attribute in the file's definitions must be in its
+set: values after `=`, `!=`, `in`, `not in`, `has` and `has any`, members of a
+referenced `set`, and basic and enhanced `where` relation labels, where
+`nsubj:*` is checked as `nsubj`. A literal outside the set is a compile error.
+Regex and substring tests are not checked. The declaration applies to the file
+it appears in, so a catalog built from several files can combine files written
+for different schemes.
+
+A `matches` or `summarize` run also counts, over the sentences it reads, the
+tokens whose value of a declared attribute is outside its set, and reports them
+after the run as `warning[label_outside_declared_set]`, naming up to eight
+values with token counts. The warning does not change the exit status. Such
+values show that the corpus uses labels outside the catalog's scheme, as when a
+ClearNLP catalog runs over a UD parse and its `dobj` tests match nothing.
+Over a prepared corpus, a run can read only the sentences that the posting
+index selects for the catalog's `lemma` and `unidic.pos1` tests, and the counts
+then cover those sentences alone.
 
 ## Policy block
 

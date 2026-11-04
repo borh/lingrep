@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A catalog file can declare, per attribute, the label set its literals belong
+  to: `labels: { upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn" }`,
+  or an explicit `{…}` set. A literal outside its declared set is a compile
+  error. When the corpus has values outside a declared set, a `matches` or
+  `summarize` run ends with `warning[label_outside_declared_set]` and token
+  counts. Named sets are `ud-v2`, `spacy`, `clearnlp` and `penn`. `labels` is a
+  reserved word, like `analyzer`.
 - `summarize --by-document` counts each group per admitted document. Each
   query/v2 `summary` record carries a `document` ordinal, and a new `document`
   record gives the source name and admitted sentence and token counts of every

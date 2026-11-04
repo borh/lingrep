@@ -5146,7 +5146,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5679,7 +5679,7 @@ checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
 [[package]]
 name = "tree-sitter-lingrep"
 version = "0.1.0"
-source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=0f720e48d8899c76f47744dc3952745365c0da62#0f720e48d8899c76f47744dc3952745365c0da62"
+source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=800f9a076b7c2bd7782ff613e1804fb32726312e#800f9a076b7c2bd7782ff613e1804fb32726312e"
 dependencies = [
  "cc",
  "tree-sitter-language",

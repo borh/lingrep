@@ -119,6 +119,74 @@ pub(crate) fn analyzer_name(record: &lingrep_corpus::AnalyzerRecord) -> String {
     format!("{} {}", record.family, record.profile)
 }
 
+const MAX_NAMED_OUT_OF_SET_VALUES: usize = 8;
+
+/// One `label_outside_declared_set` message per declaration for which the
+/// corpus has values outside the set, naming the most frequent values with
+/// token counts.
+pub(crate) fn out_of_set_label_messages(
+    declarations: &[lingrep_core::fsm::LabelDeclaration],
+    observed: &[lingrep_core::fsm::OutOfSetValues],
+) -> Vec<String> {
+    declarations
+        .iter()
+        .zip(observed)
+        .filter(|(_, values)| !values.is_empty())
+        .map(|(declaration, values)| {
+            let mut counted: Vec<(&str, u64)> = values
+                .values
+                .iter()
+                .map(|(value, count)| (value.as_str(), *count))
+                .collect();
+            counted.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(right.0)));
+            let mut named: Vec<String> = counted
+                .iter()
+                .take(MAX_NAMED_OUT_OF_SET_VALUES)
+                .map(|(value, count)| format!("`{value}` ({count})"))
+                .collect();
+            let elided_tokens = counted
+                .iter()
+                .skip(MAX_NAMED_OUT_OF_SET_VALUES)
+                .map(|(_, count)| count)
+                .sum::<u64>()
+                + values.untracked_tokens;
+            if elided_tokens > 0 {
+                named.push(format!("{elided_tokens} tokens with other values"));
+            }
+            format!(
+                "the corpus has `{}` values outside the label set `{}` declared at {}:{}: {}; \
+                 the catalog's literals may not match this corpus's annotation scheme",
+                declaration.attribute().as_str(),
+                declaration.set_name(),
+                declaration.source_name(),
+                declaration.line(),
+                named.join(", ")
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn write_out_of_set_label_notices(
+    declarations: &[lingrep_core::fsm::LabelDeclaration],
+    observed: &[lingrep_core::fsm::OutOfSetValues],
+    config: &ExecutionCliConfig,
+    run_id: &str,
+) -> Result<(), CliError> {
+    for message in out_of_set_label_messages(declarations, observed) {
+        crate::commands::query_support::write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Matching,
+            "label_outside_declared_set",
+            message,
+            Some(run_id),
+            Vec::new(),
+        )
+        .map_err(CliError::Io)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -113,6 +113,9 @@ pub struct ExecutionReport {
     /// claim true. A caller that asks for an unbounded explanation cannot: the
     /// request is a number.
     pub trace: Option<crate::fsm::PolicyTrace>,
+    /// Indexed like [`CompiledCatalog::label_declarations`](crate::fsm::CompiledCatalog::label_declarations),
+    /// or empty when no sentence was observed.
+    pub out_of_set_labels: Vec<crate::fsm::OutOfSetValues>,
 }
 
 impl ExecutionReport {
@@ -569,6 +572,7 @@ where
         &mut adapted,
         observer,
         scope,
+        fsm.compiled.label_declarations(),
         |sentences| {
             BoundSentenceMatcher::new(fsm)
                 .match_all(pool, sentences)
@@ -650,6 +654,7 @@ where
         &mut adapted,
         observer,
         scope,
+        fsm.label_declarations(),
         |sentences| SentenceMatcher::new(fsm).match_all(pool, sentences),
     )?;
     let stats = sealed.stats();
@@ -778,6 +783,7 @@ fn execute_bound_with_matcher<S, A, K, P, O, M>(
     progress: &mut P,
     observer: &mut O,
     scope: &SentenceAdmission,
+    labels: &[crate::fsm::LabelDeclaration],
     mut match_batch: M,
 ) -> Result<RunOutcome, ExecutionError>
 where
@@ -797,7 +803,7 @@ where
     }
 
     std::thread::scope(|threads| {
-        let mut state = PublicationState::default();
+        let mut state = PublicationState::new(labels);
         let mut next_analyzed_corpus_sentence = 0_u64;
         let mut next_document_sentence = std::collections::BTreeMap::<u64, u64>::new();
         let mut feed = BatchFeed::new(threads, source, limits, cancel);
@@ -1017,6 +1023,7 @@ where
 struct PublicationState {
     current: ExecutionReport,
     logical_pending: usize,
+    labels: Box<[crate::fsm::LabelDeclaration]>,
 }
 
 impl PublicationState {
@@ -1024,11 +1031,23 @@ impl PublicationState {
         self.current.admit(sentence_count)
     }
 
+    fn new(labels: &[crate::fsm::LabelDeclaration]) -> Self {
+        Self {
+            labels: labels.into(),
+            ..Self::default()
+        }
+    }
+
     fn observe_match(
         &mut self,
         sentence: &dyn TokenSequence,
         matches: &[Match],
     ) -> Result<(), ExecutionError> {
+        crate::fsm::labels::observe_out_of_set(
+            &self.labels,
+            sentence,
+            &mut self.current.out_of_set_labels,
+        );
         self.current.observe_match(sentence, matches)
     }
 
@@ -1075,6 +1094,7 @@ fn execute_with_matcher<S, F, K, P, O, M>(
     progress: &mut P,
     observer: &mut O,
     scope: &SentenceAdmission,
+    labels: &[crate::fsm::LabelDeclaration],
     mut match_batch: M,
 ) -> Result<RunOutcome, ExecutionError>
 where
@@ -1094,7 +1114,7 @@ where
     }
 
     std::thread::scope(|threads| {
-        let mut state = PublicationState::default();
+        let mut state = PublicationState::new(labels);
         let mut feed = BatchFeed::new(threads, source, limits, cancel);
         loop {
             if cancel.is_cancelled() {
@@ -1853,6 +1873,7 @@ mod tests {
                 Ok(())
             },
             &SentenceAdmission::All,
+            &[],
             |sentences| {
                 matcher_calls += 1;
                 vec![Vec::new(); sentences.len()]
@@ -1895,6 +1916,7 @@ mod tests {
                 Ok(())
             },
             &SentenceAdmission::All,
+            &[],
             |sentences| {
                 matcher_calls += 1;
                 vec![Vec::new(); sentences.len()]
@@ -1937,6 +1959,7 @@ mod tests {
             &mut NoopProgress,
             &mut |_observation: TokenizedBatchObservation| Ok(()),
             &SentenceAdmission::All,
+            &[],
             |sentences| {
                 matcher_calls += 1;
                 matcher_cancel.cancel();
@@ -1991,6 +2014,7 @@ mod tests {
                 Ok(())
             },
             &SentenceAdmission::All,
+            &[],
             |sentences| {
                 matcher_calls += 1;
                 vec![Vec::new(); sentences.len()]

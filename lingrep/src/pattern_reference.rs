@@ -258,6 +258,19 @@ Repeat `analyzer:` to declare alternatives. A result key is an ordered list:
 Lexicons may also project `term` and `segments(ATTR)`. `key: none` removes a
 default key.
 
+LABEL SETS
+
+  labels: {upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn",
+           feat.VerbForm: {Fin, Ger, Inf, Part}}
+
+One `labels:` entry may appear before any annotation or definition. It names,
+per attribute, the label set the file's literals belong to: a named set, a
+union of named sets, or an explicit `{…}` list. A literal outside its set is a
+compile error. A `matches` or `summarize` run warns with token counts when the
+corpus has values outside a declared set. Named sets: `ud-v2` (upos; dep.rel, where `nsubj:pass` is
+checked by `nsubj`), `spacy` (upos: ud-v2 and SPACE), `clearnlp` (dep.rel), and
+`penn` (xpos).
+
 COMPILER-OWNED METADATA
 
 These annotations control publication and require no `schema` declaration:

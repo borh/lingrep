@@ -30,6 +30,8 @@
 (defaults_block "end" @keyword)
 (schema_block "schema" @keyword)
 (schema_block "end" @keyword)
+(labels_entry "labels" @keyword)
+(labels_field attribute: (attribute_key) @property)
 
 ; Policy: a third block keyword, and a verb that is a keyword only inside it.
 ; The argument key highlights as a property for the same reason a metadata key
