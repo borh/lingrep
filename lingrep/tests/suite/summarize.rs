@@ -18,7 +18,9 @@ use std::path::PathBuf;
 
 use lingrep::direct_source::matched_surface;
 use lingrep::protocol::validate_query_jsonl;
-use lingrep::summary::{AggregationGroup, AggregationInput, SummaryAggregator, SummaryRow};
+use lingrep::summary::{
+    AggregationGroup, AggregationInput, SummaryAggregator, SummaryPartition, SummaryRow,
+};
 use lingrep_core::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
 use lingrep_core::corpus::DocumentId;
 use lingrep_core::execution::{
@@ -42,7 +44,7 @@ use crate::support::{
 
 fn row(pattern_ordinal: u64, rank: u64, surface: &'static str, count: u64) -> SummaryRow {
     SummaryRow {
-        pattern_ordinal,
+        partition: SummaryPartition::pattern(pattern_ordinal),
         rank,
         group: AggregationGroup::Surface(surface.to_owned()),
         count,
@@ -58,7 +60,7 @@ fn summarize_fixture(
     let mut summary = SummaryAggregator::with_limits(resident_key_limit, 2, max_temp_bytes, 2)?;
     for &(pattern_ordinal, surface) in input {
         summary.add(
-            pattern_ordinal,
+            SummaryPartition::pattern(pattern_ordinal),
             AggregationInput::Surface(surface.to_owned()),
         )?;
     }
@@ -85,7 +87,9 @@ fn aggregation_input(group: &AggregationGroup) -> AggregationInput<'_> {
 fn finalize_groups(groups: &[AggregationGroup]) -> Vec<SummaryRow> {
     let mut summary = SummaryAggregator::with_limits(1, 2, u64::MAX, 2).unwrap();
     for group in groups {
-        summary.add(0, aggregation_input(group)).unwrap();
+        summary
+            .add(SummaryPartition::pattern(0), aggregation_input(group))
+            .unwrap();
     }
     let mut finalized = summary.finalize().unwrap();
     let mut rows = Vec::new();
@@ -342,13 +346,15 @@ fn cross_variant_groups_merge_into_one_row_across_shards() {
         // Engagement at one key forces the sharded path immediately.
         let mut summary = SummaryAggregator::with_limits(1, 2, u64::MAX, shards).unwrap();
         for group in [&ordinary, &lexical, &ordinary, &lexical, &lexical] {
-            summary.add(7, aggregation_input(group)).unwrap();
+            summary
+                .add(SummaryPartition::pattern(7), aggregation_input(group))
+                .unwrap();
         }
         let mut finalized = summary.finalize().unwrap();
         let mut rows = Vec::new();
         finalized
             .visit(None, |row| {
-                rows.push((row.pattern_ordinal, row.count));
+                rows.push((row.partition.pattern_ordinal, row.count));
                 Ok(())
             })
             .unwrap();
@@ -375,7 +381,10 @@ fn shard_count_does_not_change_published_rows() {
         let mut summary = SummaryAggregator::with_limits(1, 2, u64::MAX, shards).unwrap();
         for (ordinal, group) in groups.iter().enumerate() {
             summary
-                .add((ordinal % 3) as u64, aggregation_input(group))
+                .add(
+                    SummaryPartition::pattern((ordinal % 3) as u64),
+                    aggregation_input(group),
+                )
                 .unwrap();
         }
         let mut finalized = summary.finalize().unwrap();
@@ -400,7 +409,10 @@ fn temp_exhaustion_is_exact_and_publishes_no_rows() {
 
     let result = (|| {
         for surface in ["一", "二", "三", "四"] {
-            summary.add(0, AggregationInput::Surface(surface.to_owned()))?;
+            summary.add(
+                SummaryPartition::pattern(0),
+                AggregationInput::Surface(surface.to_owned()),
+            )?;
         }
         let mut finalized = summary.finalize()?;
         finalized.visit(None, |row| {
@@ -848,6 +860,137 @@ fn cancellation_before_finalize_publishes_no_summary_or_complete() {
             .collect::<Vec<_>>(),
         ["run", "definition"]
     );
+}
+
+#[test]
+fn by_document_publishes_every_document_with_an_admitted_sentence() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("documents.jsonl");
+    fs::write(
+        &input,
+        "{\"text\":\"猫。猫。\",\"metadata\":{\"id\":\"first\"}}\n\
+         {\"text\":\"犬。\",\"metadata\":{\"id\":\"second\"}}\n\
+         {\"text\":\"\",\"metadata\":{\"id\":\"empty\"}}\n\
+         {\"text\":\"猫。犬。\",\"metadata\":{\"id\":\"third\"}}\n",
+    )
+    .unwrap();
+    let artifact = directory.path().join("documents.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_success(&built);
+
+    let mut published = Vec::new();
+    for prepared in [false, true] {
+        let mut command = lingrep();
+        command.args([
+            "--json",
+            "summarize",
+            "--pattern",
+            "cat := [text=猫].",
+            "--by-document",
+            "--source-metadata",
+            "@document.id",
+        ]);
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command
+                .arg("--dict-path")
+                .arg(dictionary.path())
+                .arg(&input);
+        }
+        let output = command.output().unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        let events = parse_jsonl(&output.stdout);
+        let documents = events
+            .iter()
+            .filter(|record| record["type"] == "document")
+            .map(|record| {
+                let data = &record["data"];
+                (
+                    data["document"].as_u64().unwrap(),
+                    data["sentences_admitted"].as_u64().unwrap(),
+                    data["tokens_admitted"].as_u64().unwrap(),
+                    data["source_metadata"]["document"]["id"].clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let ids = documents
+            .iter()
+            .map(|document| document.3.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["first", "second", "third"], "prepared={prepared}");
+        assert_eq!(
+            documents.iter().map(|document| document.1).sum::<u64>(),
+            5,
+            "prepared={prepared}"
+        );
+        let rows = summary_events(&events)
+            .into_iter()
+            .map(|record| {
+                (
+                    record["data"]["document"].as_u64().unwrap(),
+                    record["data"]["count"].as_u64().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [(documents[0].0, 2), (documents[2].0, 1)],
+            "prepared={prepared}"
+        );
+        assert_eq!(
+            event(&events, "complete")["data"]["counters"]["documents_admitted"],
+            4,
+            "prepared={prepared}"
+        );
+        published.push((documents, rows));
+    }
+    assert_eq!(published[0], published[1]);
+}
+
+#[test]
+fn by_document_rejects_output_and_metadata_it_cannot_publish() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("documents.jsonl");
+    fs::write(&input, "{\"text\":\"猫。\"}\n").unwrap();
+    for (case, json, extra) in [
+        ("tsv output", false, &["--by-document"][..]),
+        (
+            "sentence metadata",
+            true,
+            &["--by-document", "--source-metadata", "@sentence.id"][..],
+        ),
+        (
+            "metadata without --by-document",
+            true,
+            &["--source-metadata", "@document.id"][..],
+        ),
+    ] {
+        let mut command = lingrep();
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args(["summarize", "--pattern", "cat := [text=猫]."])
+            .args(extra)
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{case}");
+        assert_eq!(output.status.code(), Some(2), "{case}");
+    }
 }
 
 fn summary_events(events: &[Value]) -> Vec<&Value> {

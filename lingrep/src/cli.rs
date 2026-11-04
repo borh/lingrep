@@ -571,6 +571,21 @@ pub struct SummarizeArgs {
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
+    /// Count each group per admitted document, and publish each document's
+    /// admitted sentences and tokens as a `document` record (requires --json).
+    #[arg(long, help_heading = "Output")]
+    pub by_document: bool,
+
+    /// Publish @document.KEY on each `document` record (repeatable).
+    #[arg(
+        long = "source-metadata",
+        value_name = "KEY",
+        requires = "by_document",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub source_metadata: Vec<String>,
+
     /// Show N groups per pattern (text default: 20); `all` shows every group.
     ///
     /// Default: 20 in terminal output, unlimited with --json or --tsv.

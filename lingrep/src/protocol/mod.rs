@@ -168,16 +168,25 @@ where
             query::QueryEvent::Run(_) => return Err(ProtocolError::DuplicateRun),
             _ if !saw_run => return Err(ProtocolError::MissingRun),
             query::QueryEvent::Match(record) => {
-                match &record.source_metadata {
-                    None if metadata_keys.is_empty() => {},
-                    Some(values) if !metadata_keys.is_empty() && lingrep_core::corpus::SourceMetadataProjection::new(metadata_keys.clone()).is_ok_and(|projection|projection.validate_output(values).is_ok()) => {},
-                    _ => return Err(ProtocolError::InvalidSourceMetadata { message: "match metadata does not agree with the run projection or exceeds 64 KiB".into() }),
-                }
+                validate_record_metadata(
+                    "match",
+                    record.source_metadata.as_deref(),
+                    &metadata_keys,
+                )?;
 
                 validate_result_mode(run_mode.expect("run mode set"), "match")?;
                 set_result_kind(&mut result_kind, "match")?;
             }
             query::QueryEvent::Summary(_) => {
+                validate_result_mode(run_mode.expect("run mode set"), "summary")?;
+                set_result_kind(&mut result_kind, "summary")?;
+            }
+            query::QueryEvent::Document(record) => {
+                validate_record_metadata(
+                    "document",
+                    record.source_metadata.as_deref(),
+                    &metadata_keys,
+                )?;
                 validate_result_mode(run_mode.expect("run mode set"), "summary")?;
                 set_result_kind(&mut result_kind, "summary")?;
             }
@@ -209,6 +218,30 @@ where
     }
 }
 
+fn validate_record_metadata(
+    record: &str,
+    values: Option<&serde_json::Map<String, serde_json::Value>>,
+    metadata_keys: &[String],
+) -> Result<(), ProtocolError> {
+    let agrees = match values {
+        None => metadata_keys.is_empty(),
+        Some(values) => {
+            !metadata_keys.is_empty()
+                && lingrep_core::corpus::SourceMetadataProjection::new(metadata_keys.to_vec())
+                    .is_ok_and(|projection| projection.validate_output(values).is_ok())
+        }
+    };
+    if agrees {
+        Ok(())
+    } else {
+        Err(ProtocolError::InvalidSourceMetadata {
+            message: format!(
+                "{record} metadata does not agree with the run projection or exceeds 64 KiB"
+            ),
+        })
+    }
+}
+
 fn validate_query_run_lifecycle(run: &query::QueryRun) -> Result<(), ProtocolError> {
     let projection =
         lingrep_core::corpus::SourceMetadataProjection::new(run.published_source_metadata.clone())
@@ -216,10 +249,14 @@ fn validate_query_run_lifecycle(run: &query::QueryRun) -> Result<(), ProtocolErr
                 message: error.to_string(),
             })?;
     if projection.keys() != run.published_source_metadata
-        || (run.mode == query::QueryMode::Summarize && !projection.keys().is_empty())
+        || (run.mode == query::QueryMode::Summarize
+            && projection
+                .keys()
+                .iter()
+                .any(|key| !key.starts_with("@document.")))
     {
         return Err(ProtocolError::InvalidSourceMetadata {
-            message: "run metadata fields must be sorted, unique, and restricted to matches".into(),
+            message: "run metadata fields must be sorted and unique, and summarize publishes only @document fields".into(),
         });
     }
 
@@ -372,7 +409,14 @@ pub fn validate_query_jsonl(bytes: &[u8]) -> Result<(), ProtocolError> {
     validate_jsonl(
         bytes,
         query::SCHEMA,
-        &["run", "definition", "match", "summary", "complete"],
+        &[
+            "run",
+            "definition",
+            "match",
+            "document",
+            "summary",
+            "complete",
+        ],
         |line, value| {
             serde_json::from_value::<query::QueryEnvelope>(value)
                 .map_err(|error| classify_json_error(line, error))

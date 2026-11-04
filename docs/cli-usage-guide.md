@@ -348,6 +348,27 @@ attribute) is dropped from keyed output and counted in
 `counters.records_unkeyed`. It is never grouped under a partial key that could
 collide with another pattern's complete key.
 
+### Counting per document
+
+`--by-document` counts each group per admitted document, and `--top` ranks
+within each pattern and document. It requires `--json`. Every `summary` record
+carries the `document` ordinal, and before the rows the run publishes one
+`document` record per document with at least one admitted sentence: its
+`source_name`, `sentences_admitted` and `tokens_admitted`. A document with no
+match still has a `document` record, so the token count can normalize the
+frequencies. A document with no admitted sentence, such as an empty one, has
+no record but is still counted in `counters.documents_admitted`.
+`--source-metadata @document.KEY` adds the selected fields to each `document`
+record as `source_metadata.document`, as on a `match` record.
+
+```bash
+ling --json summarize --by-document --source-metadata @document.id \
+  --patterns patterns/sentence-final.lx corpus.jsonl
+```
+
+Over a prepared corpus `--by-document` reads every sentence, because the
+posting index has no per-document token counts.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term

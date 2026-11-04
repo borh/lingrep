@@ -121,6 +121,7 @@ fn raw_jsonl_query_validation_enforces_schema_and_full_event_grammar() {
     let complete = jsonl(query_complete());
     let summary = jsonl(QueryEnvelope::new(QueryEvent::Summary(SummaryData {
         pattern: "p".into(),
+        document: None,
         group: SummaryGroupData::Surface {
             value: "猫".into()
         },
@@ -768,6 +769,7 @@ fn query_validator_rejects_matches_when_run_mode_is_summarize() {
 fn query_validator_rejects_summaries_when_run_mode_is_matches() {
     let summary = QueryEnvelope::new(QueryEvent::Summary(SummaryData {
         pattern: "p".into(),
+        document: None,
         group: SummaryGroupData::Surface {
             value: "猫".into()
         },
@@ -1055,6 +1057,7 @@ fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
             "query-summary",
             jsonl(QueryEnvelope::new(QueryEvent::Summary(SummaryData {
                 pattern: "p".into(),
+                document: None,
                 group: SummaryGroupData::Surface {
                     value: "猫".into()
                 },

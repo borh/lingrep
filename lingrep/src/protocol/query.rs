@@ -32,7 +32,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                 },
                 StreamPhase {
                     name: "results",
-                    events: &["match", "summary"],
+                    events: &["match", "document", "summary"],
                     min: 0,
                     max: None,
                 },
@@ -89,6 +89,7 @@ pub enum QueryEvent {
     Definition(DefinitionData),
     Match(MatchData),
     Summary(SummaryData),
+    Document(DocumentData),
     Complete(QueryComplete),
 }
 
@@ -102,6 +103,7 @@ impl QueryEvent {
             Self::Definition(_) => "definition",
             Self::Match(_) => "match",
             Self::Summary(_) => "summary",
+            Self::Document(_) => "document",
             Self::Complete(_) => "complete",
         }
     }
@@ -743,9 +745,27 @@ pub struct LexicalMatchData {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SummaryData {
     pub pattern: String,
+    /// The document ordinal this count is confined to, under `--by-document`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<u64>,
     pub group: SummaryGroupData,
     pub count: u64,
     pub rank: u64,
+}
+
+/// One document with at least one admitted sentence in a `--by-document`
+/// summary, published whether or not any pattern matched in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DocumentData {
+    pub document: u64,
+    pub source_name: String,
+    pub sentences_admitted: u64,
+    pub tokens_admitted: u64,
+    /// The `@document.KEY` fields selected with `--source-metadata`, shaped
+    /// as on a `match` record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "source_metadata_schema")]
+    pub source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
 }
 
 #[derive(

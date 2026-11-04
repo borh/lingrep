@@ -22,6 +22,7 @@ fn broken_pipe_is_typed_for_authoritative_jsonl() {
     let event = QueryEnvelope::new(lingrep::protocol::query::QueryEvent::Summary(
         lingrep::protocol::query::SummaryData {
             pattern: "p".into(),
+            document: None,
             group: lingrep::protocol::query::SummaryGroupData::Surface {
                 value: "猫".into()
             },

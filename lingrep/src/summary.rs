@@ -1,4 +1,4 @@
-//! Exact bounded aggregation for `(authored pattern, typed group)` keys.
+//! Exact bounded aggregation for `(authored pattern, document, typed group)` keys.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -94,9 +94,28 @@ fn resolve_value(value: ValueId, values: &[Box<str>]) -> io::Result<String> {
         .ok_or_else(|| io::Error::other("summary key value is out of range"))
 }
 
+/// The rows ranked together: one authored pattern, and under `--by-document`
+/// one admitted document of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SummaryPartition {
+    pub pattern_ordinal: u64,
+    pub document_ordinal: Option<u64>,
+}
+
+impl SummaryPartition {
+    /// The partition of a summary that is not split by document.
+    #[must_use]
+    pub const fn pattern(pattern_ordinal: u64) -> Self {
+        Self {
+            pattern_ordinal,
+            document_ordinal: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SummaryRow {
-    pub pattern_ordinal: u64,
+    pub partition: SummaryPartition,
     pub rank: u64,
     pub group: AggregationGroup,
     pub count: u64,
@@ -104,13 +123,13 @@ pub struct SummaryRow {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct SummaryKey {
-    pattern_ordinal: u64,
+    partition: SummaryPartition,
     group: StoredGroup,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SummaryOrder {
-    pattern_ordinal: u64,
+    partition: SummaryPartition,
     count: usize,
     group: StoredGroup,
 }
@@ -444,9 +463,9 @@ impl Ord for OwnedAggregationInput {
 /// exactly as an ordinary key value does and both key variants share a tag.
 /// Field names stand in for the interned schema id — equality of names is
 /// equality of schema. The hash never leaves the process.
-pub(crate) fn shard_hash(pattern_ordinal: u64, group: &OwnedAggregationInput) -> u64 {
+pub(crate) fn shard_hash(partition: SummaryPartition, group: &OwnedAggregationInput) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
-    pattern_ordinal.hash(&mut hasher);
+    partition.hash(&mut hasher);
     fn hash_key_parts<'a>(
         hasher: &mut rustc_hash::FxHasher,
         names: impl Iterator<Item = &'a str>,
@@ -512,9 +531,7 @@ pub enum AggregationGroup {
 
 impl PartialEq for SummaryOrder {
     fn eq(&self, other: &Self) -> bool {
-        self.pattern_ordinal == other.pattern_ordinal
-            && self.count == other.count
-            && self.group == other.group
+        self.partition == other.partition && self.count == other.count && self.group == other.group
     }
 }
 
@@ -528,8 +545,8 @@ impl PartialOrd for SummaryOrder {
 
 impl Ord for SummaryOrder {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.pattern_ordinal
-            .cmp(&other.pattern_ordinal)
+        self.partition
+            .cmp(&other.partition)
             .then_with(|| other.count.cmp(&self.count))
             .then_with(|| self.group.cmp(&other.group))
     }
@@ -540,7 +557,7 @@ enum ShardRequest {
     /// Groups to count with the tally each already carries: one for a scanned
     /// record, more for an entry migrated from the inline buffer. Groups
     /// arrive as strings; the shard interns them into its own local domain.
-    Batch(Vec<(u64, OwnedAggregationInput, usize)>),
+    Batch(Vec<(SummaryPartition, OwnedAggregationInput, usize)>),
     /// The end of the scan's additions: the shard answers on its dedicated
     /// snapshot channel with its local identity domain — vocabulary and key
     /// schemas — so the scan can compute the canonical global ranks the
@@ -577,7 +594,7 @@ struct Shard {
     snapshots: Receiver<ShardSnapshot>,
     thread: Option<JoinHandle<io::Result<SortedRunCounts<SummaryOrder>>>>,
     /// Groups awaiting dispatch to this shard's thread.
-    batch: Vec<(u64, OwnedAggregationInput, usize)>,
+    batch: Vec<(SummaryPartition, OwnedAggregationInput, usize)>,
 }
 
 /// Joins a shard that refused a send or dropped its reply channel, which it
@@ -811,15 +828,9 @@ fn shard_thread(
     for request in &receiver {
         match request {
             ShardRequest::Batch(batch) => {
-                for (pattern_ordinal, group, count) in batch {
-                    let group = store.store(pattern_ordinal, group.as_input())?;
-                    counts.add(
-                        SummaryKey {
-                            pattern_ordinal,
-                            group,
-                        },
-                        count,
-                    )?;
+                for (partition, group, count) in batch {
+                    let group = store.store(partition.pattern_ordinal, group.as_input())?;
+                    counts.add(SummaryKey { partition, group }, count)?;
                 }
             }
             ShardRequest::Snapshot => {
@@ -849,7 +860,7 @@ fn shard_thread(
                 while let Some((key, count)) = drain.next_entry()? {
                     ordered.add(
                         SummaryOrder {
-                            pattern_ordinal: key.pattern_ordinal,
+                            partition: key.partition,
                             count,
                             group: key.group.canonicalize(&schema_remap, &value_ranks)?,
                         },
@@ -878,7 +889,7 @@ fn shard_thread(
 /// catalogs that motivated sharding the inline phase is a fraction of a
 /// percent of the scan.
 enum ScanMode {
-    Inline(BTreeMap<(u64, OwnedAggregationInput), usize>),
+    Inline(BTreeMap<(SummaryPartition, OwnedAggregationInput), usize>),
     Sharded(ShardPool),
 }
 
@@ -966,11 +977,11 @@ impl SummaryAggregator {
                 batch: Vec::with_capacity(AGGREGATION_BATCH_KEYS),
             });
         }
-        for ((pattern_ordinal, group), count) in tallies {
-            let hash = shard_hash(pattern_ordinal, &group);
+        for ((partition, group), count) in tallies {
+            let hash = shard_hash(partition, &group);
             let index = (hash % pool.shards.len() as u64) as usize;
             let shard = &mut pool.shards[index];
-            shard.batch.push((pattern_ordinal, group, count));
+            shard.batch.push((partition, group, count));
             if shard.batch.len() >= AGGREGATION_BATCH_KEYS {
                 dispatch_shard(shard)?;
             }
@@ -979,8 +990,12 @@ impl SummaryAggregator {
         Ok(())
     }
 
-    pub fn add(&mut self, pattern_ordinal: u64, group: AggregationInput<'_>) -> io::Result<()> {
-        self.add_group(pattern_ordinal, group.into_owned(), None)
+    pub fn add(
+        &mut self,
+        partition: SummaryPartition,
+        group: AggregationInput<'_>,
+    ) -> io::Result<()> {
+        self.add_group(partition, group.into_owned(), None)
     }
 
     /// [`Self::add`] with the group already owned and its routing hash
@@ -989,22 +1004,22 @@ impl SummaryAggregator {
     /// exactly this group.
     pub(crate) fn add_owned_prehashed(
         &mut self,
-        pattern_ordinal: u64,
+        partition: SummaryPartition,
         group: OwnedAggregationInput,
         hash: u64,
     ) -> io::Result<()> {
-        self.add_group(pattern_ordinal, group, Some(hash))
+        self.add_group(partition, group, Some(hash))
     }
 
     fn add_group(
         &mut self,
-        pattern_ordinal: u64,
+        partition: SummaryPartition,
         group: OwnedAggregationInput,
         hash: Option<u64>,
     ) -> io::Result<()> {
         match &mut self.mode {
             ScanMode::Inline(tallies) => {
-                let count = tallies.entry((pattern_ordinal, group)).or_insert(0);
+                let count = tallies.entry((partition, group)).or_insert(0);
                 *count = count
                     .checked_add(1)
                     .ok_or_else(|| io::Error::other("summary count overflow"))?;
@@ -1013,10 +1028,10 @@ impl SummaryAggregator {
                 }
             }
             ScanMode::Sharded(pool) => {
-                let hash = hash.unwrap_or_else(|| shard_hash(pattern_ordinal, &group));
+                let hash = hash.unwrap_or_else(|| shard_hash(partition, &group));
                 let index = (hash % pool.shards.len() as u64) as usize;
                 let shard = &mut pool.shards[index];
-                shard.batch.push((pattern_ordinal, group, 1));
+                shard.batch.push((partition, group, 1));
                 if shard.batch.len() >= AGGREGATION_BATCH_KEYS {
                     dispatch_shard(shard)?;
                 }
@@ -1132,11 +1147,11 @@ impl FinalizedSummary {
         for drain in &mut drains {
             heads.push(drain.next_entry()?.map(|(entry, _count)| entry));
         }
-        let mut current_pattern = None;
+        let mut current_partition = None;
         let mut rank = 0_u64;
         let mut emitted = 0_u64;
         // The selection is a scan over at most `shards` heads. Two heads never
-        // tie: a tie would need one (pattern, count, group) on two shards,
+        // tie: a tie would need one (partition, count, group) on two shards,
         // and a group lives on exactly one.
         while let Some(next) = heads
             .iter()
@@ -1147,8 +1162,8 @@ impl FinalizedSummary {
         {
             let entry = heads[next].take().expect("selected head exists");
             heads[next] = drains[next].next_entry()?.map(|(entry, _count)| entry);
-            if current_pattern != Some(entry.pattern_ordinal) {
-                current_pattern = Some(entry.pattern_ordinal);
+            if current_partition != Some(entry.partition) {
+                current_partition = Some(entry.partition);
                 rank = 0;
             }
             rank = rank
@@ -1160,7 +1175,7 @@ impl FinalizedSummary {
             let count = u64::try_from(entry.count)
                 .map_err(|_| io::Error::other("summary count exceeds u64"))?;
             visitor(&SummaryRow {
-                pattern_ordinal: entry.pattern_ordinal,
+                partition: entry.partition,
                 rank,
                 group: materialize_group(&entry.group, &self.key_schemas, &self.values)?,
                 count,

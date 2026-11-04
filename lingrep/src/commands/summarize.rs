@@ -30,14 +30,15 @@ use crate::output::{SummaryTsvRow, sanitize_terminal, write_summary_tsv};
 use crate::presentation::{OutputMode, ResultDelivery, resolve_summary_top};
 use crate::protocol::diagnostic::DiagnosticStage;
 use crate::protocol::query::{
-    Coverage, DefinitionBody, DefinitionData, InventoryStats, MatchOrder, ProtocolKeyField,
-    QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters,
-    SourceSpan, SpanConvention, SummaryData, SummaryGroupData, TemporaryStorageLimits, Termination,
+    Coverage, DefinitionBody, DefinitionData, DocumentData, InventoryStats, MatchOrder,
+    ProtocolKeyField, QueryComplete, QueryEnvelope, QueryEvent, QueryMode, QueryRun,
+    ResourceHighWater, RunCounters, SourceSpan, SpanConvention, SummaryData, SummaryGroupData,
+    TemporaryStorageLimits, Termination,
 };
 use crate::protocol::write_jsonl;
 use crate::summary::{
     AggregationGroup, AggregationInput, FinalizedSummary, OwnedAggregationInput, SummaryAggregator,
-    SummaryRow, shard_hash,
+    SummaryPartition, SummaryRow, shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -112,7 +113,7 @@ fn publish_summary_rows_and_complete(
     let mut publication_error = None;
     let visit_result = finalized.visit(top, |row| {
         let pattern = pattern_names
-            .get(row.pattern_ordinal as usize)
+            .get(row.partition.pattern_ordinal as usize)
             .ok_or_else(|| io::Error::other("summary pattern ordinal is out of range"))?;
         match writer.write_summary(pattern, row) {
             Ok(()) => Ok(()),
@@ -171,6 +172,29 @@ pub fn run(
         QueryMode::Summarize,
     )?;
 
+    if args.by_document && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "--by-document requires --json".to_owned(),
+        ));
+    }
+    if let Some(key) = args
+        .source_metadata
+        .iter()
+        .find(|key| !key.starts_with("@document."))
+    {
+        return Err(CliError::InvalidArgs(format!(
+            "summarize --source-metadata accepts only @document.KEY, not {key}"
+        )));
+    }
+    let metadata_projection = if args.source_metadata.is_empty() {
+        None
+    } else {
+        Some(
+            lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
+                .map_err(|error| CliError::InvalidArgs(error.to_string()))?,
+        )
+    };
+
     // Before query execution: direct execution is the default; `--cache`
     // observes ROOT, then reuses or creates a compatible artifact beside it.
     let resolved_corpus = crate::corpus_mode::resolve(
@@ -200,9 +224,11 @@ pub fn run(
         terminal,
         QueryMode::Summarize,
         false,
-        None,
+        metadata_projection.clone(),
         sample.filter(|_| args.sample.blocks),
-        sample.is_none() && scope_clause.is_none(),
+        // A sentence the posting index skips still counts toward its
+        // document's admitted tokens.
+        sample.is_none() && scope_clause.is_none() && !args.by_document,
     )?;
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
@@ -226,7 +252,9 @@ pub fn run(
         // `summarize` publishes counts, never token evidence, so the honest
         // declaration is that this run publishes no token attributes.
         published_attributes: Vec::new(),
-        published_source_metadata: Vec::new(),
+        published_source_metadata: metadata_projection
+            .as_ref()
+            .map_or_else(Vec::new, |projection| projection.keys().to_vec()),
         sample: run_facts
             .block_sample_report
             .or_else(|| sample.map(crate::protocol::query::SampleReport::of)),
@@ -300,6 +328,7 @@ pub fn run(
             pattern_ordinals: &pattern_ordinals,
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
+            documents: args.by_document.then(BTreeMap::new),
         };
         let presentation_progress = PresentationProgress::stderr(
             &config.stderr,
@@ -380,6 +409,7 @@ pub fn run(
             .take()
             .expect("summary aggregation remains available after successful execution");
         let records_unkeyed = sink.records_unkeyed;
+        let documents = sink.documents.take();
         drop(sink);
 
         let (complete_corpus, inventory) = lifecycle.complete(FilesystemCompletion::Full)?;
@@ -458,6 +488,18 @@ pub fn run(
             termination: Termination::Eof,
             scope: scope_report.clone(),
         };
+        for (ordinal, tally) in documents.into_iter().flatten() {
+            publish_query_jsonl(
+                &mut writer,
+                &QueryEnvelope::new(QueryEvent::Document(DocumentData {
+                    document: ordinal,
+                    source_name: tally.source_name.to_string(),
+                    sentences_admitted: tally.sentences,
+                    tokens_admitted: tally.tokens,
+                    source_metadata: tally.source_metadata,
+                })),
+            )?;
+        }
         let mut event_writer = MachineSummaryEventWriter {
             writer: &mut writer,
             output,
@@ -489,6 +531,15 @@ struct SummarySink<'a> {
     /// silently, because a row that vanished without a number is
     /// indistinguishable from one that never matched.
     records_unkeyed: u64,
+    /// Per-document admission under `--by-document`, keyed by document ordinal.
+    documents: Option<BTreeMap<u64, DocumentTally>>,
+}
+
+struct DocumentTally {
+    source_name: std::sync::Arc<str>,
+    sentences: u64,
+    tokens: u64,
+    source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
 }
 
 /// Renders one typed group in the human and TSV surfaces.
@@ -513,6 +564,7 @@ fn aggregation_group_display(group: &AggregationGroup) -> String {
 fn summary_data(pattern: &str, row: &SummaryRow) -> SummaryData {
     SummaryData {
         pattern: pattern.to_owned(),
+        document: row.partition.document_ordinal,
         group: match &row.group {
             AggregationGroup::Surface(value) => SummaryGroupData::Surface {
                 value: value.clone(),
@@ -598,6 +650,48 @@ impl Serialize for CompactLexicalKeyGroup<'_> {
 }
 
 impl SummarySink<'_> {
+    fn partition(
+        &self,
+        pattern_ordinal: u64,
+        location: &lingrep_core::execution::SentenceLocation,
+    ) -> SummaryPartition {
+        SummaryPartition {
+            pattern_ordinal,
+            document_ordinal: self
+                .documents
+                .is_some()
+                .then_some(location.document_ordinal),
+        }
+    }
+
+    /// Counts one admitted sentence toward its document under `--by-document`.
+    fn observe_sentence(
+        &mut self,
+        location: &lingrep_core::execution::SentenceLocation,
+        tokens: usize,
+    ) -> Result<(), ExecutionError> {
+        let Some(documents) = self.documents.as_mut() else {
+            return Ok(());
+        };
+        let tally = documents
+            .entry(location.document_ordinal)
+            .or_insert_with(|| DocumentTally {
+                source_name: std::sync::Arc::clone(&location.source_name),
+                sentences: 0,
+                tokens: 0,
+                source_metadata: location.source_metadata.clone(),
+            });
+        tally.sentences = tally
+            .sentences
+            .checked_add(1)
+            .ok_or(ExecutionError::ResourceAccounting)?;
+        tally.tokens = tally
+            .tokens
+            .checked_add(tokens as u64)
+            .ok_or(ExecutionError::ResourceAccounting)?;
+        Ok(())
+    }
+
     /// What one record groups by, or `None` when it declares a key it could not
     /// satisfy.
     ///
@@ -685,7 +779,7 @@ impl SummarySink<'_> {
         location: &lingrep_core::execution::SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: Vec<PublishedRecord>,
-    ) -> Result<Vec<(u64, Option<(OwnedAggregationInput, u64)>)>, ExecutionError> {
+    ) -> Result<Vec<(SummaryPartition, Option<(OwnedAggregationInput, u64)>)>, ExecutionError> {
         records
             .into_iter()
             .map(|record| {
@@ -694,23 +788,24 @@ impl SummarySink<'_> {
                     .get(record.name.as_str())
                     .copied()
                     .ok_or_else(|| ExecutionError::Sink("unknown summary pattern".into()))?;
+                let partition = self.partition(pattern_ordinal, location);
                 let grouped = self
                     .grouping_owned(location, sentence, record)?
                     .map(|group| {
-                        let hash = shard_hash(pattern_ordinal, &group);
+                        let hash = shard_hash(partition, &group);
                         (group, hash)
                     });
-                Ok((pattern_ordinal, grouped))
+                Ok((partition, grouped))
             })
             .collect()
     }
 
     fn add_owned_groups(
         &mut self,
-        groups: Vec<(u64, Option<(OwnedAggregationInput, u64)>)>,
+        groups: Vec<(SummaryPartition, Option<(OwnedAggregationInput, u64)>)>,
     ) -> Result<usize, ExecutionError> {
         let records_emitted = groups.len();
-        for (pattern_ordinal, grouped) in groups {
+        for (partition, grouped) in groups {
             let Some((grouped, hash)) = grouped else {
                 self.records_unkeyed += 1;
                 continue;
@@ -719,7 +814,7 @@ impl SummarySink<'_> {
                 .aggregation
                 .as_mut()
                 .expect("aggregation exists during execution")
-                .add_owned_prehashed(pattern_ordinal, grouped, hash)
+                .add_owned_prehashed(partition, grouped, hash)
             {
                 let message = error.to_string();
                 self.aggregation_error = Some(error);
@@ -735,6 +830,7 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: impl Iterator<Item = RecordView<'r>>,
     ) -> Result<SinkControl, ExecutionError> {
+        self.observe_sentence(location, sentence.len())?;
         let mut records_emitted = 0usize;
         for record in records {
             records_emitted += 1;
@@ -747,11 +843,12 @@ impl SummarySink<'_> {
                 .get(record.pattern)
                 .copied()
                 .ok_or_else(|| ExecutionError::Sink("unknown summary pattern".into()))?;
+            let partition = self.partition(pattern_ordinal, location);
             if let Err(error) = self
                 .aggregation
                 .as_mut()
                 .expect("aggregation exists during execution")
-                .add(pattern_ordinal, grouped)
+                .add(partition, grouped)
             {
                 let message = error.to_string();
                 self.aggregation_error = Some(error);
@@ -783,6 +880,7 @@ impl MatchSink for SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: Vec<PublishedRecord>,
     ) -> Result<SinkControl, ExecutionError> {
+        self.observe_sentence(location, sentence.len())?;
         let groups = self.group_owned_records(location, sentence, records)?;
         let records_emitted = self.add_owned_groups(groups)?;
         Ok(SinkControl::Continue { records_emitted })
@@ -823,10 +921,13 @@ impl MatchSink for SummarySink<'_> {
         // Parallel preparation is speculative. Aggregation, errors, and
         // cancellation remain observable only in corpus order.
         let mut controls = Vec::with_capacity(locations.len());
-        for groups in grouped.into_iter().flatten() {
+        for ((groups, location), sentence) in
+            grouped.into_iter().flatten().zip(locations).zip(sentences)
+        {
             if cancel.is_cancelled() {
                 return Ok((controls, true));
             }
+            self.observe_sentence(location, sentence.len())?;
             let records_emitted = self.add_owned_groups(groups?)?;
             controls.push(SinkControl::Continue { records_emitted });
             if cancel.is_cancelled() {
@@ -984,7 +1085,10 @@ mod tests {
         let mut aggregation = SummaryAggregator::with_limits(1, 2, u64::MAX, 2).unwrap();
         for surface in ["b", "b", "a", "c"] {
             aggregation
-                .add(0, AggregationInput::Surface(surface.to_owned()))
+                .add(
+                    crate::summary::SummaryPartition::pattern(0),
+                    AggregationInput::Surface(surface.to_owned()),
+                )
                 .unwrap();
         }
         aggregation.finalize().unwrap()

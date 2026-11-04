@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `summarize --by-document` counts each group per admitted document. Each
+  query/v2 `summary` record carries a `document` ordinal, and a new `document`
+  record gives the source name and admitted sentence and token counts of every
+  document with an admitted sentence, with `@document.KEY` fields selected by `--source-metadata`. It
+  requires `--json`.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added
