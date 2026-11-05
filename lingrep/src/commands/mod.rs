@@ -60,6 +60,14 @@ pub fn dispatch(
         Command::Dictionary(args) => match &args.command {
             DictionaryCommand::Install(args) => dictionary::run_install(args, output),
         },
+        Command::Check(args)
+            if args.diagram && output == crate::presentation::OutputMode::Jsonl =>
+        {
+            Err(CliError::UnsupportedOutput {
+                command: "check --diagram",
+                output: "json",
+            })
+        }
         Command::Check(args) => check::run(args, config, terminal, output),
         Command::Matches(args) => matches::run(args, config, terminal, output, cli.color),
         Command::Summarize(args) => summarize::run(args, config, terminal, output),

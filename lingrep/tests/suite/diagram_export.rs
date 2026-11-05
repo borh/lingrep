@@ -206,3 +206,28 @@ fn output_dir_requires_svg_diagrams() {
         assert!(tree(temp.path()).is_empty());
     }
 }
+
+#[test]
+fn json_output_rejects_diagram_mode() {
+    let output = crate::support::lingrep_without_dictionary()
+        .args([
+            "--json",
+            "check",
+            "--diagram",
+            "--pattern",
+            "p := [upos=NOUN].",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stdout.is_empty(),
+        "{:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let records = crate::support::parse_jsonl(&output.stderr);
+    assert_eq!(
+        records[0]["data"]["code"], "unsupported_output",
+        "{records:?}"
+    );
+}

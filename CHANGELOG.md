@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `skip: true`, with a syntax error, and a metadata schema cannot declare
   `skip`.
 
+### Fixed
+
+- `ling --json check --diagram` exits with `unsupported_output` instead of
+  writing a text diagram to stdout and exiting 0.
+
 ## [0.6.0] - 2026-11-04
 
 ### Added
