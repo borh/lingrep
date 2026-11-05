@@ -161,7 +161,7 @@ fn process_result(elapsed: Duration, output: Output) -> ProcessResult {
             let counters = &event["data"]["counters"];
             Some(Counters {
                 sentences: counters["sentences_matched"].as_u64()?,
-                tokens: counters["tokens_matched"].as_u64()?,
+                tokens: counters["tokens_scanned"].as_u64()?,
                 matches: counters["matches_found"].as_u64()?,
             })
         });

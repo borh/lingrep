@@ -787,7 +787,10 @@ pub struct RunCounters {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sentences_proven_absent: u64,
     pub sentences_matched: u64,
-    pub tokens_matched: u64,
+    /// Tokens in the sentences the matcher ran, which excludes the sentences
+    /// counted in `sentences_proven_absent`; the admitted-token count is the
+    /// sum of `tokens_admitted` over the `document` records of `--by-document`.
+    pub tokens_scanned: u64,
     pub matches_found: u64,
     pub records_emitted: u64,
     /// Records dropped from keyed output because a declared `key:` capture did

@@ -137,10 +137,10 @@ fn main() {
     println!(
         "{}",
         serde_json::json!({
-            "tokens": report.tokens_matched,
+            "tokens": report.tokens_scanned,
             "sentences": report.sentences_matched,
             "elapsed_seconds": seconds,
-            "tokens_per_second": report.tokens_matched as f64 / seconds,
+            "tokens_per_second": report.tokens_scanned as f64 / seconds,
             "peak_rss_kib": peak_rss_kib(),
             "emitted_lexical_occurrences": sink.lexical_occurrences,
             "distinct_groups": sink.groups.len(),

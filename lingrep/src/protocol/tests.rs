@@ -1543,7 +1543,7 @@ fn query_complete() -> QueryEnvelope {
             sentences_admitted: 1,
             sentences_proven_absent: 0,
             sentences_matched: 1,
-            tokens_matched: 1,
+            tokens_scanned: 1,
             matches_found: 1,
             records_emitted: 1,
             records_unkeyed: 0,

@@ -52,7 +52,7 @@ import json, sys
 for line in sys.stdin:
     record = json.loads(line)
     if record["type"] == "complete":
-        print(record["data"]["counters"]["tokens_matched"])
+        print(record["data"]["counters"]["tokens_scanned"])
 ')
 if [ -z "$completed_tokens" ] || [ "$completed_tokens" -eq 0 ]; then
     echo "sentence-final preflight did not report a positive completed token count" >&2

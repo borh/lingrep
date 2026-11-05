@@ -55,7 +55,7 @@ pub struct ExecutionProgress {
     /// Number of sentences processed by the matcher.
     pub sentences_matched: u64,
     /// Number of tokens processed by the matcher.
-    pub tokens_matched: u64,
+    pub tokens_scanned: u64,
     /// Number of canonical matches produced by the matcher.
     pub matches_found: u64,
     /// Number of match records the sink reported publishing.
@@ -82,7 +82,7 @@ pub struct ExecutionReport {
     /// Number of sentences processed by the matcher.
     pub sentences_matched: u64,
     /// Number of tokens processed by the matcher.
-    pub tokens_matched: u64,
+    pub tokens_scanned: u64,
     /// Number of canonical matches produced by the matcher.
     pub matches_found: u64,
     /// Number of match records the sink reported publishing.
@@ -143,8 +143,8 @@ impl ExecutionReport {
             .sentences_matched
             .checked_add(1)
             .ok_or(ExecutionError::ResourceAccounting)?;
-        self.tokens_matched = self
-            .tokens_matched
+        self.tokens_scanned = self
+            .tokens_scanned
             .checked_add(
                 u64::try_from(sentence.len()).map_err(|_| ExecutionError::ResourceAccounting)?,
             )
@@ -177,7 +177,7 @@ impl ExecutionReport {
         ExecutionProgress {
             sentences_admitted: self.sentences_admitted,
             sentences_matched: self.sentences_matched,
-            tokens_matched: self.tokens_matched,
+            tokens_scanned: self.tokens_scanned,
             matches_found: self.matches_found,
             records_emitted: self.records_emitted,
         }
@@ -2330,7 +2330,7 @@ mod tests {
             RunOutcome::Cancelled(ExecutionReport {
                 sentences_admitted: 1,
                 sentences_matched: 1,
-                tokens_matched: 1,
+                tokens_scanned: 1,
                 ..ExecutionReport::default()
             })
         );

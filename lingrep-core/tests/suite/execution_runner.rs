@@ -801,7 +801,7 @@ fn cancellation_requested_inside_push_is_observed_before_the_next_push() {
 fn expected_report(
     sentences_admitted: u64,
     sentences_matched: u64,
-    tokens_matched: u64,
+    tokens_scanned: u64,
     matches_found: u64,
     records_emitted: u64,
 ) -> ExecutionReport {
@@ -812,7 +812,7 @@ fn expected_report(
         out_of_set_labels: Vec::new(),
         sentences_admitted,
         sentences_matched,
-        tokens_matched,
+        tokens_scanned,
         matches_found,
         records_emitted,
     }
@@ -908,7 +908,7 @@ fn cancellation_prevents_the_next_batch() {
         [ExecutionProgress {
             sentences_admitted: 1,
             sentences_matched: 1,
-            tokens_matched: 1,
+            tokens_scanned: 1,
             matches_found: 1,
             records_emitted: 1,
         }]
@@ -985,14 +985,14 @@ fn generic_execution_freezes_ordinals_progress_and_lifecycle_across_sources_and_
         ExecutionProgress {
             sentences_admitted: 2,
             sentences_matched: 2,
-            tokens_matched: 2,
+            tokens_scanned: 2,
             matches_found: 1,
             records_emitted: 1,
         },
         ExecutionProgress {
             sentences_admitted: 3,
             sentences_matched: 3,
-            tokens_matched: 3,
+            tokens_scanned: 3,
             matches_found: 2,
             records_emitted: 2,
         },

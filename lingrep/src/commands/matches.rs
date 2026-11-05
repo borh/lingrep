@@ -537,7 +537,7 @@ pub fn run(
                             })?,
                         sentences_proven_absent,
                         sentences_matched: report.sentences_matched,
-                        tokens_matched: report.tokens_matched,
+                        tokens_scanned: report.tokens_scanned,
                         matches_found: report.matches_found,
                         records_emitted: sink.emitted,
                         // `matches` drops nothing, but it does publish the

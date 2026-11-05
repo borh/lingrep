@@ -239,7 +239,7 @@ fn resolve_scan(
             progress: ExecutionProgress {
                 sentences_admitted: report.sentences_admitted,
                 sentences_matched: report.sentences_matched,
-                tokens_matched: report.tokens_matched,
+                tokens_scanned: report.tokens_scanned,
                 matches_found: report.matches_found,
                 records_emitted: report.records_emitted,
             },
@@ -1218,7 +1218,7 @@ mod tests {
         let progress = ExecutionProgress {
             sentences_admitted: 4,
             sentences_matched: 4,
-            tokens_matched: 9,
+            tokens_scanned: 9,
             matches_found: 1,
             records_emitted: 1,
         };
@@ -1890,7 +1890,7 @@ mod tests {
             out_of_set_labels: Vec::new(),
             sentences_admitted: sentences,
             sentences_matched: sentences,
-            tokens_matched: sentences,
+            tokens_scanned: sentences,
             matches_found: sentences,
             records_emitted: sentences,
         }
@@ -1999,7 +1999,7 @@ mod tests {
             ExecutionProgress {
                 sentences_admitted: 2,
                 sentences_matched: 2,
-                tokens_matched: 2,
+                tokens_scanned: 2,
                 matches_found: 2,
                 records_emitted: 2,
             }

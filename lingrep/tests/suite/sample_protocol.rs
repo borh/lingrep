@@ -590,7 +590,7 @@ fn selective_prepared_queries_preserve_records_and_report_skipped_matcher_work()
         assert_eq!(counters["sentences_admitted"], 2048);
         assert_eq!(counters["sentences_proven_absent"], 2047);
         assert_eq!(counters["sentences_matched"], 1);
-        assert_eq!(counters["tokens_matched"], 1);
+        assert_eq!(counters["tokens_scanned"], 1);
         for key in ["documents_admitted", "matches_found", "records_emitted"] {
             assert_eq!(counters[key], reference["counters"][key], "{key}");
         }
@@ -614,6 +614,30 @@ fn selective_prepared_queries_preserve_records_and_report_skipped_matcher_work()
             );
         }
     }
+    let by_document = query("summarize", "lemma=犬", &["--by-document"]);
+    let documents = data(&by_document, "document");
+    assert_eq!(
+        documents,
+        [serde_json::json!({
+            "document": 0,
+            "source_name": "selective.jsonl line 1",
+            "sentences_admitted": 2048,
+            "tokens_admitted": 2048,
+        })]
+    );
+    let tokens_admitted = documents
+        .iter()
+        .map(|document| document["tokens_admitted"].as_u64().unwrap())
+        .sum::<u64>();
+    let tokens_scanned = |predicate: &str| {
+        data(&query("summarize", predicate, &[]), "complete")
+            .pop()
+            .unwrap()["counters"]["tokens_scanned"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(tokens_scanned("lemma ~ /犬/"), tokens_admitted);
+    assert!(tokens_scanned("lemma=犬") < tokens_admitted);
     for command in ["matches", "summarize"] {
         for predicate in ["lemma=不在", "lemma ~ /不在/"] {
             let mut cmd = crate::support::lingrep_without_dictionary();

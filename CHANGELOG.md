@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The query/v2 `complete` record's `counters.tokens_matched` is renamed
+  `counters.tokens_scanned`, with no alias, so a reader of `tokens_matched`
+  must change. It counts the tokens of the sentences the matcher
+  ran, not of those counted in `sentences_proven_absent`. Admitted tokens are the
+  sum of `tokens_admitted` over the `document` records of
+  `summarize --by-document`.
+
 ## [0.7.0] - 2026-11-05
 
 ### Added

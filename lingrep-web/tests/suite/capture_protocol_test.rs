@@ -163,7 +163,7 @@ fn cancellation_is_observed_before_the_next_capture_push() {
             out_of_set_labels: Vec::new(),
             sentences_admitted: 2,
             sentences_matched: 2,
-            tokens_matched: 2,
+            tokens_scanned: 2,
             matches_found: 2,
             records_emitted: 1,
         })

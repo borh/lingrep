@@ -287,7 +287,7 @@ mod tests {
             progress: ExecutionProgress {
                 sentences_admitted: sentences,
                 sentences_matched: sentences,
-                tokens_matched: tokens,
+                tokens_scanned: tokens,
                 matches_found: 0,
                 records_emitted: 0,
             },
