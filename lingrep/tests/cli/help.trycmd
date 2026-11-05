@@ -10,6 +10,7 @@ Commands:
   tokenize     Split text into tokens; --json includes linguistic attributes
   coverage     Count the tokens that carry each attribute
   explore      Browse pattern counts and matches in an interactive terminal view
+  serve        Serve the browser interface over one or more corpora
   corpus       Save analyzed corpora for reuse, inspect them, and list corpus sources
   check        Validate patterns without reading a corpus; --help lists the syntax
   dictionary   Download a UniDic dictionary for Japanese analysis

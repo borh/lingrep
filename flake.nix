@@ -815,6 +815,7 @@
                   test -s "$out/share/man/man1/ling.1"
                   test -s "$out/share/man/man1/ling-matches.1"
                   test -s "$out/share/man/man1/ling-corpus-build.1"
+                  test -s "$out/share/man/man1/ling-serve.1"
                 '';
               }).overrideAttrs
                 (old: {

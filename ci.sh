@@ -101,6 +101,9 @@ run_common_checks() {
 
     echo "Running clippy on all targets and features"
     cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee "${TMPDIR:-/tmp}/cargo-clippy.log"
+
+    echo "Checking ling without the web feature"
+    cargo clippy -p lingrep --all-targets --no-default-features -- -D warnings 2>&1 | tee "${TMPDIR:-/tmp}/cargo-clippy-no-web.log"
 }
 
 run_shared_tests() {

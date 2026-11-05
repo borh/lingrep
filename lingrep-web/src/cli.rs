@@ -64,7 +64,7 @@ impl FromStr for BasePath {
     }
 }
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(
     name = "lingrep-web",
     about = "Web interface for lingrep pattern matching",

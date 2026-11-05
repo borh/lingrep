@@ -34,6 +34,7 @@ and protocol details; terminal output reports readable summaries.
 | Inspect analyzed tokens | `ling tokenize` | [Tokenization and interactive workflows](#tokenization-and-interactive-workflows) |
 | Check attribute availability | `ling coverage` | [Attribute coverage](#attribute-coverage-ling-coverage) |
 | Explore interactively | `ling explore` | [TUI guide](tui-guide.md) |
+| Browse corpora in a web browser | `ling serve` | [Serving several corpora](#serving-several-corpora-from-lingrep-web) |
 | Reuse analyzed input | `--cache` or `ling corpus build` | [Reusing and preparing a corpus](#reusing-and-preparing-a-corpus-from-a-query) |
 | Select an analyzer | `--analyzer` | [Choose an analyzer](#choose-an-analyzer) |
 | Preflight a long operation | `--plan` | [Discovery and diagnostics](#discovery-explanation-and-completion) |
@@ -1713,6 +1714,9 @@ See [the TUI guide](tui-guide.md) and
 This section covers `lingrep-web`, the browser interface, because `--corpus`
 has a different meaning there: on `ling` it names a prepared V1 artifact to
 query, and on `lingrep-web` it declares a corpus the running server offers.
+`ling serve` runs the same server and accepts the same arguments as each
+`lingrep-web` command below. A `ling` built with `--no-default-features` has no
+`serve` subcommand.
 
 ```bash
 export LINGREP_CORPUS=/absolute/path/to/corpus.jsonl
@@ -1742,14 +1746,14 @@ lingrep-web --dict-path "$DICT" \
   --corpus bccwj=/data/bccwj.g2.a1.<analysis-identity>.locally-executed.lingcorpus
 ```
 
-A BCCWJ root passed directly to `lingrep-web` is refused with a message: the
-C-XML reader is part of `ling`. Because artifacts are read in place rather than
+`lingrep-web` rejects a BCCWJ root passed to it directly, because the C-XML
+reader is part of `ling`. Because artifacts are read in place rather than
 owned:
 
-- No reader configuration applies to an artifact. `--input-format` is refused
-  for an artifact rather than ignored, because reader configuration is part of
-  artifact identity. The flags for selecting Markdown sections do not apply to an
-  artifact; they were applied when it was built.
+- No reader configuration applies to an artifact. `--input-format` with an
+  artifact is an error instead of being ignored, because reader configuration is
+  part of artifact identity. The flags for selecting Markdown sections do not
+  apply to an artifact; they were applied when it was built.
 - A declared artifact is never deleted. `lingrep-web` discards an artifact it
   built when that artifact is found corrupt, because the source is beside it
   and a retry rebuilds it. A declared artifact cannot be rebuilt from anything
@@ -1765,7 +1769,7 @@ artifact's stem is the whole content-addressed name.
 nothing about the filesystem. It is not a caption: a corpus file may be called
 `日本語コーパス.jsonl`, which is a valid filename and an invalid key. A
 repeated `NAME`, a missing `=`, and a name outside that alphabet are each
-refused before the server starts. A duplicate error names the key and a
+rejected before the server starts. A duplicate error names the key and a
 malformed-entry error quotes the whole argument, while an over-long or
 invalid-character error reports only the offending character or the
 64-character limit.
@@ -1779,8 +1783,8 @@ either flag; the first declared one is the default that the bare `/` resolves
 to. Declaring only `--corpus` entries therefore starts a server on which no
 corpus is keyed `default`, and a link naming `k=default` finds nothing.
 
-`--input-format` is refused once more than one corpus is declared, because it is
-a single global override and would be applied to every path:
+`--input-format` is rejected once more than one corpus is declared, because it
+is a single global override and would be applied to every path:
 
 ```text
 Invalid lingrep-web configuration: --input-format applies to every declared corpus

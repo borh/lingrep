@@ -193,6 +193,10 @@ pub enum Command {
     Attributes(AttributesArgs),
     /// Browse pattern counts and matches in an interactive terminal view.
     Explore(ExploreArgs),
+    /// Serve the browser interface over one or more corpora.
+    #[cfg(feature = "web")]
+    #[command(name = "serve")]
+    Serve(lingrep_web::Args),
     /// Save analyzed corpora for reuse, inspect them, and list corpus sources.
     Corpus(CorpusArgs),
     /// Validate patterns without reading a corpus; --help lists the syntax.
@@ -1691,6 +1695,8 @@ impl Cli {
             | Command::Completions(_)
             | Command::Manpages(_)
             | Command::Schema(_) => false,
+            #[cfg(feature = "web")]
+            Command::Serve(_) => false,
         }
     }
 
@@ -1721,6 +1727,8 @@ impl Cli {
             | Command::Completions(_)
             | Command::Manpages(_)
             | Command::Schema(_) => OutputMode::Human,
+            #[cfg(feature = "web")]
+            Command::Serve(_) => OutputMode::Human,
         }
     }
 
@@ -1770,6 +1778,8 @@ impl Cli {
             | Command::Completions(_)
             | Command::Manpages(_)
             | Command::Schema(_) => ResourceArgs::default(),
+            #[cfg(feature = "web")]
+            Command::Serve(_) => ResourceArgs::default(),
         };
 
         let limits = ExecutionLimits {

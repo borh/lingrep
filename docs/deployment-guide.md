@@ -6,6 +6,10 @@ recommended deployment is loopback plus a reverse proxy on the same host:
 lingrep-web binds only `127.0.0.1`, Caddy terminates TLS, and access control
 (basic auth, OIDC, IP allowlists) is configured at the proxy.
 
+Without Nix, `ling serve` from the release archives runs the same server with
+the same arguments as `lingrep-web`; the proxy guidance below applies to it
+unchanged.
+
 ## Why loopback + reverse proxy
 
 `lingrep-web` has no built-in authentication, rate limiting, or TLS. Bound
@@ -182,7 +186,7 @@ ling corpus build \
 ```nix
 services.lingrep-web.corpora.bccwj = {
   # The artifact directory, not the distribution root. Leave `format`
-  # unset: lingrep-web refuses `--input-format` for an artifact, and the
+  # unset: lingrep-web rejects `--input-format` for an artifact, and the
   # module rejects it at evaluation time for a path ending in `.lingcorpus`.
   path = "/data/lingrep-web/corpora/bccwj.g2.a1.<identity>.locally-executed.lingcorpus";
 };

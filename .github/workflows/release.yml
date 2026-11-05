@@ -68,6 +68,8 @@ jobs:
       # no system headers are involved and the runner requires no packages.
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p lingrep
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
 
       # The smoke gate requires no dictionary, so it runs on every target before
       # anything is packaged. A binary that cannot answer `--version` or parse
@@ -77,6 +79,7 @@ jobs:
           binary="target/${{ matrix.target }}/release/ling"
           "$binary" --version
           "$binary" check --patterns patterns/sfe.lx
+          "$binary" serve --help > /dev/null
 
       - name: Check the binary loads only system libraries
         run: scripts/check-release-linkage.sh "target/${{ matrix.target }}/release/ling"

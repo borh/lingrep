@@ -78,6 +78,17 @@ pub fn dispatch(
             })
         }
         Command::Explore(args) => explore::run(args, config, terminal),
+        #[cfg(feature = "web")]
+        Command::Serve(_) if output == crate::presentation::OutputMode::Jsonl => {
+            Err(CliError::UnsupportedOutput {
+                command: "serve",
+                output: "json",
+            })
+        }
+        #[cfg(feature = "web")]
+        Command::Serve(args) => lingrep_web::serve::run(args)
+            .map(|()| CommandOutcome::Success)
+            .map_err(CliError::InvalidArgs),
         Command::Describe(args) => describe::run(args, output),
         Command::Completions(args) => completions::run(args, output),
         Command::Manpages(args) => manpages::run(args, output),

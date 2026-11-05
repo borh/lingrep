@@ -40,9 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a bounded, filesystem-safe form of the name. `ling` creates `DIR` only
   after every selected definition renders; an existing `DIR` is rejected and left
   unchanged.
+- `ling serve` runs the `lingrep-web` browser interface and takes the same
+  arguments, so a `ling` installed from the release archives or `install.sh`
+  serves the browser interface without Nix.
+  It is part of the default `web` feature; `--no-default-features` builds
+  `ling` without it.
 
 ### Changed
 
+- Release binaries are stripped of symbols.
 - `skip` is a reserved word. A `skip:` entry must name a test or be `none`, so
   `ling` rejects a catalog that uses `skip` as a descriptive metadata key, as in
   `skip: true`, with a syntax error, and a metadata schema cannot declare

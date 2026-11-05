@@ -255,6 +255,14 @@ static SEMANTICS: &[CommandSemantics] = &[
         input_modes: &["direct", "stdin", "prepared"],
         examples: ExamplePublication::Published(ATTRIBUTES_EXAMPLES),
     },
+    #[cfg(feature = "web")]
+    CommandSemantics {
+        command: "serve",
+        input_modes: &["direct", "prepared"],
+        examples: ExamplePublication::Omitted {
+            reason: "serve runs a long-lived HTTP server, not a deterministic executable example",
+        },
+    },
     CommandSemantics {
         command: "explore",
         input_modes: &["direct", "prepared"],

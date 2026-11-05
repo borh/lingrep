@@ -11,7 +11,13 @@ description = "Japanese corpus search on the command line: morphology, lingrep p
 name = "ling"
 path = "src/main.rs"
 
+[features]
+default = ["web"]
+# `ling serve`, which links the lingrep-web server.
+web = ["dep:lingrep-web"]
+
 [dependencies]
+lingrep-web = { path = "../lingrep-web", optional = true }
 anstyle.workspace = true
 blake3.workspace = true
 lingrep-cli-common = { path = "../lingrep-cli-common" }

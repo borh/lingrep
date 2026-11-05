@@ -34,6 +34,8 @@ pub fn requested(cli: &Cli) -> bool {
         | Command::Completions(_)
         | Command::Manpages(_)
         | Command::Schema(_) => false,
+        #[cfg(feature = "web")]
+        Command::Serve(_) => false,
     }
 }
 

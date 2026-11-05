@@ -2574,6 +2574,7 @@ dependencies = [
  "lingrep-cli-common",
  "lingrep-core",
  "lingrep-corpus",
+ "lingrep-web",
  "log",
  "lru 0.19.0",
  "num_cpus",

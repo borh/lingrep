@@ -68,6 +68,55 @@ fn check_diagrams_keep_stdout_separate_from_check_reports() {
     }
 }
 
+#[cfg(feature = "web")]
+#[test]
+fn serve_takes_the_lingrep_web_arguments_and_rejects_json_output() {
+    let help = crate::support::lingrep_without_dictionary()
+        .args(["serve", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("Usage: ling serve"), "{help}");
+    assert!(help.contains("--base-path"), "{help}");
+
+    let json = crate::support::lingrep_without_dictionary()
+        .args(["--json", "serve"])
+        .output()
+        .unwrap();
+    assert_eq!(json.status.code(), Some(2));
+    let records = parse_jsonl(&json.stderr);
+    assert_eq!(
+        records[0]["data"]["code"], "unsupported_output",
+        "{records:?}"
+    );
+}
+
+#[cfg(feature = "web")]
+#[test]
+fn serve_reports_an_occupied_port_as_an_invocation_error() {
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = occupied.local_addr().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let output = lingrep()
+        .args(["serve", "--host", "127.0.0.1"])
+        .args(["--port", &address.port().to_string()])
+        .arg("--input")
+        .arg(&input)
+        .arg("--dict-path")
+        .arg(dictionary.path())
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(stderr.contains(&address.to_string()), "{stderr}");
+}
+
 #[test]
 fn a_skip_pattern_diagram_shows_the_authored_pattern_and_its_skip_test() {
     let directory = tempfile::tempdir().unwrap();

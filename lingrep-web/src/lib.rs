@@ -26,6 +26,7 @@ pub mod section_contrast;
 pub mod section_dendrogram;
 pub mod section_tally;
 pub mod security_headers;
+pub mod serve;
 pub mod server_context;
 pub mod snapshot;
 pub mod snapshot_sink;
