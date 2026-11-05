@@ -261,6 +261,7 @@ mod tests {
 
     fn at_document(document_id: u64) -> lingrep_core::execution::SentenceLocation {
         lingrep_core::execution::SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: 0,
             document_id: DocumentId::new(document_id),
@@ -409,6 +410,7 @@ mod tests {
 
     fn at_sentence(ordinal: u64) -> lingrep_core::execution::SentenceLocation {
         lingrep_core::execution::SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: ordinal,
             document_id: DocumentId::new(0),

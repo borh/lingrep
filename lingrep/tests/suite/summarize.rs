@@ -719,6 +719,7 @@ fn prepared_summary_never_substitutes_text_for_missing_orth() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("fallback-must-not-appear"));
 
     let location = SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: 0,
         document_id: DocumentId::new(0),

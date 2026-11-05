@@ -38,14 +38,18 @@ pub(crate) fn materialize_program(
             &mut BTreeMap::new(),
         )?;
         let relations = state.resolve_relations(definition.relations(), &expr)?;
-        let (enhanced_relations, graph_bindings) =
-            state.resolve_enhanced_relations(definition.enhanced_relations(), &expr)?;
+        let (enhanced_relations, orders, graph_bindings) = state.resolve_enhanced_relations(
+            definition.enhanced_relations(),
+            definition.orders(),
+            &expr,
+        )?;
         output.push(ExecutionDefinition {
             name: definition.name.clone(),
             expr,
             capability: ExecutionCapability::Plain,
             relations,
             enhanced_relations,
+            orders,
             graph_bindings,
             metadata: definition.metadata.clone(),
             key: definition.key.clone(),
@@ -290,10 +294,12 @@ impl Materializer<'_> {
     fn resolve_enhanced_relations(
         &mut self,
         relations: &[super::model::BoundEnhancedRelation],
+        orders: &[super::model::OrderConstraint],
         expr: &ExecutionExpr,
     ) -> Result<
         (
             Box<[super::model::ExecutionEnhancedRelation]>,
+            Box<[super::model::ExecutionOrder]>,
             Box<[super::model::ExecutionGraphBindingDecl]>,
         ),
         CompileError,
@@ -302,8 +308,8 @@ impl Materializer<'_> {
             BoundEnhancedEndpoint, ExecutionEnhancedEndpoint, ExecutionEnhancedRelation,
             ExecutionGraphBindingDecl,
         };
-        if relations.is_empty() {
-            return Ok((Box::default(), Box::default()));
+        if relations.is_empty() && orders.is_empty() {
+            return Ok((Box::default(), Box::default(), Box::default()));
         }
         let mut captures: BTreeMap<&str, Vec<CaptureId>> = BTreeMap::new();
         collect_capture_names(expr, &mut captures);
@@ -447,6 +453,24 @@ impl Materializer<'_> {
                 dependent: resolve(&relation.dependent, self)?,
             });
         }
+        let orders = orders
+            .iter()
+            .map(|order| {
+                order
+                    .operands
+                    .iter()
+                    .map(|(name, span)| {
+                        resolve(
+                            &BoundEnhancedEndpoint::Reference {
+                                name: name.clone(),
+                                span: *span,
+                            },
+                            self,
+                        )
+                    })
+                    .collect()
+            })
+            .collect::<Result<_, _>>()?;
 
         let mut reachable = BTreeSet::new();
         for relation in resolved
@@ -517,6 +541,7 @@ impl Materializer<'_> {
         });
         Ok((
             resolved.into_boxed_slice(),
+            orders,
             declarations
                 .into_iter()
                 .map(|(_, declaration)| declaration)

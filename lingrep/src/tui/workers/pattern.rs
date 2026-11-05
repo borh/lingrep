@@ -234,6 +234,7 @@ mod tests {
         ];
         sink.push(
             &SentenceLocation {
+                lookaround_divisions: None,
                 source_metadata: None,
                 corpus_sentence_ordinal: 0,
                 document_id: lingrep_core::corpus::DocumentId::new(0),

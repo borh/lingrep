@@ -40,9 +40,15 @@ PATTERN EXPRESSIONS
   not_preceded_by(EXPR)           require no match ending here
   followed_by(EXPR)               require a match starting here
   not_followed_by(EXPR)           require no match starting here
+  followed_by(EXPR, within=document)
+                                  let EXPR continue into the next sentences
+  followed_by(EXPR, within=KIND)  let EXPR continue within one KIND division
 
 Quantifiers bind before sequence, sequence before intersection, and
-intersection before alternation. Lookarounds are zero-width and sentence-local.
+intersection before alternation. Lookarounds are zero-width and read only the
+current sentence unless written with `within=document` or `within=KIND`; a
+body of bounded width written so may also match the neighbouring sentences of
+the same document or innermost division of that kind.
 `any_order` admits implicit `[]*` gaps, publishes one longest result per
 surface permutation, and requires two or more exact-width-one captures.
 
@@ -79,6 +85,16 @@ Each binding is a separate match, so `edge` matches every basic edge once,
 whatever the distance or order. A root attachment or an unusable `dep.head`
 contributes no edge. The other endpoint must be a one-token capture; a key reads
 the binder's `text`, `lemma`, `upos`, `xpos`, `node.id` and `node.kind`.
+A later edge may name the binder as `$name`, so one clause can bind every word
+of a connected subtree; the binders of basic edges bind distinct words.
+
+`$a < $b < $c` requires each named node to precede the next in sentence order.
+Operands are one-token captures or graph-node binders of the clause. When two
+binders have the same test, relation and head, a pattern matches each pair of
+words twice, once for each assignment; `$a < $b` keeps one:
+
+  pattern two_objects := (?<v> [upos=VERB])
+    where $v -[obj]-> (?<a> [upos=NOUN]), $v -[obj]-> (?<b> [upos=NOUN]), $a < $b.
 
 Use `_` when only existence matters, not the dependent's identity:
 
@@ -273,8 +289,9 @@ default key.
 `skip: @T` makes a pattern match as if the tokens satisfying test `T` were
 absent: they may lie between its elements, no element matches one, and a match
 or capture neither starts nor ends on one. Lookarounds, `^` and `$` step over
-them. A `defaults` block may supply it for every pattern, and `skip: none`
-removes it from one. A pattern with `skip:` may not reference another
+them; a `within=` lookaround reads at most as many neighbouring tokens as its
+body is wide, skipped tokens included. A `defaults` block may supply it for
+every pattern, and `skip: none` removes it from one. A pattern with `skip:` may not reference another
 definition or use `same_as`.
 
 LABEL SETS

@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
-use crate::corpus::{DocumentId, SentenceId};
+use crate::corpus::{DivisionId, DocumentId, SentenceId};
 use crate::fsm::CompiledCatalog;
 use crate::{
     corpus::conllu::EnhancedGraphObservation,
@@ -32,6 +32,10 @@ pub struct SentenceLocation {
     pub source_name: Arc<str>,
     /// Explicitly selected source metadata; absent when projection was not requested.
     pub source_metadata: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
+    /// The innermost division of each kind in
+    /// [`CompiledCatalog::lookaround_division_kinds`], in that order; absent
+    /// when the source does not supply them.
+    pub lookaround_divisions: Option<Arc<[Option<DivisionId>]>>,
 }
 
 /// How a sentence source treats a sentence whose tokenized residency
@@ -99,6 +103,7 @@ impl SentenceLocation {
         let sentence_id = SentenceId::new(ordinal);
         Self {
             source_metadata: None,
+            lookaround_divisions: None,
             corpus_sentence_ordinal: sentence_id.get(),
             document_id: DocumentId::new(0),
             document_ordinal: 0,

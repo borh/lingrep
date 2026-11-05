@@ -50,55 +50,52 @@ impl SearchScope {
     }
 }
 
+/// A search scope with the provenance view from which a scan reads sections
+/// and division ids. The default is unrestricted and has no view, so its
+/// sources record no division ids.
 #[derive(Default)]
-pub(crate) enum BoundScope {
-    #[default]
-    All,
-    Restricted {
-        scope: SearchScope,
-        provenance: Arc<ProvenanceView>,
-        runtime: tokio::runtime::Handle,
-    },
+pub(crate) struct BoundScope {
+    scope: SearchScope,
+    provenance: Option<(Arc<ProvenanceView>, tokio::runtime::Handle)>,
 }
 
 impl BoundScope {
+    /// Must be called inside a Tokio runtime, which runs the provenance
+    /// queries.
     pub fn new(scope: SearchScope, provenance: Arc<ProvenanceView>) -> Self {
-        if scope.is_unrestricted() {
-            Self::All
-        } else {
-            Self::Restricted {
-                scope,
-                provenance,
-                runtime: tokio::runtime::Handle::current(),
-            }
+        Self {
+            scope,
+            provenance: Some((provenance, tokio::runtime::Handle::current())),
         }
     }
 
+    /// Opens a source over the scope's sentences that records each
+    /// sentence's innermost division of each of `division_kinds`.
     pub fn open_source(
         self,
         artifact: &CorpusArtifact,
         projection: &BoundProjection,
+        division_kinds: Vec<compact_str::CompactString>,
     ) -> Result<PreparedSentenceSource, CorpusError> {
-        match self {
-            Self::All => artifact.bound_sentence_source(projection),
-            Self::Restricted {
-                scope,
-                provenance,
-                runtime,
-            } => artifact.bound_sentence_source_with_sections(
-                projection,
-                provenance,
-                runtime,
-                scope.included_sections,
-                scope.include_unlabelled,
-            ),
+        let source = match &self.provenance {
+            Some((provenance, runtime)) if !self.scope.is_unrestricted() => artifact
+                .bound_sentence_source_with_sections(
+                    projection,
+                    Arc::clone(provenance),
+                    runtime.clone(),
+                    self.scope.included_sections,
+                    self.scope.include_unlabelled,
+                )?,
+            _ => artifact.bound_sentence_source(projection)?,
+        };
+        match self.provenance {
+            Some((provenance, runtime)) if !division_kinds.is_empty() => artifact
+                .with_shared_lookaround_divisions(source, division_kinds, provenance, runtime),
+            _ => Ok(source),
         }
     }
 
     pub fn specification(&self) -> SearchScope {
-        match self {
-            Self::All => SearchScope::default(),
-            Self::Restricted { scope, .. } => scope.clone(),
-        }
+        self.scope.clone()
     }
 }

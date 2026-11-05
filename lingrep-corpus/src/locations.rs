@@ -611,6 +611,7 @@ impl MappedLocations {
         let document_sentence_ordinal = read_u64(record, 16)?;
         let source_name = Arc::from(self.document_name(document_id)?);
         Ok(SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: ordinal,
             document_id,

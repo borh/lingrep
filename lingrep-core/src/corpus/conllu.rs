@@ -170,7 +170,7 @@ pub enum EnhancedNodeId {
 }
 
 impl EnhancedNodeId {
-    fn source_order_key(self) -> (usize, u8, usize) {
+    pub(crate) fn source_order_key(self) -> (usize, u8, usize) {
         match self {
             Self::Word { token_index } => (token_index, 1, 0),
             Self::Empty { boundary, subindex } => (boundary, 0, subindex),

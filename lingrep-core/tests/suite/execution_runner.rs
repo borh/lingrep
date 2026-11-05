@@ -19,7 +19,7 @@ use std::sync::{
 use lingrep_core::analysis::{
     AnalyzerPlan, InputUnitId, NormalizationPolicy, TextUnit, VibratoPlan, VibratoSession,
 };
-use lingrep_core::corpus::DocumentId;
+use lingrep_core::corpus::{DivisionId, DocumentId};
 use lingrep_core::execution::{
     AnalysisBinding, BoundSentenceInput, CancellationFlag, DEFAULT_MAX_INPUT_RECORD_BYTES,
     EnhancedGraphInput, ExecutionBatch, ExecutionError, ExecutionLimits, ExecutionProgress,
@@ -57,6 +57,7 @@ fn location(
     document_sentence_ordinal: u64,
 ) -> SentenceLocation {
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal,
         document_id: DocumentId::new(corpus_sentence_ordinal + 10),
@@ -2729,5 +2730,352 @@ fn source_metadata_follows_every_analyzer_created_sentence() {
     assert_eq!(sink.locations.len(), 2);
     for location in sink.locations {
         assert_eq!(location.source_metadata.as_ref(), Some(&metadata));
+    }
+}
+
+mod document_lookarounds {
+    use super::*;
+    use lingrep_core::fsm::{ContextSegment, ContextWindow, LookaroundContext, LookaroundScope};
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    const CATALOG: &str = "pattern next := [text=x] followed_by([text=a] [text=b]?, within=document).\n\
+         pattern previous := preceded_by([text=b] $ ^ [text=a]?, within=document) [text=x].\n\
+         pattern local := [text=x] followed_by([text=a]).\n\
+         pattern in_paragraph := [text=x] followed_by([text=a] [text=b] [text=a], within=paragraph).\n\
+         pattern after_section := preceded_by([text=a] [text=b] [text=b], within=section) [text=x].";
+
+    /// A sentence's texts and its innermost `paragraph` and `section`.
+    type Sentence = (Vec<&'static str>, Option<u64>, Option<u64>);
+
+    /// Analyzer segmentation renumbers in-document ordinals, so the runner
+    /// reads a gap from the input units' ordinals: units `0, 1, 3` leave the
+    /// last `猫` without the `犬` two units back, and units `0, 1, 2` do not.
+    #[test]
+    fn an_analyzed_text_unit_after_a_gap_starts_a_new_window() {
+        let compiled =
+            matcher("pattern after_dog := preceded_by([text=犬], within=document) [text=猫].");
+        let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+        let bound = compiled.bind(plan.schema()).unwrap();
+        for (ordinals, expected) in [([0, 1, 2], [0, 0, 1]), ([0, 1, 3], [0, 0, 0])] {
+            let units = ordinals
+                .into_iter()
+                .zip(["猫", "犬", "猫"])
+                .enumerate()
+                .map(|(index, (ordinal, text))| {
+                    let mut at = location(index as u64, "direct", ordinal);
+                    at.document_id = DocumentId::new(0);
+                    ExecutionSentence {
+                        location: at,
+                        value: TextUnit::sentence(
+                            InputUnitId::new(index as u64),
+                            text,
+                            NormalizationPolicy::None,
+                        )
+                        .unwrap(),
+                    }
+                })
+                .collect();
+            let mut sink = ProtocolRecordingSink::default();
+            execute_analyzed(
+                RecordingSource::new(
+                    Arc::new(AtomicUsize::new(0)),
+                    vec![ExecutionBatch::Text(units)],
+                ),
+                AnalysisBinding::Session(plan.create_session()),
+                &bound,
+                &pool(),
+                &ExecutionLimits::default(),
+                3,
+                &CancellationFlag::new(),
+                &mut sink,
+                &mut NoopProgress,
+                &mut NoopObserver,
+                lingrep_core::execution::PolicySelection::Apply,
+                &SentenceAdmission::All,
+            )
+            .unwrap();
+            assert_eq!(
+                sink.matches.iter().map(Vec::len).collect::<Vec<_>>(),
+                expected,
+                "unit ordinals {ordinals:?}"
+            );
+        }
+    }
+
+    fn text_schema() -> TokenSchema {
+        TokenSchema::new([SchemaAttribute::new("text", AttributeKind::Scalar).unwrap()]).unwrap()
+    }
+
+    /// Every admitted sentence's matches, computed from windows of the
+    /// admitted sentences next to it in its document, up to the first
+    /// sentence that the scope removes; a division window also ends at the first
+    /// sentence outside the sentence's division.
+    fn expected(
+        catalog: &CompiledCatalog,
+        documents: &[Vec<Sentence>],
+        admitted: impl Fn(u64) -> bool,
+    ) -> Vec<(u64, Vec<Match>)> {
+        let mut expected = Vec::new();
+        let mut first = 0;
+        for document in documents {
+            let sentences: Vec<Vec<TokenInfo>> = document
+                .iter()
+                .map(|(texts, _, _)| texts.iter().map(|text| token(text)).collect())
+                .collect();
+            let kept: Vec<bool> = (first..first + sentences.len() as u64)
+                .map(&admitted)
+                .collect();
+            for (index, sentence) in sentences.iter().enumerate() {
+                let ordinal = first + index as u64;
+                if !kept[index] {
+                    continue;
+                }
+                let window = |unit: &dyn Fn(usize) -> Option<u64>| {
+                    let same = |other: usize| {
+                        kept[other] && (unit(index).is_some() && unit(other) == unit(index))
+                    };
+                    let mut start = index;
+                    while start > 0 && same(start - 1) {
+                        start -= 1;
+                    }
+                    let mut end = index + 1;
+                    while end < sentences.len() && same(end) {
+                        end += 1;
+                    }
+                    ContextWindow {
+                        before: whole(&sentences[start..index]),
+                        after: whole(&sentences[index + 1..end]),
+                    }
+                };
+                let context = LookaroundContext {
+                    windows: BTreeMap::from([
+                        (LookaroundScope::Document, window(&|_| Some(0))),
+                        (
+                            LookaroundScope::Division("paragraph".into()),
+                            window(&|at| document[at].1),
+                        ),
+                        (
+                            LookaroundScope::Division("section".into()),
+                            window(&|at| document[at].2),
+                        ),
+                    ]),
+                };
+                expected.push((
+                    ordinal,
+                    catalog.find_matches_in_context(sentence.as_slice(), &context),
+                ));
+            }
+            first += sentences.len() as u64;
+        }
+        expected
+    }
+
+    fn whole(sentences: &[Vec<TokenInfo>]) -> Vec<ContextSegment<'_, [TokenInfo]>> {
+        sentences
+            .iter()
+            .map(|tokens| ContextSegment {
+                tokens: tokens.as_slice(),
+                range: 0..tokens.len(),
+            })
+            .collect()
+    }
+
+    fn document_strategy() -> impl Strategy<Value = Vec<Sentence>> {
+        prop::collection::vec(
+            (
+                prop::collection::vec(prop::sample::select(vec!["x", "a", "b"]), 0..4),
+                prop::option::of(0u64..2),
+                prop::option::of(0u64..2),
+            ),
+            1..5,
+        )
+    }
+
+    fn bound_sentences(
+        bound: &lingrep_core::fsm::BoundCatalog,
+        documents: &[Vec<Sentence>],
+    ) -> Vec<(ExecutionSentence<BoundSentenceInput>, usize)> {
+        let mut sentences = Vec::new();
+        let mut ordinal = 0;
+        for (document_index, document) in documents.iter().enumerate() {
+            for (sentence_index, (texts, paragraph, section)) in document.iter().enumerate() {
+                let words = BoundTokenSentence::from_projected_values(
+                    bound.projection(),
+                    texts.len(),
+                    texts.iter().map(|text| Some((*text).into())).collect(),
+                )
+                .unwrap();
+                let charge = words.resident_bytes().unwrap();
+                let mut at = location(ordinal, "documents", sentence_index as u64);
+                at.document_id = DocumentId::new(document_index as u64);
+                let division =
+                    |id: &Option<u64>| id.map(|id| DivisionId(document_index as u64 * 10 + id));
+                at.lookaround_divisions = (paragraph.is_some() || section.is_some())
+                    .then(|| Arc::from([division(paragraph), division(section)]));
+                sentences.push((
+                    ExecutionSentence {
+                        location: at,
+                        value: BoundSentenceInput::new(words, EnhancedGraphInput::NotRequested),
+                    },
+                    charge,
+                ));
+                ordinal += 1;
+            }
+        }
+        sentences
+    }
+
+    /// The published matches of a run over `documents` cut into source
+    /// batches of `batch_sizes`, beside the matches [`expected`] computes.
+    fn published_and_expected(
+        documents: &[Vec<Sentence>],
+        batch_sizes: &[usize],
+        logical_batch_sentences: usize,
+        dropped: &std::collections::BTreeSet<u64>,
+    ) -> (Vec<(u64, Vec<Match>)>, Vec<(u64, Vec<Match>)>) {
+        let catalog = matcher(CATALOG);
+        let schema = text_schema();
+        let bound = matcher(CATALOG).bind(&schema).unwrap();
+        let mut sentences = bound_sentences(&bound, documents);
+        let ordinal = sentences.len() as u64;
+        let mut batches = Vec::new();
+        let mut sizes = batch_sizes.iter().cycle();
+        while !sentences.is_empty() {
+            let size = (*sizes.next().unwrap()).min(sentences.len());
+            let (values, charges): (Vec<_>, Vec<_>) = sentences.drain(..size).unzip();
+            batches.push(ExecutionBatch::bound_tokenized_with_charges(
+                values, charges,
+            ));
+        }
+        let admitted_ordinals =
+            roaring::RoaringTreemap::from_iter((0..ordinal).filter(|o| !dropped.contains(o)));
+        let mut sink = ProtocolRecordingSink::default();
+        let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
+            RecordingSource::new(Arc::new(AtomicUsize::new(0)), batches),
+            AnalysisBinding::Prepared(schema),
+            &bound,
+            &pool(),
+            &ExecutionLimits::default(),
+            logical_batch_sentences,
+            &CancellationFlag::new(),
+            &mut sink,
+            &mut NoopProgress,
+            &mut NoopObserver,
+            lingrep_core::execution::PolicySelection::Apply,
+            &SentenceAdmission::Sentences(admitted_ordinals),
+        )
+        .unwrap();
+        assert!(matches!(outcome, RunOutcome::Completed(_)));
+        let published = sink
+            .locations
+            .iter()
+            .map(|location| location.corpus_sentence_ordinal)
+            .zip(sink.matches)
+            .collect();
+        (
+            published,
+            expected(&catalog, documents, |ordinal| !dropped.contains(&ordinal)),
+        )
+    }
+
+    /// The division-scoped bodies are wider than the document-scoped ones, so
+    /// the runner holds a sentence back, and keeps context after publishing
+    /// it, for the widest reach of any scope.
+    #[test]
+    fn a_division_window_reads_further_than_the_document_reach() {
+        let paragraph = |text| (vec![text], Some(0), None);
+        let section = |text| (vec![text], None, Some(0));
+        let rows = [
+            (
+                vec![
+                    paragraph("x"),
+                    paragraph("a"),
+                    paragraph("b"),
+                    paragraph("a"),
+                ],
+                [3, 1],
+                0,
+                "in_paragraph",
+            ),
+            (
+                vec![section("a"), section("b"), section("b"), section("x")],
+                [1, 1],
+                3,
+                "after_section",
+            ),
+        ];
+        for (document, batch_sizes, sentence, pattern) in rows {
+            let (published, expected) =
+                published_and_expected(&[document], &batch_sizes, 1, &Default::default());
+            assert_eq!(published, expected);
+            assert!(
+                published[sentence]
+                    .1
+                    .iter()
+                    .any(|matched| matched.pattern == pattern),
+                "{pattern}"
+            );
+        }
+    }
+
+    proptest! {
+        /// Batch and partition cuts leave every `within=` result as matching
+        /// over the uncut document or division computes it, and a sentence
+        /// that the scope removes ends the window.
+        #[test]
+        fn scoped_lookarounds_read_across_cuts_and_stop_at_removed_sentences(
+            documents in prop::collection::vec(document_strategy(), 1..4),
+            batch_sizes in prop::collection::vec(1usize..4, 1..12),
+            logical_batch_sentences in 1usize..4,
+            dropped in prop::collection::btree_set(0u64..20, 0..6),
+        ) {
+            let (published, expected) =
+                published_and_expected(&documents, &batch_sizes, logical_batch_sentences, &dropped);
+            prop_assert_eq!(published, expected);
+        }
+
+        /// An explanation over the admitted sentences around a sentence
+        /// publishes what the run publishes. Over a slice of them, the
+        /// explanation is the same, or `None` when a window reaches past the
+        /// slice.
+        #[test]
+        fn an_explanation_in_windows_publishes_what_the_run_publishes(
+            documents in prop::collection::vec(document_strategy(), 1..4),
+            dropped in prop::collection::btree_set(0u64..20, 0..6),
+            margin in 0usize..3,
+        ) {
+            let (published, _) = published_and_expected(&documents, &[2], 2, &dropped);
+            let bound = matcher(CATALOG).bind(&text_schema()).unwrap();
+            let (locations, inputs): (Vec<_>, Vec<_>) = bound_sentences(&bound, &documents)
+                .into_iter()
+                .map(|(sentence, _)| (sentence.location, sentence.value))
+                .filter(|(location, _)| !dropped.contains(&location.corpus_sentence_ordinal))
+                .unzip();
+            for (target, (ordinal, matches)) in published.iter().enumerate() {
+                let explain = |range: std::ops::Range<usize>| {
+                    lingrep_core::execution::explain_in_windows(
+                        &bound,
+                        &locations[range.clone()],
+                        &inputs[range.clone()],
+                        target - range.start,
+                        range.start > 0,
+                        range.end < inputs.len(),
+                    )
+                    .unwrap()
+                };
+                let full = explain(0..inputs.len()).unwrap();
+                let explained: Vec<Match> = full
+                    .candidates
+                    .iter()
+                    .filter_map(|candidate| candidate.published.clone())
+                    .collect();
+                prop_assert_eq!(&explained, matches, "sentence {}", ordinal);
+                let slice = target.saturating_sub(margin)..(target + 1 + margin).min(inputs.len());
+                if let Some(narrow) = explain(slice) {
+                    prop_assert_eq!(narrow, full.clone());
+                }
+            }
+        }
     }
 }

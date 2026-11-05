@@ -753,6 +753,7 @@ mod tests {
 
     fn location(ordinal: u64) -> SentenceLocation {
         SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: ordinal,
             document_id: lingrep_core::corpus::DocumentId::new(0),
@@ -1206,6 +1207,7 @@ mod tests {
 
     fn located(ordinal: u64, document: u64) -> SentenceLocation {
         SentenceLocation {
+            lookaround_divisions: None,
             document_ordinal: document,
             document_id: lingrep_core::corpus::DocumentId::new(document),
             ..location(ordinal)

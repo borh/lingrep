@@ -18,6 +18,7 @@ mod policy_sink;
 mod record_reader;
 mod runner;
 mod source;
+mod windows;
 
 pub use admission::SentenceAdmission;
 #[cfg(unix)]
@@ -48,6 +49,8 @@ pub use source::{
     SentenceBatchSource, SentenceLocation, TextIteratorSource, TokenizedAdmission,
     cached_run_attributes,
 };
+pub use windows::explain_in_windows;
+pub(crate) use windows::{WindowLinks, window_at};
 
 #[cfg(unix)]
 mod external_session;

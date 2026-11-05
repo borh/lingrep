@@ -1137,6 +1137,7 @@ fn prepared_match_never_substitutes_text_for_missing_orth() {
 
     let tokens = [TokenInfo::default().with_text("surface")];
     let location = SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: 0,
         document_id: DocumentId::new(0),
@@ -1211,6 +1212,7 @@ fn direct_and_v6_queries_keep_distinct_tag_norm_and_lextype_columns() {
          pattern lextype := [unidic.lextype=LEX].\n",
     );
     let location = SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: 0,
         document_id: DocumentId::new(0),

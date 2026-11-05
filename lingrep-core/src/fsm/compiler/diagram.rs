@@ -399,8 +399,13 @@ fn flow(
             } else {
                 ""
             };
+            let scope = look
+                .scope
+                .as_ref()
+                .map(|scope| format!(", within={}", scope.name()))
+                .unwrap_or_default();
             Flow::Lookaround {
-                label: format!("zero-width: {polarity}{direction}"),
+                label: format!("zero-width: {polarity}{direction}{scope}"),
                 body: Box::new(child(&look.body)?),
             }
         }

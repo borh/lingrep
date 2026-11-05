@@ -345,15 +345,13 @@ fn the_direct_and_prepared_paths_admit_the_same_sentences() {
     );
 }
 
-/// The two paths agree on *which* sentences, and differ on what they call them.
+/// The two paths give an admitted sentence the same in-document ordinal.
 ///
-/// Direct input compacts ordinals over the admitted sentences; a prepared
-/// artifact never renumbers. A section clause is the first way to admit a
-/// non-contiguous set of sentences from one document, which is what makes the
-/// difference observable at all. Pinned here so that a future change to either
-/// path is a deliberate one.
+/// Direct input compacts corpus ordinals over the admitted sentences, but an
+/// excluded sentence still counts toward the in-document ordinal, as on a
+/// prepared artifact; a `within=document` lookaround window ends at that gap.
 #[test]
-fn the_two_paths_number_the_same_sentences_differently() {
+fn the_two_paths_give_the_same_sentences_the_same_document_ordinals() {
     let fixture = AgreementFixture::new();
     let clause = "@section in {methods, results} & @document.year >= 2010";
 
@@ -368,7 +366,7 @@ fn the_two_paths_number_the_same_sentences_differently() {
     // it and is not admitted.
     assert_eq!(
         ordinals(&fixture.direct(clause)),
-        std::collections::BTreeSet::from([0, 1, 2])
+        std::collections::BTreeSet::from([0, 1, 3])
     );
     assert_eq!(
         ordinals(&fixture.prepared(clause)),

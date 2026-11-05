@@ -1729,6 +1729,7 @@ fn matched_surface_rejects_a_missing_orth_with_sentence_and_token_location() {
     let mut tokens = vec![token("有"), TokenInfo::default()];
     tokens[1].set_text("fallback-must-not-be-used");
     let location = SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: 7,
         document_id: lingrep_core::corpus::DocumentId::new(2),

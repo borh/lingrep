@@ -745,6 +745,8 @@ fn lowers_all_regular_lookaround_forms_with_direction_polarity_body_and_span() {
             ParsedExpr::Lookaround(LookaroundExpr {
                 direction,
                 polarity,
+                scope: None,
+                skip_reach: None,
                 body: Box::new(ParsedExpr::Sequence(vec![
                     token(&source, "[text=a]", "a"),
                     ParsedExpr::Repeat {

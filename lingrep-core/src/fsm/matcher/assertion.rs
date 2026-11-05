@@ -1,14 +1,15 @@
+use super::lookaround_context::{LookaroundContext, LookaroundReach, WindowTokens};
 use super::predicate::{
     CompiledPositionAssertion, PredicateCatalog, PredicateId, PredicateSession,
 };
 use crate::fsm::compiler::model::{LookDirection, LookPolarity, TokenPredicate};
-use crate::fsm::{AssertionOccurrenceId, PositionAssertion};
+use crate::fsm::{AssertionOccurrenceId, LookaroundScope, PositionAssertion};
 #[cfg(test)]
 use crate::token_match::TokenAttributeIndex;
 use crate::token_match::{AttributeKey, TokenSequence};
 #[cfg(feature = "bench-instrumentation")]
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion-evaluator work observed by opt-in benchmark builds.
 ///
@@ -77,6 +78,8 @@ impl AssertionCatalog {
                 .into_iter()
                 .map(|program| CompiledAssertionProgram {
                     direction: program.direction,
+                    scope: program.scope,
+                    reach: program.reach,
                     automaton: compile_automaton(
                         program.automaton,
                         predicates,
@@ -101,6 +104,9 @@ pub(crate) struct AssertionOccurrence {
 #[derive(Clone, Debug)]
 pub(crate) struct AssertionProgram {
     pub(crate) direction: LookDirection,
+    pub(crate) scope: Option<LookaroundScope>,
+    /// The most tokens the body can match; zero when `scope` is `None`.
+    pub(crate) reach: usize,
     pub(crate) automaton: AssertionAutomaton,
     pub(crate) dependencies: Box<[AssertionProgramId]>,
     pub(crate) required_attributes: Box<[AttributeKey]>,
@@ -168,11 +174,28 @@ impl CompiledAssertionCatalog {
             .iter()
             .flat_map(|program| program.required_attributes.iter().cloned())
     }
+
+    pub(crate) fn lookaround_reach(&self) -> BTreeMap<LookaroundScope, LookaroundReach> {
+        let mut reach = BTreeMap::<LookaroundScope, LookaroundReach>::new();
+        for program in &self.programs {
+            let Some(scope) = &program.scope else {
+                continue;
+            };
+            let entry = reach.entry(scope.clone()).or_default();
+            match program.direction {
+                LookDirection::PrecededBy => entry.before = entry.before.max(program.reach),
+                LookDirection::FollowedBy => entry.after = entry.after.max(program.reach),
+            }
+        }
+        reach
+    }
 }
 
 #[derive(Clone, Debug)]
 struct CompiledAssertionProgram {
     direction: LookDirection,
+    scope: Option<LookaroundScope>,
+    reach: usize,
     automaton: CompiledAssertionAutomaton,
     dependencies: Box<[AssertionProgramId]>,
     required_attributes: Box<[AttributeKey]>,
@@ -664,6 +687,10 @@ pub(crate) struct AssertionSession<'catalog, 'tokens, S: TokenSequence + ?Sized>
     catalog: &'catalog CompiledAssertionCatalog,
     predicates: PredicateSession<'catalog>,
     tokens: &'tokens S,
+    context: Option<&'tokens LookaroundContext<'tokens, S>>,
+    /// Where `^` and `$` hold when `tokens` joins several sentences; `None`
+    /// means at `0` and `tokens.len()`.
+    sentence_marks: Option<(Vec<bool>, Vec<bool>)>,
     rows: Vec<Option<BoundaryBits>>,
     work: Vec<usize>,
     /// Pooled pass buffers.
@@ -688,6 +715,8 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
             catalog,
             predicates: predicates.clone(),
             tokens,
+            context: None,
+            sentence_marks: None,
             rows: vec![None; catalog.programs.len()],
             work: Vec::new(),
             frontier: Frontier::default(),
@@ -695,6 +724,14 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
             #[cfg(feature = "bench-instrumentation")]
             metrics: AssertionMetricCells::default(),
         }
+    }
+
+    pub(crate) fn with_context(
+        mut self,
+        context: Option<&'tokens LookaroundContext<'tokens, S>>,
+    ) -> Self {
+        self.context = context;
+        self
     }
 
     pub(crate) fn holds(&mut self, occurrence: AssertionOccurrenceId, boundary: usize) -> bool {
@@ -787,7 +824,6 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
 
     fn evaluate(&mut self, id: AssertionProgramId) -> BoundaryBits {
         let program = &self.catalog.programs[id.index()];
-        let automaton = &program.automaton;
 
         // A union is read, not walked. `ensure` has already materialized every
         // member — they are this program's dependencies — so the answer is
@@ -804,8 +840,47 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
             }
             return row;
         }
+        if let Some(scope) = &program.scope
+            && let Some(window) = self.context.and_then(|context| context.windows.get(scope))
+        {
+            let (before, after) = match program.direction {
+                LookDirection::PrecededBy => (program.reach, 0),
+                LookDirection::FollowedBy => (0, program.reach),
+            };
+            let (joined, offset, starts, ends) =
+                WindowTokens::join(self.tokens, window, before, after);
+            let mut session = AssertionSession {
+                catalog: self.catalog,
+                predicates: self.predicates.unmemoized(),
+                tokens: &joined,
+                context: None,
+                sentence_marks: Some((starts, ends)),
+                rows: Vec::new(),
+                work: std::mem::take(&mut self.work),
+                frontier: std::mem::take(&mut self.frontier),
+                next_frontier: std::mem::take(&mut self.next_frontier),
+                #[cfg(feature = "bench-instrumentation")]
+                metrics: AssertionMetricCells::default(),
+            };
+            let joined_row = session.evaluate_local(id);
+            self.work = session.work;
+            self.frontier = session.frontier;
+            self.next_frontier = session.next_frontier;
+            let mut row = BoundaryBits::new(self.tokens.len() + 1);
+            for boundary in 0..=self.tokens.len() {
+                if joined_row.get(offset + boundary) {
+                    row.set(boundary);
+                }
+            }
+            return row;
+        }
+        self.evaluate_local(id)
+    }
 
-        match program.direction {
+    /// One pass of `id`'s automaton over `self.tokens`.
+    fn evaluate_local(&mut self, id: AssertionProgramId) -> BoundaryBits {
+        let automaton = &self.catalog.programs[id.index()].automaton;
+        match self.catalog.programs[id.index()].direction {
             LookDirection::PrecededBy => {
                 let mut row = BoundaryBits::new(self.tokens.len() + 1);
                 let mut frontier = std::mem::take(&mut self.frontier);
@@ -1021,8 +1096,14 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
         boundary: usize,
     ) -> bool {
         match assertion {
-            CompiledPositionAssertion::SentenceStart => boundary == 0,
-            CompiledPositionAssertion::SentenceEnd => boundary == self.tokens.len(),
+            CompiledPositionAssertion::SentenceStart => match &self.sentence_marks {
+                Some((starts, _)) => starts[boundary],
+                None => boundary == 0,
+            },
+            CompiledPositionAssertion::SentenceEnd => match &self.sentence_marks {
+                Some((_, ends)) => ends[boundary],
+                None => boundary == self.tokens.len(),
+            },
             CompiledPositionAssertion::PreviousToken(predicate) => {
                 boundary.checked_sub(1).is_some_and(|index| {
                     self.predicates.matches_at_assertion_previous_token(
@@ -1412,6 +1493,8 @@ mod tests {
         AssertionCatalog {
             programs: Box::from([AssertionProgram {
                 direction,
+                scope: None,
+                reach: 0,
                 required_attributes: required_attributes(&automaton),
                 automaton,
                 dependencies: Box::default(),
@@ -1521,6 +1604,8 @@ mod tests {
         let catalog = AssertionCatalog {
             programs: Box::from([AssertionProgram {
                 direction: LookDirection::PrecededBy,
+                scope: None,
+                reach: 0,
                 required_attributes: required_attributes(&automaton),
                 automaton,
                 dependencies: Box::default(),
@@ -1591,6 +1676,8 @@ mod tests {
                 };
                 AssertionProgram {
                     direction: LookDirection::PrecededBy,
+                    scope: None,
+                    reach: 0,
                     required_attributes: required_attributes(&automaton),
                     automaton,
                     dependencies: Box::default(),
@@ -1667,6 +1754,8 @@ mod tests {
         let catalog = AssertionCatalog {
             programs: Box::from([AssertionProgram {
                 direction: LookDirection::PrecededBy,
+                scope: None,
+                reach: 0,
                 required_attributes: required_attributes(&automaton),
                 automaton,
                 dependencies: Box::default(),

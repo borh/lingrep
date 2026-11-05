@@ -170,6 +170,7 @@ where
                             .entry(input_location.document_id.get())
                             .or_default();
                         let location = super::SentenceLocation {
+                            lookaround_divisions: None,
                             source_metadata: input_location.source_metadata.clone(),
                             corpus_sentence_ordinal: candidate_ordinal,
                             document_id: input_location.document_id,

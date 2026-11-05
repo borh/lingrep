@@ -1053,6 +1053,7 @@ impl CorpusBuilder {
                     return Err(invalid_builder("invalid admitted sentence order"));
                 }
                 let location = SentenceLocation {
+                    lookaround_divisions: None,
                     source_metadata: None,
                     corpus_sentence_ordinal: self.sentence_count,
                     document_id: document.id,
@@ -1783,6 +1784,45 @@ impl CorpusArtifact {
         self.validate_provenance_reader(&reader)?;
         let source = self.bound_sentence_source(projection)?;
         Ok(source.with_source_metadata(reader, metadata))
+    }
+
+    /// Makes `source` record each sentence's innermost division of each of
+    /// `kinds` in [`SentenceLocation::lookaround_divisions`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `reader` is not this artifact's provenance.
+    pub fn with_lookaround_divisions(
+        &self,
+        source: PreparedSentenceSource,
+        kinds: Vec<compact_str::CompactString>,
+        reader: Arc<crate::BlockingProvenance>,
+    ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.validate_provenance_reader(&reader)?;
+        Ok(
+            source
+                .with_lookaround_divisions(kinds, crate::tokens::DivisionLookup::Blocking(reader)),
+        )
+    }
+
+    /// [`Self::with_lookaround_divisions`] over a shared provenance view,
+    /// whose queries run on `runtime`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `view` is not this artifact's provenance.
+    pub fn with_shared_lookaround_divisions(
+        &self,
+        source: PreparedSentenceSource,
+        kinds: Vec<compact_str::CompactString>,
+        view: Arc<ProvenanceView>,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<PreparedSentenceSource, CorpusError> {
+        self.validate_provenance_view(&view)?;
+        Ok(source.with_lookaround_divisions(
+            kinds,
+            crate::tokens::DivisionLookup::Shared { view, runtime },
+        ))
     }
 
     fn validate_provenance_reader(

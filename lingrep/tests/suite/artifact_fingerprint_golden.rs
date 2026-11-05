@@ -435,6 +435,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
                 artifact.sentence_provenance(view, ordinal).await.unwrap(),
                 SentenceProvenance {
                     location: SentenceLocation {
+                        lookaround_divisions: None,
                         corpus_sentence_ordinal: ordinal,
                         document_id: DocumentId::new(document),
                         document_ordinal: document,

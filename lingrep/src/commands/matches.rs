@@ -479,6 +479,14 @@ pub fn run(
             )?;
         }
         let limited = limit.is_some_and(|limit| sink.emitted == limit);
+        if !limited && let Some(observed) = source_stats.observed_division_kinds() {
+            crate::attribute_binding::write_unobserved_division_notices(
+                &compiled.matcher.lookaround_division_kinds(),
+                |kind| observed.contains(kind),
+                config,
+                Some(&run_id),
+            )?;
+        }
         let scope_report =
             scope.report_after_run(scope_clause.as_ref(), limited, config, &run_id)?;
         let coverage = if limited {
@@ -1050,6 +1058,7 @@ mod tests {
 
     fn sink_test_location() -> lingrep_core::execution::SentenceLocation {
         lingrep_core::execution::SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: 3,
             document_id: lingrep_core::corpus::DocumentId::new(7),

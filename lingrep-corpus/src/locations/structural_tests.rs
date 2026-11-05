@@ -34,6 +34,7 @@ fn location(
     source_name: &str,
 ) -> SentenceLocation {
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: sentence,
         document_id: DocumentId::new(document_id),

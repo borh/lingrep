@@ -84,6 +84,7 @@ fn location_for_document(
     document_sentence_ordinal: u64,
 ) -> SentenceLocation {
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: sentence,
         document_id,

@@ -24,6 +24,7 @@ use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo, TokenSequence};
 
 fn location() -> SentenceLocation {
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: 0,
         document_id: DocumentId::new(0),
@@ -534,6 +535,7 @@ fn terminal_is_measured_against_the_sentence_not_the_retained_tokens() {
 /// let a label built from the wrong one pass.
 fn located(document_sentence_ordinal: u64) -> SentenceLocation {
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: document_sentence_ordinal + 100,
         document_sentence_ordinal,

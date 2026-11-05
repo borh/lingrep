@@ -49,6 +49,14 @@ async fn detail_html(source: &str, path: &str) -> String {
 
 async fn detail_html_with_tokens(source: &str, path: &str, tokens: Vec<TokenInfo>) -> String {
     let (_fixture, runtime) = runtime_fixture("capture-handler", vec![tokens]);
+    detail_html_in(runtime, source, path).await
+}
+
+async fn detail_html_in(
+    runtime: std::sync::Arc<lingrep_web::corpus_runtime::CorpusRuntime>,
+    source: &str,
+    path: &str,
+) -> String {
     let store = RequestStore::with_runtime(
         Config {
             dict_path: String::new(),
@@ -140,6 +148,28 @@ async fn pattern_detail_flags_sample_overlaps_before_policy() {
     assert!(html.contains("1 of 1 shown hits"), "{html}");
     assert!(html.contains("<code>b</code>"), "{html}");
     assert!(html.contains("class=\"overlap-marker\""), "{html}");
+}
+
+/// `a` matches the first sentence only with the next sentence as context,
+/// so the overlap warning appears only when the inspector reads that sentence.
+#[tokio::test]
+async fn hit_inspector_explains_a_hit_with_its_scan_lookaround_windows() {
+    let source =
+        "b := [text=食べる]. a := [text=食べる] followed_by([text=来る], within=document).";
+    let html = |next: &'static str| async move {
+        let (_fixture, runtime) = runtime_fixture(
+            "capture-handler",
+            vec![
+                vec![TokenInfo::default().with_orth("食べる")],
+                vec![TokenInfo::default().with_orth(next)],
+            ],
+        );
+        detail_html_in(runtime, source, "/hit-detail/capture-handler/1/0/0").await
+    };
+    let read = html("来る").await;
+    assert!(read.contains("data-overlap-warning"), "{read}");
+    assert!(read.contains("<code>a</code>"), "{read}");
+    assert!(!html("見る").await.contains("data-overlap-warning"));
 }
 
 #[tokio::test]

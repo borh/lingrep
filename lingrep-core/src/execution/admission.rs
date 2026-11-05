@@ -67,6 +67,7 @@ mod tests {
     /// Every field differs, so a variant reading the wrong one is visible.
     fn location() -> SentenceLocation {
         SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: 3,
             document_id: DocumentId::new(7),

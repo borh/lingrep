@@ -195,8 +195,9 @@ struct LineAnalysis {
 // any view is built. Reporting that as "Rendering failed" would name the wrong
 // stage, and reporting it as an empty match list would show the researcher a
 // sample that matched nothing.
-fn build_line_analysis(
-    line: &[TokenInfo],
+fn build_line_analysis<'a>(
+    line: &'a [TokenInfo],
+    context: &'a lingrep_core::fsm::LookaroundContext<'a, [TokenInfo]>,
     matcher: &lingrep_core::fsm::CompiledCatalog,
     base_index: usize,
     render_offset: usize,
@@ -206,7 +207,7 @@ fn build_line_analysis(
     // matcher owns that one policy application so this view cannot drift from
     // normal publication behavior.
     let explanation = matcher
-        .explain_sentence(line)
+        .explain_sentence_in_context(line, context)
         .map_err(|error| SampleAnalysisError {
             message: format!("Result policy failed: {error}"),
         })?;
@@ -256,6 +257,16 @@ fn build_line_analysis(
     })
 }
 
+fn whole<'a>(lines: &[&'a [TokenInfo]]) -> Vec<lingrep_core::fsm::ContextSegment<'a, [TokenInfo]>> {
+    lines
+        .iter()
+        .map(|line| lingrep_core::fsm::ContextSegment {
+            tokens: *line,
+            range: 0..line.len(),
+        })
+        .collect()
+}
+
 pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleAnalysis {
     let matcher = match compile_web_pattern(pattern_source) {
         Ok(output) => output.matcher,
@@ -270,12 +281,23 @@ pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleA
     let mut all_matches: Vec<MatchView> = Vec::new();
     let mut constellations: Vec<SampleConstellation> = Vec::new();
     let mut has_candidates = false;
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
+    let lines: Vec<&[TokenInfo]> = lines
+        .iter()
+        .map(Vec::as_slice)
+        .filter(|line| !line.is_empty())
+        .collect();
+    for (index, line) in lines.iter().copied().enumerate() {
+        let context = lingrep_core::fsm::LookaroundContext {
+            windows: std::collections::BTreeMap::from([(
+                lingrep_core::fsm::LookaroundScope::Document,
+                lingrep_core::fsm::ContextWindow {
+                    before: whole(&lines[..index]),
+                    after: whole(&lines[index + 1..]),
+                },
+            )]),
+        };
         let base_index = all_tokens.len();
-        match build_line_analysis(line, &matcher, base_index, all_matches.len()) {
+        match build_line_analysis(line, &context, &matcher, base_index, all_matches.len()) {
             Ok(mut analysis) => {
                 has_candidates |= !analysis.constellation.groups.is_empty();
                 all_matches.append(&mut analysis.matches);

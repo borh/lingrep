@@ -3,11 +3,11 @@ use super::limits::CompileLimits;
 use super::model::{
     BoundExpr, BoundProgram, DefinitionId, LookDirection, LookPolarity, SourceSpan,
 };
-use crate::fsm::AssertionOccurrenceId;
 use crate::fsm::matcher::assertion::{
     AssertionAutomaton, AssertionCatalog, AssertionEdge, AssertionEdgeKind, AssertionOccurrence,
     AssertionProgram, AssertionProgramId, required_attributes,
 };
+use crate::fsm::{AssertionOccurrenceId, LookaroundScope};
 use crate::fsm::{AttrValueType, SymbolicAttrValue};
 use compact_str::CompactString;
 use std::collections::{BTreeMap, BTreeSet};
@@ -78,6 +78,8 @@ pub(super) fn compile_assertions(
             // exclude shares a program with a `followed_by` body or a
             // `preceded_by` one.
             LookDirection::FollowedBy,
+            None,
+            None,
             definition
                 .expr()
                 .expect("anchor excludes are ordinary fragments"),
@@ -101,7 +103,12 @@ struct Compiler<'a> {
     bound: &'a BoundProgram,
     limits: &'a CompileLimits,
     programs: Vec<AssertionProgram>,
-    keys: Vec<(LookDirection, BoundExpr)>,
+    keys: Vec<(
+        LookDirection,
+        Option<LookaroundScope>,
+        Option<usize>,
+        BoundExpr,
+    )>,
     occurrences: Vec<AssertionOccurrence>,
     occurrence_by_span: BTreeMap<SourceSpan, AssertionOccurrenceId>,
     cost: AssertionCost,
@@ -136,8 +143,13 @@ impl Compiler<'_> {
                     return Ok(());
                 }
                 // Walks the body itself, with `nested` true — see its doc.
-                let program =
-                    self.intern_program(lookaround.direction, &lookaround.body, lookaround.span)?;
+                let program = self.intern_program(
+                    lookaround.direction,
+                    lookaround.scope.as_ref(),
+                    lookaround.skip_reach,
+                    &lookaround.body,
+                    lookaround.span,
+                )?;
                 let occurrence = AssertionOccurrenceId::new(self.occurrences.len());
                 self.charge_generated_owned_bytes(
                     lookaround.span,
@@ -197,17 +209,28 @@ impl Compiler<'_> {
     fn intern_program(
         &mut self,
         direction: LookDirection,
+        scope: Option<&LookaroundScope>,
+        skip_reach: Option<usize>,
         body: &BoundExpr,
         span: SourceSpan,
     ) -> Result<AssertionProgramId, CompileError> {
         self.collect(body, true)?;
-        if let Some(index) = self
-            .keys
-            .iter()
-            .position(|(key_direction, key_body)| *key_direction == direction && key_body == body)
+        if let Some(index) =
+            self.keys
+                .iter()
+                .position(|(key_direction, key_scope, key_skip_reach, key_body)| {
+                    *key_direction == direction
+                        && key_scope.as_ref() == scope
+                        && *key_skip_reach == skip_reach
+                        && key_body == body
+                })
         {
             return Ok(AssertionProgramId::new(index));
         }
+        let reach = match scope {
+            None => 0,
+            Some(scope) => self.scoped_reach(scope, skip_reach, body, span)?,
+        };
 
         // A top-level alternation is the union of its branches, and a row is a
         // set of boundaries, so `row(A | B) == row(A) | row(B)` in either
@@ -225,7 +248,7 @@ impl Compiler<'_> {
         if let BoundExpr::Alternation(children) = body
             && children.len() > 1
         {
-            return self.intern_union(direction, body, children, span);
+            return self.intern_union(direction, scope, skip_reach, reach, body, children, span);
         }
 
         let mut builder = AutomatonBuilder {
@@ -246,9 +269,12 @@ impl Compiler<'_> {
         let required_attributes = required_attributes(&automaton);
         self.charge_program(span, &dependencies, &required_attributes)?;
         let id = AssertionProgramId::new(self.programs.len());
-        self.keys.push((direction, body.clone()));
+        self.keys
+            .push((direction, scope.cloned(), skip_reach, body.clone()));
         self.programs.push(AssertionProgram {
             direction,
+            scope: scope.cloned(),
+            reach,
             automaton,
             dependencies,
             required_attributes,
@@ -281,6 +307,9 @@ impl Compiler<'_> {
     fn intern_union(
         &mut self,
         direction: LookDirection,
+        scope: Option<&LookaroundScope>,
+        skip_reach: Option<usize>,
+        reach: usize,
         body: &BoundExpr,
         children: &[BoundExpr],
         span: SourceSpan,
@@ -304,7 +333,7 @@ impl Compiler<'_> {
                     .expect("lexicon references are refused"),
                 other => other,
             };
-            let program = self.intern_program(direction, body, span)?;
+            let program = self.intern_program(direction, scope, skip_reach, body, span)?;
             members.insert(program);
             let occurrence = AssertionOccurrenceId::new(self.occurrences.len());
             self.charge_generated_owned_bytes(span, size_of::<AssertionOccurrence>())?;
@@ -343,15 +372,53 @@ impl Compiler<'_> {
         let required_attributes = required_attributes(&automaton);
         self.charge_program(span, &dependencies, &required_attributes)?;
         let id = AssertionProgramId::new(self.programs.len());
-        self.keys.push((direction, body.clone()));
+        self.keys
+            .push((direction, scope.cloned(), skip_reach, body.clone()));
         self.programs.push(AssertionProgram {
             direction,
+            scope: scope.cloned(),
+            reach,
             automaton,
             dependencies,
             required_attributes,
             union_members,
         });
         Ok(id)
+    }
+
+    /// The most tokens a `within=` body can match, which bounds the
+    /// neighbouring-sentence context its evaluation reads; `skip_reach` when
+    /// `skip:` set it.
+    fn scoped_reach(
+        &self,
+        scope: &LookaroundScope,
+        skip_reach: Option<usize>,
+        body: &BoundExpr,
+        span: SourceSpan,
+    ) -> Result<usize, CompileError> {
+        if contains_lookaround(body, &self.bound.definitions) {
+            return Err(self.diagnostic(
+                span,
+                DiagnosticCode::ScopedLookaroundUnsupported,
+                &format!(
+                    "a `within={}` lookaround body cannot contain another lookaround",
+                    scope.name()
+                ),
+            ));
+        }
+        skip_reach
+            .or_else(|| super::capture_key::bound_max_width(body, &self.bound.definitions))
+            .ok_or_else(|| {
+                self.diagnostic(
+                    span,
+                    DiagnosticCode::ScopedLookaroundUnsupported,
+                    &format!(
+                        "a `within={}` lookaround body must have a maximum width: \
+                     replace an unbounded repetition such as `+` or `*` with `{{m,n}}`",
+                        scope.name()
+                    ),
+                )
+            })
     }
 
     /// Charges one installed program's owned bytes.
@@ -671,6 +738,25 @@ impl AutomatonBuilder<'_, '_> {
             self.edge(repeated.end, AssertionEdgeKind::Epsilon, tail)?;
         }
         Ok(Fragment { start, end })
+    }
+}
+
+fn contains_lookaround(expr: &BoundExpr, definitions: &[super::model::BoundDefinition]) -> bool {
+    match expr {
+        BoundExpr::Lookaround(_) => true,
+        BoundExpr::Token(_) | BoundExpr::Assertion(_) | BoundExpr::SameAs { .. } => false,
+        BoundExpr::Sequence(children) | BoundExpr::Alternation(children) => children
+            .iter()
+            .any(|child| contains_lookaround(child, definitions)),
+        BoundExpr::Intersection { operands, .. } | BoundExpr::AnyOrder { operands, .. } => operands
+            .iter()
+            .any(|operand| contains_lookaround(operand, definitions)),
+        BoundExpr::Repeat { expr, .. } | BoundExpr::Capture { expr, .. } => {
+            contains_lookaround(expr, definitions)
+        }
+        BoundExpr::Definition { id, .. } => definitions[id.index()]
+            .expr()
+            .is_some_and(|expr| contains_lookaround(expr, definitions)),
     }
 }
 

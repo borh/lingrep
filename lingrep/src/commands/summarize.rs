@@ -401,6 +401,14 @@ pub fn run(
             config,
             &run_id,
         )?;
+        if let Some(observed) = source_stats.observed_division_kinds() {
+            crate::attribute_binding::write_unobserved_division_notices(
+                &compiled.matcher.lookaround_division_kinds(),
+                |kind| observed.contains(kind),
+                config,
+                Some(&run_id),
+            )?;
+        }
         if args.trace_policy.is_some() {
             crate::policy_report::write_requested(
                 &config.stderr,

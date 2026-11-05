@@ -86,6 +86,7 @@ async fn hit_detail(
     .map(|sentence| HitProvenance::from_sentence(&sentence));
     let overlaps = match super::overlaps::inspect(
         &store,
+        &ready,
         std::sync::Arc::clone(&snapshot),
         key,
         &refs,
@@ -291,6 +292,7 @@ async fn pattern_detail(
     let mut projection = PatternDetailProjection::new(hits, &snapshot.sections, key);
     let overlaps = match super::overlaps::inspect(
         &store,
+        &ready,
         std::sync::Arc::clone(&snapshot),
         key,
         &refs,

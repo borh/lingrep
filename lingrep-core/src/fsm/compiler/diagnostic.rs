@@ -45,6 +45,9 @@ pub enum DiagnosticCode {
     /// carry. The reverse nesting — a lookaround inside `&` — is fine, and
     /// stays allowed.
     IntersectionInsideLookaround,
+    /// A `within=` lookaround whose body has no maximum width or contains
+    /// another lookaround.
+    ScopedLookaroundUnsupported,
     /// A `skip:` on a definition that the rewrite does not support: a fragment, a
     /// lexicon, or a pattern that references a definition or uses `same_as`.
     SkipUnsupported,
@@ -380,6 +383,7 @@ impl DiagnosticCode {
             Self::CaptureInsideLookaround => "CaptureInsideLookaround",
             Self::SpanEqualityInsideLookaround => "SpanEqualityInsideLookaround",
             Self::IntersectionInsideLookaround => "IntersectionInsideLookaround",
+            Self::ScopedLookaroundUnsupported => "ScopedLookaroundUnsupported",
             Self::SkipUnsupported => "SkipUnsupported",
             Self::CaptureInsideIntersection => "CaptureInsideIntersection",
             Self::SpanEqualityInsideIntersection => "SpanEqualityInsideIntersection",

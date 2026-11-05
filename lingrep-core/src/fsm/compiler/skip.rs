@@ -7,6 +7,10 @@
 //! both step over skipped tokens. A gap never begins or ends a match or a
 //! capture: where a nullable prefix or suffix could leave one there, a
 //! one-token boundary lookaround rejects that span.
+//!
+//! A `within=` body cannot contain a lookaround, so there `^` and `$` become
+//! `gap ^ gap` and `gap $ gap`. Its reach is the width of the body as
+//! written, so skipped tokens of the neighbouring sentences count toward it.
 
 use compact_str::CompactString;
 
@@ -58,7 +62,7 @@ impl SkipRewrite {
     }
 
     pub(super) fn pattern(&self, expr: ParsedExpr) -> Result<ParsedExpr, Unsupported> {
-        let rewritten = self.rewrite(expr)?;
+        let rewritten = self.rewrite(expr, false)?;
         Ok(self.bounded(rewritten))
     }
 
@@ -96,6 +100,8 @@ impl SkipRewrite {
         ParsedExpr::Lookaround(LookaroundExpr {
             direction,
             polarity,
+            scope: None,
+            skip_reach: None,
             body: Box::new(body),
             span: self.spans[kind as usize],
         })
@@ -134,11 +140,19 @@ impl SkipRewrite {
         }
     }
 
-    fn rewrite(&self, expr: ParsedExpr) -> Result<ParsedExpr, Unsupported> {
+    /// `scoped` is set inside a `within=` lookaround body.
+    fn rewrite(&self, expr: ParsedExpr, scoped: bool) -> Result<ParsedExpr, Unsupported> {
         Ok(match expr {
             ParsedExpr::Token(test, span) => {
                 ParsedExpr::Token(ParsedTest::And(vec![test, self.not_skipped()]), span)
             }
+            ParsedExpr::Assertion(
+                assertion @ (PositionAssertion::SentenceStart | PositionAssertion::SentenceEnd),
+            ) if scoped => ParsedExpr::Sequence(vec![
+                self.gap(),
+                ParsedExpr::Assertion(assertion),
+                self.gap(),
+            ]),
             ParsedExpr::Assertion(PositionAssertion::SentenceStart) => self.lookaround(
                 Synthesized::SentenceStart,
                 LookDirection::PrecededBy,
@@ -159,13 +173,20 @@ impl SkipRewrite {
             ),
             ParsedExpr::Assertion(assertion) => ParsedExpr::Assertion(assertion),
             ParsedExpr::Lookaround(lookaround) => {
-                let body = self.rewrite(*lookaround.body)?;
+                let scoped = lookaround.scope.is_some();
+                let skip_reach = if scoped {
+                    max_width(&lookaround.body)
+                } else {
+                    None
+                };
+                let body = self.rewrite(*lookaround.body, scoped)?;
                 let padded = match lookaround.direction {
                     LookDirection::PrecededBy => vec![body, self.gap()],
                     LookDirection::FollowedBy => vec![self.gap(), body],
                 };
                 ParsedExpr::Lookaround(LookaroundExpr {
                     body: Box::new(ParsedExpr::Sequence(padded)),
+                    skip_reach,
                     ..lookaround
                 })
             }
@@ -178,26 +199,35 @@ impl SkipRewrite {
                         rewritten.push(self.gap());
                     }
                     consumed_before |= consumes;
-                    rewritten.push(self.rewrite(item)?);
+                    rewritten.push(self.rewrite(item, scoped)?);
                 }
                 ParsedExpr::Sequence(rewritten)
             }
-            ParsedExpr::Alternation(items) => ParsedExpr::Alternation(self.rewrite_all(items)?),
+            ParsedExpr::Alternation(items) => {
+                ParsedExpr::Alternation(self.rewrite_all(items, scoped)?)
+            }
             ParsedExpr::Intersection { operands, span } => ParsedExpr::Intersection {
-                operands: self.rewrite_all(operands)?,
+                operands: self.rewrite_all(operands, scoped)?,
                 span,
             },
             ParsedExpr::AnyOrder { operands, span } => ParsedExpr::AnyOrder {
-                operands: self.rewrite_all(operands)?,
+                operands: self.rewrite_all(operands, scoped)?,
                 span,
             },
-            ParsedExpr::Repeat { expr, min, max } => self.repeat(*expr, min, max)?,
-            ParsedExpr::Group(expr) => ParsedExpr::Group(Box::new(self.rewrite(*expr)?)),
-            ParsedExpr::NamedGroup { name, expr, span } => ParsedExpr::NamedGroup {
-                name,
-                expr: Box::new(self.bounded(self.rewrite(*expr)?)),
-                span,
-            },
+            ParsedExpr::Repeat { expr, min, max } => self.repeat(*expr, min, max, scoped)?,
+            ParsedExpr::Group(expr) => ParsedExpr::Group(Box::new(self.rewrite(*expr, scoped)?)),
+            ParsedExpr::NamedGroup { name, expr, span } => {
+                let rewritten = self.rewrite(*expr, scoped)?;
+                ParsedExpr::NamedGroup {
+                    name,
+                    expr: Box::new(if scoped {
+                        rewritten
+                    } else {
+                        self.bounded(rewritten)
+                    }),
+                    span,
+                }
+            }
             ParsedExpr::SameAs { span, .. } => return Err(Unsupported::SameAs { span }),
             ParsedExpr::Reference { name, span } => {
                 return Err(Unsupported::Reference { name, span });
@@ -205,8 +235,15 @@ impl SkipRewrite {
         })
     }
 
-    fn rewrite_all(&self, items: Vec<ParsedExpr>) -> Result<Vec<ParsedExpr>, Unsupported> {
-        items.into_iter().map(|item| self.rewrite(item)).collect()
+    fn rewrite_all(
+        &self,
+        items: Vec<ParsedExpr>,
+        scoped: bool,
+    ) -> Result<Vec<ParsedExpr>, Unsupported> {
+        items
+            .into_iter()
+            .map(|item| self.rewrite(item, scoped))
+            .collect()
     }
 
     /// `E{m,n}` with a gap between consecutive iterations.
@@ -215,8 +252,9 @@ impl SkipRewrite {
         expr: ParsedExpr,
         min: usize,
         max: Option<usize>,
+        scoped: bool,
     ) -> Result<ParsedExpr, Unsupported> {
-        let inner = self.rewrite(expr)?;
+        let inner = self.rewrite(expr, scoped)?;
         if max == Some(0) {
             return Ok(ParsedExpr::Repeat {
                 expr: Box::new(inner),
@@ -378,6 +416,29 @@ fn zero_width(expr: &ParsedExpr) -> bool {
         ParsedExpr::Intersection { operands, .. } => operands.iter().any(zero_width),
         ParsedExpr::Repeat { expr, max, .. } => *max == Some(0) || zero_width(expr),
         ParsedExpr::Group(expr) | ParsedExpr::NamedGroup { expr, .. } => zero_width(expr),
+    }
+}
+
+/// The most tokens `expr` can match, or `None` when that is unbounded or
+/// depends on a reference.
+fn max_width(expr: &ParsedExpr) -> Option<usize> {
+    match expr {
+        ParsedExpr::Token(..) => Some(1),
+        ParsedExpr::Assertion(_) | ParsedExpr::Lookaround(_) => Some(0),
+        ParsedExpr::Sequence(items) => items
+            .iter()
+            .try_fold(0usize, |total, item| total.checked_add(max_width(item)?)),
+        ParsedExpr::Alternation(items)
+        | ParsedExpr::Intersection {
+            operands: items, ..
+        } => items
+            .iter()
+            .try_fold(0usize, |widest, item| Some(widest.max(max_width(item)?))),
+        ParsedExpr::Repeat { expr, max, .. } => max_width(expr)?.checked_mul((*max)?),
+        ParsedExpr::Group(expr) | ParsedExpr::NamedGroup { expr, .. } => max_width(expr),
+        ParsedExpr::AnyOrder { .. } | ParsedExpr::SameAs { .. } | ParsedExpr::Reference { .. } => {
+            None
+        }
     }
 }
 

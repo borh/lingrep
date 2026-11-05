@@ -1078,7 +1078,8 @@ to supply both fields. `within(section, role=methods) & within(section,
 reviewer=A)` may use two different sections. `not within` preserves unknown
 missing/ill-shaped evidence; it cannot turn unavailable structure into absence.
 Unavailable kinds are refused with a reason. Nested `within` is unsupported.
-All token patterns remain sentence-local. The structure budget is 256 active
+A token pattern matches inside one sentence; only a `within=` lookaround
+reads neighbouring sentences. The structure budget is 256 active
 divisions, 64 parent levels, 256 observed kinds per document and 16 MiB of
 active division metadata; derived sentence labels have a separate 16 MiB
 byte cap. Prepared storage retains metadata once per division. Sequential

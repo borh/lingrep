@@ -1315,6 +1315,95 @@ fn a_basic_edge_with_a_node_binder_matches_each_non_root_edge_once() {
 }
 
 #[test]
+fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assignment() {
+    let sentence = "1\tA\ta\tNOUN\t_\t_\t2\tnsubj\t_\t_\n\
+                    2\tsaw\tsee\tVERB\t_\t_\t0\troot\t_\t_\n\
+                    3\tB\tb\tNOUN\t_\t_\t2\tobj\t_\t_\n\
+                    4\tC\tc\tNOUN\t_\t_\t2\tobj\t_\t_\n\
+                    5\tD\td\tNOUN\t_\t_\t4\tnmod\t_\t_\n";
+    let assignments =
+        |source: &str| {
+            let compiled = compile_catalog(
+                PatternSource::named("ordered-subtree.lx", source),
+                CompileLimits::default(),
+            )
+            .unwrap_or_else(|error| panic!("{source} compiles: {:?}", error.diagnostics))
+            .matcher;
+            let bound = compiled
+                .bind(&lingrep_core::corpus::conllu::token_schema())
+                .expect("the CoNLL-U schema carries dep.head and dep.rel");
+            bound
+                .find_matches(&conllu_sentence(sentence, &bound))
+                .expect("schema matches")
+                .into_iter()
+                .map(|matched| {
+                    let mut nodes =
+                        matched
+                            .captures
+                            .iter()
+                            .map(|capture| (capture.name.to_string(), capture.start))
+                            .chain(matched.graph_bindings.iter().map(|binding| match binding {
+                                lingrep_core::fsm::GraphBinding::Node {
+                                    name,
+                                    node:
+                                        lingrep_core::corpus::conllu::EnhancedNodeId::Word {
+                                            token_index,
+                                        },
+                                    ..
+                                } => (name.to_string(), *token_index),
+                                other => panic!("a word binding expected, got {other:?}"),
+                            }))
+                            .collect::<Vec<_>>();
+                    nodes.sort();
+                    nodes
+                        .into_iter()
+                        .map(|(name, index)| format!("{name}={index}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect::<Vec<_>>()
+        };
+
+    // Two binders with one test, relation and head bind two different words,
+    // in both assignments; an order constraint keeps one.
+    let siblings = "(?<v> [upos=VERB]) where $v -[obj]-> (?<a> [upos=NOUN]), \
+                    $v -[obj]-> (?<b> [upos=NOUN])";
+    assert_eq!(
+        assignments(&format!("pattern p := {siblings}.")),
+        ["a=2 b=3 v=1", "a=3 b=2 v=1"]
+    );
+    assert_eq!(
+        assignments(&format!("pattern p := {siblings}, $a < $b.")),
+        ["a=2 b=3 v=1"]
+    );
+    // A binder does not bind the word of a surface capture that a basic edge
+    // names.
+    assert_eq!(
+        assignments(
+            "pattern p := (?<a> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $a, \
+             $v -[obj]-> (?<b> [upos=NOUN])."
+        ),
+        ["a=2 b=3 v=1", "a=3 b=2 v=1"]
+    );
+    // A pattern for the ordered four-node shape
+    // `NOUN@1:nsubj VERB^ NOUN@1:obj NOUN@2:nmod` matches each node set once;
+    // its order constraint precedes the edges that declare the binders.
+    assert_eq!(
+        assignments(
+            "pattern p := (?<n1> [upos=VERB]) where $n0 < $n1 < $n2 < $n3, \
+             $n1 -[nsubj]-> (?<n0> [upos=NOUN]), $n1 -[obj]-> (?<n2> [upos=NOUN]), \
+             $n2 -[nmod]-> (?<n3> [upos=NOUN])."
+        ),
+        ["n0=0 n1=1 n2=3 n3=4"]
+    );
+    // Surface captures alone may be ordered.
+    assert_eq!(
+        assignments("pattern p := (?<x> [upos=NOUN]) []* (?<y> [upos=NOUN]) where $y < $x."),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn enhanced_where_clause_reaches_empty_nodes_from_a_surface_anchor() {
     let source = "# text = I saw\n1\tI\tI\tPRON\t_\t_\t2\tnsubj\t2:nsubj\t_\n2\tsaw\tsee\tVERB\t_\t_\t0\troot\t0:root\t_\n2.1\tpro\tpro\tPRON\t_\t_\t_\t_\t2:obj\t_\n2.2\tthere\tthere\tADV\t_\t_\t_\t_\t2.1:dep\t_\n";
     let compiled = compile_catalog(
@@ -1409,6 +1498,14 @@ fn graph_where_clause_rejects_ambiguous_or_unanchored_bindings() {
         ),
         (
             "pattern p := (?<d> [upos=NOUN]+) where (?<h> []) -[*]-> $d.",
+            DiagnosticCode::WhereCaptureNotSingleToken,
+        ),
+        (
+            "pattern p := (?<d> []) where (?<h> []) -[*]-> $d, $h < $x.",
+            DiagnosticCode::EnhancedGraphBindingUndefined,
+        ),
+        (
+            "pattern p := (?<d> [upos=NOUN]+) (?<e> []) where $d < $e.",
             DiagnosticCode::WhereCaptureNotSingleToken,
         ),
     ];

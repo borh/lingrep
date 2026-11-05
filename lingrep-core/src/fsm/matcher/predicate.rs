@@ -391,6 +391,14 @@ impl<'catalog> PredicateSession<'catalog> {
         }
     }
 
+    /// A session that evaluates every predicate afresh, for token positions
+    /// the memo does not index.
+    pub(crate) fn unmemoized(&self) -> Self {
+        let mut session = self.clone();
+        session.memoize = false;
+        session
+    }
+
     #[cfg(test)]
     pub(crate) fn new_unmemoized(catalog: &'catalog PredicateCatalog) -> Self {
         let mut session = Self::new(catalog);

@@ -2099,3 +2099,23 @@ other := [text=c].
         ["shared", "other"]
     );
 }
+
+#[test]
+fn compiler_rejects_scoped_lookarounds_in_anchor_exclusions() {
+    for body in [
+        "[upos=PUNCT]+ followed_by([text=a], within=document)",
+        "[upos=PUNCT]+ preceded_by([text=a], within=paragraph)",
+        "@helper",
+    ] {
+        let source = PUNCT_ANCHOR.replace(
+            "fragment TRAILING_APPARATUS := [upos=PUNCT]+.",
+            &format!("fragment TRAILING_APPARATUS := {body}.\nfragment helper := [upos=PUNCT]+ followed_by([text=a], within=document)."),
+        );
+        let errors = compile_errors(&source);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code() == DiagnosticCode::ScopedLookaroundUnsupported)
+        );
+    }
+}

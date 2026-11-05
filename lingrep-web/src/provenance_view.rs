@@ -132,6 +132,7 @@ mod tests {
     fn sentence_provenance() -> SentenceProvenance {
         SentenceProvenance {
             location: SentenceLocation {
+                lookaround_divisions: None,
                 source_metadata: None,
                 corpus_sentence_ordinal: 0,
                 document_id: DocumentId::new(0),

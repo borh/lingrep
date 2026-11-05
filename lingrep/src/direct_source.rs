@@ -154,6 +154,7 @@ struct DirectSourceStatsState {
     documents_admitted: u64,
     max_staged_raw_bytes: usize,
     oversized_sentence_omissions: Option<OversizedSentenceOmissionSummary>,
+    observed_division_kinds: std::collections::BTreeSet<compact_str::CompactString>,
 }
 
 impl DirectSourceStats {
@@ -161,6 +162,16 @@ impl DirectSourceStats {
         self.state
             .lock()
             .map(|state| state.documents_admitted)
+            .unwrap_or_default()
+    }
+
+    /// The lookaround division kinds that some admitted document observes.
+    pub(crate) fn observed_division_kinds(
+        &self,
+    ) -> std::collections::BTreeSet<compact_str::CompactString> {
+        self.state
+            .lock()
+            .map(|state| state.observed_division_kinds.clone())
             .unwrap_or_default()
     }
 
@@ -226,6 +237,7 @@ pub struct DirectSentenceSource<I> {
     pending: Option<DirectSentence>,
     current_source: Option<(lingrep_core::corpus::DocumentId, Arc<str>)>,
     source_metadata_projection: Option<lingrep_core::corpus::SourceMetadataProjection>,
+    lookaround_division_kinds: Box<[compact_str::CompactString]>,
     document_metadata: lingrep_core::corpus::Metadata,
     next_sentence_ordinal: u64,
     terminal_failure: Option<TerminalFailure>,
@@ -260,6 +272,14 @@ impl<I> DirectSentenceSource<I> {
         projection: Option<lingrep_core::corpus::SourceMetadataProjection>,
     ) -> Self {
         self.source_metadata_projection = projection;
+        self
+    }
+
+    /// Records each sentence's innermost division of each of `kinds` in
+    /// [`SentenceLocation::lookaround_divisions`].
+    #[must_use]
+    pub fn with_lookaround_divisions(mut self, kinds: Vec<compact_str::CompactString>) -> Self {
+        self.lookaround_division_kinds = kinds.into();
         self
     }
 
@@ -369,6 +389,7 @@ fn source_from_events_with_disposition<I>(
         pending: None,
         current_source: None,
         source_metadata_projection: None,
+        lookaround_division_kinds: Box::default(),
         document_metadata: Default::default(),
         next_sentence_ordinal: 0,
         terminal_failure: None,
@@ -521,7 +542,24 @@ where
                             .next_sentence_ordinal
                             .checked_add(1)
                             .ok_or(ExecutionError::ResourceAccounting)?;
+                        for kind in &self.lookaround_division_kinds {
+                            if sentence.structure.observes(kind) {
+                                let mut stats = self
+                                    .stats
+                                    .state
+                                    .lock()
+                                    .map_err(|_| ExecutionError::ResourceAccounting)?;
+                                stats.observed_division_kinds.insert(kind.clone());
+                            }
+                        }
                         let location = SentenceLocation {
+                            lookaround_divisions: (!self.lookaround_division_kinds.is_empty())
+                                .then(|| {
+                                    self.lookaround_division_kinds
+                                        .iter()
+                                        .map(|kind| sentence.structure.innermost(kind))
+                                        .collect()
+                                }),
                             source_metadata: self
                                 .source_metadata_projection
                                 .as_ref()

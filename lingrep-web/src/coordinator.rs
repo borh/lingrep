@@ -439,7 +439,11 @@ fn run_scan_blocking_with_options(
     // so the result banner can disclose a degraded run.
     let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
     let execution_source = scope
-        .open_source(&ready.artifact, bound.projection())
+        .open_source(
+            &ready.artifact,
+            bound.projection(),
+            output.matcher.lookaround_division_kinds(),
+        )
         .map_err(|error| {
             tracing::warn!(%error, "sentence source construction failed");
             integrity_failure()
@@ -1572,6 +1576,7 @@ mod tests {
 
     fn test_location(ordinal: u64) -> lingrep_core::execution::SentenceLocation {
         lingrep_core::execution::SentenceLocation {
+            lookaround_divisions: None,
             source_metadata: None,
             corpus_sentence_ordinal: ordinal,
             document_id: lingrep_core::corpus::DocumentId::new(0),

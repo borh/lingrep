@@ -151,6 +151,7 @@ pub(crate) fn resolve_matching_query(
         ));
     }
     let catalog_attributes = compiled.matcher.execution_attributes();
+    let division_kinds = compiled.matcher.lookaround_division_kinds();
     let root = input.root.as_deref();
     let stdin = selected_corpus.is_none() && root.is_none_or(|path| path == Path::new("-"));
     let mut scope = QueryScope::default();
@@ -174,11 +175,30 @@ pub(crate) fn resolve_matching_query(
             &analyzer_name,
             config,
         )?;
-        let provenance = if scope_clause.is_some() || metadata_projection.is_some() {
+        let provenance = if scope_clause.is_some()
+            || metadata_projection.is_some()
+            || !division_kinds.is_empty()
+        {
             Some(artifact.provenance_reader()?)
         } else {
             None
         };
+        if let Some(reader) = provenance.as_deref()
+            && !division_kinds.is_empty()
+        {
+            let observed: BTreeSet<String> = reader
+                .block_on(reader.view().division_observation_counts())?
+                .into_iter()
+                .filter(|(_, documents)| *documents > 0)
+                .map(|(kind, _)| kind)
+                .collect();
+            crate::attribute_binding::write_unobserved_division_notices(
+                &division_kinds,
+                |kind| observed.contains(kind),
+                config,
+                None,
+            )?;
+        }
         let resolved = scope_clause
             .map(|clause| {
                 resolve_prepared_scope(
@@ -217,6 +237,19 @@ pub(crate) fn resolve_matching_query(
                     }
                     None => artifact.bound_sentence_source(bound.projection())?,
                 },
+            };
+            let source = if division_kinds.is_empty() {
+                source
+            } else {
+                artifact.with_lookaround_divisions(
+                    source,
+                    division_kinds.clone(),
+                    Arc::clone(
+                        provenance
+                            .as_ref()
+                            .expect("lookaround divisions opened provenance"),
+                    ),
+                )?
             };
             let source = if char_offsets {
                 source
@@ -369,7 +402,8 @@ pub(crate) fn resolve_matching_query(
                     .with_normalization(config.normalization)
                     .with_segmentation(config.segmentation)
                     .with_projection(bound.projection().clone())
-                    .with_source_metadata(metadata_projection.clone()),
+                    .with_source_metadata(metadata_projection.clone())
+                    .with_lookaround_divisions(division_kinds.clone()),
                 )),
                 CompletionObservation::Stdin {
                     stream_id,
@@ -400,7 +434,8 @@ pub(crate) fn resolve_matching_query(
             .with_normalization(config.normalization)
             .with_segmentation(config.segmentation)
             .with_projection(bound.projection().clone())
-            .with_source_metadata(metadata_projection.clone());
+            .with_source_metadata(metadata_projection.clone())
+            .with_lookaround_divisions(division_kinds.clone());
             (
                 query_source::direct(Box::new(source)),
                 CompletionObservation::Filesystem {

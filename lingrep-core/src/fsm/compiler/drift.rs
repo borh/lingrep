@@ -136,7 +136,19 @@ pub fn report_catalog_drift(
                     expr,
                     relations,
                     enhanced_relations,
+                    orders,
                 } => {
+                    let mut canonical_orders =
+                        orders
+                            .iter()
+                            .flat_map(|order| {
+                                order.operands.iter().zip(&order.operands[1..]).map(
+                                    |((before, _), (after, _))| (before.clone(), after.clone()),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                    canonical_orders.sort();
+                    canonical_orders.dedup();
                     let mut canonical_relations = relations
                         .iter()
                         .map(|relation| {
@@ -237,6 +249,7 @@ pub fn report_catalog_drift(
                             })?,
                             relations: canonical_relations.into_boxed_slice(),
                             enhanced_relations: canonical_enhanced_relations.into_boxed_slice(),
+                            orders: canonical_orders.into_boxed_slice(),
                         },
                     )
                 }
@@ -309,6 +322,7 @@ enum CanonicalExpr {
     Lookaround {
         direction: LookDirection,
         polarity: LookPolarity,
+        scope: Option<crate::fsm::LookaroundScope>,
         body: Box<CanonicalExpr>,
     },
     Sequence(Vec<CanonicalExpr>),
@@ -344,6 +358,9 @@ enum CanonicalDefinitionBody {
         /// one meaning and must not drift.
         relations: Box<[CanonicalRelation]>,
         enhanced_relations: Box<[CanonicalEnhancedRelation]>,
+        /// Each adjacent pair `$a < $b` of an order constraint, sorted and
+        /// deduplicated.
+        orders: Box<[(CompactString, CompactString)]>,
     },
     Lexicon {
         by: Box<[crate::token_match::AttributeKey]>,
@@ -461,6 +478,7 @@ impl Canonicalizer<'_> {
             BoundExpr::Lookaround(lookaround) => CanonicalExpr::Lookaround {
                 direction: lookaround.direction,
                 polarity: lookaround.polarity,
+                scope: lookaround.scope.clone(),
                 // Recurse into the body: it contains token predicates, and
                 // leaving them un-normalized would resurrect the P2(a) false
                 // positive inside lookaround.

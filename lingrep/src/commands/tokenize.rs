@@ -592,6 +592,7 @@ mod tests {
         let sentences: Vec<_> = (0..2)
             .map(|ordinal| ExecutionSentence {
                 location: SentenceLocation {
+                    lookaround_divisions: None,
                     source_metadata: None,
                     corpus_sentence_ordinal: ordinal,
                     document_id: DocumentId::new(0),

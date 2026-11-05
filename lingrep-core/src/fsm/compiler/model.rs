@@ -363,6 +363,7 @@ pub(crate) enum ParsedDefinitionBody {
         expr: ParsedExpr,
         relations: Box<[ParsedRelation]>,
         enhanced_relations: Box<[ParsedEnhancedRelation]>,
+        orders: Box<[OrderConstraint]>,
     },
     Lexicon {
         by: Box<[AttributeKey]>,
@@ -486,9 +487,9 @@ pub(crate) enum ParsedRelationTarget<T> {
 
 /// The bound dependent side of a `where` edge.
 ///
-/// `Captured` preserves the existing exact-edge constraint. `Anonymous` asks
-/// only whether a matching dependent exists without allocating a capture
-/// identity or result field. `Predicate` likewise allocates no
+/// `Captured` relates the head to one captured dependent. `Anonymous` holds
+/// when a matching dependent exists, and allocates no capture identity or
+/// result field. `Predicate` likewise allocates no
 /// identity, but requires or excludes a witness satisfying one branch of its
 /// normalized one-token test.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -554,6 +555,13 @@ pub(crate) enum ParsedEnhancedEndpoint {
         dependent: CompactString,
         span: SourceSpan,
     },
+}
+
+/// `$a < $b < …`: each named surface capture or graph node precedes the next
+/// in sentence order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OrderConstraint {
+    pub(crate) operands: Box<[(CompactString, SourceSpan)]>,
 }
 
 /// The dependency graph a graph relation reads: basic `dep.head` and
@@ -691,6 +699,10 @@ pub(crate) enum LookPolarity {
 pub(crate) struct LookaroundExpr<E> {
     pub(crate) direction: LookDirection,
     pub(crate) polarity: LookPolarity,
+    pub(crate) scope: Option<crate::fsm::LookaroundScope>,
+    /// The reach of a `within=` body rewritten by `skip:`, whose skip gaps
+    /// leave it without a maximum width.
+    pub(crate) skip_reach: Option<usize>,
     pub(crate) body: Box<E>,
     pub(crate) span: SourceSpan,
 }
@@ -832,6 +844,7 @@ pub(crate) enum BoundDefinitionBody {
         expr: BoundExpr,
         relations: Box<[BoundRelation]>,
         enhanced_relations: Box<[BoundEnhancedRelation]>,
+        orders: Box<[OrderConstraint]>,
     },
     Lexicon {
         by: Box<[AttributeKey]>,
@@ -866,6 +879,13 @@ impl BoundDefinition {
             BoundDefinitionBody::Pattern {
                 enhanced_relations, ..
             } => enhanced_relations,
+            BoundDefinitionBody::Lexicon { .. } => &[],
+        }
+    }
+
+    pub(crate) fn orders(&self) -> &[OrderConstraint] {
+        match &self.body {
+            BoundDefinitionBody::Pattern { orders, .. } => orders,
             BoundDefinitionBody::Lexicon { .. } => &[],
         }
     }
@@ -922,6 +942,7 @@ impl LookaroundExpr<BoundExpr> {
     pub(crate) fn specialized_previous_token(&self) -> Option<&TokenPredicate> {
         if self.direction == LookDirection::PrecededBy
             && self.polarity == LookPolarity::Positive
+            && self.scope.is_none()
             && let BoundExpr::Token(predicate) = self.body.as_ref()
         {
             return Some(predicate);
@@ -1050,6 +1071,7 @@ pub(crate) struct ExecutionDefinition {
     /// definition without a clause.
     pub(crate) relations: Box<[ExecutionRelation]>,
     pub(crate) enhanced_relations: Box<[ExecutionEnhancedRelation]>,
+    pub(crate) orders: Box<[ExecutionOrder]>,
     /// Observable graph variables in canonical binding-kind/name order.
     pub(crate) graph_bindings: Box<[ExecutionGraphBindingDecl]>,
     pub(crate) metadata: Metadata,
@@ -1067,9 +1089,9 @@ pub(crate) struct ExecutionDefinition {
 /// one-based sentence-local HEAD — designates the head capture's token. A
 /// token carries exactly one `dep.rel`, so at most one member can match and
 /// the matched label stays observable as the dependent capture's own
-/// `dep.rel` — which is why the predicate needs no new record shape. Operand
-/// spans are retained because the width refusal in `analyze` fires per
-/// operand, after materialization.
+/// `dep.rel`, so a match record has no field for the matched label. Operand
+/// spans are kept because `analyze` reports a width error at each operand,
+/// after materialization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionRelation {
     pub(crate) head: CaptureId,
@@ -1098,6 +1120,8 @@ pub(crate) struct ExecutionEnhancedRelation {
     pub(crate) edge: Option<CompactString>,
     pub(crate) dependent: ExecutionEnhancedEndpoint,
 }
+
+pub(crate) type ExecutionOrder = Box<[ExecutionEnhancedEndpoint]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionGraphBindingDecl {

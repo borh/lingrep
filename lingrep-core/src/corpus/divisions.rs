@@ -52,6 +52,15 @@ pub struct StructuralContext {
 }
 
 impl StructuralContext {
+    /// The innermost active division of `kind`.
+    pub fn innermost(&self, kind: &str) -> Option<DivisionId> {
+        self.divisions
+            .iter()
+            .filter(|division| division.kind == kind)
+            .map(|division| division.id)
+            .max()
+    }
+
     pub fn observes(&self, kind: &str) -> bool {
         matches!(
             self.observations.get(kind),

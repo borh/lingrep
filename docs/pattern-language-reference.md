@@ -152,9 +152,33 @@ Three things are refused:
 `^` and `$` assert the exact boundaries of the supplied sentence-token slice.
 `preceded_by(E)` succeeds when `E` ends at the current boundary; `followed_by(E)`
 succeeds when `E` starts there. `not_preceded_by(E)` and `not_followed_by(E)`
-complement those existential facts. All four are sentence-local, zero-width, and
-accept regular lingrep patterns expressions, including nullable ones and nested
-lookaround; captures and `same_as` are forbidden inside.
+complement those existential facts. All four are zero-width and accept regular
+lingrep patterns expressions, including nullable ones and nested lookaround;
+captures and `same_as` are forbidden inside.
+
+Without a scope, a lookaround reads only the current sentence. With
+`, within=document`, as in `followed_by([text=。] [upos=NOUN], within=document)`,
+the body may also match tokens of the neighbouring sentences of the same
+document, and `^` and `$` inside it hold at the boundaries between sentences.
+With `, within=KIND`, where `KIND` is a division kind such as `paragraph` or
+`section`, the neighbours are the sentences of the same innermost division of
+that kind; for a sentence in no such division, the lookaround reads only that
+sentence. When the corpus observes no division of that kind, the lookaround
+reads only the current sentence. `ling matches` and `ling summarize` then report
+`warning[division_unavailable]`, except after a direct-input `ling matches` run
+that `--limit` stopped; the browser and `ling explore` do not report it. A
+scoped body must have a maximum width and contain no lookaround
+(`ScopedLookaroundUnsupported`). Anchor exclusion fragments cannot contain scoped
+lookarounds, including through references.
+
+A window ends at the first sentence excluded by a scope clause, `--sample`,
+`--sample-blocks` or an oversized-sentence skip. Results next to an excluded
+sentence can therefore differ from an unrestricted run.
+The browser's sample preview reads its lines as consecutive sentences of one
+document with no divisions.
+
+Retained execution windows, including empty sentences, count toward the estimated
+tokenized byte limit. Execution fails if a required window exceeds that limit.
 
 The four construct names are reserved as bare elements, but remain valid
 bracketed values such as `[text=followed_by]`.
@@ -226,8 +250,12 @@ Each binding is a separate match, so `edge` matches every basic edge of the
 sentence once, regardless of the distance or order between head and dependent.
 A token whose `dep.head` is `0`, missing, unparseable, or outside the sentence
 contributes no edge, and the sentence root cannot be bound. A key reads a binder's `text`,
-`lemma`, `upos`, `xpos`, `node.id` and `node.kind`. Only one endpoint may be a
-binder, and the form has no `not` polarity.
+`lemma`, `upos`, `xpos`, `node.id` and `node.kind`. Only one endpoint of an edge
+may be a binder, and the form has no `not` polarity. A later edge may name an
+earlier binder as `$name`, so one clause can bind every word of a connected
+subtree that is reached from one surface capture. The binders of basic edges bind
+distinct words, and none binds the token of a surface capture that a basic edge
+names.
 
 The bracket is either `*`, meaning any present basic `dep.rel`, or one or more
 terms joined by `|`. The any-label form is written `-[*]->`, does not match a
@@ -251,6 +279,24 @@ sibling labels are added to or removed from the bracket. For a keyness table
 whose rows must be each label's own pattern count, generate one definition per
 label. `matches --raw-matches` bypasses catalog policy; it does not expose
 candidates lost at matcher selection, and `summarize` has no raw mode.
+
+### Order constraints between `where` nodes
+
+`$a < $b < $c` in a `where` clause requires each named node to precede the next
+in sentence order. An operand is a capture of statically exactly one token or a
+graph-node binder declared anywhere in the clause. When two binders have the
+same test, relation and head, a pattern matches each pair of words twice, once
+for each assignment of the words to the binders; an order constraint between
+the binders keeps one of the two matches:
+
+```pattern
+key: [$v.lemma, $a.lemma, $b.lemma]
+pattern two_objects := (?<v> [upos=VERB])
+  where $v -[obj]-> (?<a> [upos=NOUN]), $v -[obj]-> (?<b> [upos=NOUN]), $a < $b.
+```
+
+An order constraint compares enhanced empty nodes in CoNLL-U order: `2.1` comes
+after word `2` and before word `3`.
 
 ### Static validation
 
@@ -292,8 +338,7 @@ A catalog with a `where` clause requires `dep.head` and `dep.rel` at binding, so
 morphology-only corpus is rejected by name before matching. Only basic edges are
 consulted; `dep.enhanced` is not.
 
-Optional captured edges, negated labels, ordering predicates and dependency paths
-are unsupported. `patterns/ud-dependency.lx` is the tracked exemplar; its
+Optional captured edges, negated labels and dependency paths are unsupported. `patterns/ud-dependency.lx` is the tracked exemplar; its
 `verbal_argument` carries all three term forms in one bracket —
 `-[@CORE_ARGUMENT|obl|obl:*]->`. `patterns/ud-object-realization.lx` exercises
 anonymous existence. `patterns/double-wo-dep.lx` expresses `double-wo.lx`'s
@@ -444,7 +489,11 @@ pattern for_example := [text=for] [text=example].
 the pattern, `[]` included, matches a skipped token, and neither a match nor a
 capture starts or ends on one; spans and captures report sentence positions.
 Lookarounds, `^` and `$` step over skipped tokens, so `^ [text=well]` matches
-after a leading quote. `any_order` already admits any tokens between its
+after a leading quote. A `within=` lookaround reads at most as many tokens of
+the neighbouring sentences as its body, written without the skipped tokens, is
+wide, and skipped tokens there count toward that number: under `skip: @dropped`,
+`preceded_by([text=yes], within=document)` holds after a previous sentence that
+ends in `yes` but not after one that ends in `yes ”`. `any_order` already admits any tokens between its
 operands. A pattern without `skip:` matches the skipped tokens like any other token.
 
 A `defaults` block may supply `skip:`, which then applies to every pattern and

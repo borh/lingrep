@@ -137,7 +137,11 @@ fn run_export_scan_with_compounds(
         .bind_with_projection(&schema, attributes.iter().cloned())
         .map_err(|_| ExportScanError::CacheCorruption)?;
     let source = scope
-        .open_source(artifact, bound.projection())
+        .open_source(
+            artifact,
+            bound.projection(),
+            output.matcher.lookaround_division_kinds(),
+        )
         .map_err(|_| ExportScanError::CacheCorruption)?;
     let source = source.with_cancellation(cancel.clone());
     let mut progress = |_, _: &ExportSink| {};
@@ -476,6 +480,7 @@ mod tests {
         let mut sink = ExportSink::new(&["p"], 10, 10, 1_024);
         sink.push(
             &lingrep_core::execution::SentenceLocation {
+                lookaround_divisions: None,
                 source_metadata: None,
                 corpus_sentence_ordinal: 7,
                 document_id: lingrep_core::corpus::DocumentId::new(0),

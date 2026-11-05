@@ -997,6 +997,10 @@ impl<I> AdmittedCorpus<I> {
                         .map(|(division, _)| Arc::clone(division))
                         .collect(),
                 });
+                let next_ordinal = document_ordinal
+                    .checked_add(1)
+                    .ok_or_else(|| Self::invalid("document sentence ordinal overflow"))?;
+                self.document = Some((document_id, next_ordinal));
                 if let Some(scoped) = &mut self.scope {
                     if self.outcome == DocumentOutcome::RequiresSentences {
                         scoped
@@ -1017,20 +1021,16 @@ impl<I> AdmittedCorpus<I> {
                     };
                     if let Verdict::Excluded(reason) = verdict {
                         // Before `SentenceId::new`, so a skipped sentence
-                        // consumes no ordinal and direct-input ordinals
-                        // compact. That is not a new semantics: the empty-line
-                        // skip immediately above has behaved this way since it
-                        // was written.
+                        // consumes no corpus ordinal and direct-input corpus
+                        // ordinals compact. It does consume an in-document
+                        // ordinal, as on a prepared corpus, so the gap ends a
+                        // `within=document` lookaround window.
                         scoped.pending.record_excluded_sentence(reason)?;
                         return Ok(None);
                     }
                     scoped.pending.record_admitted_sentence()?;
                 }
                 let id = SentenceId::new(Self::take(&mut self.next_sentence, "sentence ID")?);
-                let next_ordinal = document_ordinal
-                    .checked_add(1)
-                    .ok_or_else(|| Self::invalid("document sentence ordinal overflow"))?;
-                self.document = Some((document_id, next_ordinal));
                 Ok(Some(AdmittedCorpusEvent::Sentence(AdmittedSentence {
                     structure,
                     id,

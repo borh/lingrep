@@ -360,6 +360,7 @@ fn flatten_external_batch(
             }
             output.push(ExecutionSentence {
                 location: SentenceLocation {
+                    lookaround_divisions: None,
                     source_metadata: None,
                     corpus_sentence_ordinal: candidate_corpus_sentence,
                     document_id: DocumentId::new(input.provenance().document_identity()),

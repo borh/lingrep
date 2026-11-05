@@ -137,7 +137,7 @@ impl InteractiveExecution {
                 "interactive execution requires a reopenable source".into(),
             ));
         }
-        let _validated_source = self.open_source()?;
+        let _validated_source = self.open_source(Vec::new())?;
         Ok(())
     }
 
@@ -161,7 +161,7 @@ impl InteractiveExecution {
     where
         S: MatchSink,
     {
-        let (source, tokenizer) = self.open_source()?;
+        let (source, tokenizer) = self.open_source(matcher.lookaround_division_kinds())?;
         let pool = ThreadPoolBuilder::new()
             .num_threads(self.config.workers)
             .build()
@@ -212,11 +212,26 @@ impl InteractiveExecution {
         .map_err(CliError::from)
     }
 
-    fn open_source(&self) -> Result<(BoxSentenceSource, Option<Arc<Tokenizer>>), CliError> {
+    /// Opens the input and records each sentence's innermost division of each
+    /// of `division_kinds`.
+    fn open_source(
+        &self,
+        division_kinds: Vec<compact_str::CompactString>,
+    ) -> Result<(BoxSentenceSource, Option<Arc<Tokenizer>>), CliError> {
         match &self.input {
             InputSpec::Prepared { artifact } => {
                 let artifact = CorpusArtifact::open(artifact)?;
-                Ok((Box::new(artifact.sentence_source()?), None))
+                let source = artifact.sentence_source()?;
+                let source = if division_kinds.is_empty() {
+                    source
+                } else {
+                    artifact.with_lookaround_divisions(
+                        source,
+                        division_kinds,
+                        artifact.provenance_reader()?,
+                    )?
+                };
+                Ok((Box::new(source), None))
             }
             InputSpec::Direct {
                 root: Some(root),
@@ -232,7 +247,8 @@ impl InteractiveExecution {
                 Ok((
                     Box::new(
                         source_from_events(admitted_filesystem_events(events))
-                            .with_normalization(self.config.normalization),
+                            .with_normalization(self.config.normalization)
+                            .with_lookaround_divisions(division_kinds),
                     ),
                     Some(Arc::clone(tokenizer)),
                 ))
@@ -263,7 +279,8 @@ impl InteractiveExecution {
                 Ok((
                     Box::new(
                         source_from_events(AdmittedCorpus::new(events))
-                            .with_normalization(self.config.normalization),
+                            .with_normalization(self.config.normalization)
+                            .with_lookaround_divisions(division_kinds),
                     ),
                     Some(Arc::clone(tokenizer)),
                 ))
@@ -337,6 +354,65 @@ mod tests {
         };
 
         assert!(Arc::ptr_eq(first_tokenizer, second_tokenizer));
+    }
+
+    /// The matches of each pattern, as `(pattern, document_sentence_ordinal)`.
+    #[derive(Default)]
+    struct Recorded(Vec<(String, u64)>);
+
+    impl MatchSink for Recorded {
+        fn push(
+            &mut self,
+            location: &lingrep_core::execution::SentenceLocation,
+            _sentence: &dyn lingrep_core::token_match::TokenSequence,
+            matches: &[lingrep_core::fsm::Match],
+        ) -> Result<lingrep_core::execution::SinkControl, lingrep_core::execution::ExecutionError>
+        {
+            self.0.extend(matches.iter().map(|matched| {
+                (
+                    matched.pattern.to_string(),
+                    location.document_sentence_ordinal,
+                )
+            }));
+            Ok(lingrep_core::execution::SinkControl::Continue {
+                records_emitted: matches.len(),
+            })
+        }
+
+        fn finish_batch(&mut self) -> Result<(), lingrep_core::execution::ExecutionError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn direct_scans_read_division_lookaround_windows() {
+        let (_directory, execution) = direct_test_execution(
+            "# First\n\n猫が鳥を見る。\n犬も見る。\n\n鳥が猫を見る。\n\n# Second\n\n犬が来る。\n",
+        );
+        let matcher = crate::tui::compile_catalog_source(
+            "scoped.lx",
+            "pattern section := [] $ followed_by([], within=section).\n\
+             pattern paragraph := [] $ followed_by([], within=paragraph).",
+        )
+        .unwrap();
+        let mut sink = Recorded::default();
+        execution
+            .execute(
+                &matcher,
+                &CancellationFlag::new(),
+                &mut sink,
+                &mut |_, _| {},
+            )
+            .unwrap();
+        sink.0.sort();
+        assert_eq!(
+            sink.0,
+            [
+                ("paragraph".to_owned(), 0),
+                ("section".to_owned(), 0),
+                ("section".to_owned(), 1),
+            ]
+        );
     }
 
     #[test]

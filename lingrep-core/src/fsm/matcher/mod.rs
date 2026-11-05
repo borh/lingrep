@@ -10,6 +10,7 @@ mod emit;
 mod evaluated;
 mod exec;
 mod lexicon;
+mod lookaround_context;
 mod pool;
 /// Crate-visible so the result-policy engine can evaluate transform guards
 /// through the matcher's own predicate semantics rather than a second
@@ -34,6 +35,7 @@ pub use compiled::{
     CompiledLexiconDefinition,
 };
 pub(crate) use lexicon::CompiledLexicons;
+pub use lookaround_context::{ContextSegment, ContextWindow, LookaroundContext, LookaroundReach};
 pub use predicate::PredicateDigest;
 #[cfg(feature = "bench-instrumentation")]
 pub use spawn_candidate_metrics::{

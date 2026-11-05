@@ -516,6 +516,24 @@ impl AssertionOccurrenceId {
     }
 }
 
+/// The unit whose neighbouring sentences a `within=` lookaround body may match.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LookaroundScope {
+    Document,
+    /// A division kind, such as `paragraph` or `section`.
+    Division(CompactString),
+}
+
+impl LookaroundScope {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Document => "document",
+            Self::Division(kind) => kind,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PositionAssertion {
     SentenceStart,

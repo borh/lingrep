@@ -69,6 +69,7 @@ fn location(scale: Scale, sentence: u64) -> SentenceLocation {
     let document = document_for(scale, sentence);
     let first = document.saturating_mul(scale.sentences) / scale.documents;
     SentenceLocation {
+        lookaround_divisions: None,
         source_metadata: None,
         corpus_sentence_ordinal: sentence,
         document_id: DocumentId::new(document.saturating_mul(17).saturating_add(11)),

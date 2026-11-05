@@ -805,6 +805,7 @@ pub struct PreparedSentenceSource {
     locations: MappedLocations,
     projection: SourceProjection,
     next_ordinal: u64,
+    end_ordinal: u64,
     terminal_failure: Option<String>,
     admission: SentenceAdmission,
     sections: Option<SectionAdmission>,
@@ -813,10 +814,19 @@ pub struct PreparedSentenceSource {
     tokenized_admission: TokenizedAdmission,
     source_metadata: Option<lingrep_core::corpus::SourceMetadataProjection>,
     provenance: Option<Arc<crate::BlockingProvenance>>,
+    lookaround_divisions: Option<(Box<[compact_str::CompactString]>, DivisionLookup)>,
     char_offsets: bool,
     block_sample: Option<lingrep_core::execution::CorpusSample>,
     pub(crate) candidates: Option<crate::postings::Candidates>,
     filter_stats: crate::PreparedFilterStats,
+}
+
+pub(crate) enum DivisionLookup {
+    Blocking(Arc<crate::BlockingProvenance>),
+    Shared {
+        view: Arc<crate::ProvenanceView>,
+        runtime: tokio::runtime::Handle,
+    },
 }
 
 impl PreparedSentenceSource {
@@ -888,12 +898,14 @@ impl PreparedSentenceSource {
                 component: COMPONENT,
             });
         }
+        let end_ordinal = reader.sentence_count();
         Ok(Self {
             reader: Arc::new(reader),
             enhanced,
             locations,
             projection,
             next_ordinal: 0,
+            end_ordinal,
             terminal_failure: None,
             admission: SentenceAdmission::All,
             sections: None,
@@ -902,6 +914,7 @@ impl PreparedSentenceSource {
             tokenized_admission: TokenizedAdmission::Fail,
             source_metadata: None,
             provenance: None,
+            lookaround_divisions: None,
             char_offsets: true,
             block_sample: None,
             candidates: None,
@@ -963,6 +976,15 @@ impl PreparedSentenceSource {
         self
     }
 
+    pub(crate) fn with_lookaround_divisions(
+        mut self,
+        kinds: Vec<compact_str::CompactString>,
+        lookup: DivisionLookup,
+    ) -> Self {
+        self.lookaround_divisions = Some((kinds.into(), lookup));
+        self
+    }
+
     #[must_use]
     pub fn with_tokenized_admission(mut self, admission: TokenizedAdmission) -> Self {
         self.tokenized_admission = admission;
@@ -971,6 +993,13 @@ impl PreparedSentenceSource {
     #[must_use]
     pub fn with_admission(mut self, admission: SentenceAdmission) -> Self {
         self.admission = admission;
+        self
+    }
+    /// Reads only the sentences whose corpus ordinals are in `range`.
+    #[must_use]
+    pub fn with_ordinal_range(mut self, range: std::ops::Range<u64>) -> Self {
+        self.end_ordinal = range.end.min(self.reader.sentence_count());
+        self.next_ordinal = range.start.min(self.end_ordinal);
         self
     }
     #[must_use]
@@ -1088,7 +1117,7 @@ impl PreparedSentenceSource {
             });
         }
         limits.validate()?;
-        while self.next_ordinal < self.reader.sentence_count() {
+        while self.next_ordinal < self.end_ordinal {
             if self
                 .cancel
                 .as_ref()
@@ -1113,9 +1142,7 @@ impl PreparedSentenceSource {
             } else {
                 limits.max_stage_sentences
             };
-            while self.next_ordinal < self.reader.sentence_count()
-                && ordinals.len() < source_batch_sentences
-            {
+            while self.next_ordinal < self.end_ordinal && ordinals.len() < source_batch_sentences {
                 let ordinal = self.next_ordinal;
                 if let Some(sample) = self.block_sample {
                     let (_, block) = self
@@ -1282,6 +1309,25 @@ impl PreparedSentenceSource {
                         })?;
                     for (location, value) in page.iter_mut().zip(values) {
                         location.source_metadata = Some(value);
+                    }
+                }
+            }
+            if let Some((kinds, lookup)) = &self.lookaround_divisions {
+                for page in locations.chunks_mut(crate::MAX_PROVENANCE_PAGE_SIZE) {
+                    let values = match lookup {
+                        DivisionLookup::Blocking(reader) => {
+                            reader.block_on(reader.view().lookaround_divisions(page, kinds))
+                        }
+                        DivisionLookup::Shared { view, runtime } => {
+                            runtime.block_on(view.lookaround_divisions(page, kinds))
+                        }
+                    }
+                    .map_err(|error| ExecutionError::Source {
+                        ordinal: page[0].corpus_sentence_ordinal,
+                        message: error.to_string(),
+                    })?;
+                    for (location, value) in page.iter_mut().zip(values) {
+                        location.lookaround_divisions = Some(value);
                     }
                 }
             }
@@ -2225,7 +2271,7 @@ mod tests {
     }
 
     #[test]
-    fn block_samples_use_real_boundaries_and_leave_excluded_blocks_lazy() {
+    fn block_samples_and_ordinal_ranges_decode_only_their_blocks() {
         use crate::locations::LocationWriter;
         use lingrep_core::execution::CorpusSample;
         let directory = tempfile::tempdir().unwrap();
@@ -2255,6 +2301,7 @@ mod tests {
                     .unwrap();
                 locations
                     .append(&crate::SentenceLocation {
+                        lookaround_divisions: None,
                         source_metadata: None,
                         corpus_sentence_ordinal: ordinal,
                         document_id: crate::DocumentId::new(0),
@@ -2340,6 +2387,16 @@ mod tests {
             (0..ordinal).collect::<Vec<_>>()
         );
         assert!(drain(&mut open(CorpusSample::new(1, 7)), 1024).is_empty());
+        for (range, batch_size, decoded_blocks) in
+            [(1..2, 1, 1), (250..270, 1024, 3), (770..9_999, 1024, 1)]
+        {
+            let mut source = open(None).with_ordinal_range(range.clone());
+            assert_eq!(
+                drain(&mut source, batch_size),
+                (range.start..range.end.min(ordinal)).collect::<Vec<_>>()
+            );
+            assert_eq!(source.decoded_block_count(), decoded_blocks, "{range:?}");
+        }
         let original = std::fs::read(&path).unwrap();
         for selected in [false, true] {
             let block = blocks

@@ -548,7 +548,29 @@ impl CompiledCatalog {
         &self,
         tokens: &S,
     ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
-        let canonical = self.find_matches(tokens);
+        self.explain_sentence_with_context(tokens, None)
+    }
+
+    /// [`Self::explain_sentence`] with `within=` lookarounds reading the
+    /// windows in `context`, as in [`Self::find_matches_in_context`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::explain_sentence`].
+    pub fn explain_sentence_in_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: &'t super::LookaroundContext<'t, S>,
+    ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
+        self.explain_sentence_with_context(tokens, Some(context))
+    }
+
+    fn explain_sentence_with_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: Option<&'t super::LookaroundContext<'t, S>>,
+    ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
+        let canonical = self.find_matches_with_context(tokens, context);
         let policy_declared = self.catalog_policy.declared();
         let mut published_by_raw = std::collections::HashMap::<Match, Vec<Match>>::new();
 
@@ -687,6 +709,46 @@ impl CompiledCatalog {
     }
 
     pub fn find_matches<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Vec<Match> {
+        self.find_matches_with_context(tokens, None)
+    }
+
+    /// Matches one sentence. Each `within=` lookaround reads the window that
+    /// `context` supplies for its scope.
+    ///
+    /// Matching reads at most [`Self::lookaround_reach`] tokens of a window on
+    /// each side of the sentence.
+    pub fn find_matches_in_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: &'t super::LookaroundContext<'t, S>,
+    ) -> Vec<Match> {
+        self.find_matches_with_context(tokens, Some(context))
+    }
+
+    /// The context each scope's `within=` lookarounds can read.
+    pub fn lookaround_reach(
+        &self,
+    ) -> BTreeMap<crate::fsm::LookaroundScope, super::LookaroundReach> {
+        self.assertion_catalog.lookaround_reach()
+    }
+
+    /// The division kinds that `within=` lookarounds name, in
+    /// [`Self::lookaround_reach`] order.
+    pub fn lookaround_division_kinds(&self) -> Vec<compact_str::CompactString> {
+        self.lookaround_reach()
+            .into_keys()
+            .filter_map(|scope| match scope {
+                crate::fsm::LookaroundScope::Document => None,
+                crate::fsm::LookaroundScope::Division(kind) => Some(kind),
+            })
+            .collect()
+    }
+
+    pub(crate) fn find_matches_with_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: Option<&'t super::LookaroundContext<'t, S>>,
+    ) -> Vec<Match> {
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
             let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
@@ -703,7 +765,8 @@ impl CompiledCatalog {
             return self.finish_catalog_matches(tokens, canonical_matches(matches));
         }
 
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
+        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
+            .with_context(context);
         let mut matches = Matcher::find_matches_dense_with_assertions(
             &self.dense,
             &predicates,
@@ -750,13 +813,14 @@ impl CompiledCatalog {
                 actual_words: graph.word_count(),
             });
         }
-        Ok(self.find_matches_with_complete_graph(tokens, graph))
+        Ok(self.find_matches_with_complete_graph(tokens, graph, None))
     }
 
-    pub(crate) fn find_matches_with_complete_graph<S: TokenSequence + ?Sized>(
+    pub(crate) fn find_matches_with_complete_graph<'t, S: TokenSequence + ?Sized>(
         &self,
-        tokens: &S,
+        tokens: &'t S,
         graph: &EnhancedGraph,
+        context: Option<&'t super::LookaroundContext<'t, S>>,
     ) -> Vec<Match> {
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
@@ -778,7 +842,8 @@ impl CompiledCatalog {
             return self.finish_catalog_matches(tokens, canonical_matches(matches));
         }
 
-        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
+        let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
+            .with_context(context);
         let mut matches = Matcher::find_matches_dense_with_assertions(
             &self.dense,
             &predicates,

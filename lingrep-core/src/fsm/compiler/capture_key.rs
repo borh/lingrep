@@ -431,7 +431,7 @@ fn max_width(expr: &ExecutionExpr) -> Option<usize> {
     }
 }
 
-fn bound_max_width(expr: &BoundExpr, definitions: &[BoundDefinition]) -> Option<usize> {
+pub(super) fn bound_max_width(expr: &BoundExpr, definitions: &[BoundDefinition]) -> Option<usize> {
     match expr {
         BoundExpr::Token(_) => Some(1),
         BoundExpr::Assertion(_) | BoundExpr::Lookaround(_) | BoundExpr::SameAs { .. } => Some(0),

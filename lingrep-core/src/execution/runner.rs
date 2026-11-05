@@ -6,8 +6,13 @@ use std::sync::{
 };
 
 use crate::analysis::{AnalyzerSession, TextUnit};
+use std::collections::BTreeMap;
+use std::ops::Range;
+
+use crate::corpus::DocumentId;
 use crate::fsm::{
-    BoundCatalog, BoundSentenceMatcher, CompiledCatalog, Match, PublishedRecord, SentenceMatcher,
+    BoundCatalog, BoundSentenceMatcher, CompiledCatalog, LookaroundReach, LookaroundScope, Match,
+    PublishedRecord, SentenceMatcher,
 };
 use crate::token_match::{
     BoundProjection, BoundTokenSentence, TokenInfo, TokenSchema, TokenSequence,
@@ -16,7 +21,7 @@ use crate::token_match::{
 use super::{
     BoundSentenceInput, EnhancedGraphInput, ExecutionBatch, ExecutionError, ExecutionLimits,
     ExecutionSentence, PolicySink, Publication, SentenceAdmission, SentenceBatchSource,
-    SentenceLocation, estimate_token_info_bytes,
+    SentenceLocation, WindowLinks, estimate_token_info_bytes, window_at,
 };
 
 /// A clonable cooperative-cancellation signal shared with an execution run.
@@ -573,9 +578,10 @@ where
         observer,
         scope,
         fsm.compiled.label_declarations(),
-        |sentences| {
+        fsm.compiled.lookaround_reach(),
+        |sentences, links, targets| {
             BoundSentenceMatcher::new(fsm)
-                .match_all(pool, sentences)
+                .match_in_windows(pool, sentences, links, targets)
                 .expect("the executor admits only this binding's sentence schema")
         },
     )?;
@@ -784,6 +790,7 @@ fn execute_bound_with_matcher<S, A, K, P, O, M>(
     observer: &mut O,
     scope: &SentenceAdmission,
     labels: &[crate::fsm::LabelDeclaration],
+    reach: BTreeMap<LookaroundScope, LookaroundReach>,
     mut match_batch: M,
 ) -> Result<RunOutcome, ExecutionError>
 where
@@ -792,7 +799,7 @@ where
     K: MatchSink,
     P: ProgressSink<K>,
     O: TokenizedBatchObserver,
-    M: FnMut(&[BoundSentenceInput]) -> Vec<Vec<Match>>,
+    M: FnMut(&[BoundSentenceInput], &[bool], Range<usize>) -> Vec<Vec<Match>>,
 {
     limits.validate()?;
     if logical_batch_sentences == 0 {
@@ -804,14 +811,54 @@ where
 
     std::thread::scope(|threads| {
         let mut state = PublicationState::new(labels);
+        let mut partitioner = Partitioner::new(reach);
+        macro_rules! run_with {
+            () => {
+                |locations: &[SentenceLocation],
+                 held: &[BoundSentenceInput],
+                 links: &[bool],
+                 targets: Range<usize>,
+                 charged_bytes: usize,
+                 state: &mut PublicationState| {
+                    run_partition(
+                        locations,
+                        held,
+                        links,
+                        targets,
+                        charged_bytes,
+                        logical_batch_sentences,
+                        pool,
+                        cancel,
+                        sink,
+                        progress,
+                        observer,
+                        &mut match_batch,
+                        state,
+                    )
+                }
+            };
+        }
         let mut next_analyzed_corpus_sentence = 0_u64;
         let mut next_document_sentence = std::collections::BTreeMap::<u64, u64>::new();
+        // The document position of the last analyzed input unit. Analyzer
+        // segmentation renumbers in-document sentence ordinals, so adjacency
+        // is read from the units.
+        let mut last_unit: Option<(DocumentId, u64)> = None;
         let mut feed = BatchFeed::new(threads, source, limits, cancel);
         loop {
             if cancel.is_cancelled() {
                 return Ok(state.cancelled());
             }
             let Some(batch) = feed.next()? else {
+                let control = partitioner.finish(
+                    limits.max_tokenized_bytes,
+                    logical_batch_sentences,
+                    &mut state,
+                    &mut run_with!(),
+                )?;
+                if control == BatchControl::Cancelled {
+                    return Ok(state.cancelled());
+                }
                 if state.logical_pending != 0 {
                     state.finalize(sink, progress)?;
                 }
@@ -831,6 +878,7 @@ where
                     validate_raw_sentences(&sentences, limits)?;
                     let mut projected = Vec::with_capacity(sentences.len());
                     let mut estimates = Vec::with_capacity(sentences.len());
+                    let mut adjacency = Vec::with_capacity(sentences.len());
                     // One dispatch for the whole batch, so a lane-parallel
                     // session has a batch to spread. Ordinal assignment stays
                     // strictly sequential below, because it is what makes a
@@ -844,12 +892,19 @@ where
                     }
                     let analyzed_batch = analyzer.analyze_batch(inputs, projection)?;
                     for (location, analyzed) in locations.into_iter().zip(analyzed_batch) {
+                        let unit = (location.document_id, location.document_sentence_ordinal);
+                        let mut adjacent = last_unit
+                            .is_some_and(|(document, ordinal)| (document, ordinal + 1) == unit);
+                        last_unit = Some(unit);
                         for (_analyzer_ordinal, sentence) in analyzed.sentences {
+                            adjacency.push(adjacent);
+                            adjacent = true;
                             let output_location = if analyzed.analyzer_segmented {
                                 let document_sentence = next_document_sentence
                                     .entry(location.document_id.get())
                                     .or_default();
                                 let output = SentenceLocation {
+                                    lookaround_divisions: location.lookaround_divisions.clone(),
                                     source_metadata: location.source_metadata.clone(),
                                     corpus_sentence_ordinal: next_analyzed_corpus_sentence,
                                     document_id: location.document_id,
@@ -899,28 +954,15 @@ where
                             ),
                         })
                         .collect();
-                    execute_tokenized_partitions(
+                    partitioner.push_batch(
                         projected,
                         estimates,
+                        Some(adjacency),
                         scope,
                         limits.max_tokenized_bytes,
                         logical_batch_sentences,
                         &mut state,
-                        |locations, sentences, charged_bytes, state| {
-                            run_partition(
-                                locations,
-                                sentences,
-                                charged_bytes,
-                                logical_batch_sentences,
-                                pool,
-                                cancel,
-                                sink,
-                                progress,
-                                observer,
-                                &mut match_batch,
-                                state,
-                            )
-                        },
+                        &mut run_with!(),
                     )?
                 }
                 ExecutionBatch::Tokenized { sentences, charges } => {
@@ -954,55 +996,29 @@ where
                             ),
                         })
                         .collect();
-                    execute_tokenized_partitions(
+                    partitioner.push_batch(
                         projected,
                         estimates,
+                        None,
                         scope,
                         limits.max_tokenized_bytes,
                         logical_batch_sentences,
                         &mut state,
-                        |locations, sentences, charged_bytes, state| {
-                            run_partition(
-                                locations,
-                                sentences,
-                                charged_bytes,
-                                logical_batch_sentences,
-                                pool,
-                                cancel,
-                                sink,
-                                progress,
-                                observer,
-                                &mut match_batch,
-                                state,
-                            )
-                        },
+                        &mut run_with!(),
                     )?
                 }
                 ExecutionBatch::BoundTokenized { sentences, charges } => {
                     validate_batch_count(sentences.len(), limits)?;
                     let estimates = admit_bound_charges(&sentences, charges, limits, projection)?;
-                    execute_tokenized_partitions(
+                    partitioner.push_batch(
                         sentences,
                         estimates,
+                        None,
                         scope,
                         limits.max_tokenized_bytes,
                         logical_batch_sentences,
                         &mut state,
-                        |locations, sentences, charged_bytes, state| {
-                            run_partition(
-                                locations,
-                                sentences,
-                                charged_bytes,
-                                logical_batch_sentences,
-                                pool,
-                                cancel,
-                                sink,
-                                progress,
-                                observer,
-                                &mut match_batch,
-                                state,
-                            )
-                        },
+                        &mut run_with!(),
                     )?
                 }
             };
@@ -1355,6 +1371,8 @@ where
         let control = run_partition(
             &[location],
             &[tokens],
+            &[false],
+            0..1,
             estimate,
             logical_batch_sentences,
             pool,
@@ -1362,7 +1380,9 @@ where
             sink,
             progress,
             observer,
-            match_batch,
+            &mut |held: &[Vec<TokenInfo>], _: &[bool], targets: Range<usize>| {
+                match_batch(&held[targets])
+            },
             state,
         )?;
         if control != BatchControl::Continue {
@@ -1530,18 +1550,25 @@ where
     O: TokenizedBatchObserver,
     M: FnMut(&[Vec<TokenInfo>]) -> Vec<Vec<Match>>,
 {
-    debug_assert_eq!(sentences.len(), estimates.len());
-    execute_tokenized_partitions(
+    Partitioner::new(BTreeMap::new()).push_batch(
         sentences,
         estimates,
+        None,
         scope,
         max_tokenized_bytes,
         logical_batch_sentences,
         state,
-        |locations, sentences, charged_bytes, state| {
+        &mut |locations: &[SentenceLocation],
+              held: &[Vec<TokenInfo>],
+              links: &[bool],
+              targets: Range<usize>,
+              charged_bytes: usize,
+              state: &mut PublicationState| {
             run_partition(
                 locations,
-                sentences,
+                held,
+                links,
+                targets,
                 charged_bytes,
                 logical_batch_sentences,
                 pool,
@@ -1549,92 +1576,287 @@ where
                 sink,
                 progress,
                 observer,
-                match_batch,
+                &mut |held: &[Vec<TokenInfo>], _: &[bool], targets: Range<usize>| {
+                    match_batch(&held[targets])
+                },
                 state,
             )
         },
     )
 }
 
-fn execute_tokenized_partitions<V, R>(
-    sentences: Vec<ExecutionSentence<V>>,
-    estimates: Vec<usize>,
-    scope: &SentenceAdmission,
-    max_tokenized_bytes: usize,
-    logical_batch_sentences: usize,
-    state: &mut PublicationState,
-    mut run: R,
+/// The run callback of a [`Partitioner`]: target locations, every held
+/// sentence, whether each held sentence directly follows the one before it in
+/// its document, the target range, and the bytes charged for the targets.
+trait PartitionRun<V>:
+    FnMut(
+    &[SentenceLocation],
+    &[V],
+    &[bool],
+    Range<usize>,
+    usize,
+    &mut PublicationState,
 ) -> Result<BatchControl, ExecutionError>
-where
-    V: TokenSequence + Sync,
+{
+}
+
+impl<V, R> PartitionRun<V> for R where
     R: FnMut(
         &[SentenceLocation],
-        &mut [V],
+        &[V],
+        &[bool],
+        Range<usize>,
         usize,
         &mut PublicationState,
-    ) -> Result<BatchControl, ExecutionError>,
+    ) -> Result<BatchControl, ExecutionError>
 {
-    debug_assert_eq!(sentences.len(), estimates.len());
-    let mut partition_locations = Vec::new();
-    let mut partition_sentences = Vec::new();
-    let mut partition_bytes = 0usize;
+}
 
-    for (sentence, estimate) in sentences.into_iter().zip(estimates) {
-        if !scope.admits(&sentence.location) {
-            // Dropped before matching, which is what scope conditioning
-            // requires. The sentence keeps its ordinal: on a prepared artifact
-            // an ordinal is identity, and two runs over one artifact must
-            // agree about what sentence 40,000 is.
-            //
-            // Partitions are built by pushing rather than by subslicing, so an
-            // omitted sentence leaves every within-partition length invariant
-            // intact.
-            continue;
+/// Sentences between the source batches and the matcher.
+///
+/// With a `within=` reach, a sentence is matched only once the following
+/// tokens that its lookarounds can read have arrived or a gap ends its window, and
+/// published sentences stay held as preceding context, so partition and batch
+/// cuts do not change a result. With no reach, a sentence is ready on arrival
+/// and nothing is held after its partition is published.
+struct Partitioner<V> {
+    windows: WindowLinks,
+    values: Vec<V>,
+    /// For each of `values` and each scope, whether the sentence continues
+    /// the window of the one before it.
+    links: Vec<bool>,
+    /// `values[..margin]` are published and held as context only.
+    margin: usize,
+    /// `values[margin..ready]` are ready to match.
+    ready: usize,
+    ready_bytes: usize,
+    held_bytes: usize,
+    locations: Vec<SentenceLocation>,
+    estimates: Vec<usize>,
+}
+
+impl<V: TokenSequence> Partitioner<V> {
+    fn new(reach: BTreeMap<LookaroundScope, LookaroundReach>) -> Self {
+        Self {
+            windows: WindowLinks::new(reach),
+            values: Vec::new(),
+            links: Vec::new(),
+            margin: 0,
+            ready: 0,
+            ready_bytes: 0,
+            held_bytes: 0,
+            locations: Vec::new(),
+            estimates: Vec::new(),
         }
-        let next_bytes = partition_bytes
-            .checked_add(estimate)
-            .ok_or(ExecutionError::ResourceAccounting)?;
-        let logical_capacity = logical_batch_sentences - state.logical_pending;
-        if !partition_sentences.is_empty()
-            && (next_bytes > max_tokenized_bytes || partition_sentences.len() == logical_capacity)
-        {
-            let control = run(
-                &partition_locations,
-                &mut partition_sentences,
-                partition_bytes,
+    }
+
+    /// Admits one source batch and matches every sentence whose context is
+    /// complete.
+    ///
+    /// `adjacency` states, per sentence, whether it directly follows the
+    /// previous one; without it, [`WindowLinks::push`] compares in-document
+    /// ordinals.
+    #[allow(clippy::too_many_arguments)]
+    fn push_batch<R: PartitionRun<V>>(
+        &mut self,
+        sentences: Vec<ExecutionSentence<V>>,
+        estimates: Vec<usize>,
+        adjacency: Option<Vec<bool>>,
+        scope: &SentenceAdmission,
+        max_tokenized_bytes: usize,
+        logical_batch_sentences: usize,
+        state: &mut PublicationState,
+        run: &mut R,
+    ) -> Result<BatchControl, ExecutionError> {
+        debug_assert_eq!(sentences.len(), estimates.len());
+        let mut adjacency = adjacency.map(Vec::into_iter);
+        for (sentence, estimate) in sentences.into_iter().zip(estimates) {
+            let explicit = adjacency.as_mut().and_then(Iterator::next);
+            if !scope.admits(&sentence.location) {
+                // Dropped before matching, which is what scope conditioning
+                // requires. The sentence keeps its ordinal: on a prepared
+                // artifact an ordinal is identity, and two runs over one
+                // artifact must give each sentence the same ordinal.
+                continue;
+            }
+            let incoming = estimate
+                .checked_add(self.sentence_overhead())
+                .ok_or(ExecutionError::ResourceAccounting)?;
+            if self.windows.scope_count() > 0
+                && self
+                    .held_bytes
+                    .checked_add(incoming)
+                    .ok_or(ExecutionError::ResourceAccounting)?
+                    > max_tokenized_bytes
+            {
+                let control = self.flush(state, run)?;
+                if control != BatchControl::Continue {
+                    return Ok(control);
+                }
+            }
+            self.windows
+                .push(&sentence.location, explicit, &mut self.links);
+            self.held_bytes = self
+                .held_bytes
+                .checked_add(incoming)
+                .ok_or(ExecutionError::ResourceAccounting)?;
+            self.values.push(sentence.value);
+            self.locations.push(sentence.location);
+            self.estimates.push(estimate);
+            if self.windows.scope_count() > 0 && self.held_bytes > max_tokenized_bytes {
+                self.retire();
+                if self.held_bytes > max_tokenized_bytes {
+                    return Err(ExecutionError::LookaroundWindowTooLarge {
+                        actual: self.held_bytes,
+                        limit: max_tokenized_bytes,
+                    });
+                }
+            }
+            let control = self.advance(
+                false,
+                max_tokenized_bytes,
+                logical_batch_sentences,
                 state,
+                run,
             )?;
             if control != BatchControl::Continue {
                 return Ok(control);
             }
-            partition_locations.clear();
-            partition_sentences.clear();
-            partition_bytes = 0;
         }
-
-        partition_bytes = partition_bytes
-            .checked_add(estimate)
-            .ok_or(ExecutionError::ResourceAccounting)?;
-        partition_locations.push(sentence.location);
-        partition_sentences.push(sentence.value);
+        self.flush(state, run)
     }
 
-    if partition_sentences.is_empty() {
-        Ok(BatchControl::Continue)
-    } else {
-        run(
-            &partition_locations,
-            &mut partition_sentences,
-            partition_bytes,
+    fn sentence_overhead(&self) -> usize {
+        std::mem::size_of::<V>()
+            + std::mem::size_of::<SentenceLocation>()
+            + std::mem::size_of::<usize>()
+            + self.windows.scope_count()
+    }
+
+    fn finish<R: PartitionRun<V>>(
+        &mut self,
+        max_tokenized_bytes: usize,
+        logical_batch_sentences: usize,
+        state: &mut PublicationState,
+        run: &mut R,
+    ) -> Result<BatchControl, ExecutionError> {
+        let control = self.advance(
+            true,
+            max_tokenized_bytes,
+            logical_batch_sentences,
             state,
-        )
+            run,
+        )?;
+        if control != BatchControl::Continue {
+            return Ok(control);
+        }
+        self.flush(state, run)
+    }
+
+    fn advance<R: PartitionRun<V>>(
+        &mut self,
+        end: bool,
+        max_tokenized_bytes: usize,
+        logical_batch_sentences: usize,
+        state: &mut PublicationState,
+        run: &mut R,
+    ) -> Result<BatchControl, ExecutionError> {
+        while self.ready < self.values.len() && (end || self.followed(self.ready)) {
+            let estimate = self.estimates[self.ready];
+            let next_bytes = self
+                .ready_bytes
+                .checked_add(estimate)
+                .ok_or(ExecutionError::ResourceAccounting)?;
+            let logical_capacity = logical_batch_sentences - state.logical_pending;
+            let ready = self.ready - self.margin;
+            if ready > 0 && (next_bytes > max_tokenized_bytes || ready == logical_capacity) {
+                let control = self.flush(state, run)?;
+                if control != BatchControl::Continue {
+                    return Ok(control);
+                }
+            }
+            self.ready_bytes = self
+                .ready_bytes
+                .checked_add(estimate)
+                .ok_or(ExecutionError::ResourceAccounting)?;
+            self.ready += 1;
+        }
+        Ok(BatchControl::Continue)
+    }
+
+    /// Whether every token after `values[index]` that a `followed_by` body can
+    /// read has arrived.
+    fn followed(&self, index: usize) -> bool {
+        let scopes = self.windows.scope_count();
+        self.windows.reach().enumerate().all(|(scope, reach)| {
+            !window_at(&self.values, &self.links, scopes, scope, reach, index).open_after
+        })
+    }
+
+    fn flush<R: PartitionRun<V>>(
+        &mut self,
+        state: &mut PublicationState,
+        run: &mut R,
+    ) -> Result<BatchControl, ExecutionError> {
+        if self.ready == self.margin {
+            return Ok(BatchControl::Continue);
+        }
+        let control = run(
+            &self.locations[..self.ready - self.margin],
+            &self.values,
+            &self.links,
+            self.margin..self.ready,
+            self.ready_bytes,
+            state,
+        )?;
+        self.retire();
+        Ok(control)
+    }
+
+    /// Moves the ready sentences into the margin and drops margin sentences
+    /// beyond the preceding reach.
+    fn retire(&mut self) {
+        let retired = self.ready - self.margin;
+        self.locations.drain(..retired);
+        self.margin = self.ready;
+        self.ready_bytes = 0;
+
+        let scopes = self.windows.scope_count();
+        let kept_from = self
+            .windows
+            .reach()
+            .enumerate()
+            .map(|(scope, reach)| {
+                let mut start = self.margin;
+                let mut tokens = 0;
+                while start > 0 && tokens < reach.before {
+                    if start < self.values.len() && !self.links[start * scopes + scope] {
+                        break;
+                    }
+                    start -= 1;
+                    tokens += self.values[start].len();
+                }
+                start
+            })
+            .min()
+            .unwrap_or(self.margin);
+        let overhead = self.sentence_overhead();
+        for estimate in self.estimates.drain(..kept_from) {
+            self.held_bytes -= estimate + overhead;
+        }
+        self.values.drain(..kept_from);
+        self.links.drain(..kept_from * self.windows.scope_count());
+        self.margin -= kept_from;
+        self.ready -= kept_from;
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_partition<V: TokenSequence + Sync, K, P, O, M>(
     locations: &[SentenceLocation],
-    sentences: &[V],
+    held: &[V],
+    links: &[bool],
+    targets: Range<usize>,
     charged_bytes: usize,
     logical_batch_sentences: usize,
     pool: &rayon::ThreadPool,
@@ -1649,11 +1871,12 @@ where
     K: MatchSink,
     P: ProgressSink<K>,
     O: TokenizedBatchObserver,
-    M: FnMut(&[V]) -> Vec<Vec<Match>>,
+    M: FnMut(&[V], &[bool], Range<usize>) -> Vec<Vec<Match>>,
 {
     if cancel.is_cancelled() {
         return Ok(BatchControl::Cancelled);
     }
+    let sentences = &held[targets.clone()];
     state.admit(sentences.len())?;
     observer.observe(TokenizedBatchObservation {
         sentence_count: sentences.len(),
@@ -1663,7 +1886,7 @@ where
         return Ok(BatchControl::Cancelled);
     }
 
-    let found = match_batch(sentences);
+    let found = match_batch(held, links, targets);
     debug_assert_eq!(found.len(), sentences.len());
     for (sentence, matches) in sentences.iter().zip(&found) {
         state.observe_match(sentence, matches)?;
@@ -1692,6 +1915,140 @@ mod tests {
         ExecutionBatch, ExecutionLimits, ExecutionSentence, SentenceBatchSource,
     };
     use crate::token_match::{TokenAttributeIndex, TokenInfo};
+
+    #[test]
+    fn empty_sentence_context_is_bounded_by_the_residency_limit() {
+        for reach in [
+            LookaroundReach {
+                before: 1,
+                after: 0,
+            },
+            LookaroundReach {
+                before: 0,
+                after: 1,
+            },
+        ] {
+            let mut partitioner =
+                Partitioner::new(BTreeMap::from([(LookaroundScope::Document, reach)]));
+            let mut state = PublicationState::new(&[]);
+            let mut rejected = false;
+            for ordinal in 0..100 {
+                let sentence = ExecutionSentence {
+                    location: SentenceLocation::run_local(ordinal),
+                    value: Vec::<TokenInfo>::new(),
+                };
+                let result = partitioner.push_batch(
+                    vec![sentence],
+                    vec![1],
+                    None,
+                    &SentenceAdmission::All,
+                    1024,
+                    1,
+                    &mut state,
+                    &mut |_: &[SentenceLocation],
+                          _: &[Vec<TokenInfo>],
+                          _: &[bool],
+                          _: Range<usize>,
+                          _: usize,
+                          _: &mut PublicationState| {
+                        Ok(BatchControl::Continue)
+                    },
+                );
+                if let Err(error) = result {
+                    assert!(
+                        matches!(error, ExecutionError::LookaroundWindowTooLarge { actual, limit: 1024 } if actual > 1024)
+                    );
+                    rejected = true;
+                    break;
+                }
+            }
+            assert!(
+                rejected,
+                "empty-sentence context exceeded the byte limit without an error: {reach:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookaround_payload_charges_are_checked_before_matching() {
+        let mut partitioner = Partitioner::new(BTreeMap::from([(
+            LookaroundScope::Document,
+            LookaroundReach {
+                before: 0,
+                after: 2,
+            },
+        )]));
+        let mut state = PublicationState::new(&[]);
+        for ordinal in 0..2 {
+            let result = partitioner.push_batch(
+                vec![ExecutionSentence {
+                    location: SentenceLocation::run_local(ordinal),
+                    value: vec![token("a")],
+                }],
+                vec![2048],
+                None,
+                &SentenceAdmission::All,
+                4096,
+                1,
+                &mut state,
+                &mut |_: &[SentenceLocation],
+                      _: &[Vec<TokenInfo>],
+                      _: &[bool],
+                      _: Range<usize>,
+                      _: usize,
+                      _: &mut PublicationState| {
+                    panic!("matching started before context and residency checks completed")
+                },
+            );
+            if ordinal == 0 {
+                assert!(result.is_ok());
+            } else {
+                assert!(
+                    matches!(result, Err(ExecutionError::LookaroundWindowTooLarge { actual, limit: 4096 }) if actual > 4096)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn preceding_context_is_retired_at_a_document_boundary() {
+        let mut partitioner = Partitioner::new(BTreeMap::from([(
+            LookaroundScope::Document,
+            LookaroundReach {
+                before: 1,
+                after: 0,
+            },
+        )]));
+        let mut state = PublicationState::new(&[]);
+        for ordinal in 0..10 {
+            let mut location = SentenceLocation::run_local(ordinal);
+            location.document_id = DocumentId::new(ordinal);
+            location.document_sentence_ordinal = 0;
+            partitioner
+                .push_batch(
+                    vec![ExecutionSentence {
+                        location,
+                        value: Vec::<TokenInfo>::new(),
+                    }],
+                    vec![1],
+                    None,
+                    &SentenceAdmission::All,
+                    1024,
+                    1,
+                    &mut state,
+                    &mut |_: &[SentenceLocation],
+                          _: &[Vec<TokenInfo>],
+                          _: &[bool],
+                          _: Range<usize>,
+                          _: usize,
+                          _: &mut PublicationState| {
+                        Ok(BatchControl::Continue)
+                    },
+                )
+                .unwrap();
+            assert_eq!(partitioner.values.len(), 1);
+        }
+    }
 
     fn token(orth: &str) -> TokenInfo {
         let mut token = TokenInfo::default();

@@ -548,6 +548,7 @@ pub fn measure(scope: &ScopeSelection) -> Result<WorkReport, MeasureError> {
                 &bound,
                 tokens,
                 &SentenceLocation {
+                    lookaround_divisions: None,
                     source_metadata: None,
                     corpus_sentence_ordinal: ordinal,
                     document_id: DocumentId::new(ordinal),
@@ -773,6 +774,7 @@ mod tests {
             &bound,
             &projected,
             &SentenceLocation {
+                lookaround_divisions: None,
                 source_metadata: None,
                 corpus_sentence_ordinal: 0,
                 document_id: DocumentId::new(0),

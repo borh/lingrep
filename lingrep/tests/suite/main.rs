@@ -26,6 +26,7 @@ mod protocol;
 mod protocol_discovery;
 mod sample_protocol;
 mod scope_protocol;
+mod scoped_lookaround_protocol;
 mod section_protocol;
 mod summarize;
 mod terminal_safety;

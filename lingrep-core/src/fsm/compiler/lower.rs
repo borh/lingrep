@@ -1671,8 +1671,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "unknown pattern expression node",
             ));
         }
-        let (relations, enhanced_relations) = match node.child_by_field_name("where") {
-            None => (Box::default(), Box::default()),
+        let (relations, enhanced_relations, orders) = match node.child_by_field_name("where") {
+            None => (Box::default(), Box::default(), Box::default()),
             Some(where_node) => {
                 if visibility == DefinitionVisibility::Fragment {
                     return Err(self.error(
@@ -1728,6 +1728,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 expr,
                 relations,
                 enhanced_relations,
+                orders,
             },
             metadata,
             key,
@@ -1745,9 +1746,9 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// Lowers a definition's `where` clause into its authored constraints.
     ///
     /// Only what is decidable without capture identities is checked here: the
-    /// self-edge refusal fires on operand *names*, which is equivalent to the
-    /// capture-identity comparison because duplicate capture names within one
-    /// definition are refused. Existence and width are materialization and
+    /// self-edge check compares operand *names*, which is equivalent to
+    /// comparing capture identities because duplicate capture names within
+    /// one definition are rejected. Existence and width are materialization and
     /// analysis questions, answered after fragment expansion.
     fn lower_where_clause(
         &mut self,
@@ -1756,18 +1757,43 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         (
             Box<[ParsedRelation]>,
             Box<[super::model::ParsedEnhancedRelation]>,
+            Box<[super::model::OrderConstraint]>,
         ),
         CompileError,
     > {
         self.check_recovery_node(node)?;
         let mut relations = Vec::new();
         let mut enhanced_relations = Vec::new();
+        let mut orders = Vec::new();
         let mut cursor = node.walk();
         let constraints: Vec<_> = node
             .children_by_field_name("constraint", &mut cursor)
             .collect();
         for constraint in constraints {
             self.check_recovery_node(constraint)?;
+            if constraint.kind() == "order_constraint" {
+                let mut cursor = constraint.walk();
+                let operands = constraint
+                    .children_by_field_name("operand", &mut cursor)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|operand| {
+                        let name = required_field(
+                            self.source,
+                            &self.source_label,
+                            operand,
+                            "name",
+                            "identifier",
+                        )?;
+                        Ok((
+                            CompactString::from(self.text(name)?),
+                            self.span_of(operand)?,
+                        ))
+                    })
+                    .collect::<Result<_, CompileError>>()?;
+                orders.push(super::model::OrderConstraint { operands });
+                continue;
+            }
             if constraint.child_by_field_name("kind").is_some() {
                 let head_node = constraint.child_by_field_name("head").ok_or_else(|| {
                     self.error(
@@ -1950,6 +1976,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok((
             relations.into_boxed_slice(),
             enhanced_relations.into_boxed_slice(),
+            orders.into_boxed_slice(),
         ))
     }
 
@@ -2025,10 +2052,9 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// `*` is a complete predicate rather than a label term, so the grammar
     /// makes it mutually exclusive with this listed-term path.
     ///
-    /// Duplicates are refused rather than deduped, and only among literals:
-    /// two set references, or a literal already inside a referenced set,
-    /// cannot be compared until bind resolves them, and that check lives
-    /// there.
+    /// A duplicate literal is a compile error here. Two set references, or a
+    /// literal already inside a referenced set, cannot be compared until bind
+    /// resolves the sets, so bind checks those duplicates.
     fn lower_relation_labels(
         &mut self,
         node: Node<'_>,
@@ -2317,9 +2343,20 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "lookaround source span exceeds the supported offset range",
             )
         })?;
+        let scope = node
+            .child_by_field_name("scope")
+            .map(|scope| {
+                self.text(scope).map(|name| match name {
+                    "document" => crate::fsm::LookaroundScope::Document,
+                    kind => crate::fsm::LookaroundScope::Division(kind.into()),
+                })
+            })
+            .transpose()?;
         Ok(ParsedExpr::Lookaround(LookaroundExpr {
             direction,
             polarity,
+            scope,
+            skip_reach: None,
             body: Box::new(self.lower_expr(body, depth + 1)?),
             span,
         }))

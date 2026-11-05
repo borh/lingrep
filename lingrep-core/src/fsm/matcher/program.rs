@@ -23,6 +23,7 @@ pub(crate) struct Program {
     captures: Box<[CaptureDescriptor]>,
     relations: Box<[RuntimeRelation]>,
     enhanced_relations: Box<[RuntimeEnhancedRelation]>,
+    orders: Box<[Box<[RuntimeEnhancedEndpoint]>]>,
 }
 
 /// One `where` edge constraint in executable form.
@@ -30,7 +31,7 @@ pub(crate) struct Program {
 /// The locators start symbolic and are bound with the rest of the program's
 /// attributes: `required_attributes` reports `dep.head` and `dep.rel` for any
 /// relation-bearing program, so schema binding either projected both or
-/// refused the catalog before execution could begin.
+/// rejected the catalog before execution could begin.
 #[derive(Clone)]
 struct RuntimeRelation {
     head: CaptureId,
@@ -236,12 +237,18 @@ impl Program {
                 dependent: compile_enhanced_endpoint(&relation.dependent),
             })
             .collect();
+        let orders = definition
+            .orders
+            .iter()
+            .map(|order| order.iter().map(compile_enhanced_endpoint).collect())
+            .collect();
         Self {
             definition,
             runtime,
             captures: captures.into_boxed_slice(),
             relations,
             enhanced_relations,
+            orders,
         }
     }
 
@@ -544,7 +551,12 @@ impl Program {
         graph: Option<&EnhancedGraph>,
     ) -> Vec<GraphAssignment> {
         if self.enhanced_relations.is_empty() {
-            return vec![GraphAssignment::default()];
+            let assignment = GraphAssignment::default();
+            return self
+                .orders_hold(candidate, tokens, &assignment)
+                .then_some(assignment)
+                .into_iter()
+                .collect();
         }
         if graph.is_none() && self.has_enhanced_relations() {
             return Vec::new();
@@ -557,6 +569,10 @@ impl Program {
             graph,
             &GraphAssignment::default(),
         );
+        assignments.retain(|assignment| {
+            basic_binders_are_distinct(&self.enhanced_relations, candidate, assignment)
+                && self.orders_hold(candidate, tokens, assignment)
+        });
         assignments.sort_by(|left, right| {
             self.public_graph_bindings(left, tokens, graph)
                 .cmp(&self.public_graph_bindings(right, tokens, graph))
@@ -566,6 +582,26 @@ impl Program {
                 == self.public_graph_bindings(right, tokens, graph)
         });
         assignments
+    }
+
+    /// Whether each operand of every order constraint precedes the next in
+    /// CoNLL-U source order.
+    fn orders_hold<S: TokenSequence + ?Sized>(
+        &self,
+        candidate: &Candidate,
+        tokens: &S,
+        assignment: &GraphAssignment,
+    ) -> bool {
+        self.orders.iter().all(|order| {
+            let nodes = order
+                .iter()
+                .map(|operand| {
+                    enhanced_endpoint_assignment(operand, candidate, tokens, assignment)
+                        .map(EnhancedNodeId::source_order_key)
+                })
+                .collect::<Option<Vec<_>>>();
+            nodes.is_some_and(|nodes| nodes.is_sorted_by(|before, after| before < after))
+        })
     }
 
     pub(crate) fn matches_without_assertions<S: TokenSequence + ?Sized>(
@@ -875,6 +911,42 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             enhanced_assignments_from(relations, index + 1, candidate, tokens, graph, &next)
         })
         .collect()
+}
+
+/// Whether the binders of basic-layer relations bind pairwise different
+/// words, none of them the token of a surface capture that a basic-layer
+/// relation names.
+fn basic_binders_are_distinct(
+    relations: &[RuntimeEnhancedRelation],
+    candidate: &Candidate,
+    assignment: &GraphAssignment,
+) -> bool {
+    let mut binders = BTreeSet::new();
+    let mut surface = BTreeSet::new();
+    for relation in relations
+        .iter()
+        .filter(|relation| matches!(relation.layer, RuntimeLayer::Basic { .. }))
+    {
+        for endpoint in [&relation.head, &relation.dependent] {
+            match endpoint {
+                RuntimeEnhancedEndpoint::Graph { name, .. } => {
+                    binders.insert(name);
+                }
+                RuntimeEnhancedEndpoint::Surface(capture) => {
+                    surface.extend(candidate.slots[capture.index()].map(|(start, _)| start));
+                }
+                RuntimeEnhancedEndpoint::BasicHead { .. } => {}
+            }
+        }
+    }
+    let mut occupied = surface
+        .into_iter()
+        .map(|token_index| EnhancedNodeId::Word { token_index })
+        .collect::<BTreeSet<_>>();
+    binders
+        .into_iter()
+        .filter_map(|name| assignment.nodes.get(name))
+        .all(|node| occupied.insert(*node))
 }
 
 /// Every `(head, dependent, label)` edge of one layer, root attachments

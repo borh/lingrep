@@ -1800,6 +1800,7 @@ pub(crate) fn synthesize_hidden_emitters(
                 },
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
+                orders: Box::default(),
             },
             metadata: Metadata::default(),
             key: None,
@@ -1810,34 +1811,6 @@ pub(crate) fn synthesize_hidden_emitters(
     }
 }
 
-/// Resolves each anchor's `exclude` against the **bound** program, checking the
-/// two things that need a resolved body.
-///
-/// Those two are whether the fragment can match the empty span, and whether it
-/// names a capture or asserts span equality. Everything else an anchor
-/// declaration can get wrong — its shape, fields, uniqueness, whether
-/// `exclude` names a fragment, and whether anything references it — is
-/// answered by [`extract_policy`] before binding, so a
-/// declaration error never queues behind an unrelated body error.
-///
-/// **Lookaround inside an `exclude` is permitted.** The assertion compiler
-/// already walks nested lookaround bodies. Captures and `same_as`
-/// stay forbidden: an anchor is a position, and nothing downstream can observe a
-/// capture made inside one.
-///
-/// The resolution is returned rather than recomputed downstream. This is the one
-/// pass that must look each `exclude` up by name, so it is the one place the
-/// "checked before binding" invariant is asserted; [`anchor_set_digest`] and the
-/// assertion compiler take ids and cannot restate it — differently or at all.
-///
-/// The map is anchor name to [`DefinitionId`], and carries no second copy of the
-/// `exclude` name: `bound.definitions[id.index()].name` already holds it, and
-/// two fields that are equal by construction are the small inconsistent state
-/// this resolution exists to remove.
-///
-/// `Err` carries errors only, and the signature says so. Every non-fatal thing
-/// an anchor declaration can be wrong about is answered before binding, so a
-/// severity split here would be a branch that cannot be taken.
 pub(crate) fn resolve_anchors(
     policy: &CatalogPolicy,
     bound: &BoundProgram,
@@ -1866,6 +1839,21 @@ pub(crate) fn resolve_anchors(
                      every boundary is the earliest one it matches from and the anchor would \
                      always be the raw sentence end; make it consume at least one token"
                 ),
+                DiagnosticSeverity::Error,
+            ));
+        }
+        if let Some(span) = find_scoped_lookaround(
+            definition
+                .expr()
+                .expect("anchor excludes are ordinary fragments"),
+            bound,
+            &mut BTreeSet::new(),
+        ) {
+            diagnostics.push(diagnostic_at(
+                &bound.sources,
+                span,
+                DiagnosticCode::ScopedLookaroundUnsupported,
+                format!("anchor `{anchor}`'s exclude fragment `{exclude}` contains a scoped lookaround; remove `within=` because anchor exclusions read only the current sentence"),
                 DiagnosticSeverity::Error,
             ));
         }
@@ -2146,6 +2134,42 @@ fn find_capture_or_same_as(
                     visited,
                 )
         }
+    }
+}
+
+fn find_scoped_lookaround(
+    expr: &BoundExpr,
+    bound: &BoundProgram,
+    visited: &mut BTreeSet<DefinitionId>,
+) -> Option<super::model::SourceSpan> {
+    match expr {
+        BoundExpr::Lookaround(lookaround) => {
+            if lookaround.scope.is_some() {
+                Some(lookaround.span)
+            } else {
+                find_scoped_lookaround(&lookaround.body, bound, visited)
+            }
+        }
+        BoundExpr::Sequence(children)
+        | BoundExpr::Alternation(children)
+        | BoundExpr::AnyOrder {
+            operands: children, ..
+        }
+        | BoundExpr::Intersection {
+            operands: children, ..
+        } => children
+            .iter()
+            .find_map(|child| find_scoped_lookaround(child, bound, visited)),
+        BoundExpr::Repeat { expr, .. } | BoundExpr::Capture { expr, .. } => {
+            find_scoped_lookaround(expr, bound, visited)
+        }
+        BoundExpr::Definition { id, .. } if visited.insert(*id) => bound.definitions[id.index()]
+            .expr()
+            .and_then(|expr| find_scoped_lookaround(expr, bound, visited)),
+        BoundExpr::Definition { .. }
+        | BoundExpr::Token(_)
+        | BoundExpr::Assertion(_)
+        | BoundExpr::SameAs { .. } => None,
     }
 }
 

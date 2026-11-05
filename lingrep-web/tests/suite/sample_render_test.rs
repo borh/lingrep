@@ -164,3 +164,36 @@ fn sample_render_shows_composition_for_the_experimental_catalog() {
     // The composition strip must not resurrect the pattern policy excluded.
     assert!(!html.contains("ものである"));
 }
+
+/// The sample's lines are consecutive sentences of one document, so a
+/// `within=document` lookaround reads the next line, and an empty line
+/// separates nothing.
+#[test]
+fn sample_lines_are_one_document_for_document_lookarounds() {
+    let lines = vec![
+        vec![tok("猫", "名詞")],
+        vec![tok("走る", "動詞")],
+        Vec::new(),
+        vec![tok("犬", "名詞")],
+    ];
+    let analysis = analyze_tokens(
+        "pattern before_verb := [upos=名詞] followed_by([upos=動詞], within=document).\n\
+         pattern last := [upos=名詞] not_followed_by([], within=document).",
+        &lines,
+    );
+    let SampleAnalysis::Matched { matches, .. } = analysis else {
+        panic!("the sample matches");
+    };
+    let mut found: Vec<(String, String)> = matches
+        .into_iter()
+        .map(|matched| (matched.pattern_name, matched.matched_text))
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            ("before_verb".to_owned(), "猫".to_owned()),
+            ("last".to_owned(), "犬".to_owned()),
+        ]
+    );
+}

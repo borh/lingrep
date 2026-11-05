@@ -107,6 +107,32 @@ pub(crate) fn write_unavailable_attribute_notices(
     Ok(())
 }
 
+/// One `division_unavailable` notice per division kind that `within=`
+/// lookarounds name and the corpus does not observe.
+pub(crate) fn write_unobserved_division_notices(
+    kinds: &[compact_str::CompactString],
+    observes: impl Fn(&str) -> bool,
+    config: &ExecutionCliConfig,
+    run_id: Option<&str>,
+) -> Result<(), CliError> {
+    for kind in kinds.iter().filter(|kind| !observes(kind)) {
+        crate::commands::query_support::write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Catalog,
+            "division_unavailable",
+            format!(
+                "`within={kind}` lookarounds match within their own sentence: this corpus \
+                 observes no `{kind}` divisions"
+            ),
+            run_id,
+            Vec::new(),
+        )
+        .map_err(CliError::Io)?;
+    }
+    Ok(())
+}
+
 /// The schema name a notice carries, from the artifact's recorded analyzer
 /// family and extraction profile.
 ///

@@ -89,6 +89,7 @@ mod same_as_projection_test;
 mod schema_binding_contract;
 mod scope_admission;
 mod scope_language;
+mod scoped_lookaround_contract;
 mod section_scope;
 mod sentence_explanation_test;
 mod sentence_metadata_scope;

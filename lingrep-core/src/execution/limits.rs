@@ -47,7 +47,7 @@ pub struct ExecutionLimits {
     /// A larger accepted sentence runs alone so batching never splits a sentence.
     pub max_stage_input_bytes: usize,
     /// Maximum estimated resident bytes for one tokenized sentence and for
-    /// each aggregate batch passed to [`crate::fsm::SentenceMatcher::match_all`].
+    /// each aggregate batch, including retained lookaround context.
     pub max_tokenized_bytes: usize,
 }
 
@@ -194,6 +194,8 @@ pub enum ExecutionError {
         /// Configured upper bound.
         limit: usize,
     },
+    #[error("lookaround window is estimated at {actual} bytes; limit is {limit}")]
+    LookaroundWindowTooLarge { actual: usize, limit: usize },
     /// Decoding a cache failed.
     #[error("cache decode failed: {0}")]
     Cache(#[source] std::io::Error),

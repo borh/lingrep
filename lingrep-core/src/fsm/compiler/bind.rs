@@ -287,6 +287,7 @@ pub(super) fn bind(
                 expr,
                 relations,
                 enhanced_relations,
+                orders,
             } => {
                 let (expr, relations, enhanced_relations, used_sets, used_tests) = bind_definition(
                     expr,
@@ -310,6 +311,7 @@ pub(super) fn bind(
                         expr,
                         relations,
                         enhanced_relations,
+                        orders,
                     },
                     used_sets,
                     used_tests,
@@ -1201,6 +1203,8 @@ fn bind_expr(
             BoundExpr::Lookaround(super::model::LookaroundExpr {
                 direction: lookaround.direction,
                 polarity: lookaround.polarity,
+                scope: lookaround.scope,
+                skip_reach: lookaround.skip_reach,
                 body: Box::new(bind_expr(
                     *lookaround.body,
                     ctx,
@@ -1940,6 +1944,7 @@ mod tests {
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
+                orders: Box::default(),
             },
             metadata: metadata(),
             key: None,
@@ -1960,6 +1965,7 @@ mod tests {
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
+                orders: Box::default(),
             },
             ..definition(name, token(), source, start)
         }
@@ -2129,6 +2135,7 @@ mod tests {
                 expr: ParsedExpr::Sequence(vec![reference("shared"), reference("shared")]),
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
+                orders: Box::default(),
             },
             metadata: shared_metadata.clone(),
             key: None,
@@ -2344,6 +2351,7 @@ mod set_sharing_tests {
                 expr,
                 relations: Box::default(),
                 enhanced_relations: Box::default(),
+                orders: Box::default(),
             },
             metadata: metadata(),
             key: None,

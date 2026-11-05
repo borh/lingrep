@@ -51,8 +51,8 @@ pub(crate) fn analyze_program(
         }
         // An edge endpoint is one word: `dep.head` designates a single token,
         // so a wider or variable-width operand has no head ordinal to compare
-        // against. Checked here because widths exist here; the operand's own
-        // span carries the refusal.
+        // against. Checked here because capture widths are computed here; the
+        // diagnostic points at the operand's span.
         for relation in &definition.relations {
             let mut operands = vec![(relation.head, relation.head_span)];
             if let RelationTarget::Captured { capture, span, .. } = &relation.target {
@@ -73,26 +73,22 @@ pub(crate) fn analyze_program(
                 }
             }
         }
-        for relation in &definition.enhanced_relations {
-            for endpoint in [&relation.head, &relation.dependent] {
-                let (capture, span) = match endpoint {
-                    ExecutionEnhancedEndpoint::Surface(capture) => (*capture, definition.span),
-                    ExecutionEnhancedEndpoint::BasicHead(dependent) => {
-                        (*dependent, definition.span)
-                    }
-                    ExecutionEnhancedEndpoint::Graph { .. } => continue,
-                };
-                let exact_one = capture_widths
-                    .get(&capture)
-                    .is_some_and(|width| width.min == 1 && width.max == Some(1));
-                if !exact_one {
-                    diagnostics.push(diagnostic(
-                        sources,
-                        span,
-                        DiagnosticCode::WhereCaptureNotSingleToken,
-                        "a graph-relation surface or `basic_head` endpoint must derive from a capture that is statically exactly one token",
-                    ));
-                }
+        for endpoint in graph_endpoints_and_order_operands(definition) {
+            let (capture, span) = match endpoint {
+                ExecutionEnhancedEndpoint::Surface(capture) => (*capture, definition.span),
+                ExecutionEnhancedEndpoint::BasicHead(dependent) => (*dependent, definition.span),
+                ExecutionEnhancedEndpoint::Graph { .. } => continue,
+            };
+            let exact_one = capture_widths
+                .get(&capture)
+                .is_some_and(|width| width.min == 1 && width.max == Some(1));
+            if !exact_one {
+                diagnostics.push(diagnostic(
+                    sources,
+                    span,
+                    DiagnosticCode::WhereCaptureNotSingleToken,
+                    "a graph-relation surface or `basic_head` endpoint, or an order operand, must derive from a capture that is statically exactly one token",
+                ));
             }
         }
         for (index, relation) in definition.relations.iter().enumerate() {
@@ -225,7 +221,10 @@ pub(crate) fn analyze_program(
         // Checked across the whole clause rather than per constraint:
         // `$c -[x]-> $a, $c -[y]-> $b` fails for exactly the reason
         // `$a -[x]-> $b` does.
-        if !definition.relations.is_empty() || !definition.enhanced_relations.is_empty() {
+        if !definition.relations.is_empty()
+            || !definition.enhanced_relations.is_empty()
+            || !definition.orders.is_empty()
+        {
             let guards = branch_guards(&definition.expr);
             let mut operands: Vec<(CaptureId, SourceSpan)> = Vec::new();
             for relation in &definition.relations {
@@ -234,17 +233,15 @@ pub(crate) fn analyze_program(
                     operands.push((*capture, *span));
                 }
             }
-            for relation in &definition.enhanced_relations {
-                for endpoint in [&relation.head, &relation.dependent] {
-                    match endpoint {
-                        ExecutionEnhancedEndpoint::Surface(capture) => {
-                            operands.push((*capture, definition.span));
-                        }
-                        ExecutionEnhancedEndpoint::BasicHead(dependent) => {
-                            operands.push((*dependent, definition.span));
-                        }
-                        ExecutionEnhancedEndpoint::Graph { .. } => {}
+            for endpoint in graph_endpoints_and_order_operands(definition) {
+                match endpoint {
+                    ExecutionEnhancedEndpoint::Surface(capture) => {
+                        operands.push((*capture, definition.span));
                     }
+                    ExecutionEnhancedEndpoint::BasicHead(dependent) => {
+                        operands.push((*dependent, definition.span));
+                    }
+                    ExecutionEnhancedEndpoint::Graph { .. } => {}
                 }
             }
             for (index, (capture, _)) in operands.iter().enumerate() {
@@ -279,7 +276,10 @@ pub(crate) fn analyze_program(
             ExecutionCapability::Intersection
         } else if contains_any_order(&definition.expr) {
             ExecutionCapability::AnyOrder
-        } else if !definition.relations.is_empty() || !definition.enhanced_relations.is_empty() {
+        } else if !definition.relations.is_empty()
+            || !definition.enhanced_relations.is_empty()
+            || !definition.orders.is_empty()
+        {
             // Also above `Captures`, for the ordering reason the capability's
             // own doc states: the relation filter must see every candidate
             // span, and the dense sink keeps only the longest per start before
@@ -295,6 +295,16 @@ pub(crate) fn analyze_program(
         };
     }
     Ok(())
+}
+
+fn graph_endpoints_and_order_operands(
+    definition: &ExecutionDefinition,
+) -> impl Iterator<Item = &ExecutionEnhancedEndpoint> {
+    definition
+        .enhanced_relations
+        .iter()
+        .flat_map(|relation| [&relation.head, &relation.dependent])
+        .chain(definition.orders.iter().flatten())
 }
 
 fn relation_labels_intersect(

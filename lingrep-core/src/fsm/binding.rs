@@ -103,6 +103,23 @@ pub enum BoundExecutionError {
     },
 }
 
+#[derive(Debug)]
+pub enum BoundExplanationError {
+    Bound(BoundExecutionError),
+    Policy(super::policy::AnchorResolutionError),
+}
+
+impl fmt::Display for BoundExplanationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bound(error) => error.fmt(formatter),
+            Self::Policy(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for BoundExplanationError {}
+
 impl fmt::Display for BoundExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -202,21 +219,91 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
     ) -> Result<Vec<Match>, BoundExecutionError> {
+        self.find_matches_input_with(input, None)
+    }
+
+    /// Executes one bound sentence input whose `within=` lookarounds of each
+    /// listed scope may match the tokens of the inputs that precede and
+    /// follow it in that scope, in document order.
+    pub fn find_matches_input_in_windows(
+        &self,
+        input: &BoundSentenceInput,
+        windows: &[ScopeWindow<'_>],
+    ) -> Result<Vec<Match>, BoundExecutionError> {
+        let tokens = self.window_tokens(windows)?;
+        self.find_matches_input_with(input, Some(&window_context(&tokens)))
+    }
+
+    /// Explains one bound sentence input as
+    /// [`CompiledCatalog::explain_sentence_in_context`] does, over the
+    /// windows [`Self::find_matches_input_in_windows`] reads. Enhanced-graph
+    /// relations are not evaluated, as in [`CompiledCatalog::explain_sentence`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an input does not match this catalog's schema, or
+    /// the result policy cannot resolve an anchor.
+    pub fn explain_input_in_windows(
+        &self,
+        input: &BoundSentenceInput,
+        windows: &[ScopeWindow<'_>],
+    ) -> Result<super::SentenceExplanation, BoundExplanationError> {
+        self.validate_tokens(input.words())
+            .map_err(BoundExplanationError::Bound)?;
+        let tokens = self
+            .window_tokens(windows)
+            .map_err(BoundExplanationError::Bound)?;
+        let context = window_context(&tokens);
+        self.compiled
+            .explain_sentence_in_context(
+                &BoundExecutionTokens {
+                    tokens: input.words(),
+                    projection: &self.projection,
+                },
+                &context,
+            )
+            .map_err(BoundExplanationError::Policy)
+    }
+
+    fn window_tokens<'a>(
+        &'a self,
+        windows: &[ScopeWindow<'a>],
+    ) -> Result<Vec<WindowTokens<'a>>, BoundExecutionError> {
+        let mut tokens = Vec::with_capacity(windows.len());
+        for (scope, before, after) in windows {
+            if before.is_empty() && after.is_empty() {
+                continue;
+            }
+            for neighbour in before.iter().chain(*after) {
+                self.validate_tokens(neighbour.words())?;
+            }
+            tokens.push((
+                *scope,
+                bound_tokens(&self.projection, before),
+                bound_tokens(&self.projection, after),
+            ));
+        }
+        Ok(tokens)
+    }
+
+    fn find_matches_input_with(
+        &self,
+        input: &BoundSentenceInput,
+        context: Option<&crate::fsm::LookaroundContext<'_, BoundExecutionTokens<'_>>>,
+    ) -> Result<Vec<Match>, BoundExecutionError> {
         self.validate_tokens(input.words())?;
+        let tokens = BoundExecutionTokens {
+            tokens: input.words(),
+            projection: &self.projection,
+        };
         if !self.compiled.requires_enhanced_graph() {
-            return Ok(self.compiled.find_matches(&BoundExecutionTokens {
-                tokens: input.words(),
-                projection: &self.projection,
-            }));
+            return Ok(self.compiled.find_matches_with_context(&tokens, context));
         }
         match input.enhanced_graph() {
             EnhancedGraphInput::NotRequested => Err(BoundExecutionError::EnhancedGraphNotRequested),
             EnhancedGraphInput::Observation(observation) => {
                 let Some(graph) = observation.complete() else {
-                    return Ok(self.compiled.find_matches(&BoundExecutionTokens {
-                        tokens: input.words(),
-                        projection: &self.projection,
-                    }));
+                    return Ok(self.compiled.find_matches_with_context(&tokens, context));
                 };
                 if graph.word_count() != input.words().len() {
                     return Err(BoundExecutionError::EnhancedGraphWordCountMismatch {
@@ -224,13 +311,9 @@ impl BoundCatalog {
                         actual: graph.word_count(),
                     });
                 }
-                Ok(self.compiled.find_matches_with_complete_graph(
-                    &BoundExecutionTokens {
-                        tokens: input.words(),
-                        projection: &self.projection,
-                    },
-                    graph,
-                ))
+                Ok(self
+                    .compiled
+                    .find_matches_with_complete_graph(&tokens, graph, context))
             }
         }
     }
@@ -324,6 +407,63 @@ impl BoundCatalog {
                 projection: &self.projection,
             }))
     }
+}
+
+/// One scope and the inputs before and after a sentence in its window.
+pub type ScopeWindow<'a> = (
+    &'a crate::fsm::LookaroundScope,
+    &'a [BoundSentenceInput],
+    &'a [BoundSentenceInput],
+);
+
+type WindowTokens<'a> = (
+    &'a crate::fsm::LookaroundScope,
+    Vec<BoundExecutionTokens<'a>>,
+    Vec<BoundExecutionTokens<'a>>,
+);
+
+fn window_context<'a, 'b>(
+    tokens: &'a [WindowTokens<'b>],
+) -> crate::fsm::LookaroundContext<'a, BoundExecutionTokens<'b>> {
+    crate::fsm::LookaroundContext {
+        windows: tokens
+            .iter()
+            .map(|(scope, before, after)| {
+                (
+                    (*scope).clone(),
+                    crate::fsm::ContextWindow {
+                        before: whole_segments(before),
+                        after: whole_segments(after),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn bound_tokens<'a>(
+    projection: &'a BoundProjection,
+    inputs: &'a [BoundSentenceInput],
+) -> Vec<BoundExecutionTokens<'a>> {
+    inputs
+        .iter()
+        .map(|input| BoundExecutionTokens {
+            tokens: input.words(),
+            projection,
+        })
+        .collect()
+}
+
+fn whole_segments<'a, 'b>(
+    sentences: &'a [BoundExecutionTokens<'b>],
+) -> Vec<crate::fsm::ContextSegment<'a, BoundExecutionTokens<'b>>> {
+    sentences
+        .iter()
+        .map(|tokens| crate::fsm::ContextSegment {
+            tokens,
+            range: 0..tokens.len(),
+        })
+        .collect()
 }
 
 struct BoundExecutionTokens<'a> {

@@ -2255,6 +2255,61 @@ impl ProvenanceView {
             .unwrap_or_default())
     }
 
+    /// The innermost division of each of `kinds` for each sentence, in
+    /// `kinds` order.
+    pub(crate) async fn lookaround_divisions(
+        &self,
+        sentences: &[crate::SentenceLocation],
+        kinds: &[compact_str::CompactString],
+    ) -> Result<Vec<Arc<[Option<lingrep_core::corpus::DivisionId>]>>, CorpusError> {
+        use futures::TryStreamExt;
+        if sentences.len() > crate::MAX_PROVENANCE_PAGE_SIZE {
+            return Err(CorpusError::ProvenancePageCapacity {
+                limit: crate::MAX_PROVENANCE_PAGE_SIZE,
+            });
+        }
+        let requested = serde_json::to_string(
+            &sentences
+                .iter()
+                .map(|location| location.corpus_sentence_ordinal)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| invalid(error.to_string()))?;
+        let names = serde_json::to_string(
+            &kinds
+                .iter()
+                .map(compact_str::CompactString::as_str)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| invalid(error.to_string()))?;
+        let mut divisions = vec![vec![None; kinds.len()]; sentences.len()];
+        let mut rows = sqlx::query("SELECT CAST(requested.key AS INTEGER) AS position,d.kind,MAX(d.division_id) AS division_id
+            FROM json_each(?) requested
+            JOIN sentence_provenance sp ON sp.sentence_id=CAST(requested.value AS INTEGER)
+            CROSS JOIN json_each(sp.division_ids_json) active
+            JOIN divisions d ON d.division_id=active.value
+            WHERE d.kind IN (SELECT value FROM json_each(?))
+            GROUP BY position,d.kind")
+            .bind(requested)
+            .bind(names)
+            .fetch(&self.pool);
+        while let Some(row) = rows.try_next().await.map_err(database)? {
+            let position = sqlite_usize(row.try_get("position").map_err(database)?, "position")?;
+            let kind: String = row.try_get("kind").map_err(database)?;
+            let id = sqlite_u64(row.try_get("division_id").map_err(database)?, "division ID")?;
+            let index = kinds
+                .iter()
+                .position(|candidate| *candidate == kind)
+                .ok_or_else(|| invalid("division kind outside the requested kinds"))?;
+            *divisions
+                .get_mut(position)
+                .and_then(|sentence| sentence.get_mut(index))
+                .ok_or_else(|| invalid("division row outside the requested sentences"))? =
+                Some(lingrep_core::corpus::DivisionId(id));
+        }
+        Ok(divisions.into_iter().map(Arc::from).collect())
+    }
+
     pub(crate) async fn projected_source_metadata(
         &self,
         sentences: &[crate::SentenceLocation],

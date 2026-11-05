@@ -29,7 +29,9 @@ pub mod types;
 // Matcher, builder, scheduler, and engine tests live beside the APIs they
 // exercise, not in a test module here.
 
-pub use binding::{BoundCatalog, BoundExecutionError, SchemaBindError};
+pub use binding::{
+    BoundCatalog, BoundExecutionError, BoundExplanationError, SchemaBindError, ScopeWindow,
+};
 pub use compiler::{
     AttributeReferenceSite, CatalogAnalysis, CatalogDriftReport, CompileError, CompileLimits,
     CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic, DiagnosticCode,
@@ -52,7 +54,8 @@ pub use inline::normalize_inline_pattern;
 pub use labels::{LabelDeclaration, OutOfSetValues};
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
-    CompiledLexiconDefinition, FsmBuilder, PredicateDigest, clear_pools,
+    CompiledLexiconDefinition, ContextSegment, ContextWindow, FsmBuilder, LookaroundContext,
+    LookaroundReach, PredicateDigest, clear_pools,
 };
 #[cfg(feature = "bench-instrumentation")]
 pub use matcher::{

@@ -1,9 +1,10 @@
-use crate::execution::BoundSentenceInput;
+use crate::execution::{BoundSentenceInput, window_at};
 use crate::fsm::matcher::CompiledCatalog;
 use crate::fsm::types::Match;
 use crate::fsm::{BoundCatalog, BoundExecutionError};
 use crate::token_match::TokenInfoTrait;
 use rayon::prelude::*;
+use std::ops::Range;
 
 /// Schedules independent sentence matches on a caller-owned Rayon pool.
 ///
@@ -32,6 +33,50 @@ impl<'a> BoundSentenceMatcher<'a> {
             sentences
                 .par_iter()
                 .map(|sentence| self.matcher.find_matches_input(sentence))
+                .collect()
+        })
+    }
+
+    /// Matches `sentences[targets]` in order. A `within=` lookaround may
+    /// match the neighbouring sentences of the slice.
+    ///
+    /// `links` holds one entry per sentence and per scope of
+    /// [`CompiledCatalog::lookaround_reach`], in that order:
+    /// `links[i * scopes + s]` states whether `sentences[i]` continues the
+    /// window of `sentences[i - 1]` in scope `s`.
+    pub fn match_in_windows(
+        &self,
+        pool: &rayon::ThreadPool,
+        sentences: &[BoundSentenceInput],
+        links: &[bool],
+        targets: Range<usize>,
+    ) -> Result<Vec<Vec<Match>>, BoundExecutionError> {
+        let reach: Vec<_> = self
+            .matcher
+            .compiled
+            .lookaround_reach()
+            .into_iter()
+            .collect();
+        if reach.is_empty() {
+            return self.match_all(pool, &sentences[targets]);
+        }
+        let stride = reach.len();
+        debug_assert_eq!(links.len(), sentences.len() * stride);
+        pool.install(|| {
+            targets
+                .into_par_iter()
+                .map(|index| {
+                    let windows: Vec<_> = reach
+                        .iter()
+                        .enumerate()
+                        .map(|(scope, (name, reach))| {
+                            let window = window_at(sentences, links, stride, scope, *reach, index);
+                            (name, &sentences[window.before], &sentences[window.after])
+                        })
+                        .collect();
+                    self.matcher
+                        .find_matches_input_in_windows(&sentences[index], &windows)
+                })
                 .collect()
         })
     }

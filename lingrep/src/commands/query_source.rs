@@ -50,6 +50,17 @@ impl QueryInputStats {
         }
     }
 
+    /// The lookaround division kinds the direct input observed; `None` for a
+    /// prepared artifact, whose observations are read before the run.
+    pub(crate) fn observed_division_kinds(
+        &self,
+    ) -> Option<std::collections::BTreeSet<compact_str::CompactString>> {
+        match self {
+            Self::Direct(stats) => Some(stats.observed_division_kinds()),
+            Self::Prepared { .. } => None,
+        }
+    }
+
     pub(crate) fn max_staged_raw_bytes(&self) -> usize {
         match self {
             Self::Direct(stats) => stats.max_staged_raw_bytes(),

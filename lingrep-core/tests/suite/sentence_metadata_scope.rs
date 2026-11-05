@@ -160,8 +160,10 @@ fn admission_selects_exactly_the_cited_sentence_and_counts_the_rest() {
         .collect::<Vec<_>>();
     assert_eq!(sentences.len(), 1);
     assert_eq!(sentences[0].text, "二文目。");
-    // Compacted ordinal: the excluded sentence before it consumed none.
+    // Compacted corpus ordinal: the excluded sentence before it consumed
+    // none. The in-document ordinal counts it, as a prepared corpus does.
     assert_eq!(sentences[0].id.get(), 0);
+    assert_eq!(sentences[0].document_sentence_ordinal, 1);
 
     let counts = observation.counts().expect("counts publish");
     assert_eq!(counts.documents_admitted, 1);

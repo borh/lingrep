@@ -169,6 +169,73 @@ async fn jsonl_sentence_arrays_reach_a_completed_verb_query() {
     );
 }
 
+/// A scan reads `within=` windows as `ling matches` does: sentences 0 and 1
+/// share a paragraph, sentence 2 ends the first section before its
+/// subsection, and sentences 3 and 4 are each alone in their section.
+#[tokio::test]
+async fn a_scan_reads_document_and_division_lookaround_windows() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("markdown-corpus");
+    fs::create_dir(&corpus).unwrap();
+    fs::write(
+        corpus.join("paper.md"),
+        "# First\n\n猫が鳥を見る。\n犬も見る。\n\n鳥が猫を見る。\n\n## Inner\n\n猫が来る。\n\n\
+         # Second\n\n犬が来る。\n",
+    )
+    .unwrap();
+    let context =
+        Arc::new(lingrep_web::server_context::ServerContext::new(dictionary.path()).unwrap());
+    let runtime = Arc::new(CorpusRuntime::new(context, &corpus).unwrap());
+    runtime.start_or_observe().await;
+    let slot = CorpusSlot::new(
+        CorpusName::default_key(),
+        Arc::clone(&runtime),
+        "e2e".into(),
+    );
+    let registry = CoordinatorRegistry::new(10);
+    let workbench = WorkbenchId::new("scoped-lookaround-e2e");
+    registry
+        .accept_next_revision(
+            workbench.clone(),
+            &slot,
+            "document := [] $ followed_by([], within=document).\n\
+             section := [] $ followed_by([], within=section).\n\
+             paragraph := [] $ followed_by([], within=paragraph)."
+                .into(),
+        )
+        .await;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let view = registry.snapshot(&workbench).await.unwrap();
+            if view.state.current_attempt().unwrap().phase == AttemptPhase::Completed {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let snapshot = registry.snapshot(&workbench).await.unwrap();
+    let totals: Vec<(String, u64)> = snapshot
+        .state
+        .displayed_snapshot()
+        .unwrap()
+        .patterns
+        .iter()
+        .map(|pattern| (pattern.name.to_string(), pattern.exact_total))
+        .collect();
+    assert_eq!(
+        totals,
+        [
+            ("document".to_owned(), 4),
+            ("section".to_owned(), 2),
+            ("paragraph".to_owned(), 1),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn markdown_directory_reaches_a_completed_verb_query() {
     let dictionary = MiniDictionary::new();

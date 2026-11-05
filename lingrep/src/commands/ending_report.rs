@@ -238,6 +238,7 @@ mod tests {
 
     fn location(document: u64) -> SentenceLocation {
         SentenceLocation {
+            lookaround_divisions: None,
             corpus_sentence_ordinal: document,
             document_id: lingrep_core::corpus::DocumentId::new(document),
             document_ordinal: document,
