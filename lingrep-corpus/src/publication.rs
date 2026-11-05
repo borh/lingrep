@@ -131,7 +131,7 @@ fn destination_parent(destination: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// One path as a syscall argument, refusing an interior NUL.
+/// One path as a syscall argument; an interior NUL is an `InvalidInput` error.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
     CString::new(path.as_os_str().as_bytes())

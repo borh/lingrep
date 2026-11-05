@@ -13,7 +13,7 @@ use zip::ZipArchive;
 
 /// The `(dev, ino, len, mtime)` identity of one ZIP file — the discovery
 /// `(dev, ino)` file identity extended with the fields an in-place edit
-/// changes. Compared at stream end to refuse an archive that is not
+/// changes. Compared at stream end to reject an archive that is not
 /// byte-stable between its identity hash and its parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZipFileStat {

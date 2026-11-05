@@ -235,8 +235,8 @@ mod tests {
     }
 
     /// Recovery is opt-in, so omitting the flag must reproduce the strict read
-    /// every existing artifact was built under. A default that quietly recovered
-    /// would move every Markdown artifact's identity at once.
+    /// every existing artifact was built under. A default that recovered without
+    /// the flag would move every Markdown artifact's identity at once.
     #[test]
     fn recovery_is_off_unless_asked_for() {
         assert_eq!(

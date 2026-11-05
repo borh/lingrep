@@ -366,7 +366,7 @@ fn the_recorded_depth_two_transcript_is_reproduced() {
 // Anchored admission: the anchor deciding what is published.
 // ---------------------------------------------------------------------------
 
-/// The record the raw anchor refused: `という` before the sentence-final period.
+/// The record the raw anchor did not admit: `という` before the sentence-final period.
 ///
 /// End to end from a sentence, where
 /// [`an_exact_terminal_admits_a_record_ending_at_the_anchor`] above asserts the
@@ -413,12 +413,12 @@ fn an_anchored_within_measures_from_the_anchor_not_the_raw_end() {
     assert!(refused.is_empty(), "Within(0) refuses one token short");
 }
 
-/// One-sided: past the anchor is refused at every distance.
+/// One-sided: past the anchor is not admitted at every distance.
 ///
 /// Unreachable before this task — a match could not end past its own sentence,
 /// and the raw sentence end was the only anchor. A derived anchor can precede a
 /// valid match's end, so the branch is live, data-dependent behaviour from here.
-/// Three distances, because `Exact` and `Within` refuse it by different
+/// Three distances, because `Exact` and `Within` reject it by different
 /// expressions and a wide `Within` is the one that would admit it if the
 /// comparison were a magnitude rather than a direction.
 #[test]
@@ -458,8 +458,8 @@ fn find_matches_is_unchanged_by_an_anchor_declaration() {
 /// positions — or resolved one anchor and reused it for every `admit` — answers
 /// identically and the suite stays green. Two statements naming two anchors
 /// that land two tokens apart is the smallest input that separates them, and
-/// both records are admitted only under the correct pairing: swapping the
-/// positions refuses both.
+/// both records are admitted only under the correct pairing: with the
+/// positions swapped, neither is admitted.
 ///
 /// `each_anchor_reports_the_position_of_its_own_exclude` pins the same property
 /// one layer down, in the evaluator. This pins it in the engine, which is a

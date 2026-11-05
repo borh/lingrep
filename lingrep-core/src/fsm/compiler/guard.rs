@@ -1,42 +1,10 @@
 //! Compiling a transform guard written inside metadata.
 //!
-//! Guards are lingrep patterns token predicates, not a second predicate dialect that
-//! resembles one. The cheapest way to make that true
-//! rather than aspirational is to hand the authored text to the same parser a
-//! definition body goes through: `[upos in {AUX, ADP} & lemma != れる]` then
-//! means here exactly what it means there, including the rule that a token
-//! lacking the attribute satisfies neither polarity — which arrives for free
-//! instead of being reimplemented and drifting.
-//!
-//! # Why only a token predicate
-//!
-//! The guard grammar is narrower than the expression grammar, on
-//! two independent grounds.
-//!
-//! Every v1 op judges **one token at a time**: `drop_edge` walks inward token
-//! by token, `truncate_before` tests one position, `substitute` targets one
-//! edge. A sequence or a quantified body is therefore a guard that no op could
-//! evaluate — it would compile, and then be rejected by whichever op tried to
-//! use it. Enforcing that at each operation would defer an authoring error, so
-//! the parser rejects wide guards at their declaration.
-//!
-//! A reference is refused for a second and stronger reason: reference-driven
-//! edge removal is what a `policy` block's `detach` statement already performs.
-//! Admitting `@FRAG` here would ship a second general edge-removal mechanism
-//! differing from the first only in whether the operand is spelled as a
-//! predicate or as a name. The diagnostic therefore points at `detach` rather
-//! than merely refusing.
-//!
-//! Captures and lookaround are refused as meaningless in this position: there
-//! is no match in progress to bind a capture to, and no surrounding context for
-//! an assertion to consult.
-//!
-//! A named set — `[upos in @NAME]` — is refused on a third ground: timing. A
-//! `set` is scoped to the accumulated catalog and resolves at bind, whereas a
-//! guard is compiled with the definition whose metadata carries it, so the
-//! table the name would resolve against does not exist yet. The alternative is
-//! not "resolve it later" but "resolve it to nothing", and a guard that
-//! silently matches no token is worse than one the author is told to rewrite.
+//! A guard is parsed as a lingrep patterns token predicate, so
+//! `[upos in {AUX, ADP} & lemma != れる]` matches the same tokens here as in a
+//! definition body. A guard must be a conjunction of attribute tests with
+//! inline values; any other expression, `|`, `!`, `@test` or `@set` is a
+//! compile error, and the error for a definition reference names `detach`.
 
 use super::model::{ParsedAttr, ParsedAttrValue, ParsedExpr, ParsedTest};
 use super::{CompileLimits, PatternSource, lower::lower_document};
@@ -54,8 +22,8 @@ const GUARD_DEFINITION: &str = "guard";
 
 /// Compiles one guard source into an evaluable token predicate.
 ///
-/// The error is a bare sentence rather than a `Diagnostic`: the caller knows
-/// which policy key and which definition the guard was written on, and it
+/// The error is a bare sentence rather than a `Diagnostic`: the caller holds
+/// the policy key and the definition that the guard was written on, and it
 /// composes that context around this. Reporting from here would either lose
 /// that context or duplicate it.
 pub(super) fn compile_guard(source: &str) -> Result<CompiledGuard, String> {
@@ -118,10 +86,10 @@ pub(super) fn compile_guard(source: &str) -> Result<CompiledGuard, String> {
 
 /// Flattens a guard's token test to the conjunction a [`CompiledGuard`] is.
 ///
-/// `|` and `!` are refused rather than distributed. A guard is one conjunction
+/// `|` and `!` are rejected rather than distributed. A guard is one conjunction
 /// of attributes evaluated against one token by [`CompiledGuard`], so a
 /// disjunction has no representation here — the operation that reads the guard
-/// would have to become a matcher to honour it. A test reference is refused for
+/// would have to become a matcher to honour it. A test reference is rejected for
 /// the reason a set reference is, and the message below says so.
 fn flatten_guard_conjunction(test: &ParsedTest) -> Result<Vec<&ParsedAttr>, String> {
     let mut attributes = Vec::new();
@@ -168,12 +136,12 @@ fn unwrap_groups(expr: &ParsedExpr) -> &ParsedExpr {
 
 /// Resolves one parsed guard attribute to its evaluable form.
 ///
-/// A named set is refused here rather than resolved. A guard is compiled with
+/// A named set is rejected here rather than resolved. A guard is compiled with
 /// the definition whose metadata carries it, while a `set` is scoped to the
 /// accumulated catalog and resolves at bind — so at this point the table the
 /// name would be looked up in does not exist yet. Resolving to an empty list
 /// instead would give the author a guard that silently matches nothing, which
-/// is the one outcome worse than a refusal.
+/// is the one outcome worse than a compile error.
 fn resolve_guard_attr(parsed: &ParsedAttr) -> Result<crate::fsm::SymbolicAttrValue, String> {
     match &parsed.value {
         ParsedAttrValue::Resolved(value) => Ok(AttrValue {
@@ -265,7 +233,7 @@ mod tests {
         assert!(error.contains("detach"), "{error}");
     }
 
-    /// A named set inside a guard is refused, not resolved to nothing.
+    /// A named set inside a guard is rejected, not resolved to nothing.
     ///
     /// `[upos in @NAME]` is one token predicate, so it is reachable authored
     /// syntax — the guard grammar's narrowing does not exclude it. What
@@ -284,7 +252,7 @@ mod tests {
         );
     }
 
-    /// A named test inside a guard is refused for the same reason a named set
+    /// A named test inside a guard is rejected for the same reason a named set
     /// is, and the mirror of
     /// [`a_named_set_is_refused_because_the_catalog_does_not_exist_yet`].
     ///
@@ -303,9 +271,9 @@ mod tests {
         );
     }
 
-    /// `|` and `!` inside a guard are refused rather than distributed.
+    /// `|` and `!` inside a guard are rejected rather than distributed.
     ///
-    /// Also reachable authored syntax, and refused for a different reason than
+    /// Also reachable authored syntax, and rejected for a different reason than
     /// the reference above: a `CompiledGuard` *is* one conjunction of
     /// attributes, so there is nowhere to put a second branch. Distribution
     /// would mean the operation reading the guard became a matcher, which is

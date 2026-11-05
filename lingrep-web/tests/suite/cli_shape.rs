@@ -28,7 +28,7 @@ fn dict_path_and_input_parse() {
 
 /// `--corpus` was rejected outright before this task. B2 (CLAUDE.md's `--corpus`
 /// quick reference) reuses the long flag for `NAME=PATH` additional-corpus
-/// declarations: parsing now succeeds, and a value with no `=` is refused by
+/// declarations: parsing now succeeds, and a value with no `=` is rejected by
 /// `declared_corpora`, not by clap.
 #[test]
 fn corpus_flag_now_declares_additional_corpora() {

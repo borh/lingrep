@@ -16,7 +16,7 @@
 //! fragment can match the empty span, whether it names a capture, and what its
 //! transitive expansion is — is a question about a resolved body, and the parsed
 //! program cannot answer it. They are here rather than in `bind` because they
-//! are about a *declaration*; binding does not know anchors exist.
+//! are about a *declaration*; binding does not inspect anchors.
 //!
 //! An unresolved policy reference reuses [`DiagnosticCode::UndefinedReference`]
 //! rather than inventing a parallel vocabulary: a policy operand naming `X`
@@ -66,7 +66,7 @@ const DIGEST_DOMAIN: &[u8] = b"lingrep.anchor-set.v1";
 
 /// Renders a closed set of names for a diagnostic.
 ///
-/// Every message refusing a name lists the alternatives, because a span says
+/// Every message rejecting a name lists the alternatives, because a span says
 /// where the mistake is and not what would have been right, and there is
 /// nowhere else an author learns what exists.
 pub(super) fn quoted_list(names: &[&str]) -> String {
@@ -298,11 +298,11 @@ fn resolve_anchor_references(
 ///
 /// A metadata block attaches its keys to *every* definition it wraps, so one
 /// `anchor:` line on a two-fragment block arrives here twice. An `anchor:` value
-/// already read is therefore skipped outright: replication says nothing new, and
+/// already read is therefore skipped outright: a replicated value adds nothing, and
 /// reading it again would report a malformed declaration once per wrapped
 /// definition, each copy naming a different definition as the culprit.
 ///
-/// What is refused is disagreement — the same name excluding two different
+/// What is rejected is disagreement — the same name excluding two different
 /// fragments — and a name repeated within one `anchor:` value, which no amount
 /// of block replication can produce.
 ///
@@ -449,7 +449,7 @@ fn read_anchor_declaration(site: AnchorDeclarationSite<'_>) {
     // must resolve against an unpadded one rather than be reported downstream as
     // an anchor nobody declared.
     let (name, exclude) = (name.trim(), exclude.trim());
-    // Named individually: the condition knows which field is blank, so echoing
+    // Named individually: each blank field is reported by its own name; echoing
     // "`name` or `exclude`" back would make the author check both.
     for (field, value, names) in [
         ("name", name, "what a `terminal:` refers to the anchor by"),
@@ -805,7 +805,7 @@ impl PolicyReader<'_> {
     /// A list of attribute names, deduplicated in authored order. An entry the
     /// definition already reads is legal and redundant rather than an error:
     /// what a `key:` projects is an implementation detail of the key, and a
-    /// consumer stating its own requirement should not have to know which
+    /// consumer stating its own requirement should not have to track which
     /// attributes some projection happens to pull in.
     ///
     /// Whether the bound corpus supplies the attribute is not decided here —
@@ -870,7 +870,7 @@ impl PolicyReader<'_> {
         // declaration nothing reads back is *provably* inert: the researcher
         // declares a transformation, `check` passes, and the output is
         // byte-identical to not declaring it. That is the silent no-op this
-        // tier exists to close, so it is refused at compile time.
+        // tier exists to close, so it is rejected at compile time.
         //
         // Three things read overrides. A later `join` renders them into the
         // unit. A `key:` field projecting the written form renders them into
@@ -1044,7 +1044,7 @@ impl PolicyReader<'_> {
     }
 
     /// Compiles a guard, reporting the failure against the key and op that
-    /// carried it — `compile_guard` knows the predicate but not where it was
+    /// carried it — `compile_guard` receives the predicate but not where it was
     /// written.
     fn read_guard(
         &mut self,
@@ -1082,11 +1082,11 @@ impl PolicyReader<'_> {
     /// `substitute` writes to one edge token, so its `component:` is `first` or
     /// `last`.
     ///
-    /// `span` and a `$capture` target are refused rather than approximated:
+    /// `span` and a `$capture` target are rejected rather than approximated:
     /// projecting several tokens onto one attribute has no defined semantics
     /// and no witness. The names are shared with `key:`'s components on purpose
     /// — one vocabulary — which is exactly why the two that do not apply here
-    /// have to say so instead of being quietly accepted.
+    /// must produce an error instead of being accepted without one.
     fn read_substitute_target(
         &mut self,
         key: &str,
@@ -1174,7 +1174,7 @@ impl PolicyReader<'_> {
     ///
     /// Form (b) and form (c) are both single-line flow maps, so the `$` sigil is
     /// what tells them apart — all-`$` keys is a projection, no-`$` keys is a
-    /// presence mapping. Mixing is refused rather than resolved: a map with one
+    /// presence mapping. Mixing is rejected rather than resolved: a map with one
     /// of each is not an unusual spelling of either, it is an author who meant
     /// one and typed the other.
     fn read_tag_source(&mut self, key: &str, name: &str, value: &Value) -> Option<TagSource> {
@@ -1371,7 +1371,7 @@ pub(crate) fn install_group_index(
         crate::fsm::policy_program::GroupIndex::from_definition_groups(&authored_groups);
     // A derived group whose predicate currently selects nothing still exists:
     // `%name` resolves to it and its statements draw the empty-subject
-    // warning, rather than an unknown-group refusal claiming the catalog does
+    // warning, rather than an unknown-group error claiming the catalog does
     // not declare a group it declares one line up.
     for declaration in &program.groups {
         index.declare(&declaration.name);
@@ -1444,7 +1444,7 @@ pub(crate) fn lexicon_definition_policy_errors(program: &ParsedProgram) -> Vec<D
 /// the whole mechanism inert over every tracked catalog.
 ///
 /// Returns the **warnings** the static rules raised — a statement the engine
-/// runs over an empty set is honored and inert, and refusing it would be the
+/// runs over an empty set is honored and inert, and rejecting it would be the
 /// compiler overruling a declaration it can execute. Errors take the `Err` arm,
 /// which is the same split [`extract_policy`] makes over its own diagnostics.
 ///
@@ -1571,17 +1571,17 @@ pub(crate) fn bind_policy_program(
 /// error, and any error takes the `Err` arm before this runs.
 ///
 /// A selected definition **lacking** the key gets no entry — its records are
-/// not selected by the statement, which is the same warn-not-refuse stance an
+/// not selected by the statement, which is the same warn-not-reject stance an
 /// empty subject takes. One **carrying** the key with a non-string value is an
 /// error at that definition's own key: a class is the key's string value, so a
 /// number names no class, and silently skipping the definition would move it
-/// out of every contest without saying so.
+/// out of every contest without a diagnostic.
 ///
 /// A key **nothing** in a non-empty selected set carries — a typo'd
 /// `partition: layr` — leaves every class empty, and the statement runs over
 /// nothing, on every sentence, forever. That is the empty-subject warning's
 /// situation exactly, so it draws the same `IneffectivePolicy` warning rather
-/// than a refusal: the engine executes the statement exactly as written.
+/// than an error: the engine executes the statement exactly as written.
 /// An empty *subject* is not re-warned here — the subject rule already covers
 /// it, and two warnings naming one defect would send the author two ways.
 ///
@@ -1677,7 +1677,7 @@ fn metadata_value_shape(value: &Value) -> &'static str {
         Value::Bool(_) => "a boolean",
         Value::Array(_) => "a list",
         Value::Object(_) => "a mapping",
-        // The metadata grammar has no `null`; a key that says nothing is
+        // The metadata grammar has no `null`; a key without a value is
         // omitted. Kept total so a future lowering change fails loudly in a
         // message rather than silently in a panic.
         Value::Null => "nothing",
@@ -1896,7 +1896,7 @@ pub(crate) fn resolve_anchors(
 ///
 /// Runs on the **bound** program, beside [`resolve_anchors`], although every
 /// question it asks is answerable before binding. That placement is deliberate:
-/// a nullable or capture-carrying `exclude` is refused by `resolve_anchors`
+/// a nullable or capture-carrying `exclude` is rejected by `resolve_anchors`
 /// first, so an author whose anchor cannot work at all is told *that* rather
 /// than being told to document its depth. It reads nothing binding produced,
 /// so it stays dictionary-free and needs no automaton.
@@ -2179,7 +2179,7 @@ fn find_scoped_lookaround(
 /// and two catalogs whose roots are byte-identical can have different referenced
 /// bodies — so hashing the root alone would call non-interchangeable catalogs
 /// equal, which is precisely the substitution [`AnchorSetDigest`] exists to
-/// refuse. The walk therefore covers, for each anchor in name order:
+/// reject. The walk therefore covers, for each anchor in name order:
 ///
 /// * the anchor's name and its `exclude` fragment's name;
 /// * every predicate, in the order the expression reaches it;
@@ -2298,7 +2298,7 @@ fn hash_bound_expr(
             }
             hash_bound_expr(expr, bound, visited, hasher);
         }
-        // A capture and a `same_as` are refused inside an `exclude` by
+        // A capture and a `same_as` are rejected inside an `exclude` by
         // `anchor_binding_diagnostics`, so neither arm can be reached from a
         // catalog that compiles. They exist because exhaustiveness is the
         // guarantee, and they hash the authored name and the projection rather
@@ -2443,7 +2443,7 @@ pub(crate) fn reserved_name_errors(program: &ParsedProgram) -> Vec<Diagnostic> {
 /// The bridge between the catalog's installed program and the width analysis
 /// over the bound definitions. Split from
 /// [`super::policy_program::check_detach_non_emptiness`] so that function takes
-/// only what it reasons about, and so the two places that know how a
+/// only what it reasons about, and so the two places that depend on how a
 /// `CatalogPolicy` stores its program and its domains stay on this side.
 ///
 /// # Errors

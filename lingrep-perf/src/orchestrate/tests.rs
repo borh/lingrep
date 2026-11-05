@@ -799,8 +799,8 @@ fn occupancy_is_the_mean_ratio_against_the_sealed_pool() {
         observations: vec![
             observation("a", 3.0, 12.0),
             observation("a", 3.0, 12.0),
-            // Arm B is the change under test and says nothing about the
-            // workload the campaign was planned against.
+            // Arm B is the change under test and carries no information about
+            // the workload the campaign was planned against.
             observation("b", 1.0, 1.0),
         ],
         selections: Vec::new(),

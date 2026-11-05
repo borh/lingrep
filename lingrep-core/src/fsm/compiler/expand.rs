@@ -111,7 +111,7 @@ pub fn expand_pattern_definition(
             column: point.column + 1,
         });
     }
-    // Lowering is what makes the splice below safe: it refuses an undefined
+    // Lowering is what makes the splice below safe: it rejects an undefined
     // reference and a reference cycle, so every name this resolves exists and
     // the recursion terminates on the catalog's own structure.
     if let Err(error) = lower_document(&source, &limits) {
@@ -771,12 +771,12 @@ mod tests {
         );
     }
 
-    /// Refusal is scoped to what the expansion actually walks.
+    /// Rejection is scoped to what the expansion actually walks.
     ///
     /// The preflight lowers the document, which checks syntax and shape and
     /// stops; binding — where an undefined reference is normally caught — has
-    /// not run. So this refuses a name it reaches and cannot resolve, and says
-    /// nothing about a broken definition elsewhere in the catalog, because
+    /// not run. So expansion rejects a name it reaches and cannot resolve, and
+    /// reports no error for a broken definition elsewhere in the catalog, because
     /// expanding one definition never reads one it does not stand on.
     #[test]
     fn an_undefined_reference_is_refused_only_when_the_expansion_reaches_it() {
@@ -798,7 +798,7 @@ mod tests {
         );
     }
 
-    /// The recursion is the cycle check, and it has to be: `bind` would refuse
+    /// The recursion is the cycle check, and it has to be: `bind` would reject
     /// this, and `bind` has not run.
     #[test]
     fn a_reference_cycle_is_refused_with_the_path_that_closes_it() {
@@ -817,7 +817,7 @@ mod tests {
         );
     }
 
-    /// A budget refusal, not a hang: the compiler has already refused cycles,
+    /// A budget error, not a hang: the compiler has already rejected cycles,
     /// so what remains is a diamond that multiplies out.
     #[test]
     fn an_expansion_past_the_source_budget_is_refused_by_name() {

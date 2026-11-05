@@ -368,7 +368,7 @@ fn tracked_pattern_execution_attributes_are_pinned() {
         ("patterns/test-simple.lx", &["text"][..]),
         // `dep.head` and `dep.rel` are contributed by the `where` clauses as
         // well as by the `[dep.rel=…]` predicates: a relation-bearing program
-        // reports both so schema binding projects them or refuses.
+        // reports both so schema binding projects them or rejects the program.
         (
             "patterns/ud-dependency.lx",
             &["dep.head", "dep.rel", "text", "upos"][..],

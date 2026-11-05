@@ -700,7 +700,7 @@ impl<R: BufRead> DialectIterator<R> {
             "a tracked opening line per open div"
         );
         // Recovery accepts div imbalance at the physical document boundary. A
-        // strict read still refuses it, and names the line that opened it: the
+        // strict read still rejects it, and names the line that opened it: the
         // count alone bounds nothing in a truncated paper.
         if !self.config.recover_conversion_artifacts
             && let Some(&opened_at) = self.div_lines.first()
@@ -1341,7 +1341,7 @@ mod primitive_tests {
         assert!(matches!(parse_div("::: {.a .b}"), Some(DivLine::Open(_))));
 
         // The whole-remainder check replaced a `starts_with('{')` /
-        // `ends_with('}')` pair and must still refuse what that pair refused:
+        // `ends_with('}')` pair and must still reject what that pair rejected:
         // a span preceded by text ends where the remainder ends, so only the
         // span's *start* rejects this one.
         assert!(matches!(parse_div("::: x{.a}"), Some(DivLine::Malformed)));
@@ -1682,7 +1682,7 @@ mod reader_tests {
     #[test]
     fn raw_html_in_a_comment_tail_is_still_an_error() {
         // The tail goes through the same rejection as any other line: reading a
-        // comment tail must not become a hole in the raw-HTML refusal.
+        // comment tail must not become a hole in the raw-HTML rejection.
         let markdown = "<!-- x --> <div class=\"y\">\n";
         let error = read(markdown, permissive()).expect_err("raw HTML in a comment tail");
         assert!(
@@ -1728,7 +1728,7 @@ mod reader_tests {
     #[test]
     fn an_over_indented_fence_still_closes() {
         // The opener was trimmed and the closer was not, so `opens_fence` never
-        // saw indentation while `closes_fence` refused anything past 3 spaces:
+        // saw indentation while `closes_fence` rejected anything past 3 spaces:
         // this fence opened and its own matching closer could not close it. The
         // rest of the document was swallowed into the code block and the run
         // ended in a spurious "unclosed code fence".

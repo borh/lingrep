@@ -309,8 +309,8 @@ fn the_same_pair_with_the_declarations_swapped_shares_a_document() {
 
 /// Two sets with one name are reported, not silently collapsed.
 ///
-/// `IndexMap::insert` on a repeated key keeps the last declaration and says
-/// nothing, so without this the second `{い}` would quietly win over the first
+/// `IndexMap::insert` on a repeated key keeps the last declaration and emits
+/// no diagnostic, so without this the second `{い}` would replace the first
 /// `{あ}` and every `@X` would resolve to members its author did not write.
 /// The note points at the first, which pins the ordering on this path too.
 #[test]
@@ -344,7 +344,7 @@ fn a_set_declared_twice_is_refused_and_names_the_first() {
     );
 }
 
-/// An annotation run before a `set` is refused rather than drifting.
+/// An annotation run before a `set` is rejected rather than drifting.
 ///
 /// A `set` publishes nothing and inherits nothing, so a run above one binds to
 /// no definition. Ignoring it would let it slide onto the definition that
@@ -380,7 +380,7 @@ fn an_annotation_run_before_a_set_is_refused_and_does_not_drift() {
     );
 }
 
-/// A repeated member is refused at a declaration as it is inline.
+/// A repeated member is rejected at a declaration as it is inline.
 #[test]
 fn a_duplicate_set_member_is_refused() {
     let Err(error) = compile_catalog(
@@ -398,7 +398,7 @@ fn a_duplicate_set_member_is_refused() {
     );
 }
 
-/// A regex member is refused without naming an operator the declaration lacks.
+/// A regex member is rejected without naming an operator the declaration lacks.
 ///
 /// `lower_literal_value`'s `negated` argument only selects between recommending
 /// `~` and `!~`. A declaration carries no operator, so it passes `false` — and
@@ -441,8 +441,8 @@ fn an_undefined_set_reference_names_the_kind() {
 
 /// A fragment after `in` says so, rather than looking like a typo.
 ///
-/// The sigil is shared, so this is the predictable mistake: a reader who
-/// knows `@ARU` is a fragment will reach for it here.
+/// The sigil is shared, so this is the predictable mistake: an author who has
+/// written `@ARU` as a fragment reference will reach for it here.
 #[test]
 fn a_fragment_after_in_is_told_apart_from_a_typo() {
     let Err(error) = compile_catalog(
@@ -501,14 +501,14 @@ fn a_set_in_pattern_position_is_told_apart_from_a_typo() {
     );
 }
 
-/// A sigil with no name after it is refused by the recovery check.
+/// A sigil with no name after it is rejected by the recovery check.
 ///
 /// This is what makes `lower_attribute`'s "set reference is missing its name"
 /// fallback unreachable from authored syntax rather than merely unlikely:
 /// `set_reference` is `seq('@', $.identifier)`, so tree-sitter supplies a
 /// MISSING `identifier` rather than a childless node, and
 /// `check_recovery_node` — which runs on the reference first and scans every
-/// child, anonymous ones included, for `is_missing()` — refuses it here. The
+/// child, anonymous ones included, for `is_missing()` — rejects it here. The
 /// fallback stays as the total-match arm, in the shape `compile_guard`'s
 /// unreachable `Group` arm already uses: a sentence rather than a panic.
 #[test]

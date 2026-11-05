@@ -232,8 +232,8 @@ mod tests {
     ///
     /// Asserted per analyzer, because the invariant is a property of each
     /// analyzer's session as much as of the split: a session that carried
-    /// cross-sentence state would break it, and only the analyzer knows
-    /// whether its own does.
+    /// cross-sentence state would break it, and whether a session carries such
+    /// state depends on each analyzer's implementation.
     #[test]
     fn lane_count_does_not_change_what_a_vibrato_batch_analyzes_to() {
         let Some(plan) = vibrato_test_plan() else {

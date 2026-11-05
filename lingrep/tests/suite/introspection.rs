@@ -379,7 +379,7 @@ fn doctor_binding_probe_names_unavailable_attributes() {
 }
 
 /// A dependency `where` clause on a morphology-only artifact makes the pair
-/// not ready — the same refusal a `matches` run would report, found first.
+/// not ready — the same failure a `matches` run would report, found first.
 #[test]
 fn doctor_binding_probe_fails_on_an_unsatisfiable_where_clause() {
     let temp = tempfile::tempdir().unwrap();

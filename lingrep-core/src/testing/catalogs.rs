@@ -2,7 +2,7 @@
 //!
 //! Tests that need per-catalog expectations still pin them by name — the point
 //! is that the *set* comes from the tree, so a new catalog forces the
-//! expectation to be written rather than being quietly skipped.
+//! expectation to be written rather than being skipped without a failure.
 //!
 //! This lives in `lingrep_core::testing` rather than in one crate's `tests/support`
 //! because lingrep-web's catalog-projection baseline needs the same set. A second
@@ -163,10 +163,10 @@ pub enum RuntimeRegime {
 ///
 /// Every catalog was implicitly bound to the UniDic morphology schema until
 /// `ud-dependency.lx`,
-/// whose `where` clauses require `dep.head`/`dep.rel` and therefore refuse a
-/// morphology-only schema at binding — correctly, so the campaign harness has
+/// whose `where` clauses require `dep.head`/`dep.rel` and therefore fail to
+/// bind against a morphology-only schema — correctly, so the campaign harness has
 /// to bind it against a schema that carries them rather than treat the
-/// refusal as a broken catalog.
+/// binding error as a broken catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CampaignBinding {
     /// `TokenSchema::unidic_morphology()`, the default.
@@ -221,7 +221,7 @@ impl CatalogDescriptor {
 /// list must account for every discovered catalog.
 ///
 /// The regimes are machine tags and the description is the prose beside them.
-/// `lingrep-perf declare` refuses a tag outside this set, so a mistyped regime
+/// `lingrep-perf declare` rejects a tag outside this set, so a mistyped regime
 /// cannot silently select nothing — which would drop every guardrail to a
 /// screen pair and make the campaign look cheaper rather than wrong. Deriving
 /// the tags from each catalog's compiled form would be stronger still; the

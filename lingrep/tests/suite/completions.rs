@@ -113,7 +113,7 @@ const SHELL_PROMPT: &str = "% ";
 /// Complete `input`, retrying while the shell never reached its prompt.
 ///
 /// `completest_pty::comptest` writes the input to the pty and then waits for
-/// output to go quiet for 50ms, having no other way to know a shell is done. But
+/// output to go quiet for 50ms, having no other signal that a shell is done. But
 /// the pty echoes those bytes back the instant they are written — before the
 /// shell has read its rcfile — so the quiet window can open against shell
 /// *startup*. Bash therefore uses [`complete_in_bash`], which invokes its

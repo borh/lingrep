@@ -77,7 +77,7 @@ impl SectionComparison {
     /// Builds the table, or `None` when there is nothing to compare.
     ///
     /// `None` rather than an empty table for three distinct cases that all
-    /// mean the same thing to a reader: the projection was refused, the corpus
+    /// mean the same thing to a reader: the projection was rejected, the corpus
     /// records no labelled sections, or fewer than two patterns have any
     /// labelled count. The last is deliberate — a comparison of one row is not
     /// a comparison, and rendering the band for it invites the reader to

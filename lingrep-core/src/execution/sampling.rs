@@ -73,8 +73,8 @@ const fn mix(z: u64) -> u64 {
 /// Wraps a source and drops the sentences the sample excludes.
 ///
 /// Placed between the source and the executor rather than inside either, so
-/// one implementation covers every source the CLI can build and no source has
-/// to know it is being sampled. Filtering here still precedes analysis: a
+/// one implementation covers every source the CLI can build and no source
+/// receives the sample. Filtering here still precedes analysis: a
 /// direct source yields raw text and the executor tokenizes it, so a dropped
 /// sentence is never tokenized.
 #[derive(Debug)]

@@ -27,7 +27,7 @@ pub(crate) const MANIFEST_NAME: &str = "manifest.json";
 /// Structural and cheap: a directory carrying a `manifest.json`. It answers
 /// "which reader does this path want", not "is this artifact sound" —
 /// [`crate::CorpusArtifact::open`] is the admission check and is the thing
-/// that reports *why* a malformed artifact is refused.
+/// that reports *why* a malformed artifact is rejected.
 ///
 /// It lives here because the artifact's on-disk shape is this crate's to
 /// define. A consumer that hand-rolled `path.join("manifest.json")` would be a
@@ -142,7 +142,7 @@ pub(crate) struct Manifest {
     ///
     /// `#[serde(default)]` for the reason `identity_scheme` carries it: an
     /// artifact written before this field existed truncated nothing, because
-    /// the build refused instead, and `None` *is* that value. So
+    /// the build failed instead, and `None` *is* that value. So
     /// [`MANIFEST_SCHEMA_VERSION`] does not move and no artifact on disk is
     /// invalidated.
     #[serde(default)]

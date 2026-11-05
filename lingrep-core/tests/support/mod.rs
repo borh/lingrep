@@ -14,7 +14,7 @@ use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
 /// Whether `error` carries a diagnostic with exactly this code.
 ///
 /// Asserting the code rather than the message is what keeps a test honest about
-/// *which* refusal fired; three compile-test modules had their own copy.
+/// *which* diagnostic fired; three compile-test modules had their own copy.
 pub fn refuses_with(error: &CompileError, code: DiagnosticCode) -> bool {
     error
         .diagnostics

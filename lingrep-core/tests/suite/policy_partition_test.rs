@@ -6,7 +6,7 @@
 //! metadata key on each record's definition, and the rank contest runs
 //! independently per class. The map is resolved at policy-compile time, so the
 //! engine stays metadata-free; a selected definition lacking the key is not
-//! selected by the statement at all, which is the language's warn-not-refuse
+//! selected by the statement at all, which is the language's warn-not-reject
 //! stance rather than an error.
 
 use lingrep_core::fsm::DiagnosticCode;
@@ -31,7 +31,7 @@ fn resolve_accepts_a_partition_argument() {
     );
 }
 
-/// A `partition:` on any verb other than `resolve` is refused with its own
+/// A `partition:` on any verb other than `resolve` is rejected with its own
 /// diagnostic, pointing at the `partition` key rather than at the statement.
 #[test]
 fn partition_on_a_non_resolve_verb_is_refused_at_the_key() {
@@ -52,7 +52,7 @@ fn partition_on_a_non_resolve_verb_is_refused_at_the_key() {
     );
 }
 
-/// A selected definition carrying the key with a non-string value is refused,
+/// A selected definition carrying the key with a non-string value is rejected,
 /// and the diagnostic points at that definition's own key — the language's
 /// metadata-diagnostic rule.
 #[test]

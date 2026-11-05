@@ -179,7 +179,7 @@ pub struct PatternDetailProjection {
     /// section projection itself was available.
     pub surface_sections_refused: Option<SurfaceRefusal>,
     /// `Some` exactly when the corpus's label vocabulary would not fit the
-    /// retained ceiling, in which case `sections` is empty: a refused
+    /// retained ceiling, in which case `sections` is empty: a withheld
     /// projection lists nothing rather than falling back to the sample.
     pub section_unavailable: Option<SectionRefusal>,
     /// How many section labels the *corpus* carries, whatever this pattern
@@ -199,7 +199,7 @@ pub struct PatternDetailProjection {
     /// KWIC section column shows each retained row's own labels,
     /// so it is this that decides whether the column exists: exact counts can
     /// be nonzero while every retained hit happens to be unlabelled, and a
-    /// refused projection empties `sections` while the rows keep their labels.
+    /// withheld projection empties `sections` while the rows keep their labels.
     pub has_hit_sections: bool,
 }
 
@@ -318,7 +318,7 @@ impl PatternDetailProjection {
         // ordering because the surface cross-tabulation is indexed by it and
         // the display order is not the tally's.
         let (ordered_sections, no_section) = match sections {
-            // A refused projection lists nothing: falling back to the sample
+            // A withheld projection lists nothing: falling back to the sample
             // would put a biased distribution behind an exact contract.
             SectionAvailability::VocabularyTooLarge(_) => (Vec::new(), NoSectionCount::default()),
             SectionAvailability::Available(tally) => {
@@ -444,7 +444,7 @@ impl PatternDetailProjection {
             .into_iter()
             .map(|hit| {
                 // Membership ids for the section filter. A label with no
-                // projected row — every label when the projection is refused —
+                // projected row — every label when the projection is withheld —
                 // contributes none, rather than panicking on a missing key.
                 let section_indices = hit
                     .section_labels
@@ -774,7 +774,7 @@ mod tests {
 
     /// The state the KWIC section column exists for, which is not the state the
     /// distribution block exists for: exact counts can be nonzero while every
-    /// retained hit happens to be unlabelled, and a refused projection empties
+    /// retained hit happens to be unlabelled, and a withheld projection empties
     /// `sections` while the rows keep their labels.
     #[test]
     fn the_kwic_section_column_follows_the_retained_hits_not_the_corpus() {
@@ -1037,7 +1037,7 @@ mod tests {
         );
     }
 
-    /// A refused cross-tabulation has no corpus figures to offer, so the list
+    /// A withheld cross-tabulation has no corpus figures to offer, so the list
     /// falls back to the sample and the panel says which it is showing.
     #[test]
     fn a_pattern_whose_surfaces_were_refused_falls_back_to_the_sample() {
@@ -1153,7 +1153,7 @@ mod tests {
         }
     }
 
-    /// A refused pattern publishes the reason and no matrix. Zeros would be a
+    /// A withheld pattern publishes the reason and no matrix. Zeros would be a
     /// worse answer than silence: they read as "this surface occurs nowhere".
     #[test]
     fn a_pattern_past_the_surface_limit_reaches_the_projection_as_a_reason() {

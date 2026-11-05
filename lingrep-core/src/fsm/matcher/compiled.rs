@@ -501,7 +501,7 @@ impl CompiledCatalog {
     ///
     /// `AnchorResolutionError` when the anchor an `admit` measures against could
     /// not be resolved. This pairs a catalog's policy with *its own* positions,
-    /// and the compiler refuses an `admit` naming an undeclared anchor, so valid
+    /// and the compiler rejects an `admit` naming an undeclared anchor, so valid
     /// compiled catalogs cannot produce this error. The signature retains it
     /// because the type system does not encode that invariant.
     ///
@@ -797,8 +797,8 @@ impl CompiledCatalog {
     /// `Unavailable` and `Incomplete` cannot satisfy an enhanced constraint,
     /// but ordinary definitions in a mixed catalog continue to match. The
     /// plain [`Self::find_matches`] method has those same unavailable-graph
-    /// semantics; bound execution additionally refuses when its source forgot
-    /// to request a graph required by the catalog.
+    /// semantics; bound execution additionally fails when its source did not
+    /// request a graph required by the catalog.
     pub fn find_matches_with_enhanced_graph<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1181,7 +1181,7 @@ impl CompiledCatalog {
     ///
     /// Empty when no definition declares a clause. Unlike an ordinarily
     /// referenced attribute — which binds as universally absent when a schema
-    /// lacks it — these are a bind-time refusal, because a dependency
+    /// lacks it — these are a bind-time error, because a dependency
     /// constraint without its edge attributes is meaningless rather than
     /// unsatisfied.
     #[must_use]
@@ -1307,7 +1307,7 @@ impl AnchorEvaluator<'_> {
     /// `exclude` matches no suffix falls back to the raw sentence end, which is
     /// an `admit`'s shipped meaning — an unpunctuated sentence's propositional
     /// end is its end. That is a computed answer and not the fallback
-    /// [`AnchorPositions`] refuses: a *missing* anchor stays an error there.
+    /// [`AnchorPositions`] rejects: a *missing* anchor stays an error there.
     ///
     /// The session is built unconditionally, without checking
     /// `CompiledCatalog::requires_assertion_session`. That predicate answers a

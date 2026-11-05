@@ -44,11 +44,11 @@ pub trait SpanSource {
     /// # Errors
     ///
     /// Returns an error when the underlying stream failed, was truncated, or
-    /// the caller's own validation refused the event.
+    /// the caller's own validation rejected the event.
     fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError>;
 }
 
-/// A one-event-lookahead cursor: the sweep must know whether the next span
+/// A one-event-lookahead cursor: the sweep must check whether the next span
 /// starts at or before the current sentence without consuming it.
 pub struct SpanEvents {
     source: Box<dyn SpanSource + Send>,
@@ -57,7 +57,7 @@ pub struct SpanEvents {
     previous_first: Option<u64>,
     /// The first terminal error, re-reported for every later `peek`.
     ///
-    /// Without it a refused event is simply dropped and the next `peek` can
+    /// Without it a rejected event is simply dropped and the next `peek` can
     /// succeed, which would turn a detected violation into a silent omission
     /// for any caller that did not abort on the first error.
     poisoned: Option<SpanStreamError>,
@@ -119,7 +119,7 @@ impl SpanEvents {
     }
 
     /// Records the first terminal error and returns it, so every later `peek`
-    /// reports the same refusal rather than resuming past it.
+    /// reports the same error rather than resuming past it.
     fn poison(&mut self, error: SpanStreamError) -> SpanStreamError {
         self.poisoned.get_or_insert(error).clone()
     }
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn a_refusal_is_sticky() {
-        // Resuming past a refused event would turn a detected violation into a
+        // Resuming past a rejected event would turn a detected violation into a
         // silent omission for any caller that did not abort on the first error.
         let mut events =
             SpanEvents::from_events(vec![event(0, 10, 12), event(1, 4, 6), event(2, 20, 22)]);

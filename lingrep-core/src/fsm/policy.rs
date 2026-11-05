@@ -201,7 +201,7 @@ pub enum TransformOp {
     ///
     /// `component:` names an **edge** token and always did: writing several
     /// tokens from one attribute has no defined meaning, so `span` and a
-    /// `$capture` component stay refused. What a capture selects is the *span
+    /// `$capture` component stay rejected. What a capture selects is the *span
     /// the edge is an edge of*, and that is [`TransformStep::scope`] — a
     /// separate field, so the two questions "which span" and "which end of it"
     /// keep their separate answers.
@@ -241,7 +241,7 @@ pub enum TagSource {
     CapturePresence(Vec<(CompactString, String)>),
     /// Form (c): an attribute projected off a named capture's sole token.
     ///
-    /// Single-token by construction — `capture_key` refuses a reference it
+    /// Single-token by construction — `capture_key` rejects a reference it
     /// cannot prove covers exactly one token, and unlike [`KeyProjection`] there is
     /// no `{first|last|span}` spelling to waive that proof.
     Projection {
@@ -276,8 +276,8 @@ impl Terminal {
     /// `end` is exclusive, matching `Match`'s span convention, so a record
     /// ending at the anchor has `end == anchor`.
     ///
-    /// **One-sided**: a record ending *past* the anchor is refused under both
-    /// variants, at any distance. Material after the propositional end is
+    /// **One-sided**: a record ending *past* the anchor is not admitted under
+    /// both variants, at any distance. Material after the propositional end is
     /// citation apparatus, and a record reaching into it is not sentence-final
     /// in the sense a researcher means.
     #[must_use]
@@ -589,7 +589,7 @@ impl AnchorSetDigest {
 ///
 /// **Both variants are library wiring errors, not authoring mistakes**, so both
 /// messages are terse and factual and neither carries a fix-it. The compiler
-/// already refuses every authoring mistake in this area — an `admit` naming
+/// already rejects every authoring mistake in this area — an `admit` naming
 /// an undeclared anchor is an `InvalidPolicyValue` diagnostic with a source span
 /// and its own remediation — so a researcher who could act on advice here has
 /// been told already, and one who sees this string cannot act on it.
@@ -630,14 +630,14 @@ pub enum AnchorError {
 /// authored order; the cause is catalog-wide rather than per-record, so there
 /// is no second failure with different information.
 ///
-/// **A wiring error, not an authoring one, and the message says so by saying
-/// nothing about editing lingrep patterns.** An `admit` naming an undeclared anchor is
-/// refused at compile time with a source span and its own remediation
+/// **A wiring error, not an authoring one, so the message does not mention
+/// editing lingrep patterns.** An `admit` naming an undeclared anchor is
+/// rejected at compile time with a source span and its own remediation
 /// (`compiler::policy::resolve_anchor_references`), and a compiled catalog's own
 /// positions always carry its own digest — so a researcher who reaches this
 /// string is looking at a caller that paired a policy with someone else's
-/// positions. Remediation phrased for a particular surface belongs in whatever
-/// wraps this, which knows what that surface is.
+/// positions. Remediation phrased for a particular surface belongs in the
+/// caller that wraps this error and owns that surface.
 ///
 /// [`PolicySpan`]: crate::fsm::policy_program::PolicySpan
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -800,7 +800,7 @@ impl Display for NestingEntry {
 ///
 /// A catalog must write all three fields, with both lists non-empty; that is
 /// the load-bearing choice in the *encoding*, because it leaves a depth no
-/// sentence exercises no way to be spelled. The refusal lives in
+/// sentence exercises no way to be spelled. The check lives in
 /// `compiler::policy::read_nesting_claims`, not in this type, which is a parsed
 /// result and constrains nothing on its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -844,7 +844,7 @@ pub struct CatalogPolicy {
     /// may share one `exclude` and a claim is verified per anchor.
     ///
     /// The same keys as [`Self::anchors`]: every declared anchor must carry a
-    /// claim, so a missing one is refused at compile
+    /// claim, so a missing one is rejected at compile
     /// time. It is separate from `anchors` all the same — a claim is
     /// provenance, and no part of what [`Self::anchor_digest`] hashes, because
     /// editing a witness changes nothing about which boundary an anchor picks.
@@ -1225,8 +1225,8 @@ impl CatalogPolicyBuilder {
             nesting_claims: self.nesting_claims,
             hidden: self.hidden,
             // Empty until `install_group_index` runs, which is after synthesis
-            // — the builder cannot know the complete definition list, because
-            // synthesis has not appended to it yet.
+            // — the builder does not yet have the complete definition list,
+            // because synthesis has not appended to it yet.
             group_index: crate::fsm::policy_program::GroupIndex::empty(),
             // Empty for the same reason, and installed at the same point.
             definitions: crate::fsm::policy_program::DefinitionDomain::empty(),
@@ -1378,9 +1378,9 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
             | KeyTarget::LexicalSegments => return None,
         };
         // A zero-width capture has no token to read, and is unkeyable for the
-        // same reason a skipped one is. The compiler refuses to declare one,
-        // so this guards the runtime against a shape it proved absent rather
-        // than duplicating the check.
+        // same reason a skipped one is. The compiler rejects a declaration of
+        // one, so this guards the runtime against a shape it proved absent
+        // rather than duplicating the check.
         if start >= end || end > tokens.len() {
             return None;
         }
@@ -1874,7 +1874,7 @@ fn project_tag<S: TokenSequence + ?Sized>(
             present.next().is_none().then(|| value.clone())
         }
         TagSource::Projection { capture, attr } => {
-            // `found.start` is the capture's only token: `capture_key` refuses
+            // `found.start` is the capture's only token: `capture_key` rejects
             // projections from captures it cannot prove are exactly one token.
             let found = components.iter().find(|found| found.name == *capture)?;
             Some(tokens.scalar_key(found.start, attr)?.to_string())
@@ -2311,7 +2311,7 @@ pub const MAX_NESTING_KEY: &str = "max_nesting";
 /// with the compiler-owned keys.
 ///
 /// Two callers, and they read it for different reasons. The schema checker
-/// refuses a declaration of one of these keys, because the compiler already
+/// rejects a declaration of one of these keys, because the compiler already
 /// defines it. `lingrep-web`'s pattern browser withholds them from its grouping
 /// heuristic, because a key the compiler owns describes how a record is
 /// published rather than what a researcher wanted to ask — and the heuristic,

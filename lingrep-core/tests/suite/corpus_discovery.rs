@@ -32,7 +32,7 @@ fn limits() -> TraversalLimits {
 /// stage an input for it.
 ///
 /// This is a property of the **filesystem**, not the OS: a Linux exFAT or
-/// FAT32 mount refuses the same name, and a `cfg(target_os)` gate would both
+/// FAT32 mount rejects the same name, and a `cfg(target_os)` gate would both
 /// mis-describe that and, worse, turn absent coverage into a silently green
 /// run. Probing reports the skip instead, and runs the assertions anywhere
 /// they can run.

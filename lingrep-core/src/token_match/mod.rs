@@ -514,7 +514,7 @@ fn feature_fields(feature: &str) -> Vec<Cow<'_, str>> {
 ///
 /// `None` for the remainder means the record ended. An unterminated quoted
 /// field takes the rest of the record rather than failing: a feature string is
-/// dictionary data this crate did not write, and refusing to featurize a token
+/// dictionary data this crate did not write, and failing to featurize a token
 /// over it would be a worse outcome than reading it literally.
 fn next_feature_field(rest: &str) -> (Cow<'_, str>, Option<&str>) {
     let Some(body) = rest.strip_prefix('"') else {
@@ -603,7 +603,7 @@ fn featurize_selected(
         values[Text as usize] = Some(CompactString::from(token.surface()));
     }
 
-    // For a token the dictionary does not know, attributes whose value space
+    // For a token absent from the dictionary, attributes whose value space
     // *is* the surface orthography fall back to the surface. An unknown-word
     // entry carries a six-field feature string, so twenty attributes are absent
     // on an OOV token — and a missing attribute satisfies neither polarity,

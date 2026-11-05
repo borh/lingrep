@@ -138,7 +138,7 @@ impl CatalogWork {
 
 /// The report format. Bumped when the counter list or the digest changes.
 ///
-/// Carried explicitly so an incompatible baseline is refused by name rather
+/// Carried explicitly so an incompatible baseline is rejected by name rather
 /// than by whatever Serde happens to do with a missing or extra field.
 pub const REPORT_SCHEMA: &str = "lingrep-perf.work/v1";
 
@@ -149,7 +149,7 @@ pub struct CatalogMeasurement {
     ///
     /// A sentence *count* is not identity: editing an example or a fixture
     /// without changing how many sentences there are would otherwise produce a
-    /// counter delta reported as a matcher work change. Comparison refuses
+    /// counter delta reported as a matcher work change. Comparison fails
     /// when this differs.
     pub input_digest: String,
     /// How many sentences the catalog was measured over.
@@ -410,7 +410,7 @@ fn record_publication_work(
 /// or when a selected catalog does not compile. A mistyped `--catalog` must not
 /// succeed with an empty report: no work would then be indistinguishable from a
 /// successful measurement, which is the same failure the missing-feature path
-/// already refuses.
+/// already rejects.
 pub fn measure(scope: &ScopeSelection) -> Result<WorkReport, MeasureError> {
     let mut report = WorkReport::default();
     let suite: Vec<&str> = catalog_campaign_descriptors()
@@ -464,7 +464,7 @@ pub fn measure(scope: &ScopeSelection) -> Result<WorkReport, MeasureError> {
         // The suite descriptor names which schema family this catalog binds
         // against; a discovered catalog outside the suite keeps the Vibrato
         // default. Binding a `where`-bearing catalog against the morphology
-        // schema is refused by design, so measuring it means binding it
+        // schema is rejected, so measuring it means binding it
         // against the schema its predicates require.
         let binding = catalog_campaign_descriptors()
             .into_iter()

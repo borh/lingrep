@@ -127,7 +127,7 @@ pub(crate) struct PredicateCatalog {
 /// Chains one predicate's definition into a catalog digest.
 ///
 /// The source [`AttrValue`]s rather than the compiled text, because a
-/// [`RegexId`] is assigned by first appearance and so says nothing about the
+/// [`RegexId`] is assigned by first appearance and so does not identify the
 /// pattern it stands for.
 fn absorb_predicate(state: &mut [u8; 32], attrs: &[SymbolicAttrValue]) {
     let digest = &mut blake3::Hasher::new();
@@ -1020,8 +1020,8 @@ impl PredicateCatalog {
     /// polymorphism: a containment or regex test reads a string, and a
     /// string-set attribute is a set of strings, so the operator has an
     /// answer over either physical kind and requires neither. Every other
-    /// operator names one kind and a schema declaring the other is a bind-time
-    /// refusal.
+    /// operator names one kind and a schema declaring the other is rejected at
+    /// bind time.
     pub(crate) fn required_kinds(&self) -> Vec<(AttributeKey, AttributeKind)> {
         self.predicates
             .iter()

@@ -212,9 +212,9 @@ struct Lowerer<'a, 'src> {
 ///
 /// `Unset` is delete-with-provenance: the key ends up absent from the
 /// definition, but the site that merges the annotation run over the file
-/// defaults still knows an unset happened there and where it was written —
-/// which is what lets `UnsetWithoutDefault` point at the key. Only a
-/// per-definition annotation run may hold one; `lower_entry_block` refuses it
+/// defaults still records that an unset happened there and where it was written
+/// — which is what lets `UnsetWithoutDefault` point at the key. Only a
+/// per-definition annotation run may hold one; `lower_entry_block` rejects it
 /// for `defaults`, where the entry *is* the default.
 #[derive(Clone)]
 enum LoweredEntry {
@@ -248,7 +248,7 @@ impl LoweredEntry {
 /// not the walker's, so they live here — once each, as a decision that returns
 /// a [`DraftRefusal`] rather than as an effect.
 ///
-/// Free of `tree_sitter` types: a refusal names a span, and the
+/// Free of `tree_sitter` types: a rejection names a span, and the
 /// lowerer renders it. That is what keeps the ordering rules testable without
 /// a syntax tree, and what stops a rule from acquiring a rendering concern.
 #[derive(Default)]
@@ -287,7 +287,7 @@ impl DocumentDraft {
         !self.saw_definition && self.run.is_empty()
     }
 
-    /// Admits one annotation of the current run, or refuses it.
+    /// Admits one annotation of the current run, or rejects it.
     ///
     /// Two facts are judged where the annotation is written: a duplicate key in
     /// one run is ambiguous, and an unset is delete-with-provenance, so it needs
@@ -348,7 +348,7 @@ impl DocumentDraft {
     /// leaves the loop with its *effective* metadata, and nothing downstream can
     /// see an unexpanded default. An unset key is simply absent, exactly as if
     /// the file had no default; an `Unset` with nothing to delete was already
-    /// refused by [`Self::admit_annotation`].
+    /// rejected by [`Self::admit_annotation`].
     fn materialize_metadata(&mut self) -> (Metadata, Option<ParsedKey>, Option<ParsedSkip>) {
         let mut effective = self.defaults.clone().unwrap_or_default();
         if let Some(LoweredEntry::KeySet(key)) = effective.get_mut("key") {
@@ -977,7 +977,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             ));
         }
         // An entry whose *whole* value is `none` is an unset, recognized here
-        // — before `lower_metadata_value`, which refuses `none` everywhere
+        // — before `lower_metadata_value`, which rejects `none` everywhere
         // else — and carrying the key's span so the caller that judges it can
         // point its diagnostic at authored source.
         if value_node.kind() == "metadata_none" {
@@ -1284,7 +1284,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
                 Ok(Value::Object(map))
             }
-            // A nested `none` — a list item, a map value — is refused at the
+            // A nested `none` — a list item, a map value — is rejected at the
             // `none` itself: only an annotation entry's whole value can mean
             // "unset the file default", and the defect sits on the inner
             // value, not on the key beside it.
@@ -1358,7 +1358,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         )
     }
 
-    /// Renders a [`DocumentDraft`] refusal at the span the draft named.
+    /// Renders a [`DocumentDraft`] rejection at the span the draft named.
     ///
     /// The draft decides; the lowerer renders. Keeping the two apart is what
     /// lets the ordering rules hold no syntax-tree types and no `self`.
@@ -1379,7 +1379,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// Members go through [`Self::lower_literal_value`], the same function an
     /// inline `in {…}` uses, which is what makes an escape decode identically
     /// in both places. That function's `negated` argument only selects between
-    /// naming `~` and `!~` in the regex-rejection message; a declaration knows
+    /// naming `~` and `!~` in the regex-rejection message; a declaration has
     /// no operator, so this passes `false` and the message names none.
     fn lower_set_definition(&mut self, node: Node<'_>) -> Result<ParsedSet, CompileError> {
         self.check_recovery_node(node)?;
@@ -2076,7 +2076,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 // `lower_attribute`'s `in` arm gives: `set_reference` is
                 // `seq('@', $.identifier)` and declares no field on the name.
                 // `@` with no name parses as a MISSING `identifier`, which
-                // `check_recovery_node` above has already refused, so the
+                // `check_recovery_node` above has already rejected, so the
                 // `ok_or_else` is total-match and not a real branch.
                 let name_node = term_node.named_child(0).ok_or_else(|| {
                     self.error(
@@ -2508,7 +2508,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// Lowers one node of the Boolean token-test grammar.
     ///
     /// `depth` is the enclosing expression's depth, so a deeply parenthesized
-    /// test is refused by the same nesting limit an equally deep expression is
+    /// test is rejected by the same nesting limit an equally deep expression is
     /// — this recursion is otherwise unbounded on adversarial source.
     fn lower_test(&mut self, node: Node<'_>, depth: usize) -> Result<ParsedTest, Diagnostic> {
         self.check_recovery_node(node)
@@ -2736,7 +2736,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     //
                     // The `ok_or_else` is the total-match arm and nothing
                     // more: `@` with no name parses as a MISSING `identifier`,
-                    // which `check_recovery_node` above has already refused.
+                    // which `check_recovery_node` above has already rejected.
                     // It is a sentence rather than a panic for the reason
                     // `compile_guard`'s `Group` arm is — a later grammar
                     // change should reach a researcher as a diagnostic.
@@ -3371,7 +3371,7 @@ fn only_expression_child<'tree>(
 /// The counterpart of [`only_expression_child`] for the token-test grammar.
 /// Neither rule declares a field on its operand, so this takes the one named
 /// child rather than inventing one; the kind is then checked by
-/// [`Lowerer::lower_test`]'s own dispatch, which is the only place that knows
+/// [`Lowerer::lower_test`]'s own dispatch, which is the only place that lists
 /// the full set.
 fn only_test_child<'tree>(
     source: &PatternSource<'_>,

@@ -28,7 +28,7 @@ pub(crate) fn parse_scope(clause: Option<&str>) -> Result<Option<ScopeClause>, C
 /// Resolves a clause against a prepared artifact's document metadata.
 ///
 /// Also returns the labels the artifact records, so the caller can report the
-/// ones the clause named and the corpus does not have. An artifact knows its
+/// ones the clause named and the corpus does not have. An artifact records its
 /// whole label set up front, unlike a stream.
 pub(crate) fn resolve_prepared_scope(
     reader: &BlockingProvenance,

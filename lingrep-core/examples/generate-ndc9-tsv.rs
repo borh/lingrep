@@ -3,8 +3,8 @@
 //!
 //! The table is NDL/JLA's NDC9 classification scheme — not BCCWJ text — and is
 //! checked in so the reader has no runtime data dependency. The generator is
-//! the validation: it refuses to write on any malformed input and prints the
-//! provenance numbers recorded beside this example in
+//! the validation: on any malformed input it exits with an error before
+//! writing, and on success it prints the provenance numbers recorded beside this example in
 //! `lingrep-core/src/corpus/bccwj/mod.rs`.
 //!
 //! Usage:
@@ -102,7 +102,7 @@ fn utf8_len(lead: u8) -> Option<usize> {
 
 /// Parses the strict EDN subset the NDC9 map uses: a flat map of
 /// double-quoted strings to vectors of one or more double-quoted strings.
-/// Anything else is a refused input, not a warning. The returned map is
+/// Anything else returns `Err`, not a warning. The returned map is
 /// sorted by notation, which fixes the TSV row order.
 fn parse_edn_map(text: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
     let mut cursor = Scanner {

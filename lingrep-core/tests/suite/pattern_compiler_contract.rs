@@ -3268,11 +3268,11 @@ fn where_clause_static_refusals_each_carry_their_own_code() {
     }
 }
 
-/// What branch exclusivity must **not** refuse.
+/// What branch exclusivity must **not** reject.
 ///
-/// The refusal is sound because a single-entry alternation takes one branch,
+/// The rejection is sound because a single-entry alternation takes one branch,
 /// and incomplete everywhere else. Each shape here has a live
-/// precedent, so a rule that over-refused would delete a legal query rather
+/// precedent, so a rule that rejected too much would delete a legal query rather
 /// than merely annoy someone.
 #[test]
 fn branch_exclusivity_admits_every_shape_that_can_bind_both() {
@@ -3330,7 +3330,7 @@ fn branch_exclusivity_admits_every_shape_that_can_bind_both() {
 /// The re-entrant case is legal *and matches*, which compilation alone cannot
 /// show.
 ///
-/// A rule keyed on branch membership alone would refuse this at compile time;
+/// A rule keyed on branch membership alone would reject this at compile time;
 /// one that admitted it but broke the runtime would pass the test above. Both
 /// captures bind here, in different iterations of one repetition, and the
 /// clause holds over them — the counterexample the design round was built on.
@@ -3557,7 +3557,7 @@ fn a_named_set_term_matches_what_the_inline_spelling_matches() {
 
 /// `obl:*` matches subtypes of `obl` and excludes the
 /// unsubtyped label: `obl` and `obl:tmod` are two labels, and a wildcard that
-/// quietly included the bare form would make `obl|obl:*` mean `obl:*`.
+/// also matched the bare form would make `obl|obl:*` mean `obl:*`.
 #[test]
 fn a_subtype_wildcard_excludes_the_unsubtyped_label() {
     let object = |labels: &str| {

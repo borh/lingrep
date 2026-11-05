@@ -26,7 +26,7 @@ pub struct SearchForm {
     /// How many KWIC lines this run retains per pattern. Absent means the
     /// server's configured ceiling, so a caller predating the control — and
     /// the export and permalink paths, which do not offer one — is unchanged.
-    /// A value above the ceiling is clamped at admission, not refused.
+    /// A value above the ceiling is clamped at admission, not rejected.
     #[serde(default)]
     pub retained: Option<usize>,
     #[serde(default)]

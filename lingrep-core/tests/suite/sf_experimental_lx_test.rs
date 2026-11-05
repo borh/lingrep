@@ -134,8 +134,8 @@ fn catalog_contains_only_research_patterns() {
     );
 }
 
-/// The catalog's `schema` block must refuse what the deleted Rust assertions
-/// refused. Proved before deletion, or the assertions would be removed on
+/// The catalog's `schema` block must reject what the deleted Rust assertions
+/// rejected. Proved before deletion, or the assertions would be removed on
 /// faith.
 ///
 /// Mutates the source **in memory**. Editing a real catalog and reverting with
@@ -148,7 +148,7 @@ fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
     )
     .expect("catalog is readable");
 
-    // (from, to, the phrase the refusal must contain)
+    // (from, to, the phrase the rejection message must contain)
     let mutations = [
         // `status:` is a defaults entry, so one edit reaches every definition.
         (
@@ -193,7 +193,7 @@ fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
         );
     }
 
-    // `required` is the other half: deleting the key entirely is refused too.
+    // `required` is the other half: deleting the key entirely is rejected too.
     let without_category = source.replacen("category: \"S1a 相\"\n", "", 1);
     assert_ne!(without_category, source, "the deletion applied");
     let error = match compile_catalog(
@@ -231,7 +231,7 @@ fn research_metadata_and_approximations_are_explicit() {
     // `source` are no longer asserted here: the catalog's own `schema` block
     // declares all seven,
     // and `the_catalog_schema_refuses_what_the_rust_assertions_refused` proves
-    // it refuses what this loop refused. A second copy would only be a second
+    // it rejects what this loop rejected. A second copy would only be a second
     // thing to keep in step.
     let output = compile_fixture();
     let mut approximated = BTreeSet::new();
@@ -374,7 +374,7 @@ fn published(tokens: &[lingrep_core::token_match::TokenInfo]) -> Vec<String> {
 /// Stage 2: a negated progressive is not a resultative, and is not published.
 ///
 /// `ついていない` and `行っていない` are negated progressives — not
-/// resultative/perfective uses of ている — and upstream refuses to tag them as
+/// resultative/perfective uses of ている — and upstream does not tag them as
 /// S1a 相 (`sf_experimental.py:1108`). The bare `ている` in the same shape
 /// without the negation survives, which is the half that proves the statement
 /// is not simply dropping every `ている`.

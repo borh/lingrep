@@ -248,7 +248,7 @@ pub(super) fn check_policy_program(
 
     // A `within` window so wide it admits nearly every record. Executable
     // exactly as written, so this is a warning: what is wrong is the magnitude,
-    // and refusing it would be the compiler overruling a declaration it can
+    // and rejecting it would be the compiler overruling a declaration it can
     // honor.
     for op in &program.ops {
         let BoundOp::Admit {
@@ -791,7 +791,7 @@ impl<'src> PolicyLowerer<'_, 'src> {
         let distance = match (exact, within) {
             (Some((true, _)), None) => Terminal::Exact,
             (None, Some(count)) => Terminal::Within(count),
-            // `exact: false` is refused rather than read as "no constraint",
+            // `exact: false` is rejected rather than read as "no constraint",
             // in the same words the metadata key uses: a disabled constraint
             // should be deleted, because an inert declaration that still looks
             // executable is the failure this tier exists to close.
@@ -1122,7 +1122,7 @@ fn take_optional<'tree>(
 /// **The proof takes the maximum per edge, not the sum over all statements.**
 /// A public span narrows monotonically — `public_start` only moves right and
 /// `public_end` only moves left — so two `at_start` detaches remove the wider
-/// of their regions, never both. Summing them would refuse a catalog that
+/// of their regions, never both. Summing them would reject a catalog that
 /// cannot empty, and the same holds inside one statement whose `%group`
 /// operand has several members: exactly one region is removed per edge.
 ///
@@ -1163,7 +1163,7 @@ pub(super) fn check_detach_non_emptiness(
         else {
             continue;
         };
-        // A relation naming no detachable region is already refused; reaching
+        // A relation naming no detachable region is already rejected; reaching
         // here would mean this analysis had a different idea of which
         // statements detach than the rule that admits them.
         let at_start = match relation {

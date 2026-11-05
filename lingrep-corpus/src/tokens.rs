@@ -1827,7 +1827,7 @@ fn decode_block(
         return Err(invalid("invalid sentence selection"));
     }
     // Every caller already supplies these in ascending order — `decode_bound_ordinals`
-    // refuses a decreasing corpus ordinal and `validate_block` passes `0..count`.
+    // rejects a decreasing corpus ordinal and `validate_block` passes `0..count`.
     // The cell loop's owner cursor depends on it, so it is checked rather than assumed.
     if locals.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(invalid("sentence selection must be strictly increasing"));

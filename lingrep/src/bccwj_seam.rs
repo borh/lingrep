@@ -6,11 +6,10 @@
 //! ([`crate::prepared_source`]), and `corpus inventory`
 //! ([`crate::commands::corpus`]) — and they must agree on what a discovered
 //! source *is*: which zip is ordinal `n`, which target group it belongs to,
-//! and what the inventory digest over the whole set comes out as. That
-//! agreement is load-bearing: `finish_guarded` refuses a build whose report
-//! disagrees with the builder's own derivation, and
-//! [`crate::direct_source::validate_ordered_inventory`] refuses a run whose
-//! read order disagrees with discovery.
+//! and what the inventory digest over the whole set comes out as. If
+//! discovery and corpus commands disagree on inventory order or identity,
+//! `finish_guarded` rejects the build and
+//! [`crate::direct_source::validate_ordered_inventory`] rejects the run.
 //!
 //! [`BccwjCursor`] centralizes the two shared invariants: *ordinal indexes the
 //! zip vector* and *each zip is its own target group*.
@@ -247,7 +246,7 @@ pub(crate) fn bccwj_inventory_summary<'a>(
             alias_documents: 0,
             // One document per target; the generic walker leaves this 0 for
             // an empty inventory, which cannot happen here (`discover`
-            // refuses an empty selection) but keeps the shape total.
+            // rejects an empty selection) but keeps the shape total.
             max_target_multiplicity: documents.min(1),
             external_targets: 0,
         },

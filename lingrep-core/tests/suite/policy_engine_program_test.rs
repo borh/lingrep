@@ -110,7 +110,8 @@ fn the_reserved_anchor_bypasses_anchor_positions_entirely() {
     assert_eq!(admitted.len(), 1);
 
     // The control: same foreign positions, a *declared* anchor, and the read
-    // that the reserved name skipped is now made and refused.
+    // that the reserved name skipped is now made and fails with
+    // `AnchorError::CatalogMismatch`.
     let declared = sym_anchor_matcher();
     let punct = crate::policy_helpers::punct_anchor_matcher();
     assert_eq!(
@@ -359,7 +360,7 @@ fn survives(effect: &str, relation: &str, definitions: &str, words: &[&str]) -> 
 /// Every relation, asserted against the geometry it names.
 ///
 /// One fixture per arrangement, each checked against all six relations, so a
-/// relation that quietly answered like its neighbour is caught by the five
+/// relation that answered like its neighbour is caught by the five
 /// cases it is *not* supposed to hold for rather than the one it is.
 fn check_relations(definitions: &str, words: &[&str], holding: &[&str]) {
     for relation in RELATIONS {
@@ -691,8 +692,8 @@ fn a_capture_reaching_into_the_detached_region_is_dropped_whole() {
 /// `apply_policy_records` is public and nothing in its signature pairs a policy
 /// with the matcher that produced the records, so a caller can hand it a
 /// foreign one. Every other pass answers an unknown name by finding no entry
-/// and keeping the record; the program must not be the one pass that refuses to
-/// run instead.
+/// and keeping the record; the program must not be the one pass that returns an
+/// error instead.
 #[test]
 fn a_record_this_catalog_does_not_declare_survives_the_program() {
     let matcher = matcher_for(
@@ -816,7 +817,7 @@ fn an_evidence_emitter_is_matched_to_the_fragment_it_observes() {
 ///
 /// `a` reaches past the anchor by exactly the punctuation `TRAILING_APPARATUS`
 /// recognizes, which is what gives `detach` a region to remove and `admit`
-/// something to refuse.
+/// something to reject.
 const ADMIT_CATALOG: &str = r#"
 anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
 max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
@@ -877,7 +878,7 @@ fn admit_observes_the_published_end_so_position_matters() {
 /// The positions here are a structurally different catalog's, which is the one
 /// way a compiled `admit` can go unanswered: its own anchor name is resolved at
 /// compile time. Nothing may be decided against an unresolved anchor, and no
-/// statistic may move before the resolution that would have refused the run.
+/// statistic may move before the resolution that would have failed the run.
 #[test]
 fn an_admit_forces_anchor_resolution_before_any_statistic_moves() {
     let matcher = matcher_for(&ADMIT_CATALOG.replace("{PROGRAM}", ADMIT_STATEMENT));

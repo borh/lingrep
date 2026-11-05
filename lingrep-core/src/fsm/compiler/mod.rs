@@ -463,8 +463,8 @@ fn compile_program(
     // machine, which is already built; the other half is whether a capture or
     // span-equality plan queries a lookaround, and only this call establishes
     // it. A span-equality definition is skipped by NFA lowering, so its
-    // lookaround exists in no other half. The gate returns `Err` on refusal, so
-    // ordering it this way costs a refused compilation the plans it then
+    // lookaround exists in no other half. The gate returns `Err` on rejection,
+    // so ordering it this way costs a rejected compilation the plans it then
     // discards, and buys the gate and the per-sentence path one shared answer
     // rather than a compiler-side copy that can drift from it.
     lowered.matcher.install_execution(execution.into_vec());

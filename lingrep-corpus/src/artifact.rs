@@ -331,7 +331,7 @@ impl AnalyzerRecord {
 /// Minimal deterministic analyzer description for storage-focused fixtures.
 ///
 /// Its resource digests are literals no real dictionary produces, which is the
-/// point: a fixture must be recognizable as one. The durability gate refuses it
+/// point: a fixture must be recognizable as one. The durability gate rejects it
 /// as a fixture source for exactly that reason — a stored artifact that proves
 /// a descriptor comparison works has to carry a descriptor a production build
 /// could emit.
@@ -1464,10 +1464,10 @@ impl CorpusArtifact {
     /// The root is resolved through a symlink; the components inside it are
     /// not. The asymmetry is the point. A *component* symlink is a containment
     /// escape — the manifest describes bytes that then live somewhere else —
-    /// and `ensure_regular` refuses it. The *root* is the path the caller
+    /// and `ensure_regular` rejects it. The *root* is the path the caller
     /// named, and staging a corpus behind a symlink is what deployment tooling
     /// does: this repository's own NixOS module assembles every declared corpus
-    /// as `<state>/corpora/<name>`, so refusing one here made a declared
+    /// as `<state>/corpora/<name>`, so rejecting one here made a declared
     /// artifact unserveable in the one deployment shape we ship.
     ///
     /// It also has to resolve, because [`crate::is_prepared_artifact`] — the
@@ -1476,7 +1476,7 @@ impl CorpusArtifact {
     /// branch: the gate answered "this is an artifact" and the open then
     /// answered "expected artifact directory" about the same path.
     ///
-    /// A symlink to a regular file is still refused, because the resolved type
+    /// A symlink to a regular file is still rejected, because the resolved type
     /// is what is checked; a dangling one surfaces as the underlying I/O error.
     pub fn open(path: &Path) -> Result<Self, CorpusError> {
         let metadata = fs::metadata(path)?;

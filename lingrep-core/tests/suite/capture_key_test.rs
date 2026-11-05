@@ -19,7 +19,7 @@
 //! `実験を行う` alone is published as seven rows ranked 2 through 11,182.
 //!
 //! This pins the compiler and projection halves: what `key:` accepts, what it
-//! refuses, and what a keyed record projects to.
+//! rejects, and what a keyed record projects to.
 
 use lingrep_core::fsm::{
     CompileLimits, DiagnosticCode, KeyComponent, KeyProjection, PatternSource, ProjectedKeyField,
@@ -201,7 +201,7 @@ fn keying_on_a_quantified_capture_is_an_error() {
 }
 
 /// Projecting one attribute off a span that can cover several tokens has no
-/// defined answer. `substitute` already refuses this for the same reason; a
+/// defined answer. `substitute` already rejects this for the same reason; a
 /// head-token rule would be invented, not witnessed.
 #[test]
 fn keying_on_a_capture_that_can_span_several_tokens_is_an_error() {
@@ -318,7 +318,7 @@ fn last_reads_the_rightmost_token_of_the_capture() {
     );
 }
 
-/// An explicit component admits exactly what the bare form refuses. Without
+/// An explicit component admits exactly what the bare form rejects. Without
 /// this the two halves could drift: a stricter width rule would make the new
 /// syntax unusable while every existing test stayed green.
 #[test]
@@ -335,8 +335,8 @@ fn an_explicit_component_admits_the_capture_the_bare_form_refuses() {
     assert_code(&error, DiagnosticCode::MultiTokenCaptureProjection);
 }
 
-/// The refusal is the only place an author learns the alternatives exist, so
-/// it has to name them.
+/// The rejection diagnostic is the only place an author learns the
+/// alternatives exist, so it has to name them.
 #[test]
 fn refusing_a_wide_bare_key_names_the_components_that_would_work() {
     let error = compile_err(
@@ -359,7 +359,7 @@ fn refusing_a_wide_bare_key_names_the_components_that_would_work() {
 
 /// An unbounded capture is fine for an explicit component — it is
 /// sentence-local, so the span is concrete when the key is projected — and
-/// still refused for the bare form, which claims exactly one token.
+/// still rejected for the bare form, which claims exactly one token.
 #[test]
 fn an_unbounded_capture_is_admitted_by_span_and_refused_by_the_bare_form() {
     let unbounded = "pattern p := (?<c> [text=実験]+) [text=を].\n";
@@ -624,7 +624,7 @@ fn binding_failures_precede_independent_whole_match_width_errors() {
 // ---------------------------------------------------------------------------
 
 /// Tag sources that name a capture but do not project one of its tokens. Every
-/// refusal below must leave these compiling.
+/// rejection below must leave these compiling.
 const QUANTIFIED: &str = "pattern p := ((?<c> [text=実験]) [text=と]){1,3} [text=行っ].\n";
 const WIDE: &str = "pattern p := (?<c> [text=実験]{1,3}) [text=を].\n";
 
@@ -698,7 +698,7 @@ fn a_zero_width_capture_is_refused_as_a_tag_projection() {
 }
 
 /// The decision, pinned: a tag projection reads one token and `tags:` has no
-/// component spelling, so the refusal must not send the author looking for one.
+/// component spelling, so the rejection must not send the author looking for one.
 /// It also has to name the declaration they wrote — the same message told them
 /// `key:` when they had written `tags:`.
 /// These diagnostics were built at `0..0` — no span at all — because metadata

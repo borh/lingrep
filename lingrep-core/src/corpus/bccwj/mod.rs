@@ -65,11 +65,11 @@ use std::collections::BTreeMap;
 ///       lingrep-core/src/corpus/bccwj/data/ndc9.tsv
 /// ```
 ///
-/// The generator (that example) is the validation: it refuses to write on
-/// any malformed input (non-string values, duplicate or empty notations,
-/// tab/newline in a field, or an empty label outside the four known
-/// astronomy heading gaps 440.12–440.14 and 440.19). Pinned provenance of
-/// the checked-in table:
+/// The generator (that example) is the validation: it exits with an error
+/// before writing on any malformed input (non-string values, duplicate or
+/// empty notations, tab/newline in a field, or an empty label outside the
+/// four known astronomy heading gaps 440.12–440.14 and 440.19). Pinned
+/// provenance of the checked-in table:
 ///
 /// | fact | value |
 /// |---|---|

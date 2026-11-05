@@ -63,8 +63,9 @@ fn next_rung(ladder: &[usize], blocks: usize) -> Option<usize> {
 pub fn plan(campaign: &Campaign) -> Vec<Row> {
     let manifest = &campaign.manifest;
 
-    // Only consulted once minimum coverage is met everywhere; before that it
-    // refuses, and a refusal is not an escalation instruction.
+    // Only consulted once minimum coverage is met everywhere; before that
+    // `adjudicate` returns `Err`, and an error is not an escalation
+    // instruction.
     //
     // Every blocking stream, not the one the verdict names. A verdict names a
     // single catalog because it must report one thing; escalation is owed by
@@ -116,7 +117,7 @@ pub fn plan(campaign: &Campaign) -> Vec<Row> {
 
         // Promotion is a property of the *data*, not of the current verdict.
         // While a promoted catalog is part-way through its blocks the
-        // campaign is short of coverage and adjudicates to a refusal, so the
+        // campaign is short of coverage and `adjudicate` returns `Err`, so the
         // verdict names nothing — and a catalog that decided its promotion
         // from the verdict alone would fall back to "screen, 1 of 1" and
         // stop mid-promotion.

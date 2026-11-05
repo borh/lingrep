@@ -45,7 +45,7 @@ impl SectionPolicy {
     /// it cannot occur in the data — labels are opaque strings and nothing here
     /// constrains their bytes, so any separator this module chose could be
     /// spelled by a label and would silently merge two fields into one. Encoding
-    /// is the caller's problem because only the caller knows the whole of what it
+    /// is the caller's problem because only the caller holds every field that it
     /// is encoding; see `markdown_dialect::reader_tag`, the only caller.
     ///
     /// `pub(crate)` rather than `pub`: the policy is one part of a reader

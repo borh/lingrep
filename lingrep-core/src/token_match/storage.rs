@@ -58,7 +58,7 @@ pub trait TokenInfoTrait {
 /// layer uses internally: this is the quantity a standoff-annotation consumer
 /// addresses text by, and every such consumer reachable from here — brat, NIF,
 /// Python, R — counts characters. The conversion happens once, at the reader
-/// that knows the sentence text, rather than at each consumer that would have
+/// that holds the sentence text, rather than at each consumer that would have
 /// to guess which unit it was handed.
 ///
 /// Sentence-relative, because that is the only origin defined on every path

@@ -10,7 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! `--where` end to end: refusal before work, the clause echo, the four-bucket
+//! `--where` end to end: rejection before work, the clause echo, the four-bucket
 //! accounting, and what the denominator covers under prefix coverage.
 //!
 //! The fixture is four documents and seven sentences, one per accounting

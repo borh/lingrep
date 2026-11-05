@@ -216,7 +216,7 @@ impl Materializer<'_> {
     /// Resolution runs here, after fragment expansion, so a capture arriving
     /// through an inclusion is a legal operand exactly when it is a legal
     /// capture. A name that resolves to more than one materialized capture —
-    /// one fragment included twice — is refused: the constraint would have no
+    /// one fragment included twice — is rejected: the constraint would have no
     /// single edge to check.
     fn resolve_relations(
         &mut self,
@@ -615,7 +615,7 @@ fn endpoint_is_surface_anchor(endpoint: &super::model::ExecutionEnhancedEndpoint
 /// Collects every materialized capture, grouped by authored name.
 ///
 /// Grouped rather than flattened because one fragment included twice
-/// materializes its capture once per inclusion: the caller refuses a `where`
+/// materializes its capture once per inclusion: the caller rejects a `where`
 /// operand whose name carries more than one identity.
 fn collect_capture_names<'expr>(
     expr: &'expr ExecutionExpr,

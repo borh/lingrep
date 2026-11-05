@@ -112,7 +112,7 @@ pub enum ProbeEvidence {
         /// Referenced attributes the corpus cannot supply. The catalog still
         /// binds; positive tests over them match nothing there.
         unavailable: Vec<UnavailableBindingAttribute>,
-        /// Keys whose absence refuses the bind outright — dependency `where`
+        /// Keys whose absence fails the bind outright — dependency `where`
         /// clause edges. Non-empty means the probe failed.
         required_missing: Vec<String>,
     },

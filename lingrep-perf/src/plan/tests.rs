@@ -27,7 +27,7 @@ fn an_interrupted_block_is_reported_as_partial_rather_than_recorded() {
     // The bug this pins: counting distinct block numbers treats a block with
     // one run in it as recorded, so the next invocation starts at the
     // following block and the partial one stays permanently unbalanced — a
-    // campaign refused for a reason no further measurement can repair.
+    // campaign rejected for a reason no further measurement can repair.
     let mut campaign = campaign_with(0.80);
     campaign.observations.retain(|observation| {
         observation.catalog != "patterns/primary.lx"
@@ -105,7 +105,7 @@ fn a_promoted_screen_owes_three_whole_blocks_beside_the_screen_it_already_has() 
 fn a_promoted_catalog_can_be_driven_to_completion() {
     // End to end over the state machine, because every earlier failure here
     // was a transition rather than a value: the widths disagreed, so the
-    // third run of the first promoted block was refused as out of sequence
+    // third run of the first promoted block was rejected as out of sequence
     // and promotion could never finish.
     let mut campaign = campaign_with_escalating_screen();
     let catalog = "patterns/unaffected.lx";

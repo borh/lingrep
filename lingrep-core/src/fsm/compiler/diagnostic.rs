@@ -37,7 +37,7 @@ pub enum DiagnosticCode {
     SpanEqualityInsideLookaround,
     /// `&` inside a lookaround body.
     ///
-    /// The sibling of [`Self::SpanEqualityInsideLookaround`], and refused for
+    /// The sibling of [`Self::SpanEqualityInsideLookaround`], and rejected for
     /// the same underlying reason: a lookaround is answered by a boundary
     /// sweep that records only *which boundaries an accepting path reaches*,
     /// discarding the other endpoint. Intersection is a statement
@@ -123,16 +123,16 @@ pub enum DiagnosticCode {
     /// The statement case is the one an author cannot see: a `%group` holding
     /// only fragments *has* members, so the reference resolves and the
     /// statement runs — over an empty set, on every sentence. Inert and honored
-    /// look identical from the catalog, which is why this warns rather than
-    /// staying silent, and why it does not refuse: the engine executes the
+    /// look identical from the catalog, which is why this is a warning rather
+    /// than no diagnostic, and why it is not an error: the engine executes the
     /// statement exactly as written.
     IneffectivePolicy,
     /// A recognized result-policy declaration the engine can execute exactly as
     /// written, but whose magnitude says the author meant something else — an
     /// `admit … terminal: {within: N, …}` wide enough to admit nearly every
     /// record.
-    /// Non-fatal: the catalog is internally consistent, so refusing it would be
-    /// the compiler overruling a declaration it can honor.
+    /// Non-fatal: the catalog is internally consistent, and the engine can
+    /// execute the declaration as written, so the compiler does not reject it.
     ImplausiblePolicyValue,
     /// A `partition:` argument on a policy verb other than `resolve`. Fatal,
     /// and its own code rather than the generic unknown-argument syntax error:
@@ -142,7 +142,7 @@ pub enum DiagnosticCode {
     /// A `resolve … partition: <key>` selecting a definition that carries the
     /// key with a non-string value. Fatal: a class is the string value of the
     /// key, so a number or list names no class, and silently skipping the
-    /// definition would move it out of every contest without saying so. Points
+    /// definition would move it out of every contest with no diagnostic. Points
     /// at that definition's own key, per the metadata-diagnostic rule.
     PartitionKeyNotString,
     /// A catalog-level `anchor:` declaration the compiler cannot turn into a
@@ -178,7 +178,7 @@ pub enum DiagnosticCode {
     /// and undetectable in any output.
     AmbiguousCaptureReference,
     /// A `key:` projection onto a capture that can cover more than one token.
-    /// Fatal for the same reason `substitute` refuses the shape: reading one
+    /// Fatal for the same reason `substitute` rejects the shape: reading one
     /// attribute off a multi-token span has no defined answer, and a
     /// head-token rule would be invented rather than witnessed.
     MultiTokenCaptureProjection,
@@ -204,7 +204,7 @@ pub enum DiagnosticCode {
     ///
     /// An **error**. It shipped as a warning, on the argument that `|` inside
     /// `[…]` had exactly one possible reading before the Boolean token-test
-    /// syntax existed and that refusing it would narrow the language. What the
+    /// syntax existed and that rejecting it would narrow the language. What the
     /// warning left behind is what overturned that: a catalog that compiles,
     /// matches nothing, and publishes an empty result a reader cannot tell
     /// from an absent phenomenon.
@@ -295,8 +295,8 @@ pub enum DiagnosticCode {
     /// One `where` label set repeating a term.
     ///
     /// A dependent carries exactly one `dep.rel`, so a repeat adds nothing.
-    /// Refused rather than deduped, for the reason the language refuses a
-    /// duplicate name: the repeat is more likely a typo than intent.
+    /// Rejected rather than deduped, for the reason a duplicate name is
+    /// rejected: the repeat is more likely a typo than intent.
     DuplicateRelationLabel,
     /// A `where` label term that is not a well-formed relation label.
     ///

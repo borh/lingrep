@@ -30,7 +30,7 @@ impl fmt::Debug for BoundCatalog {
 
 /// Why a symbolic lingrep patterns catalog could not bind to a token schema.
 ///
-/// Binding refuses only what would make the catalog's semantics undefined: a
+/// Binding rejects only what would make the catalog's semantics undefined: a
 /// dependency `where` clause whose edge attributes the schema cannot supply,
 /// or an execution attribute the schema carries under a conflicting value
 /// kind. Any other referenced-but-absent attribute binds as universally absent
@@ -160,8 +160,8 @@ impl CompiledCatalog {
         let (available, unavailable): (Vec<AttributeKey>, Vec<AttributeKey>) = required
             .into_iter()
             .partition(|attribute| schema.keys().iter().any(|key| key == attribute));
-        // A `where` clause's edge attributes are the one absence that is a
-        // refusal rather than a report: without them every dependency
+        // A `where` clause's edge attributes are the one absence that is an
+        // error rather than a report: without them every dependency
         // constraint is meaningless, not merely unsatisfied.
         let refused: Vec<CompactString> = self
             .relation_attributes()

@@ -713,7 +713,7 @@ pub(crate) enum ParsedExpr {
     /// One `[…]`, carrying the whole Boolean test rather than a conjunction.
     ///
     /// Distribution to a one-token alternation happens at bind, so this is the
-    /// last layer that still knows how the researcher spelled it — which is
+    /// last layer that still records how the researcher spelled it — which is
     /// what a diagnostic about the test has to point at.
     Token(ParsedTest, SourceSpan),
     Assertion(PositionAssertion),
@@ -726,7 +726,7 @@ pub(crate) enum ParsedExpr {
     /// [`Self::Alternation`], because one diagnostic has nowhere else to point:
     /// an intersection whose operand widths are disjoint is provably empty, and
     /// that is a property of the *operator*, not of any node inside it. Every
-    /// other refusal this construct introduces reports at an inner node that
+    /// other error this construct introduces reports at an inner node that
     /// carries a span already.
     Intersection {
         operands: Vec<ParsedExpr>,

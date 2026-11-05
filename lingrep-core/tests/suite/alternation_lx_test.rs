@@ -145,7 +145,7 @@ fn a_quotative_to_matches_but_does_not_publish() {
     );
 
     // The same shape with a non-quotative main verb is kept, so the statement
-    // is an exclusion rather than a blanket refusal of と.
+    // is an exclusion rather than a blanket rejection of と.
     assert!(
         names(&published(&matcher, "研究を進めると分かる。")).contains(&"cond_to"),
         "an ordinary conditional と must still publish"

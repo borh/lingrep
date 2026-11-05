@@ -133,7 +133,8 @@ impl AnalysisInputs {
     }
 
     /// Builds inputs with an independently obtained storage schema identity,
-    /// refusing one that disagrees with the descriptor.
+    /// returning `IdentityError::TokenSchemaMismatch` for one that disagrees
+    /// with the descriptor.
     ///
     /// A caller that already holds a bound schema digest uses this to assert
     /// the agreement rather than assume it.

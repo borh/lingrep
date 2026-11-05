@@ -2,11 +2,11 @@
 //!
 //! Pure: a campaign is a value, adjudication is a function of it plus the
 //! catalog set, and nothing here reads a clock, a file, or `lingrep-core`. That is
-//! what lets every refusal and every verdict be tested on a synthetic campaign
+//! what lets every rejection and every verdict be tested on a synthetic campaign
 //! rather than on a measurement that takes twenty minutes to produce.
 //!
 //! The shape of this module is set by one rule: **an invalid campaign must
-//! fail loudly rather than produce a confident wrong answer.** Refusals are
+//! fail loudly rather than produce a confident wrong answer.** Rejections are
 //! therefore checked before any arithmetic runs, and they are a distinct
 //! outcome from every verdict.
 
@@ -294,7 +294,7 @@ impl TemplateArg {
     ///
     /// A token that looks like a hole and names none is an error rather than a
     /// literal, because `{catlog}` would otherwise seal a command no run can
-    /// ever match and the campaign would refuse every block.
+    /// ever match and the campaign would reject every block.
     pub fn parse(token: &str) -> Result<Self, String> {
         if token == Self::CATALOG_HOLE {
             return Ok(Self::Catalog);
@@ -786,7 +786,7 @@ pub enum Refusal {
     SelectionRepeatsMetric {
         metric: Metric,
     },
-    /// A selection was recorded without saying why.
+    /// A selection was recorded with an empty reason.
     SelectionReasonEmpty,
     /// Tier 1 declared a mode it never measured.
     ModeNotMeasured {
@@ -973,7 +973,7 @@ pub fn required_coverage(manifest: &Manifest, catalog: &CampaignCatalog) -> Cove
 /// rather than reinterpreting what it already measured. Treating the width as
 /// a property of the catalog instead of the block made promotion impossible to
 /// complete: the shell wrote four runs while this counted two, and the third
-/// run of a promoted block was refused as out of sequence.
+/// run of a promoted block was rejected as out of sequence.
 #[must_use]
 pub fn block_width(manifest: &Manifest, catalog: &str, index: usize) -> usize {
     let screened = manifest
@@ -1115,7 +1115,7 @@ pub enum Verdict {
 ///
 /// Threshold-free: evaluates only whether the two intervals
 /// disagree about parity, so it needs no calibrated bytes-per-second and it
-/// catches pacing this tool does not know about — an un-streamed campaign
+/// catches pacing this tool does not model — an un-streamed campaign
 /// whose catalog is bound by writing its own output flags identically.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternallyPaced {

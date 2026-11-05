@@ -83,7 +83,7 @@ pub struct BccwjDocument {
     pub paragraphs: Box<[BccwjParagraph]>,
 }
 
-/// The zstd magic, recognized only to refuse: canonical BCCWJ entries are
+/// The zstd magic, recognized only to reject the entry: canonical BCCWJ entries are
 /// plain UTF-8 XML. The zstd layer in the corpus-utils reference is its own
 /// local runtime cache (`zipfile-cached-files` writes `<entry>.zstd` copies
 /// into a `./cache/` directory and reads those back), not a property of the
@@ -96,7 +96,7 @@ const ZSTD_MAGIC: &[u8; 4] = b"\x28\xb5\x2f\xfd";
 ///
 /// # Errors
 ///
-/// A zstd-compressed entry (refused on the `ZSTD_MAGIC` prefix), invalid UTF-8,
+/// A zstd-compressed entry (rejected on the `ZSTD_MAGIC` prefix), invalid UTF-8,
 /// malformed XML (naming the offending construct), or an unterminated
 /// element at end of input (naming the tag).
 pub fn parse_entry(bytes: &[u8], subcorpus: Subcorpus) -> io::Result<BccwjDocument> {
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn zstd_compressed_entries_are_refused_not_decoded() {
         // The reference's zstd layer is its own local cache, not a
-        // distribution input; a zstd-magic entry is refused with the reason
+        // distribution input; a zstd-magic entry is rejected with the reason
         // named instead of silently decoded.
         let compressed =
             zstd::encode_all(std::io::Cursor::new(SIMPLE.as_bytes()), 3).expect("compress");

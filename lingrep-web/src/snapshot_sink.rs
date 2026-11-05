@@ -21,7 +21,7 @@ use crate::snapshot::{
 ///
 /// The builder is boxed because it carries the sweep's whole transient state —
 /// the event cursor, the open-span heap, the active-slot list — against a
-/// refusal that is two integers. One allocation per scan buys a small
+/// rejection that is two integers. One allocation per scan buys a small
 /// `SnapshotSink`, which is moved on every terminal path.
 #[derive(Debug)]
 pub(crate) enum SectionScanState {
@@ -79,7 +79,7 @@ pub(crate) struct SnapshotSink {
     /// Sentences published to this sink. The denominator, and the value
     /// `resolve_scan` checks against `ExecutionReport::sentences_matched`.
     /// Owned here rather than by the tally, because the tally does not exist
-    /// in the refused branch and the gate must hold in both.
+    /// in the rejected branch and the gate must hold in both.
     pub(crate) observed_sentences: u64,
     /// Observed sentences that published at least one match, counted once
     /// per sentence however many matches or compounds it holds.
@@ -585,7 +585,7 @@ impl SnapshotSink {
     }
 }
 
-/// Collapses a sweep refusal into the sink error the runner propagates. The
+/// Collapses a sweep failure into the sink error the runner propagates. The
 /// cause is preserved in the message; the coordinator logs it and shows the
 /// generic integrity text, as it does for every other scan failure.
 fn sink_error(error: SectionTallyError) -> ExecutionError {

@@ -19,7 +19,7 @@ pub enum SectionSlot {
     None,
 }
 
-/// Why an exact section projection was refused. Both inputs are carried so the
+/// Why an exact section projection was rejected. Both inputs are carried so the
 /// panel can say which corpus and which catalog produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionRefusal {
@@ -27,14 +27,14 @@ pub struct SectionRefusal {
     pub patterns: usize,
 }
 
-/// What a completed scan knows about sections.
+/// The section outcome of a completed scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionAvailability {
     Available(SectionTally),
     VocabularyTooLarge(SectionRefusal),
 }
 
-/// Why a sweep refused to keep counting. Every variant is a hard failure.
+/// Why a sweep stopped counting. Every variant is a hard failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionTallyError {
     OutOfOrderSentence { previous: u64, found: u64 },
@@ -70,7 +70,7 @@ fn label_allocation(label: &str) -> usize {
 }
 
 /// `8·P·S + 8·S + 32·S + B + 128`, checked. `None` means it would overflow,
-/// which is a refusal rather than a wrapped comparison that admits.
+/// which rejects rather than wrapping into a comparison that admits.
 fn retained_bytes(patterns: usize, slots: usize, label_bytes: usize) -> Option<usize> {
     let counts = patterns.checked_mul(slots)?.checked_mul(8)?;
     let universe = slots.checked_mul(8)?;
@@ -102,7 +102,7 @@ impl SectionTally {
     /// `None` slot and no observations.
     ///
     /// Test-only. Snapshot fixtures that assert nothing about sections need a
-    /// value that is honest rather than a refusal they would then have to
+    /// value that is honest rather than a rejection they would then have to
     /// explain.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
@@ -165,7 +165,7 @@ pub struct SectionTallyBuilder {
 /// [`SectionTallyBuilder`]'s constructor is private: the admission test must
 /// run before anything opens a stream. A producer whose consumer was never built fills its
 /// channel and parks forever, so `start_stream` is **not called** on the
-/// refused branch — which is what makes that obligation testable rather than
+/// rejected branch — which is what makes that obligation testable rather than
 /// merely asserted at the call site.
 pub fn admit<F>(
     vocabulary: &[SectionCoverage],
@@ -189,7 +189,7 @@ where
     }
 }
 
-/// [`admit`] over an already-built stream, discarding the refusal. For callers
+/// [`admit`] over an already-built stream, discarding the rejection. For callers
 /// that have no producer to protect — tests, and the sample-equivalent tally.
 #[must_use]
 pub fn build(
@@ -202,10 +202,10 @@ pub fn build(
 
 impl SectionTallyBuilder {
     /// Decides availability *before* allocating, and before the caller starts a
-    /// span producer: a refused admission must not leave a producer parked on a
+    /// span producer: a rejected admission must not leave a producer parked on a
     /// channel nothing will drain.
     ///
-    /// Public because the refusal is a reportable outcome; [`admit`] is how a
+    /// Public because a rejection is a reportable outcome; [`admit`] is how a
     /// caller acts on it.
     #[must_use]
     pub fn fits(vocabulary: &[SectionCoverage], patterns: usize) -> bool {
@@ -250,7 +250,7 @@ impl SectionTallyBuilder {
         &self.slots
     }
 
-    /// Adds rows for patterns discovered during the scan, or refuses the
+    /// Adds rows for patterns discovered during the scan, or rejects the
     /// section projection before its retained count table exceeds its budget.
     pub(crate) fn ensure_patterns(&mut self, patterns: usize) -> Result<(), SectionRefusal> {
         if patterns <= self.counts.len() {
@@ -434,7 +434,7 @@ impl SectionTallyBuilder {
             let Some(flag) = self.active.get_mut(slot) else {
                 // A producer only ever emits slots it mapped from this
                 // vocabulary, so this is unreachable in the wired path; the
-                // sweep still refuses rather than indexing out of bounds.
+                // sweep still returns an error rather than indexing out of bounds.
                 return Err(SectionTallyError::OverlappingSpan {
                     slot: event.slot,
                     ordinal,
@@ -721,10 +721,6 @@ mod tests {
         );
     }
 
-    /// Spec obligation 10. The stream is not merely unused on the refused
-    /// branch — it is never started, because a producer with no consumer fills
-    /// its channel and parks forever. Pinned by a closure that records whether
-    /// it ran.
     #[test]
     fn a_refused_vocabulary_never_starts_the_stream() {
         let started = std::cell::Cell::new(false);
@@ -825,7 +821,7 @@ mod tests {
         let past = retained_bytes(100, 301, 32 * 300).expect("no overflow");
         assert!(at <= RETAINED_CEILING_BYTES, "{at} must fit");
         assert!(past > RETAINED_CEILING_BYTES, "{past} must not");
-        // Overflow is a refusal, not a wrap that admits.
+        // Overflow returns `None`, not a wrapped value that admits.
         assert_eq!(retained_bytes(usize::MAX, 2, 0), None);
         assert_eq!(retained_bytes(1, 1, usize::MAX), None);
     }

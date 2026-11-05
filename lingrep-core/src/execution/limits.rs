@@ -233,7 +233,7 @@ pub enum ExecutionError {
     /// declined to judge.
     ///
     /// Nothing here tells a researcher to edit their catalog: an `admit` naming
-    /// an undeclared anchor is refused at compile time with a source span, so
+    /// an undeclared anchor is rejected at compile time with a source span, so
     /// this reports a seam wired against the wrong catalog's positions.
     #[error("result policy could not be applied: {0}")]
     PolicyAnchor(#[source] crate::fsm::policy::AnchorResolutionError),

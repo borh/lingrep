@@ -30,7 +30,7 @@
 //! below as a string constant the way `intersection_test.rs` keeps the wrong
 //! rewrite beside the right one: so the non-equivalence stays checkable
 //! in-tree, and so a future attempt to migrate starts from the witnesses that
-//! refused this one.
+//! ruled out this one.
 
 use lingrep_core::fsm::{CompileLimits, CompiledCatalog, Match, PatternSource, compile_catalog};
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};

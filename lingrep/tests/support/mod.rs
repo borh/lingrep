@@ -407,7 +407,7 @@ pub const SORANOHA_CATALOG: &str = "\u{feff}\"identifier\",\"title\",\"subtitle\
 /// Writes a synthetic Soranoha bulk plaintext archive at `path` (creating its
 /// parent): `catalog.csv` plus two works, `kumo.txt` (one sentence) and
 /// `hari.txt` (one sentence). Both texts use words the miniature dictionary
-/// knows, so a test can match them without a real dictionary. Returns the archive path.
+/// contains, so a test can match them without a real dictionary. Returns the archive path.
 ///
 /// The texts are self-authored, the release is one value across the archive,
 /// and each `body_character_count` equals the work's non-whitespace character
@@ -488,7 +488,7 @@ pub fn assert_success(output: &Output) {
     );
 }
 
-/// The `(source, sentence ordinal, token index)` a missing-attribute refusal
+/// The `(source, sentence ordinal, token index)` a missing-attribute error
 /// names.
 pub fn missing_attribute_location(error: &ExecutionError) -> (&str, u64, usize) {
     match error {

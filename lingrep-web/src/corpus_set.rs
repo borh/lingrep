@@ -83,7 +83,7 @@ impl CorpusName {
 
     /// Validate a key an *operator* supplied via `--corpus NAME=PATH`.
     ///
-    /// Everything [`CorpusName::parse`] enforces, plus a refusal of the reserved
+    /// Everything [`CorpusName::parse`] enforces, plus rejection of the reserved
     /// `default` key, which `--input` already occupies.
     pub fn parse_declared(raw: &str) -> Result<Self, NameError> {
         let parsed = Self::parse(raw)?;

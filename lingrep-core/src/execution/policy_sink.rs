@@ -137,7 +137,8 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
     /// always safe to install.
     ///
     /// `anchors` must come from the same compiled catalog as `policy`; a
-    /// mismatch is refused per sentence rather than silently answered, and
+    /// mismatch makes that sentence's push return `ExecutionError::PolicyAnchor`
+    /// rather than a silent answer, and
     /// [`crate::fsm::CompiledCatalog::anchor_evaluator`] is where one comes from.
     pub fn new(inner: S, policy: CatalogPolicy, anchors: AnchorEvaluator<'a>) -> Self {
         let mode = if policy.declared() {
@@ -231,7 +232,7 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
     /// so a parameter would make every call site say "no trace" out loud.
     ///
     /// Raw mode applies no policy and so has nothing to explain. Installing a
-    /// trace on one is accepted and collects nothing, rather than refused: the
+    /// trace on one is accepted and collects nothing, rather than rejected: the
     /// selection is the caller's, and a sink that rejected a harmless request
     /// would push that branch into every caller.
     #[must_use]

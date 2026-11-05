@@ -15,7 +15,7 @@ pub const MAX_PATTERN_BYTES: usize = 1024 * 1024;
 ///
 /// Sized so a full research catalog can ride the URL: the seeded
 /// `sf-experimental.lx` encodes to ~12KB, and corpus switching carries the
-/// whole editor buffer, so the 8KB value in force before 2026-08-19 refused
+/// whole editor buffer, so the 8KB value in force before 2026-08-19 rejected
 /// every switch made with such a catalog open. 32KB keeps real catalogs with
 /// headroom while staying far below browser request-line limits (~2MB) and
 /// the front proxy's (Caddy) header budget.
@@ -31,7 +31,7 @@ pub enum PermalinkError {
 ///
 /// `corpus` is the selector (`k`) and is always emitted. `digest` is an
 /// *assertion* about which content produced the results and is emitted only when
-/// the caller actually knows one — a lazily built corpus has no identity yet, so
+/// the caller actually has one — a lazily built corpus has no identity yet, so
 /// the selector must be expressible without it. An absent `c` means "no
 /// assertion", not "no corpus".
 ///

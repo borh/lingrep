@@ -178,8 +178,9 @@ impl InteractiveExecution {
         // the catalog and prepared-token projection.
         let schema = lingrep_core::token_match::TokenSchema::unidic_morphology();
         // No unavailable-attribute notices here: the TUI owns the terminal,
-        // and this surface's schema is that one constant anyway. A refusal
-        // (dependency `where` clauses on a morphology schema) still reports.
+        // and this surface's schema is that one constant anyway. A binding
+        // error (dependency `where` clauses on a morphology schema) is still
+        // returned.
         let bound = matcher
             .bind_with_projection(&schema, matcher.execution_attributes())
             .map_err(|error| {

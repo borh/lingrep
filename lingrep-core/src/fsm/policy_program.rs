@@ -445,7 +445,7 @@ impl GroupIndex {
     ///
     /// For a derived `group` declaration whose predicate currently selects
     /// nothing: the group still exists — `%name` must resolve to it and draw
-    /// the empty-subject warning rather than an unknown-group refusal claiming
+    /// the empty-subject warning rather than an unknown-group error claiming
     /// the catalog does not declare it. Membership lists can never encode an
     /// empty group, which is why this is a separate entry point rather than an
     /// input to [`Self::from_definition_groups`].
@@ -531,8 +531,8 @@ impl GroupIndex {
     ///
     /// `eligible` is the **subject domain**: the publishable emitting
     /// definitions, ascending. It is passed in rather than derived here
-    /// because the two domains are not the same set and this index knows
-    /// neither:
+    /// because the two domains are not the same set and this index cannot
+    /// derive either:
     ///
     /// * **Subject domain** — emitting definitions only. A fragment never
     ///   emits, and a synthesized `__policy__` emitter is stripped before the
@@ -614,7 +614,7 @@ impl DefinitionDomain {
     /// complete and in declaration order.
     ///
     /// The eligibility flag is supplied rather than derived from the name,
-    /// because visibility is the compiler's to know and a name test would make
+    /// because the compiler tracks visibility and a name test would make
     /// the hidden-emitter prefix load-bearing in a second place.
     pub fn new<'a>(definitions: impl IntoIterator<Item = (&'a str, bool, bool)>) -> Self {
         let mut ids = IndexMap::new();

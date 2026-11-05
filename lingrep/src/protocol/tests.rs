@@ -1319,7 +1319,7 @@ fn absent_attributes_serialize_as_an_empty_map() {
     assert_eq!(serde_json::to_string(&attributes).unwrap(), "{}");
 }
 
-/// Provider keys remain open while malformed keys are refused.
+/// Provider keys remain open while malformed keys are rejected.
 #[test]
 fn provider_attribute_keys_round_trip_and_malformed_keys_fail() {
     let attributes =

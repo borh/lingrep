@@ -1,6 +1,6 @@
 //! The results document a campaign produces.
 //!
-//! Generated from an adjudicated campaign, so incomplete coverage is refused
+//! Generated from an adjudicated campaign, so incomplete coverage is rejected
 //! before rendering.
 //!
 //! Two sections are prompted for and left blank on purpose. Where the bound
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn every_measured_catalog_appears_in_the_table() {
         // Failure mode 6: a report published with four catalogs where the tier
-        // required seven. Adjudication refuses a short campaign, and the
+        // required seven. Adjudication rejects a short campaign, and the
         // renderer prints whatever survived that.
         let campaign = crate::campaign::tests::campaign_with(0.90);
         let report = rendered(&campaign);
@@ -667,7 +667,7 @@ mod tests {
         let mut campaign = crate::campaign::tests::campaign_with(0.9);
         campaign.manifest.workers = None;
         // Re-sealed: the digest covers the manifest, so an edited one is
-        // refused before it is rendered — which is the point of the digest.
+        // rejected before it is rendered — which is the point of the digest.
         let campaign = crate::campaign::tests::seal(campaign);
         let report = rendered(&campaign);
         assert!(report.contains("## Saturation"), "{report}");

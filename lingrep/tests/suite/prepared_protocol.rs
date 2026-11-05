@@ -1928,7 +1928,7 @@ fn corpus_build_without_output_keeps_the_old_artifact_when_the_source_changes() 
 }
 
 /// A *readable* artifact at the canonical path whose recorded identity
-/// disagrees is refused just as firmly. It is reachable in one run: the naming
+/// disagrees is rejected the same way. It is reachable in one run: the naming
 /// pass and the build pass read the source separately, so a source edited
 /// between them lands an artifact named from the older content while recording
 /// the newer identity. Staged here deterministically instead, by moving one
@@ -2050,7 +2050,7 @@ fn corpus_build_without_output_refuses_a_corrupt_canonical_artifact() {
         stderr.contains(&artifact.display().to_string()),
         "the error must name the canonical path: {stderr}"
     );
-    // Separates the early diagnosis from the late commit-time refusal: reaching
+    // Separates the early diagnosis from the late commit-time rejection: reaching
     // `destination_exists` would mean the whole tokenizing build ran first and
     // the corruption was never diagnosed, only collided with.
     assert!(

@@ -103,7 +103,7 @@ fn a_document_is_admitted_even_when_no_sentence_survives() {
     assert_eq!(scope["sentences"]["admitted"], 0);
 }
 
-/// A label absent from *this* corpus is a warning, not a refusal: one catalog
+/// A label absent from *this* corpus is a warning, not an error: one catalog
 /// legitimately runs over several corpora and only some may record it.
 #[test]
 fn a_label_the_corpus_never_records_warns_and_completes() {
@@ -410,7 +410,7 @@ fn each_path_publishes_exactly_the_sentences_it_reports_admitting() {
 }
 
 /// A metadata-only clause must not acquire section behaviour, and in
-/// particular must not be refused against an input that records no sections.
+/// particular must not be rejected against an input that records no sections.
 #[test]
 fn a_metadata_only_clause_is_unaffected_by_any_of_this() {
     let output = run_on(
@@ -510,7 +510,7 @@ fn build_tree(root: &Path, output: &Path, extra: &[&str]) -> Output {
         .unwrap()
 }
 
-/// A reader knows a line number and nothing else — it was handed one stream,
+/// A reader has a line number and nothing else — it was handed one stream,
 /// not a tree. The build path has no execution layer to supply the rest, so
 /// without the document name this failure would arrive as a bare `line 3:`.
 #[test]
@@ -535,8 +535,9 @@ fn a_strict_build_names_the_document_whose_div_never_closed() {
 }
 
 /// The same tree builds when the caller opts into recovery. Before the flag
-/// existed there was nothing to pass: `lingrep-web` recovered and the CLI refused,
-/// and one unclosed div in one file made a whole tree unbuildable.
+/// existed there was nothing to pass: `lingrep-web` recovered and the CLI
+/// rejected the tree, and one unclosed div in one file made a whole tree
+/// unbuildable.
 #[test]
 fn recovery_admits_a_tree_a_strict_read_refuses() {
     let directory = TempDir::new().unwrap();

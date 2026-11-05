@@ -67,8 +67,8 @@ pub(crate) struct PreparedBuildEvents {
     /// Logical name of the document `current` is reading, retained solely to
     /// name it in a reader error.
     ///
-    /// A reader reports `line 321: …` because that is all it knows — it was
-    /// handed one stream, not a tree. On a single-file run the execution layer
+    /// A reader reports `line 321: …` because the line number is all it has —
+    /// it was handed one stream, not a tree. On a single-file run the execution layer
     /// supplies the rest (`input failed before sentence N in 00393.md: …`), but
     /// the build path has no such layer, so the same fault over a directory
     /// arrived as a bare line number with nothing to open. Over a

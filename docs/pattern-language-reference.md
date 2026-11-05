@@ -138,7 +138,7 @@ enumerating branches by hand: `( @nbgap* @bnd @gap* ) & []{1,8}` states one boun
 where multiplication through the concatenation would give an alternative per
 position in `patterns/double-wo.lx`.
 
-Three things are refused:
+The compiler rejects three constructs:
 
 - An intersection whose operand widths are disjoint (`EmptyIntersection`).
   Overlapping widths are accepted even when no span matches both.
@@ -435,7 +435,7 @@ spelling of `none`, and using it without a default, or anywhere but an
 annotation's top level, is a compile error.
 
 Without a `schema` block, any key is accepted. A `schema` block closes the
-catalog's descriptive key set, so an undeclared key is refused; an empty `schema`
+catalog's descriptive key set, so an undeclared key is rejected; an empty `schema`
 block closes it to compiler-owned keys alone. A declaration names one of the
 five value types; `map` admits any map, whatever its keys. Compiler-owned keys —
 `output_name`, `groups`, `priority_order`, `key`, `skip`, `publish`, `transform`, `tags`,
@@ -532,10 +532,10 @@ that the transform was written for. A scoped step rewrites only its own
 capture: the record span, the sibling captures, and any capture nested inside
 are unchanged. A scope naming a capture the match did not bind has no effect.
 `substitute`'s `component:` names an edge — `first` or `last` — of whichever
-span the scope selected; `span` and a `$capture` component are refused.
+span the scope selected; `span` and a `$capture` component are rejected.
 `patterns/npv-collocation.lx` is the tracked exemplar.
 
-A `substitute` with no later `join` is refused unless a `key:` projects the
+A `substitute` with no later `join` is rejected unless a `key:` projects the
 written form, because no output would read the substitution.
 
 ### Lexicons

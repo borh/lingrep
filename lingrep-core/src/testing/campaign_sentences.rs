@@ -52,8 +52,8 @@ const SYNTHETIC: &str = include_str!("../../tests/corpus/synthetic.jsonl");
 /// The order is stable so a snapshot or a delta keyed on the label does not
 /// churn. Panics if the fixture loader reads a different number of sentences
 /// than [`COMMITTED_FIXTURE_SENTENCES`] records — asserted exactly rather than
-/// as a floor, because a loader that quietly stops finding half its input
-/// would otherwise narrow every consumer's coverage in silence.
+/// as a floor, because a loader that stops finding half its input without an
+/// error would otherwise narrow every consumer's coverage in silence.
 pub fn baseline_sentences(matcher: &CompiledCatalog) -> Vec<LabelledSentence> {
     let mut sentences = Vec::new();
     for (definition, pattern) in matcher.patterns() {

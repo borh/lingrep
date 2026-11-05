@@ -277,7 +277,8 @@ fn verifying_one_block_does_not_excuse_a_later_corrupt_one() {
             ..
         })
     ));
-    // And it stays refused rather than passing once a bit is set somewhere.
+    // And it keeps failing verification rather than passing once a bit is set
+    // somewhere.
     assert!(matches!(
         mapped.sentence(RECORDS_PER_BLOCK),
         Err(CorpusError::VerificationMismatch { .. })

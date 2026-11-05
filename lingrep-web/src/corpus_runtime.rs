@@ -54,7 +54,7 @@ pub const CORPUS_DECODE_CHUNK: usize = 128;
 /// `markdown` is a *parameter* rather than a default because section selection
 /// decides which lines become sentences: a server started with one policy and a
 /// cache built under another describe different corpora. It arrives already
-/// resolved from the flags, so an invalid one has been refused at startup.
+/// resolved from the flags, so an invalid one has been rejected at startup.
 pub fn read_config(
     path: &Path,
     override_format: Option<lingrep_core::corpus::CorpusFormat>,

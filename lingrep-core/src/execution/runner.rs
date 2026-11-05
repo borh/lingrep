@@ -479,7 +479,7 @@ where
 
 /// Where a run's token schema comes from.
 ///
-/// The executor needs the schema its batches' tokens are in: it refuses a
+/// The executor takes the schema its batches' tokens are in: it rejects a
 /// catalog binding compiled against a different one, and re-projects a raw
 /// tokenized batch through it. There are exactly two answers, and this type
 /// exists so that neither can be left unsaid.
@@ -1392,7 +1392,7 @@ where
     Ok(BatchControl::Continue)
 }
 
-/// Admits a batch whose source already knows what each sentence costs.
+/// Admits a batch whose source supplies each sentence's charge.
 ///
 /// The shape is checked, because a mismatched charge list would silently pair a
 /// sentence with another sentence's residency, and the per-sentence limit is

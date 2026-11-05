@@ -1080,7 +1080,7 @@ enum DiscoveryState {
     /// The cursor and the per-run stream facts live in the variant that
     /// needs them. Holding them as `Option` fields beside it let the type
     /// say "a BCCWJ walk with no metadata table", which nothing could
-    /// construct and a runtime guard had to refuse anyway.
+    /// construct and a runtime guard had to reject anyway.
     Bccwj {
         cursor: crate::bccwj_seam::BccwjCursor,
         stream: crate::bccwj_seam::BccwjStream,

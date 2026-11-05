@@ -2534,7 +2534,7 @@ fn an_excluded_sentence_is_never_matched() {
 
 #[test]
 fn a_wholly_excluded_batch_completes_the_run_without_an_empty_partition() {
-    // `validate_batch_count` refuses an empty batch from a source; a partition
+    // `validate_batch_count` rejects an empty batch from a source; a partition
     // that empties after skipping must simply not run, not become that error.
     let mut sink = RecordingSink::default();
 

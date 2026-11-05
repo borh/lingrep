@@ -145,10 +145,10 @@ fn resolve_scan(
             }
         }
         // Holds on *every* completed scan, unlike the corpus-count check
-        // above: it depends on no optional expectation and on sections being
-        // neither available nor refused. The sink is pushed once per sentence
-        // the matcher processed, so a divergence is a lost or duplicated
-        // publication rather than a tolerable difference.
+        // above: it depends on no optional expectation and holds whether the
+        // section scan is `Building` or `Refused`. The sink is pushed once per
+        // sentence the matcher processed, so a divergence is a lost or
+        // duplicated publication rather than a tolerable difference.
         //
         // The equality rests on `SnapshotSink` always returning
         // `SinkControl::Continue`. A sink that returned `StopAfter` would
@@ -272,8 +272,8 @@ enum Prepared {
         // lives for exactly one match expression.
         compiled: Box<CompileOutput>,
         provenance: Arc<lingrep_corpus::ProvenanceView>,
-        /// `None` when the vocabulary was refused: a producer with no consumer
-        /// fills its channel and parks forever, so it is never started.
+        /// `None` when `admit` rejected the vocabulary: a producer with no
+        /// consumer fills its channel and parks forever, so it is never started.
         producer: Option<tokio::task::JoinHandle<()>>,
         sections: SectionScanState,
     },
@@ -310,13 +310,14 @@ async fn prepare_scan(
         }
     };
     // A vocabulary past `MAX_SECTION_LABELS` is `SectionLabelCapacity` here, not
-    // a truncated list, and that fails the whole scan rather than refusing the
-    // projection the way the ceiling does. The difference is only in how it is
-    // reported — 100_001 slots is 800_008 bytes of counters for a single
-    // pattern, so such a corpus could never be admitted anyway — and the cap
-    // is a defensive bound on what the reader will enumerate at all, which
-    // lingrep-web treats as an unreadable sidecar like any other. Reporting it as a
-    // refusal would mean naming a label count this path cannot know.
+    // a truncated list, and that fails the whole scan rather than returning a
+    // `SectionRefusal` for the projection the way the ceiling does. The
+    // difference is only in how it is reported — 100_001 slots is 800_008
+    // bytes of counters for a single pattern, so such a corpus could never be
+    // admitted anyway — and the cap is a defensive bound on what the reader
+    // will enumerate at all, which lingrep-web treats as an unreadable sidecar
+    // like any other. Reporting it as a `SectionRefusal` would require a label
+    // count this path does not have.
     let mut vocabulary = match provenance
         .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
         .await
@@ -562,7 +563,7 @@ struct RegistryInner {
     tick: AtomicU64,
 }
 
-/// Why an admission was refused.
+/// Why an admission was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmitError {
     /// Every entry is active, subscribed, or unfinished, and the id is new.

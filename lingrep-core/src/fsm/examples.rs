@@ -255,7 +255,7 @@ fn check_entry<T: TokenInfoTrait>(
 /// `括弧開` or `括弧閉` — which is what lets a depth recognizer be a plain
 /// alternation rather than a literal bracket list. Reading it here is what makes `depth:`
 /// load-bearing rather than decorative; the price is that this one function
-/// knows a tagset. It runs only with an injected dictionary.
+/// depends on a tagset. It runs only with an injected dictionary.
 ///
 /// `Pos2` is **raw**, not the derived UPOS-like [`TokenAttributeIndex::Pos`]
 /// that `[upos=PUNCT]` matches on: UniDic writes `補助記号-括弧開`, so the
@@ -424,11 +424,11 @@ fn verify_post_policy<T: TokenInfoTrait>(
                 // The `expect` is the invariant this call site *is*: the
                 // positions come from the same `CompiledCatalog` whose policy is
                 // being applied, so the digest matches by construction, and
-                // `resolve_anchor_references` refuses an `admit` naming an
+                // `resolve_anchor_references` rejects an `admit` naming an
                 // undeclared anchor at compile time, so every reference resolves
                 // — `anchor_programs` is keyed by exactly `CatalogPolicy::anchors`.
                 // Skipping the entry instead would leave `post_policy_checked`
-                // under-counting, which is the vacuous check this module refuses
+                // under-counting, which is the vacuous check this module avoids
                 // everywhere else.
                 //
                 // The cost, stated because it is not free: if that invariant

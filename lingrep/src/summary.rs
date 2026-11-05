@@ -597,8 +597,8 @@ struct Shard {
     batch: Vec<(SummaryPartition, OwnedAggregationInput, usize)>,
 }
 
-/// Joins a shard that refused a send or dropped its reply channel, which it
-/// only does on error; the join is what retrieves that error.
+/// Joins a shard after a send to it failed or it dropped its reply channel,
+/// which happens only on error; the join is what retrieves that error.
 fn join_shard_error(shard: &mut Shard) -> io::Error {
     shard.sender = None;
     match shard.thread.take() {
@@ -680,8 +680,8 @@ impl ShardPool {
             let Some(sender) = shard.sender.take() else {
                 continue;
             };
-            // A refused send means the shard already exited; the join below
-            // reports why, so the refusal itself carries no information.
+            // A failed send means the shard already exited; the join below
+            // reports why, so the send error itself carries no information.
             let _ = sender.send(ShardRequest::Order {
                 schema_remap,
                 value_ranks,

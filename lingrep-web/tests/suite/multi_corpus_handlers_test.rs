@@ -358,7 +358,7 @@ async fn an_undeclared_corpus_key_is_refused_before_any_workbench_is_admitted() 
 }
 
 /// A workbench's corpus is fixed at admission (B3), so a request naming another
-/// corpus is refused. Before the form carried a key that refusal was unreachable
+/// corpus is rejected. Before the form carried a key that rejection was unreachable
 /// and every `Err` was rendered as capacity exhaustion; now it is reachable, and
 /// "Server busy: too many active sessions" would be a wrong diagnosis of a
 /// mismatch the user can actually fix.

@@ -1,7 +1,7 @@
 //! Recursive descent over the lexed clause.
 //!
 //! Conjunction is the default and disjunction requires explicit parentheses,
-//! so `a & b | c` is refused rather than resolved by a precedence rule the
+//! so `a & b | c` is rejected rather than resolved by a precedence rule the
 //! author cannot see.
 
 use std::ops::Range;
@@ -109,7 +109,7 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    /// `nested` distinguishes the top level, where `|` is refused, from the
+    /// `nested` distinguishes the top level, where `|` is rejected, from the
     /// inside of a parenthesised group, where it is the alternation operator.
     fn clause(&mut self, nested: bool) -> Result<Clause, ScopeError> {
         let mut all = vec![self.disjunct()?];

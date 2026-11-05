@@ -160,7 +160,7 @@ impl CorpusFormat {
 ///
 /// Two members are not [`InputFormat`]s. `Bccwj` is a distribution root rather
 /// than a file, and `Soranoha` is one archive whose reader needs a seekable
-/// handle rather than a `BufRead`. File-only consumers refuse both. A future
+/// handle rather than a `BufRead`. File-only consumers reject both. A future
 /// split of this enum should follow the handle each reader needs: only BCCWJ
 /// is "not a file", so a file/distribution split would not separate the two.
 #[derive(Debug, Clone)]

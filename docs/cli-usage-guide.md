@@ -324,7 +324,7 @@ was left unchanged because no statement selected it.
 - The trace goes to stderr and is printed regardless of `--progress`. JSONL and
   TSV records are unchanged by the flag.
 
-`--trace-policy` is refused with `--raw-matches`, because raw publication
+`--trace-policy` is rejected with `--raw-matches`, because raw publication
 applies no policy. Unlike `--plan`, which validates the invocation without
 scanning, `--trace-policy` scans and reports per record. Long statement text is
 shortened on the trace line; compile diagnostics always quote the statement in
@@ -491,7 +491,7 @@ ling check --patterns patterns/ud-dependency.lx --schema conllu
 
 JSON output carries a `binding` object listing each unavailable attribute with
 its referencing definition sites; human output prints one line per attribute.
-Unavailable attributes never change the exit status; a refusal (a
+Unavailable attributes never change the exit status; a rejection (a
 `where`-bearing catalog against a schema without `dep.*`) is reported as
 `refusal` and fails the check. `doctor` reports the same finding against a real
 corpus; see
@@ -557,7 +557,7 @@ ling matches --patterns patterns/sentence-final.lx --dict-path "$DICT" \
 | `@section in {a, b}` | at least one of `a`, `b` is active |
 | `@section not in {a, b}` | neither is active |
 
-Ordered comparison and `contains` are refused: a label is an opaque string with
+Ordered comparison and `contains` are rejected: a label is an opaque string with
 no order and no parts.
 
 The `@` prefix separates labels from metadata keys. `@` cannot begin an
@@ -597,7 +597,7 @@ index. A scoped run is therefore not an integrity check; use
 `corpus inspect --verify` for whole-artifact verification. A sentence too large
 for `--max-tokenized-bytes` does not fail a run that excludes it.
 
-A `@section` clause over a corpus that records no sections is refused before
+A `@section` clause over a corpus that records no sections is rejected before
 processing: JSONL input, or an artifact whose section coverage is empty. An
 empty label set there cannot distinguish "in no labelled section" from "this
 format records none". If the corpus records sections but none with the requested
@@ -614,7 +614,7 @@ label, the run reports a warning, because one catalog can run over several corpo
 
 Ordered comparison parses rather than dispatching on type because a stored
 numeric value may be a string: `year` can be `"2013"` rather than `2013`. A literal in the clause that is not a decimal (`year >= abc`) is
-refused before the run starts; a stored value that does not parse is a
+rejected before the run starts; a stored value that does not parse is a
 per-document outcome, below.
 
 ### The four buckets
@@ -695,7 +695,7 @@ ling --json summarize --patterns patterns/sentence-final.lx \
 ```
 
 `RATE` is a decimal greater than 0 and at most 1. `--sample 1.0` is valid and
-selects everything; `--sample 0` is refused because it would admit nothing and
+selects everything; `--sample 0` is rejected because it would admit nothing and
 report it as a corpus. Selection uses integer arithmetic and does not depend on
 the platform's floating-point rounding.
 
@@ -714,7 +714,7 @@ record declares the rate, seed and sampling unit:
 
 An unsampled run omits `sample`.
 
-### What sampling is refused with
+### What sampling rejects
 
 | Combination | Why |
 |---|---|
@@ -890,7 +890,7 @@ while an unnamed parallel edge is existential. Node keys can project
 projects `$edge.rel`. The match JSONL `graph_bindings` field preserves these
 assignments in canonical node-name then edge-name order, and the browser hit
 inspector displays them. Complete DEPS observation is required, so a
-morphology-only prepared corpus is refused at binding and unavailable or
+morphology-only prepared corpus is rejected at binding and unavailable or
 incomplete CoNLL-U DEPS never produces a match.
 
 An exact anti-edge may connect endpoints bound by the body or positive graph
@@ -981,7 +981,7 @@ an empty string: `@document.subtitle != …` reports a missing field, not an
 empty one. A column outside the pinned set is carried as string metadata. A
 missing pinned column, a row without `identifier`, `filename` or `release`, a
 duplicate filename or identifier, and rows with conflicting release values are
-refused with the row named.
+rejected with the row named.
 
 The text is the plaintext projection: ruby readings and apparatus are absent,
 Aozora Bunko line breaks and source indentation are preserved, and sentences
@@ -1055,7 +1055,7 @@ strings and objects with a string `text` and metadata:
 Sentence and document metadata are independent. In this example,
 `@sentence.speaker = B` selects the first sentence; `@document.speaker = A`
 selects both. `@sentence.speaker = A` selects neither. Objects may put metadata
-keys beside `text`; repeating a key inside `metadata` is refused. Each metadata
+keys beside `text`; repeating a key inside `metadata` is rejected. Each metadata
 record accepts at most 256 fields and 1 MiB of encoded JSON.
 
 Authored structural metadata uses explicit whole-sentence ranges:
@@ -1077,7 +1077,7 @@ is unavailable. Boundaries inside a sentence are unsupported.
 to supply both fields. `within(section, role=methods) & within(section,
 reviewer=A)` may use two different sections. `not within` preserves unknown
 missing/ill-shaped evidence; it cannot turn unavailable structure into absence.
-Unavailable kinds are refused with a reason. Nested `within` is unsupported.
+Unavailable kinds are rejected with an explanation. Nested `within` is unsupported.
 A token pattern matches inside one sentence; only a `within=` lookaround
 reads neighbouring sentences. The structure budget is 256 active
 divisions, 64 parent levels, 256 observed kinds per document and 16 MiB of
@@ -1085,7 +1085,7 @@ active division metadata; derived sentence labels have a separate 16 MiB
 byte cap. Prepared storage retains metadata once per division. Sequential
 metadata pages are capped at 4 MiB; random provenance/projection pages at
 64 MiB of source metadata and 64 MiB of unique division metadata. An oversized
-requested page is refused rather than dropping fields or entities.
+requested page is rejected rather than dropping fields or entities.
 
 ### Hugging Face datasets
 
@@ -1146,7 +1146,7 @@ scripts/huggingface_dataset.py Helsinki-NLP/opus-100 \
 ling summarize --cache --patterns patterns/sentence-final.lx opus-en-ja.jsonl
 ```
 
-`--output` publishes either format atomically and refuses to replace an
+`--output` publishes either format atomically and does not replace an
 existing file. Pin a commit with `--revision` when the materialized bytes must
 be reproducible; an unpinned direct stream follows the repository's current
 default revision. On NixOS, invoke the adapter inside `nix develop`; the shell
@@ -1401,7 +1401,7 @@ When the prepared artifact path is known, `--corpus` addresses it directly and
 skips source observation.
 
 The artifact is `corpus build`'s artifact: same identity, same canonical path,
-same refusal to overwrite. `corpus build` and `--cache` queries reuse artifacts
+same rule against overwriting. `corpus build` and `--cache` queries reuse artifacts
 published by one another. Without `--output`, `ling --json corpus build ROOT`
 reuses or builds that artifact and names it in the `run` record's
 `artifact_path`, so a caller observes ROOT once and passes the path to
@@ -1652,7 +1652,7 @@ runs.
 
 `--where` scopes the report exactly as it scopes `matches`. `--tsv` emits the
 coverage table alone as the fixed headerless `lingrep.attributes-tsv/v1`, and
-is refused together with a catalog, because the exclusion table has different
+is rejected together with a catalog, because the exclusion table has different
 columns. Use `--json` for both tables.
 
 ## Discovery, explanation, and completion

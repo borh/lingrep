@@ -133,7 +133,7 @@ impl Compiler<'_> {
     /// Mutually recursive with [`Self::intern_program`], which walks the body it
     /// is given before compiling it — so the descent through a nested lookaround
     /// happens there rather than in the arm below. It terminates because `bind`
-    /// already refused every reference cycle, leaving a DAG to walk.
+    /// already rejected every reference cycle, leaving a DAG to walk.
     fn collect(&mut self, expr: &BoundExpr, nested: bool) -> Result<(), CompileError> {
         match expr {
             BoundExpr::Lookaround(lookaround) => {
@@ -166,10 +166,10 @@ impl Compiler<'_> {
                     self.collect(child, nested)?;
                 }
             }
-            // Walked, not refused here. `collect` registers occurrences; the
-            // refusal belongs to `AutomatonBuilder::compile`, which is the
-            // thing that cannot represent an intersection, and which reports
-            // against the operator's own span.
+            // Walked, not rejected here. `collect` registers occurrences;
+            // `AutomatonBuilder::compile` rejects the operator, because it
+            // cannot represent an intersection, and reports against the
+            // operator's own span.
             BoundExpr::Intersection { operands, .. } | BoundExpr::AnyOrder { operands, .. } => {
                 for operand in operands {
                     self.collect(operand, nested)?;

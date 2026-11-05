@@ -97,7 +97,7 @@ pub(crate) struct CatalogSchema {
 ///
 /// Three cases rather than an `Option` and a flag: "declared for the other
 /// visibility" carries the visibility it *was* declared for, which only the
-/// lookup can know, and making that a variant removes the impossible fourth
+/// lookup can determine, and making that a variant removes the impossible fourth
 /// combination rather than asserting against it.
 enum Declaration<'a> {
     Applies(&'a SchemaEntry),
@@ -105,7 +105,7 @@ enum Declaration<'a> {
     Undeclared,
 }
 
-/// One refusal: a message and the span it belongs on.
+/// One rejection: a message and the span it belongs on.
 ///
 /// Returned rather than built into a diagnostic here so the lowerer keeps sole
 /// ownership of its source label and its line index.
@@ -301,7 +301,7 @@ mod tests {
         .to_string()
     }
 
-    /// The byte range the refusal points at.
+    /// The byte range the rejection points at.
     ///
     /// Every schema diagnostic asserts through this as well as through
     /// `refuse`. Prose is not a span: a message can name the right key while

@@ -81,7 +81,7 @@ enum Command {
     ///
     /// One TSV row per catalog: path, required coverage, blocks recorded. The
     /// coverage table is the tier rules, and an operator should not have to
-    /// hold them in their head to know what to run next.
+    /// memorize them to decide what to run next.
     ///
     /// Pure, like `adjudicate`.
     Plan {
@@ -253,7 +253,7 @@ struct DeclareArgs {
     #[arg(long, value_name = "N")]
     workers: Option<u32>,
     /// Pipe each run's output through `digest-stream` rather than writing it
-    /// to a file first. Sealed, and `record` refuses a run that disagrees.
+    /// to a file first. Sealed, and `record` rejects a run that disagrees.
     ///
     /// Nothing reads the bytes except the hasher, and one catalog's output is
     /// ~42 GB per run. This trades those writes for a hashing consumer, which
@@ -287,7 +287,7 @@ struct RecordArgs {
     order: usize,
     #[arg(long, value_name = "NAME")]
     mode: Option<String>,
-    /// The run exited non-zero. Recorded, and refused at adjudication.
+    /// The run exited non-zero. Recorded, and rejected at adjudication.
     #[arg(long)]
     failed: bool,
     #[arg(long, value_name = "SECONDS")]
@@ -532,8 +532,8 @@ fn run_adjudicate(path: &std::path::Path, verdict_only: bool) -> std::process::E
         };
     }
     match adjudicate(&campaign) {
-        // A refusal is its own exit status, distinct from every verdict. An
-        // invalid campaign must not read as a decision.
+        // A rejected campaign exits with its own status, distinct from every
+        // verdict. An invalid campaign must not read as a decision.
         Err(refusal) => {
             eprintln!("lingrep-perf: refused to adjudicate: {refusal}");
             std::process::ExitCode::from(2)
@@ -806,7 +806,7 @@ fn run_declare(args: &DeclareArgs) -> std::process::ExitCode {
     // A floor catalog is "measured, but never evidence that an optimization is
     // broadly effective" — so it is reported and excluded from the aggregate.
     // Naming it the primary is legitimate for a decode-path change and a
-    // mistake for anything else, which is why this warns rather than refuses.
+    // mistake for anything else, which is why this warns rather than fails.
     if campaign
         .manifest
         .catalogs
@@ -824,7 +824,7 @@ fn run_declare(args: &DeclareArgs) -> std::process::ExitCode {
     // Streaming makes the hasher the pipeline's rate limiter, and a limiter
     // paces both arms equally — so a catalog that publishes faster than the
     // hasher consumes reports wall ~1.0 whatever the change did. This warns
-    // rather than refuses because it is conditional on output rate, which is
+    // rather than fails because it is conditional on output rate, which is
     // not knowable here: the catalogs it will bite are discovered at
     // adjudication, where the wall-versus-user disagreement names them.
     if campaign.manifest.output_capture == lingrep_perf::campaign::OutputCapture::Stream
@@ -932,8 +932,9 @@ fn run_record(_args: &RecordArgs) -> std::process::ExitCode {
     refuse_without_screen("record")
 }
 
-/// Refused rather than answered wrongly, for the same reason `work` is: a
-/// campaign step that quietly did nothing reads exactly like one that worked.
+/// Exits with failure rather than answering wrongly, for the same reason
+/// `work` does: a campaign step that did nothing and exited successfully reads
+/// exactly like one that worked.
 #[cfg(not(feature = "screen"))]
 fn refuse_without_screen(command: &str) -> std::process::ExitCode {
     eprintln!(

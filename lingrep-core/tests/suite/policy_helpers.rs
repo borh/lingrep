@@ -59,9 +59,9 @@ pub(crate) fn catalog_policy_for(source: &str) -> CatalogPolicy {
 /// specific offending field is a legitimate *secondary* assertion.
 ///
 /// Panicking on unexpected success is what keeps `!compile_errors(..).is_empty()`
-/// honest. Returning an empty vector instead would make "refused, but reported
+/// honest. Returning an empty vector instead would make "rejected, but reported
 /// nothing" and "compiled fine" the same observation, so a catalog that silently
-/// started compiling would keep passing the test written to refuse it.
+/// started compiling would keep passing the test written to reject it.
 pub(crate) fn compile_errors(source: &str) -> Vec<Diagnostic> {
     match compile(source) {
         Ok(_) => panic!("expected compilation to fail: {source}"),
@@ -134,7 +134,7 @@ pub(crate) fn tokens_with_orth_and_pos(pairs: &[(&str, &str)]) -> Vec<TokenInfo>
 ///
 /// Every metadata value is single-line YAML flow style, because the grammar's
 /// `metadata_line` is one line: a block sequence under `anchor:` parses as three
-/// separate `anchor:`-less lines and is refused as a duplicate metadata key.
+/// separate `anchor:`-less lines and is rejected as a duplicate metadata key.
 pub(crate) const PUNCT_ANCHOR: &str = r#"
 anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
 max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
@@ -213,7 +213,7 @@ pub(crate) fn positions(entries: &[(&str, usize)]) -> AnchorPositions {
 /// have produced rather than a stand-in.
 ///
 /// It is not a way around the mandatory parameter. A `terminal:` that named an
-/// anchor would be refused here with [`lingrep_core::fsm::AnchorError::Unknown`],
+/// anchor would fail here with [`lingrep_core::fsm::AnchorError::Unknown`],
 /// which is the point: the empty set answers nothing, it does not fall back to
 /// the raw sentence end.
 pub(crate) fn no_anchors() -> AnchorPositions {

@@ -140,9 +140,9 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Lexed>, LexError> {
 
 /// `not` exists only as `not in` and `not contains`.
 ///
-/// Refusing a bare `not` here rather than in the parser is what lets the
-/// message name the construct: by the time the parser sees an identifier it no
-/// longer knows the author wrote a negation.
+/// Rejecting a bare `not` here rather than in the parser is what lets the
+/// message name the construct: by the time the parser sees an identifier, the
+/// token stream no longer records that the author wrote a negation.
 fn not_form(rest: &str, width: usize, start: usize) -> Result<(Token, usize), LexError> {
     let tail = rest.get(width..).unwrap_or_default().trim_start();
     let gap = rest.len().saturating_sub(width).saturating_sub(tail.len());

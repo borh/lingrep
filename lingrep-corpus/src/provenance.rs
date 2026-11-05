@@ -661,7 +661,7 @@ struct StoredAnalysis {
 ///
 /// Integers are converted at the point the caller supplies them rather than at
 /// the point the row is written, so a value SQLite cannot hold is still
-/// refused against the call that introduced it.
+/// rejected against the call that introduced it.
 struct PendingSentence {
     ordinal: u64,
     sentence_id: i64,
@@ -921,7 +921,7 @@ impl ProvenanceWriter {
     async fn attach_analyzed(&mut self, record: AnalysisRecord) -> Result<(), CorpusError> {
         // The analysis attaches to the provisional row this writer wrote
         // immediately before it — `CorpusBuilder` interleaves them one for one
-        // and refuses anything else — so the admitted bytes are still in hand.
+        // and rejects anything else — so the admitted bytes are still in hand.
         let Some(pending) = self.pending.take() else {
             return Err(invalid("analyzed sentence has no provisional record"));
         };
@@ -933,7 +933,7 @@ impl ProvenanceWriter {
         // Under the analyzer's *own* recorded policy, not by raw equality. The
         // provisional row keeps the admitted bytes exactly as the corpus wrote
         // them, while the analyzer records what it actually analyzed — the
-        // text after normalization. Comparing those two directly refused every
+        // text after normalization. Comparing those two directly rejected every
         // corpus that was not already NFC, which is most Japanese text, under
         // the default `--normalization nfc`. Reading the policy off the
         // analyzed input is what keeps this check unable to disagree with the

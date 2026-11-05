@@ -1433,7 +1433,7 @@ fn evaluate<
         // at any nesting depth for free.
         //
         // Slot vectors survive from the first operand alone. That is sound
-        // rather than lossy: `analyze::inspect_intersection_operands` refuses a
+        // rather than lossy: `analyze::inspect_intersection_operands` rejects a
         // capture in *every* operand, so the retained candidates carry exactly
         // the slots the enclosing expression handed in, and every operand hands
         // back the same ones.
@@ -1801,7 +1801,7 @@ fn collect_captures(expr: &ExecutionExpr, captures: &mut Vec<CaptureDescriptor>)
                 collect_captures(child, captures);
             }
         }
-        // Unreachable from a definition that compiled, since `analyze` refuses
+        // Unreachable from a definition that compiled, since `analyze` rejects
         // a capture inside `&`. Walked anyway, because the cost of being wrong
         // here is not a missing descriptor but an out-of-range `slots` index at
         // runtime — `Candidate::slots` is sized from exactly this list.

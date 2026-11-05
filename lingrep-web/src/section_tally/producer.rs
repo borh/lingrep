@@ -53,7 +53,7 @@ impl SpanSource for ChannelSource {
 /// from a blocking thread, never from a runtime worker.
 ///
 /// Read order is `span_id`, which is `first_sentence` order by the writer's
-/// invariant; the consumer validates that contract and refuses a database that
+/// invariant; the consumer validates that contract and rejects a database that
 /// violates it.
 pub fn spawn_span_producer(
     provenance: Arc<ProvenanceView>,

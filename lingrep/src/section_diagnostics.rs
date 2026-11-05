@@ -2,9 +2,10 @@
 //!
 //! An empty active-label set is ambiguous between "this sentence sits in no
 //! labelled section" and "this input records no sections at all". The second is
-//! not data. Where it is knowable before processing the run refuses; where it is
-//! only knowable afterwards — Markdown, which is structurally able to carry
-//! labels — the run warns and names what the corpus did record.
+//! not data. Where it is knowable before processing, the run fails with an
+//! error; where it is only knowable afterwards — Markdown, which is
+//! structurally able to carry labels — the run warns and names what the corpus
+//! did record.
 
 use lingrep_core::corpus::{DEFAULT_EXCLUDED_SECTIONS, SectionPolicy};
 use lingrep_core::scope::ScopeClause;
@@ -15,7 +16,7 @@ use crate::commands::query_support::write_warning;
 use crate::error::CliError;
 use crate::protocol::diagnostic::DiagnosticStage;
 
-/// Refuses a section clause against an input that records no section labels.
+/// Rejects a section clause against an input that records no section labels.
 ///
 /// Answering it with a confident zero and a clean four-bucket accounting would
 /// be a false denominator, which is the failure the scope report exists to
@@ -41,7 +42,7 @@ pub(crate) fn refuse_unanswerable(
 
 /// Warns about every label the clause named that the corpus never recorded.
 ///
-/// A refusal would be wrong: one catalog legitimately runs over several corpora
+/// An error would be wrong: one catalog legitimately runs over several corpora
 /// and a label may be recorded by only some of them. Silence would also be
 /// wrong — an empty result and a mistyped label look identical.
 ///
@@ -101,7 +102,7 @@ pub(crate) fn warn_unused_labels(
 ///
 /// It is distinct from the unused-label report and cannot be folded into it:
 /// the reader still *observes* the label on the heading it excluded, so the
-/// corpus does record it. Only the policy knows why nothing survived. Being a
+/// corpus does record it. Only the policy records why nothing survived. Being a
 /// property of the clause and the policy alone, it is also checkable before a
 /// byte is read.
 ///

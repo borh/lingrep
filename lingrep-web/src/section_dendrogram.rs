@@ -168,10 +168,10 @@ impl SectionDendrogram {
     /// Clusters the comparison's patterns, or `None` when there is nothing to
     /// cluster.
     ///
-    /// Inherits the comparison's own refusals — a refused projection, no
+    /// Inherits the comparison's own `None` cases — a rejected projection, no
     /// labelled sections, fewer than two comparable patterns — because it is
-    /// built from one. Nothing else refuses: two patterns are a valid, if
-    /// short, tree.
+    /// built from one. Nothing else returns `None`: two patterns are a valid,
+    /// if short, tree.
     #[must_use]
     pub fn new(comparison: &SectionComparison) -> Option<Self> {
         Self::with_distance(comparison, DistanceMetric::JensenShannon)
@@ -745,7 +745,7 @@ mod tests {
 
     /// A link's distance as a number. The label is what the drawing carries,
     /// but comparing two of them as strings would be lexicographic and would
-    /// quietly stop meaning "deeper" the moment a distance reached 10.
+    /// stop meaning "deeper", with no error, the moment a distance reached 10.
     fn distance(link: &DendrogramLink) -> f64 {
         link.distance_label.parse().expect("a formatted distance")
     }

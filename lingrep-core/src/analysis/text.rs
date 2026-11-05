@@ -82,7 +82,7 @@ impl NormalizationPolicy {
     /// Exists because a component can hold the *raw* admitted bytes and be
     /// handed the *analyzed* text, and asking whether they are the same
     /// sentence is then a question about this policy rather than about string
-    /// equality. Comparing them directly is what made a `nfc` build refuse any
+    /// equality. Comparing them directly made a `nfc` build reject every
     /// corpus that was not already NFC.
     ///
     /// Allocation-free: a `char` sequence determines a UTF-8 string, so the

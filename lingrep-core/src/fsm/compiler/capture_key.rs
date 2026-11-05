@@ -317,7 +317,7 @@ enum WidthRule {
 /// capture is admissible because it is sentence-local, so its span is concrete
 /// by projection time.
 ///
-/// A zero-width capture is refused everywhere. `span` over no tokens would key
+/// A zero-width capture is rejected everywhere. `span` over no tokens would key
 /// on the empty string, and an empty string is a value rather than an absence,
 /// so it would silently merge records that share nothing.
 fn width_refusal(rule: WidthRule, occurrence: &Occurrence) -> Option<&'static str> {
@@ -381,10 +381,10 @@ fn collect(expr: &ExecutionExpr, name: &str, repeated: bool, found: &mut Vec<Occ
                 collect(part, name, repeated, found);
             }
         }
-        // Unreachable from a definition that compiled — `analyze` refuses a
+        // Unreachable from a definition that compiled — `analyze` rejects a
         // capture inside an intersection — and walked anyway, because a
         // walker that stops at a variant is how a later relaxation of that
-        // refusal silently stops finding occurrences.
+        // rule silently stops finding occurrences.
         ExecutionExpr::Intersection { operands, .. } => {
             for operand in operands {
                 collect(operand, name, repeated, found);

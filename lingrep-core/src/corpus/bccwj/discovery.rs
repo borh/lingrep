@@ -77,14 +77,14 @@ impl BccwjInventory {
     /// The walk is bounded exactly as the generic lexical discovery is:
     /// `max_depth` below `C-XML/`, `max_directory_entries` per directory,
     /// and `max_source_entries` / `max_documents` over the selected zips.
-    /// A symlink back to an ancestor is refused rather than enumerated once
+    /// A symlink back to an ancestor is rejected rather than enumerated once
     /// per level. Two things secure that, and the depth bound is only one of
     /// them: a link is resolved with an explicit `metadata` call whose error
     /// propagates, because `is_dir()` reports a failed stat as "not a
     /// directory" and so ended the walk silently. Which one fires is a
     /// property of the platform's symlink budget — Linux permits 40 per
     /// resolution, so the depth bound is reached first, while macOS gives up
-    /// at 16 with `ELOOP` (measured, not assumed). Both are named refusals;
+    /// at 16 with `ELOOP` (measured, not assumed). Both are named errors;
     /// relying on the bound alone made the guarantee depend on that budget
     /// exceeding it. The non-guarantee about cycles *inside* the bound is
     /// unchanged, and matches the generic walker.
@@ -315,7 +315,7 @@ impl BccwEvents {
     /// Wraps an already-open handle over one inventory zip.
     ///
     /// `max_entry_bytes` is the run's `max_input_record_bytes`; an entry
-    /// whose *declared* uncompressed size exceeds it is refused before a
+    /// whose *declared* uncompressed size exceeds it is rejected before a
     /// byte is decompressed, and the read itself is bounded so an entry that
     /// under-declares its size cannot outgrow the limit either.
     ///
@@ -445,9 +445,9 @@ impl BccwEvents {
             .zip
             .by_index(index)
             .map_err(|err| context(format!("unreadable zip entry: {err}")))?;
-        // The declared uncompressed size refuses an oversized entry — and a
-        // decompression bomb — before anything is inflated. The bounded read
-        // then covers an entry that under-declares its size.
+        // The check on the declared uncompressed size rejects an oversized
+        // entry — and a decompression bomb — before anything is inflated. The
+        // bounded read then covers an entry that under-declares its size.
         let declared = entry.size();
         if declared > limit as u64 {
             return Err(oversized(&declared.to_string()));

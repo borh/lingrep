@@ -265,7 +265,7 @@ fn evaluate_execution<T: TokenInfoTrait>(
         // position is in `A & B` at this start exactly when it is in the set of
         // ends of *every* operand. Computed as a fold over those sets, and the
         // surviving paths are then the first operand's that land in it — which
-        // is well defined only because a capture inside `&` is refused, so
+        // is well defined only because a capture inside `&` is rejected, so
         // every operand hands back the same slots it was given.
         ExecutionExpr::Intersection { operands, .. } => {
             let agreed = operands

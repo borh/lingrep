@@ -512,7 +512,7 @@ fn opposite_edge_detaches_carry_the_cumulative_obligation() {
 /// Two detaches on opposite edges that provably cannot meet.
 ///
 /// The obligation is a width proof, not a ban: five tokens minus one at each
-/// edge still leaves three. Without this, "refuse every opposite-edge pair"
+/// edge still leaves three. Without this, "reject every opposite-edge pair"
 /// would pass the test above and nothing would notice.
 #[test]
 fn opposite_edge_detaches_that_cannot_meet_are_admitted() {
@@ -559,7 +559,7 @@ fn opposite_edge_obligations_are_found_across_different_subject_spellings() {
 ///
 /// A public span narrows monotonically, so a second `at_start` can only push
 /// the start where the first already could — or further, never cumulatively.
-/// Summing them instead refuses this catalog, which cannot empty: the widest
+/// Summing them instead rejects this catalog, which cannot empty: the widest
 /// head is two tokens, the tail one, and the record is five.
 #[test]
 fn two_detaches_on_one_edge_do_not_accumulate() {
@@ -575,7 +575,7 @@ fn two_detaches_on_one_edge_do_not_accumulate() {
     assert_eq!(output.matcher.catalog_policy().program().ops.len(), 3);
 }
 
-/// Operands that meet exactly are refused: the span they leave is empty.
+/// Operands that meet exactly are rejected: the span they leave is empty.
 ///
 /// The boundary the proof turns on. One token less on either side and the
 /// record survives with a token to spare, which
@@ -637,7 +637,7 @@ fragment N := [text=ぬ].
 
 proptest::proptest! {
     /// §8: every statement over the real vocabularies either lowers to one
-    /// well-formed operation or is refused with a diagnostic.
+    /// well-formed operation or is rejected with a diagnostic.
     ///
     /// Never a third outcome. A panic here is the failure mode the whole
     /// declaration tier exists to remove: a catalog that says something the
@@ -695,7 +695,7 @@ fn warns_inert(source: &str) -> bool {
 
 /// The case the design named: a group that has members and selects none.
 ///
-/// The reference resolves, so nothing refuses it, and the statement runs on
+/// The reference resolves, so no check rejects it, and the statement runs on
 /// every sentence over an empty set. This is the one shape an author cannot
 /// distinguish from a working one by reading the catalog.
 #[test]
@@ -739,7 +739,7 @@ fn all_warns_when_the_catalog_declares_no_publishable_pattern() {
     assert!(warns_inert(source), "got {:?}", warnings(source));
 }
 
-/// A warning, never a refusal: the engine executes the statement as written.
+/// A warning, never an error: the engine executes the statement as written.
 #[test]
 fn an_inert_statement_still_compiles_and_still_lowers() {
     let output = compile(
@@ -749,7 +749,7 @@ fn an_inert_statement_still_compiles_and_still_lowers() {
     assert_eq!(output.matcher.catalog_policy().program().ops.len(), 1);
 }
 
-/// Diagnostics from a catalog expected to be refused.
+/// Diagnostics from a catalog expected to fail compilation.
 fn refusals(source: &str) -> Vec<String> {
     match compile_catalog(
         PatternSource::named("t.lx", source),

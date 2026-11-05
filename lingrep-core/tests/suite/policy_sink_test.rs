@@ -5,7 +5,7 @@
 //! pinned here is the decoration itself — that the inner sink sees published
 //! records and only published records, that raw mode still strips synthetics,
 //! that statistics reach the reporting channel, and that the decorator does not
-//! quietly discard the inner sink's token demand.
+//! discard the inner sink's token demand.
 
 use std::sync::{Arc, OnceLock};
 
@@ -122,7 +122,7 @@ fn catalog() -> CatalogPolicy {
     .clone()
 }
 
-/// How many records the catalog's one `admit` refused.
+/// How many records the catalog's one `admit` dropped.
 ///
 /// An `admit` records its drops per statement, making the count attributable to
 /// the decision that produced it.
@@ -580,10 +580,10 @@ fn a_traced_record_carries_its_sentence_label() {
 /// A trace on a raw sink is accepted and collects nothing.
 ///
 /// Raw publication applies no policy, so there is nothing to explain. The
-/// constructor documents that it accepts the request rather than refusing it —
+/// constructor documents that it accepts the request rather than rejecting it —
 /// the selection is the caller's, and a sink that rejected a harmless one would
-/// push that branch into every caller. An accepted request that quietly
-/// collected *something* would be worse than a refusal, so pin the emptiness.
+/// push that branch into every caller. An accepted request that collected
+/// *something* would be worse than a rejection, so pin the emptiness.
 #[test]
 fn a_trace_on_a_raw_sink_collects_nothing() {
     let mut sink = PolicySink::raw(Recording::default(), catalog(), anchor_free()).with_trace(64);
@@ -643,7 +643,7 @@ end
 ///
 /// Both halves of "called it against the wrong tokens" are pinned: an empty
 /// slice makes the anchor fall back to `0`, and a slice one token short moves it
-/// to `1`. Neither equals the record's end, so both are refused and both fail
+/// to `1`. Neither equals the record's end, so both are dropped and both fail
 /// this assertion.
 #[test]
 fn the_sink_admits_against_the_declared_anchor() {
@@ -682,7 +682,7 @@ fn the_sink_admits_against_the_declared_anchor() {
 /// The sink reports an unresolvable anchor as an `ExecutionError`, not silence.
 ///
 /// `a_rejected_call_leaves_statistics_untouched` in `policy_engine_test` pins
-/// the engine's refusal; what is pinned here is the seam's wrapping of it —
+/// the engine's error; what is pinned here is the seam's wrapping of it —
 /// `ExecutionError::PolicyAnchor` and the `map_err` that produces it, which
 /// nothing else asserts. Pairing a catalog's policy with a structurally
 /// different catalog's evaluator is the wiring mistake the whole digest check

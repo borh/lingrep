@@ -397,11 +397,11 @@ type BranchGuard = (usize, usize);
 /// and a rule keyed on branch membership alone would delete it.
 ///
 /// Such an alternation therefore contributes no guard at all, which makes the
-/// refusal below sound by construction: a guard exists only where the branch
+/// rejection below sound by construction: a guard exists only where the branch
 /// choice is binding.
 ///
 /// `Intersection` needs no arm of its own beyond the structural walk, because
-/// [`inspect_intersection_operands`] refuses a capture inside `&`.
+/// [`inspect_intersection_operands`] rejects a capture inside `&`.
 fn branch_guards(expr: &ExecutionExpr) -> BTreeMap<CaptureId, Vec<BranchGuard>> {
     fn walk(
         expr: &ExecutionExpr,
@@ -468,7 +468,7 @@ fn branch_guards(expr: &ExecutionExpr) -> BTreeMap<CaptureId, Vec<BranchGuard>> 
 /// True when one single-entry alternation holds them in different branches.
 /// An absent guard list is a capture the walk never reached, which
 /// `WhereCaptureUndefined` has already reported; answering `false` keeps this
-/// refusal from adding a second diagnostic for one mistake.
+/// check from adding a second diagnostic for one mistake.
 fn provably_exclusive(left: Option<&Vec<BranchGuard>>, right: Option<&Vec<BranchGuard>>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
         return false;
@@ -483,8 +483,8 @@ fn provably_exclusive(left: Option<&Vec<BranchGuard>>, right: Option<&Vec<Branch
 /// The token-count interval an expression can consume.
 ///
 /// Takes the registry because one arm reports an intersection whose operands
-/// admit no common width as a compile error rather than a pattern that quietly
-/// never matches.
+/// admit no common width as a compile error rather than a pattern that compiles
+/// and never matches.
 pub(crate) fn width(
     expr: &ExecutionExpr,
     sources: &SourceRegistry,
@@ -796,18 +796,18 @@ fn inspect_same_as(
     }
 }
 
-/// Refuses a capture or a `same_as` inside an operand of `&`.
+/// Rejects a capture or a `same_as` inside an operand of `&`.
 ///
-/// **A capture is refused in every operand, not merely in all but the first.**
+/// **A capture is rejected in every operand, not merely in all but the first.**
 /// Allowing it on one side would make `A & B` and `B & A` produce different
 /// `Match` values, and `&` is commutative — so the operator would stop obeying
 /// its own algebra to record which operand the author happened to write first.
 /// It would also need a rule for which of several accepting paths donates the
-/// slot, which nothing else in the language has to answer. Refusing both sides
+/// slot, which nothing else in the language has to answer. Rejecting both sides
 /// needs no such rule, keeps commutativity exact, and can be relaxed later
 /// without invalidating anything already authored.
 ///
-/// `same_as` is refused for a second, independent reason: `deduplicate` keys on
+/// `same_as` is rejected for a second, independent reason: `deduplicate` keys on
 /// `(position, referenced slot)`, and with no referenced slot that key collapses
 /// to position alone, which is what bounds every candidate set by the token
 /// count and keeps the evaluator polynomial.

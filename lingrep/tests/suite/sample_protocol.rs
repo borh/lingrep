@@ -10,7 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! `--sample` end to end: refusal before work, what the `run` record declares,
+//! `--sample` end to end: rejection before work, what the `run` record declares,
 //! and the property that makes a sampled result quotable — one seed selects one
 //! sample, whatever else the invocation says.
 //!

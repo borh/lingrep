@@ -163,9 +163,9 @@ impl<R: Read + Seek> SoranohaEvents<R> {
             .zip
             .by_index(index)
             .map_err(|error| context(format!("unreadable ZIP entry: {error}")))?;
-        // The declared uncompressed size refuses an oversized work — and a
-        // decompression bomb — before anything is inflated. The bounded read
-        // then covers an entry that under-declares its size.
+        // Checking the declared uncompressed size rejects an oversized work —
+        // and a decompression bomb — before anything is inflated. The bounded
+        // read then covers an entry that under-declares its size.
         let declared = entry.size();
         if declared > limit as u64 {
             return Err(context(format!(
@@ -920,7 +920,7 @@ mod tests {
             "{error}"
         );
 
-        // A physical line over the record limit is refused.
+        // A physical line over the record limit is rejected.
         let mut limited = SoranohaEvents::new(
             archive(&[
                 (

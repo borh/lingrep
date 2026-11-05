@@ -47,10 +47,10 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
-    // Refused here rather than by clap, which would name the two flags and
+    // Rejected here rather than by clap, which would name the two flags and
     // not the recovery. Two record shapes in one headerless fixed-column
     // stream cannot be consumed, and silently dropping the exclusion table
-    // would be worse than refusing the combination.
+    // would be worse than rejecting the combination.
     if args.tsv && args.catalog.catalog_input().is_some() {
         return Err(CliError::InvalidArgs(
             "--tsv cannot be combined with a catalog; use --json for both tables".into(),

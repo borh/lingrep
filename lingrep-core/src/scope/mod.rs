@@ -33,7 +33,7 @@ pub struct ScopeClause {
 }
 
 impl ScopeClause {
-    /// Parses a clause, refusing anything a document could not disambiguate.
+    /// Parses a clause, rejecting anything a document could not disambiguate.
     ///
     /// # Errors
     ///
@@ -125,7 +125,7 @@ impl ScopeClause {
     }
 }
 
-/// A refusal, pointing at the bytes that caused it.
+/// A parse error, pointing at the bytes that caused it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScopeError {
     /// What was wrong, in the author's terms.

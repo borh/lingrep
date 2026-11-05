@@ -250,7 +250,7 @@ async fn selector_fixture() -> String {
     };
 
     // Mirrors the real endpoint's answers, including the shapes the switch must
-    // refuse: an undeclared key is 404 `unknown_corpus`, never a path.
+    // reject: an undeclared key is 404 `unknown_corpus`, never a path.
     let permalink = |Form(form): Form<HashMap<String, String>>| async move {
         let pattern = form.get("pattern").cloned().unwrap_or_default();
         let corpus = form.get("corpus").cloned().unwrap_or_default();
@@ -401,7 +401,7 @@ async fn selecting_a_corpus_navigates_to_it_and_reruns_the_query() -> WebDriverR
     outcome
 }
 
-/// A refused switch must still be readable after the corpus-context poll fires.
+/// A rejected switch must still be readable after the corpus-context poll fires.
 ///
 /// The live region sits outside the polled section for exactly this reason: a
 /// preparing corpus polls every few seconds, and that is precisely the state in
@@ -424,7 +424,7 @@ async fn refusing_fixture() -> String {
         section = preparing_section("default", None)
     );
 
-    // Every mint is refused, which is the 404 `unknown_corpus` shape.
+    // Every mint is rejected, which is the 404 `unknown_corpus` shape.
     let permalink = |Form(_form): Form<HashMap<String, String>>| async move {
         (
             StatusCode::NOT_FOUND,

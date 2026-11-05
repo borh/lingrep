@@ -834,7 +834,7 @@ mod tests {
         // before both. Without the explicit budget this call does not return.
         // `compile_catalog` rejects the same catalog with `LimitExceeded`, so
         // accepting it here would make `--compare-with` admit what `check`
-        // refuses.
+        // rejects.
         let mut catalog = String::from("d0 := [text=a].\n");
         for depth in 1..40 {
             catalog.push_str(&format!("d{depth} := @d{} @d{}.\n", depth - 1, depth - 1));
