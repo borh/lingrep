@@ -368,7 +368,7 @@ wheels = [
 
 [[package]]
 name = "lingrep-adapter-protocol"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "../adapter-protocol" }
 dependencies = [
     { name = "blake3" },
@@ -379,7 +379,7 @@ requires-dist = [{ name = "blake3", specifier = ">=1.0.8,<2" }]
 
 [[package]]
 name = "lingrep-stanza-adapter"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "lingrep-adapter-protocol" },
@@ -965,14 +965,14 @@ name = "torch"
 version = "2.13.0+rocm7.2"
 source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
+    { name = "filelock", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
+    { name = "fsspec", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
+    { name = "jinja2", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
+    { name = "networkx", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
+    { name = "setuptools", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
+    { name = "sympy", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
     { name = "triton-rocm", marker = "(sys_platform == 'linux' and extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-rocm') or (extra == 'extra-22-lingrep-stanza-adapter-cuda' and extra == 'extra-22-lingrep-stanza-adapter-rocm')" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "extra == 'extra-22-lingrep-stanza-adapter-rocm' or (extra != 'extra-22-lingrep-stanza-adapter-cpu' and extra != 'extra-22-lingrep-stanza-adapter-cuda') or (extra == 'extra-22-lingrep-stanza-adapter-cpu' and extra == 'extra-22-lingrep-stanza-adapter-cuda')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.13.0%2Brocm7.2-cp314-cp314-manylinux_2_28_x86_64.whl", upload-time = "2026-07-08T11:26:20Z" },

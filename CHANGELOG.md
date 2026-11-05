@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-05
+
 ### Added
 
 - A lookaround written with `within=document`, as in
@@ -81,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ling serve` and `lingrep-web` report an occupied port with exit code 2
+  instead of panicking.
+- Retained lookaround context, including empty sentences, counts toward the
+  tokenized byte limit. A required window that exceeds the limit ends execution
+  with an error.
+- Scoped lookarounds in anchor exclusion fragments fail compilation with
+  `ScopedLookaroundUnsupported`, including through fragment references.
 - `ling --json check --diagram` exits with `unsupported_output` instead of
   writing a text diagram to stdout and exiting 0.
 
