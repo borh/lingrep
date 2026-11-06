@@ -18,11 +18,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use lingrep::direct_source::matched_surface;
-use lingrep::protocol::query::{SectionData, SectionPatternCount};
+use lingrep::protocol::query::{MetadataValueData, PatternCount, SectionData};
 use lingrep::protocol::validate_query_jsonl;
 use lingrep::summary::{
-    AggregationGroup, AggregationInput, SectionTally, SummaryAggregator, SummaryPartition,
-    SummaryRow,
+    AggregationGroup, AggregationInput, MetadataValueTally, SectionTally, SummaryAggregator,
+    SummaryPartition, SummaryRow,
 };
 use lingrep_core::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
 use lingrep_core::corpus::DocumentId;
@@ -1297,7 +1297,7 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
         .unwrap();
         for (sentence, tokens, patterns) in sentences {
             tally
-                .observe(sentence, tokens, patterns.iter().copied())
+                .observe(sentence, 0, tokens, patterns.iter().copied())
                 .unwrap();
         }
         let mut records = tally.into_records(&[2, 0, 1], &names).unwrap();
@@ -1319,13 +1319,11 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
         patterns: ["cat", "bird", "dog"]
             .into_iter()
             .zip(counts)
-            .map(
-                |(pattern, (matches, sentences_matched))| SectionPatternCount {
-                    pattern: pattern.to_owned(),
-                    matches,
-                    sentences_matched,
-                },
-            )
+            .map(|(pattern, (matches, sentences_matched))| PatternCount {
+                pattern: pattern.to_owned(),
+                matches,
+                sentences_matched,
+            })
             .collect(),
     };
     assert_eq!(
@@ -1334,6 +1332,306 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
             section(Some("methods"), 2, 9, [(2, 1), (2, 1), (2, 2)]),
             section(Some("results"), 3, 13, [(2, 1), (1, 1), (1, 1)]),
             section(None, 2, 4, [(1, 1), (0, 0), (1, 1)]),
+        ]
+    );
+}
+
+fn tagged_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
+    let input = directory.path().join("tagged.jsonl");
+    fs::write(
+        &input,
+        "{\"text\":\"猫が猫を見る。犬。\",\"metadata\":{\"tags\":[\"x\",\"y\",\"x\"],\"year\":\"2001\"}}\n\
+         {\"text\":\"猫。\",\"metadata\":{\"tags\":\"x\",\"year\":\"2002\"}}\n\
+         {\"text\":\"犬が鳥を見る。\",\"metadata\":{\"year\":\"2001\"}}\n\
+         {\"text\":\"猫と犬。\",\"metadata\":{\"tags\":[],\"year\":\"2002\"}}\n\
+         {\"text\":\"鳥。\",\"metadata\":{\"tags\":1,\"year\":\"2003\"}}\n\
+         {\"text\":\"\",\"metadata\":{\"tags\":\"x\",\"year\":\"2003\"}}\n\
+         {\"text\":\"猫。猫。\",\"metadata\":{\"tags\":\"1\",\"year\":\"2003\"}}\n",
+    )
+    .unwrap();
+    let artifact = directory.path().join("tagged.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    artifact
+}
+
+fn summarize_events(artifact: &std::path::Path, extra: &[&str]) -> Vec<Value> {
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--pattern",
+            "cat := [text=猫].",
+            "--corpus",
+        ])
+        .arg(artifact)
+        .args(extra)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    validate_query_jsonl(&output.stdout).unwrap();
+    parse_jsonl(&output.stdout)
+}
+
+/// Each `metadata_value` record equals the counters of the run whose `--where`
+/// clause adds that value, as `=` for a scalar and `contains` for a list.
+#[test]
+fn by_metadata_value_records_equal_the_where_run_for_each_value() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    for (scope, values) in [
+        (None, &[Some("x"), Some("y"), Some("1"), None][..]),
+        (
+            Some("@document.year >= 2002"),
+            &[Some("x"), Some("1"), None][..],
+        ),
+    ] {
+        let mut extra = vec!["--by-metadata", "@document.tags"];
+        if let Some(scope) = scope {
+            extra.extend(["--where", scope]);
+        }
+        let events = summarize_events(&artifact, &extra);
+        let records = events
+            .iter()
+            .filter(|record| record["type"] == "metadata_value")
+            .map(|record| {
+                serde_json::from_value::<MetadataValueData>(record["data"].clone()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.value.as_deref())
+                .collect::<Vec<_>>(),
+            values,
+            "{scope:?}"
+        );
+        for record in &records {
+            assert_eq!(record.key, "@document.tags");
+            let Some(value) = record.value.as_deref() else {
+                // Documents 3 and 4: no key, and an empty list.
+                let expected = if scope.is_some() {
+                    (1, 1, 1, 1)
+                } else {
+                    (2, 2, 1, 1)
+                };
+                let cat = &record.patterns[0];
+                assert_eq!(
+                    (
+                        record.documents_admitted,
+                        record.sentences_admitted,
+                        cat.matches,
+                        cat.sentences_matched
+                    ),
+                    expected,
+                    "{scope:?}"
+                );
+                continue;
+            };
+            let selected =
+                format!("(@document.tags = \"{value}\" | @document.tags contains \"{value}\")");
+            let clause =
+                scope.map_or_else(|| selected.clone(), |scope| format!("{scope} & {selected}"));
+            let oracle = summarize_events(&artifact, &["--where", &clause]);
+            let counters = &event(&oracle, "complete")["data"]["counters"];
+            // The complete record's `sentences_matched` counts every sentence
+            // the matcher ran, so matched sentences come from `matches`.
+            let matched = lingrep_without_dictionary()
+                .args([
+                    "--json",
+                    "matches",
+                    "--pattern",
+                    "cat := [text=猫].",
+                    "--corpus",
+                ])
+                .arg(&artifact)
+                .args(["--where", &clause])
+                .output()
+                .unwrap();
+            assert_success(&matched);
+            let matched = parse_jsonl(&matched.stdout)
+                .into_iter()
+                .filter(|record| record["type"] == "match")
+                .map(|record| record["data"]["corpus_sentence_ordinal"].as_u64().unwrap())
+                .collect::<Vec<_>>();
+            let matched_sentences = matched
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            assert_eq!(
+                serde_json::to_value(record).unwrap(),
+                serde_json::json!({
+                    "key": "@document.tags",
+                    "value": value,
+                    "documents_admitted": counters["documents_admitted"],
+                    "sentences_admitted": counters["sentences_admitted"],
+                    "tokens_admitted": counters["tokens_scanned"],
+                    "patterns": [{
+                        "pattern": "cat",
+                        "matches": matched.len(),
+                        "sentences_matched": matched_sentences,
+                    }],
+                }),
+                "{clause}"
+            );
+        }
+        let complete = &event(&events, "complete")["data"]["counters"];
+        let plain = summarize_events(&artifact, &extra[2..]);
+        assert_eq!(complete, &event(&plain, "complete")["data"]["counters"]);
+        assert_eq!(summary_events(&events), summary_events(&plain));
+    }
+}
+
+#[test]
+fn by_metadata_rejects_other_owners_tsv_output_direct_input_and_other_groupings() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let direct = directory.path().join("tagged.jsonl");
+    for (case, json, prepared, extra) in [
+        (
+            "@sentence key",
+            true,
+            true,
+            &["--by-metadata", "@sentence.tags"][..],
+        ),
+        ("bare key", true, true, &["--by-metadata", "tags"][..]),
+        (
+            "empty key",
+            true,
+            true,
+            &["--by-metadata", "@document."][..],
+        ),
+        (
+            "tsv output",
+            false,
+            true,
+            &["--by-metadata", "@document.tags"][..],
+        ),
+        (
+            "direct input",
+            true,
+            false,
+            &["--by-metadata", "@document.tags"][..],
+        ),
+        (
+            "with --by-document",
+            true,
+            true,
+            &["--by-metadata", "@document.tags", "--by-document"][..],
+        ),
+        (
+            "with --by-section",
+            true,
+            true,
+            &["--by-metadata", "@document.tags", "--by-section"][..],
+        ),
+    ] {
+        let mut command = lingrep();
+        if json {
+            command.arg("--json");
+        }
+        command
+            .args(["summarize", "--pattern", "cat := [text=猫]."])
+            .args(extra);
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command
+                .arg("--dict-path")
+                .arg(dictionary.path())
+                .arg(&direct);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{case}");
+        assert!(output.stdout.is_empty(), "{case}");
+    }
+}
+
+#[test]
+fn spilled_metadata_value_counts_publish_the_same_records_as_resident_counts() {
+    let strings = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
+    // (sentence range, values). The empty document lists a value that no
+    // sentence can count, and "a" is listed twice by the first document.
+    let documents = || {
+        vec![
+            (0..2, strings(&["a", "b", "a"])),
+            (2..2, strings(&["unseen"])),
+            (2..4, strings(&["b"])),
+            (4..5, strings(&[])),
+            (5..7, strings(&["a"])),
+        ]
+    };
+    // (sentence, tokens, pattern ordinal per match); pattern 3 is not
+    // published, and sentence 3 is not admitted.
+    let sentences: [(u64, usize, &[u64]); 6] = [
+        (0, 3, &[0]),
+        (1, 4, &[1, 1, 2]),
+        (2, 5, &[0, 2, 0]),
+        (4, 6, &[3, 1]),
+        (5, 1, &[2]),
+        (6, 2, &[]),
+    ];
+    let names = ["cat", "bird", "dog", "hidden"];
+    let run = |resident_key_limit: Option<usize>| {
+        let budget = Arc::new(TempBudget::new(u64::MAX));
+        let key = "@document.tags".to_owned();
+        let mut tally = match resident_key_limit {
+            Some(limit) => {
+                MetadataValueTally::with_limits(key, documents(), limit, 2, Arc::clone(&budget))
+            }
+            None => MetadataValueTally::new(key, documents(), Arc::clone(&budget)),
+        }
+        .unwrap();
+        for (sentence, tokens, patterns) in sentences {
+            tally
+                .observe(sentence, tokens, patterns.iter().copied())
+                .unwrap();
+        }
+        let mut records = tally.into_records(&[2, 0, 1], &names).unwrap();
+        let mut published = Vec::new();
+        while let Some(record) = records.next_record().unwrap() {
+            published.push(record);
+        }
+        (published, budget.peak_used_bytes())
+    };
+    let (resident, resident_temp_bytes) = run(None);
+    let (spilled, spilled_temp_bytes) = run(Some(1));
+    assert_eq!(resident_temp_bytes, 0);
+    assert!(spilled_temp_bytes > 0, "a one-key buffer writes runs");
+    assert_eq!(spilled, resident);
+    let value = |value: Option<&str>, documents, sentences, tokens, counts: [(u64, u64); 3]| {
+        MetadataValueData {
+            key: "@document.tags".to_owned(),
+            value: value.map(str::to_owned),
+            documents_admitted: documents,
+            sentences_admitted: sentences,
+            tokens_admitted: tokens,
+            patterns: ["cat", "bird", "dog"]
+                .into_iter()
+                .zip(counts)
+                .map(|(pattern, (matches, sentences_matched))| PatternCount {
+                    pattern: pattern.to_owned(),
+                    matches,
+                    sentences_matched,
+                })
+                .collect(),
+        }
+    };
+    assert_eq!(
+        resident,
+        [
+            value(Some("a"), 2, 4, 10, [(1, 1), (2, 1), (2, 2)]),
+            value(Some("b"), 2, 3, 12, [(3, 2), (2, 1), (2, 2)]),
+            value(None, 1, 1, 6, [(0, 0), (1, 1), (0, 0)]),
         ]
     );
 }

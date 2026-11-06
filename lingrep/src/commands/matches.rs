@@ -273,6 +273,7 @@ pub fn run(
         bound,
         run: run_facts,
         scope,
+        ..
     } = resolve_matching_query(
         &args.input,
         selected_corpus,
@@ -289,6 +290,7 @@ pub fn run(
             && limit.is_none()
             && sample.is_none()
             && scope_clause.is_none(),
+        false,
     )?;
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();

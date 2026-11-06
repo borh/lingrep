@@ -410,6 +410,37 @@ ling --json summarize --by-section --corpus paper.lingcorpus \
 `--where` applies first, so `sentences_admitted` is the section's size within
 the scope. Like `--by-document`, `--by-section` reads every sentence.
 
+### Counting per metadata value
+
+`--by-metadata @document.KEY` counts the same per-pattern `matches` and
+`sentences_matched` under every value of one document metadata key. It
+requires `--json` and `--corpus` or `--cache`, and cannot be combined with
+`--by-document` or `--by-section`. The run publishes one `metadata_value`
+record per value with at least one admitted sentence, in the order the values
+first occur in the artifact's documents: its `key`, `value`,
+`documents_admitted` (documents with that value and at least one admitted
+sentence), `sentences_admitted`, `tokens_admitted`, and `patterns` as in a
+`section` record.
+
+`value` is the text that `--where` compares, so the string `"1"` and the
+number `1` are one value. The record for a scalar value `V` counts what
+`--where '@document.KEY = "V"'` admits. A document whose value is a list is
+counted once under each distinct listed value, as
+`--where '@document.KEY contains "V"'` admits it. Documents without the key,
+or with an empty list, are counted in a final record whose `value` is `null`.
+A document whose value is an object or a nested list fails the run with exit
+code `2` before the scan, because no `--where` comparison selects such a value.
+The `summary` rows are the same as without the flag.
+
+```bash
+ling --json summarize --by-metadata @document.author \
+  --where '@document.source_edition_year >= 1950' \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
+```
+
+`--where` applies first. Like `--by-section`, `--by-metadata` reads every
+sentence.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term

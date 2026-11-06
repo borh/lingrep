@@ -300,7 +300,7 @@ fn judge(
     match predicate {
         Predicate::Compare(_, comparison, literal) => {
             scalar(value).map_or(Truth::Unmet(ExclusionReason::ShapeMismatch), |scalar| {
-                let equal = render(scalar) == *literal;
+                let equal = scalar.comparison_text() == *literal;
                 truth(matches!(comparison, Comparison::Equal) == equal)
             })
         }
@@ -320,13 +320,17 @@ fn judge(
         ),
         Predicate::Member(_, membership, members) => {
             scalar(value).map_or(Truth::Unmet(ExclusionReason::ShapeMismatch), |scalar| {
-                let present = members.iter().any(|member| render(scalar) == *member);
+                let present = members
+                    .iter()
+                    .any(|member| scalar.comparison_text() == *member);
                 truth(matches!(membership, Membership::In) == present)
             })
         }
         Predicate::Contains(_, negated, member) => match value {
             MetadataValue::Scalars(list) => {
-                let present = list.iter().any(|scalar| render(scalar) == *member);
+                let present = list
+                    .iter()
+                    .any(|scalar| scalar.comparison_text() == *member);
                 truth(*negated != present)
             }
             MetadataValue::Scalar(_) | MetadataValue::Opaque(_) => {
@@ -353,13 +357,6 @@ const fn scalar(value: &MetadataValue) -> Option<&MetadataScalar> {
     match value {
         MetadataValue::Scalar(scalar) => Some(scalar),
         MetadataValue::Scalars(_) | MetadataValue::Opaque(_) => None,
-    }
-}
-
-fn render(scalar: &MetadataScalar) -> String {
-    match scalar {
-        MetadataScalar::String(text) | MetadataScalar::Number(text) => text.clone(),
-        MetadataScalar::Bool(value) => value.to_string(),
     }
 }
 

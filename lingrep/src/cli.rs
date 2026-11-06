@@ -594,6 +594,18 @@ pub struct SummarizeArgs {
     #[arg(long, conflicts_with = "by_document", help_heading = "Output")]
     pub by_section: bool,
 
+    /// Count each pattern's matches and matched sentences, and the admitted
+    /// documents, sentences and tokens, under every value of @document.KEY in a
+    /// prepared corpus, and publish them as `metadata_value` records (requires
+    /// --json and --corpus or --cache).
+    #[arg(
+        long,
+        value_name = "@document.KEY",
+        conflicts_with_all = ["by_document", "by_section"],
+        help_heading = "Output"
+    )]
+    pub by_metadata: Option<String>,
+
     /// Publish @document.KEY on each `document` record (repeatable).
     #[arg(
         long = "source-metadata",

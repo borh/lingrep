@@ -1,5 +1,5 @@
 //! Exact bounded aggregation for `(authored pattern, document, typed group)` keys,
-//! and for `(section label, authored pattern)` counts.
+//! and for per-pattern counts under each section label or document metadata value.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -15,7 +15,7 @@ use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, Proj
 use lingrep_core::spill::{SortedDrain, SortedRunCounts, TempBudget};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::query::{SectionData, SectionPatternCount};
+use crate::protocol::query::{MetadataValueData, PatternCount, SectionData};
 
 /// Keys held in the scan's sorted buffer before it spills a run.
 ///
@@ -1256,27 +1256,178 @@ fn materialize_group(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-enum SectionCount {
+enum SlotCount {
     Matches,
     SentencesMatched,
 }
 
-/// `(slot, pattern ordinal, count)`. Slots are label positions, then one slot
-/// for sentences that carry no label.
-type SectionCountKey = (u32, u64, SectionCount);
+/// `(slot, pattern ordinal, count)`.
+type SlotCountKey = (u32, u64, SlotCount);
+
+/// The admitted documents, sentences and tokens counted under one slot.
+#[derive(Clone, Copy, Debug, Default)]
+struct SlotTotals {
+    documents: u64,
+    sentences: u64,
+    tokens: u64,
+}
+
+/// Per-slot pattern counts for `--by-section` and `--by-metadata`, whose
+/// callers assign each admitted sentence to its slots.
+///
+/// Counts only the (slot, pattern) pairs that occur, spilling them to sorted
+/// runs under the budget; the totals and last counted document of each slot
+/// stay resident.
+struct SlotTally {
+    totals: Vec<SlotTotals>,
+    last_document: Vec<Option<u64>>,
+    counts: SortedRunCounts<SlotCountKey>,
+    matched: Vec<u64>,
+}
+
+impl SlotTally {
+    fn new(
+        slots: usize,
+        resident_key_limit: usize,
+        merge_fan_in: usize,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        if u32::try_from(slots).is_err() {
+            return Err(io::Error::other("slot count exceeds u32"));
+        }
+        Ok(Self {
+            totals: vec![SlotTotals::default(); slots],
+            last_document: vec![None; slots],
+            counts: SortedRunCounts::new_budgeted(resident_key_limit, merge_fan_in, budget)?,
+            matched: Vec::new(),
+        })
+    }
+
+    /// Counts one admitted sentence of `document` under each of `slots`, with
+    /// one pattern ordinal per published match. Sentences must arrive in
+    /// corpus order, so that a document is counted once per slot.
+    fn observe(
+        &mut self,
+        slots: &[u32],
+        document: u64,
+        tokens: usize,
+        matched_patterns: impl Iterator<Item = u64>,
+    ) -> io::Result<()> {
+        let overflow = || io::Error::other("per-slot count overflow");
+        self.matched.clear();
+        self.matched.extend(matched_patterns);
+        self.matched.sort_unstable();
+        let tokens = tokens as u64;
+        for &slot in slots {
+            let totals = &mut self.totals[slot as usize];
+            let last_document = &mut self.last_document[slot as usize];
+            if *last_document != Some(document) {
+                *last_document = Some(document);
+                totals.documents = totals.documents.checked_add(1).ok_or_else(overflow)?;
+            }
+            totals.sentences = totals.sentences.checked_add(1).ok_or_else(overflow)?;
+            totals.tokens = totals.tokens.checked_add(tokens).ok_or_else(overflow)?;
+            for run in self.matched.chunk_by(|left, right| left == right) {
+                let pattern = run[0];
+                self.counts
+                    .add((slot, pattern, SlotCount::Matches), run.len())?;
+                self.counts
+                    .add((slot, pattern, SlotCount::SentencesMatched), 1)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Merges any spilled runs. `published` lists the pattern ordinals to
+    /// report, each named by `pattern_names[ordinal]`.
+    fn into_drain<'a>(
+        self,
+        published: &[u64],
+        pattern_names: &'a [&'a str],
+    ) -> io::Result<SlotDrain<'a>> {
+        let mut published = published.to_vec();
+        published.sort_unstable();
+        Ok(SlotDrain {
+            totals: self.totals,
+            next_slot: 0,
+            drain: self.counts.into_sorted_drain()?,
+            pending: None,
+            published,
+            pattern_names,
+        })
+    }
+}
+
+/// The counts of a [`SlotTally`], produced one slot at a time.
+struct SlotDrain<'a> {
+    totals: Vec<SlotTotals>,
+    next_slot: usize,
+    drain: SortedDrain<SlotCountKey>,
+    pending: Option<(SlotCountKey, usize)>,
+    published: Vec<u64>,
+    pattern_names: &'a [&'a str],
+}
+
+impl SlotDrain<'_> {
+    /// The next slot with at least one admitted sentence, with its totals and
+    /// one entry per published pattern in ordinal order.
+    fn next_slot(&mut self) -> io::Result<Option<(usize, SlotTotals, Vec<PatternCount>)>> {
+        while self.next_slot < self.totals.len() {
+            let slot = self.next_slot;
+            self.next_slot += 1;
+            let totals = self.totals[slot];
+            if totals.sentences == 0 {
+                continue;
+            }
+            let mut patterns = Vec::with_capacity(self.published.len());
+            for index in 0..self.published.len() {
+                let ordinal = self.published[index];
+                let mut count = PatternCount {
+                    pattern: (*self.pattern_names.get(ordinal as usize).ok_or_else(|| {
+                        io::Error::other("published pattern ordinal is out of range")
+                    })?)
+                    .to_owned(),
+                    matches: 0,
+                    sentences_matched: 0,
+                };
+                while let Some(((entry_slot, pattern, kind), value)) = self.peek()? {
+                    if (entry_slot as usize, pattern) > (slot, ordinal) {
+                        break;
+                    }
+                    self.pending = None;
+                    if (entry_slot as usize, pattern) < (slot, ordinal) {
+                        // An unpublished pattern, of this slot or an earlier one.
+                        continue;
+                    }
+                    let value = value as u64;
+                    match kind {
+                        SlotCount::Matches => count.matches = value,
+                        SlotCount::SentencesMatched => count.sentences_matched = value,
+                    }
+                }
+                patterns.push(count);
+            }
+            return Ok(Some((slot, totals, patterns)));
+        }
+        Ok(None)
+    }
+
+    fn peek(&mut self) -> io::Result<Option<(SlotCountKey, usize)>> {
+        if self.pending.is_none() {
+            self.pending = self.drain.next_entry()?;
+        }
+        Ok(self.pending)
+    }
+}
 
 /// Per-section counts for `summarize --by-section`.
 ///
-/// Counts only the (slot, pattern) pairs that occur, spilling them to sorted
-/// runs under the budget; one sentence-range bitmap and two totals per label
-/// stay resident.
+/// Slots are label positions, then one slot for sentences that carry no
+/// label. One sentence-range bitmap per label stays resident.
 pub struct SectionTally {
     labels: Vec<(String, roaring::RoaringTreemap)>,
-    /// Admitted sentences and tokens per slot.
-    totals: Vec<(u64, u64)>,
-    counts: SortedRunCounts<SectionCountKey>,
+    tally: SlotTally,
     active: Vec<u32>,
-    matched: Vec<u64>,
 }
 
 impl SectionTally {
@@ -1295,27 +1446,23 @@ impl SectionTally {
         merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        if u32::try_from(labels.len()).is_err() {
-            return Err(io::Error::other("section label count exceeds u32"));
-        }
         Ok(Self {
-            totals: vec![(0, 0); labels.len() + 1],
+            tally: SlotTally::new(labels.len() + 1, resident_key_limit, merge_fan_in, budget)?,
             labels,
-            counts: SortedRunCounts::new_budgeted(resident_key_limit, merge_fan_in, budget)?,
             active: Vec::new(),
-            matched: Vec::new(),
         })
     }
 
-    /// Counts one admitted sentence under every label covering it, or under
-    /// the unlabelled slot, with one pattern ordinal per published match.
+    /// Counts one admitted sentence of `document` under every label covering
+    /// it, or under the unlabelled slot, with one pattern ordinal per
+    /// published match. Sentences must arrive in corpus order.
     pub fn observe(
         &mut self,
         sentence: u64,
+        document: u64,
         tokens: usize,
         matched_patterns: impl Iterator<Item = u64>,
     ) -> io::Result<()> {
-        let overflow = || io::Error::other("section count overflow");
         self.active.clear();
         for (slot, (_, covered)) in (0u32..).zip(&self.labels) {
             if covered.contains(sentence) {
@@ -1325,23 +1472,8 @@ impl SectionTally {
         if self.active.is_empty() {
             self.active.push(self.labels.len() as u32);
         }
-        self.matched.clear();
-        self.matched.extend(matched_patterns);
-        self.matched.sort_unstable();
-        let tokens = tokens as u64;
-        for &slot in &self.active {
-            let (sentences, slot_tokens) = &mut self.totals[slot as usize];
-            *sentences = sentences.checked_add(1).ok_or_else(overflow)?;
-            *slot_tokens = slot_tokens.checked_add(tokens).ok_or_else(overflow)?;
-            for run in self.matched.chunk_by(|left, right| left == right) {
-                let pattern = run[0];
-                self.counts
-                    .add((slot, pattern, SectionCount::Matches), run.len())?;
-                self.counts
-                    .add((slot, pattern, SectionCount::SentencesMatched), 1)?;
-            }
-        }
-        Ok(())
+        self.tally
+            .observe(&self.active, document, tokens, matched_patterns)
     }
 
     /// Merges any spilled runs and returns the records in slot order, one per
@@ -1352,88 +1484,185 @@ impl SectionTally {
         published: &[u64],
         pattern_names: &'a [&'a str],
     ) -> io::Result<SectionRecords<'a>> {
-        let mut published = published.to_vec();
-        published.sort_unstable();
         Ok(SectionRecords {
-            labels: self
-                .labels
-                .into_iter()
-                .map(|(label, _)| label)
-                .collect::<Vec<_>>()
-                .into_iter(),
-            totals: self.totals,
-            next_slot: 0,
-            drain: self.counts.into_sorted_drain()?,
-            pending: None,
-            published,
-            pattern_names,
+            labels: self.labels.into_iter().map(|(label, _)| label).collect(),
+            slots: self.tally.into_drain(published, pattern_names)?,
         })
     }
 }
 
 /// The section records of a [`SectionTally`], produced one slot at a time.
 pub struct SectionRecords<'a> {
-    labels: std::vec::IntoIter<String>,
-    totals: Vec<(u64, u64)>,
-    next_slot: usize,
-    drain: SortedDrain<SectionCountKey>,
-    pending: Option<(SectionCountKey, usize)>,
-    published: Vec<u64>,
-    pattern_names: &'a [&'a str],
+    labels: Vec<String>,
+    slots: SlotDrain<'a>,
 }
 
 impl SectionRecords<'_> {
     pub fn next_record(&mut self) -> io::Result<Option<SectionData>> {
-        while self.next_slot < self.totals.len() {
-            let slot = self.next_slot;
-            self.next_slot += 1;
-            let label = self.labels.next();
-            let (sentences_admitted, tokens_admitted) = self.totals[slot];
-            if sentences_admitted == 0 {
-                continue;
-            }
-            let mut patterns = Vec::with_capacity(self.published.len());
-            for index in 0..self.published.len() {
-                let ordinal = self.published[index];
-                let mut count = SectionPatternCount {
-                    pattern: (*self.pattern_names.get(ordinal as usize).ok_or_else(|| {
-                        io::Error::other("section pattern ordinal is out of range")
-                    })?)
-                    .to_owned(),
-                    matches: 0,
-                    sentences_matched: 0,
-                };
-                while let Some(((entry_slot, pattern, kind), value)) = self.peek()? {
-                    if (entry_slot as usize, pattern) > (slot, ordinal) {
-                        break;
-                    }
-                    self.pending = None;
-                    if (entry_slot as usize, pattern) < (slot, ordinal) {
-                        // An unpublished pattern, of this slot or an earlier one.
-                        continue;
-                    }
-                    let value = value as u64;
-                    match kind {
-                        SectionCount::Matches => count.matches = value,
-                        SectionCount::SentencesMatched => count.sentences_matched = value,
-                    }
-                }
-                patterns.push(count);
-            }
-            return Ok(Some(SectionData {
-                label,
-                sentences_admitted,
-                tokens_admitted,
+        Ok(self
+            .slots
+            .next_slot()?
+            .map(|(slot, totals, patterns)| SectionData {
+                label: self.labels.get(slot).cloned(),
+                sentences_admitted: totals.sentences,
+                tokens_admitted: totals.tokens,
                 patterns,
-            }));
-        }
-        Ok(None)
+            }))
+    }
+}
+
+/// Per-value counts of one document metadata key for `summarize
+/// --by-metadata`.
+///
+/// Slots are the values in order of first occurrence, then one slot for
+/// documents with no value. Each document's sentence range and value slots
+/// stay resident.
+pub struct MetadataValueTally {
+    key: String,
+    values: Vec<String>,
+    /// Document sentence ranges in corpus order, each with its value slots.
+    documents: Vec<(std::ops::Range<u64>, Box<[u32]>)>,
+    cursor: usize,
+    tally: SlotTally,
+}
+
+impl MetadataValueTally {
+    /// `documents` lists each document's corpus sentence range and its values
+    /// for `key`, in corpus order; a document with no value lists none.
+    /// Spilled runs reserve from `budget`.
+    pub fn new(
+        key: String,
+        documents: impl IntoIterator<Item = (std::ops::Range<u64>, Vec<String>)>,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        Self::with_limits(
+            key,
+            documents,
+            DEFAULT_RESIDENT_KEYS,
+            DEFAULT_MERGE_FAN_IN,
+            budget,
+        )
     }
 
-    fn peek(&mut self) -> io::Result<Option<(SectionCountKey, usize)>> {
-        if self.pending.is_none() {
-            self.pending = self.drain.next_entry()?;
+    pub fn with_limits(
+        key: String,
+        documents: impl IntoIterator<Item = (std::ops::Range<u64>, Vec<String>)>,
+        resident_key_limit: usize,
+        merge_fan_in: usize,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        let mut slots = std::collections::HashMap::<String, u32>::new();
+        let mut values = Vec::new();
+        let mut ranges = Vec::<(std::ops::Range<u64>, Box<[u32]>)>::new();
+        for (range, document_values) in documents {
+            if ranges
+                .last()
+                .is_some_and(|(previous, _)| range.start < previous.end)
+            {
+                return Err(io::Error::other(
+                    "document sentence ranges are not in corpus order",
+                ));
+            }
+            let mut document_slots = Vec::with_capacity(document_values.len());
+            for value in document_values {
+                let next = u32::try_from(values.len())
+                    .map_err(|_| io::Error::other("metadata value count exceeds u32"))?;
+                let slot = *slots.entry(value).or_insert_with_key(|value| {
+                    values.push(value.clone());
+                    next
+                });
+                document_slots.push(slot);
+            }
+            document_slots.sort_unstable();
+            document_slots.dedup();
+            if !range.is_empty() {
+                ranges.push((range, document_slots.into_boxed_slice()));
+            }
         }
-        Ok(self.pending)
+        let no_value = u32::try_from(values.len())
+            .map_err(|_| io::Error::other("metadata value count exceeds u32"))?;
+        for (_, document_slots) in &mut ranges {
+            if document_slots.is_empty() {
+                *document_slots = Box::new([no_value]);
+            }
+        }
+        Ok(Self {
+            key,
+            tally: SlotTally::new(values.len() + 1, resident_key_limit, merge_fan_in, budget)?,
+            values,
+            documents: ranges,
+            cursor: 0,
+        })
+    }
+
+    /// Counts one admitted sentence under each value of its document, or
+    /// under the no-value slot, with one pattern ordinal per published match.
+    /// Sentences must arrive in corpus order.
+    pub fn observe(
+        &mut self,
+        sentence: u64,
+        tokens: usize,
+        matched_patterns: impl Iterator<Item = u64>,
+    ) -> io::Result<()> {
+        if !self
+            .documents
+            .get(self.cursor)
+            .is_some_and(|(range, _)| range.contains(&sentence))
+        {
+            self.cursor = self
+                .documents
+                .partition_point(|(range, _)| range.end <= sentence);
+        }
+        let Some((range, slots)) = self.documents.get(self.cursor) else {
+            return Err(io::Error::other(format!(
+                "sentence {sentence} lies outside every document"
+            )));
+        };
+        if !range.contains(&sentence) {
+            return Err(io::Error::other(format!(
+                "sentence {sentence} lies outside every document"
+            )));
+        }
+        self.tally
+            .observe(slots, self.cursor as u64, tokens, matched_patterns)
+    }
+
+    /// Merges any spilled runs and returns the records in slot order, one per
+    /// slot with at least one admitted sentence. `published` lists the pattern
+    /// ordinals to report, each named by `pattern_names[ordinal]`.
+    pub fn into_records<'a>(
+        self,
+        published: &[u64],
+        pattern_names: &'a [&'a str],
+    ) -> io::Result<MetadataValueRecords<'a>> {
+        Ok(MetadataValueRecords {
+            key: self.key,
+            values: self.values,
+            slots: self.tally.into_drain(published, pattern_names)?,
+        })
+    }
+}
+
+/// The `metadata_value` records of a [`MetadataValueTally`], produced one
+/// slot at a time.
+pub struct MetadataValueRecords<'a> {
+    key: String,
+    values: Vec<String>,
+    slots: SlotDrain<'a>,
+}
+
+impl MetadataValueRecords<'_> {
+    pub fn next_record(&mut self) -> io::Result<Option<MetadataValueData>> {
+        Ok(self
+            .slots
+            .next_slot()?
+            .map(|(slot, totals, patterns)| MetadataValueData {
+                key: self.key.clone(),
+                value: self.values.get(slot).cloned(),
+                documents_admitted: totals.documents,
+                sentences_admitted: totals.sentences,
+                tokens_admitted: totals.tokens,
+                patterns,
+            }))
     }
 }

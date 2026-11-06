@@ -32,7 +32,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                 },
                 StreamPhase {
                     name: "results",
-                    events: &["match", "document", "section", "summary"],
+                    events: &["match", "document", "section", "metadata_value", "summary"],
                     min: 0,
                     max: None,
                 },
@@ -91,6 +91,7 @@ pub enum QueryEvent {
     Summary(SummaryData),
     Document(DocumentData),
     Section(SectionData),
+    MetadataValue(MetadataValueData),
     Complete(QueryComplete),
 }
 
@@ -106,6 +107,7 @@ impl QueryEvent {
             Self::Summary(_) => "summary",
             Self::Document(_) => "document",
             Self::Section(_) => "section",
+            Self::MetadataValue(_) => "metadata_value",
             Self::Complete(_) => "complete",
         }
     }
@@ -781,14 +783,34 @@ pub struct SectionData {
     pub tokens_admitted: u64,
     /// Every published pattern, in catalog order, including those with no
     /// match in this section.
-    pub patterns: Vec<SectionPatternCount>,
+    pub patterns: Vec<PatternCount>,
 }
 
+/// One value of the document metadata key in a `--by-metadata` summary,
+/// published when at least one admitted sentence lies in a document with that
+/// value. A document listing several values is counted under each of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SectionPatternCount {
+pub struct MetadataValueData {
+    /// The `@document.KEY` selector the run counts by.
+    pub key: String,
+    /// The value as `--where` compares it; `null` for documents without the
+    /// key or with an empty list.
+    pub value: Option<String>,
+    /// Documents with this value and at least one admitted sentence.
+    pub documents_admitted: u64,
+    pub sentences_admitted: u64,
+    pub tokens_admitted: u64,
+    /// Every published pattern, in catalog order, including those with no
+    /// match under this value.
+    pub patterns: Vec<PatternCount>,
+}
+
+/// One published pattern's counts within a section or metadata value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PatternCount {
     pub pattern: String,
     pub matches: u64,
-    /// Admitted sentences in this section with at least one match.
+    /// Admitted sentences in this section or value with at least one match.
     pub sentences_matched: u64,
 }
 

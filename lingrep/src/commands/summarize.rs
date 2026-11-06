@@ -38,8 +38,9 @@ use crate::protocol::query::{
 };
 use crate::protocol::write_jsonl;
 use crate::summary::{
-    AggregationGroup, AggregationInput, FinalizedSummary, OwnedAggregationInput, SectionTally,
-    SummaryAggregator, SummaryPartition, SummaryRow, shard_hash,
+    AggregationGroup, AggregationInput, FinalizedSummary, MetadataValueTally,
+    OwnedAggregationInput, SectionTally, SummaryAggregator, SummaryPartition, SummaryRow,
+    shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -183,6 +184,20 @@ pub fn run(
             "--by-section requires --json".to_owned(),
         ));
     }
+    if args.by_metadata.is_some() && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "--by-metadata requires --json".to_owned(),
+        ));
+    }
+    if let Some(key) = args
+        .by_metadata
+        .as_ref()
+        .filter(|key| key.strip_prefix("@document.").is_none_or(str::is_empty))
+    {
+        return Err(CliError::InvalidArgs(format!(
+            "summarize --by-metadata accepts only @document.KEY, not {key}"
+        )));
+    }
     if let Some(key) = args
         .source_metadata
         .iter()
@@ -212,16 +227,16 @@ pub fn run(
         output,
     )?;
     let selected_corpus = resolved_corpus.corpus.as_deref();
-    let sections = if args.by_section {
-        let Some(path) = selected_corpus else {
-            return Err(CliError::InvalidArgs(
-                "--by-section requires a prepared corpus: pass --corpus or --cache".to_owned(),
-            ));
-        };
-        Some(section_labels(path)?)
-    } else {
-        None
-    };
+    if args.by_section && selected_corpus.is_none() {
+        return Err(CliError::InvalidArgs(
+            "--by-section requires a prepared corpus: pass --corpus or --cache".to_owned(),
+        ));
+    }
+    if args.by_metadata.is_some() && selected_corpus.is_none() {
+        return Err(CliError::InvalidArgs(
+            "--by-metadata requires a prepared corpus: pass --corpus or --cache".to_owned(),
+        ));
+    }
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -230,6 +245,7 @@ pub fn run(
         bound,
         run: run_facts,
         scope,
+        provenance,
     } = resolve_matching_query(
         &args.input,
         selected_corpus,
@@ -244,8 +260,27 @@ pub fn run(
         sample.filter(|_| args.sample.blocks),
         // A sentence the posting index skips still counts toward its
         // document's admitted tokens.
-        sample.is_none() && scope_clause.is_none() && !args.by_document && !args.by_section,
+        sample.is_none()
+            && scope_clause.is_none()
+            && !args.by_document
+            && !args.by_section
+            && args.by_metadata.is_none(),
+        args.by_section || args.by_metadata.is_some(),
     )?;
+    let provenance = || {
+        provenance
+            .as_deref()
+            .expect("a prepared query opens provenance for --by-section and --by-metadata")
+    };
+    let sections = args
+        .by_section
+        .then(|| section_labels(provenance()))
+        .transpose()?;
+    let metadata_values = args
+        .by_metadata
+        .as_ref()
+        .map(|key| Ok::<_, CliError>((key.clone(), document_values(provenance(), key)?)))
+        .transpose()?;
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
     let run_id = random_id();
@@ -341,6 +376,12 @@ pub fn run(
             .map(|labels| SectionTally::new(labels, aggregation.temp_budget()))
             .transpose()
             .map_err(CliError::Aggregation)?;
+        let metadata_values = metadata_values
+            .map(|(key, documents)| {
+                MetadataValueTally::new(key, documents, aggregation.temp_budget())
+            })
+            .transpose()
+            .map_err(CliError::Aggregation)?;
         let mut sink = SummarySink {
             aggregation: Some(aggregation),
             aggregation_error: None,
@@ -349,6 +390,7 @@ pub fn run(
             records_unkeyed: 0,
             documents: args.by_document.then(BTreeMap::new),
             sections,
+            metadata_values,
         };
         let presentation_progress = PresentationProgress::stderr(
             &config.stderr,
@@ -445,6 +487,7 @@ pub fn run(
         let records_unkeyed = sink.records_unkeyed;
         let documents = sink.documents.take();
         let sections = sink.sections.take();
+        let metadata_values = sink.metadata_values.take();
         drop(sink);
 
         let (complete_corpus, inventory) = lifecycle.complete(FilesystemCompletion::Full)?;
@@ -456,6 +499,10 @@ pub fn run(
         let published = pattern_ordinals.values().copied().collect::<Vec<_>>();
         let mut sections = sections
             .map(|sections| sections.into_records(&published, &pattern_names))
+            .transpose()
+            .map_err(CliError::Aggregation)?;
+        let mut metadata_values = metadata_values
+            .map(|values| values.into_records(&published, &pattern_names))
             .transpose()
             .map_err(CliError::Aggregation)?;
         let temp_high_water = finalized.peak_temp_bytes();
@@ -548,6 +595,14 @@ pub fn run(
                 )?;
             }
         }
+        if let Some(values) = metadata_values.as_mut() {
+            while let Some(value) = values.next_record().map_err(CliError::Aggregation)? {
+                publish_query_jsonl(
+                    &mut writer,
+                    &QueryEnvelope::new(QueryEvent::MetadataValue(value)),
+                )?;
+            }
+        }
         let mut event_writer = MachineSummaryEventWriter {
             writer: &mut writer,
             output,
@@ -582,12 +637,14 @@ struct SummarySink<'a> {
     /// Per-document admission under `--by-document`, keyed by document ordinal.
     documents: Option<BTreeMap<u64, DocumentTally>>,
     sections: Option<SectionTally>,
+    metadata_values: Option<MetadataValueTally>,
 }
 
-/// Each section label of the artifact at `path`, with the corpus sentence
-/// ordinals it covers.
-fn section_labels(path: &std::path::Path) -> Result<Vec<(String, RoaringTreemap)>, CliError> {
-    let provenance = lingrep_corpus::CorpusArtifact::open(path)?.provenance_reader()?;
+/// Each section label of the artifact that `provenance` reads, with the
+/// corpus sentence ordinals it covers.
+fn section_labels(
+    provenance: &lingrep_corpus::BlockingProvenance,
+) -> Result<Vec<(String, RoaringTreemap)>, CliError> {
     let (coverage, spans) = provenance.block_on(async {
         let view = provenance.view();
         let coverage = view
@@ -622,6 +679,48 @@ fn section_labels(path: &std::path::Path) -> Result<Vec<(String, RoaringTreemap)
         }
     }
     Ok(labels)
+}
+
+/// Each document's corpus sentence range in the artifact that `provenance`
+/// reads, with the values of `key` (`@document.NAME`) as `--where` compares
+/// them.
+fn document_values(
+    provenance: &lingrep_corpus::BlockingProvenance,
+    key: &str,
+) -> Result<Vec<(std::ops::Range<u64>, Vec<String>)>, CliError> {
+    use lingrep_core::corpus::{MetadataScalar, MetadataValue};
+    let name = key
+        .strip_prefix("@document.")
+        .expect("--by-metadata names a @document key");
+    let mut documents = Vec::new();
+    let mut cursor = 0;
+    loop {
+        let page = provenance.block_on(provenance.view().document_metadata_page(cursor))?;
+        if page.is_empty() {
+            return Ok(documents);
+        }
+        for row in page {
+            let end = row.first_sentence + row.sentence_count;
+            cursor = end;
+            let metadata = crate::scope_precompute::document_metadata(&row)
+                .map_err(|error| CliError::Corpus(error.message))?;
+            let values = match metadata.iter().find(|(candidate, _)| candidate == name) {
+                None => Vec::new(),
+                Some((_, MetadataValue::Scalar(scalar))) => vec![scalar.comparison_text()],
+                Some((_, MetadataValue::Scalars(list))) => {
+                    list.iter().map(MetadataScalar::comparison_text).collect()
+                }
+                Some((_, MetadataValue::Opaque(_))) => {
+                    return Err(CliError::InvalidArgs(format!(
+                        "--by-metadata {key}: document {} has a value that is neither a scalar \
+                         nor a list of scalars",
+                        row.document_id.get()
+                    )));
+                }
+            };
+            documents.push((row.first_sentence..end, values));
+        }
+    }
 }
 
 struct DocumentTally {
@@ -889,13 +988,13 @@ impl SummarySink<'_> {
             .collect()
     }
 
-    fn observe_sections(
+    fn observe_slots(
         &mut self,
         location: &lingrep_core::execution::SentenceLocation,
         tokens: usize,
         groups: &[(SummaryPartition, Option<(OwnedAggregationInput, u64)>)],
     ) -> Result<(), ExecutionError> {
-        self.observe_section_patterns(
+        self.observe_slot_patterns(
             location,
             tokens,
             groups
@@ -904,16 +1003,25 @@ impl SummarySink<'_> {
         )
     }
 
-    fn observe_section_patterns(
+    fn observe_slot_patterns(
         &mut self,
         location: &lingrep_core::execution::SentenceLocation,
         tokens: usize,
         patterns: impl Iterator<Item = u64>,
     ) -> Result<(), ExecutionError> {
-        let Some(sections) = self.sections.as_mut() else {
-            return Ok(());
+        let observed = match (self.sections.as_mut(), self.metadata_values.as_mut()) {
+            (None, None) => return Ok(()),
+            (Some(sections), _) => sections.observe(
+                location.corpus_sentence_ordinal,
+                location.document_ordinal,
+                tokens,
+                patterns,
+            ),
+            (None, Some(values)) => {
+                values.observe(location.corpus_sentence_ordinal, tokens, patterns)
+            }
         };
-        if let Err(error) = sections.observe(location.corpus_sentence_ordinal, tokens, patterns) {
+        if let Err(error) = observed {
             let message = error.to_string();
             self.aggregation_error = Some(error);
             return Err(ExecutionError::Sink(message));
@@ -961,7 +1069,7 @@ impl SummarySink<'_> {
                 .get(record.pattern)
                 .copied()
                 .ok_or_else(|| ExecutionError::Sink("unknown summary pattern".into()))?;
-            if self.sections.is_some() {
+            if self.sections.is_some() || self.metadata_values.is_some() {
                 matched.push(pattern_ordinal);
             }
             let Some(grouped) = self.grouping(location, sentence, record)? else {
@@ -980,7 +1088,7 @@ impl SummarySink<'_> {
                 return Err(ExecutionError::Sink(message));
             }
         }
-        self.observe_section_patterns(location, sentence.len(), matched.into_iter())?;
+        self.observe_slot_patterns(location, sentence.len(), matched.into_iter())?;
         // Every match is folded into the aggregation; nothing is skipped.
         Ok(SinkControl::Continue { records_emitted })
     }
@@ -1008,7 +1116,7 @@ impl MatchSink for SummarySink<'_> {
     ) -> Result<SinkControl, ExecutionError> {
         self.observe_sentence(location, sentence.len())?;
         let groups = self.group_owned_records(location, sentence, records)?;
-        self.observe_sections(location, sentence.len(), &groups)?;
+        self.observe_slots(location, sentence.len(), &groups)?;
         let records_emitted = self.add_owned_groups(groups)?;
         Ok(SinkControl::Continue { records_emitted })
     }
@@ -1056,7 +1164,7 @@ impl MatchSink for SummarySink<'_> {
             }
             self.observe_sentence(location, sentence.len())?;
             let groups = groups?;
-            self.observe_sections(location, sentence.len(), &groups)?;
+            self.observe_slots(location, sentence.len(), &groups)?;
             let records_emitted = self.add_owned_groups(groups)?;
             controls.push(SinkControl::Continue { records_emitted });
             if cancel.is_cancelled() {

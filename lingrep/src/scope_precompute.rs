@@ -215,7 +215,7 @@ impl ActiveLabels for ActiveAt<'_> {
 /// artifact invariant and stops the run. The writer serialises this column with
 /// `serde_json::to_string` over an already-validated `Metadata`, so there is no
 /// third possibility that is merely unusual data.
-fn document_metadata(
+pub(crate) fn document_metadata(
     row: &DocumentMetadataRow,
 ) -> Result<lingrep_core::corpus::Metadata, ScopeResolutionError> {
     let Some(raw) = row.metadata_json.as_deref() else {

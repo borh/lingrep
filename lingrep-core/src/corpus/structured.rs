@@ -356,6 +356,16 @@ impl MetadataValue {
 }
 
 impl MetadataScalar {
+    /// The text a `--where` comparison or membership test compares with its
+    /// literal, so the string `"1"` and the number `1` compare equal.
+    #[must_use]
+    pub fn comparison_text(&self) -> String {
+        match self {
+            Self::String(text) | Self::Number(text) => text.clone(),
+            Self::Bool(value) => value.to_string(),
+        }
+    }
+
     fn to_json(&self) -> serde_json::Value {
         match self {
             Self::String(value) => serde_json::Value::String(value.clone()),

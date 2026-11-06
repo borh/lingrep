@@ -72,6 +72,8 @@ pub(crate) struct ResolvedMatchingQuery {
     pub(crate) bound: BoundCatalog,
     pub(crate) run: QueryRunFacts,
     pub(crate) scope: QueryScope,
+    /// The prepared corpus's provenance reader, when the query opened one.
+    pub(crate) provenance: Option<Arc<lingrep_corpus::BlockingProvenance>>,
 }
 
 #[derive(Default)]
@@ -144,6 +146,7 @@ pub(crate) fn resolve_matching_query(
     metadata_projection: Option<lingrep_core::corpus::SourceMetadataProjection>,
     block_sample: Option<lingrep_core::execution::CorpusSample>,
     allow_selective: bool,
+    needs_provenance: bool,
 ) -> Result<ResolvedMatchingQuery, CliError> {
     if block_sample.is_some() && selected_corpus.is_none() {
         return Err(CliError::InvalidArgs(
@@ -175,7 +178,8 @@ pub(crate) fn resolve_matching_query(
             &analyzer_name,
             config,
         )?;
-        let provenance = if scope_clause.is_some()
+        let provenance = if needs_provenance
+            || scope_clause.is_some()
             || metadata_projection.is_some()
             || !division_kinds.is_empty()
         {
@@ -286,6 +290,7 @@ pub(crate) fn resolve_matching_query(
         let (source, source_stats) = query_source::prepared(source);
         ResolvedMatchingQuery {
             scope,
+            provenance,
             source,
             source_stats,
             lifecycle: CompletionObservation::Prepared {
@@ -445,6 +450,7 @@ pub(crate) fn resolve_matching_query(
         };
         ResolvedMatchingQuery {
             scope,
+            provenance: None,
             source,
             source_stats,
             lifecycle,

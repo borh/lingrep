@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sentences, its admitted sentence and token counts, and per-pattern
   `matches` and `sentences_matched`. It requires `--json` and `--corpus` or
   `--cache`.
+- `summarize --by-metadata @document.KEY` counts the same per-pattern
+  `matches` and `sentences_matched` under every value of one document
+  metadata key in one scan, together with each value's admitted documents,
+  sentences and tokens. It publishes them as query/v2 `metadata_value`
+  records. A list-valued key is counted once per listed value, and documents
+  with no value are counted in a record whose `value` is `null`. It requires
+  `--json` and `--corpus` or `--cache`.
 
 ### Changed
 
