@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use lingrep_core::execution::{ExecutionError, OversizedSentenceOmissions, TokenizedAdmission};
-use lingrep_corpus::PreparedSentenceSource;
+use lingrep_corpus::{PreparedDocumentStats, PreparedSentenceSource};
 
 use crate::direct_source::{
     BoxSentenceSource, DirectSentenceSource, DirectSourceStats, OversizedSentenceOmissionSummary,
@@ -20,11 +20,9 @@ where
     (source, QueryInputStats::Direct(stats))
 }
 
-pub(crate) fn prepared(
-    source: PreparedSentenceSource,
-    documents: u64,
-) -> (BoxSentenceSource, QueryInputStats) {
+pub(crate) fn prepared(source: PreparedSentenceSource) -> (BoxSentenceSource, QueryInputStats) {
     let omissions = Arc::new(Mutex::new(OversizedSentenceOmissions::default()));
+    let documents = source.document_stats();
     (
         Box::new(source.with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))),
         QueryInputStats::Prepared {
@@ -37,16 +35,17 @@ pub(crate) fn prepared(
 pub(crate) enum QueryInputStats {
     Direct(DirectSourceStats),
     Prepared {
-        documents: u64,
+        documents: PreparedDocumentStats,
         omissions: Arc<Mutex<OversizedSentenceOmissions>>,
     },
 }
 
 impl QueryInputStats {
+    /// The documents with at least one admitted sentence.
     pub(crate) fn documents_admitted(&self) -> u64 {
         match self {
             Self::Direct(stats) => stats.documents_admitted(),
-            Self::Prepared { documents, .. } => *documents,
+            Self::Prepared { documents, .. } => documents.admitted_documents(),
         }
     }
 
@@ -102,10 +101,9 @@ mod tests {
     fn prepared_stats_map_omissions_into_the_direct_summary_shape() {
         let omissions = Arc::new(Mutex::new(OversizedSentenceOmissions::default()));
         let stats = QueryInputStats::Prepared {
-            documents: 3,
+            documents: PreparedDocumentStats::default(),
             omissions: Arc::clone(&omissions),
         };
-        assert_eq!(stats.documents_admitted(), 3);
         assert_eq!(
             stats.oversized_sentence_omissions().expect("handle reads"),
             None

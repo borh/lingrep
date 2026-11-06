@@ -273,7 +273,6 @@ pub(crate) fn resolve_matching_query(
         let analysis_identity = encode_digest(artifact.analysis_identity().as_bytes());
         let inventory = protocol_inventory(*artifact.inventory_stats());
         let traversal_limits = protocol_traversal_limits_from_report(artifact.discovery_report());
-        let documents = artifact.document_count();
         let analyzer_run = AnalyzerRun::new(
             artifact.analyzer(),
             artifact.trust_class().address_component(),
@@ -284,7 +283,7 @@ pub(crate) fn resolve_matching_query(
             None => open_source()?,
         };
         let filter_stats = source.filter_stats();
-        let (source, source_stats) = query_source::prepared(source, documents);
+        let (source, source_stats) = query_source::prepared(source);
         ResolvedMatchingQuery {
             scope,
             source,

@@ -374,7 +374,8 @@ carries the `document` ordinal, and before the rows the run publishes one
 `source_name`, `sentences_admitted` and `tokens_admitted`. A document with no
 match still has a `document` record, so the token count can normalize the
 frequencies. A document with no admitted sentence, such as an empty one, has
-no record but is still counted in `counters.documents_admitted`.
+no record and is not counted in `counters.documents_admitted`, which equals
+the number of `document` records.
 `--source-metadata @document.KEY` adds the selected fields to each `document`
 record as `source_metadata.document`, as on a `match` record.
 

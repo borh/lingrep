@@ -578,6 +578,28 @@ impl MappedLocations {
 
     /// Returns one authoritative sentence location by corpus ordinal.
     pub(crate) fn sentence(&self, ordinal: u64) -> Result<SentenceLocation, CorpusError> {
+        let record = self.record(ordinal)?;
+        let document_id = DocumentId::new(read_u64(record, 0)?);
+        let document_ordinal = read_u64(record, 8)?;
+        let document_sentence_ordinal = read_u64(record, 16)?;
+        let source_name = Arc::from(self.document_name(document_id)?);
+        Ok(SentenceLocation {
+            lookaround_divisions: None,
+            source_metadata: None,
+            corpus_sentence_ordinal: ordinal,
+            document_id,
+            document_ordinal,
+            document_sentence_ordinal,
+            source_name,
+        })
+    }
+
+    /// Returns the document ordinal of one sentence, without its source name.
+    pub(crate) fn document_ordinal(&self, ordinal: u64) -> Result<u64, CorpusError> {
+        read_u64(self.record(ordinal)?, 8)
+    }
+
+    fn record(&self, ordinal: u64) -> Result<&[u8], CorpusError> {
         if ordinal >= self.sentence_count {
             return Err(invalid("sentence ordinal is outside the dense relation"));
         }
@@ -605,20 +627,7 @@ impl MappedLocations {
             self.mark_block_verified(block_ordinal);
         }
         let record_offset = checked_mul(ordinal - block.start, RECORD_LEN)?;
-        let record = checked_subslice(payload, record_offset, RECORD_LEN)?;
-        let document_id = DocumentId::new(read_u64(record, 0)?);
-        let document_ordinal = read_u64(record, 8)?;
-        let document_sentence_ordinal = read_u64(record, 16)?;
-        let source_name = Arc::from(self.document_name(document_id)?);
-        Ok(SentenceLocation {
-            lookaround_divisions: None,
-            source_metadata: None,
-            corpus_sentence_ordinal: ordinal,
-            document_id,
-            document_ordinal,
-            document_sentence_ordinal,
-            source_name,
-        })
+        checked_subslice(payload, record_offset, RECORD_LEN)
     }
 
     /// Looks up a logical document name by its stable document ID.

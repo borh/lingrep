@@ -152,12 +152,14 @@ pub(crate) struct OversizedSentenceOmissionSummary {
 #[derive(Clone, Default)]
 struct DirectSourceStatsState {
     documents_admitted: u64,
+    last_admitted_document: Option<u64>,
     max_staged_raw_bytes: usize,
     oversized_sentence_omissions: Option<OversizedSentenceOmissionSummary>,
     observed_division_kinds: std::collections::BTreeSet<compact_str::CompactString>,
 }
 
 impl DirectSourceStats {
+    /// The documents with at least one sentence this source has returned.
     pub fn documents_admitted(&self) -> u64 {
         self.state
             .lock()
@@ -508,15 +510,6 @@ where
                         if self.source_metadata_projection.is_some() {
                             self.document_metadata = metadata;
                         }
-                        let mut stats = self
-                            .stats
-                            .state
-                            .lock()
-                            .map_err(|_| ExecutionError::ResourceAccounting)?;
-                        stats.documents_admitted = stats
-                            .documents_admitted
-                            .checked_add(1)
-                            .ok_or(ExecutionError::ResourceAccounting)?;
                         None
                     }
                     Some(Ok(AdmittedCorpusEvent::Sentence(sentence))) => {
@@ -756,6 +749,16 @@ where
                 .lock()
                 .map_err(|_| ExecutionError::ResourceAccounting)?;
             stats.max_staged_raw_bytes = stats.max_staged_raw_bytes.max(raw_bytes);
+            for sentence in &batch {
+                let document = sentence.location.document_ordinal;
+                if stats.last_admitted_document != Some(document) {
+                    stats.last_admitted_document = Some(document);
+                    stats.documents_admitted = stats
+                        .documents_admitted
+                        .checked_add(1)
+                        .ok_or(ExecutionError::ResourceAccounting)?;
+                }
+            }
         }
         if batch.is_empty() {
             return Ok(None);

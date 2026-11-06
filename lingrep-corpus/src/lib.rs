@@ -72,5 +72,5 @@ pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
     artifact_bytes, containing_directory, is_superseded, remove_superseded,
 };
-pub use tokens::{PreparedScopeStats, PreparedSentenceSource};
+pub use tokens::{PreparedDocumentStats, PreparedScopeStats, PreparedSentenceSource};
 pub use verify::{ComponentVerification, VerificationReport};

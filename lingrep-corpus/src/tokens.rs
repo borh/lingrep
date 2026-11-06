@@ -792,6 +792,18 @@ impl PreparedScopeStats {
     }
 }
 
+/// Counts the documents with at least one admitted sentence: a sentence this
+/// source returned, or one it skipped as proven absent.
+#[derive(Clone, Default)]
+pub struct PreparedDocumentStats(Arc<AtomicU64>);
+
+impl PreparedDocumentStats {
+    #[must_use]
+    pub fn admitted_documents(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 struct SectionAdmission {
     included: Option<Vec<String>>,
     include_unlabelled: bool,
@@ -819,6 +831,11 @@ pub struct PreparedSentenceSource {
     block_sample: Option<lingrep_core::execution::CorpusSample>,
     pub(crate) candidates: Option<crate::postings::Candidates>,
     filter_stats: crate::PreparedFilterStats,
+    document_stats: PreparedDocumentStats,
+    last_admitted_document: Option<u64>,
+    /// Document ordinals of sentences skipped as proven absent and not yet
+    /// counted, in ascending order.
+    proven_absent_documents: Vec<u64>,
 }
 
 pub(crate) enum DivisionLookup {
@@ -919,6 +936,9 @@ impl PreparedSentenceSource {
             block_sample: None,
             candidates: None,
             filter_stats: crate::PreparedFilterStats::default(),
+            document_stats: PreparedDocumentStats::default(),
+            last_admitted_document: None,
+            proven_absent_documents: Vec::new(),
         })
     }
     /// The returned counter tracks exclusions after the source is moved into execution.
@@ -947,6 +967,52 @@ impl PreparedSentenceSource {
     /// Returns a live counter shared with this source, including after it reaches EOF.
     pub fn filter_stats(&self) -> crate::PreparedFilterStats {
         self.filter_stats.clone()
+    }
+
+    /// Returns a live counter shared with this source, including after it reaches EOF.
+    pub fn document_stats(&self) -> PreparedDocumentStats {
+        self.document_stats.clone()
+    }
+
+    /// Counts the documents of `batch` and of the sentences skipped since the
+    /// previous batch.
+    fn count_batch_documents(&mut self, batch: &ExecutionBatch) {
+        let mut documents = std::mem::take(&mut self.proven_absent_documents);
+        match batch {
+            ExecutionBatch::Text(sentences) => documents.extend(
+                sentences
+                    .iter()
+                    .map(|sentence| sentence.location.document_ordinal),
+            ),
+            ExecutionBatch::Tokenized { sentences, .. } => documents.extend(
+                sentences
+                    .iter()
+                    .map(|sentence| sentence.location.document_ordinal),
+            ),
+            ExecutionBatch::BoundTokenized { sentences, .. } => documents.extend(
+                sentences
+                    .iter()
+                    .map(|sentence| sentence.location.document_ordinal),
+            ),
+        }
+        self.count_admitted_documents(documents);
+    }
+
+    /// Counts each document in `documents` not counted before.
+    ///
+    /// This source reads sentences in ascending ordinal order, so one batch's
+    /// document ordinals are never below an earlier batch's.
+    fn count_admitted_documents(&mut self, mut documents: Vec<u64>) {
+        documents.sort_unstable();
+        for document in documents {
+            if self
+                .last_admitted_document
+                .is_none_or(|last| document > last)
+            {
+                self.last_admitted_document = Some(document);
+                self.document_stats.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 
     /// Draws physical token blocks by their first corpus sentence ordinal, before decoding.
@@ -1218,6 +1284,7 @@ impl PreparedSentenceSource {
             }
             if self.candidates.is_some() {
                 let mut retained = Vec::with_capacity(ordinals.len());
+                let mut absent = Vec::new();
                 for ordinal in ordinals {
                     let resident = self
                         .reader
@@ -1236,7 +1303,18 @@ impl PreparedSentenceSource {
                         retained.push(ordinal);
                     } else {
                         self.filter_stats.record(1);
+                        absent.push(ordinal);
                     }
+                }
+                let mut runs = absent.chunk_by(|left, right| left + 1 == *right);
+                while let Some(&[first, .., last] | &[first @ last]) = runs.next() {
+                    push_run_documents(
+                        &self.locations,
+                        first,
+                        last,
+                        &mut self.proven_absent_documents,
+                    )
+                    .map_err(|error| self.fail(first, error))?;
                 }
                 ordinals = retained;
                 if ordinals.is_empty() {
@@ -1470,9 +1548,12 @@ impl SentenceBatchSource for PreparedSentenceSource {
     ) -> Result<Option<ExecutionBatch>, ExecutionError> {
         loop {
             let Some(batch) = self.next_decoded_batch(limits)? else {
+                let documents = std::mem::take(&mut self.proven_absent_documents);
+                self.count_admitted_documents(documents);
                 return Ok(None);
             };
             let Some(sections) = &self.sections else {
+                self.count_batch_documents(&batch);
                 return Ok(Some(batch));
             };
             let ExecutionBatch::BoundTokenized { sentences, charges } = batch else {
@@ -1513,13 +1594,62 @@ impl SentenceBatchSource for PreparedSentenceSource {
                 }
             }
             if !kept.is_empty() {
-                return Ok(Some(ExecutionBatch::BoundTokenized {
+                let batch = ExecutionBatch::BoundTokenized {
                     sentences: kept,
                     charges: kept_charges,
-                }));
+                };
+                self.count_batch_documents(&batch);
+                return Ok(Some(batch));
             }
         }
     }
+}
+
+/// Appends the distinct document ordinals of sentences `first..=last`, in
+/// ascending order, reading one location per document boundary and bisection
+/// step rather than one per sentence.
+fn push_run_documents(
+    locations: &MappedLocations,
+    first: u64,
+    last: u64,
+    documents: &mut Vec<u64>,
+) -> Result<(), CorpusError> {
+    fn split(
+        locations: &MappedLocations,
+        (first, first_document): (u64, u64),
+        (last, last_document): (u64, u64),
+        documents: &mut Vec<u64>,
+    ) -> Result<(), CorpusError> {
+        if first_document == last_document {
+            return Ok(());
+        }
+        if last == first + 1 {
+            documents.push(last_document);
+            return Ok(());
+        }
+        let middle = first + (last - first) / 2;
+        let middle_document = locations.document_ordinal(middle)?;
+        split(
+            locations,
+            (first, first_document),
+            (middle, middle_document),
+            documents,
+        )?;
+        split(
+            locations,
+            (middle, middle_document),
+            (last, last_document),
+            documents,
+        )
+    }
+    let first_document = locations.document_ordinal(first)?;
+    documents.push(first_document);
+    split(
+        locations,
+        (first, first_document),
+        (last, locations.document_ordinal(last)?),
+        documents,
+    )
 }
 
 fn merge_graph_projection(

@@ -805,6 +805,7 @@ pub enum SummaryGroupData {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunCounters {
+    /// Documents with at least one sentence counted in `sentences_admitted`.
     pub documents_admitted: u64,
     pub sentences_admitted: u64,
     /// Admitted sentences excluded by an exact necessary-condition proof.

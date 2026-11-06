@@ -955,12 +955,150 @@ fn by_document_publishes_every_document_with_an_admitted_sentence() {
         );
         assert_eq!(
             event(&events, "complete")["data"]["counters"]["documents_admitted"],
-            4,
+            3,
             "prepared={prepared}"
         );
         published.push((documents, rows));
     }
     assert_eq!(published[0], published[1]);
+}
+
+/// `counters.documents_admitted` counts the documents with at least one
+/// admitted sentence, which are the documents `--by-document` publishes.
+///
+/// `empty.md` has no sentence and `discussion.md` has none in `methods`, so a
+/// count of documents that pass the metadata predicate differs from it.
+/// `old.md` and the `zoo` documents contain no 猫, so the unscoped `summarize`
+/// without `--by-document` and `matches` skip all their sentences as proven
+/// absent. The `zoo` documents are long enough for the posting index to be
+/// used, one run of skipped sentences spans them and the empty `zoo2.md`, and
+/// `zoo5.md` starts after the last sentence the source returns.
+#[test]
+fn documents_admitted_counts_the_documents_by_document_publishes() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("corpus");
+    fs::create_dir_all(&root).unwrap();
+    for (name, text) in [
+        (
+            "recent.md",
+            "---\nyear: 2020\n---\n\n# Methods {.methods}\n\n猫が鳥を見る。\n猫も犬を見る。\n\n\
+             # Results {.results}\n\n猫は犬である。\n",
+        ),
+        (
+            "old.md",
+            "---\nyear: 2005\n---\n\n# Methods {.methods}\n\n犬が鳥を見る。\n",
+        ),
+        (
+            "discussion.md",
+            "---\nyear: 2020\n---\n\n# Discussion {.discussion}\n\n猫が鳥を見る。\n",
+        ),
+        ("empty.md", "---\nyear: 2020\n---\n"),
+    ] {
+        fs::write(root.join(name), text).unwrap();
+    }
+    for name in ["zoo1.md", "zoo3.md", "zoo4.md", "zoo5.md"] {
+        fs::write(
+            root.join(name),
+            format!(
+                "---\nyear: 2005\n---\n\n{}",
+                "犬が鳥を見る。\n".repeat(1000)
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("zoo2.md"), "").unwrap();
+    let artifact = directory.path().join("documents.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_success(&built);
+
+    let run = |prepared: bool, arguments: &[&str], clause: Option<&str>| {
+        let mut command = lingrep();
+        command
+            .arg("--json")
+            .args(arguments)
+            .args(["--pattern", "cat := [lemma=猫]."]);
+        if let Some(clause) = clause {
+            command.args(["--where", clause]);
+        }
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command.arg("--dict-path").arg(dictionary.path()).arg(&root);
+        }
+        let output = command.output().unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        parse_jsonl(&output.stdout)
+    };
+    let counters = |events: &[Value]| event(events, "complete")["data"]["counters"].clone();
+
+    for (clause, published) in [
+        (
+            None,
+            &[
+                "discussion.md",
+                "old.md",
+                "recent.md",
+                "zoo1.md",
+                "zoo3.md",
+                "zoo4.md",
+                "zoo5.md",
+            ][..],
+        ),
+        (
+            Some("@document.year >= 2010"),
+            &["discussion.md", "recent.md"],
+        ),
+        (Some("@section = methods"), &["old.md", "recent.md"]),
+        (
+            Some("@section = methods & @document.year >= 2010"),
+            &["recent.md"],
+        ),
+    ] {
+        let mut by_document_counters = Vec::new();
+        for prepared in [false, true] {
+            let case = format!("clause={clause:?} prepared={prepared}");
+            let events = run(prepared, &["summarize", "--by-document"], clause);
+            let mut names = events
+                .iter()
+                .filter(|record| record["type"] == "document")
+                .map(|record| {
+                    let name = record["data"]["source_name"].as_str().unwrap();
+                    PathBuf::from(name)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(names, published, "{case}");
+            let by_document = counters(&events);
+            assert_eq!(by_document["documents_admitted"], published.len(), "{case}");
+            for arguments in [&["summarize"][..], &["matches", "--limit", "all"]] {
+                let other = counters(&run(prepared, arguments, clause));
+                for field in ["documents_admitted", "sentences_admitted"] {
+                    assert_eq!(
+                        other[field], by_document[field],
+                        "{case} {arguments:?} {field}"
+                    );
+                }
+            }
+            by_document_counters.push(by_document);
+        }
+        assert_eq!(
+            by_document_counters[0], by_document_counters[1],
+            "clause={clause:?}: direct and prepared counters differ"
+        );
+    }
 }
 
 #[test]

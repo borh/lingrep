@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sum of `tokens_admitted` over the `document` records of
   `summarize --by-document`.
 
+### Fixed
+
+- The query/v2 `complete` record's `counters.documents_admitted` counts the
+  documents with at least one admitted sentence, for `matches` and
+  `summarize` over direct input and `--corpus`. It counted every document
+  whatever the `--where` clause, including a document with no admitted
+  sentence: an empty one, or one whose sentences an `@section` predicate
+  excluded. It now equals the number of `summarize --by-document` `document`
+  records. The document-grain count of a `--where` clause remains
+  `scope.documents.admitted`.
+
 ## [0.7.0] - 2026-11-05
 
 ### Added
