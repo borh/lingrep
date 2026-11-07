@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   excluded. It now equals the number of `summarize --by-document` `document`
   records. The document-grain count of a `--where` clause remains
   `scope.documents.admitted`.
+- `ling coverage` reports in the `scope` record's `admitted_documents` the
+  documents with at least one admitted sentence, the same count as
+  `summarize`'s `counters.documents_admitted` for the same `--where` clause.
+  Over `--corpus` it reported every document in the artifact whatever the
+  clause; over direct input it reported 0.
 
 ## [0.7.0] - 2026-11-05
 

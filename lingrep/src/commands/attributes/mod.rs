@@ -106,25 +106,24 @@ pub fn run(
             });
             let inputs = artifact.analysis_inputs()?;
             write_token_schema_notice(artifact.analyzer(), &inputs, config)?;
-            let documents = artifact.document_count();
             let admission = scope
                 .prepared_scope
                 .as_ref()
                 .map_or(SentenceAdmission::All, |resolved| {
                     resolved.admission.clone()
                 });
+            // `sentence_source`, never `sentence_source_with_attributes`:
+            // this command's answer is *which columns are missing*, so a
+            // projection would manufacture absences it then reports.
+            let source = artifact
+                .bound_sentence_source(&projection)?
+                .with_admission(admission)
+                .with_cancellation(terminal.cancellation().clone());
+            let documents = source.document_stats();
             (
-                // `sentence_source`, never `sentence_source_with_attributes`:
-                // this command's answer is *which columns are missing*, so a
-                // projection would manufacture absences it then reports.
                 (
-                    Box::new(
-                        artifact
-                            .bound_sentence_source(&projection)?
-                            .with_admission(admission)
-                            .with_cancellation(terminal.cancellation().clone()),
-                    ) as BoxSentenceSource,
-                    documents,
+                    Box::new(source) as BoxSentenceSource,
+                    Box::new(move || documents.admitted_documents()) as Box<dyn Fn() -> u64>,
                 ),
                 None,
                 crate::protocol::query::AnalyzerRun::new(
@@ -218,7 +217,10 @@ pub fn run(
                 ))
             };
             (
-                (source, stats.documents_admitted()),
+                (
+                    source,
+                    Box::new(move || stats.documents_admitted()) as Box<dyn Fn() -> u64>,
+                ),
                 analyzer_plan,
                 analyzer_run,
                 schema,
@@ -306,7 +308,7 @@ pub fn run(
                 token_schema_identity: encode_digest(schema.digest().as_bytes()),
                 admitted_tokens: coverage.admitted_tokens(),
                 admitted_sentences,
-                admitted_documents: source_documents,
+                admitted_documents: source_documents(),
                 scope: scope_report
                     .as_ref()
                     .map(serde_json::to_value)

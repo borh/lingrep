@@ -17,7 +17,7 @@ use std::process::Stdio;
 
 use tempfile::TempDir;
 
-use crate::support::{dict_path, fixture, lingrep, lingrep_std};
+use crate::support::{assert_success, dict_path, fixture, lingrep, lingrep_std, parse_jsonl};
 
 /// No dictionary entry can supply `pron` for this, so every attribute the
 /// dictionary would have carried is absent on its tokens.
@@ -369,4 +369,104 @@ fn both_contracts_are_discoverable_from_the_cli() {
         described.contains("lingrep.attributes-tsv/v1"),
         "{described}"
     );
+}
+
+/// The scope record's document, sentence and token counts equal the
+/// `summarize --by-document` counters for the same `--where` clause, on direct
+/// and prepared input. `empty.md` has no sentence and is never counted.
+#[test]
+fn scope_counts_equal_summarize_counters_for_the_same_clause() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("corpus");
+    std::fs::create_dir(&root).unwrap();
+    for (name, text) in [
+        (
+            "recent.md",
+            "---\nyear: 2020\n---\n\n# Methods {.methods}\n\n猫が鳥を見る。\n猫も犬を見る。\n\n\
+             # Results {.results}\n\n猫は犬である。\n",
+        ),
+        (
+            "old.md",
+            "---\nyear: 2005\n---\n\n# Methods {.methods}\n\n犬が鳥を見る。\n",
+        ),
+        (
+            "discussion.md",
+            "---\nyear: 2020\n---\n\n# Discussion {.discussion}\n\n猫が鳥を見る。\n",
+        ),
+        ("empty.md", "---\nyear: 2020\n---\n"),
+    ] {
+        std::fs::write(root.join(name), text).unwrap();
+    }
+    let artifact = directory.path().join("documents.lingcorpus");
+    assert_success(
+        &lingrep()
+            .args(["corpus", "build", "--dict-path"])
+            .arg(dict_path())
+            .arg("--output")
+            .arg(&artifact)
+            .arg(&root)
+            .output()
+            .unwrap(),
+    );
+
+    let run = |prepared: bool, arguments: &[&str], clause: Option<&str>| {
+        let mut command = lingrep();
+        command.arg("--json").args(arguments);
+        if let Some(clause) = clause {
+            command.args(["--where", clause]);
+        }
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command.arg("--dict-path").arg(dict_path()).arg(&root);
+        }
+        let output = command.output().unwrap();
+        assert_success(&output);
+        parse_jsonl(&output.stdout)
+    };
+
+    for (clause, documents) in [
+        (None, 3),
+        (Some("@document.year >= 2010"), 2),
+        (Some("@section = methods"), 2),
+        (Some("@section = methods & @document.year >= 2010"), 1),
+    ] {
+        for prepared in [false, true] {
+            let case = format!("clause={clause:?} prepared={prepared}");
+            let summarize = run(
+                prepared,
+                &[
+                    "summarize",
+                    "--by-document",
+                    "--pattern",
+                    "cat := [lemma=猫].",
+                ],
+                clause,
+            );
+            let counters = &summarize
+                .iter()
+                .find(|record| record["type"] == "complete")
+                .unwrap()["data"]["counters"];
+            let tokens: u64 = summarize
+                .iter()
+                .filter(|record| record["type"] == "document")
+                .map(|record| record["data"]["tokens_admitted"].as_u64().unwrap())
+                .sum();
+            let coverage = run(prepared, &["coverage"], clause);
+            let scope = &coverage
+                .iter()
+                .find(|record| record["type"] == "scope")
+                .unwrap()["data"];
+            assert_eq!(counters["documents_admitted"], documents, "{case}");
+            assert_eq!(
+                scope["admitted_documents"], counters["documents_admitted"],
+                "{case}"
+            );
+            assert_eq!(
+                scope["admitted_sentences"], counters["sentences_admitted"],
+                "{case}"
+            );
+            assert_eq!(scope["admitted_tokens"], tokens, "{case}");
+        }
+    }
 }
