@@ -174,6 +174,11 @@ let
   ]
   ++ mdIncludeArgs;
 
+  countTableArgs = lib.concatMap (table: [
+    "--count-table"
+    (toString table)
+  ]) cfg.countTables;
+
   # `--patterns` is the editor seed, forwarded verbatim and so resolved by
   # lingrep-web against its working directory (`/var/lib/lingrep-web`) — NOT against
   # `--pattern-root`. The assembled root is `<state>/patterns/` and each
@@ -211,7 +216,7 @@ in
         # `lib.escapeShellArgs` fold flag+value into one quoted argv element
         # and lingrep-web's parser would refuse to start. Checking at evaluation
         # prevents activation of a broken generation.
-        assertion = lib.all (t: builtins.isString t) (baseArgs ++ seedArgs ++ corpusArgs);
+        assertion = lib.all (t: builtins.isString t) (baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs);
         message =
           "services.lingrep-web: ExecStart argument lists contain nested "
           + "lists; every element must be a single shell token. Use "
@@ -288,7 +293,7 @@ in
 
       serviceConfig = {
         ExecStart = lib.escapeShellArgs (
-          [ (lib.getExe cfg.package) ] ++ baseArgs ++ seedArgs ++ corpusArgs
+          [ (lib.getExe cfg.package) ] ++ baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs
         );
         User = cfg.user;
         Group = cfg.group;
@@ -311,13 +316,15 @@ in
         LockPersonality = true;
         SystemCallArchitectures = "native";
 
-        # lingrep-web reads the dictionary and corpora but never writes them.
+        # lingrep-web reads the dictionary, corpora and count tables but
+        # never writes them.
         # StateDirectory holds the farms and lingrep-web's artifact output; the
         # operator sources stay read-only.
         ReadOnlyPaths = [
           cfg.dictionary
         ]
-        ++ lib.mapAttrsToList (_: entry: entry.path) cfg.corpora;
+        ++ lib.mapAttrsToList (_: entry: entry.path) cfg.corpora
+        ++ cfg.countTables;
 
         Restart = "on-failure";
         RestartSec = "5s";

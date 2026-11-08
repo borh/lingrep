@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ling table --where` command that reproduces its rows. A table binds to a
   served corpus and a catalog by the identities it records; a table that does
   not bind stops startup with an error naming it.
+- The NixOS module's `services.lingrep-web.countTables` option takes a list of
+  count tables and passes each to lingrep-web as `--count-table`, mounted
+  read-only, so a NixOS deployment can serve the Frequencies view.
 - `ling corpus render ARTIFACT --source-root DIR --output PATH` renders each
   document of a Markdown artifact to HTML in a reading sidecar, with a map
   from each stored sentence to its rendered text. It rejects a source tree or

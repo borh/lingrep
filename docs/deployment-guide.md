@@ -96,6 +96,37 @@ route {
 }
 ```
 
+## Frequencies view
+
+`services.lingrep-web.countTables` lists count tables written by
+`ling summarize --write-table`; the module passes each as `--count-table` and
+mounts it read-only. A non-empty list adds the Frequencies view at
+`frequencies` under the base path. Each table binds to a prepared
+`.lingcorpus` corpus and a catalog by the identities it records, so declare
+that corpus in `corpora` and its catalog in `patterns.catalogs`. A table also
+records the matcher revision, so write it with the `ling` from the same lingrep
+release as the unit's `lingrep-web`:
+
+```nix
+services.lingrep-web = {
+  corpora.works.path = "/srv/corpora/works.lingcorpus";
+  patterns.catalogs = [ (inputs.lingrep.outPath + "/patterns") ];
+  countTables = [ "/srv/tables/works.collexeme.lingtable" ];
+};
+```
+
+```bash
+ling summarize --patterns patterns/collexeme.lx \
+  --corpus /srv/corpora/works.lingcorpus \
+  --write-table /srv/tables/works.collexeme.lingtable
+```
+
+A table that does not bind stops the unit at startup; `journalctl -u
+lingrep-web` shows the error naming it. The binding rules and errors are in
+[the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
+Rebuild a table after changing its corpus or catalog, and after an upgrade
+that the startup error reports as a different matcher revision.
+
 ## Caddy vhost
 
 ```caddyfile

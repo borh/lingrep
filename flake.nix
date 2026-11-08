@@ -927,6 +927,7 @@
             lingrep-web-nixos-smoke = import ./nix/modules/lingrep-web/test.nix {
               inherit pkgs;
               package = self'.packages.lingrep-web;
+              ling = self'.packages.lingrep;
             };
 
             # The corpus link naming rule, by evaluation rather than by boot,

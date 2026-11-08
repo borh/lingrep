@@ -128,6 +128,25 @@
       '';
     };
 
+    countTables = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = [ "/var/lib/lingrep-tables/main-collexeme.lingtable" ];
+      description = ''
+        Count tables written by `ling summarize --write-table`, each passed
+        as `--count-table`. A non-empty list adds the Frequencies view.
+        Each table must have been written over a prepared `.lingcorpus`
+        artifact declared in `corpora` and a catalog that is in one of
+        `patterns.catalogs` with the same source, by a `ling` with the
+        same matcher revision as this package (the same lingrep release
+        has it); a table that does not match stops the unit at startup
+        with an error naming it.
+
+        Write each entry as a Nix string; an unquoted path literal copies
+        the table into the store.
+      '';
+    };
+
     patterns = {
       catalogs = lib.mkOption {
         type = lib.types.listOf (lib.types.either lib.types.path lib.types.package);
