@@ -1705,8 +1705,9 @@ options must be the ones it was built with. The command rejects options whose
 reader identity differs from the artifact's with exit code 2. It reads the
 tree once to compute its source identity, and rejects a tree whose identity
 differs from the artifact's. It then reads each document again with the
-Markdown reader. If the sentences it reads differ from the stored ones, the
-command fails and publishes nothing.
+Markdown reader and verifies the source identity of the bytes it renders. If
+those bytes differ from the observed source, or the sentences differ from
+the stored ones, the command fails and publishes nothing.
 
 The renderer applies the dialect's own rules first: frontmatter and `<!-- -->`
 comments are not rendered, `:::` regions become `<div>` elements carrying

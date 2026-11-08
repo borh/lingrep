@@ -287,3 +287,59 @@ fn render_rejects_another_source_tree_or_other_reader_options() {
         0
     );
 }
+
+#[test]
+fn render_rejects_source_bytes_changed_after_observation() {
+    let fixture = fixture();
+    let artifact = CorpusArtifact::open(&fixture.artifact).unwrap();
+    let observation = lingrep_corpus::SourceObservation::new();
+    for name in ["a.md", "b.md", "c.md"] {
+        observation.begin_source(name).unwrap();
+        observation
+            .update_source_bytes(&fs::read(fixture.root.join(name)).unwrap())
+            .unwrap();
+        observation.end_source().unwrap();
+    }
+    let observed = observation.finish().unwrap();
+    assert_eq!(observed.source_identity(), artifact.source_identity());
+    for name in ["a.md", "c.md"] {
+        let output = fixture.scratch.join(format!("changed-{name}.reading"));
+        let writer = lingrep_corpus::ReadingSidecarWriter::new(
+            &artifact,
+            lingrep_cli_common::MarkdownReaderArgs::default()
+                .resolve()
+                .unwrap(),
+            &output,
+        )
+        .unwrap();
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(writer.write(
+                &observed,
+                |requested| {
+                    let bytes = fs::read(fixture.root.join(requested))?;
+                    if requested == name {
+                        Ok(String::from_utf8(bytes)
+                            .unwrap()
+                            .replace("# ", "# changed ")
+                            .into_bytes())
+                    } else {
+                        Ok(bytes)
+                    }
+                },
+                &lingrep_core::execution::CancellationFlag::new(),
+            ));
+        assert!(
+            matches!(result, Err(ReadingSidecarError::SourceMismatch { .. })),
+            "changed {name} was accepted"
+        );
+        assert!(!output.exists());
+        assert!(!fs::read_dir(&fixture.scratch).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("staging")
+        }));
+    }
+}

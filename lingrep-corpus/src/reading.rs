@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::publication::StagingDirectory;
 use crate::{
     CorpusArtifact, CorpusError, DocumentId, ObservedSources, ReaderIdentity, SentenceId,
-    format_identity,
+    SourceObservation, format_identity,
 };
 
 /// The `format` value of a reading sidecar's header.
@@ -363,7 +363,8 @@ impl<'a> ReadingSidecarWriter<'a> {
     ///
     /// `observed` is an observation of the source tree, and must have the
     /// artifact's source identity. `read_source` returns the bytes of the
-    /// document with the given logical name. Once `cancellation` is raised
+    /// document with the given logical name; the rendered bytes must also have
+    /// the artifact's source identity. Once `cancellation` is raised
     /// this fails with [`ReadingSidecarError::Cancelled`] and removes the
     /// staging directory.
     pub async fn write(
@@ -415,12 +416,21 @@ impl<'a> ReadingSidecarWriter<'a> {
             sentences: next_sentence,
             ..ReadingSidecarStats::default()
         };
+        let rendered_sources = SourceObservation::new();
         for batch in documents.chunks(DOCUMENT_BATCH) {
             if cancellation.is_cancelled() {
                 return Err(ReadingSidecarError::Cancelled);
             }
             let mut stored = Vec::with_capacity(batch.len());
-            for (_, sentences) in batch {
+            for (source_name, sentences) in batch {
+                let bytes = read_source(source_name)?;
+                rendered_sources
+                    .begin_source(source_name)
+                    .map_err(CorpusError::from)?;
+                rendered_sources
+                    .update_source_bytes(&bytes)
+                    .map_err(CorpusError::from)?;
+                rendered_sources.end_source().map_err(CorpusError::from)?;
                 let mut texts = Vec::with_capacity((sentences.end - sentences.start) as usize);
                 for sentence in sentences.clone() {
                     texts.push(
@@ -429,13 +439,13 @@ impl<'a> ReadingSidecarWriter<'a> {
                             .text,
                     );
                 }
-                stored.push(texts);
+                stored.push((texts, bytes));
             }
             let frames: Vec<Result<(Vec<u8>, DocumentStats), ReadingSidecarError>> = batch
                 .par_iter()
                 .zip(stored)
-                .map(|((source_name, _), texts)| {
-                    let record = self.document_record(source_name, &texts, &read_source)?;
+                .map(|((source_name, _), (texts, bytes))| {
+                    let record = self.document_record(source_name, &texts, &bytes)?;
                     let stats = DocumentStats::of(&record, &texts);
                     let json = serde_json::to_vec(&record)?;
                     Ok((zstd::bulk::compress(&json, ZSTD_LEVEL)?, stats))
@@ -449,6 +459,13 @@ impl<'a> ReadingSidecarWriter<'a> {
                 stats.sentences_rendered_in_full += document.rendered_in_full;
                 stats.sentences_without_rendered_text += document.without_rendered_text;
             }
+        }
+        let rendered_sources = rendered_sources.finish().map_err(CorpusError::from)?;
+        if rendered_sources.source_identity() != artifact.source_identity() {
+            return Err(ReadingSidecarError::SourceMismatch {
+                expected: format_identity(artifact.source_identity().as_bytes()),
+                found: format_identity(rendered_sources.source_identity().as_bytes()),
+            });
         }
         finish_file(records)?;
         write_u64s(&staging.path, DOCUMENT_OFFSETS, &offsets)?;
@@ -484,14 +501,13 @@ impl<'a> ReadingSidecarWriter<'a> {
         &self,
         source_name: &str,
         stored: &[String],
-        read_source: &(impl Fn(&str) -> io::Result<Vec<u8>> + Sync),
+        bytes: &[u8],
     ) -> Result<DocumentRecord, ReadingSidecarError> {
         let replay = |detail: String| ReadingSidecarError::ReplayMismatch {
             source_name: source_name.to_owned(),
             detail,
         };
-        let bytes = read_source(source_name)?;
-        let source = std::str::from_utf8(&bytes).map_err(|error| replay(error.to_string()))?;
+        let source = std::str::from_utf8(bytes).map_err(|error| replay(error.to_string()))?;
         let lines = read_markdown_sentence_lines(io::Cursor::new(source), self.reader.clone())
             .map_err(|error| replay(error.to_string()))?;
         if lines.len() != stored.len() {
