@@ -833,6 +833,8 @@ pub struct RunCounters {
     /// Admitted sentences excluded by an exact necessary-condition proof.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sentences_proven_absent: u64,
+    /// Admitted sentences with at least one match of any pattern, counted once
+    /// per sentence however many patterns match it.
     pub sentences_matched: u64,
     /// Tokens in the sentences the matcher ran, which excludes the sentences
     /// counted in `sentences_proven_absent`; the admitted-token count is the

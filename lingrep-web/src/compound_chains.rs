@@ -185,7 +185,6 @@ mod tests {
             observed_sentences: 0,
             matched_sentences: 0,
             documents: None,
-            sentences_matched: 0,
             oversized_omissions: None,
         }
     }

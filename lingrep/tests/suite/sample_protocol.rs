@@ -591,7 +591,12 @@ fn selective_prepared_queries_preserve_records_and_report_skipped_matcher_work()
         assert_eq!(counters["sentences_proven_absent"], 2047);
         assert_eq!(counters["sentences_matched"], 1);
         assert_eq!(counters["tokens_scanned"], 1);
-        for key in ["documents_admitted", "matches_found", "records_emitted"] {
+        for key in [
+            "documents_admitted",
+            "sentences_matched",
+            "matches_found",
+            "records_emitted",
+        ] {
             assert_eq!(counters[key], reference["counters"][key], "{key}");
         }
         assert!(
@@ -606,7 +611,7 @@ fn selective_prepared_queries_preserve_records_and_report_skipped_matcher_work()
             let fallback = query(command, "lemma=犬", &extra);
             assert_eq!(data(&fallback, event), data(&indexed, event));
             let complete = data(&fallback, "complete").pop().unwrap();
-            assert_eq!(complete["counters"]["sentences_matched"], 2048);
+            assert_eq!(complete["counters"]["sentences_matched"], 1);
             assert!(
                 complete["counters"]
                     .get("sentences_proven_absent")

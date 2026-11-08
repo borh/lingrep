@@ -138,7 +138,7 @@ fn main() {
         "{}",
         serde_json::json!({
             "tokens": report.tokens_scanned,
-            "sentences": report.sentences_matched,
+            "sentences": report.sentences_admitted,
             "elapsed_seconds": seconds,
             "tokens_per_second": report.tokens_scanned as f64 / seconds,
             "peak_rss_kib": peak_rss_kib(),

@@ -90,7 +90,6 @@ fn snapshot(derive_compounds: bool) -> CompletedSnapshot {
                 })
                 .collect(),
         }),
-        sentences_matched: 0,
         oversized_omissions: None,
     }
 }

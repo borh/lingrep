@@ -551,7 +551,6 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
         })
         .await
         .unwrap();
-        assert_eq!(snapshot.sentences_matched, scanned);
         assert_eq!(snapshot.observed_sentences, scanned);
         assert_eq!(snapshot.patterns[0].exact_total, hits);
         assert_eq!(snapshot.excluded_sentences, excluded);

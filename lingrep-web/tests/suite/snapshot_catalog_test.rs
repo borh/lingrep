@@ -106,7 +106,6 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
         observed_sentences: 0,
         matched_sentences: 0,
         documents: None,
-        sentences_matched: 0,
         revision: RevisionId(1),
         corpus_identity: CorpusIdentity::new("fixture"),
         source: std::sync::Arc::from(""),

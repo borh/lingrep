@@ -402,7 +402,6 @@ mod tests {
             observed_sentences: scanned,
             matched_sentences: matched,
             documents: None,
-            sentences_matched: scanned,
             oversized_omissions: None,
         }
     }

@@ -107,12 +107,12 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 (
                     format!(
                         "Scanning the cached corpus: {} sentences, {} tokens…",
-                        view.progress.sentences_matched, view.progress.tokens_scanned
+                        view.progress.sentences_admitted, view.progress.tokens_scanned
                     ),
                     Some("status.scanning"),
                     Some(format!(
                         "{{\"sentences\": {}, \"tokens\": {}}}",
-                        view.progress.sentences_matched, view.progress.tokens_scanned
+                        view.progress.sentences_admitted, view.progress.tokens_scanned
                     )),
                 ),
                 true,

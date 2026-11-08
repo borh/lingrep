@@ -71,7 +71,6 @@ mod tests {
             observed_sentences: 6_570,
             matched_sentences: 3_516,
             documents,
-            sentences_matched: 6_570,
             oversized_omissions: None,
         }
     }

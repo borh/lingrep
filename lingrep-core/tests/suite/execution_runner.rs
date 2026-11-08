@@ -984,14 +984,14 @@ fn generic_execution_freezes_ordinals_progress_and_lifecycle_across_sources_and_
     let expected_progress = vec![
         ExecutionProgress {
             sentences_admitted: 2,
-            sentences_matched: 2,
+            sentences_matched: 1,
             tokens_scanned: 2,
             matches_found: 1,
             records_emitted: 1,
         },
         ExecutionProgress {
             sentences_admitted: 3,
-            sentences_matched: 3,
+            sentences_matched: 2,
             tokens_scanned: 3,
             matches_found: 2,
             records_emitted: 2,
@@ -1047,7 +1047,7 @@ fn generic_execution_freezes_ordinals_progress_and_lifecycle_across_sources_and_
 
             assert_eq!(
                 outcome,
-                RunOutcome::Completed(expected_report(3, 3, 3, 2, 2))
+                RunOutcome::Completed(expected_report(3, 2, 3, 2, 2))
             );
             assert_eq!(sink.locations, expected_locations);
             assert_eq!(sink.finish_calls, 2);
@@ -1440,7 +1440,7 @@ impl ProgressSink<TimelineSink> for TimelineProgress {
         self.0
             .lock()
             .unwrap()
-            .push(format!("progress:{}", progress.sentences_matched));
+            .push(format!("progress:{}", progress.sentences_admitted));
     }
 }
 
@@ -1473,7 +1473,7 @@ fn lifecycle_is_observe_push_finish_then_cumulative_progress() {
 
     assert_eq!(
         outcome,
-        RunOutcome::Completed(expected_report(2, 2, 2, 1, 1))
+        RunOutcome::Completed(expected_report(2, 1, 2, 1, 1))
     );
     assert_eq!(
         *timeline.lock().unwrap(),
@@ -1527,7 +1527,7 @@ fn physical_batches_do_not_change_logical_finalization_cadence() {
     assert_eq!(observer_calls.load(Ordering::SeqCst), 2);
     assert_eq!(sink.finished, 1);
     assert_eq!(progress_updates.len(), 1);
-    assert_eq!(progress_updates[0].sentences_matched, 2);
+    assert_eq!(progress_updates[0].sentences_admitted, 2);
 }
 
 #[derive(Default)]
@@ -1576,7 +1576,7 @@ fn logical_boundaries_finalize_at_1000_2000_and_partial_eof() {
         &CancellationFlag::new(),
         &mut sink,
         &mut |update: ExecutionProgress, sink: &SpillSink| {
-            progress_updates.push((update.sentences_matched, sink.spill_run_count()));
+            progress_updates.push((update.sentences_admitted, sink.spill_run_count()));
         },
         &mut |observation: TokenizedBatchObservation| {
             observer_calls += 1;
@@ -1590,7 +1590,7 @@ fn logical_boundaries_finalize_at_1000_2000_and_partial_eof() {
 
     assert_eq!(
         outcome,
-        RunOutcome::Completed(expected_report(2501, 2501, 2501, 0, 0))
+        RunOutcome::Completed(expected_report(2501, 0, 2501, 0, 0))
     );
     assert!(observer_calls > 3);
     assert_eq!(sink.pushes, 2501);
@@ -2260,7 +2260,7 @@ fn empty_tokenized_sentences_still_count_and_preserve_ordinals() {
 
     assert_eq!(
         outcome,
-        RunOutcome::Completed(expected_report(3, 3, 1, 1, 1))
+        RunOutcome::Completed(expected_report(3, 1, 1, 1, 1))
     );
     assert_eq!(
         sink.records
@@ -2272,7 +2272,7 @@ fn empty_tokenized_sentences_still_count_and_preserve_ordinals() {
     assert_eq!(
         progress
             .iter()
-            .map(|update| update.sentences_matched)
+            .map(|update| update.sentences_admitted)
             .collect::<Vec<_>>(),
         [2, 3]
     );

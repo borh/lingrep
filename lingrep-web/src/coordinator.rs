@@ -129,7 +129,7 @@ fn resolve_scan(
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), ref sink, ref omissions)))
             if expected_sentence_count.is_some_and(|count| {
                 count
-                    != report.sentences_matched
+                    != report.sentences_admitted
                         + sink.excluded_sentences
                         + omissions.as_ref().map_or(0, |o| o.count)
             }) =>
@@ -152,14 +152,14 @@ fn resolve_scan(
         //
         // The equality rests on `SnapshotSink` always returning
         // `SinkControl::Continue`. A sink that returned `StopAfter` would
-        // complete with `sentences_matched` already counted for the whole
+        // complete with `sentences_admitted` already counted for the whole
         // partition and publication truncated inside it, and this arm would
         // then read a legitimate early stop as corruption.
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(ref report), ref sink, _)))
-            if report.sentences_matched != sink.observed_sentences =>
+            if report.sentences_admitted != sink.observed_sentences =>
         {
             tracing::warn!(
-                reported = report.sentences_matched,
+                reported = report.sentences_admitted,
                 observed = sink.observed_sentences,
                 "sentence count disagreement between the report and the sink"
             );
@@ -189,11 +189,7 @@ fn resolve_scan(
                 progress: ExecutionProgress::default(),
             }
         }
-        ScanTaskResult::Finished(Ok((
-            RunOutcome::Completed(report),
-            mut sink,
-            oversized_omissions,
-        ))) => {
+        ScanTaskResult::Finished(Ok((RunOutcome::Completed(_), mut sink, oversized_omissions))) => {
             let sections = sink.finalized_sections.take().unwrap_or(
                 // Unreachable: the arm above fails publication when it is
                 // `None`. Stated as a value rather than a panic because this
@@ -222,7 +218,6 @@ fn resolve_scan(
                         sections,
                         observed_sentences: sink.observed_sentences,
                         matched_sentences: sink.matched_sentences,
-                        sentences_matched: report.sentences_matched,
                         oversized_omissions,
                     }),
                 },
@@ -1516,7 +1511,7 @@ mod tests {
     fn resolve_scan_counts_omitted_sentences_toward_completion_integrity() {
         let sink = completed_sink(6);
         let report = lingrep_core::execution::ExecutionReport {
-            sentences_matched: 6,
+            sentences_admitted: 6,
             ..Default::default()
         };
         let omissions = OversizedSentenceOmissions {
@@ -1545,7 +1540,7 @@ mod tests {
         let resolution = resolve_scan(
             ScanTaskResult::Finished(Ok((
                 RunOutcome::Completed(lingrep_core::execution::ExecutionReport {
-                    sentences_matched: 6,
+                    sentences_admitted: 6,
                     ..Default::default()
                 }),
                 completed_sink(6),
@@ -1618,7 +1613,7 @@ mod tests {
 
     fn completion_report(sentences: u64) -> lingrep_core::execution::ExecutionReport {
         lingrep_core::execution::ExecutionReport {
-            sentences_matched: sentences,
+            sentences_admitted: sentences,
             ..Default::default()
         }
     }
@@ -1735,7 +1730,6 @@ mod tests {
             panic!("expected Completed");
         };
         assert_eq!(snapshot.observed_sentences, 2);
-        assert_eq!(snapshot.sentences_matched, 2);
         let SectionAvailability::Available(tally) = &snapshot.sections else {
             panic!("an empty vocabulary is admitted");
         };
@@ -1864,7 +1858,7 @@ mod tests {
 
     /// A sink that published `sentences` sentences, the first of them with a
     /// match, and was finalized — the shape `resolve_scan` sees on a completed
-    /// scan. `sentences` must equal the report's `sentences_matched`, which is
+    /// scan. `sentences` must equal the report's `sentences_admitted`, which is
     /// what the publication gate compares.
     fn completed_sink(sentences: u64) -> SnapshotSink {
         let mut sink =
@@ -2038,7 +2032,6 @@ mod tests {
             observed_sentences: 0,
             matched_sentences: 0,
             documents: None,
-            sentences_matched: 0,
             revision,
             corpus_identity: crate::corpus_runtime::CorpusIdentity::new(format!(
                 "test-corpus:{}",

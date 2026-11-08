@@ -77,7 +77,7 @@ pub(crate) struct SnapshotSink {
     /// The lean result `resolve_scan` publishes. `None` until `finish` runs.
     pub(crate) finalized_sections: Option<SectionAvailability>,
     /// Sentences published to this sink. The denominator, and the value
-    /// `resolve_scan` checks against `ExecutionReport::sentences_matched`.
+    /// `resolve_scan` checks against `ExecutionReport::sentences_admitted`.
     /// Owned here rather than by the tally, because the tally does not exist
     /// in the rejected branch and the gate must hold in both.
     pub(crate) observed_sentences: u64,

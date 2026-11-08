@@ -1227,6 +1227,136 @@ fn by_section_counts_matches_and_matched_sentences_under_every_active_label() {
     assert_eq!(complete["matches_found"], 7);
 }
 
+/// Every sentence carries at most one section label: one unlabelled sentence,
+/// then two under `methods` and two under `results`. `猫` occurs in three
+/// sentences, `鳥` in two, and the last sentence has neither.
+fn partitioned_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
+    let root = directory.path().join("partitioned");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("paper.md"),
+        "猫と犬。\n\n\
+         # Methods {.methods}\n\n猫が鳥を見る。\n犬も鳥を見る。\n\n\
+         # Results {.results}\n\n猫は犬である。\n犬。\n",
+    )
+    .unwrap();
+    let artifact = directory.path().join("partitioned.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    artifact
+}
+
+/// The complete record's `sentences_matched` is the number of distinct
+/// sentences with a match record: for several patterns the union of their
+/// sentences, not the sum of each pattern's count.
+#[test]
+fn complete_sentences_matched_counts_the_sentences_with_a_match_record() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = partitioned_artifact(&directory, &dictionary);
+    for (catalog, matches, sentences) in [
+        ("pattern cat := [text=猫].\n", 3, 3),
+        // `cat` matches three sentences and `bird` two; one sentence holds both.
+        (
+            "pattern cat := [text=猫].\npattern bird := [text=鳥].\n",
+            5,
+            4,
+        ),
+    ] {
+        let path = directory.path().join("catalog.lx");
+        fs::write(&path, catalog).unwrap();
+        let output = lingrep_without_dictionary()
+            .args(["--json", "matches", "--limit", "all", "--corpus"])
+            .arg(&artifact)
+            .arg("--patterns")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        let events = parse_jsonl(&output.stdout);
+        let ordinals = events
+            .iter()
+            .filter(|record| record["type"] == "match")
+            .map(|record| record["data"]["corpus_sentence_ordinal"].as_u64().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ordinals.len(), sentences, "{catalog}");
+        let counters = &event(&events, "complete")["data"]["counters"];
+        let mut expected = serde_json::json!({
+            "documents_admitted": 1,
+            "sentences_admitted": 5,
+            "sentences_matched": sentences,
+            "tokens_scanned": counters["tokens_scanned"],
+            "matches_found": matches,
+            "records_emitted": matches,
+        });
+        if let Some(absent) = counters.get("sentences_proven_absent") {
+            expected["sentences_proven_absent"] = absent.clone();
+        }
+        assert_eq!(counters, &expected, "{catalog}");
+    }
+}
+
+/// With sections that partition the corpus, the complete record's
+/// `sentences_matched` for one pattern is the sum over the section records.
+#[test]
+fn complete_sentences_matched_is_the_sum_over_partitioning_section_records() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = partitioned_artifact(&directory, &dictionary);
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--by-section",
+            "--pattern",
+            "cat := [text=猫].",
+            "--corpus",
+        ])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    validate_query_jsonl(&output.stdout).unwrap();
+    let events = parse_jsonl(&output.stdout);
+    let sections = events
+        .iter()
+        .filter(|record| record["type"] == "section")
+        .map(|record| serde_json::from_value::<SectionData>(record["data"].clone()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sections
+            .iter()
+            .map(|section| (
+                section.label.as_deref(),
+                section.sentences_admitted,
+                section.patterns[0].sentences_matched
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (Some("methods"), 2, 1),
+            (Some("results"), 2, 1),
+            (None, 1, 1)
+        ]
+    );
+    let counters = &event(&events, "complete")["data"]["counters"];
+    assert_eq!(counters["sentences_admitted"], 5);
+    assert_eq!(
+        counters["sentences_matched"],
+        sections
+            .iter()
+            .map(|section| section.patterns[0].sentences_matched)
+            .sum::<u64>()
+    );
+}
+
 #[test]
 fn by_section_rejects_tsv_output_direct_input_and_by_document() {
     let dictionary = MiniDictionary::new();
@@ -1442,8 +1572,6 @@ fn by_metadata_value_records_equal_the_where_run_for_each_value() {
                 scope.map_or_else(|| selected.clone(), |scope| format!("{scope} & {selected}"));
             let oracle = summarize_events(&artifact, &["--where", &clause]);
             let counters = &event(&oracle, "complete")["data"]["counters"];
-            // The complete record's `sentences_matched` counts every sentence
-            // the matcher ran, so matched sentences come from `matches`.
             let matched = lingrep_without_dictionary()
                 .args([
                     "--json",
@@ -1466,6 +1594,7 @@ fn by_metadata_value_records_equal_the_where_run_for_each_value() {
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len();
+            assert_eq!(counters["sentences_matched"], matched_sentences, "{clause}");
             assert_eq!(
                 serde_json::to_value(record).unwrap(),
                 serde_json::json!({

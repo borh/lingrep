@@ -52,7 +52,7 @@ impl CancellationFlag {
 pub struct ExecutionProgress {
     /// Number of sentences admitted to a matching partition.
     pub sentences_admitted: u64,
-    /// Number of sentences processed by the matcher.
+    /// Number of sentences with at least one canonical match, of any pattern.
     pub sentences_matched: u64,
     /// Number of tokens processed by the matcher.
     pub tokens_scanned: u64,
@@ -79,7 +79,7 @@ pub struct ExecutionProgress {
 pub struct ExecutionReport {
     /// Number of sentences admitted to a matching partition.
     pub sentences_admitted: u64,
-    /// Number of sentences processed by the matcher.
+    /// Number of sentences with at least one canonical match, of any pattern.
     pub sentences_matched: u64,
     /// Number of tokens processed by the matcher.
     pub tokens_scanned: u64,
@@ -141,7 +141,7 @@ impl ExecutionReport {
     ) -> Result<(), ExecutionError> {
         self.sentences_matched = self
             .sentences_matched
-            .checked_add(1)
+            .checked_add(u64::from(!matches.is_empty()))
             .ok_or(ExecutionError::ResourceAccounting)?;
         self.tokens_scanned = self
             .tokens_scanned
@@ -2329,7 +2329,6 @@ mod tests {
             outcome,
             RunOutcome::Cancelled(ExecutionReport {
                 sentences_admitted: 1,
-                sentences_matched: 1,
                 tokens_scanned: 1,
                 ..ExecutionReport::default()
             })

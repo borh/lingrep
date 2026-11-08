@@ -17,7 +17,6 @@ fn snapshot(revision: u64) -> Arc<CompletedSnapshot> {
         observed_sentences: 0,
         matched_sentences: 0,
         documents: None,
-        sentences_matched: 0,
         revision: RevisionId(revision),
         corpus_identity: CorpusIdentity::new("corpus"),
         source: std::sync::Arc::from(""),

@@ -312,7 +312,7 @@ impl SectionTallyBuilder {
         surfaces: &[(PatternKey, String)],
     ) -> Result<(), SectionTallyError> {
         // `<=`, not `<`: a repeated ordinal double-counts in the tally while
-        // leaving `observed_sentences` and `sentences_matched` in agreement, so
+        // leaving `observed_sentences` and `sentences_admitted` in agreement, so
         // the publication gate would not catch it. Enforce the stream contract
         // here rather than relying on its producer.
         if let Some(previous) = self.previous_ordinal

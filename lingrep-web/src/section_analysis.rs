@@ -271,7 +271,6 @@ mod tests {
             observed_sentences: 3,
             matched_sentences: 0,
             documents: None,
-            sentences_matched: 3,
             oversized_omissions: None,
         }
     }

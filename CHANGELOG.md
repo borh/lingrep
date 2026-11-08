@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `summarize`'s `counters.documents_admitted` for the same `--where` clause.
   Over `--corpus` it reported every document in the artifact whatever the
   clause; over direct input it reported 0.
+- The query/v2 `complete` record's `counters.sentences_matched` counts the
+  sentences with at least one match, once per sentence however many patterns
+  match it, for `matches` and `summarize`. It counted every sentence the
+  matcher ran, including sentences with no match, so it disagreed with the
+  `sentences_matched` of the `section` and `metadata_value` records and
+  differed between a `--corpus` run that skipped sentences through the
+  posting index and the same query without the skip. The number of sentences
+  scanned remains `sentences_admitted` minus `sentences_proven_absent`. The
+  progress line of `matches` and `summarize`, "matched N sentences", reports
+  the same count.
 
 ## [0.7.0] - 2026-11-05
 

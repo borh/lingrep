@@ -132,15 +132,13 @@ pub struct CompletedSnapshot {
     /// none. Run-result data rather than catalog description, which is why it
     /// hangs here and not off `PatternDescriptor`.
     pub sections: crate::section_tally::SectionAvailability,
-    /// Sentences the sink observed. Checked against `sentences_matched` before
+    /// Sentences the sink observed. Checked against `ExecutionReport::sentences_admitted` before
     /// publication; see `resolve_scan`.
     pub observed_sentences: u64,
     /// Observed sentences with at least one published match, counted once per
     /// sentence.
     pub matched_sentences: u64,
     pub documents: Option<DocumentSummary>,
-    /// Sentences the matcher processed, from `ExecutionReport`.
-    pub sentences_matched: u64,
     /// Sentences omitted as oversized (`TokenizedAdmission::Omit`), when any.
     /// A completed run carrying this is degraded-but-published; see the scan's
     /// banner and the 2026-08-11 robustness plan for the divergence

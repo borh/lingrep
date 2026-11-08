@@ -63,7 +63,7 @@ impl PatternWorker {
                 .execute(&matcher, &self.cancel, &mut sink, &mut |progress, _| {
                     let _ = tx.send(ExplorerMessage::PatternProgress {
                         request_id: self.request_id,
-                        current: progress.sentences_matched as usize,
+                        current: progress.sentences_admitted as usize,
                         total: 0,
                     });
                 });
