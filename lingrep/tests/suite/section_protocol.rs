@@ -666,3 +666,247 @@ fn complete_builds_do_not_record_truncation() {
 
     assert_eq!(manifest_of(&artifact)["sentence_truncation"], Value::Null);
 }
+
+/// Writes `files` into a fresh corpus root and builds a prepared artifact from
+/// `input`, a path relative to that root.
+fn prepared_artifact(
+    directory: &Path,
+    name: &str,
+    files: &[(&str, String)],
+    input: &str,
+) -> PathBuf {
+    let dictionary = MiniDictionary::new();
+    let root = directory.join(name);
+    fs::create_dir_all(&root).unwrap();
+    for (file, contents) in files {
+        fs::write(root.join(file), contents).unwrap();
+    }
+    let artifact = directory.join(format!("{name}.lingcorpus"));
+    let build = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(root.join(input))
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    artifact
+}
+
+/// Pins which sentences each clause admits from a prepared artifact, as
+/// complete records: every admitted sentence's source, corpus and document
+/// ordinals and text, and the whole scope accounting.
+///
+/// In the Markdown artifact `sections.md` carries `year` and three labelled
+/// sections and `bare.md` has no frontmatter, so every `@document` predicate
+/// meets a missing field there. In the JSONL artifact the first document
+/// carries `year`, `tags` and two authored sections, and the second carries
+/// only `year`.
+#[test]
+fn a_prepared_artifact_admits_the_pinned_sentences_for_each_clause() {
+    let directory = tempfile::tempdir().unwrap();
+    let markdown = prepared_artifact(
+        directory.path(),
+        "markdown",
+        &[
+            (
+                "sections.md",
+                "---\nyear: 2020\n---\n\n\
+                 # Methods {.methods}\n\n猫が鳥を見る。\n犬も鳥を見る。\n\n\
+                 # Discussion {.discussion}\n\n一と二と三。\n\n\
+                 # Results {.results}\n\n猫は犬である。\n"
+                    .to_owned(),
+            ),
+            ("bare.md", "犬が鳥を見る。\n".to_owned()),
+        ],
+        ".",
+    );
+    let documents = [
+        serde_json::json!({
+            "metadata": {"year": 2005, "tags": ["a", "b"]},
+            "paragraphs": [
+                {"sentences": [{"text": "猫。"}, {"text": "犬。"}]},
+                {"sentences": [{"text": "鳥。"}]}
+            ],
+            "structure": {"observed_kinds": ["section"], "divisions": [
+                {"id": "m", "kind": "section", "start": 0, "end": 2, "metadata": {"role": "methods"}},
+                {"id": "r", "kind": "section", "start": 2, "end": 3, "metadata": {"role": "results"}}
+            ]}
+        }),
+        serde_json::json!({
+            "metadata": {"year": 2020},
+            "paragraphs": [{"sentences": [{"text": "魚。"}]}],
+            "structure": {"observed_kinds": ["section"], "divisions": []}
+        }),
+    ];
+    let jsonl = prepared_artifact(
+        directory.path(),
+        "jsonl",
+        &[(
+            "structure.jsonl",
+            documents
+                .iter()
+                .map(|document| format!("{document}\n"))
+                .collect(),
+        )],
+        "structure.jsonl",
+    );
+    for (artifact, clause, expected_sentences, expected_scope) in [
+        (
+            &markdown,
+            "@document.year >= 2010",
+            vec![
+                ("sections.md", 1, 0, "猫が鳥を見る。"),
+                ("sections.md", 2, 1, "犬も鳥を見る。"),
+                ("sections.md", 3, 2, "一と二と三。"),
+                ("sections.md", 4, 3, "猫は犬である。"),
+            ],
+            r#"{"basis":"corpus","clause":"@document.year >= 2010","documents":{"admitted":1,"excluded_by_predicate":0,"excluded_missing_field":1,"excluded_shape_mismatch":0},"sentences":{"admitted":4,"excluded_by_predicate":0,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &markdown,
+            "@document.year != 2020",
+            vec![],
+            r#"{"basis":"corpus","clause":"@document.year != 2020","documents":{"admitted":0,"excluded_by_predicate":1,"excluded_missing_field":1,"excluded_shape_mismatch":0},"sentences":{"admitted":0,"excluded_by_predicate":4,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &markdown,
+            "@section = methods",
+            vec![
+                ("sections.md", 1, 0, "猫が鳥を見る。"),
+                ("sections.md", 2, 1, "犬も鳥を見る。"),
+            ],
+            r#"{"basis":"corpus","clause":"@section = methods","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":2,"excluded_by_predicate":3,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &markdown,
+            "@section != methods",
+            vec![
+                ("bare.md", 0, 0, "犬が鳥を見る。"),
+                ("sections.md", 3, 2, "一と二と三。"),
+                ("sections.md", 4, 3, "猫は犬である。"),
+            ],
+            r#"{"basis":"corpus","clause":"@section != methods","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":3,"excluded_by_predicate":2,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &markdown,
+            "@section in {methods, results} & @document.year >= 2010",
+            vec![
+                ("sections.md", 1, 0, "猫が鳥を見る。"),
+                ("sections.md", 2, 1, "犬も鳥を見る。"),
+                ("sections.md", 4, 3, "猫は犬である。"),
+            ],
+            r#"{"basis":"corpus","clause":"@section in {methods, results} & @document.year >= 2010","documents":{"admitted":1,"excluded_by_predicate":0,"excluded_missing_field":1,"excluded_shape_mismatch":0},"sentences":{"admitted":3,"excluded_by_predicate":1,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &markdown,
+            "(@document.year = 2005 | @section = results)",
+            vec![("sections.md", 4, 3, "猫は犬である。")],
+            r#"{"basis":"corpus","clause":"(@document.year = 2005 | @section = results)","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":1,"excluded_by_predicate":3,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "@document.year < 2010",
+            vec![
+                ("structure.jsonl line 1", 0, 0, "猫。"),
+                ("structure.jsonl line 1", 1, 1, "犬。"),
+                ("structure.jsonl line 1", 2, 2, "鳥。"),
+            ],
+            r#"{"basis":"corpus","clause":"@document.year < 2010","documents":{"admitted":1,"excluded_by_predicate":1,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":3,"excluded_by_predicate":1,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "@document.tags contains a",
+            vec![
+                ("structure.jsonl line 1", 0, 0, "猫。"),
+                ("structure.jsonl line 1", 1, 1, "犬。"),
+                ("structure.jsonl line 1", 2, 2, "鳥。"),
+            ],
+            r#"{"basis":"corpus","clause":"@document.tags contains a","documents":{"admitted":1,"excluded_by_predicate":0,"excluded_missing_field":1,"excluded_shape_mismatch":0},"sentences":{"admitted":3,"excluded_by_predicate":0,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "@document.tags not contains a",
+            vec![],
+            r#"{"basis":"corpus","clause":"@document.tags not contains a","documents":{"admitted":0,"excluded_by_predicate":1,"excluded_missing_field":1,"excluded_shape_mismatch":0},"sentences":{"admitted":0,"excluded_by_predicate":3,"excluded_missing_field":1,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "@document.year in {2005, 2020}",
+            vec![
+                ("structure.jsonl line 1", 0, 0, "猫。"),
+                ("structure.jsonl line 1", 1, 1, "犬。"),
+                ("structure.jsonl line 1", 2, 2, "鳥。"),
+                ("structure.jsonl line 2", 3, 0, "魚。"),
+            ],
+            r#"{"basis":"corpus","clause":"@document.year in {2005, 2020}","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":4,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "within(section, role=methods)",
+            vec![
+                ("structure.jsonl line 1", 0, 0, "猫。"),
+                ("structure.jsonl line 1", 1, 1, "犬。"),
+            ],
+            r#"{"basis":"corpus","clause":"within(section, role=methods)","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":2,"excluded_by_predicate":2,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "not within(section, role=methods)",
+            vec![
+                ("structure.jsonl line 1", 2, 2, "鳥。"),
+                ("structure.jsonl line 2", 3, 0, "魚。"),
+            ],
+            r#"{"basis":"corpus","clause":"not within(section, role=methods)","documents":{"admitted":2,"excluded_by_predicate":0,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":2,"excluded_by_predicate":2,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+        (
+            &jsonl,
+            "within(section, role=results) & @document.year = 2005",
+            vec![("structure.jsonl line 1", 2, 2, "鳥。")],
+            r#"{"basis":"corpus","clause":"within(section, role=results) & @document.year = 2005","documents":{"admitted":1,"excluded_by_predicate":1,"excluded_missing_field":0,"excluded_shape_mismatch":0},"sentences":{"admitted":1,"excluded_by_predicate":3,"excluded_missing_field":0,"excluded_shape_mismatch":0}}"#,
+        ),
+    ] {
+        let output = lingrep_without_dictionary()
+            .arg("--json")
+            .args(["matches", "--pattern", "p := ^ []+ $.", "--limit", "all"])
+            .args(["--where", clause, "--corpus"])
+            .arg(artifact)
+            .output()
+            .unwrap();
+        let scope = scope_of(&output);
+        let admitted: Vec<(String, u64, u64, String)> = parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|record| record["type"] == "match")
+            .map(|record| {
+                let data = &record["data"];
+                (
+                    Path::new(data["source_name"].as_str().unwrap())
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    data["corpus_sentence_ordinal"].as_u64().unwrap(),
+                    data["document_sentence_ordinal"].as_u64().unwrap(),
+                    data["surface"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        let expected_sentences: Vec<(String, u64, u64, String)> = expected_sentences
+            .into_iter()
+            .map(|(source, corpus, document, text)| {
+                (source.to_owned(), corpus, document, text.to_owned())
+            })
+            .collect();
+        assert_eq!(admitted, expected_sentences, "{clause}");
+        assert_eq!(
+            scope,
+            serde_json::from_str::<Value>(expected_scope).unwrap(),
+            "{clause}"
+        );
+    }
+}

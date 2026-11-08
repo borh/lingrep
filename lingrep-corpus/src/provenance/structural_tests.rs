@@ -1322,3 +1322,193 @@ async fn a_corrupt_stored_analysis_is_rejected_when_read_and_by_verification() {
         );
     }
 }
+
+/// Three documents of 6, 6 and 4 sentences. Document 11 has a section over
+/// all six sentences, a paragraph over 1..4 and an empty paragraph at 4;
+/// document 12 has a section over 8..11; document 13 has no division. Most
+/// stored reference lists repeat their predecessor's, so each mutation below
+/// either changes a row inside such a repetition or moves a division boundary
+/// to a sentence whose stored list equals the one before it.
+async fn division_sweep_fixture(path: &Path) {
+    let mut writer = ProvenanceWriter::create(path, &[]).await.unwrap();
+    for (sentence, (document, ordinal)) in (0..6)
+        .map(|ordinal| (0, ordinal))
+        .chain((0..6).map(|ordinal| (1, ordinal)))
+        .chain((0..4).map(|ordinal| (2, ordinal)))
+        .enumerate()
+    {
+        writer
+            .push_sentence(
+                &location(
+                    sentence as u64,
+                    &format!("{document}.md"),
+                    document,
+                    ordinal,
+                ),
+                &rich(),
+            )
+            .await
+            .unwrap();
+    }
+    writer.finish(analysis_identity()).await.unwrap();
+    let mut database = connection(path).await;
+    for statement in [
+        "INSERT INTO divisions VALUES(0,11,'section','s',NULL,0,6,'{}')",
+        "INSERT INTO divisions VALUES(1,11,'paragraph','p',0,1,4,'{}')",
+        "INSERT INTO divisions VALUES(2,11,'paragraph','e',0,4,4,'{}')",
+        "INSERT INTO divisions VALUES(3,12,'section','t',NULL,8,11,'{}')",
+        "INSERT INTO division_observations VALUES(11,'section','{\"state\":\"observed\"}')",
+        "INSERT INTO division_observations VALUES(11,'paragraph','{\"state\":\"observed\"}')",
+        "INSERT INTO division_observations VALUES(12,'section','{\"state\":\"observed\"}')",
+        "UPDATE sentence_provenance SET division_ids_json='[0]' WHERE sentence_id IN (0,4,5)",
+        "UPDATE sentence_provenance SET division_ids_json='[0,1]' WHERE sentence_id BETWEEN 1 AND 3",
+        "UPDATE sentence_provenance SET division_ids_json='[3]' WHERE sentence_id BETWEEN 8 AND 10",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&mut database)
+            .await
+            .unwrap();
+    }
+    database.close().await.unwrap();
+}
+
+/// Pins the complete outcome of `ProvenanceView::open` for each defect the
+/// division sweep checks, including defects at sentences whose stored
+/// references and document equal their predecessor's.
+#[tokio::test]
+async fn open_reports_each_division_sweep_defect_at_any_sentence() {
+    const DISAGREE: &str = "InvalidFormat { component: \"provenance.sqlite\", message: \"sentence division references disagree with authoritative extents\" }";
+    const OUTSIDE: &str = "VerificationMismatch { component: \"provenance.sqlite\", sentence_ordinal: None, message: \"sentence is outside its document metadata range\" }";
+    let oversized = format!("[{}0]", "0,".repeat(3100));
+    for (mutation, expected) in [
+        ("SELECT ?1", Ok(16)),
+        (
+            "UPDATE divisions SET parent_id=1 WHERE division_id=2",
+            Ok(16),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='[0]' WHERE sentence_id=2",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='[1,0]' WHERE sentence_id=3",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='[0,1]' WHERE sentence_id IN (4,5)",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='[]' WHERE sentence_id BETWEEN 8 AND 10",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='[3]' WHERE sentence_id=11",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json='x' WHERE sentence_id=2",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"expected value at line 1 column 1\" }",
+            ),
+        ),
+        (
+            "UPDATE sentence_provenance SET division_ids_json=?1 WHERE sentence_id BETWEEN 12 AND 13",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division reference list exceeds its byte budget\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET end_sentence=5 WHERE division_id=1",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE divisions SET end_sentence=3 WHERE division_id=1",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE divisions SET first_sentence=9 WHERE division_id=3",
+            Err(DISAGREE),
+        ),
+        (
+            "UPDATE divisions SET first_sentence=0,end_sentence=0 WHERE division_id=2",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division starts do not follow source identity order\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET end_sentence=3 WHERE division_id=0",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division parent ownership or containment is invalid\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET parent_id=1,first_sentence=5,end_sentence=5 WHERE division_id=2",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division ancestor ownership, order or containment is invalid\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET division_id=5,parent_id=4 WHERE division_id=3",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"dangling authored division parent\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET end_sentence=17 WHERE division_id=3",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division extent outside realized corpus\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET document_id=12 WHERE division_id=0",
+            Err(
+                "InvalidFormat { component: \"provenance.sqlite\", message: \"division extent crosses its owning document\" }",
+            ),
+        ),
+        (
+            "UPDATE divisions SET kind='bad kind' WHERE division_id=2",
+            Err(
+                "Io(Custom { kind: InvalidData, error: \"division kind must contain 1–256 bytes of letters, numbers, underscores or hyphens\" })",
+            ),
+        ),
+        (
+            "UPDATE sentence_provenance SET document_id=12 WHERE sentence_id=2",
+            Err(OUTSIDE),
+        ),
+        (
+            "UPDATE sentence_provenance SET document_id=11 WHERE sentence_id=6",
+            Err(OUTSIDE),
+        ),
+        (
+            "UPDATE sentence_provenance SET document_id=12 WHERE sentence_id=12",
+            Err(OUTSIDE),
+        ),
+        (
+            "UPDATE sentence_provenance SET document_id=99 WHERE sentence_id=14",
+            Err(
+                "VerificationMismatch { component: \"provenance.sqlite\", sentence_ordinal: None, message: \"sentence has no document metadata\" }",
+            ),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provenance.sqlite");
+        division_sweep_fixture(&path).await;
+        let mut database = connection(&path).await;
+        sqlx::query("PRAGMA foreign_keys=OFF")
+            .execute(&mut database)
+            .await
+            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(mutation))
+            .bind(&oversized)
+            .execute(&mut database)
+            .await
+            .unwrap();
+        database.close().await.unwrap();
+        let outcome = ProvenanceView::open(&path, &analysis_identity())
+            .await
+            .map(|view| view.sentence_count())
+            .map_err(|error| format!("{error:?}"));
+        assert_eq!(outcome, expected.map_err(str::to_owned), "{mutation}");
+    }
+}

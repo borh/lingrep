@@ -1323,7 +1323,6 @@ impl ProvenanceView {
 
     async fn validate_division_membership(&self) -> Result<(), CorpusError> {
         use futures::TryStreamExt;
-        use lingrep_core::corpus::divisions::{MAX_ACTIVE_DIVISIONS, MAX_STRUCTURAL_CONTEXT_BYTES};
         let mut observations=sqlx::query("SELECT document_id,CASE WHEN length(CAST(kind AS BLOB))<=256 THEN kind END AS kind,CASE WHEN length(CAST(observation_json AS BLOB))<=4096 THEN observation_json END AS observation_json FROM division_observations ORDER BY document_id,kind").fetch(&self.pool);
         let mut previous_document = None;
         let mut kind_count = 0usize;
@@ -1346,14 +1345,15 @@ impl ProvenanceView {
             observation.validate().map_err(CorpusError::Io)?;
         }
         drop(observations);
-        let mut queued = std::collections::VecDeque::new();
-        let mut next_division = 0u64;
-        let mut divisions_finished = false;
-        let mut previous_start = 0;
-        let mut active: BTreeMap<u64, (DivisionMetadataRow, usize, usize)> = BTreeMap::new();
+        let mut sweep = DivisionSweep::default();
         let mut sentence = 0u64;
+        let mut last_read: Option<(u64, String)> = None;
         loop {
-            let rows=sqlx::query("SELECT sp.sentence_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? ORDER BY sp.sentence_id LIMIT 1024")
+            // Reads only the rows whose document or division references differ
+            // from the preceding row's, and the rows outside their document's
+            // range. Every other row repeats the last row read, so `check` at
+            // the sentences where the active set changes covers it.
+            let rows=sqlx::query("SELECT sp.sentence_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN sentence_provenance prev ON prev.sentence_id=sp.sentence_id-1 LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? AND (prev.sentence_id IS NULL OR prev.document_id IS NOT sp.document_id OR prev.division_ids_json IS NOT sp.division_ids_json OR dm.document_id IS NULL OR sp.sentence_id<dm.first_sentence OR sp.sentence_id-dm.first_sentence>=dm.sentence_count) ORDER BY sp.sentence_id LIMIT 1024")
                 .bind(sqlite_integer(sentence,"sentence ID")?).fetch_all(&self.pool).await.map_err(database)?;
             let at_end = rows.is_empty();
             let positions = if at_end {
@@ -1384,91 +1384,23 @@ impl ProvenanceView {
                     .collect::<Result<Vec<_>, CorpusError>>()?
             };
             for (ordinal, document, references) in positions {
-                active.retain(|_, (row, _, _)| row.end_sentence > ordinal);
-                loop {
-                    if queued.is_empty() && !divisions_finished {
-                        let page = self.division_metadata_page(next_division).await?;
-                        divisions_finished = page.is_empty();
-                        queued.extend(page);
-                    }
-                    let Some(next) = queued.front() else {
-                        break;
-                    };
-                    if next.first_sentence < previous_start {
-                        return Err(invalid(
-                            "division starts do not follow source identity order",
-                        ));
-                    }
-                    if next.first_sentence > ordinal {
-                        break;
-                    }
-                    let row = queued
-                        .pop_front()
-                        .ok_or_else(|| invalid("division page disappeared"))?;
-                    previous_start = row.first_sentence;
-                    next_division = row
-                        .division
-                        .id
-                        .0
-                        .checked_add(1)
-                        .ok_or_else(|| invalid("division ID overflow"))?;
-                    let depth = if let Some(parent) = row.division.parent_id {
-                        if let Some((ancestor, _, depth)) = active.get(&parent.0) {
-                            if ancestor.division.document_id != row.division.document_id
-                                || ancestor.first_sentence > row.first_sentence
-                                || ancestor.end_sentence < row.end_sentence
-                            {
-                                return Err(invalid(
-                                    "division parent ownership or containment is invalid",
-                                ));
-                            }
-                            depth + 1
-                        } else {
-                            self.validate_closed_division_parent(&row).await?
-                        }
-                    } else {
-                        1
-                    };
-                    if depth > lingrep_core::corpus::divisions::MAX_DIVISION_DEPTH {
-                        return Err(invalid("division nesting exceeds 64 levels"));
-                    }
-                    if row.end_sentence > ordinal {
-                        let bytes = lingrep_core::corpus::divisions::validate_metadata(
-                            &row.division.metadata,
-                        )
-                        .map_err(CorpusError::Io)?;
-                        active.insert(row.division.id.0, (row, bytes, depth));
-                        if active.len() > MAX_ACTIVE_DIVISIONS
-                            || active.values().map(|(_, bytes, _)| bytes).sum::<usize>()
-                                > MAX_STRUCTURAL_CONTEXT_BYTES
-                        {
-                            return Err(invalid(
-                                "stored structural context exceeds its resource budget",
-                            ));
-                        }
+                if let Some((document, references)) = &last_read {
+                    while let Some(boundary) = sweep.next_boundary().filter(|&at| at < ordinal) {
+                        sweep.advance(self, boundary).await?;
+                        sweep.check(*document, references)?;
                     }
                 }
+                sweep.advance(self, ordinal).await?;
                 if let (Some(document), Some(references)) = (document, references) {
-                    if active
-                        .values()
-                        .any(|(row, _, _)| row.division.document_id.get() != document)
-                    {
-                        return Err(invalid("division extent crosses its document"));
-                    }
-                    let references: Vec<u64> = serde_json::from_str(&references)
-                        .map_err(|error| invalid(error.to_string()))?;
-                    if references != active.keys().copied().collect::<Vec<_>>() {
-                        return Err(invalid(
-                            "sentence division references disagree with authoritative extents",
-                        ));
-                    }
+                    sweep.check(document, &references)?;
+                    last_read = Some((document, references));
                     sentence = ordinal
                         .checked_add(1)
                         .ok_or_else(|| invalid("sentence ID overflow"))?;
                 }
             }
             if at_end {
-                if !queued.is_empty() || !divisions_finished || !active.is_empty() {
+                if !sweep.finished() {
                     return Err(invalid(
                         "division extent remains beyond the corpus boundary",
                     ));
@@ -3263,6 +3195,131 @@ async fn validate_table(
         }
     }
     Ok(())
+}
+
+/// The authoritative divisions active at one sentence, advanced in sentence
+/// order by [`ProvenanceView::validate_division_membership`].
+#[derive(Default)]
+struct DivisionSweep {
+    queued: std::collections::VecDeque<DivisionMetadataRow>,
+    next_division: u64,
+    divisions_finished: bool,
+    previous_start: u64,
+    active: BTreeMap<u64, (DivisionMetadataRow, usize, usize)>,
+}
+
+impl DivisionSweep {
+    /// Retires the divisions that end at or before `ordinal`, then checks and
+    /// admits every division that starts at or before it.
+    async fn advance(&mut self, view: &ProvenanceView, ordinal: u64) -> Result<(), CorpusError> {
+        use lingrep_core::corpus::divisions::{MAX_ACTIVE_DIVISIONS, MAX_STRUCTURAL_CONTEXT_BYTES};
+        self.active
+            .retain(|_, (row, _, _)| row.end_sentence > ordinal);
+        loop {
+            if self.queued.is_empty() && !self.divisions_finished {
+                let page = view.division_metadata_page(self.next_division).await?;
+                self.divisions_finished = page.is_empty();
+                self.queued.extend(page);
+            }
+            let Some(next) = self.queued.front() else {
+                break;
+            };
+            if next.first_sentence < self.previous_start {
+                return Err(invalid(
+                    "division starts do not follow source identity order",
+                ));
+            }
+            if next.first_sentence > ordinal {
+                break;
+            }
+            let row = self
+                .queued
+                .pop_front()
+                .ok_or_else(|| invalid("division page disappeared"))?;
+            self.previous_start = row.first_sentence;
+            self.next_division = row
+                .division
+                .id
+                .0
+                .checked_add(1)
+                .ok_or_else(|| invalid("division ID overflow"))?;
+            let depth = if let Some(parent) = row.division.parent_id {
+                if let Some((ancestor, _, depth)) = self.active.get(&parent.0) {
+                    if ancestor.division.document_id != row.division.document_id
+                        || ancestor.first_sentence > row.first_sentence
+                        || ancestor.end_sentence < row.end_sentence
+                    {
+                        return Err(invalid(
+                            "division parent ownership or containment is invalid",
+                        ));
+                    }
+                    depth + 1
+                } else {
+                    view.validate_closed_division_parent(&row).await?
+                }
+            } else {
+                1
+            };
+            if depth > lingrep_core::corpus::divisions::MAX_DIVISION_DEPTH {
+                return Err(invalid("division nesting exceeds 64 levels"));
+            }
+            if row.end_sentence > ordinal {
+                let bytes =
+                    lingrep_core::corpus::divisions::validate_metadata(&row.division.metadata)
+                        .map_err(CorpusError::Io)?;
+                self.active.insert(row.division.id.0, (row, bytes, depth));
+                if self.active.len() > MAX_ACTIVE_DIVISIONS
+                    || self
+                        .active
+                        .values()
+                        .map(|(_, bytes, _)| bytes)
+                        .sum::<usize>()
+                        > MAX_STRUCTURAL_CONTEXT_BYTES
+                {
+                    return Err(invalid(
+                        "stored structural context exceeds its resource budget",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks a sentence of `document` whose stored division references are
+    /// `references` against the divisions active at the last advanced sentence.
+    fn check(&self, document: u64, references: &str) -> Result<(), CorpusError> {
+        if self
+            .active
+            .values()
+            .any(|(row, _, _)| row.division.document_id.get() != document)
+        {
+            return Err(invalid("division extent crosses its document"));
+        }
+        let references: Vec<u64> =
+            serde_json::from_str(references).map_err(|error| invalid(error.to_string()))?;
+        if references != self.active.keys().copied().collect::<Vec<_>>() {
+            return Err(invalid(
+                "sentence division references disagree with authoritative extents",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The first sentence after the last advanced one at which a division
+    /// starts or an active division ends.
+    fn next_boundary(&self) -> Option<u64> {
+        self.queued
+            .front()
+            .map(|row| row.first_sentence)
+            .into_iter()
+            .chain(self.active.values().map(|(row, _, _)| row.end_sentence))
+            .min()
+    }
+
+    /// Whether every division has been read and none remains active.
+    fn finished(&self) -> bool {
+        self.queued.is_empty() && self.divisions_finished && self.active.is_empty()
+    }
 }
 
 /// Checks that the document ranges partition the sentence IDs `0..sentence_count`.
