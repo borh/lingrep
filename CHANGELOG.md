@@ -78,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployment guide's Caddy redirect and every page's link back to the start
   page led to a 404, and the page at `/prefix` loaded its assets from
   outside the mount.
+- `ling serve` and `lingrep-web` stop on SIGTERM or SIGINT: they stop
+  accepting connections, let in-flight requests finish for up to 10 seconds,
+  and exit 0. `ling serve` ignored both signals, so `systemctl stop` or a
+  container runtime waited for its kill timeout, and `lingrep-web` was killed
+  by the signal mid-request.
 - The query/v2 `complete` record's `counters.documents_admitted` counts the
   documents with at least one admitted sentence, for `matches` and
   `summarize` over direct input and `--corpus`. It counted every document

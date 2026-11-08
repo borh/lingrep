@@ -56,6 +56,11 @@ runs as the system user `lingrep-web` with `ProtectSystem=strict`; corpora and
 the dictionary are mounted with `ReadOnlyPaths=`, and an activation script
 symlinks corpora and pattern catalogs under `/var/lib/lingrep-web/`.
 
+On SIGTERM, which `systemctl stop` sends, lingrep-web stops accepting
+connections, lets in-flight requests and open progress streams run for up to
+10 seconds, and exits 0. That is within systemd's default `TimeoutStopSec` of
+90 seconds, and it is how `ling serve` stops in a container as well.
+
 ## Serving under a subpath
 
 Set `services.lingrep-web.settings.basePath` when the application is mounted below

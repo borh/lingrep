@@ -117,6 +117,47 @@ fn serve_reports_an_occupied_port_as_an_invocation_error() {
     assert!(stderr.contains(&address.to_string()), "{stderr}");
 }
 
+/// A service manager stops the server with SIGTERM and a terminal with SIGINT;
+/// either ends `ling serve` with status 0.
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_exits_zero_on_sigterm_and_sigint() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        let mut child = lingrep_std()
+            .args(["serve", "--host", "127.0.0.1", "--port", "0"])
+            .arg("--input")
+            .arg(&input)
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        stdout.read_line(&mut line).unwrap();
+        assert!(line.contains("listening on"), "{line:?}");
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() > deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("ling serve still running 30 s after signal {signal}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(0), "signal {signal}");
+    }
+}
+
 #[test]
 fn a_skip_pattern_diagram_shows_the_authored_pattern_and_its_skip_test() {
     let directory = tempfile::tempdir().unwrap();
