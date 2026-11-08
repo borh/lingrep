@@ -1262,3 +1262,63 @@ async fn span_stream_releases_the_connection_before_the_consumer_reads_sentence_
     }
     assert!(spans.next().await.is_none());
 }
+
+#[tokio::test]
+async fn a_corrupt_stored_analysis_is_rejected_when_read_and_by_verification() {
+    type Mutation = fn(Vec<u8>) -> Vec<u8>;
+    let flip_magic: Mutation = |mut blob| {
+        blob[0] ^= 1;
+        blob
+    };
+    let truncate: Mutation = |mut blob| {
+        blob.pop();
+        blob
+    };
+    let unchanged: Mutation = |blob| blob;
+    for (name, blob_mutation, input_kind) in [
+        ("flipped magic byte", flip_magic, None),
+        ("truncated payload", truncate, None),
+        ("partial input identity", unchanged, Some("sentence")),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provenance.sqlite");
+        drop(finished_two_sentence_view(&path).await);
+        let mut database = connection(&path).await;
+        let blob: Vec<u8> =
+            sqlx::query_scalar("SELECT analysis_blob FROM sentence_provenance WHERE sentence_id=1")
+                .fetch_one(&mut database)
+                .await
+                .unwrap();
+        sqlx::query(
+            "UPDATE sentence_provenance SET analysis_blob=?, input_kind=? WHERE sentence_id=1",
+        )
+        .bind(blob_mutation(blob))
+        .bind(input_kind)
+        .execute(&mut database)
+        .await
+        .unwrap();
+        database.close().await.unwrap();
+
+        let view = ProvenanceView::open(&path, &analysis_identity())
+            .await
+            .unwrap();
+        assert!(
+            view.sentence_analysis(SentenceId::new(0)).await.is_ok(),
+            "{name}: an intact row stays readable"
+        );
+        assert!(
+            matches!(
+                view.sentence_analysis(SentenceId::new(1)).await,
+                Err(CorpusError::InvalidFormat { .. })
+            ),
+            "{name}: reading the corrupt row"
+        );
+        assert!(
+            matches!(
+                view.validate_stored_analyses().await,
+                Err(CorpusError::InvalidFormat { .. })
+            ),
+            "{name}: verification"
+        );
+    }
+}

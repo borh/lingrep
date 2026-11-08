@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ran, not of those counted in `sentences_proven_absent`. Admitted tokens are the
   sum of `tokens_admitted` over the `document` records of
   `summarize --by-document`.
+- Opening a prepared corpus's provenance no longer decodes every sentence's
+  stored analysis. Every `--corpus` run that reads provenance starts sooner:
+  `--where`, `--source-metadata`, lookaround divisions, `--by-section`,
+  `--by-metadata`, and `ling corpus inspect`. A stored analysis that does not
+  decode, or a sentence whose input identity is only partly stored, is now
+  reported when that sentence's analysis is read, as by lingrep-web's reading
+  view, and by `ling corpus inspect --verify`, instead of when provenance is
+  opened. lingrep-web therefore starts serving such an artifact, and the
+  request that reads the damaged sentence fails.
 
 ### Fixed
 

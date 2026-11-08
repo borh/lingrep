@@ -82,8 +82,10 @@ impl CorpusArtifact {
                 component: LOCATIONS_NAME,
             })?;
         self.verify_admitted_document_inventory(&locations)?;
-        let provenance = self.provenance_view().await?;
-        drop(provenance);
+        self.provenance_view()
+            .await?
+            .validate_stored_analyses()
+            .await?;
         self.verify_location_rows(&locations).await?;
         Ok(VerificationReport {
             components,

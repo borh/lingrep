@@ -1486,6 +1486,33 @@ async fn verify_rejects_rehashed_sqlite_owner_mutation() {
 }
 
 #[tokio::test]
+async fn verify_rejects_a_rehashed_corrupt_stored_analysis_that_open_accepts() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = build_two_document_artifact(directory.path()).await;
+    let options = SqliteConnectOptions::new()
+        .filename(root.join("provenance.sqlite"))
+        .create_if_missing(false);
+    let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query(
+        "UPDATE sentence_provenance
+         SET analysis_blob = substr(analysis_blob, 1, length(analysis_blob) - 1)
+         WHERE sentence_id = 1",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    connection.close().await.unwrap();
+    rewrite_component_fact(&root, "provenance.sqlite", true);
+
+    let artifact = CorpusArtifact::open(&root).unwrap();
+    artifact.provenance_view().await.unwrap();
+    assert!(matches!(
+        artifact.verify_integrity().await,
+        Err(CorpusError::InvalidFormat { .. })
+    ));
+}
+
+#[tokio::test]
 async fn verify_rejects_rehashed_valid_alternative_target_partition() {
     let directory = tempfile::tempdir().unwrap();
     let root = build_two_document_artifact(directory.path()).await;

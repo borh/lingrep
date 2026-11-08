@@ -1270,120 +1270,7 @@ impl ProvenanceView {
             }
             _ => return Err(invalid("sentence relation has malformed bounds")),
         }
-        let mut first = 0_u64;
-        let mut document_end = 0_u64;
-        let mut document_id = None;
-        let mut document_count = 0_i64;
-        while first < sentence_count {
-            let rows = sqlx::query(
-                "SELECT sp.sentence_id, sp.document_id, sp.analysis_blob, sp.input_unit_id, sp.input_kind,
-                        normalization, input_identity, input_source_identity,
-                        input_document_identity, input_metadata_digest,
-                        analyzer_sentence_ordinal, source_start, source_end,
-                        dm.first_sentence, dm.sentence_count AS document_sentence_count
-                 FROM sentence_provenance sp
-                 LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id
-                 WHERE sp.sentence_id>=?
-                 ORDER BY sp.sentence_id LIMIT 1024",
-            )
-            .bind(sqlite_integer(first, "sentence ID")?)
-            .fetch_all(&pool)
-            .await
-            .map_err(database)?;
-            if rows.is_empty() {
-                return Err(verification("sentence analysis rows are incomplete"));
-            }
-            for row in rows {
-                let sentence_id =
-                    sqlite_u64(row.try_get("sentence_id").map_err(database)?, "sentence ID")?;
-                if sentence_id != first {
-                    return Err(verification("sentence analysis rows are not contiguous"));
-                }
-                let stored_document: i64 = row.try_get("document_id").map_err(database)?;
-                let document_first: Option<i64> =
-                    row.try_get("first_sentence").map_err(database)?;
-                let stored_count: Option<i64> =
-                    row.try_get("document_sentence_count").map_err(database)?;
-                if sentence_id == document_end {
-                    let start = document_first
-                        .ok_or_else(|| verification("sentence has no document metadata"))?;
-                    let count = stored_count
-                        .ok_or_else(|| verification("sentence has no document range"))?;
-                    if u64::try_from(start).ok() != Some(sentence_id) || count <= 0 {
-                        return Err(verification("document metadata ranges are not contiguous"));
-                    }
-                    document_end = sentence_id
-                        .checked_add(sqlite_u64(count, "document sentence count")?)
-                        .ok_or_else(|| invalid("document range overflow"))?;
-                    document_id = Some(stored_document);
-                    document_count += 1;
-                }
-                if document_id != Some(stored_document) || sentence_id >= document_end {
-                    return Err(verification(
-                        "sentence is outside its document metadata range",
-                    ));
-                }
-                let blob: Vec<u8> = row.try_get("analysis_blob").map_err(database)?;
-                let decoded = candidate::decode(&blob)?;
-                if decoded.len() != 1 {
-                    return Err(invalid("sentence analysis has wrong cardinality"));
-                }
-                let input_unit_id: Option<i64> = row.try_get("input_unit_id").map_err(database)?;
-                let required = [
-                    row.try_get::<Option<String>, _>("input_kind")
-                        .map_err(database)?
-                        .is_some(),
-                    row.try_get::<Option<String>, _>("normalization")
-                        .map_err(database)?
-                        .is_some(),
-                    optional_digest(
-                        row.try_get("input_identity").map_err(database)?,
-                        "input identity",
-                    )?
-                    .is_some(),
-                    optional_digest(
-                        row.try_get("input_source_identity").map_err(database)?,
-                        "input source identity",
-                    )?
-                    .is_some(),
-                    row.try_get::<Option<i64>, _>("input_document_identity")
-                        .map_err(database)?
-                        .is_some(),
-                    optional_digest(
-                        row.try_get("input_metadata_digest").map_err(database)?,
-                        "input metadata digest",
-                    )?
-                    .is_some(),
-                    row.try_get::<Option<i64>, _>("analyzer_sentence_ordinal")
-                        .map_err(database)?
-                        .is_some(),
-                    row.try_get::<Option<i64>, _>("source_start")
-                        .map_err(database)?
-                        .is_some(),
-                    row.try_get::<Option<i64>, _>("source_end")
-                        .map_err(database)?
-                        .is_some(),
-                ];
-                if required
-                    .iter()
-                    .any(|present| *present != input_unit_id.is_some())
-                {
-                    return Err(invalid("sentence input identity is only partially stored"));
-                }
-                first = first
-                    .checked_add(1)
-                    .ok_or_else(|| invalid("sentence count overflow"))?;
-            }
-        }
-        let stored_documents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM document_metadata")
-            .fetch_one(&pool)
-            .await
-            .map_err(database)?;
-        if document_end != sentence_count || document_count != stored_documents {
-            return Err(verification(
-                "document metadata ranges do not cover exactly the stored sentences",
-            ));
-        }
+        validate_document_tiling(&pool, sentence_count).await?;
         let view = Self {
             pool,
             analysis_identity: *expected,
@@ -1392,6 +1279,37 @@ impl ProvenanceView {
         };
         view.validate_division_membership().await?;
         Ok(view)
+    }
+
+    /// Applies the checks [`Self::sentence_analysis_bounded`] makes on read to
+    /// every stored sentence.
+    pub(crate) async fn validate_stored_analyses(&self) -> Result<(), CorpusError> {
+        let mut first = 0_u64;
+        while first < self.sentence_count {
+            let rows = sqlx::query(
+                "SELECT sentence_id, analysis_blob, input_unit_id, input_kind, normalization,
+                        input_identity, input_source_identity, input_document_identity,
+                        input_metadata_digest, analyzer_sentence_ordinal, source_start, source_end
+                 FROM sentence_provenance WHERE sentence_id>=? ORDER BY sentence_id LIMIT 1024",
+            )
+            .bind(sqlite_integer(first, "sentence ID")?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database)?;
+            if rows.is_empty() {
+                return Err(verification("sentence analysis rows are incomplete"));
+            }
+            for row in rows {
+                let blob: Vec<u8> = row.try_get("analysis_blob").map_err(database)?;
+                let decoded = candidate::decode(&blob)?;
+                if decoded.len() != 1 {
+                    return Err(invalid("sentence analysis has wrong cardinality"));
+                }
+                validate_input_identity(&row)?;
+                first += 1;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn validate_document_count(&self, count: u64) -> Result<(), CorpusError> {
@@ -1435,7 +1353,7 @@ impl ProvenanceView {
         let mut active: BTreeMap<u64, (DivisionMetadataRow, usize, usize)> = BTreeMap::new();
         let mut sentence = 0u64;
         loop {
-            let rows=sqlx::query("SELECT sentence_id,document_id,CASE WHEN length(division_ids_json)<=6146 THEN division_ids_json END AS division_ids_json FROM sentence_provenance WHERE sentence_id>=? ORDER BY sentence_id LIMIT 1024")
+            let rows=sqlx::query("SELECT sp.sentence_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? ORDER BY sp.sentence_id LIMIT 1024")
                 .bind(sqlite_integer(sentence,"sentence ID")?).fetch_all(&self.pool).await.map_err(database)?;
             let at_end = rows.is_empty();
             let positions = if at_end {
@@ -1443,11 +1361,13 @@ impl ProvenanceView {
             } else {
                 rows.into_iter()
                     .map(|row| {
+                        let sentence = sqlite_u64(
+                            row.try_get("sentence_id").map_err(database)?,
+                            "sentence ID",
+                        )?;
+                        validate_document_membership(&row, sentence)?;
                         Ok((
-                            sqlite_u64(
-                                row.try_get("sentence_id").map_err(database)?,
-                                "sentence ID",
-                            )?,
+                            sentence,
                             Some(sqlite_u64(
                                 row.try_get("document_id").map_err(database)?,
                                 "document ID",
@@ -2091,7 +2011,8 @@ impl ProvenanceView {
     ) -> Result<Option<StoredSentenceAnalysis>, CorpusError> {
         let row = sqlx::query(
             "SELECT CASE WHEN length(analysis_blob)<=? THEN analysis_blob END AS analysis_blob, input_unit_id, input_kind, normalization,
-                    input_identity, source_start, source_end
+                    input_identity, input_source_identity, input_document_identity,
+                    input_metadata_digest, analyzer_sentence_ordinal, source_start, source_end
              FROM sentence_provenance WHERE sentence_id=?",
         )
         .bind(i64::try_from(limit.saturating_add(25)).unwrap_or(i64::MAX))
@@ -2099,6 +2020,7 @@ impl ProvenanceView {
         .fetch_one(&self.pool)
         .await
         .map_err(database)?;
+        validate_input_identity(&row)?;
         let artifact: Option<Vec<u8>> = row.try_get("analysis_blob").map_err(database)?;
         let Some(artifact) = artifact else {
             return Ok(None);
@@ -3312,6 +3234,107 @@ async fn validate_table(
         {
             return Err(invalid(format!("{table} has a non-canonical schema")));
         }
+    }
+    Ok(())
+}
+
+/// Checks that the document ranges partition the sentence IDs `0..sentence_count`.
+async fn validate_document_tiling(
+    pool: &SqlitePool,
+    sentence_count: u64,
+) -> Result<(), CorpusError> {
+    use futures::TryStreamExt;
+    let mut rows = sqlx::query(
+        "SELECT first_sentence, sentence_count FROM document_metadata ORDER BY first_sentence",
+    )
+    .fetch(pool);
+    let mut end = 0_u64;
+    while let Some(row) = rows.try_next().await.map_err(database)? {
+        let first: i64 = row.try_get("first_sentence").map_err(database)?;
+        let count: i64 = row.try_get("sentence_count").map_err(database)?;
+        if u64::try_from(first).ok() != Some(end) || count <= 0 {
+            return Err(verification("document metadata ranges are not contiguous"));
+        }
+        end = end
+            .checked_add(sqlite_u64(count, "document sentence count")?)
+            .ok_or_else(|| invalid("document range overflow"))?;
+    }
+    if end != sentence_count {
+        return Err(verification(
+            "document metadata ranges do not cover exactly the stored sentences",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that `sentence`'s document range, joined as `first_sentence` and
+/// `sentence_count`, contains it. After [`validate_document_tiling`] that
+/// document is the only one whose range does.
+fn validate_document_membership(
+    row: &sqlx::sqlite::SqliteRow,
+    sentence: u64,
+) -> Result<(), CorpusError> {
+    let start: Option<i64> = row.try_get("first_sentence").map_err(database)?;
+    let count: Option<i64> = row.try_get("sentence_count").map_err(database)?;
+    let start = start.ok_or_else(|| verification("sentence has no document metadata"))?;
+    let count = count.ok_or_else(|| verification("sentence has no document range"))?;
+    let contains = u64::try_from(start).is_ok_and(|start| {
+        u64::try_from(count)
+            .ok()
+            .and_then(|count| start.checked_add(count))
+            .is_some_and(|end| (start..end).contains(&sentence))
+    });
+    if !contains {
+        return Err(verification(
+            "sentence is outside its document metadata range",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that a row stores either every input-identity column or none.
+fn validate_input_identity(row: &sqlx::sqlite::SqliteRow) -> Result<(), CorpusError> {
+    let input_unit_id: Option<i64> = row.try_get("input_unit_id").map_err(database)?;
+    let required = [
+        row.try_get::<Option<String>, _>("input_kind")
+            .map_err(database)?
+            .is_some(),
+        row.try_get::<Option<String>, _>("normalization")
+            .map_err(database)?
+            .is_some(),
+        optional_digest(
+            row.try_get("input_identity").map_err(database)?,
+            "input identity",
+        )?
+        .is_some(),
+        optional_digest(
+            row.try_get("input_source_identity").map_err(database)?,
+            "input source identity",
+        )?
+        .is_some(),
+        row.try_get::<Option<i64>, _>("input_document_identity")
+            .map_err(database)?
+            .is_some(),
+        optional_digest(
+            row.try_get("input_metadata_digest").map_err(database)?,
+            "input metadata digest",
+        )?
+        .is_some(),
+        row.try_get::<Option<i64>, _>("analyzer_sentence_ordinal")
+            .map_err(database)?
+            .is_some(),
+        row.try_get::<Option<i64>, _>("source_start")
+            .map_err(database)?
+            .is_some(),
+        row.try_get::<Option<i64>, _>("source_end")
+            .map_err(database)?
+            .is_some(),
+    ];
+    if required
+        .iter()
+        .any(|present| *present != input_unit_id.is_some())
+    {
+        return Err(invalid("sentence input identity is only partially stored"));
     }
     Ok(())
 }
