@@ -39,6 +39,11 @@ pub const CATALOG_COLUMNS: [&str; 17] = [
 /// ordered comparison; a value that does not parse is a catalog error.
 const NUMERIC_COLUMNS: [&str; 2] = ["body_character_count", "source_edition_year"];
 
+/// The column of a work's NDC classes: `NDC` and space-separated codes, each
+/// ASCII digits with an optional `K` (children's book) prefix, as in
+/// `NDC 712 914` or `NDC K913`. A value of another form is a catalog error.
+const NDC_COLUMN: &str = "ndc";
+
 /// The bound on `catalog.csv` itself.
 ///
 /// The catalog is metadata *about* the archive's records, not one of them, so
@@ -455,6 +460,16 @@ fn parse_catalog(bytes: &[u8], source_name: &str) -> io::Result<HashMap<String, 
                     )
                 })?;
                 serde_json::Value::from(number)
+            } else if column == NDC_COLUMN {
+                let codes = ndc_codes(value).ok_or_else(|| {
+                    catalog_error(
+                        source_name,
+                        format!(
+                            "row {row} has {column}={value:?}, which is not \"NDC\" followed by space-separated class codes"
+                        ),
+                    )
+                })?;
+                serde_json::Value::from(codes)
             } else {
                 serde_json::Value::from(value)
             };
@@ -472,6 +487,20 @@ fn parse_catalog(bytes: &[u8], source_name: &str) -> io::Result<HashMap<String, 
         }
     }
     Ok(rows)
+}
+
+fn ndc_codes(value: &str) -> Option<Vec<&str>> {
+    let mut codes = Vec::new();
+    for code in value.strip_prefix("NDC ")?.split(' ') {
+        let digits = code.strip_prefix('K').unwrap_or(code);
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        if !codes.contains(&code) {
+            codes.push(code);
+        }
+    }
+    Some(codes)
 }
 
 /// Splits CSV text into records of fields, following RFC 4180 closely enough
@@ -686,6 +715,65 @@ mod tests {
         assert!(scalar(metadata, "subtitle").is_none(), "empty is absent");
         assert!(scalar(metadata, "doi").is_some());
         assert!(scalar(metadata, "filename").is_some());
+    }
+
+    fn ndc_row(ndc: &str) -> String {
+        csv(&[row("000092_000879", "kumo.txt", "c373bb")
+            .replace("\"NDC 913\"", &format!("\"{ndc}\""))])
+    }
+
+    #[test]
+    fn ndc_becomes_the_distinct_class_codes_in_catalog_order() {
+        for (ndc, expected) in [
+            ("NDC 712 914", &["712", "914"][..]),
+            ("NDC K913", &["K913"]),
+            ("NDC 914 K914", &["914", "K914"]),
+            ("NDC 013", &["013"]),
+            ("NDC 914 712 914", &["914", "712"]),
+        ] {
+            let rows = parse_catalog(ndc_row(ndc).as_bytes(), "test.zip").expect("catalog");
+            let metadata = rows.get("kumo.txt").expect("row");
+            let Some(MetadataValue::Scalars(codes)) = scalar(metadata, "ndc") else {
+                panic!("{ndc:?} is not a list: {:?}", scalar(metadata, "ndc"));
+            };
+            let codes: Vec<&str> = codes
+                .iter()
+                .map(|code| match code {
+                    MetadataScalar::String(code) => code.as_str(),
+                    other => panic!("{ndc:?} has a non-string code {other:?}"),
+                })
+                .collect();
+            assert_eq!(codes, expected, "{ndc:?}");
+        }
+        let rows = parse_catalog(ndc_row("").as_bytes(), "test.zip").expect("catalog");
+        assert!(scalar(rows.get("kumo.txt").expect("row"), "ndc").is_none());
+    }
+
+    #[test]
+    fn a_malformed_ndc_is_a_catalog_error_naming_the_row() {
+        for ndc in [
+            "913",
+            "NDC",
+            "NDC ",
+            "ndc 913",
+            "NDC  913",
+            "NDC 913 ",
+            "NDC 9a3",
+            "NDC 913.6",
+            "NDC k913",
+            "NDC K",
+            "NDC　913",
+        ] {
+            let error = parse_catalog(ndc_row(ndc).as_bytes(), "test.zip")
+                .err()
+                .unwrap_or_else(|| panic!("{ndc:?} was accepted"));
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("row 1 has ndc={ndc:?}")),
+                "{ndc:?}: {error}"
+            );
+        }
     }
 
     #[test]

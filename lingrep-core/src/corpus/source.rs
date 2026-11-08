@@ -42,7 +42,7 @@ const CONLLU_CONFIG_TAG: u64 = 0x94d2_6c1e_58af_43b9u64;
 const BCCWJ_CONFIG_TAG: u64 = 0x7d1c_9e4a_b3f2_8c6eu64;
 /// Fixed reader-configuration tag for a Soranoha bulk archive. Configuration
 /// only — the catalog policy is the format's, with no tunable knob.
-const SORANOHA_CONFIG_TAG: u64 = 0x4e7a_b51c_0d93_6f28u64;
+const SORANOHA_CONFIG_TAG: u64 = 0xf9f6_6393_1f58_6929u64;
 
 /// Resolve the corpus format tag for a CLI input path, purely from the
 /// extension and an explicit override — never opening or stat-ing the path.
@@ -229,7 +229,7 @@ impl CorpusReadConfig {
             Self::Conllu => CONLLU_CONFIG_TAG,
             Self::Bccwj => BCCWJ_CONFIG_TAG,
             Self::Soranoha => SORANOHA_CONFIG_TAG,
-            Self::SoranohaTei => 0x81e4_73f9_d94a_b067,
+            Self::SoranohaTei => 0x4431_8972_e91b_1691,
             Self::Tei => 0x785d_1c80_2e96_4bb3,
         }
     }

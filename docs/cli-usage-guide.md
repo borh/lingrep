@@ -1040,7 +1040,7 @@ ling matches \
   --dict-path "$DICT" \
   --patterns patterns/sentence-final.lx \
   --input-format soranoha \
-  --where '@document.author = "芥川 竜之介" & @document.ndc = "NDC 913"' \
+  --where '@document.author = "芥川 竜之介" & @document.ndc contains "913"' \
   --source-metadata @document.identifier \
   --source-metadata @document.source_content_hash \
   --source-metadata @document.release \
@@ -1058,15 +1058,20 @@ and every column becomes document metadata under `@document.`:
 | kind | columns |
 |---|---|
 | citation | `identifier`, `source_content_hash`, `release` |
-| bibliographic | `title`, `subtitle`, `title_reading`, `author`, `orthographic_style`, `ndc`, `first_published`, `source_edition_title`, `source_edition_publisher`, `source_edition_year`, `url`, `doi` |
+| bibliographic | `title`, `subtitle`, `title_reading`, `author`, `orthographic_style`, `ndc` (list), `first_published`, `source_edition_title`, `source_edition_publisher`, `source_edition_year`, `url`, `doi` |
 | size and locator | `body_character_count` (number), `filename` |
 
 `body_character_count` and `source_edition_year` are numbers, so ordered
-comparisons work on them; every other column is a string, `identifier`
-included, so its leading zeros survive. An empty field is absent rather than
-an empty string: `@document.subtitle != …` reports a missing field, not an
-empty one. A column outside the pinned set is carried as string metadata. A
-missing pinned column, a row without `identifier`, `filename` or `release`, a
+comparisons work on them. `ndc` is a list of NDC class codes: `NDC 712 914`
+becomes `["712", "914"]` and `NDC K913` becomes `["K913"]`, so
+`@document.ndc contains "914"` selects one class. A code keeps its leading
+zeros and its `K` (children's book) prefix, so `914` and `K914` are distinct
+classes, and a code repeated within one value is stored once. Every other
+column is a string, `identifier` included, so its leading zeros survive. An
+empty field is absent rather than an empty string: `@document.subtitle != …`
+reports a missing field, not an empty one. A column outside the pinned set is
+carried as string metadata. A missing pinned column, a row without
+`identifier`, `filename` or `release`, an `ndc` value of another form, a
 duplicate filename or identifier, and rows with conflicting release values are
 rejected with the row named.
 
