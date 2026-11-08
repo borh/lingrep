@@ -186,7 +186,8 @@ pub enum Command {
     /// If multiple input aliases name the same source, each alias contributes
     /// its own counts.
     Summarize(SummarizeArgs),
-    /// Read per-pattern counts under --where from a saved count table.
+    /// Read per-pattern counts under --where, or one entry's counts per
+    /// document-metadata value, from a saved count table.
     ///
     /// The table is written by `ling summarize --write-table`.
     Table(TableArgs),
@@ -677,6 +678,27 @@ pub struct TableArgs {
     /// Default: 20 in terminal output, unlimited with --json.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
+
+    /// Count one entry of one pattern under --by-metadata. KEY is the `group`
+    /// of the entry's JSON row, or its key as human rows print it.
+    #[arg(
+        long,
+        value_name = "PATTERN=KEY",
+        requires = "by_metadata",
+        conflicts_with = "top",
+        help_heading = "Output"
+    )]
+    pub entry: Option<String>,
+
+    /// Count the --entry under every value of @document.NAME, one
+    /// `metadata_value` record per value (requires --json).
+    #[arg(
+        long,
+        value_name = "@document.NAME",
+        requires = "entry",
+        help_heading = "Output"
+    )]
+    pub by_metadata: Option<String>,
 
     /// Maximum bytes of temporary storage for ordering every group.
     #[arg(

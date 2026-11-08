@@ -166,3 +166,45 @@ pub(crate) fn build_scope_report(
         },
     }))
 }
+
+/// Each document's ID, corpus sentence range and values of `key`
+/// (`@document.NAME`) as `--where` compares them, in corpus order; a document
+/// with no value lists none.
+pub(crate) fn document_values(
+    provenance: &lingrep_corpus::BlockingProvenance,
+    key: &str,
+) -> Result<Vec<(u64, std::ops::Range<u64>, Vec<String>)>, CliError> {
+    use lingrep_core::corpus::{MetadataScalar, MetadataValue};
+    let name = key
+        .strip_prefix("@document.")
+        .expect("--by-metadata names a @document key");
+    let mut documents = Vec::new();
+    let mut cursor = 0;
+    loop {
+        let page = provenance.block_on(provenance.view().document_metadata_page(cursor))?;
+        if page.is_empty() {
+            return Ok(documents);
+        }
+        for row in page {
+            let end = row.first_sentence + row.sentence_count;
+            cursor = end;
+            let metadata = crate::scope_precompute::document_metadata(&row)
+                .map_err(|error| CliError::Corpus(error.message))?;
+            let values = match metadata.iter().find(|(candidate, _)| candidate == name) {
+                None => Vec::new(),
+                Some((_, MetadataValue::Scalar(scalar))) => vec![scalar.comparison_text()],
+                Some((_, MetadataValue::Scalars(list))) => {
+                    list.iter().map(MetadataScalar::comparison_text).collect()
+                }
+                Some((_, MetadataValue::Opaque(_))) => {
+                    return Err(CliError::InvalidArgs(format!(
+                        "--by-metadata {key}: document {} has a value that is neither a scalar \
+                         nor a list of scalars",
+                        row.document_id.get()
+                    )));
+                }
+            };
+            documents.push((row.document_id.get(), row.first_sentence..end, values));
+        }
+    }
+}

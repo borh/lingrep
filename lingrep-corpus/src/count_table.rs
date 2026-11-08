@@ -1091,6 +1091,16 @@ impl CountTable {
         &self.document_ids
     }
 
+    /// Each table document's ID, sentences and tokens, in the order of
+    /// [`Self::document_ids`].
+    pub fn documents(&self) -> impl ExactSizeIterator<Item = DocumentTotals> + '_ {
+        (0..self.document_ids.len()).map(|document| DocumentTotals {
+            document_id: self.document_ids[document],
+            sentences: self.document_sentences[document],
+            tokens: self.document_tokens[document],
+        })
+    }
+
     /// The mask admitting each document whose ID `admit` accepts.
     pub fn mask(&self, mut admit: impl FnMut(u64) -> bool) -> DocumentMask {
         DocumentMask {
@@ -1360,11 +1370,8 @@ impl CountTable {
         if mask.admitted.len() != self.document_ids.len() {
             return Err(corrupt("mask was built for a different table"));
         }
-        if pattern >= self.header.patterns.len() {
-            return Err(corrupt("pattern out of range"));
-        }
-        let (start, end) = self.pattern_range(pattern);
-        let rows = (start..end)
+        let rows = self
+            .pattern_range(pattern)?
             .into_par_iter()
             .with_min_len(4096)
             .map(|entry| self.conditioned(entry as u32, &mask.admitted))
@@ -1381,7 +1388,7 @@ impl CountTable {
         policy: SpillPolicy,
         budget: &Arc<TempBudget>,
     ) -> Result<SortedDrain<RowOrder>, CountTableError> {
-        let (start, end) = self.pattern_range(pattern);
+        let std::ops::Range { start, end } = self.pattern_range(pattern)?;
         let mut ordered = SortedRunCounts::with_policy(policy, Arc::clone(budget))?;
         let mut at = start;
         while at < end {
@@ -1407,8 +1414,9 @@ impl CountTable {
         Ok(ordered.into_sorted_drain()?)
     }
 
-    /// One entry's count and works under `mask`.
-    fn conditioned(&self, entry: u32, mask: &[bool]) -> Result<TopRow, CountTableError> {
+    /// The documents holding `entry`, indexed like [`Self::document_ids`] and
+    /// ascending, with its count in each.
+    pub fn entry_documents(&self, entry: u32) -> Result<(&[u32], &[u32]), CountTableError> {
         let offsets = self.u64s(&self.entry_pair_offsets)?;
         let start = *offsets
             .get(entry as usize)
@@ -1424,6 +1432,12 @@ impl CountTable {
             .u32s(&self.pair_counts)?
             .get(start..end)
             .ok_or_else(|| corrupt("entry pair offsets out of range"))?;
+        Ok((documents, counts))
+    }
+
+    /// One entry's count and works under `mask`.
+    fn conditioned(&self, entry: u32, mask: &[bool]) -> Result<TopRow, CountTableError> {
+        let (documents, counts) = self.entry_documents(entry)?;
         let mut row = TopRow {
             entry,
             count: 0,
@@ -1438,9 +1452,15 @@ impl CountTable {
         Ok(row)
     }
 
-    fn pattern_range(&self, pattern: usize) -> (usize, usize) {
-        let [start, end] = self.header.patterns[pattern].entries;
-        (start as usize, end as usize)
+    /// The entries of `pattern`.
+    pub fn pattern_range(&self, pattern: usize) -> Result<std::ops::Range<usize>, CountTableError> {
+        let [start, end] = self
+            .header
+            .patterns
+            .get(pattern)
+            .ok_or_else(|| corrupt("pattern out of range"))?
+            .entries;
+        Ok(start as usize..end as usize)
     }
 
     /// Scans the pattern's entries by descending total and stops once an
@@ -1452,7 +1472,7 @@ impl CountTable {
         mask: &DocumentMask,
         limit: usize,
     ) -> Result<Vec<TopRow>, CountTableError> {
-        let (start, end) = self.pattern_range(pattern);
+        let std::ops::Range { start, end } = self.pattern_range(pattern)?;
         let order = self
             .u32s(&self.ranked_entries)?
             .get(start..end)
@@ -1615,7 +1635,7 @@ impl CountTable {
         let order = self.u32s(&self.ranked_entries)?;
         let ranked_totals = self.u64s(&self.ranked_totals)?;
         for pattern in 0..self.header.patterns.len() {
-            let (start, end) = self.pattern_range(pattern);
+            let std::ops::Range { start, end } = self.pattern_range(pattern)?;
             let mut seen = order[start..end].to_vec();
             seen.sort_unstable();
             if seen.iter().copied().ne(start as u32..end as u32) {

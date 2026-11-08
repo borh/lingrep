@@ -18,7 +18,7 @@ use serde::ser::SerializeMap;
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
 use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
-use super::query_scope::parse_scope;
+use super::query_scope::{document_values, parse_scope};
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
     random_id, write_warning,
@@ -391,7 +391,13 @@ pub fn run(
             .map_err(CliError::Aggregation)?;
         let metadata_values = metadata_values
             .map(|(key, documents)| {
-                MetadataValueTally::new(key, documents, aggregation.temp_budget())
+                MetadataValueTally::new(
+                    key,
+                    documents
+                        .into_iter()
+                        .map(|(_, range, values)| (range, values)),
+                    aggregation.temp_budget(),
+                )
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
@@ -769,48 +775,6 @@ fn section_labels(
         }
     }
     Ok(labels)
-}
-
-/// Each document's corpus sentence range in the artifact that `provenance`
-/// reads, with the values of `key` (`@document.NAME`) as `--where` compares
-/// them.
-fn document_values(
-    provenance: &lingrep_corpus::BlockingProvenance,
-    key: &str,
-) -> Result<Vec<(std::ops::Range<u64>, Vec<String>)>, CliError> {
-    use lingrep_core::corpus::{MetadataScalar, MetadataValue};
-    let name = key
-        .strip_prefix("@document.")
-        .expect("--by-metadata names a @document key");
-    let mut documents = Vec::new();
-    let mut cursor = 0;
-    loop {
-        let page = provenance.block_on(provenance.view().document_metadata_page(cursor))?;
-        if page.is_empty() {
-            return Ok(documents);
-        }
-        for row in page {
-            let end = row.first_sentence + row.sentence_count;
-            cursor = end;
-            let metadata = crate::scope_precompute::document_metadata(&row)
-                .map_err(|error| CliError::Corpus(error.message))?;
-            let values = match metadata.iter().find(|(candidate, _)| candidate == name) {
-                None => Vec::new(),
-                Some((_, MetadataValue::Scalar(scalar))) => vec![scalar.comparison_text()],
-                Some((_, MetadataValue::Scalars(list))) => {
-                    list.iter().map(MetadataScalar::comparison_text).collect()
-                }
-                Some((_, MetadataValue::Opaque(_))) => {
-                    return Err(CliError::InvalidArgs(format!(
-                        "--by-metadata {key}: document {} has a value that is neither a scalar \
-                         nor a list of scalars",
-                        row.document_id.get()
-                    )));
-                }
-            };
-            documents.push((row.first_sentence..end, values));
-        }
-    }
 }
 
 struct DocumentTally {

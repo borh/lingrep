@@ -12,7 +12,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<TableEnvelope>(
         super::ContractId::Table,
         &["table"],
-        "Per-pattern counts under a --where clause, read from a count table.",
+        "Per-pattern counts under a --where clause, or with --entry (JSON only) one entry's counts per document-metadata value as metadata_value records, read from a count table.",
         StreamShape::Phased {
             phases: &[
                 StreamPhase {
@@ -34,6 +34,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                     max: None,
                 },
                 StreamPhase {
+                    name: "metadata_values",
+                    events: &["metadata_value"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
                     name: "complete",
                     events: &["complete"],
                     min: 1,
@@ -42,8 +48,8 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "One pattern record per pattern in catalog order, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`.",
-        "Every pattern's totals under the clause, then every entry with a nonzero count under the clause, or the first --top of each pattern.",
+        "One pattern record per pattern in catalog order, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`. Under --entry, metadata_value records alone, in the value order of `ling summarize --by-metadata`.",
+        "Every pattern's totals under the clause, then every entry with a nonzero count under the clause, or the first --top of each pattern. Under --entry, one record per value with at least one admitted document, and one for admitted documents without a value.",
         "A closed pipe is a machine-output failure.",
         "0 complete, 1 runtime/output failure, 2 invocation failure.",
         &[],
@@ -83,6 +89,7 @@ pub enum TableEvent {
     Run(TableRun),
     Pattern(TablePattern),
     Row(TableRow),
+    MetadataValue(TableMetadataValue),
     Complete(TableComplete),
 }
 
@@ -97,6 +104,12 @@ pub struct TableRun {
     /// The `--where` clause, if any.
     pub clause: Option<String>,
     pub requested_top: Option<u64>,
+    /// The `--entry` argument, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    /// The `--by-metadata` key, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_metadata: Option<String>,
 }
 
 /// One pattern's totals over all of its entries under the clause, whatever
@@ -118,6 +131,31 @@ pub struct TableRow {
     pub group: SummaryGroupData,
     pub count: u64,
     /// Admitted documents with at least one occurrence.
+    pub works: u64,
+}
+
+/// One value of the `--by-metadata` key, shaped as a `lingrep.query/v2`
+/// `metadata_value` record whose pattern counts are the one `--entry`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableMetadataValue {
+    pub key: String,
+    /// The value as `--where` compares it; `null` for documents without the
+    /// key or with an empty list.
+    pub value: Option<String>,
+    /// Admitted documents with this value.
+    pub documents_admitted: u64,
+    pub sentences_admitted: u64,
+    pub tokens_admitted: u64,
+    pub entry: TableEntryCount,
+}
+
+/// The `--entry` under one metadata value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableEntryCount {
+    pub pattern: String,
+    pub group: SummaryGroupData,
+    pub count: u64,
+    /// Admitted documents with this value and at least one occurrence.
     pub works: u64,
 }
 

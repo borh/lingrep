@@ -2741,6 +2741,370 @@ fn table_text_output_begins_with_each_pattern_total() {
     );
 }
 
+/// The `--by-metadata` values a document record's `--source-metadata` field
+/// stands for: each distinct listed value, or none.
+fn listed_values(value: Option<&Value>) -> Vec<String> {
+    let text = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let mut values = match value {
+        None => Vec::new(),
+        Some(Value::Array(list)) => list.iter().map(text).collect(),
+        Some(scalar) => vec![text(scalar)],
+    };
+    values.sort();
+    values.dedup();
+    values
+}
+
+/// Documents whose `tags` order values over every document: `w` first
+/// appears in a 2001 document and again after `x`; `v` is only on a document
+/// without sentences, which the artifact stores no metadata for; `x` is
+/// listed twice; `1` is a string and a number; and two documents have no tag.
+fn profile_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
+    let input = directory.path().join("profile.jsonl");
+    fs::write(
+        &input,
+        "{\"text\":\"猫が猫を見る。\",\"metadata\":{\"tags\":[\"w\"],\"year\":\"2001\"}}\n\
+         {\"text\":\"\",\"metadata\":{\"tags\":\"v\",\"year\":\"2002\"}}\n\
+         {\"text\":\"猫。犬。\",\"metadata\":{\"tags\":[\"x\",\"x\"],\"year\":\"2002\"}}\n\
+         {\"text\":\"犬が鳥を見る。\",\"metadata\":{\"year\":\"2003\"}}\n\
+         {\"text\":\"猫と犬。\",\"metadata\":{\"tags\":[],\"year\":\"2002\"}}\n\
+         {\"text\":\"猫。猫。\",\"metadata\":{\"tags\":[\"w\",\"1\"],\"year\":\"2003\"}}\n\
+         {\"text\":\"鳥。\",\"metadata\":{\"tags\":1,\"year\":\"2003\"}}\n",
+    )
+    .unwrap();
+    let artifact = directory.path().join("profile.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    artifact
+}
+
+/// For one entry, `ling table --entry --by-metadata` publishes the
+/// `metadata_value` records of `summarize --by-metadata` over a catalog whose
+/// pattern matches only that entry: the same values in the same order with
+/// the same admitted documents, sentences and tokens, and the pattern's
+/// matches as the entry's count. Its works per value is the number of
+/// `--by-document` documents with a match that carry the value.
+#[test]
+fn table_entry_by_metadata_equals_summarize_by_metadata_of_a_catalog_of_that_entry() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = profile_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("profile.table.lingtable");
+    write_table(&artifact, &catalog, &table);
+
+    // Each entry is selected by its human row text, that text with JSON
+    // whitespace, and the `group` of its JSON row.
+    for (pattern, keys, restricted) in [
+        (
+            "word",
+            &[
+                r#"{"text":"猫"}"#,
+                r#"{ "text" : "猫" }"#,
+                r#"{"kind":"key","fields":[{"kind":"scalar","name":"text","value":"猫"}]}"#,
+            ][..],
+            "key: [text]\npattern word := [text=猫].\n",
+        ),
+        (
+            "pair",
+            &["猫。", r#"{"kind":"surface","value":"猫。"}"#][..],
+            "pattern pair := [text=猫] [text=。].\n",
+        ),
+    ] {
+        let key = keys[0];
+        let restricted_catalog = directory.path().join(format!("{pattern}.lx"));
+        fs::write(&restricted_catalog, restricted).unwrap();
+        let summarize = |extra: &[&str]| {
+            let output = lingrep_without_dictionary()
+                .args(["--json", "summarize", "--patterns"])
+                .arg(&restricted_catalog)
+                .arg("--corpus")
+                .arg(&artifact)
+                .args(extra)
+                .output()
+                .unwrap();
+            assert_success(&output);
+            parse_jsonl(&output.stdout)
+        };
+        for by in ["@document.tags", "@document.year"] {
+            for clause in [
+                None,
+                Some("@document.year >= 2002"),
+                Some("@document.year = 1999"),
+            ] {
+                let scope = clause
+                    .iter()
+                    .flat_map(|clause| ["--where", *clause])
+                    .collect::<Vec<_>>();
+                let entry = format!("{pattern}={key}");
+                let mut extra = vec!["--entry", entry.as_str(), "--by-metadata", by];
+                extra.extend(&scope);
+                let output = table_events(&table, &catalog, &artifact, &extra);
+                assert_success(&output);
+                let records = parse_jsonl(&output.stdout);
+                for record in &records {
+                    serde_json::from_value::<lingrep::protocol::table::TableEnvelope>(
+                        record.clone(),
+                    )
+                    .unwrap();
+                }
+                assert!(
+                    records
+                        .iter()
+                        .all(|record| record["type"] != "pattern" && record["type"] != "row"),
+                    "{pattern} {by} {clause:?}"
+                );
+                let published = records
+                    .iter()
+                    .filter(|record| record["type"] == "metadata_value")
+                    .map(|record| record["data"].clone())
+                    .collect::<Vec<_>>();
+                for other in &keys[1..] {
+                    let entry = format!("{pattern}={other}");
+                    let mut extra = vec!["--entry", entry.as_str(), "--by-metadata", by];
+                    extra.extend(&scope);
+                    let output = table_events(&table, &catalog, &artifact, &extra);
+                    assert_success(&output);
+                    let selected = parse_jsonl(&output.stdout)
+                        .into_iter()
+                        .filter(|record| record["type"] == "metadata_value")
+                        .map(|record| record["data"].clone())
+                        .collect::<Vec<_>>();
+                    assert_eq!(selected, published, "{entry} {by} {clause:?}");
+                }
+
+                let mut by_document = vec!["--by-document", "--source-metadata", by];
+                by_document.extend(&scope);
+                let by_document = summarize(&by_document);
+                let field = by.strip_prefix("@document.").unwrap();
+                let mut works = BTreeMap::<Option<String>, u64>::new();
+                for record in by_document
+                    .iter()
+                    .filter(|record| record["type"] == "document")
+                {
+                    let data = &record["data"];
+                    let matched = summary_events(&by_document)
+                        .iter()
+                        .any(|summary| summary["data"]["document"] == data["document"]);
+                    if !matched {
+                        continue;
+                    }
+                    let values = listed_values(data["source_metadata"]["document"].get(field));
+                    if values.is_empty() {
+                        *works.entry(None).or_default() += 1;
+                    }
+                    for value in values {
+                        *works.entry(Some(value)).or_default() += 1;
+                    }
+                }
+
+                let mut by_metadata = vec!["--by-metadata", by];
+                by_metadata.extend(&scope);
+                let expected = summarize(&by_metadata)
+                    .into_iter()
+                    .filter(|record| record["type"] == "metadata_value")
+                    .map(|record| {
+                        let data =
+                            serde_json::from_value::<MetadataValueData>(record["data"].clone())
+                                .unwrap();
+                        let [count] = &data.patterns[..] else {
+                            panic!("one pattern: {data:?}");
+                        };
+                        assert_eq!(count.pattern, pattern);
+                        let group = if key.starts_with('{') {
+                            serde_json::json!({
+                                "kind": "key",
+                                "fields": [{"kind": "scalar", "name": "text", "value": "猫"}],
+                            })
+                        } else {
+                            serde_json::json!({"kind": "surface", "value": key})
+                        };
+                        serde_json::json!({
+                            "key": data.key,
+                            "value": data.value,
+                            "documents_admitted": data.documents_admitted,
+                            "sentences_admitted": data.sentences_admitted,
+                            "tokens_admitted": data.tokens_admitted,
+                            "entry": {
+                                "pattern": pattern,
+                                "group": group,
+                                "count": count.matches,
+                                "works": works.get(&data.value).copied().unwrap_or(0),
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(published, expected, "{pattern} {by} {clause:?}");
+                if clause == Some("@document.year = 1999") {
+                    assert!(expected.is_empty());
+                } else {
+                    assert!(
+                        expected
+                            .iter()
+                            .any(|record| record["entry"]["count"].as_u64() > Some(0)),
+                        "{pattern} {by} {clause:?} counts a match"
+                    );
+                }
+                if by == "@document.tags" && clause != Some("@document.year = 1999") {
+                    // Values are numbered over every document, including one the
+                    // clause rejects; `v` has no record; documents without a tag
+                    // share the null bucket.
+                    let values = expected
+                        .iter()
+                        .map(|record| record["value"].as_str())
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        values,
+                        [Some("w"), Some("x"), Some("1"), None],
+                        "{clause:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// `--entry` and `--by-metadata` are given together, as JSON, without
+/// `--top`; the entry names a table pattern and one of its keys as `ling
+/// table` prints it.
+#[test]
+fn table_entry_rejects_an_unknown_pattern_or_key_and_incomplete_requests() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("tagged.table.lingtable");
+    write_table(&artifact, &catalog, &table);
+    let by = ["--by-metadata", "@document.year"];
+    for (case, extra, diagnostic) in [
+        (
+            "unknown pattern",
+            &["--entry", "nope=猫", by[0], by[1]][..],
+            "nope",
+        ),
+        (
+            "unknown key",
+            &["--entry", r#"word={"text":"象"}"#, by[0], by[1]][..],
+            "象",
+        ),
+        (
+            "key not printed as ling table prints it",
+            &["--entry", "word=猫", by[0], by[1]][..],
+            "猫",
+        ),
+        (
+            "a JSON object with kind that is not a group",
+            &["--entry", r#"word={"kind":"nope"}"#, by[0], by[1]][..],
+            "group",
+        ),
+        (
+            "no key",
+            &["--entry", "word", by[0], by[1]][..],
+            "PATTERN=KEY",
+        ),
+        (
+            "no --by-metadata",
+            &["--entry", "cat=猫"][..],
+            "--by-metadata",
+        ),
+        ("no --entry", &by[..], "--entry"),
+        (
+            "not a document key",
+            &["--entry", "cat=猫", "--by-metadata", "@sentence.year"][..],
+            "@document.NAME",
+        ),
+        (
+            "with --top",
+            &["--entry", "cat=猫", by[0], by[1], "--top", "1"][..],
+            "--entry",
+        ),
+    ] {
+        let output = table_events(&table, &catalog, &artifact, extra);
+        assert_eq!(output.status.code(), Some(2), "{case}");
+        assert!(output.stdout.is_empty(), "{case}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(diagnostic), "{case}: {stderr}");
+    }
+    let text = lingrep_without_dictionary()
+        .arg("table")
+        .arg(&table)
+        .arg("--patterns")
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .args(["--entry", "cat=猫", by[0], by[1]])
+        .output()
+        .unwrap();
+    assert_eq!(text.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&text.stderr).contains("--json"));
+}
+
+/// Two definitions published under one name can print the same row text, a
+/// surface and a lexicon term; the text then exits 2 and the `group` of the
+/// JSON row selects either.
+#[test]
+fn table_entry_selects_by_group_where_the_row_text_is_ambiguous() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("shared.lx");
+    fs::write(
+        &catalog,
+        "output_name: \"shared\"\npattern cat := [text=猫].\n\n\
+         output_name: \"shared\"\nlexicon cats by [text] := {\"猫\"}.\n",
+    )
+    .unwrap();
+    let table = directory.path().join("shared.lingtable");
+    write_table(&artifact, &catalog, &table);
+    let by = ["--by-metadata", "@document.year"];
+
+    let text = table_events(
+        &table,
+        &catalog,
+        &artifact,
+        &["--entry", "shared=猫", by[0], by[1]],
+    );
+    assert_eq!(text.status.code(), Some(2));
+    assert!(text.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&text.stderr).contains("more than one entry"));
+
+    for kind in ["surface", "term"] {
+        let entry = format!(r#"shared={{"kind":"{kind}","value":"猫"}}"#);
+        let output = table_events(
+            &table,
+            &catalog,
+            &artifact,
+            &["--entry", &entry, by[0], by[1]],
+        );
+        assert_success(&output);
+        let records = parse_jsonl(&output.stdout);
+        let groups = records
+            .iter()
+            .filter(|record| record["type"] == "metadata_value")
+            .map(|record| record["data"]["entry"]["group"].clone())
+            .collect::<Vec<_>>();
+        assert!(!groups.is_empty(), "{kind}");
+        assert!(
+            groups
+                .iter()
+                .all(|group| *group == serde_json::json!({"kind": kind, "value": "猫"})),
+            "{kind}: {groups:?}"
+        );
+    }
+}
+
 #[test]
 fn table_rejects_a_table_for_another_catalog_or_artifact() {
     let dictionary = MiniDictionary::new();

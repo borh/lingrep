@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanning the corpus. Before the rows, a `pattern` record per pattern gives
   its occurrences and admitted documents over all of its groups. A table is rejected when the corpus analysis, the
   catalog or the matcher revision differs from the one it was written for.
+- `ling table --entry PATTERN=KEY --by-metadata @document.NAME` counts one
+  entry of a count table under every value of a document metadata key. It
+  publishes `lingrep.table/v1` `metadata_value` records that have the values,
+  order and admitted documents, sentences and tokens of `summarize
+  --by-metadata`, and hold the entry's `count` and `works` in place of the
+  per-pattern counts. `KEY` is the `group` of the entry's JSON `row` record,
+  or its key as human rows print it. It requires `--json`.
 - `ling serve --count-table PATH` (repeatable) adds a **Frequencies** view
   to lingrep-web. It states a query as a sentence whose blanks are the
   catalog, the pattern, conditions on document metadata, the order and a

@@ -476,6 +476,40 @@ the catalog or the corpus changes. `--write-table` cannot be combined with
 `--by-metadata`, and `ling table` accepts only `@document` conditions; both
 reject the rest with exit code `2`.
 
+`--entry PATTERN=KEY --by-metadata @document.NAME` counts one entry under
+every value of a document metadata key, from the table:
+
+```bash
+ling --json table soranoha.collexeme.lingtable \
+  --entry 'te_oku={"$verb.norm":"言う"}' --by-metadata @document.ndc \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
+```
+
+`KEY` selects one entry of the pattern in one of two forms:
+
+- the `group` object of the entry's JSON `row` record, such as
+  `{"kind":"key","fields":[{"kind":"scalar","name":"$verb.norm","value":"言う"}]}`
+  or `{"kind":"term","value":"猫"}`, with its fields in the row's order;
+- the key as human rows print it: a bare value, or a JSON object of the
+  key's fields, compared field by field in any order and with any JSON
+  whitespace.
+
+Human rows escape control and bidirectional characters for the terminal, and
+two entries of different kinds, such as a lexicon term and a surface published
+under one `output_name`, can print the same text. In those cases give the
+`group` form. An unknown pattern or key, or text that selects more than one
+entry, exits with code `2`.
+
+The output is one `metadata_value` record per value. Its values, their order,
+and its `documents_admitted`, `sentences_admitted` and `tokens_admitted` are
+those of `summarize --by-metadata`; its `entry` holds the entry's `pattern`,
+`group`, `count` and `works`. The `count` equals the `matches` that
+`summarize --by-metadata` reports for a pattern that matches only that entry.
+As with `--by-metadata`, a document listing several values is counted once
+under each value, documents without a value are counted under `value: null`,
+and `--where` restricts the documents. It requires `--json` and cannot be
+combined with `--top`.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term
