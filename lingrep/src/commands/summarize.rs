@@ -151,6 +151,7 @@ pub fn run(
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let descriptors = catalog.authored_definitions()?;
     let catalog_fingerprint = catalog.fingerprint.clone();
+    let table_fingerprint = catalog.fingerprint.clone();
     let compiled = catalog.output;
     let projected_attributes = cached_run_attributes(&compiled.matcher);
     let catalog_policy = compiled.matcher.catalog_policy();
@@ -198,6 +199,12 @@ pub fn run(
             "summarize --by-metadata accepts only @document.KEY, not {key}"
         )));
     }
+    if args.write_table.is_some() && (args.selection.clause.is_some() || sample.is_some()) {
+        return Err(CliError::InvalidArgs(
+            "--write-table counts the whole corpus; it does not accept --where or --sample"
+                .to_owned(),
+        ));
+    }
     if let Some(key) = args
         .source_metadata
         .iter()
@@ -232,6 +239,11 @@ pub fn run(
             "--by-section requires a prepared corpus: pass --corpus or --cache".to_owned(),
         ));
     }
+    if args.write_table.is_some() && selected_corpus.is_none() {
+        return Err(CliError::InvalidArgs(
+            "--write-table requires a prepared corpus: pass --corpus or --cache".to_owned(),
+        ));
+    }
     if args.by_metadata.is_some() && selected_corpus.is_none() {
         return Err(CliError::InvalidArgs(
             "--by-metadata requires a prepared corpus: pass --corpus or --cache".to_owned(),
@@ -263,6 +275,7 @@ pub fn run(
         sample.is_none()
             && scope_clause.is_none()
             && !args.by_document
+            && args.write_table.is_none()
             && !args.by_section
             && args.by_metadata.is_none(),
         args.by_section || args.by_metadata.is_some(),
@@ -388,7 +401,7 @@ pub fn run(
             pattern_ordinals: &pattern_ordinals,
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
-            documents: args.by_document.then(BTreeMap::new),
+            documents: (args.by_document || args.write_table.is_some()).then(BTreeMap::new),
             sections,
             metadata_values,
         };
@@ -495,7 +508,14 @@ pub fn run(
             .iter()
             .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
             .collect::<Vec<_>>();
-        let mut finalized = aggregation.finalize().map_err(CliError::Aggregation)?;
+        let (mut finalized, mut aggregation) = if args.write_table.is_some() {
+            (None, Some(aggregation))
+        } else {
+            (
+                Some(aggregation.finalize().map_err(CliError::Aggregation)?),
+                None,
+            )
+        };
         let published = pattern_ordinals.values().copied().collect::<Vec<_>>();
         let mut sections = sections
             .map(|sections| sections.into_records(&published, &pattern_names))
@@ -505,7 +525,44 @@ pub fn run(
             .map(|values| values.into_records(&published, &pattern_names))
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let temp_high_water = finalized.peak_temp_bytes();
+        let mut temp_high_water = finalized
+            .as_ref()
+            .map_or(0, FinalizedSummary::peak_temp_bytes);
+
+        // A table is staged before completion is claimed, so a signal that
+        // arrives while it is written publishes nothing.
+        let mut documents = documents;
+        let mut staged_table = None;
+        if let (Some(path), Some(aggregation)) = (args.write_table.as_deref(), aggregation.take()) {
+            let crate::protocol::query::CompleteCorpus::Prepared {
+                analysis_identity, ..
+            } = &complete_corpus
+            else {
+                return Err(CliError::InvalidArgs(
+                    "--write-table requires a prepared corpus".to_owned(),
+                ));
+            };
+            let key = lingrep_corpus::CountTableKey {
+                analysis_identity: analysis_identity.clone(),
+                catalog_fingerprint: table_fingerprint,
+                matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
+            };
+            match write_count_table(
+                path,
+                key,
+                aggregation,
+                documents.take().unwrap_or_default(),
+                &pattern_ordinals,
+                &pattern_names,
+                terminal.cancellation(),
+            ) {
+                Ok(staged) => staged_table = Some(staged),
+                Err(_) if terminal.cancellation().is_cancelled() => {
+                    return Ok(CommandOutcome::Cancelled);
+                }
+                Err(error) => return Err(error),
+            }
+        }
 
         if !terminal.try_claim_completion() {
             return Ok(CommandOutcome::Cancelled);
@@ -528,6 +585,22 @@ pub fn run(
         {
             write_alias_warning(config, &run_id, inventory)?;
         }
+        let table_stats = match staged_table {
+            Some((staged, peak)) => {
+                temp_high_water = peak;
+                Some(staged.publish().map_err(|error| {
+                    CliError::Corpus(format!(
+                        "count table {}: {error}",
+                        args.write_table
+                            .as_deref()
+                            .map(std::path::Path::display)
+                            .map(|path| path.to_string())
+                            .unwrap_or_default()
+                    ))
+                })?)
+            }
+            None => None,
+        };
 
         // `summarize` publishes no per-match prefix, so it always runs to
         // completion: its basis is the corpus on both paths.
@@ -607,13 +680,30 @@ pub fn run(
             writer: &mut writer,
             output,
         };
-        publish_summary_rows_and_complete(
-            &mut finalized,
-            top,
-            &pattern_names,
-            complete,
-            &mut event_writer,
-        )?;
+        if let Some(finalized) = finalized.as_mut() {
+            publish_summary_rows_and_complete(
+                finalized,
+                top,
+                &pattern_names,
+                complete,
+                &mut event_writer,
+            )?;
+        } else {
+            if let (Some(stats), Some(path), OutputMode::Human) =
+                (table_stats, args.write_table.as_deref(), output)
+            {
+                writeln!(
+                    event_writer.writer,
+                    "wrote count table {}: {} entries, {} document pairs, {} bytes",
+                    sanitize_terminal(&path.display().to_string()),
+                    stats.entries,
+                    stats.pairs,
+                    stats.bytes
+                )
+                .map_err(execution_output_io)?;
+            }
+            event_writer.write_complete(&complete)?;
+        }
         writer.flush().map_err(execution_output_io)?;
         Ok(CommandOutcome::Success)
     })();
@@ -724,10 +814,109 @@ fn document_values(
 }
 
 struct DocumentTally {
+    document_id: u64,
     source_name: std::sync::Arc<str>,
     sentences: u64,
     tokens: u64,
     source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
+}
+
+/// Writes the per-document counts of `aggregation` to a new count table at
+/// `path`, and returns what was written and the run's peak temporary storage.
+fn write_count_table(
+    path: &std::path::Path,
+    key: lingrep_corpus::CountTableKey,
+    aggregation: SummaryAggregator,
+    documents: BTreeMap<u64, DocumentTally>,
+    pattern_ordinals: &BTreeMap<String, u64>,
+    pattern_names: &[&str],
+    cancellation: &lingrep_core::execution::CancellationFlag,
+) -> Result<(lingrep_corpus::StagedCountTable, u64), CliError> {
+    let table_error = |error: lingrep_corpus::CountTableError| {
+        CliError::Corpus(format!("count table {}: {error}", path.display()))
+    };
+    let mut ordinals = pattern_ordinals.values().copied().collect::<Vec<_>>();
+    ordinals.sort_unstable();
+    let names = ordinals
+        .iter()
+        .map(|ordinal| {
+            pattern_names
+                .get(*ordinal as usize)
+                .map(|name| (*name).to_owned())
+                .ok_or_else(|| CliError::Corpus("pattern ordinal is out of range".to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let totals = documents
+        .values()
+        .map(|tally| lingrep_corpus::DocumentTotals {
+            document_id: tally.document_id,
+            sentences: tally.sentences,
+            tokens: tally.tokens,
+        })
+        .collect::<Vec<_>>();
+    let document_index = documents
+        .keys()
+        .zip(0u32..)
+        .map(|(ordinal, index)| (*ordinal, index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut finalized = aggregation
+        .finalize_by_group(cancellation)
+        .map_err(CliError::Aggregation)?;
+    let mut writer = lingrep_corpus::CountTableWriter::create(
+        path,
+        key,
+        names,
+        finalized.schemas(),
+        finalized.values(),
+        &totals,
+    )
+    .map_err(table_error)?;
+    let mut failure = None;
+    let mut events = 0u64;
+    let visited = finalized.visit(|event| {
+        events += 1;
+        if events.is_multiple_of(1 << 16) && cancellation.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "count table writing cancelled",
+            ));
+        }
+        let written = match event {
+            crate::summary::GroupEvent::Entry {
+                pattern_ordinal,
+                schema,
+                words,
+            } => match ordinals.binary_search(&pattern_ordinal) {
+                Ok(pattern) => writer.begin_entry(pattern, schema, words),
+                Err(_) => {
+                    return Err(io::Error::other("count for an unpublished pattern"));
+                }
+            },
+            crate::summary::GroupEvent::Pair {
+                document_ordinal,
+                count,
+            } => match document_index.get(&document_ordinal) {
+                Some(document) => writer.add_pair(*document, count),
+                None => {
+                    return Err(io::Error::other(
+                        "count for a document with no admitted sentence",
+                    ));
+                }
+            },
+        };
+        written.map_err(|error| {
+            let message = error.to_string();
+            failure = Some(error);
+            io::Error::other(message)
+        })
+    });
+    if let Some(error) = failure {
+        return Err(table_error(error));
+    }
+    visited.map_err(CliError::Aggregation)?;
+    let peak = finalized.peak_temp_bytes();
+    let staged = writer.finish(cancellation).map_err(table_error)?;
+    Ok((staged, peak))
 }
 
 /// Renders one typed group in the human and TSV surfaces.
@@ -864,6 +1053,7 @@ impl SummarySink<'_> {
         let tally = documents
             .entry(location.document_ordinal)
             .or_insert_with(|| DocumentTally {
+                document_id: location.document_id.get(),
                 source_name: std::sync::Arc::clone(&location.source_name),
                 sentences: 0,
                 tokens: 0,

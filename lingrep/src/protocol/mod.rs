@@ -20,6 +20,7 @@ pub mod query;
 pub mod registry;
 pub mod sources;
 pub mod status;
+pub mod table;
 pub mod tokenize;
 pub mod variants;
 

@@ -57,6 +57,7 @@ contract_ids! {
     SourcesTsv => "lingrep.sources-tsv/v1",
     Status => "lingrep.status/v1",
     SummarizeTsv => "lingrep.summarize-tsv/v1",
+    Table => "lingrep.table/v1",
     Tokenize => "lingrep.tokenize/v1",
     TokenizeTsv => "lingrep.tokenize-tsv/v1",
     Variants => "lingrep.variants/v1",

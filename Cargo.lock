@@ -2668,6 +2668,7 @@ name = "lingrep-corpus"
 version = "0.7.0"
 dependencies = [
  "blake3",
+ "bytemuck",
  "compact_str",
  "criterion",
  "futures",

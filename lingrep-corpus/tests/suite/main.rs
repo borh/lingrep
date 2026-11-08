@@ -1,4 +1,5 @@
 mod artifact;
+mod count_table;
 mod durability;
 mod identity;
 mod identity_collision;

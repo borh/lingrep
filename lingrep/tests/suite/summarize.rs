@@ -2483,3 +2483,316 @@ fn a_projected_key_orders_element_wise_on_value_text() {
         [group("あ", "あ"), group("あ", "む"), group("む", "あ")]
     );
 }
+
+const TABLE_CATALOG: &str = "cat := [text=猫].\n\
+    key: [text]\n\
+    pattern word := [].\n\
+    pattern pair := [] [].\n";
+
+fn table_events(
+    table: &std::path::Path,
+    catalog: &std::path::Path,
+    artifact: &std::path::Path,
+    extra: &[&str],
+) -> std::process::Output {
+    lingrep_without_dictionary()
+        .args(["--json", "table"])
+        .arg(table)
+        .arg("--patterns")
+        .arg(catalog)
+        .arg("--corpus")
+        .arg(artifact)
+        .args(extra)
+        .output()
+        .unwrap()
+}
+
+fn write_table(
+    artifact: &std::path::Path,
+    catalog: &std::path::Path,
+    table: &std::path::Path,
+) -> Vec<Value> {
+    let output = lingrep_without_dictionary()
+        .args(["--json", "summarize", "--patterns"])
+        .arg(catalog)
+        .arg("--corpus")
+        .arg(artifact)
+        .arg("--write-table")
+        .arg(table)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    validate_query_jsonl(&output.stdout).unwrap();
+    parse_jsonl(&output.stdout)
+}
+
+/// For each clause, the table's rows are the summary records of `summarize
+/// --where` with the same rank, and each row's works is the number of
+/// `--by-document` records of its group; the admitted documents and tokens
+/// are the sums over its `document` records.
+#[test]
+fn table_rows_equal_summarize_where_and_by_document_works() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("tagged.table.lingtable");
+    let events = write_table(&artifact, &catalog, &table);
+    assert!(summary_events(&events).is_empty());
+    assert_eq!(
+        event(&events, "complete")["data"]["counters"]["records_emitted"],
+        0
+    );
+
+    let summarize = |extra: &[&str]| {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "summarize", "--patterns"])
+            .arg(&catalog)
+            .arg("--corpus")
+            .arg(&artifact)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        parse_jsonl(&output.stdout)
+    };
+    for clause in [
+        None,
+        Some("@document.year = 2001"),
+        Some("@document.year >= 2002"),
+        Some("@document.tags contains x & @document.year != 2003"),
+        Some("@document.year = 1999"),
+    ] {
+        for top in [None, Some("1")] {
+            let mut extra = Vec::new();
+            if let Some(clause) = clause {
+                extra.extend(["--where", clause]);
+            }
+            if let Some(top) = top {
+                extra.extend(["--top", top]);
+            }
+            let output = table_events(&table, &catalog, &artifact, &extra);
+            assert_success(&output);
+            let records = parse_jsonl(&output.stdout);
+            for record in &records {
+                serde_json::from_value::<lingrep::protocol::table::TableEnvelope>(record.clone())
+                    .unwrap();
+            }
+            let rows = records
+                .iter()
+                .filter(|record| record["type"] == "row")
+                .map(|record| &record["data"])
+                .collect::<Vec<_>>();
+            let expected = summarize(&extra);
+            let expected = summary_events(&expected);
+            assert_eq!(
+                rows.iter()
+                    .map(|row| (&row["pattern"], &row["group"], &row["count"], &row["rank"]))
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|record| {
+                        let data = &record["data"];
+                        (
+                            &data["pattern"],
+                            &data["group"],
+                            &data["count"],
+                            &data["rank"],
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                "{clause:?} top {top:?}"
+            );
+
+            let mut by_document = vec!["--by-document"];
+            by_document.extend(clause.iter().flat_map(|clause| ["--where", *clause]));
+            let by_document = summarize(&by_document);
+            let mut works = BTreeMap::<(String, String), u64>::new();
+            for record in summary_events(&by_document) {
+                let data = &record["data"];
+                *works
+                    .entry((data["pattern"].to_string(), data["group"].to_string()))
+                    .or_default() += 1;
+            }
+            for row in &rows {
+                assert_eq!(
+                    row["works"],
+                    works[&(row["pattern"].to_string(), row["group"].to_string())],
+                    "{clause:?}"
+                );
+            }
+            let documents = by_document
+                .iter()
+                .filter(|record| record["type"] == "document")
+                .map(|record| &record["data"])
+                .collect::<Vec<_>>();
+            let complete = &event(&records, "complete")["data"];
+            assert_eq!(
+                complete["documents_admitted"],
+                documents.len(),
+                "{clause:?}"
+            );
+            for (field, document_field) in [
+                ("tokens_admitted", "tokens_admitted"),
+                ("sentences_admitted", "sentences_admitted"),
+            ] {
+                assert_eq!(
+                    complete[field],
+                    documents
+                        .iter()
+                        .map(|document| document[document_field].as_u64().unwrap())
+                        .sum::<u64>(),
+                    "{clause:?} {field}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn table_rejects_a_table_for_another_catalog_or_artifact() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("tagged.table.lingtable");
+    write_table(&artifact, &catalog, &table);
+
+    let other_catalog = directory.path().join("other.lx");
+    fs::write(&other_catalog, "cat := [text=猫].\n").unwrap();
+    let other_input = directory.path().join("other.jsonl");
+    fs::write(&other_input, "{\"text\":\"猫。\"}\n").unwrap();
+    let other_artifact = directory.path().join("other.lingcorpus");
+    let built = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&other_artifact)
+        .arg(&other_input)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    for (field, catalog, artifact) in [
+        ("catalog fingerprint", &other_catalog, &artifact),
+        ("analysis identity", &catalog, &other_artifact),
+    ] {
+        let output = table_events(&table, catalog, artifact, &[]);
+        assert!(!output.status.success(), "{field}");
+        assert!(output.stdout.is_empty(), "{field}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(field), "{field}: {stderr}");
+    }
+}
+
+#[test]
+fn write_table_and_table_reject_what_a_per_document_table_cannot_answer() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let table = directory.path().join("t.lingtable");
+    for (case, extra) in [
+        ("with --where", &["--where", "@document.year = 2001"][..]),
+        ("with --sample", &["--sample", "0.5"][..]),
+        ("with --by-document", &["--by-document"][..]),
+    ] {
+        let output = lingrep_without_dictionary()
+            .args([
+                "--json",
+                "summarize",
+                "--pattern",
+                "cat := [text=猫].",
+                "--corpus",
+            ])
+            .arg(&artifact)
+            .arg("--write-table")
+            .arg(&table)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{case}");
+        assert!(!table.exists(), "{case}");
+    }
+    let catalog = directory.path().join("cat.lx");
+    fs::write(&catalog, "cat := [text=猫].\n").unwrap();
+    write_table(&artifact, &catalog, &table);
+    let again = lingrep_without_dictionary()
+        .args(["--json", "summarize", "--patterns"])
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .arg("--write-table")
+        .arg(&table)
+        .output()
+        .unwrap();
+    assert!(!again.status.success(), "an existing table is replaced");
+    let output = table_events(
+        &table,
+        &catalog,
+        &artifact,
+        &["--where", "@section = methods"],
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+/// A signal delivered while the table is staged ends the run as a cancelled
+/// `summarize` ends: exit 130 or 143, no diagnostic, no `complete` record,
+/// and neither the table nor its staging directory left behind.
+#[cfg(all(unix, debug_assertions))]
+#[test]
+fn a_signal_while_a_table_is_written_publishes_nothing() {
+    use std::process::Stdio;
+
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let tables = directory.path().join("tables");
+    fs::create_dir(&tables).unwrap();
+    let table = tables.join("t.lingtable");
+    let entries = || fs::read_dir(&tables).unwrap().count();
+    for (phase, signal, code) in [
+        ("ranking", libc::SIGINT, 130),
+        ("ranking", libc::SIGTERM, 143),
+        ("transpose", libc::SIGINT, 130),
+        ("transpose", libc::SIGTERM, 143),
+    ] {
+        let case = format!("signal {signal} during {phase}");
+        let child = lingrep_std()
+            .args(["--json", "summarize", "--patterns"])
+            .arg(&catalog)
+            .arg("--corpus")
+            .arg(&artifact)
+            .arg("--write-table")
+            .arg(&table)
+            .env("LINGREP_TEST_PAUSE_COUNT_TABLE", phase)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while entries() == 0 {
+            assert!(std::time::Instant::now() < deadline, "{case}: no staging");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        unsafe {
+            libc::kill(child.id() as libc::pid_t, signal);
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(code), "{case}");
+        assert!(
+            output.stderr.is_empty(),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            parse_jsonl(&output.stdout)
+                .iter()
+                .all(|record| record["type"] != "complete"),
+            "{case}"
+        );
+        assert_eq!(entries(), 0, "{case}: a table or staging directory remains");
+    }
+}

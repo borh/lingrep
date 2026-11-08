@@ -14,8 +14,8 @@ use lingrep_core::execution::{BoundSentenceInput, EnhancedGraphInput};
 use lingrep_core::fsm::policy_program::BoundOp;
 use lingrep_core::fsm::{
     COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, DiagnosticCode, FsmBuilder,
-    GRAMMAR_SEMANTICS_REVISION, Match, POLICY_SEMANTICS_IDENTITY, PatternSource, PredicateDigest,
-    compile_catalog, report_catalog_drift,
+    GRAMMAR_SEMANTICS_REVISION, MATCHER_SEMANTICS_IDENTITY, Match, POLICY_SEMANTICS_IDENTITY,
+    PatternSource, PredicateDigest, compile_catalog, report_catalog_drift,
 };
 use lingrep_core::testing::catalogs::tracked_catalog_sources;
 use lingrep_core::token_match::{
@@ -133,6 +133,7 @@ fn public_pattern_identity_constants_are_pinned() {
     // different records, so a change to one has to be a change someone wrote
     // down rather than a change someone noticed later.
     assert_eq!(POLICY_SEMANTICS_IDENTITY, "lingrep-core-policy/v1");
+    assert_eq!(MATCHER_SEMANTICS_IDENTITY, "lingrep-core-matcher/v1");
 }
 
 #[test]

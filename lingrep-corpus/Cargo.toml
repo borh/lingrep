@@ -9,6 +9,7 @@ description = "Immutable prepared-corpus artifacts with their identity, provenan
 
 [dependencies]
 blake3.workspace = true
+bytemuck = "1.25"
 compact_str.workspace = true
 futures = "0.3"
 libc = "0.2"

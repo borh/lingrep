@@ -22,3 +22,13 @@ pub const COMPILER_SCHEMA_IDENTITY: &str = "lingrep-core-compiler/v1";
 /// Advance this identity when policy changes can alter published records.
 /// Descriptive statement labels are excluded because they change no decision.
 pub const POLICY_SEMANTICS_IDENTITY: &str = "lingrep-core-policy/v1";
+
+/// Versions what a compiled catalog counts over fixed tokens: matching,
+/// record publication, and the grouping `ling summarize` applies to the
+/// published records.
+///
+/// Catalog fingerprints exclude this value. A stored result keyed by a catalog
+/// fingerprint, such as a count table, also records this value and is stale when it
+/// differs. Advance it when a change alters any count for an unchanged
+/// catalog fingerprint and analysis identity.
+pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v1";

@@ -1,7 +1,7 @@
 use super::discovery::{ContractSpec, ContractSummary};
 use super::{
     ContractId, attributes, capabilities, check, completions, contract, diagnostic, dictionary,
-    doctor, invocation, manpages, query, sources, status, tokenize, variants,
+    doctor, invocation, manpages, query, sources, status, table, tokenize, variants,
 };
 
 pub fn get(id: ContractId) -> ContractSpec {
@@ -26,6 +26,7 @@ pub fn get(id: ContractId) -> ContractSpec {
         ContractId::TokenizeTsv => crate::output::tokenize_contract(),
         ContractId::SourcesTsv => crate::output::sources_contract(),
         ContractId::Variants => variants::contract(),
+        ContractId::Table => table::contract(),
     }
 }
 

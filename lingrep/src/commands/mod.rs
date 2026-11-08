@@ -23,6 +23,7 @@ pub(crate) mod query_source;
 pub(crate) mod query_support;
 pub mod schema;
 pub mod summarize;
+pub mod table;
 pub mod tokenize;
 pub mod variants;
 
@@ -71,6 +72,7 @@ pub fn dispatch(
         Command::Check(args) => check::run(args, config, terminal, output),
         Command::Matches(args) => matches::run(args, config, terminal, output, cli.color),
         Command::Summarize(args) => summarize::run(args, config, terminal, output),
+        Command::Table(args) => table::run(args, output),
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Sources(args) => corpus::run_sources(args, config, terminal, output),
             CorpusCommand::Build(args) => corpus::run_build(args, config, terminal, output),

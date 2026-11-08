@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 use compact_str::CompactString;
 use crossbeam_channel::{Receiver, Sender};
 use indexmap::IndexSet;
+use lingrep_core::execution::CancellationFlag;
 use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, ProjectedKeyField};
 use lingrep_core::spill::{SortedDrain, SortedRunCounts, TempBudget};
 use serde::{Deserialize, Serialize};
@@ -555,6 +556,30 @@ impl Ord for SummaryOrder {
     }
 }
 
+/// A count's position in a count table: ling's key order within a pattern,
+/// then document.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct GroupOrder {
+    pattern_ordinal: u64,
+    group: StoredGroup,
+    document_ordinal: u64,
+}
+
+/// Which order a shard's ordering phase sorts its counts into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrderBy {
+    /// [`SummaryOrder`]: what `summarize` publishes.
+    Count,
+    /// [`GroupOrder`]: what a count table stores.
+    Group,
+}
+
+/// One shard's counts after its ordering phase.
+enum OrderedShard {
+    Count(SortedRunCounts<SummaryOrder>),
+    Group(SortedRunCounts<GroupOrder>),
+}
+
 /// What the scan sends a counting shard.
 enum ShardRequest {
     /// Groups to count with the tally each already carries: one for a scanned
@@ -574,6 +599,8 @@ enum ShardRequest {
     Order {
         schema_remap: Arc<Vec<u32>>,
         value_ranks: Arc<Vec<ValueId>>,
+        by: OrderBy,
+        cancellation: Option<CancellationFlag>,
     },
 }
 
@@ -595,7 +622,7 @@ struct Shard {
     /// disconnects this receiver rather than leaving a reply sender alive in
     /// an undrained request queue.
     snapshots: Receiver<ShardSnapshot>,
-    thread: Option<JoinHandle<io::Result<SortedRunCounts<SummaryOrder>>>>,
+    thread: Option<JoinHandle<io::Result<OrderedShard>>>,
     /// Groups awaiting dispatch to this shard's thread.
     batch: Vec<(SummaryPartition, OwnedAggregationInput, usize)>,
 }
@@ -678,7 +705,9 @@ impl ShardPool {
     fn shutdown(
         &mut self,
         orders: Vec<(Arc<Vec<u32>>, Arc<Vec<ValueId>>)>,
-    ) -> io::Result<Vec<SortedRunCounts<SummaryOrder>>> {
+        by: OrderBy,
+        cancellation: Option<&CancellationFlag>,
+    ) -> io::Result<Vec<OrderedShard>> {
         for (shard, (schema_remap, value_ranks)) in self.shards.iter_mut().zip(orders) {
             let Some(sender) = shard.sender.take() else {
                 continue;
@@ -688,6 +717,8 @@ impl ShardPool {
             let _ = sender.send(ShardRequest::Order {
                 schema_remap,
                 value_ranks,
+                by,
+                cancellation: cancellation.cloned(),
             });
         }
         // Every sender is gone, so every shard's loop has an end and joining
@@ -821,7 +852,7 @@ fn shard_thread(
     resident_key_limit: usize,
     merge_fan_in: usize,
     budget: Arc<TempBudget>,
-) -> io::Result<SortedRunCounts<SummaryOrder>> {
+) -> io::Result<OrderedShard> {
     let mut counts = SortedRunCounts::<SummaryKey>::new_budgeted(
         resident_key_limit,
         merge_fan_in,
@@ -849,29 +880,73 @@ fn shard_thread(
             ShardRequest::Order {
                 schema_remap,
                 value_ranks,
+                by,
+                cancellation,
             } => {
-                let mut ordered = SortedRunCounts::new_budgeted(
-                    resident_key_limit,
-                    merge_fan_in,
-                    Arc::clone(&budget),
-                )?;
+                if let Some(cancellation) = &cancellation {
+                    counts.set_cancellation(cancellation.clone());
+                }
                 // Drain rather than finalize-and-visit: the drain flushes and
                 // merges only if something spilled, and it releases each
                 // counted entry as the ordered buffer grows, so the phase
                 // transition holds one buffer's worth of tallies, not two.
                 let mut drain = counts.into_sorted_drain()?;
-                while let Some((key, count)) = drain.next_entry()? {
-                    ordered.add(
-                        SummaryOrder {
-                            partition: key.partition,
-                            count,
-                            group: key.group.canonicalize(&schema_remap, &value_ranks)?,
-                        },
-                        1,
-                    )?;
-                }
-                ordered.finalize()?;
-                return Ok(ordered);
+                return match by {
+                    OrderBy::Count => {
+                        let mut ordered = SortedRunCounts::new_budgeted(
+                            resident_key_limit,
+                            merge_fan_in,
+                            Arc::clone(&budget),
+                        )?;
+                        while let Some((key, count)) = drain.next_entry()? {
+                            ordered.add(
+                                SummaryOrder {
+                                    partition: key.partition,
+                                    count,
+                                    group: key.group.canonicalize(&schema_remap, &value_ranks)?,
+                                },
+                                1,
+                            )?;
+                        }
+                        ordered.finalize()?;
+                        Ok(OrderedShard::Count(ordered))
+                    }
+                    OrderBy::Group => {
+                        let mut ordered = SortedRunCounts::new_budgeted(
+                            resident_key_limit,
+                            merge_fan_in,
+                            Arc::clone(&budget),
+                        )?;
+                        if let Some(cancellation) = &cancellation {
+                            ordered.set_cancellation(cancellation.clone());
+                        }
+                        while let Some((key, count)) = drain.next_entry()? {
+                            if cancellation
+                                .as_ref()
+                                .is_some_and(CancellationFlag::is_cancelled)
+                            {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::Interrupted,
+                                    "summary ordering cancelled",
+                                ));
+                            }
+                            let document_ordinal =
+                                key.partition.document_ordinal.ok_or_else(|| {
+                                    io::Error::other("a count table needs per-document partitions")
+                                })?;
+                            ordered.add(
+                                GroupOrder {
+                                    pattern_ordinal: key.partition.pattern_ordinal,
+                                    group: key.group.canonicalize(&schema_remap, &value_ranks)?,
+                                    document_ordinal,
+                                },
+                                count,
+                            )?;
+                        }
+                        ordered.finalize()?;
+                        Ok(OrderedShard::Group(ordered))
+                    }
+                };
             }
         }
     }
@@ -1048,7 +1123,57 @@ impl SummaryAggregator {
         Ok(())
     }
 
-    pub fn finalize(mut self) -> io::Result<FinalizedSummary> {
+    pub fn finalize(self) -> io::Result<FinalizedSummary> {
+        let (shards, budget, key_schemas, values) = self.finalize_by(OrderBy::Count, None)?;
+        let shards = shards
+            .into_iter()
+            .map(|shard| match shard {
+                OrderedShard::Count(counts) => Ok(counts),
+                OrderedShard::Group(_) => Err(io::Error::other("shard ordered by group")),
+            })
+            .collect::<io::Result<_>>()?;
+        Ok(FinalizedSummary {
+            shards,
+            budget,
+            key_schemas,
+            values,
+        })
+    }
+
+    /// Finalizes a `--by-document` aggregation for a count table: each
+    /// pattern's groups in ling's key order, each group's documents in order.
+    /// Once `cancellation` is raised, this and the returned groups' visit
+    /// fail with [`io::ErrorKind::Interrupted`] within a bounded number of
+    /// records.
+    pub fn finalize_by_group(self, cancellation: &CancellationFlag) -> io::Result<FinalizedGroups> {
+        let (shards, budget, key_schemas, values) =
+            self.finalize_by(OrderBy::Group, Some(cancellation))?;
+        let shards = shards
+            .into_iter()
+            .map(|shard| match shard {
+                OrderedShard::Group(counts) => Ok(counts),
+                OrderedShard::Count(_) => Err(io::Error::other("shard ordered by count")),
+            })
+            .collect::<io::Result<_>>()?;
+        Ok(FinalizedGroups {
+            shards,
+            budget,
+            key_schemas,
+            values,
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn finalize_by(
+        mut self,
+        by: OrderBy,
+        cancellation: Option<&CancellationFlag>,
+    ) -> io::Result<(
+        Vec<OrderedShard>,
+        Arc<TempBudget>,
+        Vec<Vec<CompactString>>,
+        Vec<Box<str>>,
+    )> {
         // A run that never filled the inline buffer runs both external phases
         // in the shards it now spawns; migrating at most a buffer's worth of
         // tallies is cheaper than keeping a second, inline ordering path.
@@ -1112,13 +1237,8 @@ impl SummaryAggregator {
                 .collect::<io::Result<Vec<_>>>()?;
             orders.push((Arc::new(schema_remap), Arc::new(value_ranks)));
         }
-        let shards = pool.shutdown(orders)?;
-        Ok(FinalizedSummary {
-            shards,
-            budget: self.budget,
-            key_schemas,
-            values,
-        })
+        let shards = pool.shutdown(orders, by, cancellation)?;
+        Ok((shards, Arc::clone(&self.budget), key_schemas, values))
     }
 }
 
@@ -1252,6 +1372,144 @@ fn materialize_group(
             }
             Ok(AggregationGroup::LexicalKey(fields))
         }
+    }
+}
+
+/// What [`FinalizedGroups::visit`] reports, in table order.
+pub enum GroupEvent<'a> {
+    /// A new entry. `schema` indexes [`FinalizedGroups::schemas`]; `words`
+    /// encode the key as [`lingrep_corpus::CountTableWriter::begin_entry`]
+    /// takes it.
+    Entry {
+        pattern_ordinal: u64,
+        schema: u32,
+        words: &'a [u32],
+    },
+    /// The current entry's count in one document.
+    Pair { document_ordinal: u64, count: u64 },
+}
+
+/// A `--by-document` aggregation ordered for a count table.
+pub struct FinalizedGroups {
+    shards: Vec<SortedRunCounts<GroupOrder>>,
+    budget: Arc<TempBudget>,
+    key_schemas: Vec<Vec<CompactString>>,
+    values: Vec<Box<str>>,
+}
+
+impl FinalizedGroups {
+    pub fn peak_temp_bytes(&self) -> u64 {
+        self.budget.peak_used_bytes()
+    }
+
+    /// The vocabulary key words index, in lexicographic order.
+    pub fn values(&self) -> &[Box<str>] {
+        &self.values
+    }
+
+    /// Surface, unit and term, then each key schema as a key, then each as
+    /// a lexical key.
+    pub fn schemas(&self) -> Vec<lingrep_corpus::GroupSchema> {
+        use lingrep_corpus::{GroupKind, GroupSchema};
+        let named = |kind| {
+            self.key_schemas.iter().map(move |names| GroupSchema {
+                kind,
+                names: names.iter().map(ToString::to_string).collect(),
+            })
+        };
+        [GroupKind::Surface, GroupKind::Unit, GroupKind::Term]
+            .into_iter()
+            .map(|kind| GroupSchema {
+                kind,
+                names: Vec::new(),
+            })
+            .chain(named(GroupKind::Key))
+            .chain(named(GroupKind::LexicalKey))
+            .collect()
+    }
+
+    fn encode(&self, group: &StoredGroup, words: &mut Vec<u32>) -> io::Result<u32> {
+        let schemas = u32::try_from(self.key_schemas.len())
+            .map_err(|_| io::Error::other("key schema count exceeds u32"))?;
+        words.clear();
+        Ok(match group {
+            StoredGroup::Surface(value) => {
+                words.push(*value);
+                0
+            }
+            StoredGroup::Unit(value) => {
+                words.push(*value);
+                1
+            }
+            StoredGroup::Term(value) => {
+                words.push(*value);
+                2
+            }
+            StoredGroup::Key { schema, values } => {
+                words.extend_from_slice(values);
+                3 + schema
+            }
+            StoredGroup::LexicalKey { schema, values } => {
+                for value in values {
+                    match value {
+                        StoredLexicalValue::Scalar(value) => words.extend([0, *value]),
+                        StoredLexicalValue::Segments(segments) => {
+                            let marker = u32::try_from(segments.len() + 1)
+                                .map_err(|_| io::Error::other("list field exceeds u32"))?;
+                            words.push(marker);
+                            words.extend_from_slice(segments);
+                        }
+                    }
+                }
+                3 + schemas + schema
+            }
+        })
+    }
+
+    /// Merges the shards' streams and reports each entry once, before its
+    /// documents. Groups that compare equal are one entry, whichever key
+    /// form each occurrence had. Consumes the streams.
+    pub fn visit(
+        &mut self,
+        mut visitor: impl FnMut(GroupEvent<'_>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut drains = Vec::with_capacity(self.shards.len());
+        for counts in self.shards.drain(..) {
+            drains.push(counts.into_sorted_drain()?);
+        }
+        let mut heads = Vec::with_capacity(drains.len());
+        for drain in &mut drains {
+            heads.push(drain.next_entry()?);
+        }
+        let mut current: Option<(u64, StoredGroup)> = None;
+        let mut words = Vec::new();
+        while let Some(next) = heads
+            .iter()
+            .enumerate()
+            .filter_map(|(index, head)| head.as_ref().map(|(entry, _)| (index, entry)))
+            .min_by(|(_, left), (_, right)| left.cmp(right))
+            .map(|(index, _)| index)
+        {
+            let (entry, count) = heads[next].take().expect("selected head exists");
+            heads[next] = drains[next].next_entry()?;
+            let same = current.as_ref().is_some_and(|(pattern, group)| {
+                *pattern == entry.pattern_ordinal && *group == entry.group
+            });
+            if !same {
+                let schema = self.encode(&entry.group, &mut words)?;
+                visitor(GroupEvent::Entry {
+                    pattern_ordinal: entry.pattern_ordinal,
+                    schema,
+                    words: &words,
+                })?;
+                current = Some((entry.pattern_ordinal, entry.group));
+            }
+            visitor(GroupEvent::Pair {
+                document_ordinal: entry.document_ordinal,
+                count: count as u64,
+            })?;
+        }
+        Ok(())
     }
 }
 

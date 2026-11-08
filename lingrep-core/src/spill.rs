@@ -9,6 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tempfile::{NamedTempFile, TempDir};
 
+use crate::execution::CancellationFlag;
+
+/// Records a run merge copies between checks of its cancellation flag.
+const MERGE_CANCELLATION_INTERVAL: u64 = 1 << 16;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TempBudgetSnapshot {
     limit_bytes: u64,
@@ -895,6 +900,7 @@ pub struct SortedRunCounts<K> {
     budget: Arc<TempBudget>,
     policy: SpillPolicy,
     metrics: SpillMetrics,
+    cancellation: Option<CancellationFlag>,
 }
 
 /// A pull-style reader over a finalized container's sorted stream.
@@ -985,7 +991,14 @@ where
             budget,
             policy,
             metrics: SpillMetrics::default(),
+            cancellation: None,
         })
+    }
+
+    /// Makes every later run merge fail with [`io::ErrorKind::Interrupted`]
+    /// within a bounded number of records once `cancellation` is raised.
+    pub fn set_cancellation(&mut self, cancellation: CancellationFlag) {
+        self.cancellation = Some(cancellation);
     }
 
     pub fn add(&mut self, key: K, count: usize) -> io::Result<()> {
@@ -1267,6 +1280,7 @@ where
                 &self.budget,
                 &mut self.metrics,
                 level.saturating_add(1),
+                self.cancellation.as_ref(),
             )?;
             if let Err(source) = add_total_run_bytes(&mut self.metrics, merged.bytes) {
                 return Err(operation_io_error(
@@ -1301,6 +1315,7 @@ where
             &self.budget,
             &mut self.metrics,
             level,
+            self.cancellation.as_ref(),
         )?;
         if let Err(source) = add_total_run_bytes(&mut self.metrics, merged.bytes) {
             return Err(operation_io_error(
@@ -1323,6 +1338,7 @@ where
         budget: &Arc<TempBudget>,
         metrics: &mut SpillMetrics,
         level: u32,
+        cancellation: Option<&CancellationFlag>,
     ) -> io::Result<RunFile> {
         let live_run_count = retained_run_count + runs.len();
         let merge_error = |metrics: &SpillMetrics, source| {
@@ -1355,6 +1371,7 @@ where
             Err(source) => return Err(merge_error(metrics, source)),
         };
 
+        let mut copied = 0u64;
         while let Some(next_index) = current
             .iter()
             .enumerate()
@@ -1362,6 +1379,13 @@ where
             .min_by(|(_, left), (_, right)| left.key.cmp(&right.key))
             .map(|(index, _)| index)
         {
+            copied += 1;
+            if copied.is_multiple_of(MERGE_CANCELLATION_INTERVAL)
+                && cancellation.is_some_and(CancellationFlag::is_cancelled)
+            {
+                let source = io::Error::new(io::ErrorKind::Interrupted, "run merge cancelled");
+                return Err(merge_error(metrics, source));
+            }
             let mut record = current[next_index].take().expect("selected record exists");
             current[next_index] = match readers[next_index].next(metrics) {
                 Ok(record) => record,
@@ -1633,6 +1657,35 @@ mod tests {
             budget.used_bytes() <= 1024,
             "no byte is written without being charged first"
         );
+    }
+
+    #[test]
+    fn a_raised_cancellation_interrupts_a_run_merge() {
+        let records = MERGE_CANCELLATION_INTERVAL * 2;
+        let build = |cancellation: Option<CancellationFlag>| {
+            let mut counts = SortedRunCounts::<u64>::new(records as usize / 4, 16).unwrap();
+            if let Some(cancellation) = cancellation {
+                counts.set_cancellation(cancellation);
+            }
+            for key in 0..records {
+                counts.add(key, 1).unwrap();
+            }
+            counts
+        };
+        let unraised = CancellationFlag::new();
+        build(Some(unraised)).finalize().unwrap();
+
+        let raised = CancellationFlag::new();
+        let mut counts = build(Some(raised.clone()));
+        assert!(counts.run_count() > 1);
+        raised.cancel();
+        let error = counts.finalize().unwrap_err();
+        let operation = error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<SpillOperationError>())
+            .expect("a merge failure is a spill operation error");
+        assert_eq!(operation.operation(), SpillOperation::Finalize);
+        assert_eq!(operation.source_error().kind(), io::ErrorKind::Interrupted);
     }
 
     #[test]

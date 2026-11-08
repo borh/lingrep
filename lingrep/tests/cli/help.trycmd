@@ -7,6 +7,7 @@ Usage: ling [OPTIONS] <COMMAND>
 Commands:
   matches      Search a corpus and print each match with its context
   summarize    Count matches per pattern, grouped by matched surface or declared key
+  table        Read per-pattern counts under --where from a saved count table
   tokenize     Split text into tokens; --json includes linguistic attributes
   coverage     Count the tokens that carry each attribute
   explore      Browse pattern counts and matches in an interactive terminal view

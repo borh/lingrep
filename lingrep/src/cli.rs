@@ -186,6 +186,10 @@ pub enum Command {
     /// If multiple input aliases name the same source, each alias contributes
     /// its own counts.
     Summarize(SummarizeArgs),
+    /// Read per-pattern counts under --where from a saved count table.
+    ///
+    /// The table is written by `ling summarize --write-table`.
+    Table(TableArgs),
     /// Split text into tokens; --json includes linguistic attributes.
     Tokenize(TokenizeArgs),
     /// Count the tokens that carry each attribute.
@@ -606,6 +610,17 @@ pub struct SummarizeArgs {
     )]
     pub by_metadata: Option<String>,
 
+    /// Count each group per admitted document, as --by-document does, and
+    /// write the counts to a new count table at PATH instead of publishing
+    /// summary records (requires --corpus). `ling table` reads it.
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with_all = ["by_document", "by_section", "by_metadata", "top", "tsv"],
+        help_heading = "Output"
+    )]
+    pub write_table: Option<PathBuf>,
+
     /// Publish @document.KEY on each `document` record (repeatable).
     #[arg(
         long = "source-metadata",
@@ -637,6 +652,41 @@ pub struct SummarizeArgs {
     /// Validate inputs and print the execution plan without reading corpus records.
     #[arg(long, help_heading = "Diagnostics", hide_short_help = true)]
     pub plan: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TableArgs {
+    /// Count table written by `ling summarize --write-table`.
+    #[arg(value_name = "TABLE")]
+    pub table: PathBuf,
+
+    #[command(flatten)]
+    pub catalog: CatalogArgs,
+
+    /// The prepared corpus the table was written from; its metadata answers --where.
+    #[arg(long, value_name = "ARTIFACT", help_heading = "Input")]
+    pub corpus: PathBuf,
+
+    /// Count only documents this clause admits. Only document metadata
+    /// conditions apply: the table holds counts per document.
+    #[arg(long = "where", value_name = "CLAUSE", help_heading = "Selection")]
+    pub clause: Option<String>,
+
+    /// Show N groups per pattern (text default: 20); `all` shows every group.
+    ///
+    /// Default: 20 in terminal output, unlimited with --json.
+    #[arg(long, value_name = "N|all", help_heading = "Output")]
+    pub top: Option<ExplicitLimit<u64>>,
+
+    /// Maximum bytes of temporary storage for ordering every group.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_TEMP_BYTES,
+        value_parser = positive_u64,
+        help_heading = "Safety limits",
+        hide_short_help = true
+    )]
+    pub max_temp_bytes: u64,
 }
 
 #[derive(Debug, Args)]
@@ -1707,6 +1757,7 @@ impl Cli {
             | Command::Dictionary(_)
             | Command::Analyzer(_)
             | Command::Check(_)
+            | Command::Table(_)
             | Command::Corpus(_)
             | Command::Explore(_)
             | Command::Describe(_)
@@ -1737,6 +1788,7 @@ impl Cli {
             | Command::Check(_)
             | Command::Matches(_)
             | Command::Summarize(_)
+            | Command::Table(_)
             | Command::Corpus(_)
             | Command::Tokenize(_)
             | Command::Attributes(_)
@@ -1789,6 +1841,7 @@ impl Cli {
             Command::Doctor(_)
             | Command::Dictionary(_)
             | Command::Analyzer(_)
+            | Command::Table(_)
             | Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Inspect(_) | CorpusCommand::Variants(_),
             })

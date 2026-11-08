@@ -441,6 +441,38 @@ ling --json summarize --by-metadata @document.author \
 `--where` applies first. Like `--by-section`, `--by-metadata` reads every
 sentence.
 
+### Saving per-document counts: count tables
+
+`summarize --write-table PATH` scans a prepared corpus once and writes every
+pattern's group counts per document to a count table at `PATH`, a new
+directory. `ling table` then answers a `--where` over document metadata from
+the table without scanning the corpus:
+
+```bash
+ling summarize --write-table soranoha.collexeme.lingtable \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
+ling --json table soranoha.collexeme.lingtable --top 100 \
+  --where '@document.source_edition_year >= 1950' \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
+```
+
+For each pattern, `ling table` gives each group's `count`, equal to the
+`count` of `summarize --where` with the same clause, and `works`, the number
+of admitted documents in which the group occurs. Rows are ordered by count,
+with ties in `summarize`'s group order. Without `--top`, every group is
+ordered through temporary files, which `--max-temp-bytes` limits as it does
+for `summarize`. The `complete` record gives the admitted documents,
+sentences and tokens. The output contract is
+`lingrep.table/v1`.
+
+A table records the corpus's analysis identity, the catalog fingerprint and
+the matcher revision. `ling table` rejects a table when any of the three
+differs from the `--corpus` and `--patterns` given, so a table is rebuilt after
+the catalog or the corpus changes. `--write-table` cannot be combined with
+`--where`, `--sample`, `--top`, `--tsv`, `--by-document`, `--by-section` or
+`--by-metadata`, and `ling table` accepts only `@document` conditions; both
+reject the rest with exit code `2`.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term
