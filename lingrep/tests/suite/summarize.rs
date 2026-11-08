@@ -2887,3 +2887,42 @@ fn a_signal_while_a_table_is_written_publishes_nothing() {
         assert_eq!(entries(), 0, "{case}: a table or staging directory remains");
     }
 }
+
+#[test]
+fn table_human_output_precedes_a_later_row_decode_error() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("tagged.table.lingtable");
+    write_table(&artifact, &catalog, &table);
+    let ranked = fs::read(table.join("ranked_entries.u32")).unwrap();
+    let last = u32::from_le_bytes(ranked[ranked.len() - 4..].try_into().unwrap()) as usize;
+    let offsets = fs::read(table.join("entry_key_offsets.u64")).unwrap();
+    let start = u64::from_le_bytes(offsets[last * 8..last * 8 + 8].try_into().unwrap()) as usize;
+    let mut keys = fs::read(table.join("entry_keys.u32")).unwrap();
+    keys[start * 4..start * 4 + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    fs::write(table.join("entry_keys.u32"), keys).unwrap();
+    let output = lingrep_without_dictionary()
+        .arg("table")
+        .arg(&table)
+        .arg("--patterns")
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .args(["--top", "all"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("entry key schema out of range"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| !line.starts_with("pattern ") && !line.trim().is_empty()),
+        "no rows emitted before error: {stdout}"
+    );
+    assert!(!stdout.contains("rows in"));
+}

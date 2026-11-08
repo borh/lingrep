@@ -111,40 +111,47 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
     let names = table.pattern_names().collect::<Vec<_>>();
     let stdout = io::stdout();
     let mut writer = stdout.lock();
-    let mut emit = |event: TableEvent| {
-        write_jsonl(&mut writer, &TableEnvelope::new(event))
+    let emit = |writer: &mut io::StdoutLock<'_>, event: TableEvent| {
+        write_jsonl(writer, &TableEnvelope::new(event))
             .map_err(|error| CliError::Execution(execution_output_error(error)))
     };
     let jsonl = output == OutputMode::Jsonl;
     if jsonl {
-        emit(TableEvent::Run(TableRun {
-            table: args.table.display().to_string(),
-            analysis_identity: key.analysis_identity.clone(),
-            catalog_fingerprint: key.catalog_fingerprint.clone(),
-            matcher_revision: key.matcher_revision.clone(),
-            clause: args.clause.clone(),
-            requested_top: top,
-        }))?;
+        emit(
+            &mut writer,
+            TableEvent::Run(TableRun {
+                table: args.table.display().to_string(),
+                analysis_identity: key.analysis_identity.clone(),
+                catalog_fingerprint: key.catalog_fingerprint.clone(),
+                matcher_revision: key.matcher_revision.clone(),
+                clause: args.clause.clone(),
+                requested_top: top,
+            }),
+        )?;
     }
-    let mut human = Vec::new();
     for total in &totals {
         let name = names
             .get(total.pattern)
             .copied()
             .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
         if jsonl {
-            emit(TableEvent::Pattern(TablePattern {
-                pattern: name.to_owned(),
-                occurrences: total.occurrences,
-                works: total.works,
-            }))?;
+            emit(
+                &mut writer,
+                TableEvent::Pattern(TablePattern {
+                    pattern: name.to_owned(),
+                    occurrences: total.occurrences,
+                    works: total.works,
+                }),
+            )?;
         } else {
-            human.push(format!(
+            writeln!(
+                writer,
                 "pattern {}: {} occurrences in {} documents",
                 sanitize_terminal(name),
                 total.occurrences,
                 total.works
-            ));
+            )
+            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
         }
     }
     let mut emitted = 0u64;
@@ -164,21 +171,26 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         let group = table.group(row.entry).map_err(table_error)?;
         emitted += 1;
         if jsonl {
-            emit(TableEvent::Row(TableRow {
-                pattern: name.to_owned(),
-                rank,
-                group: group_data(&group),
-                count: row.count,
-                works: row.works,
-            }))?;
+            emit(
+                &mut writer,
+                TableEvent::Row(TableRow {
+                    pattern: name.to_owned(),
+                    rank,
+                    group: group_data(&group),
+                    count: row.count,
+                    works: row.works,
+                }),
+            )?;
         } else {
-            human.push(format!(
+            writeln!(
+                writer,
                 "{:>8} {:>6}  {}  {}",
                 row.count,
                 row.works,
                 sanitize_terminal(name),
                 sanitize_terminal(&group_display(&group)?)
-            ));
+            )
+            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
         }
     }
     let query_millis = queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
@@ -191,13 +203,8 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
     };
     if jsonl {
-        emit(TableEvent::Complete(complete))?;
+        emit(&mut writer, TableEvent::Complete(complete))?;
     } else {
-        let mut writer = io::stdout().lock();
-        for line in human {
-            writeln!(writer, "{line}")
-                .map_err(|error| CliError::Execution(execution_output_io(error)))?;
-        }
         writeln!(
             writer,
             "{} documents, {} tokens admitted; {} rows in {} ms",
