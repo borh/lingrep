@@ -63,7 +63,7 @@ pkgs.testers.nixosTest {
   testScript = ''
     machine.wait_for_unit("lingrep-web.service")
     machine.wait_for_open_port(3000)
-    machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted")
+    machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/")
     machine.fail("curl --fail --silent http://127.0.0.1:3000/")
   '';
 }

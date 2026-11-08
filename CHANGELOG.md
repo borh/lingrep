@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Under `--base-path /prefix`, lingrep-web serves its start page at
+  `/prefix/` and redirects `/prefix` there. `/prefix/` answered 404, so the
+  deployment guide's Caddy redirect and every page's link back to the start
+  page led to a 404, and the page at `/prefix` loaded its assets from
+  outside the mount.
 - The query/v2 `complete` record's `counters.documents_admitted` counts the
   documents with at least one admitted sentence, for `matches` and
   `summarize` over direct input and `--corpus`. It counted every document

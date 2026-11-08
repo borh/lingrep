@@ -63,7 +63,9 @@ the proxy's root. The value may be a nested path such as
 `/temp-lingrep-web-proxy`, without a trailing slash. lingrep-web serves its
 routes under that prefix and emits browser-relative links, requests, assets,
 and permalinks, so one process can serve both a public subpath and a second
-proxy that rewrites its own root into that prefix.
+proxy that rewrites its own root into that prefix. The start page is at the
+prefix with a trailing slash, `/temp-lingrep-web-proxy/`, where those relative
+links resolve inside the prefix; lingrep-web redirects the bare prefix there.
 
 ```nix
 services.lingrep-web.settings.basePath = "/temp-lingrep-web-proxy";

@@ -37,7 +37,13 @@ pub mod templates;
 pub use cli::{Args, BasePath};
 pub use state::{Config, RequestStore};
 
-use axum::{Router, extract::DefaultBodyLimit, middleware};
+use axum::{
+    Router,
+    extract::{DefaultBodyLimit, RawQuery},
+    middleware,
+    response::Redirect,
+    routing::get,
+};
 use tower_http::compression::CompressionLayer;
 
 // Transport ceiling for /api request bodies. Sized above the 1 MiB pattern cap
@@ -89,14 +95,27 @@ pub fn app_router(store: RequestStore) -> Router {
 ///
 /// The router itself owns the mount point rather than relying on a proxy to
 /// strip it. This keeps direct deployments and proxy deployments explicit and
-/// makes paths outside the configured mount return 404.
+/// makes paths outside the configured mount return 404. A nested mount serves
+/// its start page at `<base_path>/` and redirects `<base_path>` there.
 pub fn app_router_at(store: RequestStore, base_path: &BasePath) -> Router {
     let router = app_router(store);
     if base_path.is_root() {
-        router
-    } else {
-        Router::new().nest(base_path.as_str(), router)
+        return router;
     }
+    let mount = base_path.as_str();
+    // A relative Location still resolves to the mount when an outer proxy
+    // adds a prefix of its own.
+    let last_segment = mount.rsplit('/').next().unwrap_or_default().to_owned();
+    let redirect = move |RawQuery(query): RawQuery| async move {
+        let target = match query {
+            Some(query) => format!("{last_segment}/?{query}"),
+            None => format!("{last_segment}/"),
+        };
+        Redirect::permanent(&target)
+    };
+    Router::new()
+        .route(mount, get(redirect))
+        .nest(&format!("{mount}/"), router)
 }
 
 #[cfg(test)]
@@ -136,6 +155,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(root.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The start page's links are relative (`assets/app.js`), so it is served
+    /// at the trailing-slash form of the mount, where they resolve inside the
+    /// mount; the bare mount redirects there with its query intact.
+    #[tokio::test]
+    async fn mounted_router_serves_the_start_page_at_the_trailing_slash_form() {
+        let base_path = BasePath::parse("/research/lingrep-web").expect("valid mount path");
+        let app = app_router_at(RequestStore::default(), &base_path);
+        let get = |uri: &str| {
+            app.clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        };
+
+        let page = get("/research/lingrep-web/").await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+
+        let bare = get("/research/lingrep-web?v=1&q=x").await.unwrap();
+        assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            bare.headers()[axum::http::header::LOCATION],
+            "lingrep-web/?v=1&q=x"
+        );
+        let bare = get("/research/lingrep-web").await.unwrap();
+        assert_eq!(bare.headers()[axum::http::header::LOCATION], "lingrep-web/");
     }
 }
 

@@ -804,7 +804,7 @@ fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
             &"/lingrep",
         ]),
     );
-    let (status, index) = get(&sub, "/lingrep");
+    let (status, index) = get(&sub, "/lingrep/");
     assert_eq!(status, 200);
     assert!(index.contains("href=\"frequencies\""), "{index}");
     let (status, page) = get(&sub, "/lingrep/frequencies");
