@@ -599,6 +599,15 @@ pub fn read_markdown_events<R>(
 where
     R: BufRead + Send + 'static,
 {
+    dialect_iterator(reader, config, diagnostics, source_name)
+}
+
+fn dialect_iterator<R: BufRead>(
+    reader: R,
+    config: MarkdownReaderConfig,
+    diagnostics: MarkdownDiagnostics,
+    source_name: String,
+) -> DialectIterator<R> {
     DialectIterator {
         lines: reader.lines(),
         block: Block::Body,
@@ -618,6 +627,59 @@ where
         paragraph_open: false,
         pending: VecDeque::new(),
     }
+}
+
+/// One sentence that [`AdmittedCorpus`] admits from a Markdown document, with
+/// the 1-based source line the reader read it from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentenceLine {
+    pub line: usize,
+    /// The admitted text, before normalization.
+    pub text: String,
+}
+
+/// Reads one document as [`read_markdown_events`] does and returns the
+/// sentences [`AdmittedCorpus`] admits from it, in order, with their lines.
+pub fn read_markdown_sentence_lines<R: BufRead>(
+    reader: R,
+    config: MarkdownReaderConfig,
+) -> io::Result<Vec<SentenceLine>> {
+    struct Tracked<R> {
+        inner: DialectIterator<R>,
+        line: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+    impl<R: BufRead> Iterator for Tracked<R> {
+        type Item = io::Result<CorpusEvent>;
+        fn next(&mut self) -> Option<Self::Item> {
+            let event = self.inner.next();
+            if let Some(Ok(CorpusEvent::Sentence { .. })) = &event {
+                self.line.set(self.inner.line_number);
+            }
+            event
+        }
+    }
+    let line = std::rc::Rc::new(std::cell::Cell::new(0));
+    let events = Tracked {
+        inner: dialect_iterator(
+            reader,
+            config,
+            MarkdownDiagnostics::default(),
+            "<markdown>".into(),
+        ),
+        line: line.clone(),
+    };
+    let mut sentences = Vec::new();
+    // AdmittedCorpus returns a sentence as soon as it pulls the reader's
+    // sentence event, so `line` still holds that event's line.
+    for event in AdmittedCorpus::new(events) {
+        if let super::structured::AdmittedCorpusEvent::Sentence(sentence) = event? {
+            sentences.push(SentenceLine {
+                line: line.get(),
+                text: sentence.text,
+            });
+        }
+    }
+    Ok(sentences)
 }
 
 pub fn read_markdown_dialect<R>(
@@ -1574,6 +1636,31 @@ mod reader_tests {
         )
         .collect::<io::Result<Vec<_>>>()
         .expect("dialect read")
+    }
+
+    #[test]
+    fn sentence_lines_pair_each_admitted_sentence_with_its_source_line() {
+        let markdown = "---\ntitle: t\n---\n# 見出し {.intro}\n\n一文目。\n二文目。\n\n```\ncode\n```\n::: {.note}\n<!-- c --> 三文目。\n:::\n\n   \n四文目。\n";
+        let lines = read_markdown_sentence_lines(
+            Cursor::new(markdown.to_owned()),
+            MarkdownReaderConfig::new(permissive()),
+        )
+        .expect("dialect read");
+        let found: Vec<(usize, &str)> = lines
+            .iter()
+            .map(|sentence| (sentence.line, sentence.text.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (6, "一文目。"),
+                (7, "二文目。"),
+                (13, "三文目。"),
+                (17, "四文目。")
+            ]
+        );
+        let texts: Vec<String> = lines.into_iter().map(|sentence| sentence.text).collect();
+        assert_eq!(texts, read_all(markdown, permissive()));
     }
 
     #[test]

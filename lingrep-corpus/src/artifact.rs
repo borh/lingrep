@@ -539,7 +539,7 @@ pub struct CorpusArtifact {
     logical_token_schema: TokenSchema,
     pub(crate) discovery: DiscoveryReport,
     trust: TrustClass,
-    locations: MappedLocations,
+    pub(crate) locations: MappedLocations,
     pub(crate) enhanced: Option<Arc<EnhancedReader>>,
     pub(crate) postings: Option<Arc<crate::postings::PostingIndex>>,
 }

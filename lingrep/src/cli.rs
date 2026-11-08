@@ -706,6 +706,28 @@ pub enum CorpusCommand {
     Sources(CorpusSourcesArgs),
     /// List prepared artifacts stored beside one source.
     Variants(CorpusVariantsArgs),
+    /// Render a Markdown artifact's documents into a reading sidecar.
+    Render(CorpusRenderArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CorpusRenderArgs {
+    /// Prepared artifact built from Markdown.
+    #[arg(value_name = "ARTIFACT", help_heading = "Input")]
+    pub artifact: PathBuf,
+
+    /// The Markdown tree the artifact was built from; its source identity
+    /// must equal the artifact's.
+    #[arg(long, value_name = "DIR", help_heading = "Input")]
+    pub source_root: PathBuf,
+
+    /// Write the sidecar to this new directory. Never replaces an existing path.
+    #[arg(long, value_name = "PATH", help_heading = "Output")]
+    pub output: PathBuf,
+
+    /// The Markdown reader options the artifact was built with.
+    #[command(flatten)]
+    pub markdown: MarkdownReaderArgs,
 }
 
 #[derive(Debug, Args)]
@@ -1843,7 +1865,8 @@ impl Cli {
             | Command::Analyzer(_)
             | Command::Table(_)
             | Command::Corpus(CorpusArgs {
-                command: CorpusCommand::Inspect(_) | CorpusCommand::Variants(_),
+                command:
+                    CorpusCommand::Inspect(_) | CorpusCommand::Variants(_) | CorpusCommand::Render(_),
             })
             | Command::Describe(_)
             | Command::Completions(_)

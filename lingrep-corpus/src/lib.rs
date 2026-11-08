@@ -49,7 +49,13 @@ mod postings;
 pub use postings::PreparedFilterStats;
 mod provenance;
 mod publication;
+mod reading;
 pub use publication::rename_noreplace;
+pub use reading::{
+    HighlightRange, OccurrenceAnchor, PageRequest, READING_SIDECAR_FORMAT, READING_SIDECAR_VERSION,
+    ReadingDocument, ReadingPage, ReadingSidecar, ReadingSidecarError, ReadingSidecarKey,
+    ReadingSidecarStats, ReadingSidecarWriter, SentenceAnchor, StagedReadingSidecar,
+};
 mod scratch;
 mod siblings;
 mod tokens;

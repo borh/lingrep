@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanning the corpus. Before the rows, a `pattern` record per pattern gives
   its occurrences and admitted documents over all of its groups. A table is rejected when the corpus analysis, the
   catalog or the matcher revision differs from the one it was written for.
+- `ling corpus render ARTIFACT --source-root DIR --output PATH` renders each
+  document of a Markdown artifact to HTML in a reading sidecar, with a map
+  from each stored sentence to its rendered text. It rejects a source tree or
+  `--md-*` options whose identity differs from the artifact's. The
+  `lingrep_corpus::ReadingSidecar` API opens a sidecar only when its analysis
+  identity, source identity and renderer revision equal the caller's, and
+  returns pages of blocks bounded by HTML bytes and an occurrence's highlight
+  ranges.
 
 ### Changed
 

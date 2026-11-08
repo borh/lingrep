@@ -78,6 +78,13 @@ pub fn dispatch(
             CorpusCommand::Build(args) => corpus::run_build(args, config, terminal, output),
             CorpusCommand::Inspect(args) => corpus::run_inspect(args, config, terminal, output),
             CorpusCommand::Variants(args) => variants::run(args, output),
+            CorpusCommand::Render(_) if output == crate::presentation::OutputMode::Jsonl => {
+                Err(CliError::UnsupportedOutput {
+                    command: "corpus render",
+                    output: "json",
+                })
+            }
+            CorpusCommand::Render(args) => corpus::run_render(args, config, terminal),
         },
         Command::Tokenize(args) => tokenize::run(args, config, terminal, output),
         Command::Attributes(args) => attributes::run(args, config, terminal, output),

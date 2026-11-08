@@ -1688,6 +1688,46 @@ never reused by mistake: a run that names the same path again detects the
 mismatched recorded identity and fails, while a run over the edited source names a
 fresh sibling.
 
+### Reading sidecars for Markdown corpora
+
+```bash
+ling corpus render corpus.lingcorpus --source-root corpus/ \
+  --md-recover-conversion-artifacts --output corpus.reading
+```
+
+`corpus render` renders every document of an artifact built from Markdown to
+HTML and writes the result to a reading sidecar, a new directory at
+`--output`. A reader can then show a document, and highlight an occurrence in
+it, from the artifact and the sidecar alone, without the source tree.
+
+`--source-root` names the tree the artifact was built from, and the `--md-*`
+options must be the ones it was built with. The command rejects options whose
+reader identity differs from the artifact's with exit code 2. It reads the
+tree once to compute its source identity, and rejects a tree whose identity
+differs from the artifact's. It then reads each document again with the
+Markdown reader. If the sentences it reads differ from the stored ones, the
+command fails and publishes nothing.
+
+The renderer applies the dialect's own rules first: frontmatter and `<!-- -->`
+comments are not rendered, `:::` regions become `<div>` elements carrying
+their classes, `{.class}` spans are removed and heading classes are kept. It
+renders the rest as CommonMark with tables and footnotes. Raw HTML is shown as
+text, a link keeps its target only for `http:`, `https:`, `mailto:` and `#`,
+and mathematics stays source text. A table ends at the first line that does
+not start with `|`, and cells beyond the header's width are rendered.
+
+Each stored sentence is mapped to the rendered characters of its source line.
+Characters that render as markup, such as table pipes and footnote markers,
+and ordered-list numbers, which render as list markers, have no rendered text.
+The command reports how many sentences render in full and how many have no
+rendered text.
+
+A sidecar records the artifact's analysis identity and source identity and
+the renderer revision. Two renders with the same three identities write
+identical bytes. `lingrep_corpus::ReadingSidecar::open` rejects a sidecar when
+any of the three differs from the caller's, and names the field that differs.
+`corpus render` does not support `--json` or `--plan`.
+
 ## Tokenization and interactive workflows
 
 ```bash

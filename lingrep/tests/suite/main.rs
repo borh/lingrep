@@ -11,6 +11,7 @@ mod cli;
 mod cli_shape;
 mod completions;
 mod corpus_mode;
+mod corpus_render;
 mod corpus_sources;
 mod diagram_export;
 mod direct_protocol;

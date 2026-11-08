@@ -2680,6 +2680,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "similar",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",

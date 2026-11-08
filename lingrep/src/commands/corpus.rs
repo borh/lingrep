@@ -16,9 +16,9 @@ use lingrep_core::spill::TempBudget;
 use lingrep_core::token_match::BoundProjection;
 use lingrep_corpus::{
     AnalysisInputs, BuildConfig, BuildOutcome, CorpusArtifact, CorpusBuilder,
-    DictionaryFingerprint, ObservedSources, ReaderIdentity, Realization, RealizationRequest,
-    SiblingScan, SourceObservation, TokenSchemaIdentity, TrustClass, canonical_artifact_path,
-    derive_analysis_identity,
+    DictionaryFingerprint, ObservedSources, ReaderIdentity, ReadingSidecarError,
+    ReadingSidecarWriter, Realization, RealizationRequest, SiblingScan, SourceObservation,
+    TokenSchemaIdentity, TrustClass, canonical_artifact_path, derive_analysis_identity,
 };
 
 use super::query_support::{
@@ -26,7 +26,9 @@ use super::query_support::{
 };
 use super::{CommandOutcome, admission_identity};
 use crate::analyzer_selection::resolve_input;
-use crate::cli::{CorpusBuildArgs, CorpusInspectArgs, CorpusSourcesArgs, ExecutionCliConfig};
+use crate::cli::{
+    CorpusBuildArgs, CorpusInspectArgs, CorpusRenderArgs, CorpusSourcesArgs, ExecutionCliConfig,
+};
 use crate::direct_source::{encode_digest, execution_discovery_error};
 use crate::error::CliError;
 use crate::output::{SourceTsvRow, write_source_tsv};
@@ -87,6 +89,88 @@ pub fn run_build(
             Some(artifact) => report_artifact(artifact.into_path(), output).await,
         }
     })
+}
+
+/// Render each document of a Markdown artifact into a new reading sidecar.
+pub fn run_render(
+    args: &CorpusRenderArgs,
+    config: &ExecutionCliConfig,
+    terminal: &TerminalArbiter,
+) -> Result<CommandOutcome, CliError> {
+    let sidecar_error = |error: ReadingSidecarError| match error {
+        ReadingSidecarError::Io(error) => CliError::Io(error),
+        error @ ReadingSidecarError::ReaderMismatch { .. } => {
+            CliError::InvalidArgs(error.to_string())
+        }
+        error => CliError::Corpus(error.to_string()),
+    };
+    let markdown = args
+        .markdown
+        .resolve()
+        .map_err(CliError::InvalidArgs)?
+        .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
+    let artifact = CorpusArtifact::open(&args.artifact)?;
+    let writer = ReadingSidecarWriter::new(&artifact, markdown.clone(), &args.output)
+        .map_err(sidecar_error)?;
+    let progress = PresentationProgress::stderr(
+        &config.stderr,
+        config.progress,
+        OutputMode::Human,
+        ResultDelivery::Deferred,
+    );
+    let mut paths = std::collections::HashMap::new();
+    let Some(observed) = observe_root(
+        &args.source_root,
+        config,
+        &CorpusReadConfig::new(CorpusFormat::Markdown, markdown),
+        terminal.cancellation(),
+        &progress,
+        &mut |document| {
+            paths.insert(document.logical_name, document.path);
+        },
+    )?
+    else {
+        return Ok(CommandOutcome::Cancelled);
+    };
+    let read_source = |name: &str| {
+        let path = paths.get(name).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{name} is not in the source tree"),
+            )
+        })?;
+        std::fs::read(path)
+    };
+    let runtime = tokio::runtime::Runtime::new().map_err(CliError::Io)?;
+    let staged =
+        match runtime.block_on(writer.write(&observed, read_source, terminal.cancellation())) {
+            Ok(staged) => staged,
+            Err(_) if terminal.cancellation().is_cancelled() => {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            Err(error) => return Err(sidecar_error(error)),
+        };
+    if !terminal.try_claim_completion() {
+        return Ok(CommandOutcome::Cancelled);
+    }
+    let stats = staged.publish().map_err(sidecar_error)?;
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    writeln!(
+        writer,
+        "reading sidecar: {}",
+        SafeText::from_untrusted(&args.output.display().to_string())
+    )?;
+    writeln!(
+        writer,
+        "{} document(s), {} sentence(s), {} rendered in full, {} without rendered text, {} byte(s)",
+        stats.documents,
+        stats.sentences,
+        stats.sentences_rendered_in_full,
+        stats.sentences_without_rendered_text,
+        stats.bytes
+    )?;
+    Ok(CommandOutcome::Success)
 }
 
 /// Whether publishing the artifact is the run's own terminating act.
@@ -445,8 +529,14 @@ fn resolve_destination(
     if let Some(path) = output {
         return Ok(Some(Destination::Fresh(path.to_path_buf())));
     }
-    let Some(observed) =
-        observe_root(root, config, reader_config, terminal.cancellation(), status)?
+    let Some(observed) = observe_root(
+        root,
+        config,
+        reader_config,
+        terminal.cancellation(),
+        status,
+        &mut |_| {},
+    )?
     else {
         return Ok(None);
     };
@@ -857,6 +947,7 @@ fn observe_root(
     reader_config: &CorpusReadConfig,
     cancellation: &CancellationFlag,
     progress: &PresentationProgress<io::Stderr>,
+    on_document: &mut dyn FnMut(SourceDocument),
 ) -> Result<Option<ObservedSources>, CliError> {
     let mut read_sources = 0_u64;
     let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
@@ -876,7 +967,9 @@ fn observe_root(
             return Ok(None);
         }
         let event = events.next().transpose().map_err(build_input_error)?;
-        let drained = documents.drain()?.len() as u64;
+        let discovered = documents.drain()?;
+        let drained = discovered.len() as u64;
+        discovered.into_iter().for_each(&mut *on_document);
         if drained > 0 {
             read_sources += drained;
             progress.snapshot(move || format!("identity pass: read {read_sources} sources"));

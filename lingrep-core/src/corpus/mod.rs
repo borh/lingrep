@@ -8,6 +8,7 @@ pub mod bccwj;
 pub mod conllu;
 pub mod discovery;
 pub mod markdown_dialect;
+pub mod markdown_render;
 pub mod scope_observation;
 pub mod section_policy;
 pub mod soranoha;

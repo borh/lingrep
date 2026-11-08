@@ -138,6 +138,48 @@ fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
+/// A directory beside a destination that is removed on drop unless it was
+/// renamed into place.
+pub(crate) struct StagingDirectory {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) published: bool,
+}
+
+impl StagingDirectory {
+    /// Creates a new, uniquely named directory beside `destination`, or
+    /// returns `None` when `destination` has no file name.
+    pub(crate) fn create_beside(destination: &Path) -> io::Result<Option<Self>> {
+        let Some(name) = destination.file_name() else {
+            return Ok(None);
+        };
+        let parent = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let path = parent.join(format!(
+            ".{}.staging-{}-{nanos}",
+            name.to_string_lossy(),
+            std::process::id()
+        ));
+        std::fs::create_dir(&path)?;
+        Ok(Some(Self {
+            path,
+            published: false,
+        }))
+    }
+}
+
+impl Drop for StagingDirectory {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 /// Renames `from` to `to` in one step, failing with `EEXIST` or `ENOTEMPTY`
 /// instead of replacing an existing `to`. Where no no-replace rename exists,
 /// the error is `ENOSYS`, `EINVAL` or `EOPNOTSUPP` and nothing is renamed.

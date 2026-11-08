@@ -18,6 +18,8 @@ use memmap2::{Mmap, MmapMut};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::publication::StagingDirectory;
+
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");
 
@@ -166,20 +168,6 @@ fn check_cancellation(cancellation: &CancellationFlag) -> Result<(), CountTableE
         Err(CountTableError::Cancelled)
     } else {
         Ok(())
-    }
-}
-
-/// A directory that is removed on drop unless it was renamed into place.
-struct StagingDirectory {
-    path: PathBuf,
-    published: bool,
-}
-
-impl Drop for StagingDirectory {
-    fn drop(&mut self) {
-        if !self.published {
-            let _ = fs::remove_dir_all(&self.path);
-        }
     }
 }
 
@@ -359,22 +347,8 @@ impl CountTableWriter {
         if u32::try_from(patterns.len()).is_err() {
             return Err(writer_error("more than 2^32-1 patterns"));
         }
-        let name = destination
-            .file_name()
-            .ok_or_else(|| writer_error("destination has no file name"))?
-            .to_string_lossy();
-        let parent = destination
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_nanos());
-        let staging = StagingDirectory {
-            path: parent.join(format!(".{name}.staging-{}-{nanos}", std::process::id())),
-            published: false,
-        };
-        fs::create_dir(&staging.path)?;
+        let staging = StagingDirectory::create_beside(destination)?
+            .ok_or_else(|| writer_error("destination has no file name"))?;
         // From here on, dropping `staging` removes the directory on any early return.
         let staging_path = staging.path.clone();
         let staging_path = staging_path.as_path();

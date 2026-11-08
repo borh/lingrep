@@ -246,6 +246,13 @@ static SEMANTICS: &[CommandSemantics] = &[
         examples: ExamplePublication::Published(CORPUS_VARIANTS_EXAMPLES),
     },
     CommandSemantics {
+        command: "corpus render",
+        input_modes: &["prepared"],
+        examples: ExamplePublication::Omitted {
+            reason: "renders an artifact together with the Markdown tree it was built from",
+        },
+    },
+    CommandSemantics {
         command: "table",
         input_modes: &["prepared"],
         examples: ExamplePublication::Omitted {

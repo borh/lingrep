@@ -1698,6 +1698,33 @@ impl ProvenanceView {
             .collect()
     }
 
+    /// Every document's `(document ID, first sentence, sentence count)`, in
+    /// document ID order.
+    pub(crate) async fn document_sentence_ranges(
+        &self,
+    ) -> Result<Vec<(u64, u64, u64)>, CorpusError> {
+        use futures::TryStreamExt;
+        let mut stream = sqlx::query(
+            "SELECT document_id, first_sentence, sentence_count FROM document_metadata ORDER BY document_id",
+        )
+        .fetch(&self.pool);
+        let mut ranges = Vec::new();
+        while let Some(row) = stream.try_next().await.map_err(database)? {
+            ranges.push((
+                sqlite_u64(row.try_get("document_id").map_err(database)?, "document ID")?,
+                sqlite_u64(
+                    row.try_get("first_sentence").map_err(database)?,
+                    "first sentence",
+                )?,
+                sqlite_u64(
+                    row.try_get("sentence_count").map_err(database)?,
+                    "sentence count",
+                )?,
+            ));
+        }
+        Ok(ranges)
+    }
+
     /// Reads at most 256 divisions and 4 MiB of metadata, including empty extents.
     pub async fn division_metadata_page(
         &self,
