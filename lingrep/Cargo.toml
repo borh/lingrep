@@ -79,6 +79,10 @@ harness = false
 name = "inline_lexicon_campaign"
 harness = false
 
+[[bench]]
+name = "human_output"
+harness = false
+
 [lints]
 workspace = true
 

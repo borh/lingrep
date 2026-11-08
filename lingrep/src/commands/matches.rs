@@ -2,7 +2,7 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use lingrep_core::execution::{
     ExecutionError, MatchSink, PolicySelection, Publication, RunOutcome, SentenceAdmission,
@@ -335,11 +335,6 @@ pub fn run(
 
     let post_run = (|| -> Result<CommandOutcome, CliError> {
         let stdout = io::stdout();
-        // Block-buffered rather than the lock's own line buffering. A record
-        // stream is written one record at a time and `StdoutLock` turns every
-        // one of those into its own `write(2)`; the durability boundary that
-        // matters is the logical batch seam, and `finish_batch` flushes there.
-        // Human output re-flushes per row so it still arrives as it is drawn.
         let mut writer = io::BufWriter::with_capacity(256 * 1024, stdout.lock());
         if format == MatchFormat::Jsonl {
             publish_query_jsonl(&mut writer, &run)?;
@@ -376,6 +371,7 @@ pub fn run(
 
         let limits = config.limits;
         let direct = DirectMatchSink {
+            last_human_flush: None,
             writer: &mut writer,
             output: sink_output,
             requested_context: context,
@@ -586,6 +582,10 @@ pub fn run(
     post_run.map_err(|error| error.with_run_id(run_id, None))
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "One sink per query owns the fixed renderer; its size does not grow with matches."
+)]
 enum MatchSinkOutput {
     Jsonl,
     Tsv,
@@ -642,6 +642,7 @@ fn span_char_range(
 }
 
 struct DirectMatchSink<'a, W> {
+    last_human_flush: Option<Instant>,
     writer: &'a mut W,
     output: MatchSinkOutput,
     requested_context: usize,
@@ -736,6 +737,28 @@ impl MatchRetention {
 }
 
 impl<W: Write> DirectMatchSink<'_, W> {
+    fn flush_human_row(&mut self, now: Instant) -> Result<(), ExecutionError> {
+        if self
+            .last_human_flush
+            .is_none_or(|last| now.saturating_duration_since(last) >= Duration::from_millis(100))
+        {
+            self.writer.flush().map_err(execution_output_io)?;
+            self.last_human_flush = Some(now);
+        }
+        Ok(())
+    }
+
+    fn flush_human_sentence(
+        &mut self,
+        now: impl FnOnce() -> Instant,
+    ) -> Result<(), ExecutionError> {
+        if matches!(self.output, MatchSinkOutput::Human(_)) {
+            self.writer.flush().map_err(execution_output_io)?;
+            self.last_human_flush = Some(now());
+        }
+        Ok(())
+    }
+
     fn publish_retained(
         &mut self,
     ) -> Result<Option<crate::protocol::query::RetainedMatches>, CliError> {
@@ -778,6 +801,7 @@ impl<W: Write> DirectMatchSink<'_, W> {
         location: &lingrep_core::execution::SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: impl Iterator<Item = RecordView<'r>>,
+        mut now: impl FnMut() -> Instant,
     ) -> Result<SinkControl, ExecutionError> {
         let mut records_emitted = 0usize;
         for record in records {
@@ -959,10 +983,7 @@ impl<W: Write> DirectMatchSink<'_, W> {
                     renderer
                         .match_row(&mut *self.writer, &row)
                         .map_err(execution_output_io)?;
-                    // Human output is watched as it arrives, so it flushes per
-                    // row even though this sink writes through a `BufWriter`.
-                    // The machine formats above flush at `finish_batch` boundaries instead.
-                    self.writer.flush().map_err(execution_output_io)?;
+                    self.flush_human_row(now())?;
                 }
             }
             self.last_committed = Some(CommittedPrefix {
@@ -981,8 +1002,12 @@ impl<W: Write> DirectMatchSink<'_, W> {
                 .checked_add(1)
                 .ok_or(ExecutionError::ResourceAccounting)?;
             if self.limit.is_some_and(|limit| self.emitted == limit) {
+                self.flush_human_sentence(&mut now)?;
                 return Ok(SinkControl::StopAfter { records_emitted });
             }
+        }
+        if records_emitted != 0 {
+            self.flush_human_sentence(now)?;
         }
         Ok(SinkControl::Continue { records_emitted })
     }
@@ -998,7 +1023,12 @@ impl<W: Write> MatchSink for DirectMatchSink<'_, W> {
         if let Some(endings) = &mut self.endings {
             endings.observe(location, sentence, matches)?;
         }
-        self.publish(location, sentence, matches.iter().map(RecordView::raw))
+        self.publish(
+            location,
+            sentence,
+            matches.iter().map(RecordView::raw),
+            Instant::now,
+        )
     }
 
     fn push_records(
@@ -1019,6 +1049,7 @@ impl<W: Write> MatchSink for DirectMatchSink<'_, W> {
             location,
             sentence,
             records.iter().map(RecordView::published),
+            Instant::now,
         )
     }
 
@@ -1043,6 +1074,8 @@ mod tests {
         bytes: Vec<u8>,
         writes: usize,
         flushes: usize,
+        flush_sizes: Vec<usize>,
+        fail_flush: Option<(usize, io::ErrorKind)>,
     }
 
     impl Write for CountingWriter {
@@ -1054,6 +1087,12 @@ mod tests {
 
         fn flush(&mut self) -> io::Result<()> {
             self.flushes += 1;
+            self.flush_sizes.push(self.bytes.len());
+            if let Some((at, kind)) = self.fail_flush
+                && self.flushes == at
+            {
+                return Err(kind.into());
+            }
             Ok(())
         }
     }
@@ -1102,6 +1141,7 @@ mod tests {
         output: MatchSinkOutput,
     ) -> DirectMatchSink<'a, W> {
         DirectMatchSink {
+            last_human_flush: None,
             writer,
             output,
             requested_context: 0,
@@ -1117,6 +1157,20 @@ mod tests {
             endings: None,
             retention: None,
         }
+    }
+
+    fn sink_test_human_output() -> MatchSinkOutput {
+        MatchSinkOutput::Human(HumanRenderer::new(
+            ContextColorPalette::new(
+                5,
+                crate::output::ResolvedContextColorTheme::Dark,
+                TerminalColorCapability::Ansi16,
+            ),
+            ColorPolicy::resolve(ColorMode::Never, true, false),
+            80,
+            HumanMatchLayout::Flowing,
+            "".parse().unwrap(),
+        ))
     }
 
     /// The record stream owes durability at the **logical batch seam**, not at
@@ -1153,29 +1207,117 @@ mod tests {
         );
     }
 
-    /// Human output is watched as it is drawn, so it flushes per row, which a
-    /// `BufWriter` does not. Machine formats flush at batch boundaries instead.
     #[test]
-    fn matches_human_rows_still_flush_per_row() {
+    fn human_rows_flush_first_result_and_complete_sentences_including_limits() {
+        let location = sink_test_location();
+        let sentence = sink_test_sentence();
+        let matches = sink_test_matches(5);
+        for limit in [None, Some(0), Some(2)] {
+            let mut writer = io::BufWriter::new(CountingWriter::default());
+            let mut sink = sink_over(&mut writer, sink_test_human_output());
+            sink.limit = limit;
+            let now = Instant::now();
+            sink.publish(
+                &location,
+                &sentence,
+                matches.iter().map(RecordView::raw),
+                || now,
+            )
+            .expect("published");
+            let output = sink.writer.get_ref();
+            if limit == Some(0) {
+                assert_eq!(output.flushes, 0);
+                assert!(output.bytes.is_empty());
+                continue;
+            }
+            assert_eq!(output.flushes, 2);
+            assert_eq!(
+                output.bytes[..output.flush_sizes[0]]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count(),
+                1
+            );
+            assert_eq!(
+                output.bytes.iter().filter(|&&b| b == b'\n').count(),
+                limit.unwrap_or(5) as usize
+            );
+            assert!(sink.writer.buffer().is_empty());
+        }
+    }
+
+    #[test]
+    fn human_rows_flush_at_the_deadline_and_empty_sentences_do_not_flush() {
         let location = sink_test_location();
         let sentence = sink_test_sentence();
         let matches = sink_test_matches(5);
         let mut writer = CountingWriter::default();
-        let renderer = HumanRenderer::new(
-            ContextColorPalette::new(
-                5,
-                crate::output::ResolvedContextColorTheme::Dark,
-                TerminalColorCapability::Ansi16,
-            ),
-            ColorPolicy::resolve(ColorMode::Never, true, false),
-            80,
-            HumanMatchLayout::Flowing,
-            "".parse().expect("empty separator is terminal-safe"),
-        );
-        let mut sink = sink_over(&mut writer, MatchSinkOutput::Human(renderer));
-        sink.push(&location, &sentence, &matches)
-            .expect("published");
-        assert_eq!(sink.writer.flushes, 5, "one flush per drawn row");
+        let mut sink = sink_over(&mut writer, sink_test_human_output());
+        let start = Instant::now();
+        let mut times = [0, 99, 100, 199, 200]
+            .into_iter()
+            .chain(std::iter::repeat(200));
+        sink.publish(
+            &location,
+            &sentence,
+            matches.iter().map(RecordView::raw),
+            || {
+                start
+                    .checked_add(Duration::from_millis(times.next().unwrap()))
+                    .unwrap()
+            },
+        )
+        .unwrap();
+        let rows_at_flush = sink
+            .writer
+            .flush_sizes
+            .iter()
+            .map(|&end| {
+                sink.writer.bytes[..end]
+                    .iter()
+                    .filter(|&&byte| byte == b'\n')
+                    .count()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows_at_flush, [1, 3, 5, 5]);
+        sink.publish(&location, &sentence, std::iter::empty(), || {
+            panic!("empty sentence clock read")
+        })
+        .unwrap();
+        assert_eq!(sink.writer.flushes, 4);
+    }
+
+    #[test]
+    fn human_flush_failures_preserve_io_error_kinds() {
+        let location = sink_test_location();
+        let sentence = sink_test_sentence();
+        let matches = sink_test_matches(5);
+        for at in [1, 2] {
+            for kind in [
+                io::ErrorKind::BrokenPipe,
+                io::ErrorKind::WouldBlock,
+                io::ErrorKind::Other,
+            ] {
+                let mut writer = CountingWriter {
+                    fail_flush: Some((at, kind)),
+                    ..Default::default()
+                };
+                let mut sink = sink_over(&mut writer, sink_test_human_output());
+                let now = Instant::now();
+                let error = sink
+                    .publish(
+                        &location,
+                        &sentence,
+                        matches.iter().map(RecordView::raw),
+                        || now,
+                    )
+                    .unwrap_err();
+                assert!(
+                    matches!(error, ExecutionError::Output { kind: actual, .. } if actual == kind)
+                );
+                assert_eq!(sink.emitted, if at == 1 { 0 } else { 5 });
+            }
+        }
     }
 
     /// The buffered record path and the flushing one produce the same bytes.
@@ -1198,8 +1340,13 @@ mod tests {
         {
             let mut sink = sink_over(&mut per_record, MatchSinkOutput::Jsonl);
             for one in &matches {
-                sink.publish(&location, &sentence, std::iter::once(RecordView::raw(one)))
-                    .expect("published");
+                sink.publish(
+                    &location,
+                    &sentence,
+                    std::iter::once(RecordView::raw(one)),
+                    Instant::now,
+                )
+                .expect("published");
             }
         }
         assert_eq!(

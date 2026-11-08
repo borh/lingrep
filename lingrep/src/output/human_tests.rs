@@ -58,6 +58,63 @@ fn row_with_three_context_tokens() -> HumanKwicRow {
 }
 
 #[test]
+fn context_styles_preserve_exact_bytes_across_depth_and_palette_cycles() {
+    for capability in [
+        TerminalColorCapability::Truecolor,
+        TerminalColorCapability::Ansi256,
+        TerminalColorCapability::Ansi16,
+    ] {
+        for theme in [
+            ResolvedContextColorTheme::Dark,
+            ResolvedContextColorTheme::Light,
+        ] {
+            for depth in [0, 1, 5, 20] {
+                let palette = ContextColorPalette::new(depth, theme, capability);
+                let row = HumanKwicRow {
+                    left: vec!["左".into(); 14],
+                    keyword: vec!["鍵".into()],
+                    right: vec!["右".into(); 14],
+                };
+                let renderer = HumanRenderer::new(
+                    palette.clone(),
+                    ColorPolicy::resolve(ColorMode::Always, false, true),
+                    1000,
+                    HumanMatchLayout::Flowing,
+                    "|".parse().unwrap(),
+                );
+                let context = |text: &str, distance| {
+                    let style = match palette.style(distance) {
+                        crate::output::ContextStyle::Proximity(color) => {
+                            anstyle::Style::new().fg_color(Some(color))
+                        }
+                        crate::output::ContextStyle::Distant => anstyle::Style::new().dimmed(),
+                    };
+                    format!("{style}{text}{style:#}")
+                };
+                let left = (1..=14)
+                    .rev()
+                    .map(|n| context("左", -n))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                let right = (1..=14)
+                    .map(|n| context("右", n))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                let hit = anstyle::Style::new().bold();
+                let expected = format!("{left} {hit}鍵{hit:#} {right}\n");
+                let mut actual = Vec::new();
+                renderer.match_row(&mut actual, &row).unwrap();
+                assert_eq!(
+                    actual,
+                    expected.as_bytes(),
+                    "{capability:?} {theme:?} depth={depth}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn renderer_emits_truecolor_proximity_and_dim_beyond_depth() {
     let output = render_row_with_depth(
         2,

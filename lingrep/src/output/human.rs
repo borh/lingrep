@@ -25,6 +25,10 @@ pub struct HumanKwicRow {
 
 pub struct HumanRenderer {
     palette: ContextColorPalette,
+    context_prefixes: [String; 6],
+    distant_prefix: String,
+    hit_prefix: String,
+    reset: String,
     color: ColorPolicy,
     width: usize,
     layout: HumanMatchLayout,
@@ -39,8 +43,19 @@ impl HumanRenderer {
         layout: HumanMatchLayout,
         morpheme_separator: TerminalSafeText,
     ) -> Self {
+        let context_prefixes = std::array::from_fn(|index| {
+            match palette.style((index + 1) as isize) {
+                ContextStyle::Proximity(color) => Style::new().fg_color(Some(color)),
+                ContextStyle::Distant => Style::new().dimmed(),
+            }
+            .to_string()
+        });
         Self {
             palette,
+            context_prefixes,
+            distant_prefix: Style::new().dimmed().to_string(),
+            hit_prefix: Style::new().bold().to_string(),
+            reset: Style::new().bold().render_reset().to_string(),
             color,
             width: width.max(MIN_HUMAN_MATCH_WIDTH),
             layout,
@@ -195,7 +210,7 @@ impl HumanRenderer {
 
     fn write_hit<W: Write>(&self, writer: &mut W, keyword: &str) -> io::Result<()> {
         if self.color.enabled() {
-            self.write_styled(writer, keyword, Style::new().bold())
+            self.write_styled(writer, keyword, &self.hit_prefix)
         } else {
             write!(writer, "⟦{keyword}⟧")
         }
@@ -207,19 +222,24 @@ impl HumanRenderer {
         token: &str,
         distance: isize,
     ) -> io::Result<()> {
-        let style = match self.palette.style(distance) {
-            ContextStyle::Proximity(color) => Style::new().fg_color(Some(color)),
-            ContextStyle::Distant => Style::new().dimmed(),
-        };
-        self.write_styled(writer, token, style)
+        if self.color.enabled() {
+            let prefix = match self.palette.style(distance) {
+                ContextStyle::Proximity(_) => {
+                    &self.context_prefixes
+                        [(distance.unsigned_abs() - 1) % self.context_prefixes.len()]
+                }
+                ContextStyle::Distant => &self.distant_prefix,
+            };
+            self.write_styled(writer, token, prefix)
+        } else {
+            writer.write_all(token.as_bytes())
+        }
     }
 
-    fn write_styled<W: Write>(&self, writer: &mut W, value: &str, style: Style) -> io::Result<()> {
-        if self.color.enabled() {
-            write!(writer, "{style}{value}{style:#}")
-        } else {
-            writer.write_all(value.as_bytes())
-        }
+    fn write_styled<W: Write>(&self, writer: &mut W, value: &str, prefix: &str) -> io::Result<()> {
+        writer.write_all(prefix.as_bytes())?;
+        writer.write_all(value.as_bytes())?;
+        writer.write_all(self.reset.as_bytes())
     }
 }
 
