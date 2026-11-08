@@ -1940,7 +1940,9 @@ read, so they are part of each corpus's prepared-artifact identity.
 Only the default corpus's build starts at startup, and the listener binds
 without waiting for it to finish: the server answers requests, and the corpus
 panel reports "preparing", while the first corpus is being prepared. Every
-other declared corpus starts building the first time it is selected. One
+other declared corpus starts building the first time it is selected. A corpus
+that a `--count-table` counts is the exception: the server opens it and reads
+its document metadata before it answers any request. One
 process-wide permit admits one build at a time, so N declared corpora never hold
 N decoded dictionaries at once.
 
@@ -1954,3 +1956,42 @@ re-pointing the open page. The selector is rendered only when more than one
 corpus is declared. The browser receives each corpus's key and display name
 (the file stem for the `--input` corpus, the declared `NAME` for a `--corpus`
 entry) and never its path.
+
+### Frequency view from count tables
+
+`--count-table PATH` serves a table written by `ling summarize --write-table`
+in the **Frequencies** view, at `frequencies` under the server's base path.
+The flag is repeatable. Without it the view is absent and the workbench is
+unchanged.
+
+```bash
+ling summarize --patterns patterns/collexeme.lx --corpus works.lingcorpus \
+  --write-table works.collexeme.lingtable
+ling serve --corpus works=works.lingcorpus --pattern-root patterns \
+  --count-table works.collexeme.lingtable
+```
+
+A table binds to the declared prepared corpus whose analysis identity it
+records and to the catalog under `--pattern-root` whose fingerprint it records;
+neither the flag order nor the file name takes part. Startup stops with an
+error naming the table when the table cannot be read or does not verify, was
+written by another matcher revision, matches no declared corpus or no catalog,
+counts a document the corpus does not hold, or counts the same catalog over the
+same corpus as another table:
+
+```text
+--count-table works.lingtable: matches no served corpus: it counts analysis identity ff18f3e3…
+--count-table works.lingtable: matches no catalog under the pattern root: it counts catalog fingerprint c61e213c…
+--count-table a.lingtable and --count-table b.lingtable both count catalog collexeme.lx over corpus "works"
+```
+
+The view states its query as a sentence whose blanks are the catalog, the
+pattern, one condition per document metadata key, the order and a substring
+filter. A key becomes a condition when every value is a number (a range) or
+when its scalar or list values repeat (a set to keep or to exclude). Each
+condition shows the share of occurrences it keeps: the occurrences under every
+condition out of those under every condition but this one. The page shows the
+`ling table … --where …` command that reproduces its rows; the order it
+applies is its own. A clause with `@section` or `@sentence` is answered with
+an explanation rather than rows, because a table counts per document. The
+address holds the whole state, so a copied link reopens the same view.

@@ -33,6 +33,8 @@ pub struct IndexPage {
     pub search_scope: Option<crate::search_scope::SearchScope>,
     pub workbench_id: String,
     pub current_page: &'static str,
+    /// Whether the navigation links to the frequency view.
+    pub frequency_view: bool,
     pub seed_pattern: String,
     pub auto_run: bool,
     /// The seeded query is queued rather than abandoned: the corpus is still
@@ -566,6 +568,7 @@ mod tests {
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
+            frequency_view: false,
             seed_pattern: String::new(),
             auto_run: false,
             run_when_ready: false,
@@ -602,6 +605,7 @@ mod tests {
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
+            frequency_view: false,
             seed_pattern: String::new(),
             auto_run: false,
             run_when_ready: false,
@@ -689,6 +693,7 @@ mod tests {
             corpora: vec![],
             workbench_id: "test-tab".into(),
             current_page: "corpus",
+            frequency_view: false,
             // `&` and `<` exercise the textarea's HTML escaping (lingrep patterns uses `&`).
             seed_pattern: "seed := [lemma=だ & orth=そう].\n<b>".into(),
             auto_run: false,

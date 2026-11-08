@@ -1,5 +1,5 @@
 use askama::Template;
-use axum::{Router, response::Html, routing::get};
+use axum::{Router, extract::State, response::Html, routing::get};
 
 use crate::state::RequestStore;
 
@@ -47,15 +47,17 @@ pub const HELP_EXAMPLES: &[HelpExample] = &[
 #[template(path = "help.html")]
 struct HelpPage {
     current_page: &'static str,
+    frequency_view: bool,
 }
 
 pub fn routes() -> Router<RequestStore> {
     Router::new().route("/help", get(help_page))
 }
 
-async fn help_page() -> Html<String> {
+async fn help_page(State(store): State<RequestStore>) -> Html<String> {
     HelpPage {
         current_page: "help",
+        frequency_view: !store.frequency.is_empty(),
     }
     .render().map_or_else(|_| {
         Html(
@@ -83,7 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn help_describes_all_shipped_regular_lookaround_forms() {
-        let Html(html) = help_page().await;
+        let Html(html) = help_page(State(RequestStore::default())).await;
 
         for construct in [
             "preceded_by(E)",
@@ -101,7 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn help_examples_tag_their_japanese_source_for_the_browser() {
-        let Html(html) = help_page().await;
+        let Html(html) = help_page(State(RequestStore::default())).await;
 
         assert!(
             html.contains("<pre lang=\"ja\"><code>"),

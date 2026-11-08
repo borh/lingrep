@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+{% block title %}Frequencies{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="assets/frequency.css">
+    <script type="module" src="assets/frequency.js"></script>
+{% endblock %}
+{% block content %}
+<section class="fq" data-frequency>
+  <div class="fq-head">
+    <p class="fq-sentence" data-fq-sentence></p>
+    <p class="fq-under"><span class="fq-figures" data-fq-figures></span></p>
+    <div class="fq-clause" data-fq-clause></div>
+    <div class="fq-source" data-fq-source></div>
+  </div>
+  <p class="fq-state" data-fq-state role="status"></p>
+  <div data-fq-table></div>
+</section>
+{% endblock %}

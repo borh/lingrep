@@ -257,6 +257,7 @@
   "library.unsupported_schema": "Query history uses a newer browser-storage format.",
   "library.updated": "Query library updated.",
   "nav.corpus": "Corpus Search",
+  "nav.frequencies": "Frequencies",
   "nav.help": "Help",
   "nav.sample": "Sample Debugger",
   "notice.corpus_loading": "The corpus is still loading, so the pattern was seeded but not run automatically.",

@@ -62,6 +62,7 @@ pub fn page_routes() -> Router<RequestStore> {
 struct SamplePage {
     seed_pattern: String,
     current_page: &'static str,
+    frequency_view: bool,
     catalog_keys: Vec<String>,
 }
 
@@ -72,6 +73,7 @@ async fn sample_page(State(store): State<RequestStore>) -> Html<String> {
     SamplePage {
         seed_pattern: store.default_pattern.to_string(),
         current_page: "sample",
+        frequency_view: !store.frequency.is_empty(),
         catalog_keys: store.catalogs.keys().map(str::to_owned).collect(),
     }
     .render().map_or_else(|_| {

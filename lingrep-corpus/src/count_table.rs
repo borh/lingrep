@@ -965,16 +965,7 @@ impl CountTable {
     /// `expected`. Checks the format version and every section's length; the
     /// contents are checked by [`Self::verify`].
     pub fn open(path: &Path, expected: &CountTableKey) -> Result<Self, CountTableError> {
-        let header_bytes = fs::read(path.join(HEADER))?;
-        let version: HeaderVersion = serde_json::from_slice(&header_bytes)?;
-        if version.format != COUNT_TABLE_FORMAT || version.version != COUNT_TABLE_VERSION {
-            return Err(CountTableError::UnsupportedFormat {
-                path: path.to_path_buf(),
-                found: version.format,
-                version: version.version,
-            });
-        }
-        let header: Header = serde_json::from_slice(&header_bytes)?;
+        let header = read_header(path)?;
         for (field, expected, found) in [
             (
                 "analysis identity",
@@ -1063,6 +1054,12 @@ impl CountTable {
             return Err(corrupt("pattern entry ranges do not cover the entries"));
         }
         Ok(table)
+    }
+
+    /// The key of the table at `path`, read from its header without opening
+    /// its arrays.
+    pub fn read_key(path: &Path) -> Result<CountTableKey, CountTableError> {
+        Ok(read_header(path)?.key)
     }
 
     pub fn path(&self) -> &Path {
@@ -1324,6 +1321,56 @@ impl CountTable {
             current: None,
             failed: false,
         })
+    }
+
+    /// The occurrences of `pattern` in each document, indexed like
+    /// [`Self::document_ids`].
+    pub fn pattern_document_counts(&self, pattern: usize) -> Result<Vec<u64>, CountTableError> {
+        if pattern >= self.header.patterns.len() {
+            return Err(corrupt("pattern out of range"));
+        }
+        let offsets = self.u64s(&self.document_pattern_offsets)?;
+        let patterns = self.u32s(&self.document_patterns)?;
+        let counts = self.u64s(&self.document_pattern_counts)?;
+        (0..self.document_ids.len())
+            .map(|document| {
+                let range = offsets[document] as usize..offsets[document + 1] as usize;
+                let (Some(patterns), Some(counts)) =
+                    (patterns.get(range.clone()), counts.get(range))
+                else {
+                    return Err(corrupt("document pattern offsets out of range"));
+                };
+                Ok(patterns
+                    .iter()
+                    .zip(counts)
+                    .filter(|(found, _)| **found as usize == pattern)
+                    .map(|(_, count)| *count)
+                    .sum())
+            })
+            .collect()
+    }
+
+    /// Every entry of `pattern` with a nonzero count under `mask`, in
+    /// [`PatternTop`]'s order, held in memory.
+    pub fn pattern_entries(
+        &self,
+        pattern: usize,
+        mask: &DocumentMask,
+    ) -> Result<Vec<TopRow>, CountTableError> {
+        if mask.admitted.len() != self.document_ids.len() {
+            return Err(corrupt("mask was built for a different table"));
+        }
+        if pattern >= self.header.patterns.len() {
+            return Err(corrupt("pattern out of range"));
+        }
+        let (start, end) = self.pattern_range(pattern);
+        let rows = (start..end)
+            .into_par_iter()
+            .with_min_len(4096)
+            .map(|entry| self.conditioned(entry as u32, &mask.admitted))
+            .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ranked(rows, usize::MAX))
     }
 
     /// One pattern's rows with a nonzero count, ordered as [`RowOrder`].
@@ -1649,6 +1696,19 @@ impl CountTable {
         }
         Ok(())
     }
+}
+
+fn read_header(path: &Path) -> Result<Header, CountTableError> {
+    let header_bytes = fs::read(path.join(HEADER))?;
+    let version: HeaderVersion = serde_json::from_slice(&header_bytes)?;
+    if version.format != COUNT_TABLE_FORMAT || version.version != COUNT_TABLE_VERSION {
+        return Err(CountTableError::UnsupportedFormat {
+            path: path.to_path_buf(),
+            found: version.format,
+            version: version.version,
+        });
+    }
+    Ok(serde_json::from_slice(&header_bytes)?)
 }
 
 /// `rows` by descending count and then entry, truncated to `limit`.

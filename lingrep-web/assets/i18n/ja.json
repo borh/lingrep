@@ -257,6 +257,7 @@
   "library.unsupported_schema": "クエリ履歴は新しいバージョンで保存されているため読み込めません。",
   "library.updated": "クエリライブラリを更新しました。",
   "nav.corpus": "コーパス検索",
+  "nav.frequencies": "頻度",
   "nav.help": "ヘルプ",
   "nav.sample": "サンプルデバッガー",
   "notice.corpus_loading": "コーパスを読み込み中のため、パターンは入力されましたが自動実行されていません。",

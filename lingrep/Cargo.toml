@@ -63,6 +63,7 @@ zstd.workspace = true
 assert_cmd = "2"
 criterion = { version = "0.5", features = ["html_reports"] }
 trycmd.workspace = true
+hegeltest.workspace = true
 lingrep-core = { workspace = true, features = ["testing"] }
 jsonschema = { version = "0.49.5", default-features = false }
 zip = { version = "9.0", default-features = false, features = ["deflate"] }

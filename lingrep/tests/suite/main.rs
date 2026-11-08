@@ -18,6 +18,8 @@ mod direct_protocol;
 mod examples;
 mod explore_characterization;
 mod external_gravity_example;
+#[cfg(feature = "web")]
+mod frequency_view;
 mod introspection;
 mod kwic_characterization;
 mod manpages;

@@ -49,7 +49,7 @@ pub use examples::{
 pub use explanation::{ExplainedMatch, SentenceExplanation};
 pub use identity::{
     COMPILER_SCHEMA_IDENTITY, GRAMMAR_SEMANTICS_REVISION, MATCHER_SEMANTICS_IDENTITY,
-    POLICY_SEMANTICS_IDENTITY,
+    POLICY_SEMANTICS_IDENTITY, catalog_fingerprint,
 };
 pub use inline::normalize_inline_pattern;
 pub use labels::{LabelDeclaration, OutOfSetValues};

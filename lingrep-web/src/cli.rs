@@ -147,6 +147,16 @@ pub struct Args {
     /// lingrep-web to serve formats without direct reader support, such as `bccwj`.
     #[arg(long = "corpus", value_name = "NAME=PATH")]
     pub corpus: Vec<String>,
+
+    /// Count table written by `ling summarize --write-table`, served in the
+    /// frequency view. Repeatable. A table is bound to the declared prepared
+    /// corpus with the analysis identity it records and to the catalog under
+    /// `--pattern-root` with the catalog fingerprint it records. A table that
+    /// cannot be read, does not verify, was written by another matcher
+    /// revision, matches no corpus or no catalog, or counts the same catalog
+    /// over the same corpus as another table stops startup.
+    #[arg(long = "count-table", value_name = "PATH")]
+    pub count_table: Vec<PathBuf>,
 }
 
 /// The corpora `args` declares, in declaration order, `--input` first.

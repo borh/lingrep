@@ -23,6 +23,20 @@ pub fn run(args: &Args) -> Result<(), String> {
         )
         .with_writer(std::io::stderr)
         .init();
+    let config = config(args)?;
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the server runtime must be constructible")
+        .block_on(serve(args, config))
+}
+
+/// The validated server configuration `args` declare.
+///
+/// # Errors
+///
+/// A message naming the invalid argument.
+pub fn config(args: &Args) -> Result<Config, String> {
     let config = Config {
         dict_path: args.dict.dict_path.display().to_string(),
         corpora: crate::cli::declared_corpora(args)?,
@@ -34,11 +48,7 @@ pub fn run(args: &Args) -> Result<(), String> {
         },
     };
     config.validate().map_err(|error| error.to_string())?;
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("the server runtime must be constructible")
-        .block_on(serve(args, config))
+    Ok(config)
 }
 
 async fn serve(args: &Args, config: Config) -> Result<(), String> {
@@ -46,6 +56,27 @@ async fn serve(args: &Args, config: Config) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|error| format!("cannot listen on {addr}: {error}"))?;
+    let store = store(args, config).await?;
+    let app = app_router_at(store, &args.base_path);
+
+    println!("lingrep-web listening on http://{addr}");
+    #[expect(
+        clippy::unwrap_used,
+        reason = "startup serve failure is a hard error for the lingrep-web entry point"
+    )]
+    {
+        axum::serve(listener, app).await.unwrap();
+    }
+    Ok(())
+}
+
+/// The request state `args` and `config` declare, with the default corpus
+/// started and every `--count-table` bound.
+///
+/// # Errors
+///
+/// A message naming the count table or corpus that stops startup.
+pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
     let max_active_sessions =
         NonZeroUsize::new(args.max_active_sessions).unwrap_or(NonZeroUsize::MIN);
     let context = Arc::new(
@@ -81,20 +112,19 @@ async fn serve(args: &Args, config: Config) -> Result<(), String> {
     let catalogs = std::sync::Arc::new(crate::catalog_index::CatalogIndex::discover(
         &crate::cli::resolve_pattern_root(args),
     ));
+    let frequency = Arc::new(
+        crate::frequency::FrequencyViews::bind(
+            &args.count_table,
+            &config.corpora,
+            &corpus_set,
+            &catalogs,
+        )
+        .await?,
+    );
     let store =
         RequestStore::with_corpus_set_capacity(config, context, corpus_set, max_active_sessions)
             .with_default_pattern(default_pattern)
-            .with_catalogs(catalogs);
-
-    let app = app_router_at(store, &args.base_path);
-
-    println!("lingrep-web listening on http://{addr}");
-    #[expect(
-        clippy::unwrap_used,
-        reason = "startup serve failure is a hard error for the lingrep-web entry point"
-    )]
-    {
-        axum::serve(listener, app).await.unwrap();
-    }
-    Ok(())
+            .with_catalogs(catalogs)
+            .with_frequency(frequency);
+    Ok(store)
 }

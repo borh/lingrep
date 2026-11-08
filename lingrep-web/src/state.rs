@@ -242,6 +242,9 @@ pub struct RequestStore {
     /// Empty unless set via [`RequestStore::with_catalogs`]; only the index
     /// handler and the catalog routes read it.
     pub catalogs: std::sync::Arc<crate::catalog_index::CatalogIndex>,
+    /// The count tables bound at startup. Empty unless set via
+    /// [`RequestStore::with_frequency`].
+    pub frequency: Arc<crate::frequency::FrequencyViews>,
 }
 
 impl std::fmt::Debug for RequestStore {
@@ -317,6 +320,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
+            frequency: Arc::default(),
             context,
         }
     }
@@ -331,6 +335,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
+            frequency: Arc::default(),
             context,
         }
     }
@@ -370,6 +375,7 @@ impl RequestStore {
             coordinators,
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
+            frequency: Arc::default(),
             context,
         }
     }
@@ -386,6 +392,11 @@ impl RequestStore {
     /// Attaches the startup-discovered catalog index. A builder so the many test
     /// constructors keep an empty index without change; `main.rs` calls it once.
     #[must_use]
+    pub fn with_frequency(mut self, frequency: Arc<crate::frequency::FrequencyViews>) -> Self {
+        self.frequency = frequency;
+        self
+    }
+
     pub fn with_catalogs(
         mut self,
         catalogs: std::sync::Arc<crate::catalog_index::CatalogIndex>,

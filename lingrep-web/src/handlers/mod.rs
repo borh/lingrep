@@ -3,6 +3,7 @@ pub mod catalogs;
 pub mod corpus_context;
 pub mod editor_assets;
 pub mod export;
+pub mod frequency;
 pub mod help;
 pub mod index;
 pub mod inspect;

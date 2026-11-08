@@ -3,10 +3,9 @@ use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use blake3::Hasher;
+pub(crate) use lingrep_core::fsm::catalog_fingerprint;
 use lingrep_core::fsm::{
-    COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, CompiledCatalog,
-    GRAMMAR_SEMANTICS_REVISION, POLICY_SEMANTICS_IDENTITY, PatternSource, compile_catalog,
+    CompileLimits, CompileOutput, CompiledCatalog, PatternSource, compile_catalog,
     normalize_inline_pattern,
 };
 use tree_sitter::{Node, Parser};
@@ -125,19 +124,6 @@ fn validate_inline_catalog_shape(source: &str) -> Result<(), CliError> {
              {public_definitions} public definition(s) among {definitions} declaration(s)"
         )))
     }
-}
-
-pub(crate) fn catalog_fingerprint(source: &str) -> String {
-    let normalized = source.trim();
-    let mut digest = Hasher::new();
-    digest.update(b"lingrep/catalog/v1");
-    digest.update(b"tree-sitter-lingrep/");
-    digest.update(GRAMMAR_SEMANTICS_REVISION.as_bytes());
-    digest.update(COMPILER_SCHEMA_IDENTITY.as_bytes());
-    digest.update(POLICY_SEMANTICS_IDENTITY.as_bytes());
-    digest.update(&(normalized.len() as u64).to_le_bytes());
-    digest.update(normalized.as_bytes());
-    digest.finalize().to_hex().to_string()
 }
 
 impl LoadedCatalog {

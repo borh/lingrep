@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanning the corpus. Before the rows, a `pattern` record per pattern gives
   its occurrences and admitted documents over all of its groups. A table is rejected when the corpus analysis, the
   catalog or the matcher revision differs from the one it was written for.
+- `ling serve --count-table PATH` (repeatable) adds a **Frequencies** view
+  to lingrep-web. It states a query as a sentence whose blanks are the
+  catalog, the pattern, conditions on document metadata, the order and a
+  filter, and answers it from count tables without scanning the corpus. Each
+  condition shows the share of occurrences it keeps, and the page shows the
+  `ling table --where` command that reproduces its rows. A table binds to a
+  served corpus and a catalog by the identities it records; a table that does
+  not bind stops startup with an error naming it.
 - `ling corpus render ARTIFACT --source-root DIR --output PATH` renders each
   document of a Markdown artifact to HTML in a reading sidecar, with a map
   from each stored sentence to its rendered text. It rejects a source tree or

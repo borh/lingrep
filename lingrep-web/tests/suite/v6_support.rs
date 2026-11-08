@@ -54,6 +54,15 @@ pub fn build_artifact_with_sections(
     documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>,
     sections: Vec<Vec<String>>,
 ) -> ArtifactFixture {
+    build_artifact_with_metadata(documents, sections, Vec::new())
+}
+
+/// As [`build_artifact_with_sections`], with `metadata[i]` on document `i`.
+pub fn build_artifact_with_metadata(
+    documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>,
+    sections: Vec<Vec<String>>,
+    metadata: Vec<lingrep_core::corpus::Metadata>,
+) -> ArtifactFixture {
     let documents = documents
         .into_iter()
         .map(|(name, group, external, sentences)| (name.to_owned(), group, external, sentences))
@@ -110,7 +119,10 @@ pub fn build_artifact_with_sections(
                         .push_corpus_event(&AdmittedCorpusEvent::DocumentStart {
                             id: DocumentId::new(source.ordinal),
                             source_name: source.logical_name.clone(),
-                            metadata: Box::new([]),
+                            metadata: metadata
+                                .get(source.ordinal as usize)
+                                .cloned()
+                                .unwrap_or_default(),
                         })
                         .await
                         .unwrap();

@@ -61,6 +61,9 @@ Options:
       --corpus <NAME=PATH>
           Additional corpus, as `NAME=PATH`. Repeatable. `NAME` is the URL key used by shareable links and must match `[A-Za-z0-9_-]{1,64}`; `default` is reserved for `--input`. All declared corpora share one dictionary and one reader configuration. `PATH` is a corpus source, or a prepared `.lingcorpus` artifact — read directly, and so unaffected by that shared reader configuration. Preparing an artifact with `ling corpus build` allows lingrep-web to serve formats without direct reader support, such as `bccwj`
 
+      --count-table <PATH>
+          Count table written by `ling summarize --write-table`, served in the frequency view. Repeatable. A table is bound to the declared prepared corpus with the analysis identity it records and to the catalog under `--pattern-root` with the catalog fingerprint it records. A table that cannot be read, does not verify, was written by another matcher revision, matches no corpus or no catalog, or counts the same catalog over the same corpus as another table stops startup
+
   -h, --help
           Print help (see a summary with '-h')
 

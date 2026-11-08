@@ -1155,6 +1155,7 @@ fn header_help_fixture_html() -> String {
         catalog_keys: vec![],
         retained_options: vec![100],
         retained_default: 100,
+        frequency_view: false,
     }
     .render()
     .unwrap()

@@ -240,6 +240,26 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
         table.pattern_totals(&mask).expect("pattern totals"),
         expected_totals(&pairs, &admitted)
     );
+    let every_row = (0..pairs.len())
+        .map(|pattern| {
+            surfaces(
+                &table,
+                &table.pattern_entries(pattern, &mask).expect("rows"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(every_row, expected_rows(&pairs, &admitted, None));
+    for (pattern, entries) in pairs.iter().enumerate() {
+        let mut expected = vec![0u64; document_count];
+        for (document, count) in entries.iter().flatten() {
+            expected[*document as usize] += count;
+        }
+        assert_eq!(
+            table.pattern_document_counts(pattern).expect("counts"),
+            expected,
+            "pattern {pattern}"
+        );
+    }
     let Some(limit) = limit else {
         let budget = Arc::new(TempBudget::new(u64::MAX));
         let rows = table
@@ -443,6 +463,18 @@ fn open_rejects_a_table_whose_key_differs_in_any_field() {
 }
 
 #[test]
+fn read_key_returns_the_key_a_table_was_written_for() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    one_entry_table(&path);
+    assert_eq!(CountTable::read_key(&path).expect("key"), key());
+    assert!(matches!(
+        CountTable::read_key(&directory.path().join("absent")),
+        Err(CountTableError::Io(_))
+    ));
+}
+
+#[test]
 fn open_rejects_another_format_version() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("t.lingtable");
@@ -453,6 +485,10 @@ fn open_rejects_another_format_version() {
         header.replace("\"version\": 2", "\"version\": 1"),
     )
     .expect("rewrite header");
+    assert!(matches!(
+        CountTable::read_key(&path),
+        Err(CountTableError::UnsupportedFormat { version: 1, .. })
+    ));
     let error = CountTable::open(&path, &key()).err();
     assert!(
         matches!(

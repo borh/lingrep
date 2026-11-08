@@ -32,3 +32,20 @@ pub const POLICY_SEMANTICS_IDENTITY: &str = "lingrep-core-policy/v1";
 /// differs. Advance it when a change alters any count for an unchanged
 /// catalog fingerprint and analysis identity.
 pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v1";
+
+/// The identity of a catalog's source under the current grammar, compiler
+/// and policy semantics, as `ling check` prints it and count tables record
+/// it. Surrounding whitespace is not part of it.
+#[must_use]
+pub fn catalog_fingerprint(source: &str) -> String {
+    let normalized = source.trim();
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"lingrep/catalog/v1");
+    digest.update(b"tree-sitter-lingrep/");
+    digest.update(GRAMMAR_SEMANTICS_REVISION.as_bytes());
+    digest.update(COMPILER_SCHEMA_IDENTITY.as_bytes());
+    digest.update(POLICY_SEMANTICS_IDENTITY.as_bytes());
+    digest.update(&(normalized.len() as u64).to_le_bytes());
+    digest.update(normalized.as_bytes());
+    digest.finalize().to_hex().to_string()
+}

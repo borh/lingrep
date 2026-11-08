@@ -361,6 +361,7 @@ fn render_index(
         search_scope: landing.search_scope,
         workbench_id: WorkbenchId::random().as_str().to_owned(),
         current_page: "corpus",
+        frequency_view: !store.frequency.is_empty(),
         seed_pattern: landing.seed_pattern,
         auto_run: landing.auto_run,
         run_when_ready: landing.run_when_ready,

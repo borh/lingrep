@@ -8,6 +8,7 @@ pub mod corpus_set;
 mod derived_patterns;
 pub mod document_reach;
 mod export;
+pub mod frequency;
 pub mod handlers;
 pub mod inspection;
 pub mod page_projection;
@@ -54,6 +55,7 @@ pub fn app_router(store: RequestStore) -> Router {
         .merge(handlers::index::routes())
         .merge(handlers::help::routes())
         .merge(handlers::sample::page_routes())
+        .merge(handlers::frequency::page_routes())
         .nest(
             "/assets/editor",
             handlers::editor_assets::routes().layer(CompressionLayer::new()),
@@ -76,6 +78,7 @@ pub fn app_router(store: RequestStore) -> Router {
                 .merge(handlers::export::routes())
                 .merge(handlers::permalink::routes())
                 .merge(handlers::catalogs::routes())
+                .merge(handlers::frequency::routes())
                 .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES)),
         )
         .with_state(store)
