@@ -1,0 +1,25 @@
+{
+  "vocabulary": "lingrep.soranoha-catalog",
+  "edition": "1",
+  "source": "lingrep: the catalog.csv columns the Soranoha reader stores as document metadata",
+  "licence": "MIT",
+  "keys": {
+    "@document.identifier": { "labels": { "en": "identifier", "ja": "識別子" } },
+    "@document.title": { "labels": { "en": "title", "ja": "作品名" } },
+    "@document.subtitle": { "labels": { "en": "subtitle", "ja": "副題" } },
+    "@document.title_reading": { "labels": { "en": "title reading", "ja": "作品名の読み" } },
+    "@document.author": { "labels": { "en": "author", "ja": "著者" } },
+    "@document.orthographic_style": { "labels": { "en": "orthography", "ja": "文字遣い" } },
+    "@document.ndc": { "labels": { "en": "NDC class", "ja": "NDC分類" } },
+    "@document.first_published": { "labels": { "en": "first publication", "ja": "初出" } },
+    "@document.body_character_count": { "labels": { "en": "body character count", "ja": "本文の文字数" } },
+    "@document.source_edition_title": { "labels": { "en": "source edition", "ja": "底本" } },
+    "@document.source_edition_publisher": { "labels": { "en": "source edition publisher", "ja": "底本の出版社" } },
+    "@document.source_edition_year": { "labels": { "en": "first edition year of the source", "ja": "底本の初版発行年" } },
+    "@document.filename": { "labels": { "en": "file name", "ja": "ファイル名" } },
+    "@document.source_content_hash": { "labels": { "en": "source bundle hash", "ja": "変換元データのハッシュ値" } },
+    "@document.url": { "labels": { "en": "URL", "ja": "URL" } },
+    "@document.release": { "labels": { "en": "release", "ja": "リリース" } },
+    "@document.doi": { "labels": { "en": "DOI", "ja": "DOI" } }
+  }
+}

@@ -6,7 +6,7 @@
 //! loaded at startup, so the counts are those of `ling table` with that
 //! clause.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog_index::CatalogIndex;
 use crate::corpus_runtime::{CacheReadiness, CorpusRuntime};
 use crate::corpus_set::{CorpusName, CorpusSet};
+use crate::metadata_labels::KeyLabels;
 
 /// Rows a query returns when it names no limit.
 pub const PAGE_ROWS: usize = 100;
@@ -31,6 +32,9 @@ const MAX_PAGE_ROWS: usize = 1_000;
 pub struct FrequencyViews {
     pairs: Vec<FrequencyPair>,
     dimensions: HashMap<CorpusName, Arc<[Dimension]>>,
+    /// Every document-metadata key of the corpora the tables count.
+    metadata_keys: BTreeSet<String>,
+    labels: KeyLabels,
 }
 
 /// One count table and what it counts: a catalog run over a corpus.
@@ -200,6 +204,27 @@ impl FrequencyViews {
             .find(|pair| pair.corpus.as_str() == corpus && pair.catalog == catalog)
     }
 
+    /// The display labels for metadata keys.
+    #[must_use]
+    pub fn labels(&self) -> &KeyLabels {
+        &self.labels
+    }
+
+    /// Adds `labels`, logging a notice for each labelled key that no corpus
+    /// a table counts carries.
+    #[must_use]
+    pub fn with_labels(self, labels: KeyLabels) -> Self {
+        if !self.is_empty() {
+            for (key, path) in labels.unused(&self.metadata_keys) {
+                tracing::warn!(
+                    "--metadata-labels {}: no corpus with a count table carries @document.{key}",
+                    path.display()
+                );
+            }
+        }
+        Self { labels, ..self }
+    }
+
     #[must_use]
     pub fn dimensions(&self, corpus: &CorpusName) -> &[Dimension] {
         self.dimensions
@@ -322,6 +347,12 @@ impl FrequencyViews {
                 views
                     .dimensions
                     .insert(name.clone(), documents.dimensions.clone());
+                views.metadata_keys.extend(
+                    documents
+                        .by_id
+                        .values()
+                        .flat_map(|metadata| metadata.iter().map(|(key, _)| key.clone())),
+                );
                 loaded.insert(name.clone(), Arc::clone(&documents));
                 documents
             };
@@ -534,7 +565,7 @@ fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<D
         .collect()
 }
 
-fn writable_key(key: &str) -> bool {
+pub(crate) fn writable_key(key: &str) -> bool {
     ScopeClause::parse(&format!("@document.{key} = \"x\""))
         .is_ok_and(|clause| clause.metadata_keys().len() == 1)
 }

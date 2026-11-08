@@ -791,7 +791,7 @@ fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
     assert!(!index.contains("href=\"frequencies\""));
     assert_eq!(
         get_json(&plain, "/api/frequency/meta"),
-        json!({"pairs": [], "dimensions": {}})
+        json!({"pairs": [], "dimensions": {}, "labels": {}})
     );
     drop(plain);
 
@@ -914,6 +914,73 @@ fn a_table_that_cannot_be_bound_stops_startup_naming_it() {
             "{} and {} both count catalog table.lx over corpus \"default\"",
             shown(&fixture.table),
             shown(&copy)
+        )),
+        "{stderr}"
+    );
+}
+
+/// A label file that is not valid stops startup with an error naming it.
+#[test]
+fn an_invalid_label_file_stops_startup_naming_it() {
+    let fixture = fixture();
+    let labels = fixture.directory.path().join("labels.json");
+    fs::write(&labels, r#"{"keys": {}}"#).unwrap();
+    let extra = args(&[
+        &"--input",
+        &fixture.artifact,
+        &"--pattern-root",
+        &fixture.root,
+        &"--count-table",
+        &fixture.table,
+        &"--metadata-labels",
+        &labels,
+    ]);
+    let Err((code, stderr)) = serve(&fixture, &extra) else {
+        panic!("startup succeeded with an invalid label file");
+    };
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "--metadata-labels {}: missing field",
+            labels.display()
+        )),
+        "{stderr}"
+    );
+}
+
+/// A labelled key that no served corpus carries is reported at startup,
+/// naming the key and the file, and the server still starts.
+#[test]
+fn a_label_for_a_key_no_corpus_carries_is_reported_at_startup() {
+    let fixture = fixture();
+    let labels = fixture.directory.path().join("labels.json");
+    fs::write(
+        &labels,
+        r#"{"vocabulary": "v", "edition": "1", "source": "s", "licence": "l",
+        "keys": {"@document.no_such_key": {"labels": {"en": "typo"}}}}"#,
+    )
+    .unwrap();
+    let server = served(
+        &fixture,
+        &args(&[
+            &"--count-table",
+            &fixture.table,
+            &"--metadata-labels",
+            &labels,
+        ]),
+    );
+    let port = server.address.rsplit(':').next().unwrap();
+    let stderr = fs::read_to_string(
+        fixture
+            .directory
+            .path()
+            .join(format!("serve-{port}.stderr")),
+    )
+    .unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "--metadata-labels {}: no corpus with a count table carries @document.no_such_key",
+            labels.display()
         )),
         "{stderr}"
     );

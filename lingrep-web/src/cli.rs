@@ -157,6 +157,14 @@ pub struct Args {
     /// over the same corpus as another table stops startup.
     #[arg(long = "count-table", value_name = "PATH")]
     pub count_table: Vec<PathBuf>,
+
+    /// JSON file of display labels for document-metadata keys, by locale,
+    /// shown in the frequency view in place of key names. Repeatable. Clauses,
+    /// commands and addresses keep the keys. A file that cannot be read or is
+    /// not a label file, or that labels a key another file labels, stops
+    /// startup.
+    #[arg(long = "metadata-labels", value_name = "PATH")]
+    pub metadata_labels: Vec<PathBuf>,
 }
 
 /// The corpora `args` declares, in declaration order, `--input` first.

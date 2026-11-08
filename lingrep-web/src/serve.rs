@@ -184,8 +184,9 @@ fn os_signal_count() -> watch::Receiver<u32> {
 ///
 /// # Errors
 ///
-/// A message naming the count table or corpus that stops startup.
+/// A message naming the label file, count table or corpus that stops startup.
 pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
+    let labels = crate::metadata_labels::KeyLabels::read(&args.metadata_labels)?;
     let max_active_sessions =
         NonZeroUsize::new(args.max_active_sessions).unwrap_or(NonZeroUsize::MIN);
     let context = Arc::new(
@@ -228,7 +229,8 @@ pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> 
             &corpus_set,
             &catalogs,
         )
-        .await?,
+        .await?
+        .with_labels(labels),
     );
     let store =
         RequestStore::with_corpus_set_capacity(config, context, corpus_set, max_active_sessions)

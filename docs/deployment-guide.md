@@ -128,6 +128,22 @@ lingrep-web` shows the error naming it. The binding rules and errors are in
 Rebuild a table after changing its corpus or catalog, and after an upgrade
 that the startup error reports as a different matcher revision.
 
+`services.lingrep-web.metadataLabels` lists display-label files; the module
+passes each as `--metadata-labels` and mounts it read-only. The Frequencies
+view then names its conditions by those labels in English and Japanese, while
+clauses, commands and addresses keep the keys. The package installs the
+Soranoha catalog labels:
+
+```nix
+services.lingrep-web.metadataLabels = [
+  "${pkgs.lingrep-web}/share/lingrep-web/labels/soranoha-catalog.json"
+];
+```
+
+A file that is not a valid label file stops the unit at startup with an error
+naming it. The file format is in
+[the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
+
 ## Caddy vhost
 
 ```caddyfile

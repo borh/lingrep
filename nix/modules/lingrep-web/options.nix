@@ -144,6 +144,24 @@
       '';
     };
 
+    metadataLabels = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = lib.literalExpression ''
+        [ "''${pkgs.lingrep-web}/share/lingrep-web/labels/soranoha-catalog.json" ]
+      '';
+      description = ''
+        Display-label files for document-metadata keys, each passed as
+        `--metadata-labels`. The Frequencies view names its conditions by
+        these labels in English and Japanese; clauses, commands and
+        addresses keep the keys. The `lingrep-web` package installs the
+        Soranoha catalog labels as
+        `share/lingrep-web/labels/soranoha-catalog.json`. A file that is
+        not a valid label file stops the unit at startup with an error
+        naming it.
+      '';
+    };
+
     patterns = {
       catalogs = lib.mkOption {
         type = lib.types.listOf (lib.types.either lib.types.path lib.types.package);

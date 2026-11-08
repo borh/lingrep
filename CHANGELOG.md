@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The NixOS module's `services.lingrep-web.countTables` option takes a list of
   count tables and passes each to lingrep-web as `--count-table`, mounted
   read-only, so a NixOS deployment can serve the Frequencies view.
+- `ling serve --metadata-labels PATH` (repeatable) reads display labels for
+  document metadata keys, by locale, and the Frequencies view names its
+  conditions by them in English and Japanese. The address, the clause and the
+  shown command keep the keys. `lingrep-web/labels/soranoha-catalog.json`
+  labels the Soranoha catalog columns, and the `lingrep` and `lingrep-web`
+  packages install it under `share/lingrep-web/labels/`. A label file that
+  cannot be read or is invalid stops startup with an error naming it.
+- The NixOS module's `services.lingrep-web.metadataLabels` option takes a list
+  of label files and passes each to lingrep-web as `--metadata-labels`,
+  mounted read-only.
 - `ling corpus render ARTIFACT --source-root DIR --output PATH` renders each
   document of a Markdown artifact to HTML in a reading sidecar, with a map
   from each stored sentence to its rendered text. It rejects a source tree or

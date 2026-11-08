@@ -179,6 +179,11 @@ let
     (toString table)
   ]) cfg.countTables;
 
+  metadataLabelArgs = lib.concatMap (file: [
+    "--metadata-labels"
+    (toString file)
+  ]) cfg.metadataLabels;
+
   # `--patterns` is the editor seed, forwarded verbatim and so resolved by
   # lingrep-web against its working directory (`/var/lib/lingrep-web`) — NOT against
   # `--pattern-root`. The assembled root is `<state>/patterns/` and each
@@ -216,7 +221,9 @@ in
         # `lib.escapeShellArgs` fold flag+value into one quoted argv element
         # and lingrep-web's parser would refuse to start. Checking at evaluation
         # prevents activation of a broken generation.
-        assertion = lib.all (t: builtins.isString t) (baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs);
+        assertion = lib.all (t: builtins.isString t) (
+          baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs ++ metadataLabelArgs
+        );
         message =
           "services.lingrep-web: ExecStart argument lists contain nested "
           + "lists; every element must be a single shell token. Use "
@@ -293,7 +300,12 @@ in
 
       serviceConfig = {
         ExecStart = lib.escapeShellArgs (
-          [ (lib.getExe cfg.package) ] ++ baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs
+          [ (lib.getExe cfg.package) ]
+          ++ baseArgs
+          ++ seedArgs
+          ++ corpusArgs
+          ++ countTableArgs
+          ++ metadataLabelArgs
         );
         User = cfg.user;
         Group = cfg.group;
@@ -324,7 +336,8 @@ in
           cfg.dictionary
         ]
         ++ lib.mapAttrsToList (_: entry: entry.path) cfg.corpora
-        ++ map toString cfg.countTables;
+        ++ map toString cfg.countTables
+        ++ map toString cfg.metadataLabels;
 
         Restart = "on-failure";
         RestartSec = "5s";

@@ -2,9 +2,10 @@
 #
 # Boots a NixOS VM with the module enabled and a minimal corpus/dictionary
 # substitute (a tiny JSONL file and a placeholder dictionary path), plus a
-# prepared corpus with one count table. The test asserts the unit starts, the
-# index and Frequencies pages respond, the table is bound, and the idle unit
-# stops with exit status 0. Shutdown with requests or blocking work in flight,
+# prepared corpus with one count table and the packaged Soranoha label file.
+# The test asserts the unit starts, the index and Frequencies pages respond,
+# the table is bound, the labels are served, and the idle unit stops with exit
+# status 0. Shutdown with requests or blocking work in flight,
 # and the rest of lingrep-web's behaviour, are covered by the Rust suites; this
 # test only proves the unit and its `ExecStart` survive the systemd entrypoint.
 #
@@ -79,6 +80,7 @@ pkgs.testers.nixosTest {
         };
         patterns.catalogs = [ "${countTableFixture}/catalog" ];
         countTables = [ "${countTableFixture}/fixture.lingtable" ];
+        metadataLabels = [ "${package}/share/lingrep-web/labels/soranoha-catalog.json" ];
         settings.basePath = "/mounted";
       };
 
@@ -101,6 +103,7 @@ pkgs.testers.nixosTest {
     machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/frequencies")
     meta = machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/api/frequency/meta")
     assert '"catalog":"catalog/nouns.lx"' in meta, meta
+    assert '"orthographic_style":{"en":"orthography"' in meta, meta
     machine.succeed("systemctl stop lingrep-web.service")
     status = machine.succeed("systemctl show --property=ExecMainStatus --value lingrep-web.service")
     assert status.strip() == "0", status

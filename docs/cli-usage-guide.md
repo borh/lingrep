@@ -2030,3 +2030,43 @@ condition out of those under every condition but this one. The page shows the
 applies is its own. A clause with `@section` or `@sentence` is answered with
 an explanation rather than rows, because a table counts per document. The
 address holds the whole state, so a copied link reopens the same view.
+
+`--metadata-labels PATH` reads a JSON file of display labels for document
+metadata keys, by locale. The view names a condition by its label in the
+page's language; a key without a label in that language is named by the key,
+with spaces for underscores in English. The flag is repeatable. Labels change
+no clause: the address, the clause and the shown `ling table` command keep the
+keys. A label applies to the key it names in every served corpus.
+
+```json
+{
+  "vocabulary": "lingrep.soranoha-catalog",
+  "edition": "1",
+  "source": "lingrep: the catalog.csv columns the Soranoha reader stores as document metadata",
+  "licence": "MIT",
+  "keys": {
+    "@document.orthographic_style": { "labels": { "en": "orthography", "ja": "文字遣い" } },
+    "@document.source_edition_year": { "labels": { "en": "first edition year of the source", "ja": "底本の初版発行年" } }
+  }
+}
+```
+
+`vocabulary`, `edition`, `source` and `licence` identify the labels and their
+terms and must not be empty. Each entry in `keys` names an `@document` key and
+gives at least one non-empty label, each under `en` or `ja`, the locales the
+page is served in. Startup stops with an error naming the file when the file
+cannot be read, has an unknown or empty field, names a key or a locale twice,
+gives two keys the same label in one locale, or labels a key that another file
+labels. A labelled key that no corpus with a count table carries is reported
+at startup and does not stop it.
+[`lingrep-web/labels/soranoha-catalog.json`](../lingrep-web/labels/soranoha-catalog.json)
+labels every Soranoha catalog column in English and Japanese. The `lingrep`
+and `lingrep-web` Nix packages install it as
+`share/lingrep-web/labels/soranoha-catalog.json`:
+
+```bash
+lingrep=$(nix build --no-link --print-out-paths .#lingrep)
+"$lingrep/bin/ling" serve --corpus soranoha=soranoha.lingcorpus --pattern-root patterns \
+  --count-table soranoha.collexeme.lingtable \
+  --metadata-labels "$lingrep/share/lingrep-web/labels/soranoha-catalog.json"
+```

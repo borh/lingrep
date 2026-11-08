@@ -176,6 +176,12 @@ return [...document.querySelectorAll('[data-fq-sentence] .blank > .role')].map((
   };
 });";
 
+/// Each condition's key and the full name its role shows.
+const NAMES: &str = r"
+return Object.fromEntries([...document.querySelectorAll('[data-fq-sentence] .blank')]
+  .filter((blank) => blank.querySelector('.pick'))
+  .map((blank) => { const nm = blank.querySelector('.nm'); return [blank.querySelector('.pick').dataset.b, nm.dataset.label ?? nm.textContent]; }));";
+
 fn assert_label_invariants(labels: &Value) {
     let labels = labels.as_array().unwrap();
     let units = |text: &str| -> Vec<String> {
@@ -224,8 +230,9 @@ fn assert_label_invariants(labels: &Value) {
     }
 }
 
-#[tokio::test]
-async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> WebDriverResult<()> {
+/// The driver at `LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL`, or `None` when it is
+/// unavailable and not required.
+async fn driver() -> WebDriverResult<Option<WebDriver>> {
     let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
     let address = driver_url
@@ -238,49 +245,8 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
             "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
         );
         eprintln!("SKIP: Chromedriver is unavailable at {driver_url}");
-        return Ok(());
+        return Ok(None);
     }
-
-    let sentences = |surface: &str| vec![vec![TokenInfo::default().with_orth(surface)]];
-    let artifact = support::build_artifact_with_metadata(
-        (0..6)
-            .map(|index| ("doc.md", index, false, sentences("x")))
-            .collect(),
-        Vec::new(),
-        metadata(),
-    );
-    let root = artifact.directory.path().join("patterns");
-    std::fs::create_dir(&root).unwrap();
-    std::fs::write(root.join("catalog.lx"), CATALOG).unwrap();
-    let table = artifact.directory.path().join("fixture.lingtable");
-    write_table(&artifact.path, &table);
-
-    let dictionary = lingrep_core::testing::MiniDictionary::new();
-    let args = lingrep_web::Args::try_parse_from([
-        "lingrep-web".as_ref(),
-        "--dict-path".as_ref(),
-        dictionary.path().as_os_str(),
-        "--input".as_ref(),
-        artifact.path.as_os_str(),
-        "--pattern-root".as_ref(),
-        root.as_os_str(),
-        "--count-table".as_ref(),
-        table.as_os_str(),
-        "--base-path".as_ref(),
-        "/sub".as_ref(),
-    ] as [&std::ffi::OsStr; 11])
-    .unwrap();
-    let config = lingrep_web::serve::config(&args).unwrap();
-    let store = lingrep_web::serve::store(&args, config).await.unwrap();
-    let statuses = Arc::new(Mutex::new(Vec::new()));
-    let recorded = Arc::clone(&statuses);
-    let app = lingrep_web::app_router_at(store, &args.base_path).layer(axum::middleware::from_fn(
-        move |request, next| record_errors(Arc::clone(&recorded), request, next),
-    ));
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}/sub/frequencies", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
@@ -298,6 +264,77 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         )
         .await?;
     driver.set_window_rect(0, 0, 1280, 900).await?;
+    Ok(Some(driver))
+}
+
+/// A server for the fixture under `/sub` with `extra` arguments.
+struct Served {
+    /// The frequency page's address.
+    base: String,
+    /// Every response of 400 or more.
+    statuses: Arc<Mutex<Vec<String>>>,
+    server: tokio::task::JoinHandle<()>,
+    _artifact: support::ArtifactFixture,
+    _dictionary: lingrep_core::testing::MiniDictionary,
+}
+
+async fn serve(extra: &[&std::ffi::OsStr]) -> Served {
+    let sentences = |surface: &str| vec![vec![TokenInfo::default().with_orth(surface)]];
+    let artifact = support::build_artifact_with_metadata(
+        (0..6)
+            .map(|index| ("doc.md", index, false, sentences("x")))
+            .collect(),
+        Vec::new(),
+        metadata(),
+    );
+    let root = artifact.directory.path().join("patterns");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("catalog.lx"), CATALOG).unwrap();
+    let table = artifact.directory.path().join("fixture.lingtable");
+    write_table(&artifact.path, &table);
+
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let mut argv: Vec<&std::ffi::OsStr> = vec![
+        "lingrep-web".as_ref(),
+        "--dict-path".as_ref(),
+        dictionary.path().as_os_str(),
+        "--input".as_ref(),
+        artifact.path.as_os_str(),
+        "--pattern-root".as_ref(),
+        root.as_os_str(),
+        "--count-table".as_ref(),
+        table.as_os_str(),
+        "--base-path".as_ref(),
+        "/sub".as_ref(),
+    ];
+    argv.extend_from_slice(extra);
+    let args = lingrep_web::Args::try_parse_from(argv).unwrap();
+    let config = lingrep_web::serve::config(&args).unwrap();
+    let store = lingrep_web::serve::store(&args, config).await.unwrap();
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&statuses);
+    let app = lingrep_web::app_router_at(store, &args.base_path).layer(axum::middleware::from_fn(
+        move |request, next| record_errors(Arc::clone(&recorded), request, next),
+    ));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/sub/frequencies", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    Served {
+        base,
+        statuses,
+        server,
+        _artifact: artifact,
+        _dictionary: dictionary,
+    }
+}
+
+#[tokio::test]
+async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    let base = served.base.clone();
 
     // A bare address gets the first pair and pattern and is not rewritten.
     open(&driver, &base, ROWS).await?;
@@ -382,6 +419,15 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         .await?
         .json()
         .clone();
+    // Without a label file each condition is named by its key.
+    assert_eq!(
+        driver.execute(NAMES, Vec::new()).await?.json(),
+        &json!({
+            "author_birth_place_city": "author birth place city",
+            "author_birth_place_prefecture": "author birth place prefecture",
+            "genre": "genre",
+        })
+    );
 
     // Loading the address reproduces the view and leaves the address alone.
     open(
@@ -493,8 +539,196 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     );
 
     assert_no_page_errors(&driver).await?;
-    assert_eq!(*statuses.lock().unwrap(), Vec::<String>::new());
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     driver.quit().await?;
-    server.abort();
+    served.server.abort();
+    Ok(())
+}
+
+const LABEL_FILE: &str = r#"{
+  "vocabulary": "test.fixture",
+  "edition": "1",
+  "source": "the fixture",
+  "licence": "MIT",
+  "keys": {
+    "@document.genre": { "labels": { "en": "form", "ja": "形式" } },
+    "@document.year": { "labels": { "en": "year of publication", "ja": "刊行年" } },
+    "@document.author_birth_place_city": { "labels": { "en": "city <b>&\"" } }
+  }
+}"#;
+
+/// What the page shows of a query: the condition names, the sentence, the
+/// add menu, the command and the address.
+const SHOWN: &str = r"
+const names = (() => { NAMES })();
+document.querySelector('button.add').click();
+const menu = [...document.querySelectorAll('.fq-pop [data-add]')].map((b) => [b.dataset.add, b.textContent]);
+document.querySelector('button.add').click();
+return {
+  names,
+  sentence: document.querySelector('[data-fq-sentence]').textContent,
+  menu: Object.fromEntries(menu),
+  command: document.querySelector('[data-fq-clause] code').textContent,
+  href: location.href,
+};";
+
+#[tokio::test]
+async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let labels = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(labels.path(), LABEL_FILE).unwrap();
+    let served = serve(&["--metadata-labels".as_ref(), labels.path().as_os_str()]).await;
+    let script = SHOWN.replace("NAMES", NAMES);
+    let url = format!(
+        "{}#{}",
+        served.base,
+        "w=%7B%22genre%22%3A%7B%22m%22%3A%22in%22%2C%22v%22%3A%5B%22novel%22%5D%7D%2C%22year%22%3A%7B%22m%22%3A%22range%22%2C%22lo%22%3A1960%7D%7D"
+    );
+    let settled = "return document.querySelectorAll('.role .n:not(:empty)').length === 2";
+    open(&driver, &url, settled).await?;
+    let english = driver.execute(&script, Vec::new()).await?.json().clone();
+
+    driver
+        .find(By::Css("[data-locale-toggle]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('button.add')?.textContent === '＋ 条件'",
+        "the Japanese sentence",
+    )
+    .await?;
+    let japanese = driver.execute(&script, Vec::new()).await?.json().clone();
+
+    // The labels name the conditions; a key without a label is named by the key.
+    assert_eq!(
+        english["names"],
+        json!({"genre": "form", "year": "year of publication"})
+    );
+    assert_eq!(
+        english["menu"],
+        json!({
+            "author_birth_place_city": "city <b>&\"",
+            "author_birth_place_prefecture": "author birth place prefecture",
+        })
+    );
+    assert_eq!(
+        japanese["names"],
+        json!({"genre": "形式", "year": "刊行年"})
+    );
+    assert_eq!(
+        japanese["menu"],
+        json!({
+            "author_birth_place_city": "author_birth_place_city",
+            "author_birth_place_prefecture": "author_birth_place_prefecture",
+        })
+    );
+    let english_sentence = english["sentence"].as_str().unwrap();
+    let japanese_sentence = japanese["sentence"].as_str().unwrap();
+    assert!(
+        english_sentence.contains("with form ")
+            && english_sentence.contains("with year of publication "),
+        "{english_sentence}"
+    );
+    assert!(
+        japanese_sentence.contains("形式が") && japanese_sentence.contains("刊行年が"),
+        "{japanese_sentence}"
+    );
+    // A stated condition ends its phrase with の before 文書.
+    assert!(
+        japanese_sentence.contains("1960以上の文書における"),
+        "{japanese_sentence}"
+    );
+    for sentence in [english_sentence, japanese_sentence] {
+        assert!(!sentence.contains("genre"), "{sentence}");
+    }
+
+    // The command and the address keep the keys, in either language.
+    let command = english["command"].as_str().unwrap();
+    assert!(
+        command.contains(r#"--where '@document.genre = "novel" & @document.year >= 1960'"#),
+        "{command}"
+    );
+    assert_eq!(japanese["command"], english["command"]);
+    assert_eq!(english["href"], json!(url));
+    assert_eq!(japanese["href"], json!(url));
+
+    // A value picked from the popover with labels loaded is written under the
+    // key. The key has only an English label, so the Japanese role shows it raw.
+    driver.find(By::Css("button.add")).await?.click().await?;
+    driver
+        .find(By::Css("[data-add='author_birth_place_city']"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('.fq-pop:not([hidden]) .opts input')",
+        "the city values",
+    )
+    .await?;
+    driver
+        .find(By::Css(".fq-pop .opts input"))
+        .await?
+        .click()
+        .await?;
+    let command = wait_for(
+        &driver,
+        "const code = document.querySelector('[data-fq-clause] code')?.textContent ?? ''; return code.includes('author_birth_place_city') && code",
+        "the picked city in the command",
+    )
+    .await?;
+    assert!(
+        command
+            .as_str()
+            .unwrap()
+            .contains(r#"--where '@document.author_birth_place_city = "Chiyoda" & "#),
+        "{command}"
+    );
+    driver
+        .find(By::Css("body"))
+        .await?
+        .send_keys(Key::Escape)
+        .await?;
+    assert_eq!(
+        driver.execute(NAMES, Vec::new()).await?.json()["author_birth_place_city"],
+        "author_birth_place_city"
+    );
+
+    // Back in English, a label holding markup characters is shown as text.
+    driver
+        .find(By::Css("[data-locale-toggle]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('button.add')?.textContent === '+ condition'",
+        "the English sentence",
+    )
+    .await?;
+    assert_eq!(
+        driver.execute(NAMES, Vec::new()).await?.json()["author_birth_place_city"],
+        "city <b>&\""
+    );
+    assert_eq!(
+        driver
+            .execute(
+                "return document.querySelectorAll('[data-fq-sentence] b, .fq-pop b').length",
+                Vec::new()
+            )
+            .await?
+            .json(),
+        &json!(0)
+    );
+
+    assert_no_page_errors(&driver).await?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    driver.quit().await?;
+    served.server.abort();
     Ok(())
 }

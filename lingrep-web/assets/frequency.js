@@ -22,7 +22,7 @@ const S = {
     role: { pattern: "pattern", catalog: "catalog", order: "order", filter: "filter" },
     sorts: [["count", "most frequent first"], ["works", "most widespread first"], ["key", "in character-code order"]],
     name: (key) => key.replace(/_/g, " "),
-    any: (key) => `any ${key.replace(/_/g, " ")}`,
+    any: (name) => `any ${name}`,
     values: (w) => (w.m === "out" ? `other than ${orList(w.v, "and")}` : w.v.length <= 3 ? orList(w.v, "or") : `${w.v.length} values`),
     range: (w) => (w.lo != null && w.hi != null ? `${w.lo}–${w.hi}` : w.lo != null ? `${w.lo} or more` : `${w.hi} or less`),
     scope: (items) => (items.length ? `from documents ${items.map((x) => (x.any ? `with ${x.html}` : `with ${esc(x.name)} ${x.html}`)).join(", ")}` : ""),
@@ -45,7 +45,7 @@ const S = {
     cancel: "Cancel",
     blanks: "Use the blanks",
     mode: ["Only these", "All except these"],
-    anyButton: (key) => `Any ${key.replace(/_/g, " ")}`,
+    anyButton: (name) => `Any ${name}`,
     findValue: "Find a value",
     topValues: (n, of) => `Top ${n} of ${of}`,
     foundValues: (n, of) => (n < of ? `Top ${n} of ${of} matches` : `${of} matches`),
@@ -70,7 +70,7 @@ const S = {
     role: { pattern: "パターン", catalog: "カタログ", order: "並び順", filter: "絞り込み" },
     sorts: [["count", "頻度の高い順"], ["works", "出現文書数の多い順"], ["key", "文字コード順"]],
     name: (key) => key,
-    any: (key) => key,
+    any: (name) => name,
     values: (w) => (w.m === "out" ? `${jaJoin(w.v)}以外` : w.v.length <= 3 ? jaJoin(w.v) : `${w.v.length}件`),
     range: (w) => (w.lo != null && w.hi != null ? `${w.lo}–${w.hi}` : w.lo != null ? `${w.lo}以上` : `${w.hi}以下`),
     scope: (items) => {
@@ -80,7 +80,7 @@ const S = {
         if (x.any && last?.any) last.html.push(x.html);
         else parts.push({ any: x.any, html: [x.html], name: x.name });
       }
-      return parts.length ? `${parts.map((p) => (p.any ? `${p.html.join("・")}を問わない` : `${esc(p.name)}が${p.html[0]}`)).join("、")}文書` : "";
+      return parts.length ? `${parts.map((p) => (p.any ? `${p.html.join("・")}を問わない` : `${esc(p.name)}が${p.html[0]}`)).join("、")}${parts.at(-1).any ? "" : "の"}文書` : "";
     },
     sentence: (b) => `${b.C}${b.scope ? `のうち、${b.scope}における` : "における"}${b.P}の頻度。${b.O}、${b.Q}を含む項目<span class="tail">。</span>`,
     rawScope: "下の条件式に合う文書",
@@ -101,7 +101,7 @@ const S = {
     cancel: "取り消す",
     blanks: "空欄に戻す",
     mode: ["これらのみ", "これら以外"],
-    anyButton: (key) => `すべての${key}`,
+    anyButton: (name) => `すべての${name}`,
     findValue: "値を検索",
     topValues: (n, of) => `${of}種中、上位${n}種`,
     foundValues: (n, of) => (n < of ? `一致${of}種中、上位${n}種` : `一致${of}種`),
@@ -195,6 +195,8 @@ export function mountFrequency(root) {
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
   const dims = () => (pair() ? meta.dimensions[pair().corpus] ?? [] : []);
   const dim = (key) => dims().find((d) => d.key === key);
+  /** A key as the page names it: its label in this locale, falling back to `L().name(key)`. */
+  const keyName = (key) => meta.labels?.[key]?.[currentLocale()] ?? L().name(key);
   const shownKeys = () => dims().map((d) => d.key).filter((k) => k in s.w || k === pending);
   /** The conditions sent to the server: the address's, without a blank just added and not yet chosen. */
   const conditions = () => (Object.keys(s.w).length ? JSON.stringify(s.w) : undefined);
@@ -234,7 +236,7 @@ export function mountFrequency(root) {
 
   function conditionText(d, w) {
     const t = L();
-    if (!w || (d.kind === "range" ? w.lo == null && w.hi == null : !w.v?.length)) return t.any(d.key);
+    if (!w || (d.kind === "range" ? w.lo == null && w.hi == null : !w.v?.length)) return t.any(keyName(d.key));
     return d.kind === "range" ? t.range(w) : t.values(w);
   }
   const isAny = (d, w) => !w || (d.kind === "range" ? w.lo == null && w.hi == null : !w.v?.length);
@@ -245,9 +247,9 @@ export function mountFrequency(root) {
     const items = shownKeys().map((key) => {
       const d = dim(key), w = s.w[key];
       return {
-        name: t.name(key),
+        name: keyName(key),
         any: isAny(d, w),
-        html: blank(role(t.name(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${openPop === key}">${esc(conditionText(d, w))}</button>`),
+        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${openPop === key}">${esc(conditionText(d, w))}</button>`),
       };
     });
     const b = {
@@ -450,7 +452,7 @@ export function mountFrequency(root) {
     const t = L();
     if (openPop === "add") {
       const free = dims().filter((d) => !shownKeys().includes(d.key));
-      pop.innerHTML = `<ul class="addlist" role="menu">${free.map((d) => `<li><button role="menuitem" data-add="${esc(d.key)}">${esc(t.name(d.key))}</button></li>`).join("")}</ul>`;
+      pop.innerHTML = `<ul class="addlist" role="menu">${free.map((d) => `<li><button role="menuitem" data-add="${esc(d.key)}">${esc(keyName(d.key))}</button></li>`).join("")}</ul>`;
       pop.setAttribute("aria-label", t.addLabel);
       pop.hidden = false;
       placePop(blankEl("add"));
@@ -463,12 +465,12 @@ export function mountFrequency(root) {
       return;
     }
     const w = s.w[d.key];
-    pop.setAttribute("aria-label", t.name(d.key));
+    pop.setAttribute("aria-label", keyName(d.key));
     if (d.kind === "range") {
-      pop.innerHTML = `<div class="head"><span></span><button class="any" data-any>${esc(t.anyButton(d.key))}</button></div><div class="range"><label>${esc(t.from)} <input type="number" data-lo step="any" placeholder="${esc(d.min)}" value="${esc(w?.lo ?? "")}"></label><label>${esc(t.to)} <input type="number" data-hi step="any" placeholder="${esc(d.max)}" value="${esc(w?.hi ?? "")}"></label></div>`;
+      pop.innerHTML = `<div class="head"><span></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div><div class="range"><label>${esc(t.from)} <input type="number" data-lo step="any" placeholder="${esc(d.min)}" value="${esc(w?.lo ?? "")}"></label><label>${esc(t.to)} <input type="number" data-hi step="any" placeholder="${esc(d.max)}" value="${esc(w?.hi ?? "")}"></label></div>`;
     } else {
       const out = w?.m === "out";
-      pop.innerHTML = `<div class="head"><span class="mode" role="group"><button data-mode="in" aria-pressed="${!out}">${esc(t.mode[0])}</button><button data-mode="out" aria-pressed="${out}">${esc(t.mode[1])}</button></span><button class="any" data-any>${esc(t.anyButton(d.key))}</button></div>${d.values > MANY ? `<input class="find" type="search" data-find placeholder="${esc(t.findValue)}" aria-label="${esc(t.findValue)}" value="${esc(find)}">` : ""}<div class="opts">${valueList(d.key)}</div>`;
+      pop.innerHTML = `<div class="head"><span class="mode" role="group"><button data-mode="in" aria-pressed="${!out}">${esc(t.mode[0])}</button><button data-mode="out" aria-pressed="${out}">${esc(t.mode[1])}</button></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div>${d.values > MANY ? `<input class="find" type="search" data-find placeholder="${esc(t.findValue)}" aria-label="${esc(t.findValue)}" value="${esc(find)}">` : ""}<div class="opts">${valueList(d.key)}</div>`;
     }
     pop.hidden = false;
     placePop(blankEl(d.key));
