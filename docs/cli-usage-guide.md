@@ -456,14 +456,17 @@ ling --json table soranoha.collexeme.lingtable --top 100 \
   --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
 ```
 
-For each pattern, `ling table` gives each group's `count`, equal to the
-`count` of `summarize --where` with the same clause, and `works`, the number
-of admitted documents in which the group occurs. Rows are ordered by count,
+Before the rows, `ling table` gives each pattern's `occurrences`, the sum of
+the counts of all its groups under the clause whatever `--top` keeps, and
+`works`, the number of admitted documents with at least one of them; a clause
+that admits nothing gives 0. For each pattern, it then gives each group's
+`count`, equal to the `count` of `summarize --where` with the same clause, and
+`works`, the number of admitted documents in which the group occurs. Rows are ordered by count,
 with ties in `summarize`'s group order. Without `--top`, every group is
 ordered through temporary files, which `--max-temp-bytes` limits as it does
 for `summarize`. The `complete` record gives the admitted documents,
 sentences and tokens. The output contract is
-`lingrep.table/v1`.
+`lingrep.table/v1`, whose `pattern` records carry the totals.
 
 A table records the corpus's analysis identity, the catalog fingerprint and
 the matcher revision. `ling table` rejects a table when any of the three

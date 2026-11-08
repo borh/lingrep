@@ -21,7 +21,9 @@ use crate::error::CliError;
 use crate::output::sanitize_terminal;
 use crate::presentation::{OutputMode, resolve_summary_top};
 use crate::protocol::query::{ProtocolKeyField, SummaryGroupData};
-use crate::protocol::table::{TableComplete, TableEnvelope, TableEvent, TableRow, TableRun};
+use crate::protocol::table::{
+    TableComplete, TableEnvelope, TableEvent, TablePattern, TableRow, TableRun,
+};
 use crate::protocol::write_jsonl;
 
 /// Rows held in memory per sorted run when every group is read.
@@ -72,6 +74,7 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         }
     };
     let queried = Instant::now();
+    let totals = table.pattern_totals(&mask).map_err(table_error)?;
     // A limit returns each pattern's rows at once; without one, rows stream
     // through sorted runs on disk.
     let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) = if let Some(top) = top {
@@ -123,8 +126,28 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
             requested_top: top,
         }))?;
     }
-    let mut emitted = 0u64;
     let mut human = Vec::new();
+    for total in &totals {
+        let name = names
+            .get(total.pattern)
+            .copied()
+            .ok_or_else(|| CliError::Corpus("table pattern out of range".to_owned()))?;
+        if jsonl {
+            emit(TableEvent::Pattern(TablePattern {
+                pattern: name.to_owned(),
+                occurrences: total.occurrences,
+                works: total.works,
+            }))?;
+        } else {
+            human.push(format!(
+                "pattern {}: {} occurrences in {} documents",
+                sanitize_terminal(name),
+                total.occurrences,
+                total.works
+            ));
+        }
+    }
+    let mut emitted = 0u64;
     let mut previous_pattern = None;
     let mut rank = 0u64;
     for row in &mut rows {

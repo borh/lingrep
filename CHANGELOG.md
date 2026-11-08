@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document of a prepared corpus to a count table, and `ling table PATH`
   reads it to rank each pattern's groups under an `@document` `--where`,
   with each group's count and number of admitted documents, without
-  scanning the corpus. A table is rejected when the corpus analysis, the
+  scanning the corpus. Before the rows, a `pattern` record per pattern gives
+  its occurrences and admitted documents over all of its groups. A table is rejected when the corpus analysis, the
   catalog or the matcher revision differs from the one it was written for.
 
 ### Changed

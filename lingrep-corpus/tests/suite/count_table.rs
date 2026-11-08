@@ -8,7 +8,7 @@ use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     CountTable, CountTableError, CountTableKey, CountTableWriter, DocumentMask, DocumentTotals,
-    FieldValue, Group, GroupKind, GroupSchema, TopRow,
+    FieldValue, Group, GroupKind, GroupSchema, PatternTotal, TopRow,
 };
 
 fn key() -> CountTableKey {
@@ -127,6 +127,32 @@ fn expected_rows(
         .collect()
 }
 
+/// Each pattern's occurrences and works under `admitted`, counted from the
+/// pairs.
+fn expected_totals(pairs: &Pairs, admitted: &[bool]) -> Vec<PatternTotal> {
+    pairs
+        .iter()
+        .enumerate()
+        .map(|(pattern, entries)| {
+            let admitted_pairs = entries
+                .iter()
+                .flatten()
+                .filter(|(document, _)| admitted[*document as usize]);
+            let mut documents = admitted_pairs
+                .clone()
+                .map(|(document, _)| *document)
+                .collect::<Vec<_>>();
+            documents.sort_unstable();
+            documents.dedup();
+            PatternTotal {
+                pattern,
+                occurrences: admitted_pairs.map(|(_, count)| count).sum(),
+                works: documents.len() as u64,
+            }
+        })
+        .collect()
+}
+
 fn surfaces(table: &CountTable, rows: &[TopRow]) -> Vec<(String, u64, u64)> {
     rows.iter()
         .map(|row| match table.group(row.entry).expect("group") {
@@ -210,6 +236,10 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
         sentences_admitted: admitted_documents.clone().map(|(d, _)| d.sentences).sum(),
         tokens_admitted: admitted_documents.map(|(d, _)| d.tokens).sum(),
     };
+    assert_eq!(
+        table.pattern_totals(&mask).expect("pattern totals"),
+        expected_totals(&pairs, &admitted)
+    );
     let Some(limit) = limit else {
         let budget = Arc::new(TempBudget::new(u64::MAX));
         let rows = table
@@ -325,6 +355,24 @@ fn verify_rejects_document_offsets_that_move_a_pair_into_another_document() {
 }
 
 #[test]
+fn verify_rejects_document_pattern_totals_that_differ_from_the_pairs() {
+    let documents = [DocumentTotals {
+        document_id: 0,
+        sentences: 1,
+        tokens: 1,
+    }];
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    let table = write_table(&path, &documents, &vec![vec![vec![(0, 2)], vec![(0, 3)]]]);
+    table.verify().expect("verify");
+    drop(table);
+    std::fs::write(path.join("document_pattern_counts.u64"), 4u64.to_le_bytes())
+        .expect("rewrite totals");
+    let table = CountTable::open(&path, &key()).expect("open");
+    assert!(matches!(table.verify(), Err(CountTableError::Corrupt(_))));
+}
+
+#[test]
 fn a_raised_cancellation_or_an_unpublished_table_leaves_no_directory() {
     let documents = [DocumentTotals {
         document_id: 0,
@@ -402,13 +450,23 @@ fn open_rejects_another_format_version() {
     let header = std::fs::read_to_string(path.join("header.json")).expect("header");
     std::fs::write(
         path.join("header.json"),
-        header.replace("\"version\": 1", "\"version\": 2"),
+        header.replace("\"version\": 2", "\"version\": 1"),
     )
     .expect("rewrite header");
-    assert!(matches!(
-        CountTable::open(&path, &key()),
-        Err(CountTableError::UnsupportedFormat { version: 2, .. })
-    ));
+    let error = CountTable::open(&path, &key()).err();
+    assert!(
+        matches!(
+            error,
+            Some(CountTableError::UnsupportedFormat { version: 1, .. })
+        ),
+        "{error:?}"
+    );
+    assert!(
+        error
+            .expect("error")
+            .to_string()
+            .contains("rebuild it with `ling summarize --write-table`")
+    );
 }
 
 #[test]

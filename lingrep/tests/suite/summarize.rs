@@ -2622,6 +2622,48 @@ fn table_rows_equal_summarize_where_and_by_document_works() {
                     "{clause:?}"
                 );
             }
+
+            // Every pattern's totals precede the rows, in catalog order, and
+            // count every group under the clause whatever --top keeps.
+            let mut all = vec!["--top", "all"];
+            all.extend(clause.iter().flat_map(|clause| ["--where", *clause]));
+            let all = summarize(&all);
+            let expected_patterns = ["cat", "word", "pair"]
+                .map(|pattern| {
+                    let occurrences = summary_events(&all)
+                        .iter()
+                        .filter(|record| record["data"]["pattern"] == pattern)
+                        .map(|record| record["data"]["count"].as_u64().unwrap())
+                        .sum::<u64>();
+                    let works = summary_events(&by_document)
+                        .iter()
+                        .filter(|record| record["data"]["pattern"] == pattern)
+                        .map(|record| record["data"]["document"].as_u64().unwrap())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len();
+                    serde_json::json!({
+                        "schema": "lingrep.table/v1",
+                        "type": "pattern",
+                        "data": {"pattern": pattern, "occurrences": occurrences, "works": works},
+                    })
+                })
+                .to_vec();
+            assert_eq!(records[1..=3], expected_patterns, "{clause:?} top {top:?}");
+            if clause == Some("@document.year = 1999") {
+                assert!(
+                    expected_patterns
+                        .iter()
+                        .all(|record| record["data"]["occurrences"] == 0),
+                    "the clause admits nothing"
+                );
+            } else {
+                assert!(
+                    expected_patterns
+                        .iter()
+                        .any(|record| record["data"]["occurrences"] != 0),
+                    "{clause:?} admits a match"
+                );
+            }
             let documents = by_document
                 .iter()
                 .filter(|record| record["type"] == "document")
@@ -2648,6 +2690,55 @@ fn table_rows_equal_summarize_where_and_by_document_works() {
             }
         }
     }
+}
+
+/// The text output states the same pattern totals as the `pattern` records,
+/// one line per pattern before the rows.
+#[test]
+fn table_text_output_begins_with_each_pattern_total() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("tagged.table.lingtable");
+    write_table(&artifact, &catalog, &table);
+    let clause = ["--where", "@document.year = 2001", "--top", "1"];
+
+    let json = table_events(&table, &catalog, &artifact, &clause);
+    assert_success(&json);
+    let expected = parse_jsonl(&json.stdout)
+        .iter()
+        .filter(|record| record["type"] == "pattern")
+        .map(|record| {
+            let data = &record["data"];
+            format!(
+                "pattern {}: {} occurrences in {} documents",
+                data["pattern"].as_str().unwrap(),
+                data["occurrences"],
+                data["works"]
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(expected.len(), 3);
+
+    let text = lingrep_without_dictionary()
+        .arg("table")
+        .arg(&table)
+        .arg("--patterns")
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .args(clause)
+        .output()
+        .unwrap();
+    assert_success(&text);
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert_eq!(
+        stdout.lines().take(3).collect::<Vec<_>>(),
+        expected,
+        "{stdout}"
+    );
 }
 
 #[test]

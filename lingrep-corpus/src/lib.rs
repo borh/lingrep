@@ -37,7 +37,7 @@ mod count_table;
 pub use count_table::{
     Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, CountTable, CountTableError, CountTableKey,
     CountTableStats, CountTableWriter, DocumentMask, DocumentTotals, FieldValue, Group, GroupKind,
-    GroupSchema, PatternTop, StagedCountTable, TableRows, TopResult, TopRow,
+    GroupSchema, PatternTop, PatternTotal, StagedCountTable, TableRows, TopResult, TopRow,
 };
 mod enhanced;
 mod error;

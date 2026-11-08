@@ -22,6 +22,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                     max: Some(1),
                 },
                 StreamPhase {
+                    name: "patterns",
+                    events: &["pattern"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
                     name: "rows",
                     events: &["row"],
                     min: 0,
@@ -36,8 +42,8 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "Patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`.",
-        "Every entry with a nonzero count under the clause, or the first --top of each pattern.",
+        "One pattern record per pattern in catalog order, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`.",
+        "Every pattern's totals under the clause, then every entry with a nonzero count under the clause, or the first --top of each pattern.",
         "A closed pipe is a machine-output failure.",
         "0 complete, 1 runtime/output failure, 2 invocation failure.",
         &[],
@@ -75,6 +81,7 @@ impl TableEnvelope {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum TableEvent {
     Run(TableRun),
+    Pattern(TablePattern),
     Row(TableRow),
     Complete(TableComplete),
 }
@@ -90,6 +97,16 @@ pub struct TableRun {
     /// The `--where` clause, if any.
     pub clause: Option<String>,
     pub requested_top: Option<u64>,
+}
+
+/// One pattern's totals over all of its entries under the clause, whatever
+/// `--top` keeps; 0 when the clause admits none of its occurrences.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TablePattern {
+    pub pattern: String,
+    pub occurrences: u64,
+    /// Admitted documents with at least one occurrence of the pattern.
+    pub works: u64,
 }
 
 /// One entry of one pattern under the clause.

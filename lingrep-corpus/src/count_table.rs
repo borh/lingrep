@@ -24,7 +24,7 @@ compile_error!("count tables map little-endian arrays in place");
 /// The `format` value of a count table's header.
 pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
 /// The header version this build reads and writes.
-pub const COUNT_TABLE_VERSION: u32 = 1;
+pub const COUNT_TABLE_VERSION: u32 = 2;
 
 /// Admitted pairs at or below which [`CountTable::top`] sums the admitted
 /// documents' own pairs instead of scanning entries.
@@ -43,6 +43,9 @@ const RANKED_TOTALS: &str = "ranked_totals.u64";
 const DOCUMENT_PAIR_OFFSETS: &str = "document_pair_offsets.u64";
 const DOCUMENT_ENTRIES: &str = "document_entries.u32";
 const DOCUMENT_COUNTS: &str = "document_counts.u32";
+const DOCUMENT_PATTERN_OFFSETS: &str = "document_pattern_offsets.u64";
+const DOCUMENT_PATTERNS: &str = "document_patterns.u32";
+const DOCUMENT_PATTERN_COUNTS: &str = "document_pattern_counts.u64";
 const DOCUMENT_IDS: &str = "document_ids.u64";
 const DOCUMENT_SENTENCES: &str = "document_sentences.u64";
 const DOCUMENT_TOKENS: &str = "document_tokens.u64";
@@ -108,7 +111,7 @@ pub enum CountTableError {
     #[error("count table header is not valid: {0}")]
     Header(#[from] serde_json::Error),
     #[error(
-        "{path} is a {found} version {version} table, not {COUNT_TABLE_FORMAT} version {COUNT_TABLE_VERSION}"
+        "{path} is a {found} version {version} table, not {COUNT_TABLE_FORMAT} version {COUNT_TABLE_VERSION}; rebuild it with `ling summarize --write-table`"
     )]
     UnsupportedFormat {
         path: PathBuf,
@@ -201,6 +204,9 @@ struct Header {
     key_words: u64,
     pairs: u64,
     documents: u64,
+    /// `(document, pattern)` totals: one per pattern with an occurrence in
+    /// a document.
+    document_patterns: u64,
 }
 
 /// Only the fields a reader checks before trusting the rest.
@@ -314,6 +320,7 @@ pub struct CountTableWriter {
     entries: u64,
     key_words: u64,
     pairs: u64,
+    document_patterns: u64,
     open: Option<OpenEntry>,
 }
 
@@ -348,6 +355,9 @@ impl CountTableWriter {
         }
         if u32::try_from(values.len()).is_err() {
             return Err(writer_error("more than 2^32-1 values"));
+        }
+        if u32::try_from(patterns.len()).is_err() {
+            return Err(writer_error("more than 2^32-1 patterns"));
         }
         let name = destination
             .file_name()
@@ -422,6 +432,7 @@ impl CountTableWriter {
             entries: 0,
             key_words: 0,
             pairs: 0,
+            document_patterns: 0,
             open: None,
         })
     }
@@ -578,6 +589,7 @@ impl CountTableWriter {
             key_words: self.key_words,
             pairs: self.pairs,
             documents: self.documents,
+            document_patterns: self.document_patterns,
         };
         let mut file = OpenOptions::new()
             .write(true)
@@ -642,7 +654,10 @@ impl CountTableWriter {
     }
 
     /// The pairs again, grouped by document, each document's in entry order.
-    fn write_document_major(&self, cancellation: &CancellationFlag) -> Result<(), CountTableError> {
+    fn write_document_major(
+        &mut self,
+        cancellation: &CancellationFlag,
+    ) -> Result<(), CountTableError> {
         let mut offsets = Vec::with_capacity(self.document_pairs.len() + 1);
         let mut running = 0u64;
         offsets.push(0);
@@ -694,11 +709,56 @@ impl CountTableWriter {
                     out_counts[at] = counts_in[pair];
                 }
             }
+            self.write_document_patterns(&offsets, out_entries, out_counts, cancellation)?;
             entries_map.flush()?;
             counts_map.flush()?;
+        } else {
+            self.write_document_patterns(&offsets, &[], &[], cancellation)?;
         }
         entries_file.sync_all()?;
         counts_file.sync_all()?;
+        Ok(())
+    }
+
+    /// Each document's occurrences per pattern, summed from its
+    /// document-major pairs, whose entries ascend and so group by pattern.
+    fn write_document_patterns(
+        &mut self,
+        pair_offsets: &[u64],
+        entries: &[u32],
+        counts: &[u32],
+        cancellation: &CancellationFlag,
+    ) -> Result<(), CountTableError> {
+        let mut patterns = Staged::create(&self.staging.path, DOCUMENT_PATTERNS)?;
+        let mut totals = Staged::create(&self.staging.path, DOCUMENT_PATTERN_COUNTS)?;
+        let mut offsets = Staged::create(&self.staging.path, DOCUMENT_PATTERN_OFFSETS)?;
+        let mut rows = 0u64;
+        offsets.u64(0)?;
+        for (document, range) in pair_offsets.windows(2).enumerate() {
+            if document % CANCELLATION_INTERVAL == 0 {
+                check_cancellation(cancellation)?;
+            }
+            let (mut at, end) = (range[0] as usize, range[1] as usize);
+            while at < end {
+                let pattern = self
+                    .patterns
+                    .partition_point(|pattern| pattern.entries[1] <= u64::from(entries[at]));
+                let pattern_end = self.patterns[pattern].entries[1];
+                let mut total = 0u64;
+                while at < end && u64::from(entries[at]) < pattern_end {
+                    total += u64::from(counts[at]);
+                    at += 1;
+                }
+                patterns.u32(pattern as u32)?;
+                totals.u64(total)?;
+                rows += 1;
+            }
+            offsets.u64(rows)?;
+        }
+        patterns.finish()?;
+        totals.finish()?;
+        offsets.finish()?;
+        self.document_patterns = rows;
         Ok(())
     }
 }
@@ -800,6 +860,9 @@ pub struct CountTable {
     document_pair_offsets: Section,
     document_entries: Section,
     document_counts: Section,
+    document_pattern_offsets: Section,
+    document_patterns: Section,
+    document_pattern_counts: Section,
     document_ids: Vec<u64>,
     document_sentences: Vec<u64>,
     document_tokens: Vec<u64>,
@@ -817,6 +880,15 @@ pub struct TopRow {
     pub entry: u32,
     pub count: u64,
     /// Admitted documents with at least one occurrence of the entry.
+    pub works: u64,
+}
+
+/// One pattern's occurrences under a mask, summed over all of its entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatternTotal {
+    pub pattern: usize,
+    pub occurrences: u64,
+    /// Admitted documents with at least one occurrence of any entry.
     pub works: u64,
 }
 
@@ -990,6 +1062,15 @@ impl CountTable {
             document_pair_offsets: section(DOCUMENT_PAIR_OFFSETS, (header.documents + 1) * 8)?,
             document_entries: section(DOCUMENT_ENTRIES, header.pairs * 4)?,
             document_counts: section(DOCUMENT_COUNTS, header.pairs * 4)?,
+            document_pattern_offsets: section(
+                DOCUMENT_PATTERN_OFFSETS,
+                (header.documents + 1) * 8,
+            )?,
+            document_patterns: section(DOCUMENT_PATTERNS, header.document_patterns * 4)?,
+            document_pattern_counts: section(
+                DOCUMENT_PATTERN_COUNTS,
+                header.document_patterns * 8,
+            )?,
             document_ids: small(DOCUMENT_IDS)?,
             document_sentences: small(DOCUMENT_SENTENCES)?,
             document_tokens: small(DOCUMENT_TOKENS)?,
@@ -1206,6 +1287,45 @@ impl CountTable {
             }
         }
         Ok((admission, admitted_pairs))
+    }
+
+    /// Every pattern's occurrences and works under `mask`, in pattern order,
+    /// including patterns with none.
+    pub fn pattern_totals(
+        &self,
+        mask: &DocumentMask,
+    ) -> Result<Vec<PatternTotal>, CountTableError> {
+        if mask.admitted.len() != self.document_ids.len() {
+            return Err(corrupt("mask was built for a different table"));
+        }
+        let offsets = self.u64s(&self.document_pattern_offsets)?;
+        let patterns = self.u32s(&self.document_patterns)?;
+        let counts = self.u64s(&self.document_pattern_counts)?;
+        let mut totals = (0..self.header.patterns.len())
+            .map(|pattern| PatternTotal {
+                pattern,
+                occurrences: 0,
+                works: 0,
+            })
+            .collect::<Vec<_>>();
+        for (document, admitted) in mask.admitted.iter().enumerate() {
+            if !*admitted {
+                continue;
+            }
+            let range = offsets[document] as usize..offsets[document + 1] as usize;
+            let (Some(patterns), Some(counts)) = (patterns.get(range.clone()), counts.get(range))
+            else {
+                return Err(corrupt("document pattern offsets out of range"));
+            };
+            for (pattern, count) in patterns.iter().zip(counts) {
+                let total = totals
+                    .get_mut(*pattern as usize)
+                    .ok_or_else(|| corrupt("document pattern out of range"))?;
+                total.occurrences += count;
+                total.works += 1;
+            }
+        }
+        Ok(totals)
     }
 
     /// Every entry with a nonzero count under `mask`, pattern by pattern and
@@ -1518,6 +1638,40 @@ impl CountTable {
             return Err(corrupt(
                 "document pair offsets differ from each document's pairs",
             ));
+        }
+        monotonic(
+            self.u64s(&self.document_pattern_offsets)?,
+            self.header.document_patterns,
+            "document pattern offsets",
+        )?;
+        let pattern_offsets = self.u64s(&self.document_pattern_offsets)?;
+        let patterns = self.u32s(&self.document_patterns)?;
+        let pattern_counts = self.u64s(&self.document_pattern_counts)?;
+        for document in 0..self.document_ids.len() {
+            let mut expected: Vec<(u32, u64)> = Vec::new();
+            for pair in document_offsets[document] as usize..document_offsets[document + 1] as usize
+            {
+                let pattern = self.header.patterns.partition_point(|pattern| {
+                    pattern.entries[1] <= u64::from(document_entries[pair])
+                }) as u32;
+                match expected.last_mut() {
+                    Some((last, total)) if *last == pattern => {
+                        *total += u64::from(document_counts[pair]);
+                    }
+                    _ => expected.push((pattern, u64::from(document_counts[pair]))),
+                }
+            }
+            let range = pattern_offsets[document] as usize..pattern_offsets[document + 1] as usize;
+            if patterns[range.clone()]
+                .iter()
+                .copied()
+                .zip(pattern_counts[range].iter().copied())
+                .ne(expected)
+            {
+                return Err(corrupt(format!(
+                    "document {document}'s pattern totals differ from its pairs"
+                )));
+            }
         }
         Ok(())
     }
