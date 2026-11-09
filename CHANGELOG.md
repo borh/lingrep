@@ -7,8 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-10
+
 ### Added
 
+- A lookaround written with `within=document`, as in
+  `[text=x] followed_by($ ^ [upos=NOUN], within=document)`, may match tokens of
+  the neighbouring sentences of the same document, and a lookaround written with
+  `within=paragraph`, `within=section` or another division kind may match
+  tokens of the neighbouring sentences of the same innermost division of that
+  kind. Its body must have a maximum width. The neighbours end at a sentence
+  removed by a scope clause, sampling, or an oversized-sentence skip.
+  `ling matches` and `ling summarize` report a division kind that the corpus
+  does not observe as `warning[division_unavailable]`, except after a
+  direct-input `ling matches` run that `--limit` stopped; the browser and
+  `ling explore` do not.
+- `skip: @T` makes a pattern match as if the tokens satisfying the test `T`
+  were absent, so `[text=for] [text=example]` matches `for “ example`. Elements,
+  lookarounds, `^` and `$` step over skipped tokens, and a match or capture
+  neither starts nor ends on one. A `within=` lookaround in such a pattern reads
+  at most as many tokens of the neighbouring sentences as its body is wide,
+  skipped tokens included. A `defaults` block may supply `skip:` for every
+  pattern in a file.
+- Either endpoint of a basic `where` edge can be a graph-node binder, so
+  `(?<d> []) where (?<h> []) -[*]-> $d` matches every basic dependency edge once,
+  whatever the distance or order between head and dependent, and
+  `key: [$h.lemma, $d.lemma]` counts edges by both ends.
+- A `where` clause accepts order constraints, `$a < $b < $c`, over one-token
+  captures and graph-node binders. A pattern that binds a dependency subtree
+  from one surface capture through binders chained by `$name` references, and
+  orders all its nodes, matches each occurrence of a subtree with that shape and
+  token order once.
+- The `run` record of `ling --json corpus build` and `corpus inspect` names the
+  artifact in `artifact_path`. Without `--output`, `corpus build ROOT` reuses or
+  builds the artifact that `--cache` queries read, so a caller can resolve ROOT
+  once and use `--corpus PATH` afterwards.
+- A catalog file can declare, per attribute, the label set its literals belong
+  to: `labels: { upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn" }`,
+  or an explicit `{…}` set. A literal outside its declared set is a compile
+  error. When the corpus has values outside a declared set, a `matches` or
+  `summarize` run ends with `warning[label_outside_declared_set]` and token
+  counts. Named sets are `ud-v2`, `spacy`, `clearnlp` and `penn`. `labels` is a
+  reserved word, like `analyzer`.
+- `summarize --by-document` counts each group per admitted document. Each
+  query/v2 `summary` record carries a `document` ordinal, and a new `document`
+  record gives the source name and admitted sentence and token counts of every
+  document with an admitted sentence, with `@document.KEY` fields selected by `--source-metadata`. It
+  requires `--json`.
+- `check --diagram --diagram-format svg --output-dir DIR` writes one SVG file
+  per selected pattern and fragment into a new directory `DIR` and prints each
+  definition name with its file path. Files are named by source-order position
+  and a bounded, filesystem-safe form of the name. `ling` creates `DIR` only
+  after every selected definition renders; an existing `DIR` is rejected and left
+  unchanged.
+- `ling serve` runs the `lingrep-web` browser interface and takes the same
+  arguments, so a `ling` installed from the release archives or `install.sh`
+  serves the browser interface without Nix.
+  It is part of the default `web` feature; `--no-default-features` builds
+  `ling` without it.
 - `summarize --by-section` counts each pattern's matches and matched
   sentences under every section label of a prepared corpus in one scan. A new
   query/v2 `section` record gives the label, or `null` for unlabelled
@@ -110,9 +166,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read` and `scope`, in the Frequencies view and in the workbench, so a
   link or a reload reopens it. Reading requests from the Frequencies view
   do not wait for workbench scans or exports.
+- The workbench capture-key picker edits single-token `text`, `lemma` and
+  `norm` projections using compiler-provided source ranges and runs a fresh
+  CLI summary over the selected corpus scope. Saved count tables are unchanged.
+- Word-constrained graph-node keys can project any scalar token attribute,
+  including `norm`; missing values make the match unkeyable.
 
 ### Changed
 
+- On direct input, a sentence that a scope clause excludes still counts toward
+  the `document_sentence_ordinal` of the sentences after it, so a scoped direct
+  run reports the same in-document ordinals as the same query over a prepared
+  corpus.
+- Release binaries are stripped of symbols.
+- The graph-node binders of basic `where` edges bind distinct words: two
+  binders of one clause, or a binder and a surface capture that a basic edge
+  names, never bind the same word.
+- `skip` is a reserved word. A `skip:` entry must name a test or be `none`, so
+  `ling` rejects a catalog that uses `skip` as a descriptive metadata key, as in
+  `skip: true`, with a syntax error, and a metadata schema cannot declare
+  `skip`.
 - The workbench reader marks a hit in the colours of the KWIC keyword.
 - The query/v2 `complete` record's `counters.tokens_matched` is renamed
   `counters.tokens_scanned`, with no alias, so a reader of `tokens_matched`
@@ -129,9 +202,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   view, and by `ling corpus inspect --verify`, instead of when provenance is
   opened. lingrep-web therefore starts serving such an artifact, and the
   request that reads the damaged sentence fails.
+- Markdown analysis excludes marked LaTeX math, strips nested list markers,
+  and reads included pipe-table rows as cell text. Significance asterisks before
+  p-value comparisons are preserved only with conversion-artifact recovery.
 
 ### Fixed
 
+- `ling serve` and `lingrep-web` report an occupied port with exit code 2
+  instead of panicking.
+- Retained lookaround context, including empty sentences, counts toward the
+  tokenized byte limit. A required window that exceeds the limit ends execution
+  with an error.
+- Scoped lookarounds in anchor exclusion fragments fail compilation with
+  `ScopedLookaroundUnsupported`, including through fragment references.
+- `ling --json check --diagram` exits with `unsupported_output` instead of
+  writing a text diagram to stdout and exiting 0.
 - Under `--base-path /prefix`, lingrep-web serves its start page at
   `/prefix/` and redirects `/prefix` there. `/prefix/` answered 404, so the
   deployment guide's Caddy redirect and every page's link back to the start
@@ -166,92 +251,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scanned remains `sentences_admitted` minus `sentences_proven_absent`. The
   progress line of `matches` and `summarize`, "matched N sentences", reports
   the same count.
-
-## [0.7.0] - 2026-11-05
-
-### Added
-
-- A lookaround written with `within=document`, as in
-  `[text=x] followed_by($ ^ [upos=NOUN], within=document)`, may match tokens of
-  the neighbouring sentences of the same document, and a lookaround written with
-  `within=paragraph`, `within=section` or another division kind may match
-  tokens of the neighbouring sentences of the same innermost division of that
-  kind. Its body must have a maximum width. The neighbours end at a sentence
-  removed by a scope clause, sampling, or an oversized-sentence skip.
-  `ling matches` and `ling summarize` report a division kind that the corpus
-  does not observe as `warning[division_unavailable]`, except after a
-  direct-input `ling matches` run that `--limit` stopped; the browser and
-  `ling explore` do not.
-- `skip: @T` makes a pattern match as if the tokens satisfying the test `T`
-  were absent, so `[text=for] [text=example]` matches `for “ example`. Elements,
-  lookarounds, `^` and `$` step over skipped tokens, and a match or capture
-  neither starts nor ends on one. A `within=` lookaround in such a pattern reads
-  at most as many tokens of the neighbouring sentences as its body is wide,
-  skipped tokens included. A `defaults` block may supply `skip:` for every
-  pattern in a file.
-- Either endpoint of a basic `where` edge can be a graph-node binder, so
-  `(?<d> []) where (?<h> []) -[*]-> $d` matches every basic dependency edge once,
-  whatever the distance or order between head and dependent, and
-  `key: [$h.lemma, $d.lemma]` counts edges by both ends.
-- A `where` clause accepts order constraints, `$a < $b < $c`, over one-token
-  captures and graph-node binders. A pattern that binds a dependency subtree
-  from one surface capture through binders chained by `$name` references, and
-  orders all its nodes, matches each occurrence of a subtree with that shape and
-  token order once.
-- The `run` record of `ling --json corpus build` and `corpus inspect` names the
-  artifact in `artifact_path`. Without `--output`, `corpus build ROOT` reuses or
-  builds the artifact that `--cache` queries read, so a caller can resolve ROOT
-  once and use `--corpus PATH` afterwards.
-- A catalog file can declare, per attribute, the label set its literals belong
-  to: `labels: { upos: "ud-v2", dep.rel: ["clearnlp", "ud-v2"], xpos: "penn" }`,
-  or an explicit `{…}` set. A literal outside its declared set is a compile
-  error. When the corpus has values outside a declared set, a `matches` or
-  `summarize` run ends with `warning[label_outside_declared_set]` and token
-  counts. Named sets are `ud-v2`, `spacy`, `clearnlp` and `penn`. `labels` is a
-  reserved word, like `analyzer`.
-- `summarize --by-document` counts each group per admitted document. Each
-  query/v2 `summary` record carries a `document` ordinal, and a new `document`
-  record gives the source name and admitted sentence and token counts of every
-  document with an admitted sentence, with `@document.KEY` fields selected by `--source-metadata`. It
-  requires `--json`.
-- `check --diagram --diagram-format svg --output-dir DIR` writes one SVG file
-  per selected pattern and fragment into a new directory `DIR` and prints each
-  definition name with its file path. Files are named by source-order position
-  and a bounded, filesystem-safe form of the name. `ling` creates `DIR` only
-  after every selected definition renders; an existing `DIR` is rejected and left
-  unchanged.
-- `ling serve` runs the `lingrep-web` browser interface and takes the same
-  arguments, so a `ling` installed from the release archives or `install.sh`
-  serves the browser interface without Nix.
-  It is part of the default `web` feature; `--no-default-features` builds
-  `ling` without it.
-
-### Changed
-
-- On direct input, a sentence that a scope clause excludes still counts toward
-  the `document_sentence_ordinal` of the sentences after it, so a scoped direct
-  run reports the same in-document ordinals as the same query over a prepared
-  corpus.
-- Release binaries are stripped of symbols.
-- The graph-node binders of basic `where` edges bind distinct words: two
-  binders of one clause, or a binder and a surface capture that a basic edge
-  names, never bind the same word.
-- `skip` is a reserved word. A `skip:` entry must name a test or be `none`, so
-  `ling` rejects a catalog that uses `skip` as a descriptive metadata key, as in
-  `skip: true`, with a syntax error, and a metadata schema cannot declare
-  `skip`.
-
-### Fixed
-
-- `ling serve` and `lingrep-web` report an occupied port with exit code 2
-  instead of panicking.
-- Retained lookaround context, including empty sentences, counts toward the
-  tokenized byte limit. A required window that exceeds the limit ends execution
-  with an error.
-- Scoped lookarounds in anchor exclusion fragments fail compilation with
-  `ScopedLookaroundUnsupported`, including through fragment references.
-- `ling --json check --diagram` exits with `unsupported_output` instead of
-  writing a text diagram to stdout and exiting 0.
+- Malformed reading-sidecar segment ranges return corruption errors before
+  highlight projection instead of overflowing.
+- The browser scope test waits for its section tab to be clickable.
+- Release archives and Nix packages include browser asset notices, and
+  `install.sh` retains the archive's licenses and notices.
 
 ## [0.6.0] - 2026-11-04
 
