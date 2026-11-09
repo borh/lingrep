@@ -1274,9 +1274,10 @@ end
 
 /// A disagreement written inside one `anchor:` list is a disagreement.
 ///
-/// It must not be told the second entry "says nothing the first does not" —
-/// advice that, followed, silently changes which fragment the anchor strips.
-/// The same mistake spelled as two blocks gets the same message.
+/// The diagnostic must not advise deleting the second entry as a repeat:
+/// following that advice changes which fragment the anchor strips, and no
+/// diagnostic reports the change. The same mistake spelled as two blocks gets
+/// the same message.
 #[test]
 fn a_conflict_inside_one_anchor_list_is_reported_as_a_conflict() {
     let source = "anchor: [{name: \"a\", exclude: \"F\"}, {name: \"a\", exclude: \"G\"}]\nfragment F := [text=x].\nanchor: [{name: \"a\", exclude: \"F\"}, {name: \"a\", exclude: \"G\"}]\nfragment G := [text=y].\n";
@@ -1289,8 +1290,8 @@ fn a_conflict_inside_one_anchor_list_is_reported_as_a_conflict() {
         }),
         "the two excludes disagree and the message must name both; got {errors:?}"
     );
-    // A true repeat keeps the "says nothing the first does not" advice, which
-    // is only safe when the two entries really are the same claim.
+    // An identical repeat still gets the advice to delete the second entry,
+    // which is safe only when the two entries are the same claim.
     let repeat = "anchor: [{name: \"a\", exclude: \"F\"}, {name: \"a\", exclude: \"F\"}]\nfragment F := [text=x].\n";
     assert!(
         compile_errors(repeat).iter().any(|d| {

@@ -202,8 +202,8 @@ impl SurfaceTallyBuilder {
         else {
             return None;
         };
-        // Both facts are read out before anything mutable is touched: `refuse`
-        // below needs the whole builder, and the row is borrowed from it.
+        // Both values are copied out before any mutation: `refuse` below takes
+        // `&mut self`, and the row is borrowed from `self`.
         let existing = index.get(surface).copied();
         let saturated = order.len() >= SURFACE_VOCABULARY_LIMIT;
         if let Some(position) = existing {

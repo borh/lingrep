@@ -179,8 +179,10 @@ pub struct Args {
 
 /// The corpora `args` declares, in declaration order, `--input` first.
 ///
-/// Returns a message suitable for `eprintln!` + exit 2 on any refusal, matching
-/// how `Config::validate` failures are already reported.
+/// # Errors
+///
+/// Returns a message for `eprintln!` and exit code 2 when a declaration is
+/// rejected, the same way `Config::validate` failures are reported.
 pub fn declared_corpora(
     args: &Args,
 ) -> Result<Vec<(crate::corpus_set::CorpusName, PathBuf, String)>, String> {
@@ -197,7 +199,7 @@ pub fn declared_corpora(
             return Err(format!("--corpus expects NAME=PATH; got {entry:?}"));
         };
         // parse_declared, not parse: this is operator input, so the reserved
-        // `default` key is refused here. The wire parser uses `parse`, which
+        // `default` key is rejected here. The wire parser uses `parse`, which
         // admits it, because `k=default` is an ordinary permalink.
         // Name the declaration, not just the fault: `NameError` describes what
         // is wrong with the *name*, and with several `--corpus` flags an
@@ -617,7 +619,7 @@ mod tests {
         .unwrap();
         let error = super::declared_corpora(&args).unwrap_err();
         assert!(error.contains("--input-format"));
-        // Names the recovery, not just the refusal.
+        // The message names the recovery as well as the rejected flag.
         assert!(error.contains("inferred"));
     }
 
@@ -694,7 +696,7 @@ mod prepared_artifact_tests {
         let error = super::declared_corpora(&args).unwrap_err();
         assert!(error.contains("--input-format"), "{error}");
         assert!(error.contains("prepared artifact"), "{error}");
-        // Names the recovery, not just the refusal.
+        // The message names the recovery as well as the rejected flag.
         assert!(error.contains("drop the flag"), "{error}");
     }
 

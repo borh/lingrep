@@ -758,11 +758,11 @@ fn unsafe_morpheme_separators_are_usage_errors() {
     }
 }
 
-/// `--trace-policy` is refused with `--raw-matches`, before the run.
+/// `--trace-policy` with `--raw-matches` fails with exit code 2 before the run.
 ///
-/// Raw publication applies no policy, so there is nothing to explain. Accepting
-/// the pair and printing an empty trace would answer a researcher's question
-/// with silence when the honest answer is that they asked the wrong command.
+/// Raw publication applies no policy, so there is nothing to trace. Accepting
+/// the pair would print an empty trace and no message that the command applies
+/// no policy.
 #[test]
 fn matches_tracing_conflicts_with_raw_matches() {
     let error = Cli::try_parse_from([
@@ -1858,12 +1858,12 @@ fn attributes_accepts_a_bare_coverage_run() {
     assert!(Cli::try_parse_from(["ling", "coverage", "corpus.jsonl"]).is_ok());
 }
 
-/// Two record shapes in one TSV stream is the coupling this project's review
-/// lens rejects, and silently dropping the exclusion table would be worse
-/// than refusing it.
+/// `coverage --tsv` with a catalog fails instead of writing two record shapes
+/// into one TSV stream, which this project's review rules reject, or dropping
+/// the exclusion table with no diagnostic.
 /// Asserted against the binary, not `try_parse_from`: clap's generated
-/// conflict text names only the two flags, so the refusal that names the
-/// recovery is `run`'s and is reachable only through a real invocation.
+/// conflict text names only the two flags, and the error that names the
+/// `--json` recovery comes from `run`, which only a real invocation reaches.
 #[test]
 fn attributes_refuses_tsv_together_with_a_catalog() {
     let output = lingrep()
@@ -1944,7 +1944,7 @@ fn corpus_build_output_is_optional_and_defaults_to_none() {
 }
 /// `--input-format` is accepted at all eight command positions and conflicts
 /// with `--corpus` (an artifact
-/// carries its own reader identity), and `bccwj` refuses file roots and
+/// carries its own reader identity), and `bccwj` rejects file roots and
 /// stdin with the distribution-root message.
 #[test]
 fn input_format_flag_is_accepted_at_all_command_positions() {
@@ -1985,7 +1985,8 @@ fn bccwj_input_must_be_a_distribution_root() {
     let file = directory.path().join("corpus.jsonl");
     std::fs::write(&file, "{}\n").unwrap();
 
-    // A file root is refused, with the message, on the corpus commands.
+    // The corpus commands reject a file root with exit code 2 and the
+    // distribution-root message.
     for args in [
         vec!["corpus", "build", "--input-format", "bccwj"],
         vec!["corpus", "inventory", "--input-format", "bccwj"],
@@ -2028,7 +2029,8 @@ fn soranoha_input_must_be_an_archive_file() {
     let dictionary = lingrep_core::testing::MiniDictionary::new();
     let directory = tempfile::tempdir().unwrap();
 
-    // A directory root is refused, with the message, on the corpus commands.
+    // The corpus commands reject a directory root with exit code 2 and the
+    // bulk-archive message.
     for args in [
         vec!["corpus", "build", "--input-format", "soranoha"],
         vec!["corpus", "inventory", "--input-format", "soranoha"],

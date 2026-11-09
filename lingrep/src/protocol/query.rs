@@ -946,7 +946,7 @@ impl ScopeUniverse {
     /// publishing that claim while making it false, and a false denominator is
     /// the failure this whole report exists to prevent. Overflow is
     /// unreachable for any corpus whose sentence count fits the `u64` the
-    /// artifact already stores, which is why refusing it costs nothing.
+    /// artifact already stores, so the overflow error never rejects such a corpus.
     ///
     /// # Errors
     ///

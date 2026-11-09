@@ -63,11 +63,10 @@ fn positive_usize(raw: &str) -> Result<usize, String> {
         })
 }
 
-/// The pool width a run gets when `--workers` says nothing.
+/// The pool width a run uses when `--workers` is not given.
 ///
 /// The smaller of what this process is *allowed* to run on and how many
-/// physical cores exist. Both halves are load-bearing and neither alone is
-/// right:
+/// physical cores exist. Neither bound alone is correct:
 ///
 /// `available_parallelism` respects a cgroup CPU quota, which
 /// `num_cpus::get_physical` does not — a container limited to four CPUs on a
