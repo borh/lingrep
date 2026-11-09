@@ -93,6 +93,7 @@ chmod +x "$temporary/bin/cargo" "$temporary/bin/jq" "$temporary/bin/node"
 touch "$temporary/inputs/corpus.jsonl" "$temporary/inputs/patterns.lx"
 
 export PATH="$temporary/bin:$PATH"
+unset CARGO_TARGET_DIR
 export LINGREP_CI_TEST_LOG="$temporary/invocations.log"
 export LINGREP_DICTIONARY_PATH="$temporary/inputs/dictionary.dic.zst"
 export LINGREP_REAL_CORPUS_PATH="$temporary/inputs/corpus.jsonl"
@@ -138,6 +139,12 @@ assert_full_contract
 
 run_mode --full
 assert_full_contract
+
+CARGO_TARGET_DIR="build cache" run_mode --full
+assert_has "warmup-estimator:$temporary/build cache/debug/lingrep-perf"
+
+CARGO_TARGET_DIR="$temporary/absolute cache" run_mode --fast
+assert_has "warmup-estimator:$temporary/absolute cache/debug/lingrep-perf"
 
 run_mode --quick
 assert_full_contract
