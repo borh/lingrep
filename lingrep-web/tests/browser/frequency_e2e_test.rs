@@ -1113,12 +1113,20 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     );
 
     // A sweep over every bar at 30 ms each, resting at each end, moves
-    // nothing on the page and requests previews only where it rests.
+    // nothing on the page and requests previews only where it rests. The
+    // observer starts two frames after the entry is drawn, because Chrome
+    // reports a layout shift in the frame after the layout that caused it.
+    driver
+        .execute_async(
+            "const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(true)));",
+            Vec::new(),
+        )
+        .await?;
     driver
         .execute(
-            "window.__shift = 0; window.__previews = 0; window.__requests = 0; \
+            "window.__shift = 0; window.__moved = []; window.__previews = 0; window.__requests = 0; \
              const fetched = window.fetch; window.fetch = (...a) => { if (String(a[0]).includes('frequency/')) __requests++; return fetched(...a); }; \
-             new PerformanceObserver((list) => { for (const e of list.getEntries()) if (!e.hadRecentInput) __shift += e.value; }).observe({type: 'layout-shift'}); \
+             new PerformanceObserver((list) => { for (const e of list.getEntries()) if (!e.hadRecentInput) { __shift += e.value; __moved.push([Math.round(e.startTime), ...(e.sources || []).map((s) => [s.node?.className, Math.round(s.previousRect.y), Math.round(s.currentRect.y)])]); } }).observe({type: 'layout-shift'}); \
              new MutationObserver(() => { if (document.querySelector('.fq-entry.previewing')) __previews++; }).observe(document.querySelector('[data-fq-entry]'), {attributes: true, subtree: true, childList: true});",
             Vec::new(),
         )
@@ -1144,7 +1152,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     }
     let swept = driver
         .execute(
-            "return {shift: __shift, previews: __previews, requests: __requests}",
+            "return {shift: __shift, moved: __moved, previews: __previews, requests: __requests}",
             Vec::new(),
         )
         .await?
@@ -1161,6 +1169,34 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         2 * points.len()
     );
     assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
+
+    // Setting and clearing a condition with the entry open moves nothing
+    // after the entry redraws, though the table's response comes 600 ms late.
+    driver
+        .execute(
+            "window.__late = []; window.__clicked = 0; \
+             window.__fetch = window.fetch; window.fetch = async (...a) => { const r = await __fetch(...a); if (/api\\/frequency\\?/.test(String(a[0]))) await new Promise((done) => setTimeout(done, 600)); return r; }; \
+             new PerformanceObserver((list) => { for (const e of list.getEntries()) if (e.startTime - __clicked > 300) __late.push(e.value); }).observe({type: 'layout-shift'});",
+            Vec::new(),
+        )
+        .await?;
+    for _ in 0..2 {
+        driver
+            .execute(
+                "window.__clicked = performance.now(); document.querySelector('.fq-chart[data-key=genre] [data-bar]').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry under the condition").await?;
+        tokio::time::sleep(Duration::from_millis(900)).await;
+    }
+    assert_eq!(
+        driver
+            .execute("window.fetch = __fetch; return __late", Vec::new())
+            .await?
+            .json(),
+        &json!([])
+    );
 
     // Keyboard: Tab reaches each title bar, whose full name and counts the
     // chart reads out; Arrow keys walk the bars.

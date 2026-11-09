@@ -165,9 +165,9 @@ fn run_export_scan_with_compounds(
 
 /// Cancel the scan's flag if the request future is dropped (client disconnect),
 /// unless disarmed after a successful await.
-struct CancelOnDrop {
-    flag: CancellationFlag,
-    armed: bool,
+pub(super) struct CancelOnDrop {
+    pub(super) flag: CancellationFlag,
+    pub(super) armed: bool,
 }
 
 impl Drop for CancelOnDrop {

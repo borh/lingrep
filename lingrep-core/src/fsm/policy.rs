@@ -1525,6 +1525,44 @@ impl<'a> RecordView<'a> {
     }
 }
 
+/// The field of a record that `ling summarize` groups it by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupBy {
+    Key,
+    LexicalKey,
+    Unit,
+    Term,
+    Surface,
+}
+
+impl RecordView<'_> {
+    /// What the record groups by under `policy`: the key its definition
+    /// declares, else its rendered unit, else its lexicon term, else its
+    /// matched surface. `None` when it declares a key that was not projected.
+    #[must_use]
+    pub fn group_by(&self, policy: &CatalogPolicy) -> Option<GroupBy> {
+        if policy
+            .get(self.definition)
+            .is_some_and(|entry| !entry.key.is_empty())
+        {
+            return if self.key.is_some() {
+                Some(GroupBy::Key)
+            } else if self.lexical_key.is_some() {
+                Some(GroupBy::LexicalKey)
+            } else {
+                None
+            };
+        }
+        Some(if self.unit.is_some() {
+            GroupBy::Unit
+        } else if self.lexical.is_some() {
+            GroupBy::Term
+        } else {
+            GroupBy::Surface
+        })
+    }
+}
+
 /// Drops what a span rewrite removed.
 ///
 /// Called after every narrowing so no operation has to enforce capture and
@@ -2246,6 +2284,62 @@ pub(crate) fn suggest_policy_key(key: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_record_groups_by_its_declared_key_else_unit_else_term_else_surface() {
+        let mut builder = CatalogPolicyBuilder::default();
+        builder.insert_entry(
+            CompactString::new("keyed"),
+            PatternPolicy {
+                key: vec![KeyProjection::match_attribute(
+                    AttributeKey::new("lemma").expect("key"),
+                )],
+                ..PatternPolicy::default()
+            },
+        );
+        let policy = builder.build();
+        let key = [ProjectedKeyField {
+            name: CompactString::new("lemma"),
+            value: "x".into(),
+        }];
+        let lexical = crate::fsm::LexicalMatch {
+            term: CompactString::new("t"),
+            matched_by: Box::new([]),
+        };
+        let record = |definition, key, unit, lexical| RecordView {
+            pattern: definition,
+            definition,
+            start: 0,
+            end: 1,
+            captures: &[],
+            graph_bindings: &[],
+            unit,
+            key,
+            lexical_key: None,
+            lexical,
+            tags: &[],
+        };
+        for (definition, key, unit, term, expected) in [
+            ("keyed", Some(&key[..]), Some("u"), true, Some(GroupBy::Key)),
+            ("keyed", None, Some("u"), true, None),
+            (
+                "plain",
+                Some(&key[..]),
+                Some("u"),
+                true,
+                Some(GroupBy::Unit),
+            ),
+            ("plain", None, None, true, Some(GroupBy::Term)),
+            ("plain", None, None, false, Some(GroupBy::Surface)),
+        ] {
+            let view = record(definition, key, unit, term.then_some(&lexical));
+            assert_eq!(
+                view.group_by(&policy),
+                expected,
+                "{definition} {key:?} {unit:?} {term}"
+            );
+        }
+    }
 
     #[test]
     fn one_edit_covers_substitution_insertion_and_deletion() {

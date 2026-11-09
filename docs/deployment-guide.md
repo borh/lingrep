@@ -130,8 +130,8 @@ version.
 
 Selecting a row opens the entry's charts and lines. Its lines are matched from
 the corpus at request time over only the sentences the table records for the
-entry, so the unit needs the corpus as well as the table; each request
-matches at most the documents its page of 50 lines covers.
+entry, so the unit needs the corpus as well as the table. A request matches
+only the sentences that hold its page of lines: 50 by default, at most 200.
 
 `services.lingrep-web.metadataLabels` lists display-label files; the module
 passes each as `--metadata-labels` and mounts it read-only. The Frequencies

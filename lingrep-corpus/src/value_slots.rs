@@ -102,6 +102,32 @@ impl ValueSlots {
     }
 }
 
+/// Each table document's value slots, as [`crate::CountTable::value_counts`]
+/// sums them.
+pub trait DocumentSlots {
+    /// The documents numbered.
+    fn document_count(&self) -> usize;
+    /// Values plus the slot for documents without one.
+    fn slot_count(&self) -> usize;
+    /// The slots of `document`, ascending and distinct; a document without a
+    /// value has the slot after every value's.
+    fn slots(&self, document: usize) -> &[u32];
+}
+
+impl DocumentSlots for ValueSlots {
+    fn document_count(&self) -> usize {
+        self.documents.len()
+    }
+
+    fn slot_count(&self) -> usize {
+        ValueSlots::slot_count(self)
+    }
+
+    fn slots(&self, document: usize) -> &[u32] {
+        &self.documents[document]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

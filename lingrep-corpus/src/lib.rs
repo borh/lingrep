@@ -41,7 +41,7 @@ pub use count_table::{
     ValueCount,
 };
 mod value_slots;
-pub use value_slots::{TooManyValues, ValueSlots};
+pub use value_slots::{DocumentSlots, TooManyValues, ValueSlots};
 mod enhanced;
 mod error;
 mod identity;

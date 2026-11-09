@@ -192,6 +192,68 @@ pub(super) struct TableDocuments {
     _reservation: TempReservation,
 }
 
+/// The slot stored after a list value's slots; a scalar value has none.
+const LIST: u32 = u32::MAX;
+
+/// One key's value slots over every table document, by position.
+pub(super) struct SlotColumn {
+    offsets: Vec<u64>,
+    slots: Vec<u32>,
+}
+
+impl SlotColumn {
+    /// The stored slots of the document at `position`: its value slots,
+    /// then `LIST` for a list value.
+    pub(super) fn stored(&self, position: usize) -> &[u32] {
+        &self.slots[self.offsets[position] as usize..self.offsets[position + 1] as usize]
+    }
+
+    /// The slots of the values of the document at `position`, ascending;
+    /// empty for a document without a value.
+    pub(super) fn slots(&self, position: usize) -> &[u32] {
+        match self.stored(position) {
+            [values @ .., LIST] => values,
+            values => values,
+        }
+    }
+
+    /// The value of the document at `position` as `--where` compares it:
+    /// absent, or whether it is a list and the slots of its distinct values,
+    /// ascending.
+    pub(super) fn value(&self, position: usize) -> Option<(bool, &[u32])> {
+        match self.stored(position) {
+            [] => None,
+            [values @ .., LIST] => Some((true, values)),
+            [value] => Some((false, std::slice::from_ref(value))),
+            _ => None,
+        }
+    }
+}
+
+/// A key's slot column with the documents without a value in the slot after
+/// every value's, as lingrep-corpus sums value slots.
+pub(super) struct NumberedColumn {
+    column: SlotColumn,
+    none: [u32; 1],
+}
+
+impl lingrep_corpus::DocumentSlots for NumberedColumn {
+    fn document_count(&self) -> usize {
+        self.column.offsets.len().saturating_sub(1)
+    }
+
+    fn slot_count(&self) -> usize {
+        self.none[0] as usize + 1
+    }
+
+    fn slots(&self, document: usize) -> &[u32] {
+        match self.column.slots(document) {
+            [] => &self.none,
+            slots => slots,
+        }
+    }
+}
+
 struct KeySlots {
     name: String,
     first_value: u64,
@@ -230,18 +292,21 @@ fn read_pair(file: &NamedTempFile, record: u64) -> io::Result<[u64; 2]> {
 
 impl TableDocuments {
     /// Reads the documents `ids`, ascending, from `reader` and numbers the
-    /// scalar values of each of `keys` as `value_text` renders them.
+    /// scalar values of each of `keys` as `value_texts` renders them: `None`
+    /// for a document without the key, else whether its value is a list and
+    /// the texts.
     pub(super) fn build(
         reader: &mut Reader,
         ids: &[u64],
         keys: &[String],
-        value_texts: impl Fn(&Metadata, &str) -> Vec<String>,
+        value_texts: impl Fn(&Metadata, &str) -> Option<(bool, Vec<String>)>,
         budget: &Arc<TempBudget>,
     ) -> io::Result<Self> {
         let too_many = || io::Error::other("more than 2^32 keys or values");
         let mut reservation = budget.reserve(0)?;
         let mut ranges = Spool::new()?;
         let mut held = SortedRunCounts::with_policy(SPILL_POLICY, Arc::clone(budget))?;
+        let mut numbered = SortedRunCounts::with_policy(SPILL_POLICY, Arc::clone(budget))?;
         for (position, id) in ids.iter().enumerate() {
             let (sentences, metadata) = reader.located(*id)?;
             for bound in [sentences.start, sentences.end] {
@@ -249,7 +314,13 @@ impl TableDocuments {
             }
             for (key, name) in keys.iter().enumerate() {
                 let key = u32::try_from(key).map_err(|_| too_many())?;
-                for text in value_texts(&metadata, name) {
+                let Some((list, texts)) = value_texts(&metadata, name) else {
+                    continue;
+                };
+                if list {
+                    numbered.add((key, position as u64, LIST), 1)?;
+                }
+                for text in texts {
                     held.add((key, text, position as u64), 1)?;
                 }
             }
@@ -257,7 +328,6 @@ impl TableDocuments {
         let mut values = Spool::new()?;
         let mut value_index = Spool::new()?;
         let mut numbers = Spool::new()?;
-        let mut numbered = SortedRunCounts::with_policy(SPILL_POLICY, Arc::clone(budget))?;
         let mut key_slots = keys
             .iter()
             .map(|name| KeySlots {
@@ -278,7 +348,11 @@ impl TableDocuments {
                 if slots.values == 0 {
                     slots.first_value = written;
                 }
-                slots.values = slots.values.checked_add(1).ok_or_else(too_many)?;
+                slots.values = slots
+                    .values
+                    .checked_add(1)
+                    .filter(|values| *values < LIST)
+                    .ok_or_else(too_many)?;
                 values.write(&mut reservation, text.as_bytes())?;
                 for field in [stored, text.len() as u64] {
                     value_index.write(&mut reservation, &field.to_le_bytes())?;
@@ -342,28 +416,42 @@ impl TableDocuments {
         self.keys[key].values
     }
 
-    /// The slots of key `key`'s values in the document at `position`,
-    /// ascending; empty for a document without a value.
-    pub(super) fn slots(&self, key: usize, position: usize) -> io::Result<Vec<u32>> {
-        if position >= self.documents {
-            return Err(io::Error::other("document position out of range"));
-        }
-        let entry = key as u64 * (self.documents as u64 + 1) + position as u64;
-        let mut bounds = [0u8; 16];
+    /// Every document's value slots of key `key`, read in two positioned
+    /// reads.
+    pub(super) fn slot_column(&self, key: usize) -> io::Result<SlotColumn> {
+        let per_key = self.documents as u64 + 1;
+        let mut bytes = vec![0u8; self.documents * 8 + 8];
         self.offsets
             .as_file()
-            .read_exact_at(&mut bounds, entry * 8)?;
-        let (bounds, _) = bounds.as_chunks::<8>();
-        let [start, end] = [bounds[0], bounds[1]].map(u64::from_le_bytes);
-        let length = usize::try_from(end - start).map_err(io::Error::other)?;
+            .read_exact_at(&mut bytes, key as u64 * per_key * 8)?;
+        let offsets = bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|offset| u64::from_le_bytes(*offset))
+            .collect::<Vec<_>>();
+        let first = offsets[0];
+        let length = usize::try_from(offsets[self.documents] - first).map_err(io::Error::other)?;
         let mut bytes = vec![0u8; length * 4];
-        self.slots.as_file().read_exact_at(&mut bytes, start * 4)?;
-        Ok(bytes
+        self.slots.as_file().read_exact_at(&mut bytes, first * 4)?;
+        let slots = bytes
             .as_chunks::<4>()
             .0
             .iter()
             .map(|slot| u32::from_le_bytes(*slot))
-            .collect())
+            .collect();
+        Ok(SlotColumn {
+            offsets: offsets.into_iter().map(|offset| offset - first).collect(),
+            slots,
+        })
+    }
+
+    /// Key `key`'s slot column, numbered for [`lingrep_corpus::CountTable::value_counts`].
+    pub(super) fn numbered_column(&self, key: usize) -> io::Result<NumberedColumn> {
+        Ok(NumberedColumn {
+            column: self.slot_column(key)?,
+            none: [self.keys[key].values],
+        })
     }
 
     /// Each value of key `key` read as a finite number, else NaN, by slot.
@@ -444,12 +532,15 @@ mod tests {
                 names
                     .iter()
                     .map(|_| {
-                        tc.draw(
+                        let shape = tc.draw(generators::integers::<u8>().max_value(2));
+                        let texts = tc.draw(
                             generators::vecs(generators::sampled_from(vec![
                                 "x", "y", "z", "", "7", "-2.5",
                             ]))
-                            .max_size(3),
-                        )
+                            .min_size(usize::from(shape == 1))
+                            .max_size(if shape == 1 { 1 } else { 3 }),
+                        );
+                        (shape > 0).then_some((shape == 2, texts))
                     })
                     .collect::<Vec<_>>()
             })
@@ -461,7 +552,15 @@ mod tests {
             let object = names
                 .iter()
                 .zip(values)
-                .map(|(name, values)| ((*name).to_owned(), serde_json::json!(values)))
+                .filter_map(|(name, value)| {
+                    let (list, texts) = value.as_ref()?;
+                    let json = if *list {
+                        serde_json::json!(texts)
+                    } else {
+                        serde_json::json!(texts[0])
+                    };
+                    Some(((*name).to_owned(), json))
+                })
                 .collect::<serde_json::Map<_, _>>();
             let metadata = metadata_from_json(serde_json::Value::Object(object), "test metadata")
                 .expect("metadata");
@@ -474,14 +573,18 @@ mod tests {
             &ids,
             &keys[..2],
             |metadata, key| {
-                metadata
-                    .iter()
-                    .find(|(name, _)| name == key)
-                    .and_then(|(_, value)| value.to_json().as_array().cloned())
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_owned))
-                    .collect()
+                let value = metadata.iter().find(|(name, _)| name == key)?.1.to_json();
+                Some(match value {
+                    serde_json::Value::Array(values) => (
+                        true,
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_owned))
+                            .collect(),
+                    ),
+                    serde_json::Value::String(text) => (false, vec![text]),
+                    _ => return None,
+                })
             },
             &budget,
         )
@@ -491,7 +594,11 @@ mod tests {
             assert_eq!(table.key(name), Some(key));
             let vocabulary = drawn
                 .iter()
-                .flat_map(|values| values[key].iter().copied())
+                .flat_map(|values| {
+                    values[key]
+                        .iter()
+                        .flat_map(|(_, texts)| texts.iter().copied())
+                })
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
@@ -507,20 +614,27 @@ mod tests {
                     Err(_) => assert!(number.is_nan()),
                 }
             }
+            let slots = table.slot_column(key).expect("slot column");
             for (position, values) in drawn.iter().enumerate() {
-                let mut expected = values[key]
+                let texts = values[key].as_ref().map_or(&[][..], |(_, texts)| texts);
+                let mut expected = texts
                     .iter()
                     .map(|value| vocabulary.binary_search(value).expect("listed") as u32)
                     .collect::<Vec<_>>();
                 expected.sort_unstable();
                 expected.dedup();
-                assert_eq!(table.slots(key, position).expect("slots"), expected);
+                assert_eq!(slots.slots(position), expected);
+                assert_eq!(
+                    slots.value(position),
+                    values[key]
+                        .as_ref()
+                        .map(|(list, _)| (*list, expected.as_slice()))
+                );
             }
         }
         for (position, id) in ids.iter().enumerate() {
             assert_eq!(table.sentences(position).expect("sentences"), *id..*id + 2);
         }
-        assert!(table.slots(0, documents).is_err());
         let held = budget.used_bytes();
         drop(table);
         assert!(budget.used_bytes() < held || documents == 0);

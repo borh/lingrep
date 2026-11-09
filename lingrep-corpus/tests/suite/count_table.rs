@@ -50,7 +50,7 @@ fn sentences_of(document: u32, count: u64) -> Vec<(u64, u64)> {
 fn writer_for(path: &Path, documents: &[DocumentTotals], pairs: &Pairs) -> CountTableWriter {
     let widest = pairs.iter().map(Vec::len).max().unwrap_or(0);
     let values = (0..widest)
-        .map(|value| format!("v{value}"))
+        .map(|value| format!("v{value:06}"))
         .collect::<Vec<_>>();
     let mut writer = CountTableWriter::create(
         path,
@@ -139,7 +139,7 @@ fn expected_rows(
             rows.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
             rows.truncate(limit.unwrap_or(usize::MAX));
             rows.into_iter()
-                .map(|(entry, count, works)| (format!("v{entry}"), count, works))
+                .map(|(entry, count, works)| (format!("v{entry:06}"), count, works))
                 .collect()
         })
         .collect()
@@ -284,6 +284,12 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
                     .expect("bounded group"),
                 table.group(row.entry).expect("group")
             );
+            assert_eq!(
+                table
+                    .find_entry(pattern, &table.group(row.entry).expect("group"))
+                    .expect("find entry"),
+                Some(row.entry)
+            );
         }
     }
     for (entry, entry_pairs) in pairs.iter().flatten().enumerate() {
@@ -296,17 +302,16 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
                 .collect::<Vec<_>>(),
             *entry_pairs
         );
+        let (sentences, sentence_counts) = table.entry_sentences(entry as u32).expect("sentences");
         assert_eq!(
-            table
-                .entry_sentences(entry as u32)
-                .expect("sentences")
+            sentences
                 .iter()
-                .map(|sentence| u64::from(*sentence))
+                .zip(sentence_counts)
+                .map(|(sentence, count)| (u64::from(*sentence), u64::from(*count)))
                 .collect::<Vec<_>>(),
             entry_pairs
                 .iter()
                 .flat_map(|(document, count)| sentences_of(*document, *count))
-                .map(|(sentence, _)| sentence)
                 .collect::<Vec<_>>()
         );
     }
@@ -409,7 +414,7 @@ fn top_accepts_the_largest_limit_on_a_one_entry_table_under_either_strategy() {
             .expect("top");
         assert_eq!(
             surfaces(&table, &result.patterns[0].rows),
-            [("v0".to_owned(), 1, 1)],
+            [("v000000".to_owned(), 1, 1)],
             "crossover {crossover}"
         );
     }
@@ -589,7 +594,7 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
         },
     ];
     type Step = fn(&mut CountTableWriter) -> Result<(), CountTableError>;
-    let cases: [(&str, Step); 9] = [
+    let cases: [(&str, Step); 11] = [
         ("pattern goes back", |writer| {
             writer.begin_entry(1, 0, &[0])?;
             writer.add_sentence(0, 0, 1)?;
@@ -613,6 +618,10 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
             writer.begin_entry(0, 0, &[0])?;
             writer.add_sentence(0, 0, 0)
         }),
+        ("sentence count is beyond 2^32-1", |writer| {
+            writer.begin_entry(0, 0, &[0])?;
+            writer.add_sentence(0, 0, 1 << 32)
+        }),
         ("sentence is beyond 2^32-1", |writer| {
             writer.begin_entry(0, 0, &[0])?;
             writer.add_sentence(0, 1 << 32, 1)
@@ -625,6 +634,11 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
         }),
         ("entry has no sentence", |writer| {
             writer.begin_entry(0, 0, &[0])?;
+            writer.begin_entry(0, 0, &[0])
+        }),
+        ("entry is out of key order", |writer| {
+            writer.begin_entry(0, 0, &[0])?;
+            writer.add_sentence(0, 0, 1)?;
             writer.begin_entry(0, 0, &[0])
         }),
         ("key rank is outside the vocabulary", |writer| {
@@ -653,6 +667,18 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
             .count();
         assert_eq!(left, 0, "{case}: the staging directory remains");
     }
+    let directory = tempfile::tempdir().expect("tempdir");
+    assert!(matches!(
+        CountTableWriter::create(
+            &directory.path().join("t.lingtable"),
+            key(),
+            vec!["a".into()],
+            vec![surface()],
+            &["b", "a"],
+            &documents,
+        ),
+        Err(CountTableError::Writer(_))
+    ));
 }
 
 #[test]
@@ -732,6 +758,82 @@ fn keys_of_every_kind_decode_to_their_values_and_patterns_without_entries_stay_e
             ]),
         ]
     );
+    for (row, group) in result.patterns[1].rows.iter().zip(&groups) {
+        assert_eq!(table.find_entry(1, group).expect("find"), Some(row.entry));
+        assert_eq!(table.find_entry(0, group).expect("find"), None);
+    }
+    for absent in [
+        Group::Term("a"),
+        Group::Surface("c"),
+        Group::Term("z"),
+        Group::Key(vec![("text", FieldValue::Scalar("a"))]),
+        Group::Key(vec![
+            ("lemma", FieldValue::Scalar("a")),
+            ("parts", FieldValue::Scalar("b")),
+        ]),
+    ] {
+        assert_eq!(
+            table.find_entry(1, &absent).expect("find"),
+            None,
+            "{absent:?}"
+        );
+    }
+}
+
+#[test]
+fn a_lexical_key_of_scalars_is_found_by_the_ordinary_key_of_its_values() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    let names = vec!["lemma".to_owned()];
+    let documents = [DocumentTotals {
+        document_id: 1,
+        sentences: 1,
+        tokens: 1,
+    }];
+    let mut writer = CountTableWriter::create(
+        &path,
+        key(),
+        vec!["p".into()],
+        vec![
+            GroupSchema {
+                kind: GroupKind::Key,
+                names: names.clone(),
+            },
+            GroupSchema {
+                kind: GroupKind::LexicalKey,
+                names,
+            },
+        ],
+        &["a", "b", "c"],
+        &documents,
+    )
+    .expect("create");
+    for (schema, words) in [(0, vec![0]), (1, vec![0, 1]), (1, vec![2, 2])] {
+        writer.begin_entry(0, schema, &words).expect("begin");
+        writer.add_sentence(0, 0, 1).expect("sentence");
+    }
+    publish(writer);
+    let table = CountTable::open(&path, &key()).expect("open");
+    table.verify().expect("verify");
+    for (entry, group) in [
+        Group::Key(vec![("lemma", FieldValue::Scalar("a"))]),
+        Group::Key(vec![("lemma", FieldValue::Scalar("b"))]),
+        Group::Key(vec![("lemma", FieldValue::List(vec!["c"]))]),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            table.find_entry(0, group).expect("find"),
+            Some(entry as u32)
+        );
+    }
+    assert_eq!(
+        table
+            .find_entry(0, &Group::Key(vec![("lemma", FieldValue::Scalar("c"))]))
+            .expect("find"),
+        None
+    );
 }
 
 #[test]
@@ -760,7 +862,7 @@ fn ranked_scan_reads_past_the_floor_into_entries_whose_total_equals_it() {
     let result = table.top_with_crossover(&mask, 1, 0).expect("top");
     assert_eq!(
         surfaces(&table, &result.patterns[0].rows),
-        [("v0".to_owned(), 2, 1)]
+        [("v000000".to_owned(), 2, 1)]
     );
 }
 

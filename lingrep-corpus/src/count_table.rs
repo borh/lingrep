@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::publication::StagingDirectory;
-use crate::value_slots::ValueSlots;
+use crate::value_slots::DocumentSlots;
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");
@@ -41,6 +41,7 @@ const PAIR_DOCUMENTS: &str = "pair_documents.u32";
 const PAIR_COUNTS: &str = "pair_counts.u32";
 const ENTRY_SENTENCE_OFFSETS: &str = "entry_sentence_offsets.u64";
 const ENTRY_SENTENCES: &str = "entry_sentences.u32";
+const ENTRY_SENTENCE_COUNTS: &str = "entry_sentence_counts.u32";
 const RANKED_ENTRIES: &str = "ranked_entries.u32";
 const RANKED_TOTALS: &str = "ranked_totals.u64";
 const DOCUMENT_PAIR_OFFSETS: &str = "document_pair_offsets.u64";
@@ -230,6 +231,60 @@ fn key_payload_len(schema: &GroupSchema, words: &[u32], values: u64) -> Option<u
     }
 }
 
+/// A key field in the order of a pattern's entries: a scalar precedes a
+/// list, and lists compare by their ranks in turn.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum OrderedField<'w> {
+    Scalar(u32),
+    List(&'w [u32]),
+}
+
+/// An entry's place among its pattern's entries: surfaces, then units, then
+/// terms, each by value rank; then keys by the position of their schema
+/// among the schemas of its kind and by their fields, an ordinary key and a
+/// lexical key comparing field by field.
+fn entry_order<'w>(
+    schemas: &[GroupSchema],
+    schema: u32,
+    words: &'w [u32],
+) -> Option<(u8, usize, Vec<OrderedField<'w>>)> {
+    let shape = schemas.get(schema as usize)?;
+    let position = schemas[..schema as usize]
+        .iter()
+        .filter(|other| other.kind == shape.kind)
+        .count();
+    let single = |kind| Some((kind, 0, vec![OrderedField::Scalar(*words.first()?)]));
+    match shape.kind {
+        GroupKind::Surface => single(0),
+        GroupKind::Unit => single(1),
+        GroupKind::Term => single(2),
+        GroupKind::Key => Some((
+            3,
+            position,
+            words
+                .iter()
+                .map(|rank| OrderedField::Scalar(*rank))
+                .collect(),
+        )),
+        GroupKind::LexicalKey => {
+            let mut fields = Vec::with_capacity(shape.names.len());
+            let mut at = 0usize;
+            for _ in &shape.names {
+                let marker = *words.get(at)?;
+                if marker == 0 {
+                    fields.push(OrderedField::Scalar(*words.get(at + 1)?));
+                    at += 2;
+                } else {
+                    let width = marker as usize - 1;
+                    fields.push(OrderedField::List(words.get(at + 1..at + 1 + width)?));
+                    at += 1 + width;
+                }
+            }
+            Some((3, position, fields))
+        }
+    }
+}
+
 struct Staged {
     path: PathBuf,
     writer: BufWriter<File>,
@@ -281,6 +336,7 @@ struct Streams {
     pair_counts: Staged,
     entry_sentence_offsets: Staged,
     entry_sentences: Staged,
+    entry_sentence_counts: Staged,
     entry_totals: Staged,
 }
 
@@ -308,13 +364,14 @@ pub struct CountTableWriter {
     sentences: u64,
     document_patterns: u64,
     open: Option<OpenEntry>,
+    /// The schema and key words of the current pattern's last entry.
+    last_key: Option<(u32, Vec<u32>)>,
 }
 
 impl CountTableWriter {
     /// Starts a table at `destination`, which must not exist.
     ///
-    /// `values` is the vocabulary that key words index, in the order whose
-    /// ranks the keys use. `documents` lists each document with an admitted
+    /// `values` is the vocabulary that key words index, strictly ascending. `documents` lists each document with an admitted
     /// sentence, with strictly ascending document IDs; a pair's document is an
     /// index into this list.
     pub fn create<S: AsRef<str>>(
@@ -341,6 +398,12 @@ impl CountTableWriter {
         }
         if u32::try_from(values.len()).is_err() {
             return Err(writer_error("more than 2^32-1 values"));
+        }
+        if values
+            .windows(2)
+            .any(|pair| pair[0].as_ref() >= pair[1].as_ref())
+        {
+            return Err(writer_error("values are not strictly ascending"));
         }
         if u32::try_from(patterns.len()).is_err() {
             return Err(writer_error("more than 2^32-1 patterns"));
@@ -380,6 +443,7 @@ impl CountTableWriter {
             pair_counts: Staged::create(staging_path, PAIR_COUNTS)?,
             entry_sentence_offsets: Staged::create(staging_path, ENTRY_SENTENCE_OFFSETS)?,
             entry_sentences: Staged::create(staging_path, ENTRY_SENTENCES)?,
+            entry_sentence_counts: Staged::create(staging_path, ENTRY_SENTENCE_COUNTS)?,
             entry_totals: Staged::create(staging_path, ENTRY_TOTALS_SCRATCH)?,
         };
         streams.entry_key_offsets.u64(0)?;
@@ -409,6 +473,7 @@ impl CountTableWriter {
             sentences: 0,
             document_patterns: 0,
             open: None,
+            last_key: None,
         })
     }
 
@@ -426,7 +491,9 @@ impl CountTableWriter {
     }
 
     /// Starts the next entry. Entries arrive grouped by ascending pattern
-    /// index, and within a pattern in the order ties are ranked.
+    /// index, and within a pattern strictly ascending in key order: surfaces,
+    /// units and terms by value, then keys by schema and fields, a scalar
+    /// field before a list.
     ///
     /// `words` encodes the key after its schema: one value rank for a surface,
     /// unit or term; one rank per field for a key; and for a lexical key, per
@@ -456,10 +523,21 @@ impl CountTableWriter {
         if u32::try_from(self.entries).is_err() {
             return Err(writer_error("more than 2^32-1 entries"));
         }
+        if current == Some(pattern)
+            && self.last_key.as_ref().is_some_and(|(last, last_words)| {
+                entry_order(&self.schemas, *last, last_words)
+                    >= entry_order(&self.schemas, schema, words)
+            })
+        {
+            return Err(writer_error(format!(
+                "entries of pattern {pattern} are not in key order"
+            )));
+        }
         if current != Some(pattern) {
             self.skip_patterns(pattern + 1);
             self.current_pattern = Some(pattern);
         }
+        self.last_key = Some((schema, words.to_vec()));
         self.patterns[pattern].entries[1] = self.entries + 1;
         self.key_words += 1 + words.len() as u64;
         let key_words = self.key_words;
@@ -501,6 +579,8 @@ impl CountTableWriter {
         if count == 0 {
             return Err(writer_error("sentence count is zero"));
         }
+        let count32 = u32::try_from(count)
+            .map_err(|_| writer_error(format!("sentence count {count} is beyond 2^32-1")))?;
         if u64::from(document) >= documents {
             return Err(writer_error(format!("document {document} is undeclared")));
         }
@@ -526,7 +606,9 @@ impl CountTableWriter {
             self.write_pair(document, count)?;
         }
         self.sentences += 1;
-        self.streams()?.entry_sentences.u32(sentence32)
+        let streams = self.streams()?;
+        streams.entry_sentences.u32(sentence32)?;
+        streams.entry_sentence_counts.u32(count32)
     }
 
     fn write_pair(&mut self, document: u32, count: u64) -> Result<(), CountTableError> {
@@ -577,6 +659,7 @@ impl CountTableWriter {
             streams.pair_counts,
             streams.entry_sentence_offsets,
             streams.entry_sentences,
+            streams.entry_sentence_counts,
             streams.entry_totals,
         ] {
             file.finish()?;
@@ -860,6 +943,7 @@ pub struct CountTable {
     pair_counts: Section,
     entry_sentence_offsets: Section,
     entry_sentences: Section,
+    entry_sentence_counts: Section,
     ranked_entries: Section,
     ranked_totals: Section,
     document_pair_offsets: Section,
@@ -1127,6 +1211,10 @@ impl CountTable {
                 ENTRY_SENTENCES,
                 array_bytes(ENTRY_SENTENCES, header.sentences, false, 4)?,
             )?,
+            entry_sentence_counts: section(
+                ENTRY_SENTENCE_COUNTS,
+                array_bytes(ENTRY_SENTENCE_COUNTS, header.sentences, false, 4)?,
+            )?,
             ranked_entries: section(
                 RANKED_ENTRIES,
                 array_bytes(RANKED_ENTRIES, header.entries, false, 4)?,
@@ -1214,6 +1302,7 @@ impl CountTable {
             &self.pair_counts,
             &self.entry_sentence_offsets,
             &self.entry_sentences,
+            &self.entry_sentence_counts,
             &self.ranked_entries,
             &self.ranked_totals,
             &self.document_pair_offsets,
@@ -1282,8 +1371,136 @@ impl CountTable {
         std::str::from_utf8(bytes).map_err(|_| corrupt("value is not UTF-8"))
     }
 
+    /// The schemas entry keys name, in the order the writer declared them.
+    pub fn schemas(&self) -> &[GroupSchema] {
+        &self.header.schemas
+    }
+
     pub fn group(&self, entry: u32) -> Result<Group<'_>, CountTableError> {
         self.bounded_group(entry, usize::MAX)
+    }
+
+    /// The schema and key words of `entry`.
+    fn entry_key(&self, entry: u32) -> Result<(u32, &[u32]), CountTableError> {
+        let offsets = self.u64s(&self.entry_key_offsets)?;
+        let (start, end) = (
+            *offsets
+                .get(entry as usize)
+                .ok_or_else(|| corrupt("entry out of range"))?,
+            *offsets
+                .get(entry as usize + 1)
+                .ok_or_else(|| corrupt("entry out of range"))?,
+        );
+        let words = self
+            .u32s(&self.entry_keys)?
+            .get(start as usize..end as usize)
+            .ok_or_else(|| corrupt("entry key offsets out of range"))?;
+        let (&schema, words) = words
+            .split_first()
+            .ok_or_else(|| corrupt("empty entry key"))?;
+        Ok((schema, words))
+    }
+
+    /// The rank of `text` in the vocabulary, if the table has it.
+    fn value_rank(&self, text: &str) -> Result<Option<u32>, CountTableError> {
+        let (mut low, mut high) = (0u32, self.header.values as u32);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match self.value(middle)?.cmp(text) {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => return Ok(Some(middle)),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The entry of pattern `pattern` whose group is `group`, if the table
+    /// has one, found by binary search over the pattern's entries. A key
+    /// whose fields are all scalars finds its entry in either key form.
+    pub fn find_entry(
+        &self,
+        pattern: usize,
+        group: &Group<'_>,
+    ) -> Result<Option<u32>, CountTableError> {
+        let schemas = &self.header.schemas;
+        let schema_of = |kind: GroupKind, names: &[&str]| {
+            schemas.iter().position(|schema| {
+                schema.kind == kind
+                    && schema.names.len() == names.len()
+                    && schema.names.iter().zip(names).all(|(a, b)| a == b)
+            })
+        };
+        let mut words = Vec::new();
+        let schema = match group {
+            Group::Surface(text) | Group::Unit(text) | Group::Term(text) => {
+                let kind = match group {
+                    Group::Surface(_) => GroupKind::Surface,
+                    Group::Unit(_) => GroupKind::Unit,
+                    _ => GroupKind::Term,
+                };
+                let Some(rank) = self.value_rank(text)? else {
+                    return Ok(None);
+                };
+                words.push(rank);
+                schema_of(kind, &[])
+            }
+            Group::Key(fields) => {
+                let names = fields.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+                let scalar = fields
+                    .iter()
+                    .all(|(_, value)| matches!(value, FieldValue::Scalar(_)));
+                let key = scalar.then(|| schema_of(GroupKind::Key, &names)).flatten();
+                let schema = key.or_else(|| schema_of(GroupKind::LexicalKey, &names));
+                for (_, value) in fields {
+                    let texts = match value {
+                        FieldValue::Scalar(text) => {
+                            if key.is_none() {
+                                words.push(0);
+                            }
+                            std::slice::from_ref(text)
+                        }
+                        FieldValue::List(texts) => {
+                            words.push(
+                                u32::try_from(texts.len() + 1)
+                                    .map_err(|_| corrupt("list field exceeds u32"))?,
+                            );
+                            texts.as_slice()
+                        }
+                    };
+                    for text in texts {
+                        let Some(rank) = self.value_rank(text)? else {
+                            return Ok(None);
+                        };
+                        words.push(rank);
+                    }
+                }
+                schema
+            }
+        };
+        let Some(schema) = schema.and_then(|schema| u32::try_from(schema).ok()) else {
+            return Ok(None);
+        };
+        let target = entry_order(schemas, schema, &words)
+            .ok_or_else(|| corrupt("entry key does not match its schema"))?;
+        let range = self.pattern_range(pattern)?;
+        let (mut low, mut high) = (range.start, range.end);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let entry = u32::try_from(middle).map_err(|_| corrupt("entry out of range"))?;
+            let (stored, stored_words) = self.entry_key(entry)?;
+            let order = entry_order(schemas, stored, stored_words)
+                .ok_or_else(|| corrupt("entry key does not match its schema"))?;
+            match order.cmp(&target) {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => {
+                    let same = schemas[stored as usize].names == schemas[schema as usize].names;
+                    return Ok(same.then_some(entry));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Decodes a group only when its encoded key has at most `max_values` words.
@@ -1635,8 +1852,8 @@ impl CountTable {
     }
 
     /// The corpus sentence ordinals of the sentences `entry` occurs in,
-    /// ascending.
-    pub fn entry_sentences(&self, entry: u32) -> Result<&[u32], CountTableError> {
+    /// ascending, with its count in each.
+    pub fn entry_sentences(&self, entry: u32) -> Result<(&[u32], &[u32]), CountTableError> {
         let offsets = self.u64s(&self.entry_sentence_offsets)?;
         let start = *offsets
             .get(entry as usize)
@@ -1644,9 +1861,16 @@ impl CountTable {
         let end = *offsets
             .get(entry as usize + 1)
             .ok_or_else(|| corrupt("entry out of range"))? as usize;
-        self.u32s(&self.entry_sentences)?
+        let out_of_range = || corrupt("entry sentence offsets out of range");
+        let sentences = self
+            .u32s(&self.entry_sentences)?
             .get(start..end)
-            .ok_or_else(|| corrupt("entry sentence offsets out of range"))
+            .ok_or_else(out_of_range)?;
+        let counts = self
+            .u32s(&self.entry_sentence_counts)?
+            .get(start..end)
+            .ok_or_else(out_of_range)?;
+        Ok((sentences, counts))
     }
 
     /// Sums over the admitted documents of each slot of `slots`, in slot
@@ -1661,12 +1885,12 @@ impl CountTable {
     /// range.
     pub fn value_counts(
         &self,
-        slots: &ValueSlots,
+        slots: &impl DocumentSlots,
         mask: &DocumentMask,
         counts: impl IntoIterator<Item = (usize, u64)>,
     ) -> Result<Vec<ValueCount>, CountTableError> {
         if mask.admitted.len() != self.document_ids.len()
-            || slots.documents().len() != self.document_ids.len()
+            || slots.document_count() != self.document_ids.len()
         {
             return Err(corrupt("mask or slots were built for a different table"));
         }
@@ -1682,11 +1906,11 @@ impl CountTable {
             };
             slots.slot_count()
         ];
-        for (document, document_slots) in slots.documents().iter().enumerate() {
+        for document in 0..slots.document_count() {
             if !mask.admitted[document] {
                 continue;
             }
-            for slot in document_slots {
+            for slot in slots.slots(document) {
                 let admission = &mut sums[*slot as usize].admission;
                 admission.documents_admitted += 1;
                 admission.sentences_admitted += self.document_sentences[document];
@@ -1701,7 +1925,7 @@ impl CountTable {
             if !admitted {
                 continue;
             }
-            for slot in &slots.documents()[document] {
+            for slot in slots.slots(document) {
                 let sum = &mut sums[*slot as usize];
                 sum.count += count;
                 sum.works += u64::from(count > 0);
@@ -1871,8 +2095,28 @@ impl CountTable {
             self.header.sentences,
             "entry sentence offsets",
         )?;
+        let mut previous = None;
         for rank in 0..self.header.values as u32 {
-            self.value(rank)?;
+            let value = self.value(rank)?;
+            if previous.is_some_and(|previous| previous >= value) {
+                return Err(corrupt("values are not strictly ascending"));
+            }
+            previous = Some(value);
+        }
+        for pattern in 0..self.header.patterns.len() {
+            let range = self.pattern_range(pattern)?;
+            let mut last = None;
+            for entry in range {
+                let (schema, words) = self.entry_key(entry as u32)?;
+                let order = entry_order(&self.header.schemas, schema, words)
+                    .ok_or_else(|| corrupt("entry key does not match its schema"))?;
+                if last.as_ref().is_some_and(|last| *last >= order) {
+                    return Err(corrupt(format!(
+                        "entries of pattern {pattern} are not in key order"
+                    )));
+                }
+                last = Some(order);
+            }
         }
         if self.document_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(corrupt("document IDs are not ascending"));
@@ -1902,10 +2146,15 @@ impl CountTable {
                 .iter()
                 .map(|count| u64::from(*count))
                 .sum::<u64>();
-            let sentences = self.entry_sentences(entry as u32)?;
+            let (sentences, sentence_counts) = self.entry_sentences(entry as u32)?;
             if sentences.windows(2).any(|pair| pair[0] >= pair[1])
                 || sentences.len() < range.len()
-                || sentences.len() as u64 > total
+                || sentence_counts.contains(&0)
+                || sentence_counts
+                    .iter()
+                    .map(|count| u64::from(*count))
+                    .sum::<u64>()
+                    != total
             {
                 return Err(corrupt(format!("entry {entry} has invalid sentences")));
             }

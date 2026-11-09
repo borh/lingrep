@@ -1250,7 +1250,7 @@ fn a_label_for_a_key_no_corpus_carries_is_reported_at_startup() {
 
 /// Each record's pattern and group text: the declared key's values, or else
 /// the matched surface, which is how `summarize` groups this catalog.
-fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeSet<u64>> {
+fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeMap<u64, u64>> {
     let output = crate::support::lingrep_without_dictionary()
         .args(["--json", "matches", "--patterns"])
         .arg(&fixture.catalog)
@@ -1259,7 +1259,7 @@ fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeSet<u
         .output()
         .unwrap();
     assert_success(&output);
-    let mut sentences = BTreeMap::<(String, String), BTreeSet<u64>>::new();
+    let mut sentences = BTreeMap::<(String, String), BTreeMap<u64, u64>>::new();
     for record in parse_jsonl(&output.stdout) {
         if record["type"] != "match" {
             continue;
@@ -1273,16 +1273,17 @@ fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeSet<u
                 .join("\t"),
             None => data["surface"].as_str().unwrap().to_owned(),
         };
-        sentences
+        *sentences
             .entry((data["pattern"].as_str().unwrap().to_owned(), group))
             .or_default()
-            .insert(data["corpus_sentence_ordinal"].as_u64().unwrap());
+            .entry(data["corpus_sentence_ordinal"].as_u64().unwrap())
+            .or_default() += 1;
     }
     sentences
 }
 
 #[test]
-fn a_count_table_records_the_sentences_ling_matches_finds_each_entry_in() {
+fn a_count_table_records_each_entrys_occurrences_per_sentence_as_ling_matches_finds_them() {
     let fixture = fixture();
     let key = lingrep_corpus::CountTable::read_key(&fixture.table).unwrap();
     let table = lingrep_corpus::CountTable::open(&fixture.table, &key).unwrap();
@@ -1305,17 +1306,22 @@ fn a_count_table_records_the_sentences_ling_matches_finds_each_entry_in() {
                     .collect::<Vec<_>>()
                     .join("\t"),
             };
-            let sentences = table
-                .entry_sentences(entry)
-                .unwrap()
+            let (sentences, counts) = table.entry_sentences(entry).unwrap();
+            let sentences = sentences
                 .iter()
-                .map(|sentence| u64::from(*sentence))
-                .collect::<BTreeSet<_>>();
+                .zip(counts)
+                .map(|(sentence, count)| (u64::from(*sentence), u64::from(*count)))
+                .collect::<BTreeMap<_, _>>();
             recorded.insert((name.clone(), group), sentences);
         }
     }
     let matched = matched_sentences(&fixture);
     assert!(matched.values().any(|sentences| sentences.len() > 1));
+    assert!(
+        matched
+            .values()
+            .any(|sentences| sentences.values().any(|count| *count > 1))
+    );
     assert_eq!(recorded, matched);
 }
 

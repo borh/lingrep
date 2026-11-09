@@ -66,7 +66,7 @@ pub use matcher::{
 };
 pub use policy::{
     AnchorError, AnchorPositions, AnchorResolutionError, AnchorSetDigest, CatalogPolicy,
-    CatalogPolicyBuilder, CompiledGuard, KeyComponent, KeyProjection, KeyTarget,
+    CatalogPolicyBuilder, CompiledGuard, GroupBy, KeyComponent, KeyProjection, KeyTarget,
     LexicalProjectedKeyField, LexicalProjectedKeyValue, NestingClaim, NestingEntry, PatternPolicy,
     PolicyStats, ProjectedKeyField, PublishedRecord, RENDERER_REGISTRY, RecordView,
     SubstituteTarget, TagSource, Terminal, TransformOp, apply_policy, apply_policy_records,

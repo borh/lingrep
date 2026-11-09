@@ -12,6 +12,7 @@ use lingrep_corpus::{
 use serde::{Deserialize, Serialize};
 
 mod documents;
+mod entry;
 
 use lingrep_core::spill::{SortedRunCounts, SpillPolicy, TempBudget};
 
@@ -37,8 +38,6 @@ const MAX_PROJECTED_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Default)]
 pub struct FrequencyViews {
     pairs: Vec<FrequencyPair>,
-    /// The catalog bound to the corpus of the pair at the same index.
-    matchers: Vec<crate::frequency_entry::EntryMatcher>,
     dimensions: HashMap<CorpusName, Arc<[Dimension]>>,
     metadata_keys: BTreeSet<String>,
     labels: KeyLabels,
@@ -57,6 +56,9 @@ pub struct FrequencyPair {
     table_documents: documents::TableDocuments,
     patterns: Vec<PatternSource>,
     workbench: Option<String>,
+    /// The catalog bound to the corpus, for matching an entry's lines; unit
+    /// tests build pairs without a corpus.
+    matcher: Option<entry::EntryMatcher>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,23 +287,6 @@ struct ViewRow {
     works: u64,
 }
 
-/// An entry's occurrences in a set of documents, and those documents with at
-/// least one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ValueSum {
-    pub count: u64,
-    pub works: u64,
-}
-
-impl ValueSum {
-    fn add(&mut self, count: u64) {
-        if count > 0 {
-            self.count += count;
-            self.works += 1;
-        }
-    }
-}
-
 pub enum Outcome {
     Answer(Answer),
     Unsupported(Unsupported),
@@ -321,17 +306,6 @@ impl FrequencyViews {
     pub fn find(&self, corpus: &str, catalog: &str) -> Option<&FrequencyPair> {
         self.position(corpus, catalog)
             .map(|index| &self.pairs[index])
-    }
-
-    /// The pair's catalog bound to its corpus, for matching occurrences.
-    #[must_use]
-    pub fn matcher(
-        &self,
-        corpus: &str,
-        catalog: &str,
-    ) -> Option<&crate::frequency_entry::EntryMatcher> {
-        self.position(corpus, catalog)
-            .map(|index| &self.matchers[index])
     }
 
     fn position(&self, corpus: &str, catalog: &str) -> Option<usize> {
@@ -514,7 +488,7 @@ impl FrequencyViews {
             )
             .map_err(|error| named(error.to_string()))?;
             let source = catalogs.get(&catalog).map_or("", |source| source);
-            let matcher = crate::frequency_entry::EntryMatcher::new(
+            let matcher = entry::EntryMatcher::new(
                 &catalog,
                 source,
                 table.pattern_names(),
@@ -543,8 +517,8 @@ impl FrequencyViews {
                 table_documents,
                 patterns,
                 workbench,
+                matcher: Some(matcher),
             });
-            views.matchers.push(matcher);
         }
         Ok(views)
     }
@@ -667,12 +641,15 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
     })
 }
 
-/// The values of `key` in `metadata` as `--where` compares them.
-fn value_texts(metadata: &Metadata, key: &str) -> Vec<String> {
+/// The values of `key` in `metadata` as `--where` compares them, and
+/// whether they are a list; `None` without a scalar or list value.
+fn value_texts(metadata: &Metadata, key: &str) -> Option<(bool, Vec<String>)> {
     match lookup(metadata, key) {
-        Some(MetadataValue::Scalar(scalar)) => vec![scalar_text(scalar)],
-        Some(MetadataValue::Scalars(scalars)) => scalars.iter().map(scalar_text).collect(),
-        _ => Vec::new(),
+        Some(MetadataValue::Scalar(scalar)) => Some((false, vec![scalar_text(scalar)])),
+        Some(MetadataValue::Scalars(scalars)) => {
+            Some((true, scalars.iter().map(scalar_text).collect()))
+        }
+        _ => None,
     }
 }
 
@@ -845,7 +822,7 @@ fn predicate(dimension: &Dimension, condition: &Condition) -> Result<Option<Stri
     }
 }
 
-pub(crate) fn predicates(
+fn predicates(
     dimensions: &[Dimension],
     conditions: &BTreeMap<String, Condition>,
 ) -> Result<Vec<(String, String)>, Unsupported> {
@@ -866,7 +843,7 @@ pub(crate) fn predicates(
     Ok(written)
 }
 
-pub(crate) fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
+fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
     if source.trim().is_empty() {
         return Ok(None);
     }
@@ -882,11 +859,11 @@ pub(crate) fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsup
     Ok(Some(clause))
 }
 
-pub(crate) fn shell_word(text: &str) -> String {
+fn shell_word(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-pub(crate) fn group_value(group: &Group<'_>) -> serde_json::Value {
+fn group_value(group: &Group<'_>) -> serde_json::Value {
     match group {
         Group::Surface(value) => serde_json::json!({"kind": "surface", "value": value}),
         Group::Unit(value) => serde_json::json!({"kind": "unit", "value": value}),
@@ -952,7 +929,7 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
 }
 
 impl FrequencyPair {
-    pub(crate) fn admit_query(&self) -> Result<(), QueryError> {
+    fn admit_query(&self) -> Result<(), QueryError> {
         if self.table.document_ids().len() > MAX_MASK_BYTES / 4 {
             return Err(QueryError::ResourceLimit {
                 resource: "document mask bytes",
@@ -978,133 +955,99 @@ impl FrequencyPair {
         self.workbench.as_deref()
     }
 
-    pub(crate) fn pattern_index(&self, name: &str) -> Result<usize, QueryError> {
+    fn pattern_index(&self, name: &str) -> Result<usize, QueryError> {
         self.patterns
             .iter()
             .position(|pattern| pattern.name == name)
             .ok_or_else(|| QueryError::UnknownPattern(name.to_owned()))
     }
 
-    pub(crate) fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
+    fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
+        let Some(clause) = clause else {
+            return Ok(vec![true; self.table.document_ids().len()]);
+        };
+        let numbered = clause
+            .metadata_keys()
+            .into_iter()
+            .map(|key| {
+                let name = key.strip_prefix("@document.")?;
+                Some((name.to_owned(), self.table_documents.key(name)?))
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(numbered) = numbered.filter(|_| !clause.requires_sentence_values()) else {
+            return self.admitted_from_metadata(clause);
+        };
+        let columns = numbered
+            .iter()
+            .map(|(_, key)| self.table_documents.slot_column(*key))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let mut verdicts = HashMap::<Vec<u32>, bool>::new();
+        let mut texts = HashMap::<(usize, u32), String>::new();
+        let mut budget = ProjectionBudget::default();
+        let mut stored = Vec::new();
+        let mut admitted = Vec::with_capacity(self.table.document_ids().len());
+        for position in 0..self.table.document_ids().len() {
+            stored.clear();
+            for column in &columns {
+                let slots = column.stored(position);
+                stored.push(slots.len() as u32);
+                stored.extend_from_slice(slots);
+            }
+            if let Some(verdict) = verdicts.get(&stored) {
+                admitted.push(*verdict);
+                continue;
+            }
+            let mut metadata = Vec::with_capacity(numbered.len());
+            for ((name, key), column) in numbered.iter().zip(&columns) {
+                let Some((list, slots)) = column.value(position) else {
+                    continue;
+                };
+                let mut scalars = Vec::with_capacity(slots.len());
+                for slot in slots {
+                    let text = if let Some(text) = texts.get(&(*key, *slot)) {
+                        text.clone()
+                    } else {
+                        let text = self.table_documents.value(*key, *slot)?;
+                        budget.charge(&text)?;
+                        texts.insert((*key, *slot), text.clone());
+                        text
+                    };
+                    scalars.push(MetadataScalar::String(text));
+                }
+                let value = if list {
+                    MetadataValue::Scalars(scalars.into())
+                } else {
+                    MetadataValue::Scalar(scalars.swap_remove(0))
+                };
+                metadata.push((name.clone(), value));
+            }
+            let verdict = clause.evaluate_document(&metadata.into_iter().collect::<Metadata>())
+                == DocumentOutcome::Decided(Verdict::Admitted);
+            verdicts.insert(stored.clone(), verdict);
+            admitted.push(verdict);
+        }
+        Ok(admitted)
+    }
+
+    fn admitted_from_metadata(&self, clause: &ScopeClause) -> Result<Vec<bool>, QueryError> {
         let mut reader = self.documents.reader()?;
         self.table
             .document_ids()
             .iter()
             .map(|id| {
                 let metadata = reader.document(*id)?;
-                Ok(clause.is_none_or(|clause| {
-                    clause.evaluate_document(&metadata)
-                        == DocumentOutcome::Decided(Verdict::Admitted)
-                }))
+                Ok(clause.evaluate_document(&metadata)
+                    == DocumentOutcome::Decided(Verdict::Admitted))
             })
             .collect()
     }
 
-    pub(crate) fn mask(&self, admitted: &[bool]) -> DocumentMask {
+    fn mask(&self, admitted: &[bool]) -> DocumentMask {
         let ids = self.table.document_ids();
         self.table.mask(|id| {
             ids.binary_search(&id)
                 .is_ok_and(|index| admitted.get(index).copied() == Some(true))
         })
-    }
-
-    /// The corpus sentences of the table document at `position`.
-    pub(crate) fn sentences(&self, position: usize) -> Result<std::ops::Range<u64>, QueryError> {
-        Ok(self.table_documents.sentences(position)?)
-    }
-
-    /// The corpus and catalog paths a copied command names, if every input
-    /// shares a directory.
-    pub(crate) fn command_inputs(&self) -> Option<(&str, &str)> {
-        self.command_inputs
-            .as_ref()
-            .map(|[_, corpus, catalog]| (corpus.as_str(), catalog.as_str()))
-    }
-
-    /// The group of `entry`, within the per-group name and value limit.
-    pub(crate) fn entry_group(&self, entry: u32) -> Result<Group<'_>, QueryError> {
-        Ok(self.table.bounded_group(entry, MAX_QUERY_ITEMS)?)
-    }
-
-    fn key_index(&self, key: &str) -> Result<usize, QueryError> {
-        Ok(self
-            .table_documents
-            .key(key)
-            .ok_or_else(|| std::io::Error::other(format!("{key} is not a dimension")))?)
-    }
-
-    /// Sums `counts`, pairs of a table document position and a count, over
-    /// the documents `mask` admits: per slot of `key`'s values, and for the
-    /// documents without a value.
-    pub(crate) fn value_sums(
-        &self,
-        key: &str,
-        mask: &DocumentMask,
-        counts: impl IntoIterator<Item = (usize, u64)>,
-    ) -> Result<(Vec<ValueSum>, ValueSum), QueryError> {
-        let index = self.key_index(key)?;
-        let values = self.table_documents.value_count(index) as usize;
-        if values > MAX_MASK_BYTES / 16 {
-            return Err(QueryError::ResourceLimit {
-                resource: "value sum bytes",
-                limit: MAX_MASK_BYTES as u64,
-            });
-        }
-        let mut sums = vec![ValueSum::default(); values];
-        let mut none = ValueSum::default();
-        for (position, count) in counts {
-            if !mask.admits(position) {
-                continue;
-            }
-            let slots = self.table_documents.slots(index, position)?;
-            if slots.is_empty() {
-                none.add(count);
-            }
-            for slot in slots {
-                sums[slot as usize].add(count);
-            }
-        }
-        Ok((sums, none))
-    }
-
-    /// The slot of `value` among `key`'s values, if a table document has it.
-    pub(crate) fn slot_of(&self, key: &str, value: &str) -> Result<Option<usize>, QueryError> {
-        let index = self.key_index(key)?;
-        let (mut low, mut high) = (0, self.table_documents.value_count(index));
-        while low < high {
-            let middle = low + (high - low) / 2;
-            match self
-                .table_documents
-                .value(index, middle)?
-                .as_str()
-                .cmp(value)
-            {
-                std::cmp::Ordering::Less => low = middle + 1,
-                std::cmp::Ordering::Greater => high = middle,
-                std::cmp::Ordering::Equal => return Ok(Some(middle as usize)),
-            }
-        }
-        Ok(None)
-    }
-
-    /// The values of `key` in `slots`, each slot numbering the key's values
-    /// in ascending order, within the projection limits.
-    pub(crate) fn values_of(&self, key: &str, slots: &[usize]) -> Result<Vec<String>, QueryError> {
-        let index = self.key_index(key)?;
-        let mut budget = ProjectionBudget::default();
-        slots
-            .iter()
-            .map(|slot| {
-                let value = self.table_documents.value(index, *slot as u32)?;
-                budget.charge(&value)?;
-                Ok(value)
-            })
-            .collect()
-    }
-
-    /// Each value of `key` read as a finite number, else NaN, by slot.
-    pub(crate) fn numbers_of(&self, key: &str) -> Result<Vec<f64>, QueryError> {
-        Ok(self.table_documents.numbers(self.key_index(key)?)?)
     }
 
     fn command(&self, clause: &str) -> String {
@@ -1500,6 +1443,7 @@ mod tests {
                     source: None,
                 }],
                 workbench: None,
+                matcher: None,
             },
         )
     }
@@ -1817,6 +1761,79 @@ mod tests {
             "test",
         )
         .expect("metadata")
+    }
+
+    fn drawn_clause(tc: &hegel::TestCase, depth: u8) -> String {
+        use hegel::generators;
+        let literal = || {
+            tc.draw(generators::sampled_from(vec![
+                "\"a\"", "\"1\"", "\"2.5\"", "\"true\"", "1",
+            ]))
+        };
+        if depth > 0 && tc.draw(generators::booleans()) {
+            let left = drawn_clause(tc, depth - 1);
+            let right = drawn_clause(tc, depth - 1);
+            let joiner = tc.draw(generators::sampled_from(vec!["&", "|"]));
+            return format!("({left} {joiner} {right})");
+        }
+        let key = tc.draw(generators::sampled_from(vec!["g", "t", "t", "n", "z"]));
+        match tc.draw(generators::integers::<u8>().max_value(5)) {
+            0 => format!("@document.{key} = {}", literal()),
+            1 => format!("@document.{key} != {}", literal()),
+            2 => format!(
+                "@document.{key} {} {}",
+                tc.draw(generators::sampled_from(vec!["<", "<=", ">", ">="])),
+                tc.draw(generators::sampled_from(vec!["1", "2", "2.5"]))
+            ),
+            3 => format!("@document.{key} in {{{}, {}}}", literal(), literal()),
+            4 => format!("@document.{key} not in {{{}}}", literal()),
+            _ => format!(
+                "@document.{key} {} {}",
+                tc.draw(generators::sampled_from(vec!["contains", "not contains"])),
+                literal()
+            ),
+        }
+    }
+
+    #[hegel::test(test_cases = 400, derandomize = true)]
+    fn admission_from_numbered_values_equals_admission_from_metadata(tc: hegel::TestCase) {
+        use hegel::generators;
+        let scalars = vec![
+            serde_json::json!("a"),
+            serde_json::json!("1"),
+            serde_json::json!(1),
+            serde_json::json!(2.5),
+            serde_json::json!(true),
+            serde_json::json!("true"),
+        ];
+        let documents = tc.draw(generators::integers::<usize>().min_value(1).max_value(10));
+        let drawn = (0..documents)
+            .map(|_| {
+                let mut fields = Vec::new();
+                for key in ["g", "n"] {
+                    if tc.draw(generators::booleans()) {
+                        fields.push((key, tc.draw(generators::sampled_from(scalars.clone()))));
+                    }
+                }
+                if tc.draw(generators::booleans()) {
+                    fields.push((
+                        "t",
+                        serde_json::Value::Array(tc.draw(
+                            generators::vecs(generators::sampled_from(scalars.clone())).max_size(3),
+                        )),
+                    ));
+                }
+                metadata(&fields)
+            })
+            .collect();
+        let (_directory, pair) = table_pair_documents(vec!["x".into()], surface_schema(), drawn);
+        let source = drawn_clause(&tc, 2);
+        let clause = ScopeClause::parse(&source).expect("clause");
+        assert_eq!(
+            pair.admitted(Some(&clause)).expect("numbered"),
+            pair.admitted_from_metadata(&clause).expect("metadata"),
+            "{source}"
+        );
     }
 
     #[test]

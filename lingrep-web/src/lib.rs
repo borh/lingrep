@@ -9,7 +9,6 @@ mod derived_patterns;
 pub mod document_reach;
 mod export;
 pub mod frequency;
-pub mod frequency_entry;
 pub mod handlers;
 pub mod inspection;
 pub mod metadata_labels;

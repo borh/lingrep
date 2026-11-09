@@ -429,7 +429,7 @@ export function mountFrequency(root) {
       return;
     }
     const command = source?.command ?? "";
-    const where = answer?.clause ?? s.where ?? "";
+    const where = source?.clause ?? s.where ?? "";
     const code = command
       ? (() => {
           const at = where ? command.indexOf(" --where ") : -1;
@@ -438,7 +438,7 @@ export function mountFrequency(root) {
           return `${esc(command.slice(0, at))}<span class="where">${esc(command.slice(at, end))}</span>${esc(command.slice(end))}`;
         })()
       : esc(where);
-    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t.copy)}</button>` : ""}<button data-c="edit">${esc(t.edit)}</button>${s.where != null ? `<button data-c="blanks">${esc(t.blanks)}</button>` : ""}</div>${answer ? `<p>${esc(command ? t.commandContext : t.commandUnavailable)}</p>` : ""}`;
+    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t.copy)}</button>` : ""}<button data-c="edit">${esc(t.edit)}</button>${s.where != null ? `<button data-c="blanks">${esc(t.blanks)}</button>` : ""}</div>${source ? `<p>${esc(command ? t.commandContext : t.commandUnavailable)}</p>` : ""}`;
   }
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;

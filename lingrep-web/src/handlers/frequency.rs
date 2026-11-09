@@ -14,6 +14,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use lingrep_core::execution::CancellationFlag;
+
 use crate::frequency::{Condition, Dimension, FrequencyViews, Outcome, Sort, Unsupported};
 use crate::state::RequestStore;
 
@@ -149,16 +151,25 @@ fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Resp
         })
 }
 
+/// Runs `work` under a scan permit, which it holds until it returns. Its
+/// cancellation flag is raised when the request is dropped.
 async fn run_frequency_task<T: Send + 'static>(
     coordinators: Arc<crate::coordinator::CoordinatorRegistry>,
-    work: impl FnOnce() -> T + Send + 'static,
+    work: impl FnOnce(&CancellationFlag) -> T + Send + 'static,
 ) -> Result<T, tokio::task::JoinError> {
+    let cancel = CancellationFlag::new();
+    let mut guard = super::export::CancelOnDrop {
+        flag: cancel.clone(),
+        armed: true,
+    };
     let permit = coordinators.acquire_scan_permit().await;
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        work()
+        work(&cancel)
     })
-    .await
+    .await;
+    guard.armed = false;
+    result
 }
 
 async fn on_pair<T: Serialize + Send + 'static>(
@@ -169,14 +180,15 @@ async fn on_pair<T: Serialize + Send + 'static>(
     work: impl FnOnce(
         &crate::frequency::FrequencyPair,
         &[Dimension],
+        &CancellationFlag,
     ) -> Result<Result<T, Unsupported>, String>
     + Send
     + 'static,
 ) -> Response {
     let started = Instant::now();
-    let result = run_frequency_task(coordinators, move || {
+    let result = run_frequency_task(coordinators, move |cancel| {
         let reply = match views.find(&corpus, &catalog) {
-            Some(pair) => match work(pair, views.dimensions(&pair.corpus))? {
+            Some(pair) => match work(pair, views.dimensions(&pair.corpus), cancel)? {
                 Ok(body) => Reply::Ok {
                     body,
                     ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -214,7 +226,7 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions| match pair.answer(dimensions, &query) {
+        move |pair, dimensions, _| match pair.answer(dimensions, &query) {
             Ok(Outcome::Answer(answer)) => Ok(Ok(answer)),
             Ok(Outcome::Unsupported(unsupported)) => Ok(Err(unsupported)),
             Err(error) => Err(error.to_string()),
@@ -233,7 +245,7 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions| {
+        move |pair, dimensions, _| {
             pair.values(
                 dimensions,
                 &params.pattern,
@@ -285,7 +297,7 @@ async fn profile(State(store): State<RequestStore>, Query(params): Query<EntryPa
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions| {
+        move |pair, dimensions, _| {
             pair.profile(dimensions, &params.pattern, &group, &conditions)
                 .map_err(|error| error.to_string())
         },
@@ -302,18 +314,14 @@ async fn lines(State(store): State<RequestStore>, Query(params): Query<EntryPara
         Ok(group) => group,
         Err(response) => return *response,
     };
-    let views = Arc::clone(&store.frequency);
     on_pair(
         Arc::clone(&store.frequency),
         Arc::clone(&store.coordinators),
-        params.corpus.clone(),
-        params.catalog.clone(),
-        move |pair, dimensions| {
-            let matcher = views
-                .matcher(&params.corpus, &params.catalog)
-                .expect("a served pair has a matcher");
+        params.corpus,
+        params.catalog,
+        move |pair, dimensions, cancel| {
             pair.lines(
-                matcher,
+                cancel,
                 dimensions,
                 &params.pattern,
                 &group,
@@ -337,7 +345,7 @@ mod tests {
         let registry = Arc::new(crate::coordinator::CoordinatorRegistry::new(1));
         let (started, running) = tokio::sync::oneshot::channel();
         let (release, wait) = std::sync::mpsc::channel();
-        let task = tokio::spawn(run_frequency_task(Arc::clone(&registry), move || {
+        let task = tokio::spawn(run_frequency_task(Arc::clone(&registry), move |_| {
             started.send(()).expect("started");
             wait.recv().expect("release");
         }));
@@ -359,6 +367,31 @@ mod tests {
         let permit = tokio::time::timeout(std::time::Duration::from_secs(1), next)
             .await
             .expect("next request admitted");
+        drop(permit);
+    }
+
+    #[tokio::test]
+    async fn an_aborted_request_cancels_its_work_which_then_frees_admission() {
+        let registry = Arc::new(crate::coordinator::CoordinatorRegistry::new(1));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_frequency_task(Arc::clone(&registry), move |cancel| {
+            started.send(()).expect("started");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !cancel.is_cancelled() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }));
+        running.await.expect("running");
+        let mut next = Box::pin(registry.acquire_scan_permit());
+        assert!(
+            poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        task.abort();
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(1), next)
+            .await
+            .expect("next request admitted once the work stops");
         drop(permit);
     }
 }

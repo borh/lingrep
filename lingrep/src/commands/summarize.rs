@@ -8,7 +8,7 @@ use lingrep_core::execution::{
     CancellationFlag, ExecutionError, MatchSink, PolicySelection, Publication, RunOutcome,
     SentenceAdmission, SinkControl, cached_run_attributes, execute_analyzed,
 };
-use lingrep_core::fsm::{CatalogPolicy, Match, PublishedRecord, RecordView};
+use lingrep_core::fsm::{CatalogPolicy, GroupBy, Match, PublishedRecord, RecordView};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use roaring::RoaringTreemap;
@@ -1033,48 +1033,28 @@ impl SummarySink<'_> {
         Ok(())
     }
 
-    /// What one record groups by, or `None` when it declares a key it could not
-    /// satisfy.
-    ///
-    /// Three sources in a fixed order, each narrower than the next: a declared
-    /// key, else a rendered unit, else the matched surface. The order is the
-    /// point — every fallback is a coarser grouping than the one above it, so a
-    /// record must never quietly fall through a declaration the author made.
+    /// What one record groups by, by [`RecordView::group_by`], or `None` when
+    /// it declares a key it could not satisfy.
     fn grouping<'r>(
         &self,
         location: &lingrep_core::execution::SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         record: RecordView<'r>,
     ) -> Result<Option<AggregationInput<'r>>, ExecutionError> {
-        // Keyed by the *definition's* name, not the published one: `output_name`
-        // runs last, so every earlier pass looks policy up by the name
-        // the researcher wrote.
-        let declared_key = self
-            .policy
-            .get(record.definition)
-            .is_some_and(|entry| !entry.key.is_empty());
-        if declared_key {
-            // Grouping on the surface counts spans, and spans are not
-            // collocations.
-            return Ok(record
-                .key
-                .map(AggregationInput::Key)
-                .or_else(|| record.lexical_key.map(AggregationInput::LexicalKey)));
-        }
-        if let Some(unit) = record.unit {
-            // A transform exists to construct the unit the researcher wants
-            // counted; grouping the span it was built from would count the
-            // input instead of the output.
-            return Ok(Some(AggregationInput::Unit(unit)));
-        }
-        if let Some(lexical) = record.lexical {
-            return Ok(Some(AggregationInput::Term(lexical.term.as_str())));
-        }
-        Ok(Some(AggregationInput::Surface(matched_surface(
-            sentence,
-            record.start..record.end,
-            location,
-        )?)))
+        Ok(match record.group_by(self.policy) {
+            None => None,
+            Some(GroupBy::Key) => record.key.map(AggregationInput::Key),
+            Some(GroupBy::LexicalKey) => record.lexical_key.map(AggregationInput::LexicalKey),
+            Some(GroupBy::Unit) => record.unit.map(AggregationInput::Unit),
+            Some(GroupBy::Term) => record
+                .lexical
+                .map(|lexical| AggregationInput::Term(lexical.term.as_str())),
+            Some(GroupBy::Surface) => Some(AggregationInput::Surface(matched_surface(
+                sentence,
+                record.start..record.end,
+                location,
+            )?)),
+        })
     }
 
     fn grouping_owned(
@@ -1083,33 +1063,26 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         mut record: PublishedRecord,
     ) -> Result<Option<OwnedAggregationInput>, ExecutionError> {
-        let declared_key = self
-            .policy
-            .get(record.raw.pattern.as_str())
-            .is_some_and(|entry| !entry.key.is_empty());
-        if declared_key {
-            return Ok(record
-                .key
+        let group_by = RecordView::published(&record).group_by(self.policy);
+        Ok(match group_by {
+            None => None,
+            Some(GroupBy::Key) => record.key.take().map(OwnedAggregationInput::Key),
+            Some(GroupBy::LexicalKey) => record
+                .lexical_key
                 .take()
-                .map(OwnedAggregationInput::Key)
-                .or_else(|| {
-                    record
-                        .lexical_key
-                        .take()
-                        .map(OwnedAggregationInput::LexicalKey)
-                }));
-        }
-        if let Some(unit) = record.unit.take() {
-            return Ok(Some(OwnedAggregationInput::Unit(unit)));
-        }
-        if let Some(lexical) = record.raw.lexical.take() {
-            return Ok(Some(OwnedAggregationInput::Term(lexical.term)));
-        }
-        Ok(Some(OwnedAggregationInput::Surface(matched_surface(
-            sentence,
-            record.start..record.end,
-            location,
-        )?)))
+                .map(OwnedAggregationInput::LexicalKey),
+            Some(GroupBy::Unit) => record.unit.take().map(OwnedAggregationInput::Unit),
+            Some(GroupBy::Term) => record
+                .raw
+                .lexical
+                .take()
+                .map(|lexical| OwnedAggregationInput::Term(lexical.term)),
+            Some(GroupBy::Surface) => Some(OwnedAggregationInput::Surface(matched_surface(
+                sentence,
+                record.start..record.end,
+                location,
+            )?)),
+        })
     }
 
     /// Lowers one sentence's records to routed groups: pattern ordinal, the

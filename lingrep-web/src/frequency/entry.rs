@@ -10,21 +10,21 @@ use lingrep_core::execution::{
     RunOutcome, SentenceAdmission, SentenceLocation, SinkControl, execute_analyzed,
 };
 use lingrep_core::fsm::{
-    BoundCatalog, CatalogPolicy, CompileLimits, LexicalProjectedKeyValue, Match, PatternSource,
-    PublishedRecord, RecordView, compile_catalog_pattern,
+    BoundCatalog, CatalogPolicy, CompileLimits, GroupBy, LexicalProjectedKeyValue, Match,
+    PatternSource, PublishedRecord, RecordView, compile_catalog_pattern,
 };
 use lingrep_core::token_match::{AttributeKey, TokenSequence};
-use lingrep_corpus::{FieldValue, Group};
+use lingrep_corpus::{DocumentMask, FieldValue, Group, ValueCount};
 use serde::Serialize;
 
-use crate::corpus_runtime::ReadyCorpus;
-use crate::frequency::{
-    Condition, Dimension, DimensionKind, FrequencyPair, QueryError, Unsupported, ValueSum,
-    document_clause, group_value, predicates, shell_word,
+use super::{
+    Condition, Dimension, DimensionKind, FrequencyPair, MAX_MASK_BYTES, MAX_QUERY_ITEMS,
+    ProjectionBudget, QueryError, Unsupported, document_clause, predicates, shell_word,
 };
+use crate::corpus_runtime::ReadyCorpus;
 
 /// Lines a request returns when it names no limit, and the most it may name.
-pub const LINE_PAGE: usize = 50;
+const LINE_PAGE: usize = 50;
 const MAX_LINE_PAGE: usize = 200;
 /// Characters of context kept on each side of a line's match.
 const CONTEXT_CHARS: usize = 40;
@@ -39,7 +39,7 @@ const RANGE_BINS: usize = 40;
 /// The served catalog bound to one corpus once per pattern, publishing only
 /// that pattern, for matching documents' sentences.
 pub struct EntryMatcher {
-    patterns: HashMap<String, PatternCatalog>,
+    patterns: HashMap<String, Arc<PatternCatalog>>,
     ready: ReadyCorpus,
     provenance: Arc<lingrep_corpus::ProvenanceView>,
     runtime: tokio::runtime::Handle,
@@ -52,7 +52,8 @@ struct PatternCatalog {
 
 impl EntryMatcher {
     /// Compiles `source` for each of `patterns` and binds it to the corpus's
-    /// token schema. Must be called inside a Tokio runtime, which later
+    /// token schema; a catalog that compiles whole for one pattern, as one
+    /// with a policy block does, is compiled and bound once for all of them. Must be called inside a Tokio runtime, which later
     /// answers lookaround division queries.
     ///
     /// # Errors
@@ -70,35 +71,32 @@ impl EntryMatcher {
             .token_schema()
             .map_err(|error| error.to_string())?;
         let text = AttributeKey::new("text").expect("text is a canonical attribute key");
-        let patterns = patterns
-            .into_iter()
-            .map(|pattern| {
-                let output = compile_catalog_pattern(
-                    PatternSource::named(name, source),
-                    CompileLimits::default(),
-                    pattern,
+        let patterns = compile_each(patterns, |pattern| {
+            let output = compile_catalog_pattern(
+                PatternSource::named(name, source),
+                CompileLimits::default(),
+                pattern,
+            )
+            .map_err(|error| error.to_string())?;
+            let bound = output
+                .matcher
+                .bind_with_projection(
+                    &schema,
+                    output
+                        .matcher
+                        .execution_attributes()
+                        .into_iter()
+                        .chain(std::iter::once(text.clone())),
                 )
                 .map_err(|error| error.to_string())?;
-                let bound = output
-                    .matcher
-                    .bind_with_projection(
-                        &schema,
-                        output
-                            .matcher
-                            .execution_attributes()
-                            .into_iter()
-                            .chain(std::iter::once(text.clone())),
-                    )
-                    .map_err(|error| error.to_string())?;
-                Ok((
-                    pattern.to_owned(),
-                    PatternCatalog {
-                        division_kinds: output.matcher.lookaround_division_kinds(),
-                        bound,
-                    },
-                ))
-            })
-            .collect::<Result<_, String>>()?;
+            Ok((
+                PatternCatalog {
+                    division_kinds: output.matcher.lookaround_division_kinds(),
+                    bound,
+                },
+                output.matcher.patterns().len() > 1,
+            ))
+        })?;
         Ok(Self {
             patterns,
             ready,
@@ -112,6 +110,7 @@ impl EntryMatcher {
     fn run(
         &self,
         catalog: &PatternCatalog,
+        cancel: &CancellationFlag,
         sentences: Vec<u64>,
         sink: &mut EntrySink<'_>,
     ) -> Result<(), ExecutionError> {
@@ -149,7 +148,7 @@ impl EntryMatcher {
             &self.ready.pool,
             &ExecutionLimits::default(),
             1_024,
-            &CancellationFlag::new(),
+            cancel,
             sink,
             &mut progress,
             &mut observer,
@@ -163,9 +162,32 @@ impl EntryMatcher {
     }
 }
 
-/// What a published record groups by, as `ling summarize` groups it: a
-/// declared key, else a rendered unit, else a lexicon term, else the matched
-/// surface. `None` for a record whose declared key could not be projected.
+/// Each of `patterns` with the catalog `compile` returns for it, given
+/// whether that catalog publishes more than the one pattern; once one does,
+/// it serves every later pattern without another compile.
+fn compile_each<'p, T>(
+    patterns: impl IntoIterator<Item = &'p str>,
+    mut compile: impl FnMut(&str) -> Result<(T, bool), String>,
+) -> Result<HashMap<String, Arc<T>>, String> {
+    let mut whole: Option<Arc<T>> = None;
+    let mut compiled = HashMap::new();
+    for pattern in patterns {
+        let catalog = if let Some(whole) = &whole {
+            Arc::clone(whole)
+        } else {
+            let (catalog, publishes_all) = compile(pattern)?;
+            let catalog = Arc::new(catalog);
+            if publishes_all {
+                whole = Some(Arc::clone(&catalog));
+            }
+            catalog
+        };
+        compiled.insert(pattern.to_owned(), catalog);
+    }
+    Ok(compiled)
+}
+
+/// The group a published record falls in, by [`RecordView::group_by`].
 enum RecordGroup<'r> {
     Key(&'r [lingrep_core::fsm::ProjectedKeyField]),
     LexicalKey(&'r [lingrep_core::fsm::LexicalProjectedKeyField]),
@@ -180,27 +202,22 @@ fn record_group<'r>(
     sentence: &dyn TokenSequence,
     text: &AttributeKey,
 ) -> Option<RecordGroup<'r>> {
-    if policy
-        .get(record.definition)
-        .is_some_and(|entry| !entry.key.is_empty())
-    {
-        return record
-            .key
-            .map(RecordGroup::Key)
-            .or_else(|| record.lexical_key.map(RecordGroup::LexicalKey));
+    match record.group_by(policy)? {
+        GroupBy::Key => record.key.map(RecordGroup::Key),
+        GroupBy::LexicalKey => record.lexical_key.map(RecordGroup::LexicalKey),
+        GroupBy::Unit => record.unit.map(RecordGroup::Unit),
+        GroupBy::Term => record
+            .lexical
+            .map(|lexical| RecordGroup::Term(lexical.term.as_str())),
+        GroupBy::Surface => {
+            let end = record.end.min(sentence.len());
+            let mut surface = String::new();
+            for index in record.start.min(end)..end {
+                surface.push_str(sentence.get_key(index, text)?);
+            }
+            Some(RecordGroup::Surface(surface))
+        }
     }
-    if let Some(unit) = record.unit {
-        return Some(RecordGroup::Unit(unit));
-    }
-    if let Some(lexical) = record.lexical {
-        return Some(RecordGroup::Term(lexical.term.as_str()));
-    }
-    let end = record.end.min(sentence.len());
-    let mut surface = String::new();
-    for index in record.start.min(end)..end {
-        surface.push_str(sentence.get_key(index, text)?);
-    }
-    Some(RecordGroup::Surface(surface))
 }
 
 fn same_group(record: &RecordGroup<'_>, entry: &Group<'_>) -> bool {
@@ -236,6 +253,42 @@ fn same_group(record: &RecordGroup<'_>, entry: &Group<'_>) -> bool {
         }
         _ => false,
     }
+}
+
+/// The group of a frequency row's JSON `group`, if it has that form.
+fn json_group(value: &serde_json::Value) -> Option<Group<'_>> {
+    fn text(value: &serde_json::Value) -> Option<&str> {
+        value.as_str()
+    }
+    Some(match value["kind"].as_str()? {
+        "surface" => Group::Surface(text(&value["value"])?),
+        "unit" => Group::Unit(text(&value["value"])?),
+        "term" => Group::Term(text(&value["value"])?),
+        "key" => Group::Key(
+            value["fields"]
+                .as_array()?
+                .iter()
+                .map(|field| {
+                    let name = text(&field["name"])?;
+                    Some(match field["kind"].as_str()? {
+                        "scalar" => (name, FieldValue::Scalar(text(&field["value"])?)),
+                        "list" => (
+                            name,
+                            FieldValue::List(
+                                field["values"]
+                                    .as_array()?
+                                    .iter()
+                                    .map(text)
+                                    .collect::<Option<_>>()?,
+                            ),
+                        ),
+                        _ => return None,
+                    })
+                })
+                .collect::<Option<_>>()?,
+        ),
+        _ => return None,
+    })
 }
 
 /// One occurrence of the entry, with its sentence split around the match.
@@ -366,6 +419,7 @@ pub struct Profile {
     pub count: u64,
     pub works: u64,
     pub charts: Vec<Chart>,
+    pub clause: String,
     pub command: String,
 }
 
@@ -377,6 +431,93 @@ pub struct Lines {
 }
 
 impl FrequencyPair {
+    /// The corpus sentences of the table document at `position`.
+    fn sentences(&self, position: usize) -> Result<std::ops::Range<u64>, QueryError> {
+        Ok(self.table_documents.sentences(position)?)
+    }
+
+    /// The corpus and catalog paths a copied command names, if every input
+    /// shares a directory.
+    fn command_inputs(&self) -> Option<(&str, &str)> {
+        self.command_inputs
+            .as_ref()
+            .map(|[_, corpus, catalog]| (corpus.as_str(), catalog.as_str()))
+    }
+
+    /// The group of `entry`, within the per-group name and value limit.
+    fn entry_group(&self, entry: u32) -> Result<Group<'_>, QueryError> {
+        Ok(self.table.bounded_group(entry, MAX_QUERY_ITEMS)?)
+    }
+
+    fn key_index(&self, key: &str) -> Result<usize, QueryError> {
+        Ok(self
+            .table_documents
+            .key(key)
+            .ok_or_else(|| std::io::Error::other(format!("{key} is not a dimension")))?)
+    }
+
+    /// Sums `counts`, pairs of a table document position and a count, over
+    /// the documents `mask` admits, per slot of `key`'s values, by
+    /// [`CountTable::value_counts`]: the last slot is the documents without a
+    /// value.
+    fn value_sums(
+        &self,
+        key: &str,
+        mask: &DocumentMask,
+        counts: impl IntoIterator<Item = (usize, u64)>,
+    ) -> Result<Vec<ValueCount>, QueryError> {
+        let index = self.key_index(key)?;
+        let values = self.table_documents.value_count(index) as usize;
+        if values > MAX_MASK_BYTES / std::mem::size_of::<ValueCount>() {
+            return Err(QueryError::ResourceLimit {
+                resource: "value sum bytes",
+                limit: MAX_MASK_BYTES as u64,
+            });
+        }
+        let column = self.table_documents.numbered_column(index)?;
+        Ok(self.table.value_counts(&column, mask, counts)?)
+    }
+
+    /// The slot of `value` among `key`'s values, if a table document has it.
+    fn slot_of(&self, key: &str, value: &str) -> Result<Option<usize>, QueryError> {
+        let index = self.key_index(key)?;
+        let (mut low, mut high) = (0, self.table_documents.value_count(index));
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match self
+                .table_documents
+                .value(index, middle)?
+                .as_str()
+                .cmp(value)
+            {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => return Ok(Some(middle as usize)),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The values of `key` in `slots`, each slot numbering the key's values
+    /// in ascending order, within the projection limits.
+    fn values_of(&self, key: &str, slots: &[usize]) -> Result<Vec<String>, QueryError> {
+        let index = self.key_index(key)?;
+        let mut budget = ProjectionBudget::default();
+        slots
+            .iter()
+            .map(|slot| {
+                let value = self.table_documents.value(index, *slot as u32)?;
+                budget.charge(&value)?;
+                Ok(value)
+            })
+            .collect()
+    }
+
+    /// Each value of `key` read as a finite number, else NaN, by slot.
+    fn numbers_of(&self, key: &str) -> Result<Vec<f64>, QueryError> {
+        Ok(self.table_documents.numbers(self.key_index(key)?)?)
+    }
+
     /// The entry of `pattern` whose group is `group`, in the JSON form of a
     /// frequency row.
     fn find_entry(
@@ -386,13 +527,13 @@ impl FrequencyPair {
     ) -> Result<Option<(usize, u32)>, QueryError> {
         self.admit_query()?;
         let pattern = self.pattern_index(pattern)?;
-        for entry in self.table.pattern_range(pattern)? {
-            let entry = u32::try_from(entry).expect("a table numbers entries in u32");
-            if group_value(&self.entry_group(entry)?) == *group {
-                return Ok(Some((pattern, entry)));
-            }
-        }
-        Ok(None)
+        let Some(group) = json_group(group) else {
+            return Ok(None);
+        };
+        Ok(self
+            .table
+            .find_entry(pattern, &group)?
+            .map(|entry| (pattern, entry)))
     }
 
     fn conditions_clause(
@@ -453,7 +594,10 @@ impl FrequencyPair {
                 Err(unsupported) => return Ok(Err(unsupported)),
             };
             let mask = self.mask(&self.admitted(parsed.as_ref())?);
-            let (sums, none) = self.value_sums(&dimension.key, &mask, pairs())?;
+            let sums = self.value_sums(&dimension.key, &mask, pairs())?;
+            let (none, sums) = sums
+                .split_last()
+                .expect("value counts include the slot of documents without a value");
             let none = (none.count > 0).then_some(Bar {
                 value: None,
                 count: none.count,
@@ -497,36 +641,11 @@ impl FrequencyPair {
                         none,
                     }
                 }
-                DimensionKind::Range { min, max } => {
-                    let spans = columns(*min, *max, &self.numbers_of(&dimension.key)?, &sums);
-                    let ends = spans
-                        .iter()
-                        .flat_map(|span| [span.lo, span.hi])
-                        .flatten()
-                        .collect::<Vec<_>>();
-                    let ends = ends
-                        .iter()
-                        .copied()
-                        .zip(self.values_of(&dimension.key, &ends)?)
-                        .collect::<HashMap<_, _>>();
-                    let number = |slot: Option<usize>| {
-                        slot.and_then(|slot| ends.get(&slot))
-                            .and_then(|text| text.parse::<serde_json::Number>().ok())
-                    };
-                    Chart::Range {
-                        key: dimension.key.clone(),
-                        columns: spans
-                            .into_iter()
-                            .map(|span| Column {
-                                lo: number(span.lo),
-                                hi: number(span.hi),
-                                count: span.sum.count,
-                                works: span.sum.works,
-                            })
-                            .collect(),
-                        none,
-                    }
-                }
+                DimensionKind::Range { min, max } => Chart::Range {
+                    key: dimension.key.clone(),
+                    columns: columns(*min, *max, &self.numbers_of(&dimension.key)?, sums),
+                    none,
+                },
             });
         }
         Ok(Ok(Profile {
@@ -535,6 +654,7 @@ impl FrequencyPair {
             works: total.1,
             charts,
             command: self.lines_command(pattern, group, &clause),
+            clause,
         }))
     }
 
@@ -601,7 +721,7 @@ impl FrequencyPair {
     /// An unknown pattern, a table that fails to read, or a failed match.
     pub fn lines(
         &self,
-        matcher: &EntryMatcher,
+        cancel: &CancellationFlag,
         dimensions: &[Dimension],
         pattern: &str,
         group: &serde_json::Value,
@@ -648,30 +768,28 @@ impl FrequencyPair {
         admitted.sort_by_key(|(_, _, sentences)| sentences.start);
         let total = admitted.iter().map(|(_, count, _)| count).sum::<u64>();
         let table_group = self.entry_group(entry).map_err(|error| error.to_string())?;
+        let matcher = self
+            .matcher
+            .as_ref()
+            .ok_or("the corpus has no bound catalog")?;
         let catalog = matcher
             .patterns
             .get(pattern)
             .ok_or_else(|| format!("pattern {pattern} is not bound to the corpus"))?;
         let policy = catalog.bound.catalog_policy();
-        let end = offset.saturating_add(limit);
-        let mut before = 0usize;
-        let mut skip = 0usize;
-        let mut page = Vec::new();
-        for (document, count, sentences) in admitted {
-            let count = usize::try_from(count).unwrap_or(usize::MAX);
-            if before.saturating_add(count) <= offset {
-                before += count;
-                continue;
-            }
-            if before >= end {
-                break;
-            }
-            if page.is_empty() {
-                skip = offset - before;
-            }
-            page.push((document, count, sentences));
-            before += count;
-        }
+        let (sentences, sentence_counts) = self
+            .table
+            .entry_sentences(entry)
+            .map_err(|error| error.to_string())?;
+        let ids = self.table.document_ids();
+        let (listed, skip) = page_sentences(
+            admitted
+                .into_iter()
+                .map(|(document, count, range)| (ids[document], count, range)),
+            sentences,
+            sentence_counts,
+            offset as u64..offset.saturating_add(limit) as u64,
+        )?;
         let mut sink = EntrySink {
             pattern,
             entry: &table_group,
@@ -679,40 +797,33 @@ impl FrequencyPair {
             text: AttributeKey::new("text").expect("text is a canonical attribute key"),
             lines: Vec::new(),
         };
-        let sentences = self
-            .table
-            .entry_sentences(entry)
-            .map_err(|error| error.to_string())?;
-        let mut listed = Vec::new();
-        for (_, _, range) in &page {
-            let first = sentences.partition_point(|sentence| u64::from(*sentence) < range.start);
-            let last = sentences.partition_point(|sentence| u64::from(*sentence) < range.end);
-            listed.extend(
-                sentences[first..last]
-                    .iter()
-                    .map(|sentence| u64::from(*sentence)),
-            );
-        }
         matcher
-            .run(catalog, listed, &mut sink)
+            .run(
+                catalog,
+                cancel,
+                listed.iter().map(|(sentence, _)| *sentence).collect(),
+                &mut sink,
+            )
             .map_err(|error| error.to_string())?;
-        let ids = self.table.document_ids();
         let mut found = sink.lines.into_iter().peekable();
         let mut lines = Vec::new();
-        for (document, count, _) in page {
-            let id = ids[document];
+        for (sentence, count) in listed {
             let mut held = 0;
-            while let Some(line) = found.next_if(|line| line.document == id) {
+            while let Some(line) = found.next_if(|line| line.sentence == sentence) {
                 held += 1;
                 lines.push(line);
             }
             if held != count {
                 return Err(format!(
-                    "document {id} holds {held} occurrences of the entry, but the table counts {count}"
+                    "sentence {sentence} holds {held} occurrences of the entry, but the table counts {count}"
                 ));
             }
         }
-        let lines = lines.into_iter().skip(skip).take(limit).collect();
+        let lines = lines
+            .into_iter()
+            .skip(usize::try_from(skip).unwrap_or(usize::MAX))
+            .take(limit)
+            .collect();
         Ok(Ok(Lines {
             total,
             offset,
@@ -721,24 +832,69 @@ impl FrequencyPair {
     }
 }
 
-/// The slots of a column's least and greatest values, and its sum.
-struct Span {
-    lo: Option<usize>,
-    hi: Option<usize>,
-    sum: ValueSum,
+/// The sentences, with the entry's count in each, that hold the entry's
+/// occurrences numbered `page` in the order of `documents`, and how many of
+/// the first sentence's occurrences precede the page. `documents` are a
+/// document ID, its count and its corpus sentences, in corpus order;
+/// `sentences` and `counts` are the entry's recorded sentences.
+fn page_sentences(
+    documents: impl IntoIterator<Item = (u64, u64, std::ops::Range<u64>)>,
+    sentences: &[u32],
+    counts: &[u32],
+    page: std::ops::Range<u64>,
+) -> Result<(Vec<(u64, u64)>, u64), String> {
+    let mut before = 0u64;
+    let mut skip = 0u64;
+    let mut listed = Vec::new();
+    for (id, count, range) in documents {
+        if before.saturating_add(count) <= page.start {
+            before += count;
+            continue;
+        }
+        if before >= page.end {
+            break;
+        }
+        let first = sentences.partition_point(|sentence| u64::from(*sentence) < range.start);
+        let last = sentences.partition_point(|sentence| u64::from(*sentence) < range.end);
+        let recorded = counts[first..last]
+            .iter()
+            .map(|count| u64::from(*count))
+            .sum::<u64>();
+        if recorded != count {
+            return Err(format!(
+                "document {id} records {recorded} occurrences of the entry in its sentences, but the table counts {count}"
+            ));
+        }
+        for (sentence, count) in sentences[first..last].iter().zip(&counts[first..last]) {
+            let count = u64::from(*count);
+            if before + count <= page.start {
+                before += count;
+                continue;
+            }
+            if before >= page.end {
+                break;
+            }
+            if listed.is_empty() {
+                skip = page.start - before;
+            }
+            listed.push((u64::from(*sentence), count));
+            before += count;
+        }
+    }
+    Ok((listed, skip))
 }
 
 /// Columns over `[min, max]` with the entry's sums per value slot, given
 /// each slot's number: one per integer when the values are integers within
 /// `INTEGER_COLUMNS`, otherwise `RANGE_BINS` of equal width.
-fn columns(min: f64, max: f64, numbers: &[f64], sums: &[ValueSum]) -> Vec<Span> {
+fn columns(min: f64, max: f64, numbers: &[f64], sums: &[ValueCount]) -> Vec<Column> {
     let valued = || {
         numbers
             .iter()
-            .enumerate()
-            .filter(|(_, number)| number.is_finite())
+            .zip(sums)
+            .filter(|(number, _)| number.is_finite())
     };
-    let integers = valued().all(|(_, number)| number.fract() == 0.0);
+    let integers = valued().all(|(number, _)| number.fract() == 0.0);
     let span = max - min;
     let (count, width) = if integers && span + 1.0 <= INTEGER_COLUMNS {
         (span as usize + 1, 1.0)
@@ -748,23 +904,229 @@ fn columns(min: f64, max: f64, numbers: &[f64], sums: &[ValueSum]) -> Vec<Span> 
             (span / RANGE_BINS as f64).max(f64::MIN_POSITIVE),
         )
     };
-    let mut columns = (0..count)
-        .map(|_| Span {
+    let mut ends = vec![None::<(f64, f64)>; count];
+    let mut columns = vec![
+        Column {
             lo: None,
             hi: None,
-            sum: ValueSum::default(),
-        })
-        .collect::<Vec<_>>();
-    for (slot, number) in valued() {
-        let column = &mut columns[(((number - min) / width) as usize).min(count - 1)];
-        if column.lo.is_none_or(|lo| *number < numbers[lo]) {
-            column.lo = Some(slot);
+            count: 0,
+            works: 0,
+        };
+        count
+    ];
+    for (number, sum) in valued() {
+        let at = (((number - min) / width) as usize).min(count - 1);
+        let (lo, hi) = ends[at].get_or_insert((*number, *number));
+        *lo = lo.min(*number);
+        *hi = hi.max(*number);
+        columns[at].count += sum.count;
+        columns[at].works += sum.works;
+    }
+    for (column, ends) in columns.iter_mut().zip(ends) {
+        if let Some((lo, hi)) = ends {
+            column.lo = Some(json_number(lo));
+            column.hi = Some(json_number(hi));
         }
-        if column.hi.is_none_or(|hi| *number > numbers[hi]) {
-            column.hi = Some(slot);
-        }
-        column.sum.count += sums[slot].count;
-        column.sum.works += sums[slot].works;
     }
     columns
+}
+
+/// `number` as JSON, an integer when it has no fraction.
+fn json_number(number: f64) -> serde_json::Number {
+    if number.fract() == 0.0 && number.abs() < 2f64.powi(53) {
+        serde_json::Number::from(number as i64)
+    } else {
+        serde_json::Number::from_f64(number).expect("a finite number")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hegel::generators;
+
+    /// Every finite value falls in exactly one column, in value order, and
+    /// a column's `lo` and `hi` are its least and greatest values.
+    #[hegel::test(test_cases = 300, derandomize = true)]
+    fn range_columns_partition_the_values_in_order(tc: hegel::TestCase) {
+        let integers = tc.draw(generators::booleans());
+        let numbers = tc.draw(
+            generators::vecs(generators::integers::<i32>().min_value(-500).max_value(500))
+                .min_size(1)
+                .max_size(30),
+        );
+        let mut numbers = numbers
+            .into_iter()
+            .map(|number| {
+                if integers {
+                    f64::from(number)
+                } else {
+                    f64::from(number) / 4.0
+                }
+            })
+            .collect::<Vec<_>>();
+        if tc.draw(generators::booleans()) {
+            numbers.push(f64::NAN);
+        }
+        let sums = (0..numbers.len())
+            .map(|_| ValueCount {
+                admission: lingrep_corpus::Admission {
+                    documents_admitted: 0,
+                    sentences_admitted: 0,
+                    tokens_admitted: 0,
+                },
+                count: tc.draw(generators::integers::<u64>().max_value(9)),
+                works: tc.draw(generators::integers::<u64>().max_value(3)),
+            })
+            .collect::<Vec<_>>();
+        let finite = || numbers.iter().copied().filter(|number| number.is_finite());
+        let min = finite().fold(f64::INFINITY, f64::min);
+        let max = finite().fold(f64::NEG_INFINITY, f64::max);
+
+        let columns = columns(min, max, &numbers, &sums);
+
+        let whole = finite().all(|number| number.fract() == 0.0);
+        let expected = if whole && max - min < INTEGER_COLUMNS {
+            (max - min) as usize + 1
+        } else {
+            RANGE_BINS
+        };
+        assert_eq!(columns.len(), expected);
+        let bound =
+            |number: &Option<serde_json::Number>| number.as_ref().map(|n| n.as_f64().unwrap());
+        let mut previous = f64::NEG_INFINITY;
+        let (mut count, mut works) = (0, 0);
+        for column in &columns {
+            let (lo, hi) = (bound(&column.lo), bound(&column.hi));
+            assert_eq!(lo.is_some(), hi.is_some(), "{column:?}");
+            let Some((lo, hi)) = lo.zip(hi) else {
+                assert_eq!((column.count, column.works), (0, 0));
+                continue;
+            };
+            assert!(previous < lo && lo <= hi, "{columns:?}");
+            let inside = numbers
+                .iter()
+                .zip(&sums)
+                .filter(|(number, _)| (lo..=hi).contains(*number))
+                .collect::<Vec<_>>();
+            assert!(inside.iter().any(|(number, _)| **number == lo));
+            assert!(inside.iter().any(|(number, _)| **number == hi));
+            assert_eq!(
+                column.count,
+                inside.iter().map(|(_, sum)| sum.count).sum::<u64>()
+            );
+            assert_eq!(
+                column.works,
+                inside.iter().map(|(_, sum)| sum.works).sum::<u64>()
+            );
+            count += column.count;
+            works += column.works;
+            previous = hi;
+        }
+        let valued = numbers
+            .iter()
+            .zip(&sums)
+            .filter(|(number, _)| number.is_finite());
+        assert_eq!(count, valued.clone().map(|(_, sum)| sum.count).sum::<u64>());
+        assert_eq!(works, valued.map(|(_, sum)| sum.works).sum::<u64>());
+        if whole {
+            assert!(
+                columns
+                    .iter()
+                    .flat_map(|column| [&column.lo, &column.hi])
+                    .flatten()
+                    .all(serde_json::Number::is_i64)
+            );
+        }
+    }
+
+    #[hegel::test(test_cases = 300, derandomize = true)]
+    fn a_page_lists_exactly_the_sentences_holding_its_occurrences(tc: hegel::TestCase) {
+        let shapes = tc.draw(
+            generators::vecs(
+                generators::vecs(generators::integers::<u32>().min_value(1).max_value(3))
+                    .min_size(1)
+                    .max_size(4),
+            )
+            .max_size(5),
+        );
+        let (mut sentences, mut counts, mut documents, mut occurrences) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for (index, shape) in shapes.iter().enumerate() {
+            let start = 10 * index as u64;
+            for (offset, count) in shape.iter().enumerate() {
+                let sentence = start + offset as u64;
+                sentences.push(sentence as u32);
+                counts.push(*count);
+                occurrences.extend(std::iter::repeat_n(sentence, *count as usize));
+            }
+            let count = shape.iter().map(|count| u64::from(*count)).sum();
+            documents.push((index as u64, count, start..start + 10));
+        }
+        let start = tc.draw(generators::integers::<u64>().max_value(occurrences.len() as u64 + 2));
+        let length = tc.draw(generators::integers::<u64>().min_value(1).max_value(6));
+        let (listed, skip) = page_sentences(
+            documents.clone(),
+            &sentences,
+            &counts,
+            start..start + length,
+        )
+        .expect("consistent counts");
+        let shown = occurrences
+            .iter()
+            .skip(start as usize)
+            .take(length as usize)
+            .copied()
+            .collect::<Vec<_>>();
+        let mut expected = shown.clone();
+        expected.dedup();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|(sentence, _)| *sentence)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for (sentence, count) in &listed {
+            assert_eq!(
+                *count,
+                occurrences.iter().filter(|held| *held == sentence).count() as u64
+            );
+        }
+        let held = listed
+            .iter()
+            .flat_map(|(sentence, count)| std::iter::repeat_n(*sentence, *count as usize))
+            .skip(skip as usize)
+            .take(length as usize)
+            .collect::<Vec<_>>();
+        assert_eq!(held, shown);
+    }
+
+    #[test]
+    fn a_catalog_that_compiles_whole_is_compiled_once_for_every_pattern() {
+        for whole in [false, true] {
+            let mut compiles = 0;
+            let compiled = compile_each(["a", "b", "c"], |pattern| {
+                compiles += 1;
+                Ok((pattern.to_owned(), whole))
+            })
+            .expect("compiled");
+            assert_eq!(compiles, if whole { 1 } else { 3 });
+            assert_eq!(
+                Arc::ptr_eq(&compiled["a"], &compiled["c"]),
+                whole,
+                "whole {whole}"
+            );
+            assert_eq!(compiled.len(), 3);
+        }
+    }
+
+    #[test]
+    fn a_document_whose_sentences_disagree_with_its_count_is_an_error() {
+        let error = page_sentences([(7, 3, 0..10)], &[1, 2], &[1, 1], 0..50).expect_err("mismatch");
+        assert_eq!(
+            error,
+            "document 7 records 2 occurrences of the entry in its sentences, but the table counts 3"
+        );
+    }
 }

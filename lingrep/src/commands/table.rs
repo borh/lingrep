@@ -8,7 +8,7 @@ use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     Admission, CorpusArtifact, CountTable, CountTableError, CountTableKey, FieldValue, Group,
-    TopRow, ValueSlots,
+    GroupKind, GroupSchema, TopRow, ValueSlots,
 };
 
 use super::CommandOutcome;
@@ -318,30 +318,66 @@ impl EntryKey {
         }
     }
 
-    fn selects(&self, group: &Group<'_>) -> bool {
-        match (self, group) {
-            (Self::Group(expected), group) => group_data(group) == *expected,
-            (Self::Printed { fields, .. }, Group::Key(entry)) => {
-                fields.as_ref().is_some_and(|fields| {
-                    fields.len() == entry.len()
-                        && entry.iter().all(|(name, value)| {
-                            fields.get(*name).is_some_and(|given| match value {
-                                FieldValue::Scalar(value) => given.as_str() == Some(*value),
-                                FieldValue::List(values) => given.as_array().is_some_and(|given| {
-                                    given.len() == values.len()
-                                        && given
+    /// The groups an entry printed as this key may have, given the table's
+    /// schemas: a JSON row's group, or a printed text as a surface, unit or
+    /// term, or a printed object as a key of each schema with its field names.
+    fn candidates<'k>(&'k self, schemas: &'k [GroupSchema]) -> Vec<Group<'k>> {
+        match self {
+            Self::Group(SummaryGroupData::Surface { value }) => vec![Group::Surface(value)],
+            Self::Group(SummaryGroupData::Unit { value }) => vec![Group::Unit(value)],
+            Self::Group(SummaryGroupData::Term { value }) => vec![Group::Term(value)],
+            Self::Group(SummaryGroupData::Key { fields }) => vec![Group::Key(
+                fields
+                    .iter()
+                    .map(|field| match field {
+                        ProtocolKeyField::Scalar { name, value } => {
+                            (name.as_str(), FieldValue::Scalar(value))
+                        }
+                        ProtocolKeyField::List { name, values } => (
+                            name.as_str(),
+                            FieldValue::List(values.iter().map(String::as_str).collect()),
+                        ),
+                    })
+                    .collect(),
+            )],
+            Self::Printed { text, fields } => {
+                let mut groups = vec![Group::Surface(text), Group::Unit(text), Group::Term(text)];
+                let Some(fields) = fields else {
+                    return groups;
+                };
+                for schema in schemas {
+                    if !matches!(schema.kind, GroupKind::Key | GroupKind::LexicalKey)
+                        || schema.names.len() != fields.len()
+                    {
+                        continue;
+                    }
+                    let key = schema
+                        .names
+                        .iter()
+                        .map(|name| {
+                            Some(match fields.get(name)? {
+                                serde_json::Value::String(value) => {
+                                    (name.as_str(), FieldValue::Scalar(value))
+                                }
+                                serde_json::Value::Array(values) => (
+                                    name.as_str(),
+                                    FieldValue::List(
+                                        values
                                             .iter()
-                                            .zip(values)
-                                            .all(|(given, value)| given.as_str() == Some(*value))
-                                }),
+                                            .map(serde_json::Value::as_str)
+                                            .collect::<Option<_>>()?,
+                                    ),
+                                ),
+                                _ => return None,
                             })
                         })
-                })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(key) = key {
+                        groups.push(Group::Key(key));
+                    }
+                }
+                groups
             }
-            (
-                Self::Printed { text, .. },
-                Group::Surface(value) | Group::Unit(value) | Group::Term(value),
-            ) => text == value,
         }
     }
 }
@@ -359,21 +395,19 @@ fn find_entry<'a>(
                 "table --entry: the table has no pattern {pattern_name}"
             ))
         })?;
-    let range = table.pattern_range(pattern).map_err(table_error)?;
     let key = EntryKey::parse(entry_key)?;
     let mut found = None;
-    for entry in range {
-        let entry = u32::try_from(entry)
-            .map_err(|_| CliError::Corpus("table entry out of range".to_owned()))?;
-        if key.selects(&table.group(entry).map_err(table_error)?) {
-            if found.is_some() {
-                return Err(CliError::InvalidArgs(format!(
-                    "table --entry: pattern {pattern_name} has more than one entry printed as \
-                     {entry_key}; give the `group` of its JSON row instead"
-                )));
-            }
-            found = Some(entry);
+    for group in key.candidates(table.schemas()) {
+        let Some(entry) = table.find_entry(pattern, &group).map_err(table_error)? else {
+            continue;
+        };
+        if found.is_some_and(|found| found != entry) {
+            return Err(CliError::InvalidArgs(format!(
+                "table --entry: pattern {pattern_name} has more than one entry printed as \
+                 {entry_key}; give the `group` of its JSON row instead"
+            )));
         }
+        found = Some(entry);
     }
     let entry = found.ok_or_else(|| {
         CliError::InvalidArgs(format!(
