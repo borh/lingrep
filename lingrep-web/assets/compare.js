@@ -479,7 +479,7 @@ export function mountCompare(root) {
     try {
       r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key: o.key, w: encoded(others), q: needle, limit: MANY });
     } catch (error) {
-      if (mine === gen && openPop === o && request === valueRequest) pop.querySelector(".opts").textContent = error.message;
+      if (mine === gen && openPop === o && request === valueRequest && needle === find.trim()) pop.querySelector(".opts").textContent = error.message;
       return;
     }
     if (mine !== gen || openPop !== o || request !== valueRequest || needle !== find.trim() || r.status !== "ok") return;

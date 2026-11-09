@@ -547,3 +547,77 @@ async fn a_slow_ranking_keeps_the_previous_answer_in_place_and_aborts_a_supersed
     served.server.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn value_search_ignores_errors_for_an_earlier_query() -> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": r#"
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = async (input, options) => {
+                    const url = new URL(input, location.href);
+                    if (url.pathname.endsWith('/frequency/values')) {
+                        return new Promise((resolve, reject) => {
+                            window.__rejectValues = () => reject(new Error('earlier search failed'));
+                        });
+                    }
+                    const response = await originalFetch(input, options);
+                    if (!url.pathname.endsWith('/frequency/meta')) return response;
+                    const meta = await response.json();
+                    meta.dimensions.default.find((d) => d.key === 'genre').values = 31;
+                    return Response.json(meta);
+                };
+            "#}),
+        )
+        .await?;
+    driver
+        .goto(address(
+            &served.base,
+            &[("w", r#"{"genre":{"m":"in","v":[]}}"#)],
+        ))
+        .await?;
+    wait_for(&driver, SETTLED, "comparison rows").await?;
+    driver
+        .find(By::Css(".pick[data-scope=where][data-key=genre]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return window.__rejectValues && document.querySelector('.fq-pop [data-find]')",
+        "pending value request and search field",
+    )
+    .await?;
+    driver
+        .execute(
+            r#"
+        const originalTimeout = window.setTimeout;
+        window.setTimeout = (f, delay, ...args) => delay === 150
+            ? (window.__heldSearch = f, 0) : originalTimeout(f, delay, ...args);
+        const search = document.querySelector('.fq-pop [data-find]');
+        search.value = 'nov';
+        search.dispatchEvent(new Event('input', {bubbles: true}));
+        window.__rejectValues();
+    "#,
+            Vec::new(),
+        )
+        .await?;
+    let text = driver
+        .execute(
+            "return document.querySelector('.fq-pop .opts').textContent",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(text, "", "the error belongs to the previous search");
+    Ok(())
+}
