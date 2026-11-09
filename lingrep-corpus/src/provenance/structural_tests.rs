@@ -1503,3 +1503,26 @@ async fn open_reports_each_division_sweep_defect_at_any_sentence() {
         assert_eq!(outcome, expected.map_err(str::to_owned), "{mutation}");
     }
 }
+
+#[tokio::test]
+async fn immutable_view_rejects_interior_gaps_with_intact_endpoints() {
+    for sentence in [1, 5, 6, 14] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provenance.sqlite");
+        division_sweep_fixture(&path).await;
+        let mut database = connection(&path).await;
+        sqlx::query("DELETE FROM sentence_provenance WHERE sentence_id=?")
+            .bind(sentence)
+            .execute(&mut database)
+            .await
+            .unwrap();
+        database.close().await.unwrap();
+        assert!(
+            matches!(
+                ProvenanceView::open(&path, &analysis_identity()).await,
+                Err(CorpusError::VerificationMismatch { .. })
+            ),
+            "missing sentence {sentence}"
+        );
+    }
+}

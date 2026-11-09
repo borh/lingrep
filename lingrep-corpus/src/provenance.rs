@@ -1222,16 +1222,12 @@ impl ProvenanceView {
         let sentence_count =
             u64::try_from(sentence_count).map_err(|_| invalid("sentence count is negative"))?;
         let count = sqlx::query(
-            "SELECT COUNT(*) AS row_count, MIN(sentence_id) AS first_id, MAX(sentence_id) AS last_id FROM sentence_provenance",
+            "SELECT (SELECT sentence_id FROM sentence_provenance ORDER BY sentence_id LIMIT 1) AS first_id,
+                    (SELECT sentence_id FROM sentence_provenance ORDER BY sentence_id DESC LIMIT 1) AS last_id",
         )
         .fetch_one(&pool)
         .await
         .map_err(database)?;
-        let row_count: i64 = count.try_get("row_count").map_err(database)?;
-        let row_count = u64::try_from(row_count).map_err(|_| invalid("row count is negative"))?;
-        if row_count != sentence_count {
-            return Err(verification("stored sentence count differs from row count"));
-        }
         let first_id: Option<i64> = count.try_get("first_id").map_err(database)?;
         let last_id: Option<i64> = count.try_get("last_id").map_err(database)?;
         match (sentence_count, first_id, last_id) {
@@ -1322,7 +1318,7 @@ impl ProvenanceView {
         let mut sentence = 0u64;
         let mut last_read: Option<(u64, String)> = None;
         loop {
-            let rows=sqlx::query("SELECT sp.sentence_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN sentence_provenance prev ON prev.sentence_id=sp.sentence_id-1 LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? AND (prev.sentence_id IS NULL OR prev.document_id IS NOT sp.document_id OR prev.division_ids_json IS NOT sp.division_ids_json OR dm.document_id IS NULL OR sp.sentence_id<dm.first_sentence OR sp.sentence_id-dm.first_sentence>=dm.sentence_count) ORDER BY sp.sentence_id LIMIT 1024")
+            let rows=sqlx::query("SELECT sp.sentence_id,prev.sentence_id AS previous_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN sentence_provenance prev ON prev.sentence_id=sp.sentence_id-1 LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? AND (prev.sentence_id IS NULL OR prev.document_id IS NOT sp.document_id OR prev.division_ids_json IS NOT sp.division_ids_json OR dm.document_id IS NULL OR sp.sentence_id<dm.first_sentence OR sp.sentence_id-dm.first_sentence>=dm.sentence_count) ORDER BY sp.sentence_id LIMIT 1024")
                 .bind(sqlite_integer(sentence,"sentence ID")?).fetch_all(&self.pool).await.map_err(database)?;
             let at_end = rows.is_empty();
             let positions = if at_end {
@@ -1334,6 +1330,14 @@ impl ProvenanceView {
                             row.try_get("sentence_id").map_err(database)?,
                             "sentence ID",
                         )?;
+                        // Together with the checked endpoints and unique primary key, this
+                        // proves the stored count without another full sentence-table scan.
+                        let previous: Option<i64> = row.try_get("previous_id").map_err(database)?;
+                        if sentence > 0 && previous.is_none() {
+                            return Err(verification(
+                                "sentence IDs are not contiguous and zero-based",
+                            ));
+                        }
                         validate_document_membership(&row, sentence)?;
                         Ok((
                             sentence,
