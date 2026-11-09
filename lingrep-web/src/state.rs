@@ -237,6 +237,9 @@ pub struct RequestStore {
     /// The count tables bound at startup. Empty unless set via
     /// [`RequestStore::with_frequency`].
     pub frequency: Arc<crate::frequency::FrequencyViews>,
+    /// The reading sidecars bound at startup. Empty unless set via
+    /// [`RequestStore::with_reading_sidecars`].
+    pub reading_sidecars: Arc<crate::document_reader::ReadingSidecars>,
 }
 
 impl std::fmt::Debug for RequestStore {
@@ -313,6 +316,7 @@ impl RequestStore {
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
+            reading_sidecars: Arc::default(),
             context,
         }
     }
@@ -328,6 +332,7 @@ impl RequestStore {
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
+            reading_sidecars: Arc::default(),
             context,
         }
     }
@@ -368,6 +373,7 @@ impl RequestStore {
             default_pattern: Arc::from(""),
             catalogs: Arc::new(crate::catalog_index::CatalogIndex::default()),
             frequency: Arc::default(),
+            reading_sidecars: Arc::default(),
             context,
         }
     }
@@ -386,6 +392,15 @@ impl RequestStore {
     #[must_use]
     pub fn with_frequency(mut self, frequency: Arc<crate::frequency::FrequencyViews>) -> Self {
         self.frequency = frequency;
+        self
+    }
+
+    #[must_use]
+    pub fn with_reading_sidecars(
+        mut self,
+        sidecars: Arc<crate::document_reader::ReadingSidecars>,
+    ) -> Self {
+        self.reading_sidecars = sidecars;
         self
     }
 

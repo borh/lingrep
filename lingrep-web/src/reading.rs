@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::document_reader::Anchoring;
 use crate::provenance_view::ProvenanceField;
 use askama::Template;
 use lingrep_corpus::StoredSentenceAnalysis;
@@ -18,6 +19,28 @@ pub(crate) struct ReadingQuery {
     pub start: Option<u64>,
     pub before: Option<u64>,
     pub paragraph: Option<u64>,
+    pub blocks_before: Option<u32>,
+    pub blocks_from: Option<u32>,
+}
+
+impl ReadingQuery {
+    /// Whether the query names a sentence page rather than the page around
+    /// the selected sentence.
+    pub fn moves_sentences(&self) -> bool {
+        self.start.is_some() || self.before.is_some() || self.paragraph.is_some()
+    }
+
+    /// The rendered blocks the query names: `Some(Ok((true, block)))` for
+    /// the blocks before `block`, `Some(Ok((false, block)))` for the blocks
+    /// from `block` on, and `Some(Err(()))` when it names both.
+    pub fn blocks(&self) -> Option<Result<(bool, u32), ()>> {
+        match (self.blocks_before, self.blocks_from) {
+            (None, None) => None,
+            (Some(block), None) => Some(Ok((true, block))),
+            (None, Some(block)) => Some(Ok((false, block))),
+            (Some(_), Some(_)) => Some(Err(())),
+        }
+    }
 }
 
 pub(crate) fn page_ordinals(
@@ -116,6 +139,7 @@ pub(crate) struct ReadingPage {
     pub sentences: Vec<ReadingSentence>,
     pub previous: Option<u64>,
     pub next: Option<u64>,
+    pub rendered: Option<crate::document_reader::RenderedDocument>,
 }
 
 impl ReadingPage {
@@ -255,6 +279,7 @@ mod tests {
             sentences: Vec::new(),
             previous: None,
             next: None,
+            rendered: None,
         }
     }
 
@@ -330,6 +355,7 @@ mod tests {
                     start: (!backward).then_some(cursor),
                     before: backward.then_some(cursor),
                     paragraph: None,
+                    ..ReadingQuery::default()
                 };
                 let plan = page_ordinals(0..end, 0, &query).unwrap();
                 let mut page = empty_page();
@@ -389,6 +415,7 @@ mod tests {
             start: (kind == 1 || kind == 3).then_some(raw_start),
             before: (kind == 2 || kind == 3).then_some(raw_before),
             paragraph: None,
+            ..ReadingQuery::default()
         };
         let valid = (first..end).contains(&selected)
             && match kind {

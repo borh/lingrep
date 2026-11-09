@@ -179,6 +179,11 @@ let
     (toString table)
   ]) cfg.countTables;
 
+  readingSidecarArgs = lib.concatMap (sidecar: [
+    "--reading-sidecar"
+    (toString sidecar)
+  ]) cfg.readingSidecars;
+
   metadataLabelArgs = lib.concatMap (file: [
     "--metadata-labels"
     (toString file)
@@ -222,7 +227,12 @@ in
         # and lingrep-web's parser would refuse to start. Checking at evaluation
         # prevents activation of a broken generation.
         assertion = lib.all (t: builtins.isString t) (
-          baseArgs ++ seedArgs ++ corpusArgs ++ countTableArgs ++ metadataLabelArgs
+          baseArgs
+          ++ seedArgs
+          ++ corpusArgs
+          ++ countTableArgs
+          ++ readingSidecarArgs
+          ++ metadataLabelArgs
         );
         message =
           "services.lingrep-web: ExecStart argument lists contain nested "
@@ -305,6 +315,7 @@ in
           ++ seedArgs
           ++ corpusArgs
           ++ countTableArgs
+          ++ readingSidecarArgs
           ++ metadataLabelArgs
         );
         User = cfg.user;
@@ -333,6 +344,7 @@ in
         ]
         ++ lib.mapAttrsToList (_: entry: entry.path) cfg.corpora
         ++ map toString cfg.countTables
+        ++ map toString cfg.readingSidecars
         ++ map toString cfg.metadataLabels;
 
         Restart = "on-failure";

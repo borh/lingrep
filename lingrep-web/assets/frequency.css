@@ -403,7 +403,11 @@
 }
 .fq-kwic .kl { display: flex; justify-content: flex-end; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(90deg, transparent, #000 2.5em); mask-image: linear-gradient(90deg, transparent, #000 2.5em); }
 .fq-kwic .kr { overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(270deg, transparent, #000 2.5em); mask-image: linear-gradient(270deg, transparent, #000 2.5em); }
-.fq-kwic .kn { font-weight: 700; color: var(--fq-accent); margin-right: 0.15em; }
+.fq-kwic li[data-sentence] { cursor: pointer; }
+.fq-kwic li[data-sentence]:hover { background: var(--fq-accent-wash); }
+.fq-kwic .kn { padding: 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--fq-accent); margin-right: 0.15em; cursor: pointer; }
+.fq-kwic .kn:hover { text-decoration: underline; }
+.fq-kwic .kn:focus-visible { outline-offset: -2px; }
 .fq-kwic .src { font: 11px/2.6 var(--font-sans); color: var(--fq-soft); text-align: right; white-space: nowrap; }
 
 @media (max-width: 40rem) {

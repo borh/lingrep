@@ -167,11 +167,12 @@ fn os_signal_count() -> watch::Receiver<u32> {
 }
 
 /// The request state `args` and `config` declare, with the default corpus
-/// started and every `--count-table` bound.
+/// started and every `--count-table` and `--reading-sidecar` bound.
 ///
 /// # Errors
 ///
-/// A message naming the label file, count table or corpus that stops startup.
+/// A message naming the label file, count table, reading sidecar or corpus
+/// that stops startup.
 pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
     let labels = crate::metadata_labels::KeyLabels::read(&args.metadata_labels)?;
     let max_active_sessions =
@@ -204,6 +205,10 @@ pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> 
         .start_or_observe()
         .await;
 
+    let reading_sidecars = Arc::new(crate::document_reader::ReadingSidecars::bind(
+        &args.reading_sidecar,
+        &config.corpora,
+    )?);
     let default_pattern = crate::cli::read_default_pattern(&args.patterns);
     let catalogs = std::sync::Arc::new(crate::catalog_index::CatalogIndex::discover(
         &crate::cli::resolve_pattern_root(args),
@@ -223,7 +228,8 @@ pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> 
         RequestStore::with_corpus_set_capacity(config, context, corpus_set, max_active_sessions)
             .with_default_pattern(default_pattern)
             .with_catalogs(catalogs)
-            .with_frequency(frequency);
+            .with_frequency(frequency)
+            .with_reading_sidecars(reading_sidecars);
     Ok(store)
 }
 

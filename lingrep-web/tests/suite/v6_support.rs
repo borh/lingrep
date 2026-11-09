@@ -289,3 +289,76 @@ impl RevisionTestExt for lingrep_web::coordinator::CoordinatorRegistry {
         .expect("test revision admission")
     }
 }
+
+/// A Markdown source tree, the prepared artifact lingrep-web builds from it,
+/// and the reading sidecar `ling corpus render` writes for that artifact.
+pub struct MarkdownFixture {
+    pub directory: tempfile::TempDir,
+    pub _dictionary: lingrep_core::testing::MiniDictionary,
+    pub artifact: PathBuf,
+    pub sidecar: PathBuf,
+}
+
+/// Builds a [`MarkdownFixture`] from `documents`, `(file name, Markdown)`
+/// pairs in file-name order.
+pub async fn markdown_fixture(documents: &[(&str, &str)]) -> MarkdownFixture {
+    use clap::Parser;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("papers");
+    std::fs::create_dir(&root).unwrap();
+    for (name, text) in documents {
+        std::fs::write(root.join(name), text).unwrap();
+    }
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let args = lingrep_web::Args::try_parse_from([
+        "lingrep-web".as_ref(),
+        "--dict-path".as_ref(),
+        dictionary.path().as_os_str(),
+        "--input".as_ref(),
+        root.as_os_str(),
+    ])
+    .unwrap();
+    let config = lingrep_web::serve::config(&args).unwrap();
+    let markdown = config.markdown.clone().recover_conversion_artifacts();
+    let store = lingrep_web::serve::store(&args, config).await.unwrap();
+    let runtime = Arc::clone(&store.corpora.resolve(None).unwrap().runtime);
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            if let Some(ready) = runtime.ready().await {
+                return ready;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let artifact = lingrep_corpus::canonical_artifact_path(
+        &root,
+        ready.artifact.analysis_identity(),
+        lingrep_corpus::TrustClass::LocallyExecuted,
+    );
+    let observation = lingrep_corpus::SourceObservation::new();
+    for (name, text) in documents {
+        observation.begin_source(name).unwrap();
+        observation.update_source_bytes(text.as_bytes()).unwrap();
+        observation.end_source().unwrap();
+    }
+    let sidecar = directory.path().join("papers.reading");
+    lingrep_corpus::ReadingSidecarWriter::new(&ready.artifact, markdown, &sidecar)
+        .unwrap()
+        .write(
+            &observation.finish().unwrap(),
+            |name| std::fs::read(root.join(name)),
+            &lingrep_core::execution::CancellationFlag::new(),
+        )
+        .await
+        .unwrap()
+        .publish()
+        .unwrap();
+    MarkdownFixture {
+        directory,
+        _dictionary: dictionary,
+        artifact,
+        sidecar,
+    }
+}

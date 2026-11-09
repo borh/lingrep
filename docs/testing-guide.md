@@ -163,6 +163,24 @@ available, record the RSS row as unmeasured. Do not substitute another
 utility or derive RSS from the executor estimator. Do not use an eager
 Criterion corpus collector as a full-corpus RSS substitute.
 
+The document reader's comparison with the source rendering is ignored in
+routine tests because it reads a local Markdown corpus. It needs three
+variables: `LINGREP_READER_ARTIFACT`, the corpus's prepared `.lingcorpus`
+artifact; `LINGREP_READER_SIDECAR`, the reading sidecar `ling corpus render`
+wrote for it; and `LINGREP_READER_SOURCE_ROOT`, the Markdown tree it was built
+from. It prints only counts, so a private corpus's text stays out of the
+output:
+
+```bash
+LINGREP_READER_ARTIFACT=corpus.lingcorpus LINGREP_READER_SIDECAR=corpus.reading \
+  LINGREP_READER_SOURCE_ROOT=corpus/ nix develop -c cargo test -p lingrep \
+  --test suite -- document_reader::the_reader_matches_the_source_rendering_on_a_local_corpus \
+  --ignored --exact --nocapture
+```
+
+It passes when every document with a sentence shows the headings and
+paragraphs that rendering its source shows, over every reader page.
+
 ## Writing Tests
 
 ### Prefer the library API

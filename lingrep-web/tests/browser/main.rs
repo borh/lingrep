@@ -6,6 +6,7 @@ mod corpus_context_e2e_test;
 mod frequency_e2e_test;
 mod layout_e2e_test;
 mod query_library_e2e_test;
+mod reader_e2e_test;
 
 async fn chromedriver_url() -> Option<String> {
     let required = std::env::var_os("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_some();

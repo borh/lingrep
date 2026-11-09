@@ -2208,3 +2208,62 @@ lingrep=$(nix build --no-link --print-out-paths .#lingrep)
   --count-table soranoha.collexeme.lingtable \
   --metadata-labels "$lingrep/share/lingrep-web/labels/soranoha-catalog.json"
 ```
+
+Selecting a line of an entry opens its sentence in the document it belongs
+to, in a dialog over the lines, with the matched words marked in the colour of
+the workbench's KWIC keyword. Escape, "Back to the lines" or the browser's
+Back closes the dialog and returns focus to the line, at the scroll position
+the lines had. The address holds the open occurrence as
+`read=SENTENCE.START.END`, and `scope=paragraph` when the reader shows the
+paragraph, so a copied link or a reload reopens the reader. The workbench's
+reader keeps the same `read` and `scope` in its address; a link to it opens
+the reader without the workbench's search scope.
+
+Reading requests from the Frequencies view, `api/read`, run under a permit of
+their own, so they do not wait for a workbench scan or export.
+
+### Rendered documents from reading sidecars
+
+`--reading-sidecar PATH` serves a reading sidecar written by `ling corpus
+render`, so that the document reader shows a Markdown corpus's documents with
+their headings, paragraphs, lists, tables and quotations, as the renderer
+rendered them. The flag is repeatable.
+
+```bash
+ling corpus render works.lingcorpus --source-root works/ \
+  --md-recover-conversion-artifacts --output works.reading
+ling serve --corpus works=works.lingcorpus --pattern-root patterns \
+  --reading-sidecar works.reading
+```
+
+A sidecar binds to a corpus declared by the path of a prepared `.lingcorpus`
+artifact, `--input` or `--corpus NAME=PATH`, whose analysis identity it
+records. It must also record that corpus's source identity and this release's
+renderer revision. A corpus that `lingrep-web` prepares from a source tree
+takes no sidecar; build it with `ling corpus build` and serve the artifact.
+Startup stops with an error naming the sidecar when the sidecar cannot be read
+or does not verify, records another source identity or renderer revision,
+matches no declared corpus, or renders the same corpus as another sidecar:
+
+```text
+--reading-sidecar works.reading: matches no served corpus: it renders analysis identity ff18f3e3…, and corpus "works" has analysis identity 0b9d41c7…. A corpus prepared again with another analysis needs `ling corpus render` again
+--reading-sidecar a.reading and --reading-sidecar b.reading both render corpus "works"
+```
+
+Preparing a corpus again with a release whose Markdown reader or analyzer
+differs gives it another analysis identity, so render its sidecar again.
+
+Startup checks each sidecar's records digest and decodes every record, which
+reads the whole sidecar once.
+
+The reader shows the rendered document in its Document scope, which a line
+of the Frequencies view and the workbench's "Open document" open, under the
+same title, scope controls and document metadata as the stored-sentence
+reader. It loads about 64 KiB of rendered HTML around the occurrence, with
+buttons that load the text before and after. A note says when some or all of
+the occurrence's characters are not on the rendered page, such as table pipes
+or footnote markers, and when the occurrence is not marked because its
+sentence exceeds the reader's 128 KiB limit. Under a workbench search scope,
+the text of excluded sentences is grey with a dashed underline. The
+Paragraph scope still shows the stored sentences. A corpus without a sidecar,
+including a plaintext corpus, shows its stored sentences as one run.

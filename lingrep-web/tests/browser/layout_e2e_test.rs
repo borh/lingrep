@@ -526,6 +526,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         captures: Vec::new(),
         graph_bindings: Vec::new(),
         provenance: None,
+        read: "0.0.1".into(),
     }
     .render()
     .unwrap();
@@ -562,6 +563,13 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         .click()
         .await?;
     wait_for_selector(&driver, "dialog[open] [data-reading-page]").await?;
+    let hash = || async {
+        driver
+            .execute("return location.hash", Vec::new())
+            .await
+            .map(|value| value.json().clone())
+    };
+    assert_eq!(hash().await?, json!("#read=0.0.1&scope=document"));
     driver
         .find(By::Css(".reading-toolbar [hx-get$='/paragraph']"))
         .await?
@@ -572,6 +580,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         ".reading-toolbar [hx-get$='/paragraph'][aria-pressed='true']",
     )
     .await?;
+    assert_eq!(hash().await?, json!("#read=0.0.1&scope=paragraph"));
     driver
         .find(By::Css(".reading-toolbar [hx-get$='/document']"))
         .await?
@@ -649,6 +658,110 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         .await?;
     let closed: bool = driver.execute("return !document.querySelector('.reading-dialog').open&&document.activeElement.hasAttribute('data-reading-open')", vec![]).await?.convert()?;
     assert!(closed, "closing returns focus to the reading control");
+    crate::frequency_e2e_test::wait_for(
+        &driver,
+        "return location.hash === ''",
+        "closing takes the reader out of the address",
+    )
+    .await?;
+
+    // The browser's Back closes the reader.
+    driver
+        .find(By::Css("[data-reading-open][hx-get$='/document']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "dialog[open] [data-reading-page] mark").await?;
+    driver.back().await?;
+    crate::frequency_e2e_test::wait_for(
+        &driver,
+        "return !document.querySelector('.reading-dialog').open && location.hash === ''",
+        "Back closes the reader",
+    )
+    .await?;
+
+    // A reader reopened before its close event, or before the Back that the
+    // close starts, stays open and in the address, and Back closes it.
+    for opening in [
+        "dialog.close(); open();",
+        "dialog.addEventListener('close', open, {once: true}); dialog.close();",
+    ] {
+        driver
+            .find(By::Css("[data-reading-open][hx-get$='/document']"))
+            .await?
+            .click()
+            .await?;
+        wait_for_selector(&driver, "dialog[open] [data-reading-page] mark").await?;
+        driver
+            .execute(
+                format!(
+                    "const dialog = document.querySelector('.hit-detail .reading-dialog'); \
+                     const open = () => document.querySelector(\"[data-reading-open][hx-get$='/document']\").click(); {opening}"
+                ),
+                vec![],
+            )
+            .await?;
+        // Long enough for a pending Back to be traversed.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let reopened: String = driver
+            .execute(
+                "return JSON.stringify([document.querySelector('.hit-detail .reading-dialog').open, location.hash])",
+                vec![],
+            )
+            .await?
+            .convert()?;
+        assert_eq!(
+            reopened, r##"[true,"#read=0.0.1&scope=document"]"##,
+            "{opening}"
+        );
+        driver.back().await?;
+        crate::frequency_e2e_test::wait_for(
+            &driver,
+            "return !document.querySelector('.reading-dialog').open && location.hash === ''",
+            "Back closes the reopened reader",
+        )
+        .await?;
+    }
+
+    // An address that names a hit opens its reader on load and on reload.
+    driver
+        .goto(format!(
+            "{}/reader-fixture#read=0.0.1&scope=document",
+            fixture.address
+        ))
+        .await?;
+    wait_for_selector(
+        &driver,
+        "[data-addressed-reader][open] [data-reading-page] mark",
+    )
+    .await?;
+    driver.refresh().await?;
+    wait_for_selector(
+        &driver,
+        "[data-addressed-reader][open] [data-reading-page] mark",
+    )
+    .await?;
+    assert_eq!(
+        driver
+            .find(By::Css("[data-addressed-reader] mark"))
+            .await?
+            .text()
+            .await?,
+        "HIT"
+    );
+    driver
+        .find(By::Css(
+            "[data-addressed-reader] [data-i18n-aria-label='reading.close']",
+        ))
+        .await?
+        .click()
+        .await?;
+    crate::frequency_e2e_test::wait_for(
+        &driver,
+        "return !document.querySelector('[data-addressed-reader]').open && location.hash === ''",
+        "closing the addressed reader takes it out of the address",
+    )
+    .await?;
     driver.quit().await
 }
 
@@ -3917,6 +4030,7 @@ fn provenance_fixture_html() -> String {
                 sentence: if ordinal == 0 { metadata_fields(Some(r#"{"speaker":"sentence","<img src=x onerror=alert(1)>":"<script>window.injected=true</script>"}"#)) } else { Box::new([]) },
                 sections: Box::new([]),
             }),
+            read: "0.0.1".into(),
         }.render().unwrap());
     }
     html.push_str("</body></html>");

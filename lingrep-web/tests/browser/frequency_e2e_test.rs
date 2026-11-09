@@ -29,7 +29,7 @@ mod support;
 
 const CATALOG: &str = "pattern noun := [upos=NOUN].\npattern verb := [upos=VERB].\n";
 
-async fn record_errors(
+pub(crate) async fn record_errors(
     statuses: Arc<Mutex<Vec<String>>>,
     request: Request,
     next: Next,
@@ -78,7 +78,7 @@ fn metadata() -> Vec<Metadata> {
         .collect()
 }
 
-fn table_key(artifact: &std::path::Path, catalog: &str) -> CountTableKey {
+pub(crate) fn table_key(artifact: &std::path::Path, catalog: &str) -> CountTableKey {
     let opened = lingrep_corpus::CorpusArtifact::open(artifact).unwrap();
     CountTableKey {
         analysis_identity: lingrep_corpus::format_identity(opened.analysis_identity().as_bytes()),
@@ -128,7 +128,11 @@ fn write_table(artifact: &std::path::Path, destination: &std::path::Path, docume
         .unwrap();
 }
 
-async fn wait_for(driver: &WebDriver, script: &str, what: &str) -> WebDriverResult<Value> {
+pub(crate) async fn wait_for(
+    driver: &WebDriver,
+    script: &str,
+    what: &str,
+) -> WebDriverResult<Value> {
     for _ in 0..500 {
         let value = driver.execute(script, Vec::new()).await?.json().clone();
         if !value.is_null() && value != json!(false) {
@@ -149,7 +153,7 @@ async fn open(driver: &WebDriver, url: &str, settled: &str) -> WebDriverResult<(
 const ROWS: &str = "return document.querySelectorAll('table.freq tbody tr').length > 0";
 const STATE: &str = "return document.querySelector('[data-fq-state]').textContent.trim() || null";
 
-async fn assert_no_page_errors(driver: &WebDriver) -> WebDriverResult<()> {
+pub(crate) async fn assert_no_page_errors(driver: &WebDriver) -> WebDriverResult<()> {
     let errors = driver
         .execute("return window.__pageErrors || []", Vec::new())
         .await?
@@ -225,7 +229,7 @@ fn assert_label_invariants(labels: &Value) {
     }
 }
 
-async fn driver() -> WebDriverResult<Option<WebDriver>> {
+pub(crate) async fn driver() -> WebDriverResult<Option<WebDriver>> {
     let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(None);
     };
@@ -984,7 +988,7 @@ const COUNT_FETCHES: &str = "window.__fetches = {started: 0, settled: 0, profile
 
 const FETCHES_SETTLED: &str = "return __fetches.started === __fetches.settled";
 
-async fn two_frames(driver: &WebDriver) -> WebDriverResult<()> {
+pub(crate) async fn two_frames(driver: &WebDriver) -> WebDriverResult<()> {
     driver
         .execute_async(
             "const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(true)));",

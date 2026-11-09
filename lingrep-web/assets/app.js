@@ -283,6 +283,61 @@ if (typeof document !== "undefined") {
             ?.requestSubmit();
     });
 
+    // Highlight and exclusion ranges are `[container, from, to]`: UTF-16
+    // offsets into the text content of the element whose `data-c` is
+    // `container`.
+    const wrapRanges = (scope, ranges, make) => {
+        const wrapped = [];
+        for (const [container, from, to] of ranges) {
+            const element = scope.querySelector(`[data-c="${container}"]`);
+            if (!element) continue;
+            const pieces = [];
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(), at = 0; node && at < to; node = walker.nextNode()) {
+                const start = Math.max(from, at), end = Math.min(to, at + node.data.length);
+                if (start < end) pieces.push([node, start - at, end - at]);
+                at += node.data.length;
+            }
+            for (const [node, start, end] of pieces) {
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, end);
+                const element = make();
+                range.surroundContents(element);
+                wrapped.push(element);
+            }
+        }
+        return wrapped;
+    };
+    // Marks a rendered document's occurrence and centres it in the reader.
+    const markOccurrence = (reader) => {
+        reader.setAttribute("data-marked", "");
+        const marks = wrapRanges(reader, JSON.parse(reader.dataset.highlight || "[]"), () => document.createElement("mark"));
+        let scroller = reader.parentElement;
+        while (scroller && !["auto", "scroll"].includes(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+        if (!marks.length || !scroller) return;
+        const box = marks[0].getBoundingClientRect(), view = scroller.getBoundingClientRect();
+        scroller.scrollTop += box.top - view.top - (view.height - box.height) / 2;
+    };
+    const markExcluded = (page) => {
+        page.setAttribute("data-marked", "");
+        wrapRanges(page, JSON.parse(page.dataset.excluded || "[]"), () =>
+            Object.assign(document.createElement("span"), { className: "doc-reader-excluded" }));
+    };
+    for (const name of ["htmx:responseError", "htmx:sendError"]) {
+        document.body.addEventListener(name, (event) => {
+            const more = event.detail.elt.closest?.(".doc-reader-more");
+            if (!more) return;
+            more.setAttribute("data-failed", "");
+            more.setAttribute("data-i18n", "reading.more_failed");
+            more.textContent = t("reading.more_failed");
+        });
+    }
+    document.body.addEventListener("htmx:afterSwap", () => {
+        for (const page of document.querySelectorAll(".doc-reader-page[data-excluded]:not([data-marked])")) markExcluded(page);
+        for (const reader of document.querySelectorAll("[data-doc-reader]:not([data-marked])")) markOccurrence(reader);
+    });
+
     // Fire the queued rerun after each corpus-context poll swaps in a new partial.
     // The attribute is removed before submitting, so this is one-shot even though
     // the poll keeps running.

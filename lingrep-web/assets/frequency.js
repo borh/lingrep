@@ -4,7 +4,7 @@ const MANY = 30;
 const PAGE = 100;
 const LINES = 50;
 const REST = 120;
-const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "entry"];
+const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "entry", "read", "scope"];
 
 const NUM = { en: new Intl.NumberFormat("en-US"), ja: new Intl.NumberFormat("ja-JP") };
 const esc = (text) =>
@@ -65,6 +65,9 @@ const S = {
       unknown_entry: () => "This entry does not occur in the table.",
     },
     back: (p, c) => `Frequencies of <b>${p}</b> in ${c}`,
+    readerTitle: "Occurrence in its document",
+    readerReturn: "Back to the lines",
+    readerLoading: "Loading the document…",
     entryFigures: (o, d) => `${o} ${o === "1" ? "occurrence" : "occurrences"} in ${d} ${d === "1" ? "document" : "documents"}`,
     readout: (name, o, d) => `${name}: ${S.en.entryFigures(o, d)}`,
     noValue: "no value",
@@ -136,6 +139,9 @@ const S = {
       unknown_entry: () => "この項目は件数表にありません。",
     },
     back: (p, c) => `${c}における<b>${p}</b>の頻度`,
+    readerTitle: "文書中の用例",
+    readerReturn: "用例一覧に戻る",
+    readerLoading: "文書を読み込んでいます…",
     entryFigures: (o, d) => `文書${d}件に${o}件`,
     readout: (name, o, d) => `${name}：文書${d}件に${o}件`,
     noValue: "値なし",
@@ -158,7 +164,7 @@ const num = (n) => (NUM[currentLocale()] ?? NUM.en).format(Number(n));
 
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
-  const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", entry: h.get("entry"), bad: false };
+  const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", entry: h.get("entry"), read: h.get("read"), scope: h.get("scope"), bad: false };
   if (h.get("w")) {
     try {
       const w = JSON.parse(h.get("w"));
@@ -680,7 +686,7 @@ export function mountFrequency(root) {
     if (openPop && !pop.contains(e.target) && !e.target.closest(".pick, .add")) closePop();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || root.querySelector("[data-fq-reader]").open) return;
     if (openPop) closePop();
     else if (entering() && !editing && !e.target.closest?.("input, textarea, select")) leaveEntry();
   });
@@ -744,8 +750,8 @@ export function mountFrequency(root) {
   const chartHtml = (c) =>
     `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption><p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(L().asTable)}</summary>${chartTable(c)}</details></figure>`;
 
-  const lineHtml = (l) =>
-    `<li><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><b class="kn">${esc(l.node)}</b>${esc(l.right)}</span><span class="src">${esc(L().document(l.document))}</span></li>`;
+  const lineHtml = (l, i) =>
+    `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src">${esc(L().document(l.document))}</span></li>`;
   function linesHtml(st, previewing) {
     const t = L();
     return `<h3>${esc(t.lines)} <span class="count">${esc(t.linesShown(num(st.lines.length), num(st.total)))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t.empty)}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}>${esc(t.more(LINES))}</button>`;
@@ -947,6 +953,69 @@ export function mountFrequency(root) {
     const key = e.target.closest?.(".fq-chart")?.dataset.key;
     if (key) e.target.open ? opened.add(key) : opened.delete(key);
   }, true);
+  // The reader shows a line's occurrence in its document. `read` names the
+  // occurrence as `sentence.start.end` and `scope` its paragraph scope, so
+  // the address reopens the reader; opening from a line adds a history entry,
+  // which Back removes. The lines stay drawn behind the modal dialog, which
+  // keeps their scroll and pages; closing it focuses the line it was opened
+  // from.
+  const readerEl = root.querySelector("[data-fq-reader]"), readerBody = readerEl.querySelector(".reading-body");
+  // `readerEntry` is "pushed" while the current history entry is the one
+  // opening the reader added, and "popping" from a close until the Back that
+  // removes that entry is traversed; a line opened meanwhile waits in `queued`.
+  let readerEntry = null, queued = null, shownLine = null;
+  function showReader() {
+    const found = /^(\d+)\.(\d+)\.(\d+)$/.exec(s.read ?? "");
+    if (!found || !s.corpus) return;
+    shownLine = found;
+    const t = L();
+    readerEl.querySelector("[data-fq-reader-title]").textContent = t.readerTitle;
+    readerEl.querySelector("[data-fq-return]").textContent = `← ${t.readerReturn}`;
+    readerBody.innerHTML = `<p>${esc(t.readerLoading)}</p>`;
+    if (!readerEl.open) readerEl.showModal();
+    const [, sentence, start, end] = found, scope = s.scope === "paragraph" ? "paragraph" : "document";
+    htmx.trigger(readerBody, "htmx:abort");
+    htmx.ajax("GET", `api/read/${encodeURIComponent(s.corpus)}/${sentence}/${start}/${end}/${scope}`, { source: readerBody, target: readerBody, swap: "innerHTML" });
+  }
+  function openReader(line) {
+    if (readerEntry === "popping") {
+      queued = line;
+      return;
+    }
+    const { sentence, start, end } = line.dataset;
+    s.read = `${sentence}.${start}.${end}`;
+    s.scope = null;
+    const address = `#${new URLSearchParams(stateEntries(s))}`;
+    if (readerEntry === "pushed") history.replaceState(null, "", address);
+    else history.pushState(null, "", address);
+    readerEntry = "pushed";
+    showReader();
+  }
+  readerBody.addEventListener("htmx:beforeRequest", (e) => {
+    const scope = /\/(paragraph|document)(?:\?|$)/.exec(e.detail.pathInfo?.requestPath ?? "")?.[1];
+    if (!scope || !s.read) return;
+    s.scope = scope === "paragraph" ? scope : null;
+    history.replaceState(history.state, "", `#${new URLSearchParams(stateEntries(s))}`);
+  });
+  readerEl.querySelector("[data-fq-return]").addEventListener("click", () => readerEl.close());
+  readerEl.addEventListener("close", () => {
+    if (readerEl.open) return;
+    htmx.trigger(readerBody, "htmx:abort");
+    readerBody.replaceChildren();
+    if (s.read != null) {
+      s.read = null;
+      s.scope = null;
+      if (readerEntry === "pushed") {
+        readerEntry = "popping";
+        history.back();
+      } else history.replaceState(history.state, "", `#${new URLSearchParams(stateEntries(s))}`);
+    }
+    if (!shownLine) return;
+    const [, sentence, start, end] = shownLine;
+    shownLine = null;
+    entryEl.querySelector(`.fq-kwic li[data-sentence="${sentence}"][data-start="${start}"][data-end="${end}"] .kn`)?.focus({ preventScroll: true });
+  });
+
   function leaveEntry() {
     lastEntry = s.entry;
     set({ entry: null });
@@ -968,6 +1037,11 @@ export function mountFrequency(root) {
       } finally {
         more.disabled = false;
       }
+      return;
+    }
+    const line = e.target.closest(".fq-kwic li[data-sentence]");
+    if (line && !entryEl.classList.contains("previewing") && getSelection().isCollapsed) {
+      openReader(line);
       return;
     }
     const b = pointed(e);
@@ -1063,11 +1137,28 @@ export function mountFrequency(root) {
     await entryLoad;
   }
 
-  addEventListener("popstate", () => {
-    s = readState(location.hash);
+  addEventListener("popstate", async () => {
+    if (readerEntry === "popping") {
+      readerEntry = null;
+      const line = queued;
+      queued = null;
+      if (line) openReader(line);
+      return;
+    }
+    readerEntry = null;
+    const next = readState(location.hash);
+    const view = (state) => JSON.stringify(stateEntries({ ...state, read: null, scope: null }));
+    const reread = view(next) === view(s);
+    s = next;
+    if (readerEl.open && s.read == null) readerEl.close();
+    if (reread) {
+      if (s.read != null) showReader();
+      return;
+    }
     closePop();
     editing = false;
-    load();
+    await load();
+    if (s.read != null) showReader();
   });
   onLocaleChange(() => {
     renderAll();
@@ -1083,6 +1174,7 @@ export function mountFrequency(root) {
   return (async () => {
     meta = await api("frequency/meta", {});
     await load();
+    if (s.read != null) showReader();
   })();
 }
 

@@ -158,6 +158,39 @@ The web path allows 1 GiB of temporary aggregation, a 16 MiB response and
 120 seconds of execution. Use `ling summarize` directly for larger runs.
 Saved count tables are unchanged by these edits.
 
+## Rendered documents
+
+`services.lingrep-web.readingSidecars` lists reading sidecars written by
+`ling corpus render`; the module passes each as `--reading-sidecar` and mounts
+it read-only. The reader then shows the documents of the corpus a sidecar was
+rendered from with their headings and paragraphs. Each sidecar binds to a
+prepared `.lingcorpus` corpus in `corpora` by the identities it records, and
+records the renderer revision, so render it with the `--md-*` options the
+corpus was built with and with the `ling` from the same lingrep release as the
+unit's `lingrep-web`:
+
+```nix
+services.lingrep-web = {
+  corpora.papers.path = "/srv/corpora/papers.lingcorpus";
+  readingSidecars = [ "/srv/reading/papers.reading" ];
+};
+```
+
+```bash
+ling corpus render /srv/corpora/papers.lingcorpus --source-root /srv/papers \
+  --md-recover-conversion-artifacts --output /srv/reading/papers.reading
+```
+
+A sidecar that does not bind stops the unit at startup with an error naming
+it. The binding rules are in
+[the CLI usage guide](cli-usage-guide.md#rendered-documents-from-reading-sidecars).
+
+`api/read`, which the Frequencies view uses to open a line, returns any
+sentence of a served corpus, and the document text around it, by its ordinal,
+with or without a sidecar. Anyone who can reach the server can therefore read
+every document of every served corpus, so put the same access control in
+front of the unit as the corpora require.
+
 ## Caddy vhost
 
 ```caddyfile

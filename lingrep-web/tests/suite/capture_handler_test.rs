@@ -321,6 +321,7 @@ fn outer_capture_fragment(site: OuterCaptureSite, payload: &str) -> String {
         captures: Vec::new(),
         graph_bindings: Vec::new(),
         provenance: None,
+        read: "0.0.1".into(),
     }
     .render()
     .unwrap()
@@ -358,6 +359,7 @@ fn hit_detail_renders_typed_graph_bindings() {
             },
         ],
         provenance: None,
+        read: "0.0.1".into(),
     }
     .render()
     .unwrap();

@@ -106,6 +106,10 @@ async fn hit_detail(
         &reference.graph_bindings,
         provenance_view,
         overlaps,
+        format!(
+            "{}.{}.{}",
+            reference.sentence_index, reference.span.start, reference.span.end
+        ),
     )
 }
 
@@ -118,6 +122,7 @@ fn render_hit_detail(
     graph_bindings: &[GraphBinding],
     provenance: Option<HitProvenance>,
     overlaps: Vec<crate::inspection::OverlapCandidate>,
+    read: String,
 ) -> Response {
     let captures = inspection
         .captures
@@ -169,6 +174,7 @@ fn render_hit_detail(
         captures,
         graph_bindings: graph_bindings.iter().map(graph_binding_data).collect(),
         provenance,
+        read,
     };
     super::render_or_500(fragment)
 }

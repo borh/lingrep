@@ -1473,7 +1473,103 @@ function orientDendrogram(view, orientation) {
   else geometry.removeAttribute("transform");
 }
 
+// The open reader's hit, `read=sentence.start.end` with `scope`, is in the
+// address hash, so that Back closes the reader and the address reopens it.
+// `readerEntry` is "pushed" while the current history entry is the one opening
+// a reader added, and "popping" from a close until the Back that removes that
+// entry is traversed; an address opened meanwhile waits in `queued`.
+let readerEntry = null, queued = null;
+
+function addressReader(url) {
+  if (readerEntry === "popping") queued = url;
+  else {
+    if (readerEntry === "pushed") history.replaceState(history.state, "", url);
+    else history.pushState(history.state, "", url);
+    readerEntry = "pushed";
+  }
+}
+
+export function readerAddress(hash) {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const found = /^(\d+)\.(\d+)\.(\d+)$/.exec(params.get("read") ?? "");
+  if (!found) return null;
+  const [, sentence, start, end] = found;
+  return { read: found[0], sentence, start, end, scope: params.get("scope") === "paragraph" ? "paragraph" : "document" };
+}
+
+function readerUrl(read, scope) {
+  const hash = read ? `#${new URLSearchParams({ read, scope })}` : "";
+  return `${location.pathname}${location.search}${hash}`;
+}
+
+const WORKBENCH_READER = ".hit-detail .reading-dialog, [data-addressed-reader]";
+const onWorkbench = () => !!document.querySelector("form[data-corpus-search], .hit-detail");
+
+function openAddressedReader(address) {
+  let dialog = document.querySelector("[data-addressed-reader]");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.className = "reading-dialog reading-dialog-document";
+    dialog.setAttribute("data-addressed-reader", "");
+    dialog.setAttribute("aria-labelledby", "addressed-reader-title");
+    dialog.innerHTML = `<header class="reading-dialog-header"><h2 id="addressed-reader-title" data-i18n="reading.title"></h2><form method="dialog"><button type="submit" class="btn btn-secondary" data-i18n-aria-label="reading.close"><span aria-hidden="true">×</span></button></form></header><div id="document-reader-body" class="reading-body" aria-live="polite"></div>`;
+    dialog.querySelector("h2").textContent = t("reading.title");
+    dialog.querySelector("button").setAttribute("aria-label", t("reading.close"));
+    document.body.append(dialog);
+  }
+  const body = dialog.querySelector(".reading-body");
+  body.textContent = t("reading.loading");
+  if (!dialog.open) dialog.showModal();
+  const corpus = document.querySelector("form[data-corpus-search] input[name=corpus]")?.value || "default";
+  htmx.trigger(body, "htmx:abort");
+  htmx.ajax("GET", `api/read/${encodeURIComponent(corpus)}/${address.sentence}/${address.start}/${address.end}/${address.scope}`, { source: body, target: body, swap: "innerHTML" });
+}
+
 if (typeof document !== "undefined") {
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    if (!event.detail.elt.closest?.(WORKBENCH_READER)) return;
+    const scope = /\/(paragraph|document)(?:\?|$)/.exec(event.detail.pathInfo?.requestPath ?? "")?.[1];
+    const address = readerAddress(location.hash);
+    if (scope && address) history.replaceState(history.state, "", readerUrl(address.read, scope));
+  });
+  // `close` does not bubble, so this listens in the capture phase.
+  document.addEventListener("close", (event) => {
+    if (!event.target.matches?.(WORKBENCH_READER) || event.target.open) return;
+    if (event.target.matches("[data-addressed-reader]")) {
+      const body = event.target.querySelector(".reading-body");
+      htmx.trigger(body, "htmx:abort");
+      body.replaceChildren();
+    }
+    if (readerAddress(location.hash)) {
+      if (readerEntry === "pushed") {
+        readerEntry = "popping";
+        history.back();
+      } else history.replaceState(history.state, "", readerUrl(null));
+    }
+  }, true);
+  addEventListener("popstate", () => {
+    if (!onWorkbench()) return;
+    if (readerEntry === "popping") {
+      readerEntry = null;
+      const url = queued;
+      queued = null;
+      if (url) addressReader(url);
+      return;
+    }
+    readerEntry = null;
+    const address = readerAddress(location.hash);
+    const open = [...document.querySelectorAll(WORKBENCH_READER)].find((dialog) => dialog.open);
+    if (!address) {
+      open?.close();
+    } else if (!open) openAddressedReader(address);
+  });
+  const opening = () => {
+    const address = readerAddress(location.hash);
+    if (address && onWorkbench()) openAddressedReader(address);
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", opening);
+  else opening();
+
   // Locale flip: re-render the strings this module owns (pager, filter
   // status, clear-filter chips, controller-driven inspector titles).
   onLocaleChange(() => {
@@ -1598,7 +1694,11 @@ if (typeof document !== "undefined") {
     const reading = event.target.closest("[data-reading-open]");
     if (reading) {
       const dialog = reading.closest(".hit-detail")?.querySelector(".reading-dialog");
-      if (dialog && !dialog.open) dialog.showModal();
+      if (dialog && !dialog.open) {
+        dialog.showModal();
+        const scope = reading.getAttribute("hx-get")?.endsWith("/paragraph") ? "paragraph" : "document";
+        addressReader(readerUrl(reading.dataset.read, scope));
+      }
       return;
     }
     const tab = event.target.closest("[data-detail-tab]");

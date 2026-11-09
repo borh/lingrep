@@ -726,6 +726,19 @@ fn read_u64s(path: &Path, count: u64) -> Result<Vec<u64>, ReadingSidecarError> {
         .collect())
 }
 
+fn read_header(path: &Path) -> Result<Header, ReadingSidecarError> {
+    let header_bytes = fs::read(path.join(HEADER))?;
+    let version: HeaderVersion = serde_json::from_slice(&header_bytes)?;
+    if version.format != READING_SIDECAR_FORMAT || version.version != READING_SIDECAR_VERSION {
+        return Err(ReadingSidecarError::UnsupportedFormat {
+            path: path.to_path_buf(),
+            found: version.format,
+            version: version.version,
+        });
+    }
+    Ok(serde_json::from_slice(&header_bytes)?)
+}
+
 fn ascending(values: &[u64], last: u64) -> bool {
     values.first() == Some(&0)
         && values.last() == Some(&last)
@@ -866,16 +879,7 @@ impl ReadingSidecar {
     /// `expected`. Checks the format version and the index files; the
     /// records are checked by [`Self::verify`].
     pub fn open(path: &Path, expected: &ReadingSidecarKey) -> Result<Self, ReadingSidecarError> {
-        let header_bytes = fs::read(path.join(HEADER))?;
-        let version: HeaderVersion = serde_json::from_slice(&header_bytes)?;
-        if version.format != READING_SIDECAR_FORMAT || version.version != READING_SIDECAR_VERSION {
-            return Err(ReadingSidecarError::UnsupportedFormat {
-                path: path.to_path_buf(),
-                found: version.format,
-                version: version.version,
-            });
-        }
-        let header: Header = serde_json::from_slice(&header_bytes)?;
+        let header = read_header(path)?;
         for (field, expected, found) in [
             (
                 "analysis identity",
@@ -937,6 +941,12 @@ impl ReadingSidecar {
             document_sentences,
             records,
         })
+    }
+
+    /// The key of the sidecar at `path`, read from its header without opening
+    /// its index or records.
+    pub fn read_key(path: &Path) -> Result<ReadingSidecarKey, ReadingSidecarError> {
+        Ok(read_header(path)?.key)
     }
 
     pub fn path(&self) -> &Path {
@@ -1056,6 +1066,45 @@ impl ReadingSidecar {
             }
         };
         let record = self.record(index)?;
+        Ok(self.page_of(&record, index, request, max_html_bytes)?.0)
+    }
+
+    /// The page around `sentence`, as [`Self::page`] gives it, and where the
+    /// characters `chars` of its stored text are rendered on that page. The
+    /// anchor is not exact when some of those characters are rendered on no
+    /// block of the page.
+    pub fn page_at(
+        &self,
+        sentence: SentenceId,
+        chars: Range<u32>,
+        max_html_bytes: usize,
+    ) -> Result<(ReadingPage, OccurrenceAnchor), ReadingSidecarError> {
+        let index = self.document_of(sentence)?;
+        let record = self.record(index)?;
+        let (page, containers) = self.page_of(
+            &record,
+            index,
+            PageRequest::Around(sentence),
+            max_html_bytes,
+        )?;
+        let mut occurrence = self.occurrence(&record, index, sentence, &chars);
+        let ranges = occurrence.ranges.len();
+        occurrence
+            .ranges
+            .retain(|range| containers.binary_search(&range.container).is_ok());
+        occurrence.exact &= occurrence.ranges.len() == ranges;
+        Ok((page, occurrence))
+    }
+
+    /// The page `request` selects from the document `record`, and the
+    /// containers of its blocks in ascending order.
+    fn page_of(
+        &self,
+        record: &DocumentRecord,
+        index: usize,
+        request: PageRequest,
+        max_html_bytes: usize,
+    ) -> Result<(ReadingPage, Vec<u32>), ReadingSidecarError> {
         let first_sentence = self.document_sentences[index];
         let selection = match request {
             PageRequest::Around(sentence) => {
@@ -1078,10 +1127,10 @@ impl ReadingSidecar {
         let costs: Vec<usize> = record
             .blocks
             .iter()
-            .map(|block| block_cost(&record, block))
+            .map(|block| block_cost(record, block))
             .collect();
         let blocks = select_blocks(&costs, selection, max_html_bytes);
-        let html = assemble(&record, blocks.clone());
+        let html = assemble(record, blocks.clone());
         let containers: Vec<u32> = (0..record.container_blocks.len() as u32)
             .filter(|container| {
                 blocks.contains(&(record.container_blocks[*container as usize] as usize))
@@ -1103,7 +1152,7 @@ impl ReadingSidecar {
             })
             .collect();
         let document = DocumentId::new(index as u64);
-        Ok(ReadingPage {
+        let page = ReadingPage {
             document,
             previous: (blocks.start > 0)
                 .then_some(PageRequest::Before(document, blocks.start as u32)),
@@ -1111,7 +1160,8 @@ impl ReadingSidecar {
             blocks: blocks.start as u32..blocks.end as u32,
             html,
             anchors,
-        })
+        };
+        Ok((page, containers))
     }
 
     /// Where the characters `chars` of `sentence`'s stored text are rendered.
@@ -1122,24 +1172,40 @@ impl ReadingSidecar {
     ) -> Result<OccurrenceAnchor, ReadingSidecarError> {
         let index = self.document_of(sentence)?;
         let record = self.record(index)?;
+        Ok(self.occurrence(&record, index, sentence, &chars))
+    }
+
+    fn occurrence(
+        &self,
+        record: &DocumentRecord,
+        index: usize,
+        sentence: SentenceId,
+        chars: &Range<u32>,
+    ) -> OccurrenceAnchor {
         let local = (sentence.get() - self.document_sentences[index]) as usize;
         let stored = &record.sentences[local];
-        let mapped = covered(&stored.segments, &chars);
-        Ok(OccurrenceAnchor {
+        let mapped = covered(&stored.segments, chars);
+        OccurrenceAnchor {
             document: DocumentId::new(index as u64),
             block: stored.block,
-            ranges: highlight(&stored.segments, &chars),
+            ranges: highlight(&stored.segments, chars),
             exact: mapped == chars.end.saturating_sub(chars.start),
-        })
+        }
+    }
+
+    /// Checks the records digest; reads the whole records file once.
+    pub fn verify_digest(&self) -> Result<(), ReadingSidecarError> {
+        let digest = blake3::hash(self.records.as_deref().unwrap_or_default());
+        if digest.to_hex().as_str() != self.header.records_blake3 {
+            return Err(corrupt("records digest differs from the header"));
+        }
+        Ok(())
     }
 
     /// Checks the records digest and decodes every record; reads the whole
     /// sidecar.
     pub fn verify(&self) -> Result<(), ReadingSidecarError> {
-        let digest = blake3::hash(self.records.as_deref().unwrap_or_default());
-        if digest.to_hex().as_str() != self.header.records_blake3 {
-            return Err(corrupt("records digest differs from the header"));
-        }
+        self.verify_digest()?;
         for index in 0..self.header.documents as usize {
             self.record(index)?;
         }
@@ -1337,6 +1403,40 @@ mod tests {
         }
         assert!(pages > 20);
         assert_eq!(html, assemble(&record, 0..100));
+    }
+
+    #[test]
+    fn an_occurrence_opened_with_its_page_keeps_only_the_ranges_the_page_shows() {
+        let mut record = paged_record(3);
+        record.sentences[1].segments = vec![Segment(0, 1, 1, 0, 1), Segment(1, 1, 2, 0, 1)];
+        let frame =
+            zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
+        let (_directory, sidecar) = record_fixture(&frame, 3);
+        let sentence = SentenceId::new(1);
+        let (page, occurrence) = sidecar.page_at(sentence, 0..2, 1).expect("page");
+        assert_eq!(
+            page,
+            sidecar
+                .page(PageRequest::Around(sentence), 1)
+                .expect("page")
+        );
+        assert_eq!(page.blocks, 1..2);
+        assert_eq!(
+            occurrence,
+            OccurrenceAnchor {
+                document: DocumentId::new(0),
+                block: 1,
+                ranges: vec![HighlightRange {
+                    container: 1,
+                    utf16_start: 0,
+                    utf16_end: 1
+                }],
+                exact: false,
+            }
+        );
+        let (_, whole) = sidecar.page_at(sentence, 0..2, 1024).expect("page");
+        assert!(whole.exact);
+        assert_eq!(whole.ranges.len(), 2);
     }
 
     #[test]

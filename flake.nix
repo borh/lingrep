@@ -937,6 +937,7 @@
               inherit pkgs;
               package = self'.packages.lingrep-web;
               ling = self'.packages.lingrep;
+              dictionary = vibratoDictCwj;
             };
 
             # The corpus link naming rule, by evaluation rather than by boot,

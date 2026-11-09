@@ -530,9 +530,13 @@ fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
     }
 }
 
+/// Document reads that may run at once, each bounded by the reading limits.
+const READING_CONCURRENCY: usize = 2;
+
 struct RegistryInner {
     entries: Mutex<HashMap<WorkbenchId, Arc<Entry>>>,
     permit: Arc<Semaphore>,
+    reading: Arc<Semaphore>,
     max_refs: usize,
     max_entries: NonZeroUsize,
     tick: AtomicU64,
@@ -583,6 +587,7 @@ impl CoordinatorRegistry {
             inner: Arc::new(RegistryInner {
                 entries: Mutex::new(HashMap::new()),
                 permit: Arc::new(Semaphore::new(scan_concurrency.get())),
+                reading: Arc::new(Semaphore::new(READING_CONCURRENCY)),
                 max_refs,
                 max_entries,
                 tick: AtomicU64::new(0),
@@ -831,6 +836,15 @@ impl CoordinatorRegistry {
             .acquire_owned()
             .await
             .expect("scan permit semaphore is never closed")
+    }
+
+    /// Acquire one of the permits for bounded document reads, which are
+    /// separate from the scan permit.
+    pub async fn acquire_reading_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
+        std::sync::Arc::clone(&self.inner.reading)
+            .acquire_owned()
+            .await
+            .expect("reading permit semaphore is never closed")
     }
 
     pub async fn subscribe(

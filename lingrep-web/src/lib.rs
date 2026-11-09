@@ -7,6 +7,7 @@ pub mod corpus_runtime;
 pub mod corpus_set;
 mod derived_patterns;
 pub mod document_reach;
+pub mod document_reader;
 mod export;
 pub mod frequency;
 pub mod handlers;

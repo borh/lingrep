@@ -13,17 +13,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 
 use hegel::generators;
 use lingrep_core::testing::MiniDictionary;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use crate::support::{assert_success, lingrep, lingrep_binary_path, parse_jsonl};
+use crate::support::{Server, assert_success, get, lingrep, lingrep_binary_path, parse_jsonl};
 
 const CATALOG: &str = "cat := [text=猫].\n\
     key: [text]\n\
@@ -111,54 +111,8 @@ fn fixture_with(source: &str, documents: &str) -> Fixture {
     }
 }
 
-struct Server {
-    child: Child,
-    address: String,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn serve(fixture: &Fixture, extra: &[OsString]) -> Result<Server, (Option<i32>, String)> {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let stderr_path = fixture
-        .directory
-        .path()
-        .join(format!("serve-{port}.stderr"));
-    let mut child = Command::new(lingrep_binary_path())
-        .arg("serve")
-        .arg("--dict-path")
-        .arg(fixture.dictionary.path())
-        .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-        .args(extra)
-        .stdout(Stdio::piped())
-        .stderr(fs::File::create(&stderr_path).unwrap())
-        .spawn()
-        .unwrap();
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    loop {
-        match lines.next() {
-            Some(Ok(line)) if line.contains("listening on") => {
-                return Ok(Server {
-                    child,
-                    address: format!("127.0.0.1:{port}"),
-                });
-            }
-            Some(Ok(_)) => {}
-            _ => {
-                let status = child.wait().unwrap();
-                return Err((status.code(), fs::read_to_string(&stderr_path).unwrap()));
-            }
-        }
-    }
+    crate::support::serve(fixture.directory.path(), fixture.dictionary.path(), extra)
 }
 
 fn args(parts: &[&dyn AsRef<std::ffi::OsStr>]) -> Vec<OsString> {
@@ -194,28 +148,6 @@ fn query(params: &[(&str, &str)]) -> String {
         .map(|(key, value)| format!("{key}={}", encode(value)))
         .collect::<Vec<_>>()
         .join("&")
-}
-
-fn get(server: &Server, path: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(&server.address).unwrap();
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        server.address
-    )
-    .unwrap();
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).unwrap();
-    let response = String::from_utf8(response).unwrap();
-    let (head, body) = response.split_once("\r\n\r\n").unwrap();
-    assert!(
-        !head
-            .to_ascii_lowercase()
-            .contains("transfer-encoding: chunked"),
-        "{head}"
-    );
-    let status = head.split(' ').nth(1).unwrap().parse().unwrap();
-    (status, body.to_owned())
 }
 
 fn get_json(server: &Server, path: &str) -> Value {

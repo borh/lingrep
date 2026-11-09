@@ -91,9 +91,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identity, source identity and renderer revision equal the caller's, and
   returns pages of blocks bounded by HTML bytes and an occurrence's highlight
   ranges.
+- `ling serve --reading-sidecar PATH` (repeatable) serves a reading sidecar
+  for a corpus declared by its `.lingcorpus` path, and the reader's Document
+  scope shows that corpus's documents as rendered Markdown, with headings
+  and paragraphs, around the occurrence, and marks the occurrence. The
+  reader keeps its scope controls and document metadata, and marks the
+  sentences a workbench search scope excludes. A sidecar binds to a served
+  corpus by the identities it records; a sidecar that does not bind stops
+  startup with an error naming it and, for a corpus mismatch, both analysis
+  identities. `ReadingSidecar::read_key` reads the identities a sidecar
+  records, `ReadingSidecar::verify_digest` checks only its records digest,
+  and `ReadingSidecar::page_at` reads a page and an occurrence's anchor
+  together. The NixOS module's `services.lingrep-web.readingSidecars` option
+  passes each listed sidecar as `--reading-sidecar`, mounted read-only.
+- Selecting a line of a Frequencies entry opens the occurrence in its
+  document. Closing the reader, or the browser's Back, returns focus to the
+  line at the same scroll position. The address holds the open reader as
+  `read` and `scope`, in the Frequencies view and in the workbench, so a
+  link or a reload reopens it. Reading requests from the Frequencies view
+  do not wait for workbench scans or exports.
 
 ### Changed
 
+- The workbench reader marks a hit in the colours of the KWIC keyword.
 - The query/v2 `complete` record's `counters.tokens_matched` is renamed
   `counters.tokens_scanned`, with no alias, so a reader of `tokens_matched`
   must change. It counts the tokens of the sentences the matcher

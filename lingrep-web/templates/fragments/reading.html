@@ -2,8 +2,8 @@
   <header class="reading-toolbar">
     <div class="reading-heading">{% match self.title() %}{% when Some with (title) %}<h3>{{ title }}</h3><small class="reading-source">{{ source }}</small>{% when None %}<h3>{{ source }}</h3>{% endmatch %}</div>
     <nav aria-label="Reading scope" data-i18n-aria-label="reading.scope">
-      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/paragraph{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}false{% else %}true{% endif %}" data-i18n="reading.paragraph">Paragraph</button>
-      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/document{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}true{% else %}false{% endif %}" data-i18n="reading.document">Document</button>
+      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/paragraph{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}false{% else %}true{% endif %}" data-reading-scope="paragraph" data-i18n="reading.paragraph">Paragraph</button>
+      <button type="button" class="btn btn-secondary" hx-get="{{ root_url }}/document{% if show_excluded %}?show_excluded=true{% endif %}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" aria-pressed="{% if document %}true{% else %}false{% endif %}" data-reading-scope="document" data-i18n="reading.document">Document</button>
     </nav>
   </header>
   {% if !metadata.is_empty() || metadata_omitted %}
@@ -13,6 +13,14 @@
     {% if metadata_omitted %}<p data-i18n="reading.metadata_omitted">Some metadata exceeds the display limits.</p>{% endif %}
   </details>
   {% endif %}
+  {% match rendered %}{% when Some with (rendered) %}
+  {% match rendered.anchoring %}{% when Anchoring::Exact %}{% when Anchoring::Partial %}<p class="doc-reader-note" data-reader-anchoring="partial" data-i18n="reading.partial_match">Part of the match is not in the rendered document.</p>{% when Anchoring::Missing %}<p class="doc-reader-note" data-reader-anchoring="missing" data-i18n="reading.missing_match">The match is not in the rendered document.</p>{% when Anchoring::OverLimit %}<p class="doc-reader-note" data-reader-anchoring="over-limit" data-i18n="reading.unmarked_match">The match is not marked, because its sentence is longer than the reader's 128 KiB limit.</p>{% endmatch %}
+  {% if rendered.scoped %}<p class="doc-reader-note" data-reader-scoped data-i18n="reading.scoped_text">Text outside the search scope is grey with a dashed underline.</p>{% endif %}
+  <nav class="reading-pager" aria-label="Context pages" data-i18n-aria-label="reading.pages">
+    <button type="button" class="btn btn-secondary" data-reading-selected hx-get="{{ root_url }}/document" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace" data-i18n="reading.selected">Back to match</button>
+  </nav>
+  <div class="doc-reader-text" lang="ja" data-doc-reader data-highlight="{{ rendered.highlight }}">{{ rendered.pages_html()|safe }}</div>
+  {% when None %}
   {% if paragraph_missing %}<p class="alert" data-reading-unavailable data-i18n="reading.no_paragraph">No paragraph information is stored for this hit.</p>{% endif %}
   {% if sentences.is_empty() && !paragraph_missing && paragraph_choices.is_empty() %}<p class="alert" data-i18n="reading.limit">Context exceeds the reading limits.</p>{% endif %}
   {% if !paragraph_choices.is_empty() %}<p data-i18n="reading.choose_paragraph">This hit belongs to several authored paragraphs.</p><ul>{% for choice in paragraph_choices %}<li><button type="button" class="chain-link" hx-get="{{ root_url }}/paragraph?paragraph={{ choice.id }}" hx-target="#{{ target_id }}" hx-swap="innerHTML" hx-sync="#{{ target_id }}:replace"><span data-i18n="reading.paragraph_sentences" data-i18n-args='{"first": {{ choice.first }}, "last": {{ choice.last }}}'>Paragraph · sentences {{ choice.first }}–{{ choice.last }}</span></button></li>{% endfor %}</ul>{% endif %}
@@ -33,4 +41,5 @@
     {% endfor %}
   </div>
   {% endif %}
+  {% endmatch %}
 </section>

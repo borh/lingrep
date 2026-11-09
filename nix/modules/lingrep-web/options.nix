@@ -143,6 +143,20 @@
       '';
     };
 
+    readingSidecars = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = [ "/var/lib/lingrep-tables/papers.reading" ];
+      description = ''
+        Reading sidecars written by `ling corpus render`, each passed as
+        `--reading-sidecar`. A sidecar shows the documents of the prepared
+        Markdown `.lingcorpus` artifact in `corpora` it was rendered from as
+        rendered Markdown; a corpus without one keeps the sentence reader. A
+        sidecar that matches no declared artifact, or was written by another
+        renderer revision, stops startup with an error naming the sidecar.
+      '';
+    };
+
     metadataLabels = lib.mkOption {
       type = lib.types.listOf lib.types.path;
       default = [ ];

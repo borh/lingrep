@@ -2,6 +2,7 @@
   pkgs,
   package,
   ling,
+  dictionary,
   ...
 }:
 
@@ -22,6 +23,17 @@ let
           --output "$out/fixture.lingcorpus" fixture.conllu
         ling summarize --patterns "$out/catalog/nouns.lx" \
           --corpus "$out/fixture.lingcorpus" --write-table "$out/fixture.lingtable"
+      '';
+  readingSidecarFixture =
+    pkgs.runCommand "lingrep-web-reading-sidecar-fixture" { nativeBuildInputs = [ ling ]; }
+      ''
+        export HOME="$TMPDIR"
+        mkdir -p papers "$out"
+        printf '# 序論\n\n猫が鳴く。\n' > papers/a.md
+        ling corpus build --dict-path ${dictionary}/share/vibrato/unidic-cwj-202512.dic \
+          --output "$out/papers.lingcorpus" papers
+        ling corpus render "$out/papers.lingcorpus" --source-root papers \
+          --output "$out/papers.reading"
       '';
 in
 pkgs.testers.nixosTest {
@@ -58,8 +70,12 @@ pkgs.testers.nixosTest {
         corpora.counted = {
           path = "${countTableFixture}/fixture.lingcorpus";
         };
+        corpora.papers = {
+          path = "${readingSidecarFixture}/papers.lingcorpus";
+        };
         patterns.catalogs = [ "${countTableFixture}/catalog" ];
         countTables = [ "${countTableFixture}/fixture.lingtable" ];
+        readingSidecars = [ "${readingSidecarFixture}/papers.reading" ];
         metadataLabels = [ "${package}/share/lingrep-web/labels/soranoha-catalog.json" ];
         settings.basePath = "/mounted";
       };
@@ -84,6 +100,8 @@ pkgs.testers.nixosTest {
     meta = machine.succeed("curl --fail --silent http://127.0.0.1:3000/mounted/api/frequency/meta")
     assert '"catalog":"catalog/nouns.lx"' in meta, meta
     assert '"orthographic_style":{"en":"orthography"' in meta, meta
+    reader = machine.wait_until_succeeds("curl --fail --silent http://127.0.0.1:3000/mounted/api/read/papers/0/0/1/document")
+    assert "data-doc-reader" in reader, reader
     machine.succeed("systemctl stop lingrep-web.service")
     status = machine.succeed("systemctl show --property=ExecMainStatus --value lingrep-web.service")
     assert status.strip() == "0", status

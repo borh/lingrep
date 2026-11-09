@@ -15,5 +15,9 @@
   <p class="fq-state" data-fq-state role="status"></p>
   <div data-fq-table></div>
   <div class="fq-entry" data-fq-entry hidden></div>
+  <dialog class="reading-dialog reading-dialog-document" data-fq-reader aria-labelledby="document-reader-title">
+    <header class="reading-dialog-header"><h2 id="document-reader-title" data-fq-reader-title></h2><button type="button" class="btn btn-secondary" data-fq-return></button></header>
+    <div id="document-reader-body" class="reading-body" aria-live="polite"></div>
+  </dialog>
 </section>
 {% endblock %}

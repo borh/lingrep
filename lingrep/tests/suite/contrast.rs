@@ -486,74 +486,34 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
 
 #[cfg(feature = "web")]
 mod served {
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::process::{Child, Command, Stdio};
+    use std::ffi::OsString;
+    use std::process::Command;
 
     use serde_json::Value;
 
     use super::{Fixture, contrast, fixture};
-    use crate::support::{assert_success, lingrep_binary_path, parse_jsonl};
-
-    struct Server {
-        child: Child,
-        address: String,
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
+    use crate::support::{Server, assert_success, get, lingrep_binary_path, parse_jsonl};
 
     fn serve(fixture: &Fixture) -> Server {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let mut child = Command::new(lingrep_binary_path())
-            .arg("serve")
-            .arg("--dict-path")
-            .arg(fixture.dictionary.path())
-            .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-            .arg("--input")
-            .arg(&fixture.artifact)
-            .arg("--pattern-root")
-            .arg(fixture.catalog.parent().unwrap())
-            .arg("--count-table")
-            .arg(&fixture.table)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        loop {
-            match lines.next() {
-                Some(Ok(line)) if line.contains("listening on") => {
-                    return Server {
-                        child,
-                        address: format!("127.0.0.1:{port}"),
-                    };
-                }
-                Some(Ok(_)) => {}
-                _ => panic!("ling serve exited: {:?}", child.wait()),
-            }
-        }
+        let args: Vec<OsString> = vec![
+            "--input".into(),
+            fixture.artifact.clone().into(),
+            "--pattern-root".into(),
+            fixture.catalog.parent().unwrap().into(),
+            "--count-table".into(),
+            fixture.table.clone().into(),
+        ];
+        crate::support::serve(fixture.directory.path(), fixture.dictionary.path(), &args)
+            .unwrap_or_else(|(code, stderr)| panic!("ling serve exited with {code:?}: {stderr}"))
     }
 
     fn get_json(server: &Server, params: &[(&str, &str)]) -> Value {
-        let (head, body) = get(server, params);
-        assert!(head.starts_with("HTTP/1.1 200"), "{head}\n{body}");
+        let (status, body) = get_at(server, "contrast", params);
+        assert_eq!(status, 200, "{body}");
         body
     }
 
-    fn get(server: &Server, params: &[(&str, &str)]) -> (String, Value) {
-        get_at(server, "contrast", params)
-    }
-
-    fn get_at(server: &Server, endpoint: &str, params: &[(&str, &str)]) -> (String, Value) {
+    fn get_at(server: &Server, endpoint: &str, params: &[(&str, &str)]) -> (u16, Value) {
         let query = params
             .iter()
             .map(|(key, value)| {
@@ -570,17 +530,8 @@ mod served {
             })
             .collect::<Vec<_>>()
             .join("&");
-        let mut stream = TcpStream::connect(&server.address).unwrap();
-        write!(
-            stream,
-            "GET /api/{endpoint}?{query} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-            server.address
-        )
-        .unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        let (head, body) = response.split_once("\r\n\r\n").unwrap();
-        (head.to_owned(), serde_json::from_str(body).unwrap())
+        let (status, body) = get(server, &format!("/api/{endpoint}?{query}"));
+        (status, serde_json::from_str(&body).unwrap())
     }
 
     fn row_values<'a>(rows: impl Iterator<Item = &'a Value>) -> Vec<Value> {
@@ -732,20 +683,14 @@ mod served {
                     ("offset", offset),
                 ]
             };
-            let (head, first) = get_at(&server, endpoint, &params("0"));
-            assert!(
-                head.starts_with("HTTP/1.1 200"),
-                "{endpoint}: {head}\n{first}"
-            );
+            let (status, first) = get_at(&server, endpoint, &params("0"));
+            assert_eq!(status, 200, "{endpoint}: {first}");
             let entries = first["entries"].as_u64().unwrap();
             assert!(entries > 0, "{endpoint}: {first}");
             let at_end: &'static str = entries.to_string().leak();
             for offset in [at_end, "100001", "18446744073709551615"] {
-                let (head, past) = get_at(&server, endpoint, &params(offset));
-                assert!(
-                    head.starts_with("HTTP/1.1 200"),
-                    "{endpoint} {offset}: {head}\n{past}"
-                );
+                let (status, past) = get_at(&server, endpoint, &params(offset));
+                assert_eq!(status, 200, "{endpoint} {offset}: {past}");
                 assert_eq!(past["rows"], serde_json::json!([]), "{endpoint} {offset}");
                 assert_eq!(past["entries"], first["entries"], "{endpoint} {offset}");
             }

@@ -1,4 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::panic, clippy::single_range_in_vec_init)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::single_range_in_vec_init,
+    clippy::string_slice
+)]
 
 use crate::v6_support::RevisionTestExt;
 use axum::{
@@ -736,4 +741,210 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
             );
         }
     }
+}
+
+/// A store serving one Markdown document as the default corpus with its
+/// reading sidecar bound, after a completed revision of `hit := HIT.`.
+async fn sidecar_fixture(text: &str) -> Fixture {
+    let markdown = crate::v6_support::markdown_fixture(&[("a.md", text)]).await;
+    let sidecars = lingrep_web::document_reader::ReadingSidecars::bind(
+        std::slice::from_ref(&markdown.sidecar),
+        &[(
+            lingrep_web::corpus_set::CorpusName::default_key(),
+            markdown.artifact.clone(),
+            "papers".into(),
+        )],
+    )
+    .unwrap();
+    let context =
+        Arc::new(lingrep_web::server_context::ServerContext::new("/unused/dict").unwrap());
+    let runtime = Arc::new(CorpusRuntime::from_ready(
+        CorpusIdentity::new("markdown-fixture"),
+        CorpusArtifact::open(&markdown.artifact).unwrap(),
+        context,
+    ));
+    let (store, _) = bind_runtime(runtime, "hit := HIT.").await;
+    let store = store.with_reading_sidecars(Arc::new(sidecars));
+    Fixture {
+        _directory: markdown.directory,
+        router: lingrep_web::app_router(store.clone()),
+        store,
+    }
+}
+
+async fn fetch(fixture: &Fixture, path: &str) -> (StatusCode, String) {
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{path}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// The `hx-get` address of the element of `html` that carries `marker`.
+fn control(html: &str, marker: &str) -> String {
+    let at = html
+        .find(marker)
+        .unwrap_or_else(|| panic!("{marker}: {html}"));
+    let tag = &html[html[..at].rfind('<').unwrap()..];
+    let tag = &tag[..tag.find('>').unwrap()];
+    let url = &tag[tag.find("hx-get=\"").unwrap_or_else(|| panic!("{tag}")) + 8..];
+    url[..url.find('"').unwrap()].replace("&amp;", "&")
+}
+
+#[tokio::test]
+async fn a_bound_sidecar_renders_the_document_scope_and_leaves_the_paragraph_scope() {
+    let f = sidecar_fixture(
+        "# 見出し\n\n前の段落の文です。\n\nこれは HIT の文です。\n\n- 後の項目です。\n",
+    )
+    .await;
+    let opened = "api/hit-context/reading/1/0/0/document";
+    let (status, document) = fetch(&f, opened).await;
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert!(document.contains("data-doc-reader"), "{document}");
+    assert!(
+        document.contains("<h1 data-c=\"0\">見出し</h1>"),
+        "{document}"
+    );
+    assert!(
+        document.contains("<li data-c=\"3\">後の項目です。</li>"),
+        "{document}"
+    );
+    assert!(
+        document.contains("data-highlight=\"[[2,4,7]]\""),
+        "{document}"
+    );
+    assert!(document.contains("data-excluded=\"[]\""), "{document}");
+    assert!(!document.contains("data-reader-anchoring"), "{document}");
+    assert!(!document.contains("data-reader-scoped"), "{document}");
+    assert_eq!(control(&document, "data-reading-selected"), opened);
+
+    // The scope controls switch to the paragraph and back to the document.
+    let paragraph_url = control(&document, "data-reading-scope=\"paragraph\"");
+    assert_eq!(paragraph_url, "api/hit-context/reading/1/0/0/paragraph");
+    let (status, paragraph) = fetch(&f, &paragraph_url).await;
+    assert_eq!(status, StatusCode::OK, "{paragraph}");
+    assert!(paragraph.contains("data-reading-page"), "{paragraph}");
+    assert!(!paragraph.contains("data-doc-reader"), "{paragraph}");
+    assert!(paragraph.contains("<mark>HIT</mark>"), "{paragraph}");
+    let (status, again) = fetch(&f, &control(&paragraph, "data-reading-scope=\"document\"")).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, document);
+
+    for invalid in [
+        "document?start=0",
+        "document?before=1",
+        "document?paragraph=0",
+        "document?blocks_before=0",
+        "document?blocks_from=4",
+        "document?blocks_from=0&blocks_before=1",
+        "paragraph?blocks_from=0",
+    ] {
+        let (status, body) = fetch(&f, &format!("api/hit-context/reading/1/0/0/{invalid}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}: {body}");
+    }
+    let (status, later) = fetch(&f, &format!("{opened}?blocks_from=3")).await;
+    assert_eq!(status, StatusCode::OK, "{later}");
+    assert!(
+        later.contains("<li data-c=\"3\">後の項目です。</li>"),
+        "{later}"
+    );
+    assert!(!later.contains("<h1"), "{later}");
+}
+
+#[tokio::test]
+async fn the_rendered_document_marks_the_sentences_the_search_scope_excludes() {
+    let f = sidecar_fixture(
+        "# 概要 {.abstract}\n\n概要の文です。\n\n# 本文 {.body}\n\nこれは HIT の文です。\n",
+    )
+    .await;
+    let body = serde_urlencoded::to_string([
+        ("pattern", "hit := HIT.".to_owned()),
+        (
+            "search_scope",
+            serde_json::json!({"included_sections": ["body"], "include_unlabelled": false})
+                .to_string(),
+        ),
+    ])
+    .unwrap();
+    let response = f
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/search/reading")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while f
+            .store
+            .coordinators
+            .displayed_snapshot(&WorkbenchId::new("reading"), RevisionId(2))
+            .await
+            .is_err()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (status, document) = fetch(&f, "api/hit-context/reading/2/0/0/document").await;
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert!(
+        document.contains("<p data-c=\"1\">概要の文です。</p>"),
+        "{document}"
+    );
+    assert!(
+        document.contains("data-excluded=\"[[1,0,7]]\""),
+        "{document}"
+    );
+    assert!(
+        document.contains("data-highlight=\"[[3,4,7]]\""),
+        "{document}"
+    );
+    assert!(document.contains("data-reader-scoped"), "{document}");
+}
+
+#[tokio::test]
+async fn a_frequency_line_opens_while_a_scan_holds_the_scan_permit() {
+    let f = sidecar_fixture("# 見出し\n\nこれは HIT の文です。\n").await;
+    let _scan = f.store.coordinators.acquire_scan_permit().await;
+    let (status, document) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fetch(&f, "api/read/default/0/1/2/document"),
+    )
+    .await
+    .expect("the reader waited for the scan permit");
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert!(document.contains("data-doc-reader"), "{document}");
+}
+
+#[tokio::test]
+async fn an_occurrence_in_a_sentence_over_the_reading_limit_is_reported_as_unmarked() {
+    let f = sidecar_fixture(&format!(
+        "# 見出し\n\nこれは HIT の{}。\n",
+        "あ".repeat(50_000)
+    ))
+    .await;
+    let (status, document) = fetch(&f, "api/hit-context/reading/1/0/0/document").await;
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert!(
+        document.contains("data-reader-anchoring=\"over-limit\""),
+        "{document}"
+    );
+    assert!(document.contains("data-highlight=\"[]\""), "{document}");
 }

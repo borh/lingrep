@@ -302,6 +302,8 @@ pub struct HitDetailFragment<'a> {
     pub captures: Vec<KwicCaptureData>,
     pub graph_bindings: Vec<GraphBindingData>,
     pub provenance: Option<crate::provenance_view::HitProvenance>,
+    /// The hit as `sentence.start.end`, its address in the reader's URL.
+    pub read: String,
 }
 
 pub fn format_count(value: u64) -> String {

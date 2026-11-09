@@ -158,6 +158,16 @@ pub struct Args {
     #[arg(long = "count-table", value_name = "PATH")]
     pub count_table: Vec<PathBuf>,
 
+    /// Reading sidecar written by `ling corpus render`, used to show a
+    /// declared prepared corpus's documents as rendered Markdown. Repeatable.
+    /// A sidecar is bound to the corpus with the analysis identity, source
+    /// identity and renderer revision it records. A sidecar that cannot be
+    /// read, does not verify, matches no corpus, or renders the same corpus
+    /// as another sidecar stops startup. A corpus without one keeps the
+    /// sentence reader.
+    #[arg(long = "reading-sidecar", value_name = "PATH")]
+    pub reading_sidecar: Vec<PathBuf>,
+
     /// JSON file of display labels for document-metadata keys, by locale,
     /// shown in Frequencies and Compare in place of key names. Repeatable.
     /// Clauses, commands and addresses keep the keys. A file that cannot be read or is
