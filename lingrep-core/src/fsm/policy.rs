@@ -1286,7 +1286,16 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
                 .find(|binding| binding.name() == name.as_str())?;
             projected.push(ProjectedKeyField {
                 name: field.name(),
-                value: binding.scalar(&field.attribute)?.to_owned(),
+                value: match binding {
+                    crate::fsm::GraphBinding::Node {
+                        node: crate::corpus::conllu::EnhancedNodeId::Word { token_index },
+                        ..
+                    } if !matches!(field.attribute.as_str(), "node.kind" | "node.id") => {
+                        tokens.scalar_key(*token_index, &field.attribute)?
+                    }
+                    _ => binding.scalar(&field.attribute)?,
+                }
+                .to_owned(),
             });
             continue;
         }

@@ -917,6 +917,9 @@ fn second_policy_block(
 
 fn remap_definition_source(definition: &mut ParsedDefinition, source: SourceId) {
     definition.span = definition.span.with_source(source);
+    if let Some(key) = &mut definition.key {
+        key.source_span = key.source_span.with_source(source);
+    }
     if let model::ParsedDefinitionBody::Pattern { expr, .. } = &mut definition.body {
         remap_expr_source(expr, source);
     }

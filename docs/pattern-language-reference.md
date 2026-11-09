@@ -386,9 +386,13 @@ participates in equality, deduplication, and canonical order. The vector is
 canonical by binding kind then name (nodes before edges), not by authored
 constraint order; a `where` clause remains a conjunction.
 
-Node keys can project `node.kind`, `node.id`, `text`, `lemma`, `upos`, or `xpos`;
-a named edge projects `$edge.rel`. Complete enhanced observation is required, so
-unavailable or incomplete DEPS satisfies neither polarity.
+Node keys can project `node.kind`, `node.id`, `text`, `lemma`, `upos`, or `xpos`.
+A binding constrained to words by a positive basic edge or by `node.kind=word`
+in every predicate branch can also project any scalar token attribute, such as
+`$v.norm`; schema binding checks its value kind. A missing attribute makes the
+record unkeyable. A named edge projects `$edge.rel`. Complete enhanced
+observation is required for enhanced edges, so unavailable or incomplete DEPS
+satisfies neither polarity.
 
 Graph-only patterns, generalized anonymous enhanced absence, paths, graph
 rewriting, and graph-node span/render projections are unsupported.

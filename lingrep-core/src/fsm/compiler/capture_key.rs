@@ -20,8 +20,8 @@
 use compact_str::CompactString;
 
 use super::model::{
-    BoundDefinition, BoundExpr, ExecutionDefinition, ExecutionExpr, ExecutionGraphBindingDecl,
-    SourceRegistry,
+    BoundDefinition, BoundExpr, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
+    ExecutionExpr, ExecutionGraphBindingDecl, RelationPolarity, SourceRegistry,
 };
 use super::{Diagnostic, DiagnosticCode, RelatedDiagnosticLocation};
 use crate::fsm::policy::{CatalogPolicy, KeyComponent, KeyTarget, TagSource};
@@ -129,14 +129,15 @@ pub(crate) fn key_projection_errors(
                         if !matches!(
                             field.attribute.as_str(),
                             "text" | "lemma" | "upos" | "xpos" | "node.kind" | "node.id"
-                        ) {
+                        ) && !graph_binding_is_word(definition, name)
+                        {
                             diagnostics.push(error(
                                 sources,
                                 definition,
                                 "key",
                                 DiagnosticCode::InvalidPolicyValue,
                                 format!(
-                                    "`key:` graph node `${name}` can project node.kind, node.id, text, lemma, upos, or xpos, not `{}`",
+                                    "`key:` graph node `${name}` is not proven to select only words; it can project node.kind, node.id, text, lemma, upos, or xpos, not `{}`",
                                     field.attribute
                                 ),
                             ));
@@ -553,4 +554,23 @@ fn location(sources: &SourceRegistry, span: super::model::SourceSpan) -> super::
         line,
         column,
     )
+}
+
+fn graph_binding_is_word(definition: &ExecutionDefinition, name: &str) -> bool {
+    definition.enhanced_relations.iter().any(|relation| {
+        relation.polarity == RelationPolarity::Positive
+            && [&relation.head, &relation.dependent].iter().any(|endpoint| {
+                let ExecutionEnhancedEndpoint::Graph { name: candidate, predicates } = endpoint else {
+                    return false;
+                };
+                candidate == name
+                    && (relation.layer == DependencyLayer::Basic
+                        || !predicates.is_empty() && predicates.iter().all(|branch| {
+                            branch.iter().any(|atom| {
+                                !atom.complement && atom.attr.as_str() == "node.kind"
+                                    && matches!(&atom.value, crate::fsm::AttrValueType::Single(value) if value == "word")
+                            })
+                        }))
+            })
+    })
 }

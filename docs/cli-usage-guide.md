@@ -1037,8 +1037,10 @@ component must be anchored by an exact-width-one surface capture. A graph node
 is a tagged word or decimal empty-node identity, not a token span. Each
 complete assignment emits one match; a named parallel edge emits separately,
 while an unnamed parallel edge is existential. Node keys can project
-`node.kind`, `node.id`, `text`, `lemma`, `upos`, and `xpos`; a named edge
-projects `$edge.rel`. The match JSONL `graph_bindings` field preserves these
+`node.kind`, `node.id`, `text`, `lemma`, `upos`, and `xpos`. A binding proven to
+select only words by a positive basic edge or `node.kind=word` in every
+predicate branch can also project scalar token attributes such as `$v.norm`.
+A named edge projects `$edge.rel`. The match JSONL `graph_bindings` field preserves these
 assignments in canonical node-name then edge-name order, and the browser hit
 inspector displays them. Complete DEPS observation is required, so a
 morphology-only prepared corpus is rejected at binding and unavailable or

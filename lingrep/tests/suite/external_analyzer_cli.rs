@@ -604,3 +604,88 @@ fn tei_source_annotations_compose_with_external_tokens_and_change_analysis_ident
         .collect::<Vec<_>>();
     assert_eq!(results[0], records);
 }
+
+#[test]
+fn graph_norm_keys_group_orthographic_variants_in_direct_and_prepared_summaries() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let adapter = include_str!("../../../lingrep-core/tests/fixtures/external_echo_adapter.py")
+        .replace(
+            "            for attribute in header[\"projection\"]:\n                values.append(text if attribute[\"key\"] == \"text\" else None)",
+            "            for index, surface in enumerate([text[:1], text[1:]]):\n                row = {'text': surface, 'norm': '声' if index == 0 else '言う', 'upos': 'NOUN' if index == 0 else 'VERB', 'dep.head': '2' if index == 0 else '0', 'dep.rel': 'obj' if index == 0 else 'root'}\n                values.extend(row[attribute['key']] for attribute in header['projection'])",
+        )
+        .replace("\"word_count\": 1", "\"word_count\": 2")
+        .replace("\"surface_ranges\": [[0, len(text.encode(\"utf-8\"))]]", "\"surface_ranges\": [[0, 3], [3, len(text.encode(\"utf-8\"))]]");
+    std::fs::write(root.join("adapter.py"), adapter).unwrap();
+    let python = Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    let python = String::from_utf8(python.stdout).unwrap();
+    let schema = ["text", "norm", "upos", "dep.head", "dep.rel"]
+        .map(|key| format!("{{key = '{key}', kind = 'scalar'}}"))
+        .join(",");
+    std::fs::write(root.join("analyzer.toml"), format!("version = 1\nkind = 'protocol'\npython = '{}'\nentrypoint = 'adapter.py'\nlanguage = 'ja'\nschema = [{schema}]\n", python.trim())).unwrap();
+    std::fs::write(root.join("input.txt"), "声云う\n声いう\n声言う\n").unwrap();
+    std::fs::write(
+        root.join("query.lx"),
+        "key: [$v.norm]\npattern p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $n.\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let output = lingrep_std().current_dir(root).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    let summaries = |bytes: Vec<u8>| {
+        String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|row| row["type"] == "summary")
+            .map(|row| row["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    let direct = summaries(run(&[
+        "summarize",
+        "--patterns",
+        "query.lx",
+        "--analyzer-config",
+        "analyzer.toml",
+        "--normalization",
+        "none",
+        "--json",
+        "input.txt",
+    ]));
+    assert_eq!(direct.len(), 1);
+    assert_eq!(
+        direct[0]["group"]["fields"],
+        serde_json::json!([{"kind":"scalar", "name":"$v.norm", "value":"言う"}])
+    );
+    assert_eq!(direct[0]["count"], 3);
+    run(&[
+        "corpus",
+        "build",
+        "--analyzer-config",
+        "analyzer.toml",
+        "--normalization",
+        "none",
+        "--output",
+        "artifact",
+        "input.txt",
+    ]);
+    std::fs::remove_file(root.join("adapter.py")).unwrap();
+    let prepared = summaries(run(&[
+        "summarize",
+        "--patterns",
+        "query.lx",
+        "--corpus",
+        "artifact",
+        "--json",
+    ]));
+    assert_eq!(prepared, direct);
+}

@@ -768,3 +768,197 @@ fn a_record_whose_key_capture_did_not_participate_is_unkeyed() {
         "the alternation branch without the capture yields no key"
     );
 }
+
+#[hegel::test(test_cases = 60, derandomize = true)]
+fn word_graph_keys_project_declared_scalar_values(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    use lingrep_core::token_match::{BoundTokenSentence, TokenSchema};
+    let attribute = tc.draw(g::sampled_from(vec![
+        "norm",
+        "spacy.reading",
+        "unidic.orthbase",
+    ]));
+    let value = tc.draw(g::text());
+    let present = tc.draw(g::booleans());
+    let source = format!(
+        "key: [$v.{attribute}]\npattern p := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $n."
+    );
+    let compiled = compile(&source).unwrap().matcher;
+    let schema =
+        TokenSchema::from_keys(["text", "upos", "dep.head", "dep.rel", attribute]).unwrap();
+    let bound = compiled
+        .bind_with_projection(&schema, schema.keys().iter().cloned())
+        .unwrap();
+    let values = (0..2)
+        .flat_map(|i| {
+            bound.projection().keys().iter().map({
+                let value = &value;
+                move |key| {
+                    if key.as_str() == attribute && !present {
+                        return None;
+                    }
+                    Some(match key.as_str() {
+                        "text" => {
+                            if i == 0 {
+                                "声".into()
+                            } else {
+                                "云う".into()
+                            }
+                        }
+                        "upos" => {
+                            if i == 0 {
+                                "NOUN".into()
+                            } else {
+                                "VERB".into()
+                            }
+                        }
+                        "dep.head" => {
+                            if i == 0 {
+                                "2".into()
+                            } else {
+                                "0".into()
+                            }
+                        }
+                        "dep.rel" => {
+                            if i == 0 {
+                                "obj".into()
+                            } else {
+                                "root".into()
+                            }
+                        }
+                        _ => value.as_str().into(),
+                    })
+                }
+            })
+        })
+        .collect();
+    let words = BoundTokenSentence::from_projected_values(bound.projection(), 2, values).unwrap();
+    let matches = bound.find_matches(&words).unwrap();
+    let baseline = compile(&source.replace(&format!("$v.{attribute}"), "$v.text"))
+        .unwrap()
+        .matcher
+        .bind_with_projection(&schema, schema.keys().iter().cloned())
+        .unwrap();
+    assert_eq!(matches, baseline.find_matches(&words).unwrap());
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        project_key(bound.catalog_policy(), &matches[0], &words),
+        present.then(|| vec![field(&format!("$v.{attribute}"), &value)])
+    );
+}
+
+#[test]
+fn graph_keys_reject_attributes_not_available_on_empty_nodes() {
+    for predicate in [
+        "node.kind=empty",
+        "upos=VERB",
+        "node.kind in {word, empty}",
+        "!(node.kind=word)",
+    ] {
+        let source = format!(
+            "key: [$v.norm]\npattern p := (?<n> []) where (?<v> [{predicate}]) -[enhanced obj]-> $n."
+        );
+        assert_code(
+            &compile_err(&source, "the binding can select empty nodes"),
+            DiagnosticCode::InvalidPolicyValue,
+        );
+    }
+}
+
+#[test]
+fn word_graph_key_eligibility_preserves_branch_and_schema_constraints() {
+    use lingrep_core::token_match::{AttributeKind, SchemaAttribute, TokenSchema};
+    for predicate in [
+        "node.kind=word",
+        "node.kind=word & upos=VERB",
+        "(node.kind=word & upos=VERB) | (node.kind=word & upos=NOUN)",
+    ] {
+        let source = format!(
+            "key: [$v.norm]\npattern p := (?<n> []) where (?<v> [{predicate}]) -[enhanced obj]-> $n."
+        );
+        let compiled = compile(&source).unwrap().matcher;
+        let schema = TokenSchema::new([
+            SchemaAttribute::new("dep.enhanced", AttributeKind::StringSet).unwrap(),
+            SchemaAttribute::new("norm", AttributeKind::StringSet).unwrap(),
+        ])
+        .unwrap();
+        let error = compiled.bind(&schema).unwrap_err();
+        assert!(error.to_string().contains("norm"), "{error}");
+        assert!(error.to_string().contains("scalar"), "{error}");
+    }
+    for predicate in [
+        "node.kind=word | node.kind=empty",
+        "(node.kind=word & upos=VERB) | upos=NOUN",
+    ] {
+        let source = format!(
+            "key: [$v.norm]\npattern p := (?<n> []) where (?<v> [{predicate}]) -[enhanced obj]-> $n."
+        );
+        assert_code(
+            &compile_err(&source, "one branch allows empty nodes"),
+            DiagnosticCode::InvalidPolicyValue,
+        );
+    }
+}
+
+#[test]
+fn accumulated_invalid_key_reports_its_own_source_location() {
+    let mut builder = lingrep_core::fsm::FsmBuilder::new();
+    builder
+        .add_definition(PatternSource::named("first.lx", "first := []."))
+        .unwrap();
+    let source = format!(
+        "description: \"{}\"\nkey: [$missing.lemma]\nsecond := [].",
+        "猫".repeat(80)
+    );
+    builder
+        .add_definition(PatternSource::named("second.lx", &source))
+        .unwrap();
+    let error = match builder.build() {
+        Ok(_) => panic!("the key names no capture"),
+        Err(error) => error,
+    };
+    let diagnostic = error
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::AmbiguousCaptureReference)
+        .unwrap();
+    assert_eq!(diagnostic.location().source_name(), "second.lx");
+    assert_eq!(diagnostic.location().line(), 2);
+    assert_eq!(
+        diagnostic.location().byte_range(),
+        source.find("key:").unwrap()..source.find("key:").unwrap() + 3
+    );
+}
+
+#[hegel::test(test_cases = 50, derandomize = true)]
+fn accumulated_key_errors_preserve_registered_source_coordinates(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let label = format!("later:{}", tc.draw(g::text()));
+    let prefix = format!(
+        "description: {}\n",
+        serde_json::to_string(&tc.draw(g::text())).unwrap()
+    );
+    let source = format!("{prefix}key: [$missing.lemma]\nsecond := [].");
+    let mut builder = lingrep_core::fsm::FsmBuilder::new();
+    builder
+        .add_definition(PatternSource::named("first.lx", "first := []."))
+        .unwrap();
+    builder
+        .add_definition(PatternSource::named(&label, &source))
+        .unwrap();
+    let error = match builder.build() {
+        Ok(_) => panic!("the key names no capture"),
+        Err(error) => error,
+    };
+    let diagnostic = error
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::AmbiguousCaptureReference)
+        .unwrap();
+    assert_eq!(diagnostic.location().source_name(), label);
+    assert_eq!(diagnostic.location().line(), 2);
+    assert_eq!(
+        diagnostic.location().byte_range(),
+        prefix.len()..prefix.len() + 3
+    );
+}
