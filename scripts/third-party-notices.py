@@ -9,6 +9,8 @@ Scope is what ships. The walk starts at the `lingrep` CLI crate, follows normal
 dependencies only (build and dev dependencies are not in the binary), and drops
 workspace members, whose license is the repository's own `LICENSE`.
 
+Browser asset notices are included from `lingrep-web/assets/THIRD-PARTY-NOTICES.md`.
+
 License texts are collected from each crate's source directory, which exists
 once the crate has been built, so this runs after `cargo build` — that is where
 `scripts/package-release.sh` calls it. Texts are deduplicated by content, which
@@ -176,6 +178,13 @@ def main() -> int:
         print("```")
         print(entry["text"].rstrip())
         print("```")
+
+    print()
+    browser_notices = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "lingrep-web/assets/THIRD-PARTY-NOTICES.md"
+    )
+    print(browser_notices.read_text(encoding="utf-8"), end="")
 
     if undocumented:
         names = ", ".join(f"{p['name']} {p['version']}" for p in undocumented)

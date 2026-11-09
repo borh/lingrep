@@ -20,7 +20,7 @@
 #   LING_VERSION         release to install, such as 0.3.2 (default: this script's release)
 #   LING_INSTALL_DIR     directory for `ling` (default: $XDG_BIN_HOME, else ~/.local/bin)
 #   LING_NO_MODIFY_PATH  1 leaves shell startup files unchanged
-#   XDG_DATA_HOME        manual pages and completions go under it (default: ~/.local/share)
+#   XDG_DATA_HOME        manual pages, completions and notices (default: ~/.local/share)
 #   XDG_CONFIG_HOME      fish's PATH file goes under it (default: ~/.config)
 #
 # As the XDG Base Directory Specification requires, an XDG variable holding a
@@ -175,6 +175,9 @@ install_data() { # unpacked archive, data directory
     for file in bash-completion/completions/ling fish/vendor_completions.d/ling.fish zsh/site-functions/_ling; do
         [ -f "$1/share/$file" ] && install_file "$1/share/$file" "$2/$file" 644
     done
+    for file in LICENSE THIRD-PARTY-NOTICES.md; do
+        [ -f "$1/$file" ] && install_file "$1/$file" "$2/licenses/lingrep/$file" 644
+    done
     return 0
 }
 
@@ -231,7 +234,7 @@ main() {
     [ "$reported" = "ling $version" ] || die "$dir/ling reports '$reported', expected 'ling $version'"
     say "installed $reported to $dir/ling"
     install_data "$tmp/$name" "$data"
-    say "installed manual pages and shell completions under $data"
+    say "installed manual pages, shell completions and notices under $data"
 
     add_to_path "$dir"
     found=$(command -v ling 2>/dev/null || true)

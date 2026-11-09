@@ -182,10 +182,11 @@
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          installWebLabels = ''
+          installWebResources = ''
             mkdir -p "$out/share/lingrep-web/labels"
             cp lingrep-web/labels/*.json "$out/share/lingrep-web/labels/"
             test -s "$out/share/lingrep-web/labels/soranoha-catalog.json"
+            install -m644 lingrep-web/assets/THIRD-PARTY-NOTICES.md "$out/share/lingrep-web/THIRD-PARTY-NOTICES.md"
           '';
 
           mkLingrepPackage =
@@ -825,7 +826,7 @@
                   test -s "$out/share/man/man1/ling-corpus-build.1"
                   test -s "$out/share/man/man1/ling-serve.1"
                 ''
-                + installWebLabels;
+                + installWebResources;
               }).overrideAttrs
                 (old: {
                   meta = (old.meta or { }) // {
@@ -836,7 +837,7 @@
             lingrep-web =
               (mkLingrepPackage {
                 cargoExtraArgs = "--package lingrep-web";
-                postInstall = installWebLabels + ''
+                postInstall = installWebResources + ''
                   ln -s ${self'.packages.lingrep}/bin/ling "$out/bin/ling"
                 '';
               }).overrideAttrs

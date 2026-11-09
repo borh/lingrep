@@ -35,6 +35,8 @@ make_archive() { # target [extra member]
     printf '# bash\n' >"$work/$name/share/bash-completion/completions/ling"
     printf '# fish\n' >"$work/$name/share/fish/vendor_completions.d/ling.fish"
     printf '#compdef ling\n' >"$work/$name/share/zsh/site-functions/_ling"
+    cp "$repo_root/LICENSE" "$work/$name/LICENSE"
+    cp "$repo_root/lingrep-web/assets/THIRD-PARTY-NOTICES.md" "$work/$name/THIRD-PARTY-NOTICES.md"
     if [[ $# -gt 1 ]]; then
         printf 'x\n' >"$work/$2"
         tar -C "$work" -czf "$release/$name.tar.gz" "$name" "$2"
@@ -128,12 +130,15 @@ for shell in "${shells[@]}"; do
         [[ $("$home/.local/bin/ling" --version) == "ling $version" ]] || fail "upgrade did not replace the previous binary"
     fi
 
-    # Manual pages and completions go under the default XDG data directory.
     if run 0; then
         for file in man/man1/ling.1 man/man1/ling-matches.1 bash-completion/completions/ling \
-            fish/vendor_completions.d/ling.fish zsh/site-functions/_ling; do
+            fish/vendor_completions.d/ling.fish zsh/site-functions/_ling \
+            licenses/lingrep/LICENSE licenses/lingrep/THIRD-PARTY-NOTICES.md; do
             [[ -f "$home/.local/share/$file" ]] || fail "default data file $file"
         done
+        cmp "$repo_root/LICENSE" "$home/.local/share/licenses/lingrep/LICENSE" || fail "installed license differs"
+        cmp "$repo_root/lingrep-web/assets/THIRD-PARTY-NOTICES.md" \
+            "$home/.local/share/licenses/lingrep/THIRD-PARTY-NOTICES.md" || fail "installed notices differ"
         [[ -z $(find "$home" -name '*.install.*') ]] || fail "staged file left behind"
     fi
 
@@ -141,7 +146,9 @@ for shell in "${shells[@]}"; do
     # line keeps $HOME unexpanded for a directory inside it.
     if run 0 XDG_BIN_HOME="$temporary/home/bin" XDG_DATA_HOME="$temporary/home/data"; then
         [[ -x "$home/bin/ling" && ! -e "$home/.local/bin/ling" ]] || fail "XDG_BIN_HOME"
-        [[ -f "$home/data/man/man1/ling.1" && ! -e "$home/.local/share" ]] || fail "XDG_DATA_HOME"
+        [[ -f "$home/data/man/man1/ling.1" \
+            && -f "$home/data/licenses/lingrep/THIRD-PARTY-NOTICES.md" \
+            && ! -e "$home/.local/share" ]] || fail "XDG_DATA_HOME"
         grep -qx 'export PATH="$HOME/bin:$PATH"' "$home/.bashrc" || fail "PATH line under HOME"
     fi
     run 0 LING_INSTALL_DIR="$temporary/home/explicit" XDG_BIN_HOME="$temporary/home/bin" \
