@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -80,7 +81,12 @@ class NativeMeasurementTests(unittest.TestCase):
                     (root / 'measure.py').write_bytes(SCRIPT.read_bytes())
                     pidfile = root / 'pid'
                     receipt = root / 'receipt.json'
-                    child = 'import os,time; from pathlib import Path; Path(%r).write_text(str(os.getpid())); time.sleep(60)' % str(pidfile)
+                    pipe = root / 'liveness'
+                    os.mkfifo(pipe)
+                    live = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+                    child = ('import os,time; from pathlib import Path; '
+                             'live=open(%r,"wb",buffering=0); live.write(b"R"); '
+                             'Path(%r).write_text(str(os.getpid())); time.sleep(60)') % (str(pipe), str(pidfile))
                     process = subprocess.Popen([sys.executable, str(SCRIPT), 'run', '--output', str(receipt),
                                                 '--', sys.executable, '-c', child])
                     try:
@@ -88,13 +94,16 @@ class NativeMeasurementTests(unittest.TestCase):
                         while not pidfile.exists() and process.poll() is None and time.monotonic() < deadline:
                             time.sleep(0.02)
                         self.assertTrue(pidfile.exists(), 'measurement child did not start')
+                        self.assertEqual(os.read(live, 1), b'R')
                         process.send_signal(signum)
                         self.assertEqual(process.wait(timeout=20), 128 + signum)
                         self.assertIn('KeyboardInterrupt' if signum == signal.SIGINT else 'InterruptedError',
                                       json.loads(receipt.read_text())['error'])
-                        with self.assertRaises(ProcessLookupError):
-                            os.kill(int(pidfile.read_text()), 0)
+                        readable, _, _ = select.select([live], [], [], 20)
+                        self.assertEqual(readable, [live], 'measurement child still holds its liveness pipe')
+                        self.assertEqual(os.read(live, 1), b'')
                     finally:
+                        os.close(live)
                         if process.poll() is None:
                             process.kill()
                             process.wait()
