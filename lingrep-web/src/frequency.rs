@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lingrep_core::corpus::{Metadata, MetadataScalar, MetadataValue, metadata_from_json};
-use lingrep_core::scope::{DocumentOutcome, ScopeClause, Verdict};
+use lingrep_core::scope::{DocumentOutcome, ExclusionReason, ScopeClause, Verdict};
 use lingrep_corpus::{
     CountTable, CountTableError, CountTableKey, DocumentMask, FieldValue, Group, format_identity,
 };
@@ -152,6 +152,8 @@ pub struct Query {
 pub struct Kept {
     pub kept: u64,
     pub of: u64,
+    /// Documents admitted by the other conditions but excluded here for a missing field.
+    pub excluded_missing_field_documents: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -981,13 +983,33 @@ impl FrequencyPair {
                 .collect::<Vec<_>>()
                 .join(" & ");
             let others = document_clause(&others).unwrap_or(None);
-            let others = self.mask(&self.admitted(others.as_ref())?);
+            let admitted_others = self.admitted(others.as_ref())?;
+            let mut excluded_missing_field_documents = 0;
+            if matches!(query.conditions.get(key), Some(Condition::Out { .. })) {
+                let predicate = document_clause(&written[index].1).expect("written predicate");
+                let mut reader = self.documents.reader()?;
+                for (id, admitted) in self.table.document_ids().iter().zip(&admitted_others) {
+                    if *admitted {
+                        let metadata = reader.document(*id)?;
+                        if predicate.as_ref().is_some_and(|predicate| {
+                            predicate.evaluate_document(&metadata)
+                                == DocumentOutcome::Decided(Verdict::Excluded(
+                                    ExclusionReason::MissingField,
+                                ))
+                        }) {
+                            excluded_missing_field_documents += 1;
+                        }
+                    }
+                }
+            }
+            let others = self.mask(&admitted_others);
             let of = self.table.pattern_totals(&others)?[pattern].occurrences;
             kept.insert(
                 key.clone(),
                 Kept {
                     kept: total.occurrences,
                     of,
+                    excluded_missing_field_documents,
                 },
             );
         }

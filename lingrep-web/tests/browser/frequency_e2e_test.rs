@@ -772,3 +772,53 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
     served.server.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn exclusions_explain_missing_fields_in_both_languages() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let mut rows = metadata();
+    rows[4] = rows[4]
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                if key == "genre" {
+                    scalar("essay")
+                } else {
+                    value.clone()
+                },
+            )
+        })
+        .collect();
+    rows[5] = rows[5]
+        .iter()
+        .filter(|(key, _)| key != "genre")
+        .cloned()
+        .collect();
+    let served = serve_metadata(&[], rows).await;
+    let url = format!(
+        "{}#w=%7B%22genre%22%3A%7B%22m%22%3A%22out%22%2C%22v%22%3A%5B%22novel%22%5D%7D%7D",
+        served.base
+    );
+    let tooltip =
+        "return document.querySelector('[data-share=genre]')?.parentElement.dataset.full || null";
+    open(&driver, &url, tooltip).await?;
+    let english = driver.execute(tooltip, Vec::new()).await?.json().clone();
+    assert!(
+        english
+            .as_str()
+            .unwrap()
+            .contains("1 document lacks genre and is excluded")
+    );
+    driver
+        .find(By::Css("[data-locale-toggle]"))
+        .await?
+        .click()
+        .await?;
+    let japanese = wait_for(&driver, "return document.querySelector('[data-share=genre]')?.parentElement.dataset.full?.includes('genreがない1件')", "Japanese missing-field explanation").await?;
+    assert_eq!(japanese, json!(true));
+    assert_no_page_errors(&driver).await?;
+    driver.quit().await
+}

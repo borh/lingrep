@@ -29,6 +29,7 @@ const S = {
     addLabel: "Add a condition",
     figures: (e, o, d) => `${e} entries, ${o} occurrences, ${d} documents`,
     keeps: (x, y, p) => `${x} of ${y} (${p}%)`,
+    missingField: (n, key) => `Among documents meeting the other conditions, ${n} ${n === "1" ? "document lacks" : "documents lack"} ${key} and ${n === "1" ? "is" : "are"} excluded.`,
     keepsEntries: (x, y, p) => `${x} of ${y} entries (${p}%)`,
     heads: ["Rank", "Entry", "Occurrences", "Documents", "Share of documents", "Per million tokens"],
     more: (n) => `Show the next ${n}`,
@@ -87,6 +88,7 @@ const S = {
     addLabel: "条件を追加",
     figures: (e, o, d) => `${e}項目、${o}件、文書${d}件`,
     keeps: (x, y, p) => `${y}件中${x}件（${p}%）`,
+    missingField: (n, key) => `他の条件を満たす文書のうち、${key}がない${n}件を除外しています。`,
     keepsEntries: (x, y, p) => `${y}項目中${x}項目（${p}%）`,
     heads: ["順位", "項目", "出現数", "文書数", "文書に占める割合", "100万語あたり"],
     more: (n) => `次の${n}件を表示`,
@@ -276,6 +278,9 @@ export function mountFrequency(root) {
         const k = answer.kept[key], p = pctOf(k.kept, k.of);
         kept = p;
         title = t.keeps(num(k.kept), num(k.of), p);
+        if (s.w[key]?.m === "out" && k.excluded_missing_field_documents) {
+          title += ` ${t.missingField(num(k.excluded_missing_field_documents), keyName(key))}`;
+        }
         pick?.style.setProperty("--kept", `${k.of ? (k.kept / k.of) * 100 : 0}%`);
       } else pick?.style.removeProperty("--kept");
       n.textContent = kept == null ? "" : `${kept}%`;

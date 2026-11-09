@@ -510,8 +510,8 @@ fn check(server: &Server, fixture: &Fixture, conditions: &Conditions, sort: &str
             others.remove(key);
             let of = expected_occurrences(fixture, &self::clause(&others), pattern);
             assert_eq!(
-                kept[key],
-                json!({"kept": want.occurrences, "of": of}),
+                (kept[key]["kept"].clone(), kept[key]["of"].clone()),
+                (json!(want.occurrences), json!(of)),
                 "{context}: {key}"
             );
         }
@@ -524,6 +524,70 @@ fn expected_occurrences(fixture: &Fixture, clause: &str, pattern: &str) -> u64 {
         .filter(|record| record["pattern"] == pattern)
         .map(|record| record["count"].as_u64().unwrap())
         .sum()
+}
+
+#[test]
+fn exclusions_report_missing_fields_within_the_other_conditions() {
+    let fixture = fixture();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let cases = [
+        (
+            "genre",
+            [("genre", Condition::Out(vec!["novel"]))]
+                .into_iter()
+                .collect::<Conditions>(),
+            1,
+        ),
+        (
+            "tags",
+            [("tags", Condition::Out(vec!["x"]))].into_iter().collect(),
+            1,
+        ),
+        (
+            "genre",
+            [
+                ("genre", Condition::Out(vec!["novel"])),
+                ("year", Condition::Range(Some(2004), None)),
+            ]
+            .into_iter()
+            .collect(),
+            0,
+        ),
+        (
+            "tags",
+            [
+                ("tags", Condition::Out(vec!["x"])),
+                ("genre", Condition::In(vec!["essay"])),
+            ]
+            .into_iter()
+            .collect(),
+            0,
+        ),
+    ];
+    for (key, conditions, expected) in cases {
+        let reply = answer(&server, "word", &conditions, "count", "");
+        assert_eq!(
+            reply["kept"][key]["excluded_missing_field_documents"],
+            expected
+        );
+        if conditions.len() == 1 {
+            let output = crate::support::lingrep_without_dictionary()
+                .args(["--json", "summarize", "--patterns"])
+                .arg(&fixture.catalog)
+                .arg("--corpus")
+                .arg(&fixture.artifact)
+                .args(["--where", &clause(&conditions)])
+                .output()
+                .unwrap();
+            assert_success(&output);
+            let records = parse_jsonl(&output.stdout);
+            let complete = records.iter().find(|r| r["type"] == "complete").unwrap();
+            assert_eq!(
+                reply["kept"][key]["excluded_missing_field_documents"],
+                complete["data"]["scope"]["documents"]["excluded_missing_field"]
+            );
+        }
+    }
 }
 
 #[test]
