@@ -630,7 +630,17 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
 
 #[test]
 fn the_shown_command_reproduces_the_rows() {
-    let fixture = fixture();
+    let mut fixture = fixture();
+    for (path, folder) in [
+        (&mut fixture.table, "results"),
+        (&mut fixture.artifact, "corpora"),
+    ] {
+        let directory = fixture.directory.path().join(folder);
+        fs::create_dir(&directory).unwrap();
+        let moved = directory.join(path.file_name().unwrap());
+        fs::rename(&*path, &moved).unwrap();
+        *path = moved;
+    }
     let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
     let conditions = [
         ("genre", Condition::In(vec!["novel", "essay"])),
@@ -640,28 +650,25 @@ fn the_shown_command_reproduces_the_rows() {
     .collect::<Conditions>();
     let reply = answer(&server, "word", &conditions, "count", "");
     let clause = reply["clause"].as_str().unwrap();
-    assert_eq!(
-        reply["command"],
-        format!(
-            "ling table 'works.lingtable' --top 100 --where '{clause}' --corpus 'works.lingcorpus' --patterns 'table.lx'"
-        )
-    );
-    let output = crate::support::lingrep_without_dictionary()
-        .current_dir(fixture.directory.path())
+    let output = Command::new("sh")
         .args([
-            "--json",
-            "table",
-            "works.lingtable",
-            "--top",
-            "100",
-            "--where",
-            clause,
+            "-c",
+            &format!(
+                "ling() {{ \"$LINGREP_BINARY\" --json \"$@\"; }}\n{}",
+                reply["command"].as_str().unwrap()
+            ),
         ])
-        .args(["--corpus", "works.lingcorpus", "--patterns"])
-        .arg(&fixture.catalog)
+        .env("LINGREP_BINARY", lingrep_binary_path())
+        .current_dir(fixture.directory.path())
         .output()
         .unwrap();
     assert_success(&output);
+    assert_eq!(
+        reply["command"],
+        format!(
+            "ling table './results/works.lingtable' --top 100 --where '{clause}' --corpus './corpora/works.lingcorpus' --patterns './patterns/table.lx'"
+        )
+    );
     let rows = parse_jsonl(&output.stdout)
         .into_iter()
         .filter(|record| record["type"] == "row" && record["data"]["pattern"] == "word")
@@ -694,10 +701,10 @@ fn copied_command_preserves_shell_metacharacters_in_filenames() {
     for (path, name) in [
         (
             &mut fixture.artifact,
-            "works ' ; $(touch injected).lingcorpus",
+            "-works ' ; $(touch injected).lingcorpus",
         ),
-        (&mut fixture.table, "table ' ; $(touch injected).lingtable"),
-        (&mut fixture.catalog, "catalog ' ; $(touch injected).lx"),
+        (&mut fixture.table, "-table ' ; $(touch injected).lingtable"),
+        (&mut fixture.catalog, "-catalog ' ; $(touch injected).lx"),
     ] {
         let renamed = path.with_file_name(name);
         fs::rename(&*path, &renamed).unwrap();
@@ -735,21 +742,46 @@ fn copied_command_preserves_shell_metacharacters_in_filenames() {
         .filter(|arg| !arg.is_empty())
         .map(|arg| std::str::from_utf8(arg).unwrap())
         .collect::<Vec<_>>();
+    let table = format!("./{}", fixture.table.file_name().unwrap().to_str().unwrap());
+    let corpus = format!(
+        "./{}",
+        fixture.artifact.file_name().unwrap().to_str().unwrap()
+    );
+    let catalog = format!(
+        "./{}",
+        fixture
+            .catalog
+            .strip_prefix(fixture.directory.path())
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
     assert_eq!(
         got,
         [
             "table",
-            fixture.table.file_name().unwrap().to_str().unwrap(),
+            &table,
             "--top",
             "100",
             "--where",
             "@document.genre = \"novel\"",
             "--corpus",
-            fixture.artifact.file_name().unwrap().to_str().unwrap(),
+            &corpus,
             "--patterns",
-            fixture.catalog.file_name().unwrap().to_str().unwrap(),
+            &catalog
         ]
     );
+    let executed = Command::new("sh")
+        .args([
+            "-c",
+            &format!("ling() {{ \"$LINGREP_BINARY\" --json \"$@\"; }}\n{command}"),
+        ])
+        .env("LINGREP_BINARY", lingrep_binary_path())
+        .current_dir(fixture.directory.path())
+        .output()
+        .unwrap();
+    assert_success(&executed);
+    assert!(!command.contains(fixture.directory.path().to_str().unwrap()));
     assert!(!fixture.directory.path().join("injected").exists());
 }
 

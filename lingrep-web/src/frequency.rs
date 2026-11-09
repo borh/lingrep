@@ -41,8 +41,7 @@ pub struct FrequencyPair {
     pub corpus_display: String,
     pub catalog: String,
     table: CountTable,
-    table_file: String,
-    corpus_file: String,
+    command_inputs: Option<[String; 3]>,
     documents: Vec<Arc<Metadata>>,
     patterns: Vec<PatternSource>,
     workbench: Option<String>,
@@ -295,6 +294,7 @@ impl FrequencyViews {
         declared: &[(CorpusName, PathBuf, String)],
         corpora: &CorpusSet,
         catalogs: &CatalogIndex,
+        pattern_root: &Path,
     ) -> Result<Self, String> {
         if tables.is_empty() {
             return Ok(Self::default());
@@ -429,12 +429,12 @@ impl FrequencyViews {
             let workbench = crate::permalink::encode_query_only(source, name.as_str(), None, None)
                 .ok()
                 .map(|query| format!("./{query}"));
+            let command_inputs = command_paths([&path, corpus_path, &pattern_root.join(&catalog)]);
             views.pairs.push(FrequencyPair {
                 corpus: name.clone(),
                 corpus_display: display.clone(),
                 catalog,
-                table_file: file_name(&path),
-                corpus_file: file_name(corpus_path),
+                command_inputs,
                 table,
                 documents: aligned,
                 patterns,
@@ -445,11 +445,31 @@ impl FrequencyViews {
     }
 }
 
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
+fn command_paths(paths: [&Path; 3]) -> Option<[String; 3]> {
+    let paths = paths
+        .map(std::path::absolute)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let mut parent = paths[0].parent()?;
+    while !paths.iter().all(|path| path.starts_with(parent)) {
+        parent = parent.parent()?;
+    }
+    parent.parent()?;
+    let relative = paths
+        .iter()
+        .map(|path| {
+            let path = path.strip_prefix(parent).ok()?;
+            if path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+            {
+                return None;
+            }
+            Some(format!("./{}", path.to_str()?))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    relative.try_into().ok()
 }
 
 struct CorpusDocuments {
@@ -848,18 +868,18 @@ impl FrequencyPair {
     }
 
     fn command(&self, clause: &str) -> String {
-        let mut command = format!(
-            "ling table {} --top {PAGE_ROWS}",
-            shell_word(&self.table_file)
-        );
+        let Some([table, corpus, catalog]) = &self.command_inputs else {
+            return String::new();
+        };
+        let mut command = format!("ling table {} --top {PAGE_ROWS}", shell_word(table));
         if !clause.is_empty() {
             command.push_str(" --where ");
             command.push_str(&shell_word(clause));
         }
         command.push_str(&format!(
             " --corpus {} --patterns {}",
-            shell_word(&self.corpus_file),
-            shell_word(&self.catalog)
+            shell_word(corpus),
+            shell_word(catalog)
         ));
         command
     }
@@ -1095,8 +1115,11 @@ mod tests {
                 corpus_display: "default".into(),
                 catalog: "p.lx".into(),
                 table,
-                table_file: "table.lingtable".into(),
-                corpus_file: "corpus.lingcorpus".into(),
+                command_inputs: Some([
+                    "table.lingtable".into(),
+                    "corpus.lingcorpus".into(),
+                    "catalog.lx".into(),
+                ]),
                 documents: vec![Arc::new(metadata)],
                 patterns: vec![PatternSource {
                     name: "p".into(),
@@ -1434,6 +1457,30 @@ mod tests {
             Some("pattern q := [].")
         );
         assert_eq!(definition_source(source, "absent"), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn command_paths_hide_inputs_outside_the_shared_directory() {
+        for paths in [
+            [
+                "/srv/table",
+                "/home/alice/private/corpus",
+                "/nix/store/catalog",
+            ],
+            [
+                "/srv/results/../../home/alice/private/table",
+                "/srv/results/corpus",
+                "/srv/results/catalog",
+            ],
+        ] {
+            assert!(command_paths(paths.map(Path::new)).is_none());
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let invalid = Path::new(std::ffi::OsStr::from_bytes(b"/srv/\xff"));
+        assert!(
+            command_paths([invalid, Path::new("/srv/corpus"), Path::new("/srv/catalog")]).is_none()
+        );
     }
 
     #[test]

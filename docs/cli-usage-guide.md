@@ -2027,7 +2027,11 @@ or list values repeat (a set to keep or to exclude). Each condition shows the
 number of occurrences that satisfy all conditions as a share of those that
 satisfy the other conditions. The page shows the corresponding `ling table …
 --where …` command. The view applies its selected sort order and substring
-filter separately. A clause with `@section` or `@sentence` is answered with an
+filter separately. Command paths are relative to the common parent directory of
+the table, corpus and catalog files; run the copied command from that directory.
+Absolute server paths are omitted. The command is unavailable when the inputs
+share only the filesystem root, a relative path contains `..`, or a path is not
+UTF-8. A clause with `@section` or `@sentence` is answered with an
 explanation rather than rows, because a table counts per document. The URL
 stores the query state, so a copied link reopens the same view.
 

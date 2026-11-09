@@ -35,6 +35,8 @@ const S = {
     empty: "No occurrence meets these conditions.",
     nomatch: (q) => `No entry contains “${q}”.`,
     placeholder: "anything",
+    commandUnavailable: "A copied command is unavailable because the input paths cannot be represented below a shared directory.",
+    commandContext: "Run from the common parent directory of the table, corpus and catalog files.",
     copy: "Copy",
     copied: "Copied",
     edit: "Edit as a clause",
@@ -91,6 +93,8 @@ const S = {
     empty: "条件に合う用例はありません。",
     nomatch: (q) => `「${q}」を含む項目はありません。`,
     placeholder: "任意の文字列",
+    commandUnavailable: "入力パスを共通ディレクトリからの相対パスで表せないため、コピー用コマンドは表示できません。",
+    commandContext: "テーブル・コーパス・カタログの各ファイルに共通する親ディレクトリで実行してください。",
     copy: "コピー",
     copied: "コピーしました",
     edit: "条件式として編集",
@@ -330,7 +334,7 @@ export function mountFrequency(root) {
           return `${esc(command.slice(0, at))}<span class="where">${esc(command.slice(at, end))}</span>${esc(command.slice(end))}`;
         })()
       : esc(where);
-    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t.copy)}</button>` : ""}<button data-c="edit">${esc(t.edit)}</button>${s.where != null ? `<button data-c="blanks">${esc(t.blanks)}</button>` : ""}</div>`;
+    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t.copy)}</button>` : ""}<button data-c="edit">${esc(t.edit)}</button>${s.where != null ? `<button data-c="blanks">${esc(t.blanks)}</button>` : ""}</div>${answer ? `<p>${esc(command ? t.commandContext : t.commandUnavailable)}</p>` : ""}`;
   }
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;

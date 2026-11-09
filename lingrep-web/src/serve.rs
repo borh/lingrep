@@ -214,6 +214,7 @@ pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> 
             &config.corpora,
             &corpus_set,
             &catalogs,
+            &crate::cli::resolve_pattern_root(args),
         )
         .await?
         .with_labels(labels),
