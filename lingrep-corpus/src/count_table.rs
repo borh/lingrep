@@ -589,7 +589,10 @@ impl CountTableWriter {
                 return Err(writer_error("documents of an entry are not ascending"));
             }
             Some((current, pending)) if document == current => {
-                open.pair = Some((current, pending + count));
+                let pending = pending
+                    .checked_add(count)
+                    .ok_or_else(|| writer_error("document count overflow"))?;
+                open.pair = Some((current, pending));
                 None
             }
             pending => {
