@@ -1395,3 +1395,339 @@ fn frequency_endpoints_page_large_tables() {
         }
     }
 }
+
+/// Each entry of `pattern` the view lists without conditions, as its group.
+fn entries(server: &Server, pattern: &str) -> Vec<Value> {
+    answer(server, pattern, &Conditions::new(), "count", "")["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["group"].clone())
+        .collect()
+}
+
+fn entry_query(
+    pattern: &str,
+    group: &Value,
+    conditions: &Conditions,
+    extra: &[(&str, &str)],
+) -> String {
+    let group = group.to_string();
+    let conditions = conditions_json(conditions);
+    let mut params = vec![
+        ("corpus", "default"),
+        ("catalog", "table.lx"),
+        ("pattern", pattern),
+        ("entry", group.as_str()),
+        ("w", conditions.as_str()),
+    ];
+    params.extend_from_slice(extra);
+    query(&params)
+}
+
+/// The entry's count and works per value of `key` from `ling table --entry
+/// --by-metadata`, the documents without a value under `None`.
+fn table_entry_values(
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    key: &str,
+    clause: &str,
+) -> BTreeMap<Option<String>, (u64, u64)> {
+    let mut command = crate::support::lingrep_without_dictionary();
+    command
+        .args(["--json", "table"])
+        .arg(&fixture.table)
+        .arg("--patterns")
+        .arg(&fixture.catalog)
+        .arg("--corpus")
+        .arg(&fixture.artifact)
+        .args(["--entry", &format!("{pattern}={group}")])
+        .args(["--by-metadata", &format!("@document.{key}")]);
+    if !clause.is_empty() {
+        command.args(["--where", clause]);
+    }
+    let output = command.output().unwrap();
+    assert_success(&output);
+    parse_jsonl(&output.stdout)
+        .into_iter()
+        .filter(|record| record["type"] == "metadata_value")
+        .map(|record| {
+            let data = &record["data"];
+            (
+                data["value"].as_str().map(str::to_owned),
+                (
+                    data["entry"]["count"].as_u64().unwrap(),
+                    data["entry"]["works"].as_u64().unwrap(),
+                ),
+            )
+        })
+        .filter(|(_, (count, _))| *count > 0)
+        .collect()
+}
+
+fn check_profile(
+    server: &Server,
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    conditions: &Conditions,
+) {
+    let context = format!("{pattern} {group} where {:?}", clause(conditions));
+    let reply = get_json(
+        server,
+        &format!(
+            "/api/frequency/profile?{}",
+            entry_query(pattern, group, conditions, &[])
+        ),
+    );
+    assert_eq!(reply["status"], "ok", "{context}: {reply}");
+    assert_eq!(reply["group"], *group, "{context}");
+    let row = answer(server, pattern, conditions, "count", "")["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["group"] == *group)
+        .map_or((0, 0), |row| {
+            (
+                row["count"].as_u64().unwrap(),
+                row["works"].as_u64().unwrap(),
+            )
+        });
+    assert_eq!(
+        (
+            reply["count"].as_u64().unwrap(),
+            reply["works"].as_u64().unwrap()
+        ),
+        row,
+        "{context}"
+    );
+    let charts = reply["charts"].as_array().unwrap();
+    assert_eq!(
+        charts
+            .iter()
+            .map(|chart| chart["key"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["genre", "tags", "year"],
+        "{context}"
+    );
+    for chart in charts {
+        let key = chart["key"].as_str().unwrap();
+        let mut others = conditions.clone();
+        others.remove(key);
+        let want = table_entry_values(fixture, pattern, group, key, &clause(&others));
+        let pair = |bar: &Value| {
+            (
+                bar["count"].as_u64().unwrap(),
+                bar["works"].as_u64().unwrap(),
+            )
+        };
+        let mut got = BTreeMap::new();
+        if !chart["none"].is_null() {
+            got.insert(None, pair(&chart["none"]));
+        }
+        match chart["kind"].as_str().unwrap() {
+            "categorical" => {
+                let bars = chart["bars"].as_array().unwrap();
+                assert!(
+                    bars.windows(2)
+                        .all(|two| two[0]["count"].as_u64() >= two[1]["count"].as_u64()),
+                    "{context}: {key} bars descend"
+                );
+                assert_eq!(chart["distinct"], bars.len(), "{context}: {key}");
+                for bar in bars {
+                    got.insert(Some(bar["value"].as_str().unwrap().to_owned()), pair(bar));
+                }
+            }
+            "range" => {
+                let columns = chart["columns"].as_array().unwrap();
+                assert_eq!(
+                    columns
+                        .iter()
+                        .map(|column| (column["lo"].as_i64(), column["hi"].as_i64()))
+                        .collect::<Vec<_>>(),
+                    (2001..=2005)
+                        .map(|year| (Some(year), Some(year)))
+                        .collect::<Vec<_>>(),
+                    "{context}: one column per year"
+                );
+                for column in columns
+                    .iter()
+                    .filter(|column| column["count"].as_u64() > Some(0))
+                {
+                    got.insert(Some(column["lo"].to_string()), pair(column));
+                }
+            }
+            kind => panic!("{context}: chart kind {kind}"),
+        }
+        assert_eq!(got, want, "{context}: {key}");
+    }
+}
+
+/// The text a frequency row shows for the group of a `ling matches` record
+/// of this catalog: the key's values, or else the matched surface.
+fn record_group_text(data: &Value) -> String {
+    match data["key"].as_array() {
+        Some(fields) => fields
+            .iter()
+            .map(|field| field["value"].as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join(" "),
+        None => data["surface"].as_str().unwrap().to_owned(),
+    }
+}
+
+/// `ling matches --where` records of the entry, in the order `ling` prints
+/// them, as (sentence, start, end, surface).
+fn matched_lines(
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    clause: &str,
+) -> Vec<(u64, u64, u64, String)> {
+    let mut command = crate::support::lingrep_without_dictionary();
+    command
+        .args(["--json", "matches", "--patterns"])
+        .arg(&fixture.catalog)
+        .arg("--corpus")
+        .arg(&fixture.artifact);
+    if !clause.is_empty() {
+        command.args(["--where", clause]);
+    }
+    let output = command.output().unwrap();
+    assert_success(&output);
+    let text = group_text(group);
+    parse_jsonl(&output.stdout)
+        .into_iter()
+        .filter(|record| {
+            record["type"] == "match"
+                && record["data"]["pattern"] == pattern
+                && record_group_text(&record["data"]) == text
+        })
+        .map(|record| {
+            let data = &record["data"];
+            (
+                data["corpus_sentence_ordinal"].as_u64().unwrap(),
+                data["span"]["start"].as_u64().unwrap(),
+                data["span"]["end"].as_u64().unwrap(),
+                data["surface"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn check_lines(
+    server: &Server,
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    conditions: &Conditions,
+    page: usize,
+) {
+    let context = format!(
+        "{pattern} {group} where {:?} page {page}",
+        clause(conditions)
+    );
+    let want = matched_lines(fixture, pattern, group, &clause(conditions));
+    let mut got = Vec::new();
+    loop {
+        let offset = got.len().to_string();
+        let limit = page.to_string();
+        let reply = get_json(
+            server,
+            &format!(
+                "/api/frequency/lines?{}",
+                entry_query(
+                    pattern,
+                    group,
+                    conditions,
+                    &[("offset", &offset), ("limit", &limit)]
+                )
+            ),
+        );
+        assert_eq!(reply["status"], "ok", "{context}: {reply}");
+        assert_eq!(reply["total"], want.len(), "{context}");
+        assert_eq!(reply["offset"], got.len(), "{context}");
+        let lines = reply["lines"].as_array().unwrap();
+        assert!(lines.len() <= page, "{context}");
+        if lines.is_empty() {
+            break;
+        }
+        got.extend(lines.iter().map(|line| {
+            (
+                line["sentence"].as_u64().unwrap(),
+                line["start"].as_u64().unwrap(),
+                line["end"].as_u64().unwrap(),
+                line["node"].as_str().unwrap().to_owned(),
+            )
+        }));
+    }
+    assert_eq!(got, want, "{context}");
+}
+
+#[test]
+fn an_entry_profile_equals_ling_table_and_its_lines_equal_ling_matches() {
+    let fixture = fixture();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let groups = PATTERNS
+        .iter()
+        .map(|pattern| (*pattern, entries(&server, pattern)))
+        .collect::<BTreeMap<_, _>>();
+    let named = |pairs: &[(&'static str, Condition)]| pairs.iter().cloned().collect::<Conditions>();
+    let cat = groups["cat"][0].clone();
+    for conditions in [
+        Conditions::new(),
+        named(&[("genre", Condition::In(vec!["novel"]))]),
+        named(&[
+            ("tags", Condition::Out(vec!["x"])),
+            ("year", Condition::Range(Some(2002), None)),
+        ]),
+        named(&[("year", Condition::Range(Some(1999), Some(1999)))]),
+    ] {
+        check_profile(&server, &fixture, "cat", &cat, &conditions);
+        check_lines(&server, &fixture, "cat", &cat, &conditions, 2);
+    }
+
+    hegel::Hegel::new(|tc: hegel::TestCase| {
+        let pattern = PATTERNS[usize::from(tc.draw(generators::integers::<u8>().max_value(2)))];
+        let candidates = &groups[pattern];
+        let group =
+            &candidates[tc.draw(generators::integers::<usize>().max_value(candidates.len() - 1))];
+        let mut conditions = Conditions::new();
+        for (key, values) in [("genre", GENRES), ("tags", TAGS)] {
+            let chosen = values
+                .iter()
+                .copied()
+                .filter(|_| tc.draw(generators::booleans()))
+                .collect::<Vec<_>>();
+            match tc.draw(generators::integers::<u8>().max_value(2)) {
+                0 => {}
+                1 => {
+                    conditions.insert(key, Condition::In(chosen));
+                }
+                _ => {
+                    conditions.insert(key, Condition::Out(chosen));
+                }
+            }
+        }
+        if tc.draw(generators::booleans()) {
+            let bound = || {
+                tc.draw(generators::booleans()).then(|| {
+                    tc.draw(
+                        generators::integers::<i64>()
+                            .min_value(2000)
+                            .max_value(2006),
+                    )
+                })
+            };
+            let lo = bound();
+            let hi = bound();
+            conditions.insert("year", Condition::Range(lo, hi));
+        }
+        let page = tc.draw(generators::integers::<usize>().min_value(1).max_value(4));
+        check_profile(&server, &fixture, pattern, group, &conditions);
+        check_lines(&server, &fixture, pattern, group, &conditions, page);
+    })
+    .settings(hegel::Settings::new().test_cases(25).derandomize(true))
+    .run();
+}

@@ -37,6 +37,8 @@ const MAX_PROJECTED_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Default)]
 pub struct FrequencyViews {
     pairs: Vec<FrequencyPair>,
+    /// The catalog bound to the corpus of the pair at the same index.
+    matchers: Vec<crate::frequency_entry::EntryMatcher>,
     dimensions: HashMap<CorpusName, Arc<[Dimension]>>,
     metadata_keys: BTreeSet<String>,
     labels: KeyLabels,
@@ -49,9 +51,10 @@ pub struct FrequencyPair {
     pub corpus: CorpusName,
     pub corpus_display: String,
     pub catalog: String,
-    table: CountTable,
+    pub(crate) table: CountTable,
     command_inputs: Option<[String; 3]>,
     documents: Arc<documents::Documents>,
+    table_documents: documents::TableDocuments,
     patterns: Vec<PatternSource>,
     workbench: Option<String>,
 }
@@ -125,6 +128,8 @@ pub enum Unsupported {
     Shape {
         key: String,
     },
+    /// The pattern has no entry with the given group.
+    UnknownEntry,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -280,6 +285,23 @@ struct ViewRow {
     works: u64,
 }
 
+/// An entry's occurrences in a set of documents, and those documents with at
+/// least one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ValueSum {
+    pub count: u64,
+    pub works: u64,
+}
+
+impl ValueSum {
+    fn add(&mut self, count: u64) {
+        if count > 0 {
+            self.count += count;
+            self.works += 1;
+        }
+    }
+}
+
 pub enum Outcome {
     Answer(Answer),
     Unsupported(Unsupported),
@@ -297,9 +319,25 @@ impl FrequencyViews {
 
     #[must_use]
     pub fn find(&self, corpus: &str, catalog: &str) -> Option<&FrequencyPair> {
+        self.position(corpus, catalog)
+            .map(|index| &self.pairs[index])
+    }
+
+    /// The pair's catalog bound to its corpus, for matching occurrences.
+    #[must_use]
+    pub fn matcher(
+        &self,
+        corpus: &str,
+        catalog: &str,
+    ) -> Option<&crate::frequency_entry::EntryMatcher> {
+        self.position(corpus, catalog)
+            .map(|index| &self.matchers[index])
+    }
+
+    fn position(&self, corpus: &str, catalog: &str) -> Option<usize> {
         self.pairs
             .iter()
-            .find(|pair| pair.corpus.as_str() == corpus && pair.catalog == catalog)
+            .position(|pair| pair.corpus.as_str() == corpus && pair.catalog == catalog)
     }
 
     #[must_use]
@@ -459,7 +497,31 @@ impl FrequencyViews {
             reader
                 .check_ids(table.document_ids())
                 .map_err(|error| named(error.to_string()))?;
+            let keys = documents
+                .dimensions
+                .iter()
+                .map(|dimension| dimension.key.clone())
+                .collect::<Vec<_>>();
+            let table_documents = documents::TableDocuments::build(
+                &mut documents
+                    .store
+                    .reader()
+                    .map_err(|error| named(error.to_string()))?,
+                table.document_ids(),
+                &keys,
+                value_texts,
+                &documents.budget,
+            )
+            .map_err(|error| named(error.to_string()))?;
             let source = catalogs.get(&catalog).map_or("", |source| source);
+            let matcher = crate::frequency_entry::EntryMatcher::new(
+                &catalog,
+                source,
+                table.pattern_names(),
+                documents.ready.clone(),
+                Arc::clone(&documents.provenance),
+            )
+            .map_err(|message| format!("catalog {catalog}: {message}"))?;
             let patterns = table
                 .pattern_names()
                 .map(|name| PatternSource {
@@ -478,9 +540,11 @@ impl FrequencyViews {
                 command_inputs,
                 table,
                 documents: Arc::clone(&documents.store),
+                table_documents,
                 patterns,
                 workbench,
             });
+            views.matchers.push(matcher);
         }
         Ok(views)
     }
@@ -515,6 +579,9 @@ fn command_paths(paths: [&Path; 3]) -> Option<[String; 3]> {
 
 struct CorpusDocuments {
     store: Arc<documents::Documents>,
+    budget: Arc<TempBudget>,
+    ready: crate::corpus_runtime::ReadyCorpus,
+    provenance: Arc<lingrep_corpus::ProvenanceView>,
     keys: BTreeSet<String>,
     dimensions: Arc<[Dimension]>,
 }
@@ -565,7 +632,11 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
                     })?,
             };
             writer
-                .push(row.document_id.get(), &metadata)
+                .push(
+                    row.document_id.get(),
+                    row.first_sentence..row.first_sentence + row.sentence_count,
+                    &metadata,
+                )
                 .map_err(|error| error.to_string())?;
         }
     }
@@ -583,14 +654,26 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
         }
         Ok(metadata)
     });
-    let dimensions = derive_dimensions(rows, budget)
+    let dimensions = derive_dimensions(rows, Arc::clone(&budget))
         .map_err(|error| error.to_string())?
         .into();
     Ok(CorpusDocuments {
         store,
+        budget,
+        ready,
+        provenance: view,
         keys,
         dimensions,
     })
+}
+
+/// The values of `key` in `metadata` as `--where` compares them.
+fn value_texts(metadata: &Metadata, key: &str) -> Vec<String> {
+    match lookup(metadata, key) {
+        Some(MetadataValue::Scalar(scalar)) => vec![scalar_text(scalar)],
+        Some(MetadataValue::Scalars(scalars)) => scalars.iter().map(scalar_text).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn scalar_text(scalar: &MetadataScalar) -> String {
@@ -762,7 +845,7 @@ fn predicate(dimension: &Dimension, condition: &Condition) -> Result<Option<Stri
     }
 }
 
-fn predicates(
+pub(crate) fn predicates(
     dimensions: &[Dimension],
     conditions: &BTreeMap<String, Condition>,
 ) -> Result<Vec<(String, String)>, Unsupported> {
@@ -783,7 +866,7 @@ fn predicates(
     Ok(written)
 }
 
-fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
+pub(crate) fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
     if source.trim().is_empty() {
         return Ok(None);
     }
@@ -799,11 +882,11 @@ fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
     Ok(Some(clause))
 }
 
-fn shell_word(text: &str) -> String {
+pub(crate) fn shell_word(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-fn group_value(group: &Group<'_>) -> serde_json::Value {
+pub(crate) fn group_value(group: &Group<'_>) -> serde_json::Value {
     match group {
         Group::Surface(value) => serde_json::json!({"kind": "surface", "value": value}),
         Group::Unit(value) => serde_json::json!({"kind": "unit", "value": value}),
@@ -869,7 +952,7 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
 }
 
 impl FrequencyPair {
-    fn admit_query(&self) -> Result<(), QueryError> {
+    pub(crate) fn admit_query(&self) -> Result<(), QueryError> {
         if self.table.document_ids().len() > MAX_MASK_BYTES / 4 {
             return Err(QueryError::ResourceLimit {
                 resource: "document mask bytes",
@@ -895,14 +978,14 @@ impl FrequencyPair {
         self.workbench.as_deref()
     }
 
-    fn pattern_index(&self, name: &str) -> Result<usize, QueryError> {
+    pub(crate) fn pattern_index(&self, name: &str) -> Result<usize, QueryError> {
         self.patterns
             .iter()
             .position(|pattern| pattern.name == name)
             .ok_or_else(|| QueryError::UnknownPattern(name.to_owned()))
     }
 
-    fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
+    pub(crate) fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
         let mut reader = self.documents.reader()?;
         self.table
             .document_ids()
@@ -917,12 +1000,111 @@ impl FrequencyPair {
             .collect()
     }
 
-    fn mask(&self, admitted: &[bool]) -> DocumentMask {
+    pub(crate) fn mask(&self, admitted: &[bool]) -> DocumentMask {
         let ids = self.table.document_ids();
         self.table.mask(|id| {
             ids.binary_search(&id)
                 .is_ok_and(|index| admitted.get(index).copied() == Some(true))
         })
+    }
+
+    /// The corpus sentences of the table document at `position`.
+    pub(crate) fn sentences(&self, position: usize) -> Result<std::ops::Range<u64>, QueryError> {
+        Ok(self.table_documents.sentences(position)?)
+    }
+
+    /// The corpus and catalog paths a copied command names, if every input
+    /// shares a directory.
+    pub(crate) fn command_inputs(&self) -> Option<(&str, &str)> {
+        self.command_inputs
+            .as_ref()
+            .map(|[_, corpus, catalog]| (corpus.as_str(), catalog.as_str()))
+    }
+
+    /// The group of `entry`, within the per-group name and value limit.
+    pub(crate) fn entry_group(&self, entry: u32) -> Result<Group<'_>, QueryError> {
+        Ok(self.table.bounded_group(entry, MAX_QUERY_ITEMS)?)
+    }
+
+    fn key_index(&self, key: &str) -> Result<usize, QueryError> {
+        Ok(self
+            .table_documents
+            .key(key)
+            .ok_or_else(|| std::io::Error::other(format!("{key} is not a dimension")))?)
+    }
+
+    /// Sums `counts`, pairs of a table document position and a count, over
+    /// the documents `mask` admits: per slot of `key`'s values, and for the
+    /// documents without a value.
+    pub(crate) fn value_sums(
+        &self,
+        key: &str,
+        mask: &DocumentMask,
+        counts: impl IntoIterator<Item = (usize, u64)>,
+    ) -> Result<(Vec<ValueSum>, ValueSum), QueryError> {
+        let index = self.key_index(key)?;
+        let values = self.table_documents.value_count(index) as usize;
+        if values > MAX_MASK_BYTES / 16 {
+            return Err(QueryError::ResourceLimit {
+                resource: "value sum bytes",
+                limit: MAX_MASK_BYTES as u64,
+            });
+        }
+        let mut sums = vec![ValueSum::default(); values];
+        let mut none = ValueSum::default();
+        for (position, count) in counts {
+            if !mask.admits(position) {
+                continue;
+            }
+            let slots = self.table_documents.slots(index, position)?;
+            if slots.is_empty() {
+                none.add(count);
+            }
+            for slot in slots {
+                sums[slot as usize].add(count);
+            }
+        }
+        Ok((sums, none))
+    }
+
+    /// The slot of `value` among `key`'s values, if a table document has it.
+    pub(crate) fn slot_of(&self, key: &str, value: &str) -> Result<Option<usize>, QueryError> {
+        let index = self.key_index(key)?;
+        let (mut low, mut high) = (0, self.table_documents.value_count(index));
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match self
+                .table_documents
+                .value(index, middle)?
+                .as_str()
+                .cmp(value)
+            {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => return Ok(Some(middle as usize)),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The values of `key` in `slots`, each slot numbering the key's values
+    /// in ascending order, within the projection limits.
+    pub(crate) fn values_of(&self, key: &str, slots: &[usize]) -> Result<Vec<String>, QueryError> {
+        let index = self.key_index(key)?;
+        let mut budget = ProjectionBudget::default();
+        slots
+            .iter()
+            .map(|slot| {
+                let value = self.table_documents.value(index, *slot as u32)?;
+                budget.charge(&value)?;
+                Ok(value)
+            })
+            .collect()
+    }
+
+    /// Each value of `key` read as a finite number, else NaN, by slot.
+    pub(crate) fn numbers_of(&self, key: &str) -> Result<Vec<f64>, QueryError> {
+        Ok(self.table_documents.numbers(self.key_index(key)?)?)
     }
 
     fn command(&self, clause: &str) -> String {
@@ -1277,6 +1459,28 @@ mod tests {
             .publish()
             .expect("publish");
         let table = CountTable::open(&path, &key).expect("table");
+        let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
+        let mut writer = documents::Writer::new(Arc::clone(&budget)).expect("metadata writer");
+        for (id, metadata) in metadata.iter().enumerate() {
+            writer
+                .push(id as u64, id as u64..id as u64 + 1, metadata)
+                .expect("metadata");
+        }
+        let documents = Arc::new(writer.finish().expect("metadata store"));
+        let keys = metadata
+            .iter()
+            .flat_map(|metadata| metadata.iter().map(|(key, _)| key.clone()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let table_documents = documents::TableDocuments::build(
+            &mut documents.reader().expect("reader"),
+            table.document_ids(),
+            &keys,
+            value_texts,
+            &budget,
+        )
+        .expect("table documents");
         (
             directory,
             FrequencyPair {
@@ -1289,15 +1493,8 @@ mod tests {
                     "corpus.lingcorpus".into(),
                     "catalog.lx".into(),
                 ]),
-                documents: {
-                    let mut writer =
-                        documents::Writer::new(Arc::new(TempBudget::new(MAX_TEMP_BYTES)))
-                            .expect("metadata writer");
-                    for (id, metadata) in metadata.iter().enumerate() {
-                        writer.push(id as u64, metadata).expect("metadata");
-                    }
-                    Arc::new(writer.finish().expect("metadata store"))
-                },
+                documents,
+                table_documents,
                 patterns: vec![PatternSource {
                     name: "p".into(),
                     source: None,

@@ -33,6 +33,8 @@ pub fn routes() -> Router<RequestStore> {
         .route("/frequency", get(query))
         .route("/frequency/meta", get(meta))
         .route("/frequency/values", get(values))
+        .route("/frequency/profile", get(profile))
+        .route("/frequency/lines", get(lines))
 }
 
 async fn page(State(store): State<RequestStore>) -> Response {
@@ -244,6 +246,81 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
                 },
             )
             .map_err(|error| error.to_string())
+        },
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+struct EntryParams {
+    corpus: String,
+    catalog: String,
+    pattern: String,
+    /// The entry's group, in the JSON form of a frequency row.
+    entry: String,
+    #[serde(default)]
+    w: Option<String>,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default)]
+    limit: usize,
+}
+
+fn entry_group(raw: &str) -> Result<serde_json::Value, Box<Response>> {
+    serde_json::from_str(raw)
+        .map_err(|error| Box::new(bad_request(format!("entry is not a group: {error}"))))
+}
+
+async fn profile(State(store): State<RequestStore>, Query(params): Query<EntryParams>) -> Response {
+    let conditions = match conditions(params.w.as_deref()) {
+        Ok(conditions) => conditions,
+        Err(response) => return *response,
+    };
+    let group = match entry_group(&params.entry) {
+        Ok(group) => group,
+        Err(response) => return *response,
+    };
+    on_pair(
+        Arc::clone(&store.frequency),
+        Arc::clone(&store.coordinators),
+        params.corpus,
+        params.catalog,
+        move |pair, dimensions| {
+            pair.profile(dimensions, &params.pattern, &group, &conditions)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .await
+}
+
+async fn lines(State(store): State<RequestStore>, Query(params): Query<EntryParams>) -> Response {
+    let conditions = match conditions(params.w.as_deref()) {
+        Ok(conditions) => conditions,
+        Err(response) => return *response,
+    };
+    let group = match entry_group(&params.entry) {
+        Ok(group) => group,
+        Err(response) => return *response,
+    };
+    let views = Arc::clone(&store.frequency);
+    on_pair(
+        Arc::clone(&store.frequency),
+        Arc::clone(&store.coordinators),
+        params.corpus.clone(),
+        params.catalog.clone(),
+        move |pair, dimensions| {
+            let matcher = views
+                .matcher(&params.corpus, &params.catalog)
+                .expect("a served pair has a matcher");
+            pair.lines(
+                matcher,
+                dimensions,
+                &params.pattern,
+                &group,
+                &conditions,
+                params.offset,
+                params.limit,
+            )
         },
     )
     .await

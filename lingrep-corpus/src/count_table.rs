@@ -879,6 +879,15 @@ pub struct DocumentMask {
     admitted: Vec<bool>,
 }
 
+impl DocumentMask {
+    /// Whether the document at `index` of [`CountTable::document_ids`] is
+    /// admitted.
+    #[must_use]
+    pub fn admits(&self, index: usize) -> bool {
+        self.admitted.get(index).copied().unwrap_or(false)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TopRow {
     pub entry: u32,
