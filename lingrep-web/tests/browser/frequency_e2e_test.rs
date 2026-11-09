@@ -1434,7 +1434,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .await?;
     let back = wait_for(
         &driver,
-        "return !document.querySelector('[data-fq-table]').hidden && document.querySelectorAll('table.freq tbody tr').length && document.activeElement.matches('button.open-entry') && [document.activeElement.textContent, location.hash.includes('entry=')]",
+        "return !document.querySelector('[data-fq-table]').hidden && document.querySelectorAll('table.freq tbody tr').length > 0 && document.activeElement.matches('button.open-entry') && [document.activeElement.textContent, location.hash.includes('entry=')]",
         "the table",
     )
     .await?;
