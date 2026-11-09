@@ -135,6 +135,31 @@ For human output, closing stdout with a pager or `head` ends the run successfull
 JSONL and TSV output treat a closed stdout as an error: the run
 reports `broken_pipe` and exits `1`.
 
+### Filtering a framed JSONL stream
+
+Keep every non-match record when selecting matches with `jq`. The `run`,
+`definition` and `complete` records carry the catalog, corpus identity,
+coverage and termination information that a downstream viewer requires.
+
+```bash
+demo=$(mktemp -d)
+printf '猫。犬。\n' >"$demo/sample.txt"
+ling corpus build --dict-path "$LINGREP_DICTIONARY_PATH" \
+  --output "$demo/sample.lingcorpus" "$demo/sample.txt"
+ling --json matches --corpus "$demo/sample.lingcorpus" \
+  --pattern 'noun := [upos=NOUN].' --retain 100 \
+  | jq -c 'select(.type != "match" or .data.surface == "猫")' \
+  >"$demo/cats.jsonl"
+```
+
+The filtered file retains the original completion counters and coverage;
+`records_emitted` and match totals describe the unfiltered run, not the matches
+that passed `jq`. Sequence numbers are unchanged. For this prepared run,
+`complete.data.analysis_identity` identifies the analyzed artifact against which
+the surviving matches' sentence ordinals resolve. Filtering does not create a
+new corpus identity or a new counted run. A stream without `complete` provides
+no successful completion claim, even if its retained matches look valid.
+
 ### Human KWIC rendering
 
 Human `matches` output concatenates morphemes by default. A single ordinary
