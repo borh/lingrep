@@ -1064,14 +1064,19 @@ impl PreparedSentenceSource {
         self.next_ordinal = range.start.min(self.end_ordinal);
         self
     }
-    /// Reads only the sentences whose corpus ordinals are in `ordinals`,
-    /// which ascend. A batch spans as many of them as the limits admit, so
-    /// sentences that share a block decode it once.
-    #[must_use]
-    pub fn with_ordinals(mut self, ordinals: Vec<u64>) -> Self {
-        debug_assert!(ordinals.is_sorted(), "listed ordinals ascend");
+    /// Reads only the sentences whose corpus ordinals are in `ordinals`. A
+    /// batch spans as many of them as the limits admit, so sentences that
+    /// share a block decode it once.
+    ///
+    /// # Errors
+    ///
+    /// [`CorpusError::UnsortedOrdinals`] when `ordinals` do not ascend.
+    pub fn with_ordinals(mut self, ordinals: Vec<u64>) -> Result<Self, CorpusError> {
+        if !ordinals.is_sorted() {
+            return Err(CorpusError::UnsortedOrdinals);
+        }
         self.listed = Some((ordinals, 0));
-        self
+        Ok(self)
     }
     #[must_use]
     pub fn with_cancellation(mut self, cancel: CancellationFlag) -> Self {
@@ -2541,7 +2546,7 @@ mod tests {
             })
             .count();
         for batch_size in [1, 3, 1024] {
-            let mut source = open(None).with_ordinals(listed.to_vec());
+            let mut source = open(None).with_ordinals(listed.to_vec()).unwrap();
             assert_eq!(
                 drain(&mut source, batch_size),
                 listed[..listed.len() - 1].to_vec()
@@ -2551,9 +2556,14 @@ mod tests {
             }
             let mut source = open(None)
                 .with_ordinals(listed.to_vec())
+                .unwrap()
                 .with_ordinal_range(255..600);
             assert_eq!(drain(&mut source, batch_size), [258, 259, 269]);
         }
+        assert!(matches!(
+            open(None).with_ordinals(vec![5, 2]),
+            Err(CorpusError::UnsortedOrdinals)
+        ));
         for (range, batch_size, decoded_blocks) in
             [(1..2, 1, 1), (250..270, 1024, 3), (770..9_999, 1024, 1)]
         {

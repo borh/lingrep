@@ -138,7 +138,7 @@ impl EntryMatcher {
                 )
                 .map_err(failed)?;
         }
-        let source = source.with_ordinals(sentences);
+        let source = source.with_ordinals(sentences).map_err(failed)?;
         let schema = artifact.token_schema().map_err(failed)?;
         let mut progress = |_, _: &EntrySink<'_>| {};
         let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());

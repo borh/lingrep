@@ -24,6 +24,8 @@ pub enum CorpusError {
         component: &'static str,
         offset: u64,
     },
+    #[error("listed sentence ordinals do not ascend")]
+    UnsortedOrdinals,
     #[error("invalid {component} format: {message}")]
     InvalidFormat {
         component: &'static str,
@@ -103,6 +105,7 @@ impl CorpusError {
             Self::SectionLabelCapacity { .. } => "section_label_capacity",
             Self::TokenBlockCapacity { .. } => "token_block_capacity",
             Self::Truncated { .. } => "truncated",
+            Self::UnsortedOrdinals => "unsorted_ordinals",
             Self::InvalidFormat { .. } => "invalid_format",
             Self::UnsupportedSchema { .. } => "unsupported_schema",
             Self::PreparedArtifactRebuildRequired { .. }
