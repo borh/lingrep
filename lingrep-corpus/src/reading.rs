@@ -40,6 +40,8 @@ const DOCUMENT_SENTENCES: &str = "document_sentences.u64";
 const RECORDS: &str = "records.zst";
 const ZSTD_LEVEL: i32 = 9;
 const DOCUMENT_BATCH: usize = 64;
+const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+const MAX_WINDOW_LOG: u32 = 26;
 
 /// What a sidecar's contents depend on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +98,11 @@ pub enum ReadingSidecarError {
     SourceMismatch { expected: String, found: String },
     #[error("re-reading {source_name} does not reproduce the stored sentences: {detail}")]
     ReplayMismatch { source_name: String, detail: String },
+    #[error("reading sidecar {component} record exceeds {limit} bytes")]
+    RecordLimit {
+        component: &'static str,
+        limit: usize,
+    },
     #[error("reading sidecar is corrupt: {0}")]
     Corrupt(String),
     #[error("{0}")]
@@ -108,6 +115,13 @@ pub enum ReadingSidecarError {
 
 fn corrupt(message: impl Into<String>) -> ReadingSidecarError {
     ReadingSidecarError::Corrupt(message.into())
+}
+
+fn record_limit(component: &'static str) -> ReadingSidecarError {
+    ReadingSidecarError::RecordLimit {
+        component,
+        limit: MAX_RECORD_BYTES,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -432,8 +446,16 @@ impl<'a> ReadingSidecarWriter<'a> {
                 .map(|((source_name, _), (texts, bytes))| {
                     let record = self.document_record(source_name, &texts, &bytes)?;
                     let stats = DocumentStats::of(&record, &texts);
+                    validate_rendered_size(&record)?;
                     let json = serde_json::to_vec(&record)?;
-                    Ok((zstd::bulk::compress(&json, ZSTD_LEVEL)?, stats))
+                    if json.len() > MAX_RECORD_BYTES {
+                        return Err(record_limit("decompressed"));
+                    }
+                    let frame = zstd::bulk::compress(&json, ZSTD_LEVEL)?;
+                    if frame.len() > MAX_RECORD_BYTES {
+                        return Err(record_limit("compressed"));
+                    }
+                    Ok((frame, stats))
                 })
                 .collect();
             for frame in frames {
@@ -666,6 +688,8 @@ pub struct OccurrenceAnchor {
     pub exact: bool,
 }
 
+/// Document reads accept at most 64 MiB each of compressed data, decoded
+/// JSON and expanded HTML, with a Zstd window of at most 64 MiB.
 pub struct ReadingSidecar {
     path: PathBuf,
     header: Header,
@@ -765,6 +789,48 @@ fn region_open(regions: &[String], region: u32) -> String {
 }
 
 const REGION_CLOSE: &str = "</div>";
+
+fn validate_rendered_size(record: &DocumentRecord) -> Result<(), ReadingSidecarError> {
+    let add = |total: usize, bytes: usize| {
+        total
+            .checked_add(bytes)
+            .filter(|total| *total <= MAX_RECORD_BYTES)
+            .ok_or_else(|| record_limit("rendered"))
+    };
+    let regions = record
+        .regions
+        .iter()
+        .enumerate()
+        .map(|(index, classes)| {
+            classes.bytes().try_fold(
+                region_open(&[], index as u32).len() + REGION_CLOSE.len(),
+                |total, byte| {
+                    add(
+                        total,
+                        match byte {
+                            b'&' => 5,
+                            b'<' | b'>' => 4,
+                            b'"' => 6,
+                            _ => 1,
+                        },
+                    )
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    record.blocks.iter().try_fold(0, |total, block| {
+        block
+            .regions
+            .iter()
+            .try_fold(add(total, block.html.len())?, |total, region| {
+                let bytes = regions
+                    .get(*region as usize)
+                    .ok_or_else(|| corrupt("region index out of range"))?;
+                add(total, *bytes)
+            })
+    })?;
+    Ok(())
+}
 
 fn block_cost(record: &DocumentRecord, block: &BlockRecord) -> usize {
     block.html.len()
@@ -924,8 +990,23 @@ impl ReadingSidecar {
             .as_ref()
             .and_then(|records| records.get(start..end))
             .unwrap_or_default();
-        let json = zstd::stream::decode_all(frame)
-            .map_err(|error| corrupt(format!("document {index}: {error}")))?;
+        if frame.len() > MAX_RECORD_BYTES {
+            return Err(record_limit("compressed"));
+        }
+        let decode_error = |error| corrupt(format!("document {index}: {error}"));
+        let mut decoder = zstd::stream::read::Decoder::new(frame).map_err(decode_error)?;
+        decoder
+            .window_log_max(MAX_WINDOW_LOG)
+            .map_err(decode_error)?;
+        let mut json = Vec::new();
+        decoder
+            .by_ref()
+            .take(MAX_RECORD_BYTES as u64)
+            .read_to_end(&mut json)
+            .map_err(decode_error)?;
+        if decoder.read(&mut [0]).map_err(decode_error)? != 0 {
+            return Err(record_limit("decompressed"));
+        }
         let record: DocumentRecord = serde_json::from_slice(&json)
             .map_err(|error| corrupt(format!("document {index}: {error}")))?;
         let sentences = self.document_sentences[index + 1] - self.document_sentences[index];
@@ -951,6 +1032,7 @@ impl ReadingSidecar {
                 "document {index} does not match the index"
             )));
         }
+        validate_rendered_size(&record)?;
         Ok(record)
     }
 
@@ -1087,6 +1169,179 @@ mod tests {
                 rendered
             })
             .collect()
+    }
+
+    fn record_fixture(frame: &[u8], sentences: u64) -> (tempfile::TempDir, ReadingSidecar) {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path();
+        let key = ReadingSidecarKey {
+            analysis_identity: "analysis".into(),
+            source_identity: "source".into(),
+            renderer_revision: MARKDOWN_RENDERER_REVISION.into(),
+        };
+        let header = Header {
+            format: READING_SIDECAR_FORMAT.into(),
+            version: READING_SIDECAR_VERSION,
+            key: key.clone(),
+            documents: 1,
+            sentences,
+            records_bytes: frame.len() as u64,
+            records_blake3: blake3::hash(frame).to_hex().to_string(),
+        };
+        fs::write(
+            path.join(HEADER),
+            serde_json::to_vec(&header).expect("JSON"),
+        )
+        .expect("header");
+        fs::write(
+            path.join(DOCUMENT_OFFSETS),
+            [0u64.to_le_bytes(), (frame.len() as u64).to_le_bytes()].concat(),
+        )
+        .expect("offsets");
+        fs::write(
+            path.join(DOCUMENT_SENTENCES),
+            [0u64.to_le_bytes(), sentences.to_le_bytes()].concat(),
+        )
+        .expect("sentences");
+        fs::write(path.join(RECORDS), frame).expect("records");
+        let sidecar = ReadingSidecar::open(path, &key).expect("open");
+        (directory, sidecar)
+    }
+
+    fn paged_record(blocks: u32) -> DocumentRecord {
+        DocumentRecord {
+            source_name: "a.md".into(),
+            regions: Vec::new(),
+            blocks: (0..blocks)
+                .map(|index| BlockRecord {
+                    html: format!("<p data-c=\"{index}\">猫𝑥</p>"),
+                    regions: Vec::new(),
+                })
+                .collect(),
+            container_blocks: (0..blocks).collect(),
+            sentences: (0..blocks)
+                .map(|index| SentenceRecord {
+                    block: index,
+                    segments: vec![Segment(0, 1, index, 0, 1), Segment(1, 1, index, 1, 2)],
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn tiny_reads_reject_high_compression_records_before_json_decoding() {
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 1).expect("encoder");
+        for _ in 0..8193 {
+            encoder.write_all(&[b' '; 8192]).expect("padding");
+        }
+        encoder
+            .write_all(&serde_json::to_vec(&paged_record(1)).expect("JSON"))
+            .expect("record");
+        let frame = encoder.finish().expect("frame");
+        assert!(frame.len() < 65536);
+        let (_directory, sidecar) = record_fixture(&frame, 1);
+        for error in [
+            sidecar.document(DocumentId::new(0)).err(),
+            sidecar
+                .page(PageRequest::From(DocumentId::new(0), 0), 1)
+                .err(),
+            sidecar.anchor(SentenceId::new(0), 0..1).err(),
+            sidecar.verify().err(),
+        ] {
+            assert!(
+                error
+                    .is_some_and(|error| error.to_string().contains("decompressed record exceeds"))
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_compressed_records_are_rejected_before_decoding() {
+        let frame = vec![0; 64 * 1024 * 1024 + 1];
+        let (_directory, sidecar) = record_fixture(&frame, 1);
+        let error = sidecar
+            .document(DocumentId::new(0))
+            .expect_err("reject frame");
+        assert!(
+            error.to_string().contains("compressed record exceeds"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn small_records_with_oversized_decoder_windows_are_rejected() {
+        let json = serde_json::to_vec(&paged_record(1)).expect("JSON");
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0, 0x88];
+        let block = ((json.len() as u32) << 3) | 1;
+        frame.extend_from_slice(&block.to_le_bytes()[..3]);
+        frame.extend_from_slice(&json);
+        assert_eq!(
+            zstd::bulk::decompress(&frame, json.len()).expect("valid frame"),
+            json
+        );
+        let (_directory, sidecar) = record_fixture(&frame, 1);
+        assert!(matches!(
+            sidecar.document(DocumentId::new(0)),
+            Err(ReadingSidecarError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn escaped_regions_are_bounded_before_page_assembly() {
+        let mut record = paged_record(1);
+        record.regions.push("\"".repeat(12 * 1024 * 1024));
+        record.blocks[0].regions.push(0);
+        let frame =
+            zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
+        let (_directory, sidecar) = record_fixture(&frame, 1);
+        let error = sidecar
+            .page(PageRequest::From(DocumentId::new(0), 0), 1)
+            .expect_err("reject expanded HTML");
+        assert!(
+            error.to_string().contains("rendered record exceeds"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn multiple_pages_preserve_html_and_unicode_anchors() {
+        let record = paged_record(100);
+        let frame =
+            zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
+        let (_directory, sidecar) = record_fixture(&frame, 100);
+        sidecar.verify().expect("verify");
+        assert_eq!(
+            sidecar
+                .document(DocumentId::new(0))
+                .expect("document")
+                .block_count,
+            100
+        );
+        let mut request = Some(PageRequest::From(DocumentId::new(0), 0));
+        let mut html = String::new();
+        let mut pages = 0;
+        while let Some(next) = request {
+            let page = sidecar.page(next, 100).expect("page");
+            assert!(page.html.len() <= 100);
+            for anchor in &page.anchors {
+                let index = anchor.sentence.get() as u32;
+                let occurrence = sidecar.anchor(anchor.sentence, 1..2).expect("anchor");
+                assert!(occurrence.exact);
+                assert_eq!(
+                    occurrence.ranges,
+                    [HighlightRange {
+                        container: index,
+                        utf16_start: 1,
+                        utf16_end: 3
+                    }]
+                );
+            }
+            html.push_str(&page.html);
+            pages += 1;
+            request = page.next;
+        }
+        assert!(pages > 20);
+        assert_eq!(html, assemble(&record, 0..100));
     }
 
     #[test]
