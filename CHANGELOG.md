@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corresponding `ling table --where` command. A table binds to a
   served corpus and a catalog by the identities it records; a table that does
   not bind stops startup with an error naming it.
+- Selecting a row of the Frequencies view opens that entry: a chart per
+  document metadata key of the entry's occurrences and documents under each
+  value, counted under the other conditions as `ling table --entry
+  --by-metadata` counts them, and the entry's lines, which are the records of
+  `ling matches --where` for that entry, 50 per request. Resting the pointer
+  on a bar, or focusing it, previews its value as the key's condition without
+  moving the page, and clicking or tapping it sets the condition. The address
+  carries the entry, so a copied link reopens it.
+- `lingrep_corpus::PreparedSentenceSource::with_ordinals` reads only listed
+  sentence ordinals and decodes each block they share once.
 - The NixOS module's `services.lingrep-web.countTables` option takes a list of
   count tables and passes each to lingrep-web as `--count-table`, mounted
   read-only, so a NixOS deployment can serve the Frequencies view.

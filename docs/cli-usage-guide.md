@@ -470,8 +470,8 @@ admitted sentence.
 
 `summarize --write-table PATH` scans a prepared corpus once and writes every
 pattern's group counts per document, and the sentences each group occurs in,
-to a count table at `PATH`, a new directory. `ling table` then answers a `--where` over document metadata from
-the table without scanning the corpus:
+to a count table at `PATH`, a new directory. `ling table` then answers a
+`--where` over document metadata from the table without scanning the corpus:
 
 ```bash
 ling summarize --write-table soranoha.collexeme.lingtable \
@@ -499,7 +499,9 @@ differs from the `--corpus` and `--patterns` given, so a table is rebuilt after
 the catalog or the corpus changes. `--write-table` cannot be combined with
 `--where`, `--sample`, `--top`, `--tsv`, `--by-document`, `--by-section` or
 `--by-metadata`, and `ling table` accepts only `@document` conditions; both
-reject the rest with exit code `2`.
+reject the rest with exit code `2`. A table stores sentence ordinals in 32
+bits, so `--write-table` fails when a group occurs in a sentence whose ordinal
+is 2^32 or more.
 
 `--entry PATTERN=KEY --by-metadata @document.NAME` counts one entry under
 every value of a document metadata key, from the table:
@@ -2046,9 +2048,11 @@ same corpus as another table:
 ```
 
 Document metadata is indexed in temporary files shared by the corpus's table
-bindings. Set `TMPDIR` to a writable, disk-backed directory for large corpora;
-a memory-backed temporary directory consumes RAM for those files. The files
-are removed when the server releases the corpus index.
+bindings, and each binding adds files holding its documents' sentence ranges
+and numbered condition values. Set `TMPDIR` to a writable, disk-backed
+directory for large corpora; a memory-backed temporary directory consumes RAM
+for those files. The files are removed when the server releases the corpus
+index.
 
 The view presents a query as a sentence with controls for the catalog,
 pattern, document metadata conditions, sort order and substring filter. A key
@@ -2066,6 +2070,37 @@ share only the filesystem root, a relative path contains `..`, or a path is not
 UTF-8. A clause with `@section` or `@sentence` is answered with an
 explanation rather than rows, because a table counts per document. The URL
 stores the query state, so a copied link reopens the same view.
+
+Selecting a row opens that entry. For each condition key, a chart shows the
+entry's occurrences and documents under each value, counted under the other
+conditions, which equals `ling table TABLE --entry PATTERN=GROUP
+--by-metadata @document.KEY --where …` with that key's condition left out.
+Categories show their 24 most frequent values, or the 12 most frequent and the
+chosen ones when there are more, and documents without a value get a "no
+value" bar. A range key gets one column per integer when its values are
+integers and its range holds at most 160 of them, and 40 equal columns
+otherwise. Each chart has a
+table of every shown value in full. Below the charts are the entry's lines,
+50 per page, which equal the records of the shown `ling matches --where … |
+jq` command, in the same order. The server takes the sentences to match from
+the table and fails the request if a document's lines do not add up to the
+table's count for it.
+
+Resting the pointer on a bar for 120 ms, or focusing it, previews its value as
+the key's condition: the other charts, the entry's figures and its lines
+redraw, and the sentence and the URL keep the committed conditions. A preview
+draws no more rows than the committed charts and lines hold, so the page does
+not move. Clicking or tapping a bar sets the condition; the arrow keys move
+between bars; Escape or the back link returns to the table. A value name that
+does not fit shows a shorter form that replaces whole parts with one "…":
+parts end at 、, ・ or a space, a bracketed part counts as one, and brackets
+stay balanced. No two values of a chart show the same form. The full name is
+in the bar's accessible name, in the line under the chart's name for the bar
+last pointed at, focused or tapped, and in the chart's table.
+
+The entry level needs a table written by this release's `ling summarize
+--write-table`, which records the sentences each entry occurs in (count table
+version 3). An earlier table stops startup with an error naming it; rewrite it.
 
 `--metadata-labels PATH` reads a JSON file of display labels for document
 metadata keys, by locale. The view names a condition by its label in the

@@ -125,7 +125,13 @@ A table that does not bind stops the unit at startup; `journalctl -u
 lingrep-web` shows the error naming it. The binding rules and errors are in
 [the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
 Rebuild a table after changing its corpus or catalog, and after an upgrade
-that the startup error reports as a different matcher revision.
+that the startup error reports as a different matcher revision or count table
+version.
+
+Selecting a row opens the entry's charts and lines. Its lines are matched from
+the corpus at request time over only the sentences the table records for the
+entry, so the unit needs the corpus as well as the table; each request
+matches at most the documents its page of 50 lines covers.
 
 `services.lingrep-web.metadataLabels` lists display-label files; the module
 passes each as `--metadata-labels` and mounts it read-only. The Frequencies

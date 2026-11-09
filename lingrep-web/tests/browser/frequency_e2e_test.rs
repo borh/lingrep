@@ -78,13 +78,17 @@ fn metadata() -> Vec<Metadata> {
         .collect()
 }
 
-fn write_table(artifact: &std::path::Path, destination: &std::path::Path, documents: usize) {
+fn table_key(artifact: &std::path::Path, catalog: &str) -> CountTableKey {
     let opened = lingrep_corpus::CorpusArtifact::open(artifact).unwrap();
-    let key = CountTableKey {
+    CountTableKey {
         analysis_identity: lingrep_corpus::format_identity(opened.analysis_identity().as_bytes()),
-        catalog_fingerprint: lingrep_core::fsm::catalog_fingerprint(CATALOG),
+        catalog_fingerprint: lingrep_core::fsm::catalog_fingerprint(catalog),
         matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
-    };
+    }
+}
+
+fn write_table(artifact: &std::path::Path, destination: &std::path::Path, documents: usize) {
+    let key = table_key(artifact, CATALOG);
     let documents = (0..documents as u64)
         .map(|document_id| DocumentTotals {
             document_id,
@@ -267,11 +271,28 @@ async fn serve_metadata(extra: &[&std::ffi::OsStr], metadata: Vec<Metadata>) -> 
         Vec::new(),
         metadata,
     );
+    serve_artifact(
+        artifact,
+        CATALOG,
+        |artifact, table| write_table(artifact, table, count),
+        extra,
+    )
+    .await
+}
+
+/// Serves `artifact` with `catalog` as `catalog.lx` and the count table
+/// `write` produces for it.
+async fn serve_artifact(
+    artifact: support::ArtifactFixture,
+    catalog: &str,
+    write: impl FnOnce(&std::path::Path, &std::path::Path),
+    extra: &[&std::ffi::OsStr],
+) -> Served {
     let root = artifact.directory.path().join("patterns");
     std::fs::create_dir(&root).unwrap();
-    std::fs::write(root.join("catalog.lx"), CATALOG).unwrap();
+    std::fs::write(root.join("catalog.lx"), catalog).unwrap();
     let table = artifact.directory.path().join("fixture.lingtable");
-    write_table(&artifact.path, &table, count);
+    write(&artifact.path, &table);
 
     let dictionary = lingrep_core::testing::MiniDictionary::new();
     let mut argv: Vec<&std::ffi::OsStr> = vec![
@@ -823,4 +844,486 @@ async fn exclusions_explain_missing_fields_in_both_languages() -> WebDriverResul
     assert_eq!(japanese, json!(true));
     assert_no_page_errors(&driver).await?;
     driver.quit().await
+}
+
+const ENTRY_CATALOG: &str = "pattern noun := [text in {猫, 本}].\n";
+
+/// Each document's title, genre and year. Titles share whole units and
+/// brackets, and each is two documents' so the view offers it as a
+/// condition; one document has no genre.
+const WORKS: [(&str, Option<&str>, u32); 8] = [
+    (
+        "日本文学全集　第1巻（小説・物語・随筆）",
+        Some("novel"),
+        1950,
+    ),
+    ("日本文学全集　第1巻（詩歌・俳句）", Some("novel"), 1953),
+    (
+        "日本文学全集　第2巻（小説・物語・随筆）",
+        Some("essay"),
+        1956,
+    ),
+    (
+        "世界文学全集　第1巻（小説・物語・随筆）",
+        Some("poem"),
+        1959,
+    ),
+    (
+        "日本文学全集　第1巻（小説・物語・随筆）",
+        Some("essay"),
+        1962,
+    ),
+    ("日本文学全集　第1巻（詩歌・俳句）", None, 1965),
+    (
+        "日本文学全集　第2巻（小説・物語・随筆）",
+        Some("poem"),
+        1968,
+    ),
+    (
+        "世界文学全集　第1巻（小説・物語・随筆）",
+        Some("novel"),
+        1971,
+    ),
+];
+
+/// The sentences of document `document`: each has 猫, and every other one 本.
+fn work_sentences(document: usize) -> Vec<Vec<&'static str>> {
+    (0..=(document % 3))
+        .map(|sentence| {
+            if (document + sentence).is_multiple_of(2) {
+                vec!["猫", "が", "本"]
+            } else {
+                vec!["猫", "が", "鳥"]
+            }
+        })
+        .collect()
+}
+
+/// The count table `ling summarize --write-table` writes for
+/// `ENTRY_CATALOG` over the works: each entry's occurrences per document
+/// and the corpus sentences it occurs in.
+fn write_entry_table(artifact: &std::path::Path, destination: &std::path::Path) {
+    let documents = (0..WORKS.len())
+        .map(|document| DocumentTotals {
+            document_id: document as u64,
+            sentences: work_sentences(document).len() as u64,
+            tokens: work_sentences(document).iter().map(Vec::len).sum::<usize>() as u64,
+        })
+        .collect::<Vec<_>>();
+    let values = ["本", "猫"];
+    let mut writer = CountTableWriter::create(
+        destination,
+        table_key(artifact, ENTRY_CATALOG),
+        vec!["noun".into()],
+        vec![GroupSchema {
+            kind: GroupKind::Surface,
+            names: Vec::new(),
+        }],
+        &values,
+        &documents,
+    )
+    .unwrap();
+    for (value, surface) in values.iter().enumerate() {
+        writer.begin_entry(0, 0, &[value as u32]).unwrap();
+        let mut ordinal = 0u64;
+        for document in 0..WORKS.len() {
+            for sentence in work_sentences(document) {
+                if sentence.contains(surface) {
+                    writer.add_sentence(document as u32, ordinal, 1).unwrap();
+                }
+                ordinal += 1;
+            }
+        }
+    }
+    writer
+        .finish(&CancellationFlag::new())
+        .unwrap()
+        .publish()
+        .unwrap();
+}
+
+async fn serve_entries() -> Served {
+    let metadata = WORKS
+        .iter()
+        .map(|(title, genre, year)| {
+            let mut fields = vec![
+                ("title".to_owned(), scalar(title)),
+                ("year".to_owned(), number(*year)),
+            ];
+            if let Some(genre) = genre {
+                fields.push(("genre".to_owned(), scalar(genre)));
+            }
+            fields.sort_by(|left, right| left.0.cmp(&right.0));
+            fields.into_boxed_slice()
+        })
+        .collect();
+    let artifact = support::build_artifact_with_metadata(
+        (0..WORKS.len())
+            .map(|document| {
+                let sentences = work_sentences(document)
+                    .into_iter()
+                    .map(|words| {
+                        words
+                            .into_iter()
+                            .map(|word| TokenInfo::default().with_orth(word))
+                            .collect()
+                    })
+                    .collect();
+                ("doc.md", document as u64, false, sentences)
+            })
+            .collect(),
+        Vec::new(),
+        metadata,
+    );
+    serve_artifact(artifact, ENTRY_CATALOG, write_entry_table, &[]).await
+}
+
+const ENTRY_READY: &str = "const e = document.querySelector('[data-fq-entry]'); \
+    return !!e.querySelector('[data-e=profile]') && !e.hasAttribute('aria-busy')";
+
+/// Each bar label of the entry's profile, as `assert_bar_labels` reads them.
+const BAR_LABELS: &str = "return [...document.querySelectorAll('.fq-chart')].map((chart) => \
+    [...chart.querySelectorAll('.fq-bars .name')].map((name) => ({full: name.dataset.full, shown: name.textContent, \
+      fits: name.firstChild.scrollWidth <= name.firstChild.clientWidth})))";
+
+/// No two values of a chart share a visible label; a shortened label
+/// replaces whole units with one “…”, fits, and keeps its brackets
+/// balanced. Returns how many labels are shortened.
+fn assert_bar_labels(charts: &Value) -> usize {
+    const SEPARATORS: [char; 4] = ['、', '・', ' ', '　'];
+    let mut shortened = 0;
+    for chart in charts.as_array().unwrap() {
+        let labels = chart.as_array().unwrap();
+        let shown = labels
+            .iter()
+            .map(|label| label["shown"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(shown.len(), labels.len(), "a shared label: {labels:?}");
+        for label in labels {
+            let (full, shown) = (
+                label["full"].as_str().unwrap(),
+                label["shown"].as_str().unwrap(),
+            );
+            if shown == full {
+                continue;
+            }
+            shortened += 1;
+            assert_eq!(label["fits"], true, "{shown}");
+            assert_eq!(shown.matches('…').count(), 1, "{shown}");
+            let (left, right) = shown.split_once('…').unwrap();
+            assert!(full.starts_with(left), "{shown} of {full}");
+            let unit_start = |at: usize| {
+                at == 0
+                    || full[..at].ends_with(|c: char| SEPARATORS.contains(&c) || "（）".contains(c))
+                    || full[at..].starts_with(|c: char| SEPARATORS.contains(&c) || c == '（')
+            };
+            assert!(unit_start(left.len()), "{shown} cuts a unit of {full}");
+            if !right.chars().all(|c| c == '）') {
+                assert!(full.ends_with(right), "{shown} of {full}");
+                assert!(
+                    unit_start(full.len() - right.len()),
+                    "{shown} cuts a unit of {full}"
+                );
+            }
+            for (open, close) in [('（', '）'), ('(', ')'), ('「', '」')] {
+                assert_eq!(
+                    shown.matches(open).count(),
+                    shown.matches(close).count(),
+                    "{shown}: unbalanced {open}{close}"
+                );
+            }
+        }
+    }
+    shortened
+}
+
+#[tokio::test]
+async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let base = format!("{}#pattern=noun", served.base);
+    open(&driver, &base, ROWS).await?;
+    driver
+        .find(By::Css("table.freq tbody tr:first-child button.open-entry"))
+        .await?
+        .click()
+        .await?;
+    wait_for(&driver, ENTRY_READY, "the entry").await?;
+    let shown = driver
+        .execute(
+            "return {href: location.href, entry: new URLSearchParams(location.hash.slice(1)).get('entry'), \
+              name: document.querySelector('.fq-entry-name').textContent, \
+              figures: document.querySelector('[data-e=figures]').textContent, \
+              charts: [...document.querySelectorAll('.fq-chart figcaption')].map((c) => c.textContent), \
+              lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src').textContent), \
+              none: [...document.querySelectorAll('.fq-chart[data-key=genre] [data-none]')].map((b) => b.getAttribute('aria-label'))}",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    let sentences = (0..WORKS.len())
+        .map(|document| work_sentences(document).len())
+        .collect::<Vec<_>>();
+    let cats = sentences.iter().sum::<usize>();
+    assert_eq!(shown["entry"], json!(r#"{"kind":"surface","value":"猫"}"#));
+    assert_eq!(shown["name"], "猫");
+    assert_eq!(
+        shown["figures"],
+        json!(format!("{cats} occurrences in {} documents", WORKS.len()))
+    );
+    assert_eq!(shown["charts"], json!(["genre", "title", "year"]));
+    assert_eq!(
+        shown["lines"],
+        json!(
+            sentences
+                .iter()
+                .enumerate()
+                .flat_map(|(document, n)| std::iter::repeat_n(
+                    format!("猫 document {document}"),
+                    *n
+                ))
+                .collect::<Vec<_>>()
+        )
+    );
+    assert_eq!(
+        shown["none"],
+        json!([format!(
+            "no value: {} occurrences in 1 document",
+            sentences[5]
+        )])
+    );
+    assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
+
+    // The address reproduces the entry.
+    let href = shown["href"].as_str().unwrap().to_owned();
+    open(&driver, &href, ENTRY_READY).await?;
+    assert_eq!(
+        driver
+            .execute(
+                "return [location.href, document.querySelector('.fq-entry-name').textContent]",
+                Vec::new()
+            )
+            .await?
+            .json(),
+        &json!([href, "猫"])
+    );
+
+    // A sweep over every bar at 30 ms each, resting at each end, moves
+    // nothing on the page and requests previews only where it rests.
+    driver
+        .execute(
+            "window.__shift = 0; window.__previews = 0; window.__requests = 0; \
+             const fetched = window.fetch; window.fetch = (...a) => { if (String(a[0]).includes('frequency/')) __requests++; return fetched(...a); }; \
+             new PerformanceObserver((list) => { for (const e of list.getEntries()) if (!e.hadRecentInput) __shift += e.value; }).observe({type: 'layout-shift'}); \
+             new MutationObserver(() => { if (document.querySelector('.fq-entry.previewing')) __previews++; }).observe(document.querySelector('[data-fq-entry]'), {attributes: true, subtree: true, childList: true});",
+            Vec::new(),
+        )
+        .await?;
+    let points = driver
+        .execute(
+            "return [...document.querySelectorAll('.fq-chart [data-bar], .fq-chart [data-col]')].map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; })",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    let points = points.as_array().unwrap();
+    assert!(points.len() > 10, "{points:?}");
+    let passes = [points.clone(), points.iter().rev().cloned().collect()];
+    for pass in &passes {
+        let mut sweep = driver.action_chain_with_delay(None, Some(Duration::from_millis(30)));
+        for point in pass {
+            sweep = sweep.move_to(point[0].as_i64().unwrap(), point[1].as_i64().unwrap());
+        }
+        sweep.perform().await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let swept = driver
+        .execute(
+            "return {shift: __shift, previews: __previews, requests: __requests}",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    assert_eq!(swept["shift"], json!(0), "{swept}");
+    assert!(swept["previews"].as_u64().unwrap() > 0, "{swept}");
+    // A preview requests a profile and lines: two per rest, against two per
+    // bar without the rest delay.
+    let requests = swept["requests"].as_u64().unwrap();
+    assert!(
+        requests <= 2 * (passes.len() as u64 + 2),
+        "{requests} requests over {} bars: {swept}",
+        2 * points.len()
+    );
+    assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
+
+    // Keyboard: Tab reaches each title bar, whose full name and counts the
+    // chart reads out; Arrow keys walk the bars.
+    driver
+        .execute(
+            "document.querySelector('[data-e=back]').focus()",
+            Vec::new(),
+        )
+        .await?;
+    let body = driver.find(By::Css("body")).await?;
+    let mut reached = Value::Null;
+    for _ in 0..40 {
+        body.send_keys(Key::Tab).await?;
+        reached = driver
+            .execute(
+                "const a = document.activeElement; return a.matches('.fq-chart[data-key=title] [data-bar]') ? a.closest('.fq-chart').querySelector('[data-readout]').textContent : null",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        if !reached.is_null() {
+            break;
+        }
+    }
+    let titles = WORKS[..4].iter().map(|work| work.0).collect::<Vec<_>>();
+    let readout = reached.as_str().unwrap().to_owned();
+    assert!(
+        titles
+            .iter()
+            .any(|title| readout.starts_with(&format!("{title}: "))),
+        "{readout}"
+    );
+    let mut heard = std::collections::BTreeSet::from([readout]);
+    for _ in 1..4 {
+        driver.action_chain().send_keys(Key::Down).perform().await?;
+        heard.insert(
+            driver
+                .execute("return document.querySelector('.fq-chart[data-key=title] [data-readout]').textContent", Vec::new())
+                .await?
+                .json()
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    for title in &titles {
+        assert!(
+            heard
+                .iter()
+                .any(|line| line.starts_with(&format!("{title}: "))),
+            "{title} in {heard:?}"
+        );
+    }
+
+    // Touch: a tap on the chart's table toggle shows every full name, and a
+    // tap on a bar reads it out and keeps the value.
+    driver
+        .execute(
+            "document.activeElement.blur(); window.scrollTo(0, 0);",
+            Vec::new(),
+        )
+        .await?;
+    let tap = async |selector: &str| -> WebDriverResult<()> {
+        let at = driver
+            .execute(
+                &format!("const e = document.querySelector({selector:?}); e.scrollIntoView({{block: 'center'}}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2];"),
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        for kind in ["touchStart", "touchEnd"] {
+            let points = if kind == "touchStart" {
+                json!([{"x": at[0], "y": at[1]}])
+            } else {
+                json!([])
+            };
+            driver
+                .cdp()
+                .send_raw(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": kind, "touchPoints": points}),
+                )
+                .await?;
+        }
+        Ok(())
+    };
+    driver
+        .cdp()
+        .send_raw(
+            "Emulation.setTouchEmulationEnabled",
+            json!({"enabled": true, "maxTouchPoints": 1}),
+        )
+        .await?;
+    tap(".fq-chart[data-key=title] summary").await?;
+    let table = wait_for(
+        &driver,
+        "const d = document.querySelector('.fq-chart[data-key=title] details'); return d.open && [...d.querySelectorAll('tbody td:first-child')].map((c) => c.textContent)",
+        "the title table",
+    )
+    .await?;
+    let mut listed = table
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cell| cell.as_str().unwrap())
+        .collect::<Vec<_>>();
+    listed.sort_unstable();
+    let mut all = titles.clone();
+    all.sort_unstable();
+    assert_eq!(listed, all);
+    tap(".fq-chart[data-key=genre] [data-bar][data-v=essay]").await?;
+    wait_for(
+        &driver,
+        "return decodeURIComponent(location.hash).includes('\"genre\":{\"m\":\"in\",\"v\":[\"essay\"]}')",
+        "the tapped value",
+    )
+    .await?;
+    wait_for(&driver, ENTRY_READY, "the entry under essay").await?;
+    let after = driver
+        .execute(
+            "return {readout: document.querySelector('.fq-chart[data-key=genre] [data-readout]').textContent, \
+              pressed: document.querySelector('.fq-chart[data-key=genre] [data-v=essay]').getAttribute('aria-pressed'), \
+              table: document.querySelector('.fq-chart[data-key=title] details').open}",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    let essays = [2, 4]
+        .iter()
+        .map(|document| sentences[*document])
+        .sum::<usize>();
+    assert_eq!(
+        after,
+        json!({"readout": format!("essay: {essays} occurrences in 2 documents"), "pressed": "true", "table": true})
+    );
+    driver
+        .cdp()
+        .send_raw(
+            "Emulation.setTouchEmulationEnabled",
+            json!({"enabled": false}),
+        )
+        .await?;
+
+    // Escape returns to the table with the entry's row focused.
+    driver
+        .find(By::Css("body"))
+        .await?
+        .send_keys(Key::Escape)
+        .await?;
+    let back = wait_for(
+        &driver,
+        "return !document.querySelector('[data-fq-table]').hidden && document.querySelectorAll('table.freq tbody tr').length && document.activeElement.matches('button.open-entry') && [document.activeElement.textContent, location.hash.includes('entry=')]",
+        "the table",
+    )
+    .await?;
+    assert_eq!(back, json!(["猫", false]));
+
+    assert_no_page_errors(&driver).await?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    driver.quit().await?;
+    served.server.abort();
+    Ok(())
 }
