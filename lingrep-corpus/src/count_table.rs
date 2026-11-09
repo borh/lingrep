@@ -8,7 +8,7 @@
 //! caller's.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -965,7 +965,33 @@ impl CountTable {
                 });
             }
         }
+        for (name, count, maximum) in [
+            ("values", header.values, u64::from(u32::MAX)),
+            ("entries", header.entries, u64::from(u32::MAX) + 1),
+            ("documents", header.documents, u64::from(u32::MAX)),
+            (
+                "patterns",
+                header.patterns.len() as u64,
+                u64::from(u32::MAX),
+            ),
+        ] {
+            if count > maximum {
+                return Err(corrupt(format!(
+                    "{name} exceeds the format limit of {maximum}"
+                )));
+            }
+        }
+        let array_bytes = |name: &str, count: u64, sentinel: bool, width: u64| {
+            count
+                .checked_add(u64::from(sentinel))
+                .and_then(|count| count.checked_mul(width))
+                .filter(|bytes| *bytes <= isize::MAX as u64)
+                .ok_or_else(|| corrupt(format!("{name} dimensions exceed the addressable size")))
+        };
         let section = |name: &'static str, bytes: u64| -> Result<Section, CountTableError> {
+            if bytes > isize::MAX as u64 {
+                return Err(corrupt(format!("{name} exceeds the addressable size")));
+            }
             let file = File::open(path.join(name))?;
             if file.metadata()?.len() != bytes {
                 return Err(corrupt(format!("{name} is not {bytes} bytes")));
@@ -976,8 +1002,14 @@ impl CountTable {
             })
         };
         let small = |name: &'static str| -> Result<Vec<u64>, CountTableError> {
-            let bytes = fs::read(path.join(name))?;
-            if bytes.len() as u64 != header.documents * 8 {
+            let expected = array_bytes(name, header.documents, false, 8)?;
+            let file = File::open(path.join(name))?;
+            if file.metadata()?.len() != expected {
+                return Err(corrupt(format!("{name} is not one u64 per document")));
+            }
+            let mut bytes = Vec::new();
+            file.take(expected + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 != expected {
                 return Err(corrupt(format!("{name} is not one u64 per document")));
             }
             Ok(bytes
@@ -988,26 +1020,62 @@ impl CountTable {
                 .collect())
         };
         let table = Self {
-            value_offsets: section(VALUE_OFFSETS, (header.values + 1) * 8)?,
+            value_offsets: section(
+                VALUE_OFFSETS,
+                array_bytes(VALUE_OFFSETS, header.values, true, 8)?,
+            )?,
             values: section(VALUES, header.value_bytes)?,
-            entry_key_offsets: section(ENTRY_KEY_OFFSETS, (header.entries + 1) * 8)?,
-            entry_keys: section(ENTRY_KEYS, header.key_words * 4)?,
-            entry_pair_offsets: section(ENTRY_PAIR_OFFSETS, (header.entries + 1) * 8)?,
-            pair_documents: section(PAIR_DOCUMENTS, header.pairs * 4)?,
-            pair_counts: section(PAIR_COUNTS, header.pairs * 4)?,
-            ranked_entries: section(RANKED_ENTRIES, header.entries * 4)?,
-            ranked_totals: section(RANKED_TOTALS, header.entries * 8)?,
-            document_pair_offsets: section(DOCUMENT_PAIR_OFFSETS, (header.documents + 1) * 8)?,
-            document_entries: section(DOCUMENT_ENTRIES, header.pairs * 4)?,
-            document_counts: section(DOCUMENT_COUNTS, header.pairs * 4)?,
+            entry_key_offsets: section(
+                ENTRY_KEY_OFFSETS,
+                array_bytes(ENTRY_KEY_OFFSETS, header.entries, true, 8)?,
+            )?,
+            entry_keys: section(
+                ENTRY_KEYS,
+                array_bytes(ENTRY_KEYS, header.key_words, false, 4)?,
+            )?,
+            entry_pair_offsets: section(
+                ENTRY_PAIR_OFFSETS,
+                array_bytes(ENTRY_PAIR_OFFSETS, header.entries, true, 8)?,
+            )?,
+            pair_documents: section(
+                PAIR_DOCUMENTS,
+                array_bytes(PAIR_DOCUMENTS, header.pairs, false, 4)?,
+            )?,
+            pair_counts: section(
+                PAIR_COUNTS,
+                array_bytes(PAIR_COUNTS, header.pairs, false, 4)?,
+            )?,
+            ranked_entries: section(
+                RANKED_ENTRIES,
+                array_bytes(RANKED_ENTRIES, header.entries, false, 4)?,
+            )?,
+            ranked_totals: section(
+                RANKED_TOTALS,
+                array_bytes(RANKED_TOTALS, header.entries, false, 8)?,
+            )?,
+            document_pair_offsets: section(
+                DOCUMENT_PAIR_OFFSETS,
+                array_bytes(DOCUMENT_PAIR_OFFSETS, header.documents, true, 8)?,
+            )?,
+            document_entries: section(
+                DOCUMENT_ENTRIES,
+                array_bytes(DOCUMENT_ENTRIES, header.pairs, false, 4)?,
+            )?,
+            document_counts: section(
+                DOCUMENT_COUNTS,
+                array_bytes(DOCUMENT_COUNTS, header.pairs, false, 4)?,
+            )?,
             document_pattern_offsets: section(
                 DOCUMENT_PATTERN_OFFSETS,
-                (header.documents + 1) * 8,
+                array_bytes(DOCUMENT_PATTERN_OFFSETS, header.documents, true, 8)?,
             )?,
-            document_patterns: section(DOCUMENT_PATTERNS, header.document_patterns * 4)?,
+            document_patterns: section(
+                DOCUMENT_PATTERNS,
+                array_bytes(DOCUMENT_PATTERNS, header.document_patterns, false, 4)?,
+            )?,
             document_pattern_counts: section(
                 DOCUMENT_PATTERN_COUNTS,
-                header.document_patterns * 8,
+                array_bytes(DOCUMENT_PATTERN_COUNTS, header.document_patterns, false, 8)?,
             )?,
             document_ids: small(DOCUMENT_IDS)?,
             document_sentences: small(DOCUMENT_SENTENCES)?,

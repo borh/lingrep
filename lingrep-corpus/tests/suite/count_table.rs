@@ -666,3 +666,39 @@ fn ranked_scan_reads_past_the_floor_into_entries_whose_total_equals_it() {
         [("v0".to_owned(), 2, 1)]
     );
 }
+
+#[test]
+fn overflowing_header_dimensions_return_corruption_errors() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("table");
+    write_table(&path, &[], &vec![]);
+    let header_path = path.join("header.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&header_path).expect("read header"))
+            .expect("header JSON");
+    for field in [
+        "values",
+        "entries",
+        "documents",
+        "key_words",
+        "pairs",
+        "document_patterns",
+    ] {
+        for dimension in [u64::MAX, u64::MAX / 4 + 1, u64::MAX / 8 + 1] {
+            let mut header = original.clone();
+            header[field] = dimension.into();
+            std::fs::write(&header_path, serde_json::to_vec(&header).expect("JSON"))
+                .expect("write header");
+            assert!(
+                matches!(
+                    CountTable::open(&path, &key()),
+                    Err(CountTableError::Corrupt(_))
+                ),
+                "{field} = {dimension}"
+            );
+        }
+    }
+    std::fs::write(&header_path, serde_json::to_vec(&original).expect("JSON"))
+        .expect("restore header");
+    CountTable::open(&path, &key()).expect("empty table");
+}

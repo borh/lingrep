@@ -8,7 +8,7 @@
 //! of the key alone, so two builds write identical bytes.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -675,8 +675,25 @@ pub struct ReadingSidecar {
 }
 
 fn read_u64s(path: &Path, count: u64) -> Result<Vec<u64>, ReadingSidecarError> {
-    let bytes = fs::read(path)?;
-    if bytes.len() as u64 != count * 8 {
+    let expected = count
+        .checked_mul(8)
+        .filter(|bytes| *bytes <= isize::MAX as u64)
+        .ok_or_else(|| {
+            corrupt(format!(
+                "{} dimensions exceed the addressable size",
+                path.display()
+            ))
+        })?;
+    let file = File::open(path)?;
+    if file.metadata()?.len() != expected {
+        return Err(corrupt(format!(
+            "{} is not {count} u64 values",
+            path.display()
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(expected + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != expected {
         return Err(corrupt(format!(
             "{} is not {count} u64 values",
             path.display()
@@ -824,14 +841,21 @@ impl ReadingSidecar {
                 });
             }
         }
-        let document_offsets = read_u64s(&path.join(DOCUMENT_OFFSETS), header.documents + 1)?;
-        let document_sentences = read_u64s(&path.join(DOCUMENT_SENTENCES), header.documents + 1)?;
+        let index_count = header
+            .documents
+            .checked_add(1)
+            .ok_or_else(|| corrupt("document count exceeds the index format limit"))?;
+        let document_offsets = read_u64s(&path.join(DOCUMENT_OFFSETS), index_count)?;
+        let document_sentences = read_u64s(&path.join(DOCUMENT_SENTENCES), index_count)?;
         if !ascending(&document_offsets, header.records_bytes)
             || !ascending(&document_sentences, header.sentences)
         {
             return Err(corrupt(
                 "document offsets or sentence ranges are not ascending",
             ));
+        }
+        if header.records_bytes > isize::MAX as u64 {
+            return Err(corrupt("records exceed the addressable size"));
         }
         let file = File::open(path.join(RECORDS))?;
         if file.metadata()?.len() != header.records_bytes {
@@ -1063,6 +1087,46 @@ mod tests {
                 rendered
             })
             .collect()
+    }
+
+    #[test]
+    fn overflowing_document_dimensions_return_corruption_errors() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path();
+        let key = ReadingSidecarKey {
+            analysis_identity: "analysis".into(),
+            source_identity: "source".into(),
+            renderer_revision: MARKDOWN_RENDERER_REVISION.into(),
+        };
+        let mut header = Header {
+            format: READING_SIDECAR_FORMAT.into(),
+            version: READING_SIDECAR_VERSION,
+            key: key.clone(),
+            documents: 0,
+            sentences: 0,
+            records_bytes: 0,
+            records_blake3: blake3::hash(&[]).to_hex().to_string(),
+        };
+        fs::write(path.join(DOCUMENT_OFFSETS), 0u64.to_le_bytes()).expect("offsets");
+        fs::write(path.join(DOCUMENT_SENTENCES), 0u64.to_le_bytes()).expect("sentences");
+        fs::write(path.join(RECORDS), []).expect("records");
+        for documents in [0, u64::MAX, u64::MAX / 8, u64::MAX / 8 + 1] {
+            header.documents = documents;
+            fs::write(
+                path.join(HEADER),
+                serde_json::to_vec(&header).expect("JSON"),
+            )
+            .expect("header");
+            let result = ReadingSidecar::open(path, &key);
+            if documents == 0 {
+                assert!(result.is_ok());
+            } else {
+                assert!(
+                    matches!(result, Err(ReadingSidecarError::Corrupt(_))),
+                    "documents = {documents}"
+                );
+            }
+        }
     }
 
     #[test]
