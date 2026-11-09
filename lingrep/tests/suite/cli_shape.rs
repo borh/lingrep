@@ -117,6 +117,49 @@ fn serve_reports_an_occupied_port_as_an_invocation_error() {
     assert!(stderr.contains(&address.to_string()), "{stderr}");
 }
 
+/// `ling` records a signal in its `TerminalArbiter` from the moment its
+/// handlers are installed, which is before `serve` binds its listener; a signal
+/// recorded then stops the server once it starts.
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_stops_for_a_signal_recorded_before_it_started() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let cli = Cli::try_parse_from([
+        "ling".as_ref(),
+        "serve".as_ref(),
+        "--host".as_ref(),
+        "127.0.0.1".as_ref(),
+        "--port".as_ref(),
+        "0".as_ref(),
+        "--input".as_ref(),
+        input.as_os_str(),
+        "--dict-path".as_ref(),
+        dictionary.path().as_os_str(),
+    ] as [&std::ffi::OsStr; 10])
+    .unwrap();
+    let config = cli.execution_config().unwrap();
+    let terminal = lingrep::terminal::TerminalArbiter::new();
+    assert!(terminal.try_cancel(libc::SIGTERM));
+    let (outcome_tx, outcome_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = lingrep::commands::dispatch(&cli, &config, &terminal);
+        outcome_tx
+            .send(outcome.map_err(|error| error.to_string()))
+            .unwrap();
+    });
+    let outcome = outcome_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("ling serve returns within 30 s of starting");
+    assert!(
+        matches!(outcome, Ok(lingrep::commands::CommandOutcome::Success)),
+        "{:?}",
+        outcome.map(|_| ())
+    );
+}
+
 /// A service manager stops the server with SIGTERM and a terminal with SIGINT;
 /// either ends `ling serve` with status 0.
 #[cfg(all(unix, feature = "web"))]

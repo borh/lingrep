@@ -46,7 +46,7 @@ unicode-segmentation = "1"
 terminal_size = "0.4"
 vibrato-rkyv.workspace = true
 signal-hook = "0.3.17"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 ratatui = "0.30.2"
 roff = "1.1.1"
 crossterm = "0.29.0"

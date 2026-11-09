@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use indexmap::IndexMap;
+use tokio::sync::watch;
 
 use crate::corpus_runtime::CorpusRuntime;
 use crate::corpus_set::{CorpusSet, CorpusSlot};
@@ -19,6 +20,24 @@ use crate::{Args, app_router_at};
 /// and returns `Ok` once in-flight requests finish or a bounded grace period
 /// ends. A serving failure panics. Must not be called from inside a Tokio runtime.
 pub fn run(args: &Args) -> Result<(), String> {
+    run_with(args, os_signal_count)
+}
+
+/// As [`run`], but stops when `signals`, a count of termination signals the
+/// caller has received, is at least 1, including when it already is. It
+/// installs no signal handlers of its own.
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn run_until(args: &Args, signals: watch::Receiver<u32>) -> Result<(), String> {
+    run_with(args, move || signals)
+}
+
+fn run_with(
+    args: &Args,
+    signals: impl FnOnce() -> watch::Receiver<u32> + Send,
+) -> Result<(), String> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -27,11 +46,20 @@ pub fn run(args: &Args) -> Result<(), String> {
         .with_writer(std::io::stderr)
         .init();
     let config = config(args)?;
-    tokio::runtime::Builder::new_multi_thread()
+    block_on(async move { serve(args, config, signals()).await })
+}
+
+/// Runs `future` to completion on a new multi-thread runtime, then shuts the
+/// runtime down without waiting for blocking tasks still running, which
+/// continue until the process exits.
+fn block_on<F: Future>(future: F) -> F::Output {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("the server runtime must be constructible")
-        .block_on(serve(args, config))
+        .expect("the server runtime must be constructible");
+    let output = runtime.block_on(future);
+    runtime.shutdown_background();
+    output
 }
 
 /// The validated server configuration `args` declare.
@@ -54,7 +82,7 @@ pub fn config(args: &Args) -> Result<Config, String> {
     Ok(config)
 }
 
-async fn serve(args: &Args, config: Config) -> Result<(), String> {
+async fn serve(args: &Args, config: Config, signals: watch::Receiver<u32>) -> Result<(), String> {
     let addr = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -62,14 +90,13 @@ async fn serve(args: &Args, config: Config) -> Result<(), String> {
     let store = store(args, config).await?;
     let app = app_router_at(store, &args.base_path);
 
-    let shutdown = termination_signal();
     println!("lingrep-web listening on http://{addr}");
     #[expect(
         clippy::unwrap_used,
         reason = "startup serve failure is a hard error for the lingrep-web entry point"
     )]
     {
-        serve_until(listener, app, shutdown, SHUTDOWN_GRACE)
+        serve_until(listener, app, signals, SHUTDOWN_GRACE)
             .await
             .unwrap();
     }
@@ -81,63 +108,75 @@ async fn serve(args: &Args, config: Config) -> Result<(), String> {
 /// after which systemd sends SIGKILL.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
-/// Serves `app` until `shutdown` completes, then stops accepting connections
-/// and returns when in-flight requests have finished or `grace` has elapsed,
-/// whichever is first.
+/// Serves `app` until `signals` is at least 1, then stops accepting
+/// connections and returns when in-flight requests have finished, `grace` has
+/// elapsed, or `signals` is at least 2, whichever is first.
 async fn serve_until(
     listener: tokio::net::TcpListener,
     app: axum::Router,
-    shutdown: impl Future<Output = ()> + Send + 'static,
+    signals: watch::Receiver<u32>,
     grace: Duration,
 ) -> std::io::Result<()> {
-    let (signalled_tx, signalled_rx) = tokio::sync::oneshot::channel();
+    let mut first = signals.clone();
     let server = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown.await;
-            let _ = signalled_tx.send(());
-        })
+        .with_graceful_shutdown(async move { signal_number(&mut first, 1).await })
         .into_future();
     tokio::pin!(server);
+    let mut signals = signals;
+    tokio::select! {
+        result = &mut server => return result,
+        () = signal_number(&mut signals, 1) => {}
+    }
+    tracing::info!("termination signal received; finishing in-flight requests");
     tokio::select! {
         result = &mut server => result,
-        Ok(()) = signalled_rx => tokio::time::timeout(grace, &mut server)
-            .await
-            .unwrap_or_else(|_| {
-                tracing::warn!(?grace, "stopping with requests still in flight");
-                Ok(())
-            }),
+        () = tokio::time::sleep(grace) => {
+            tracing::warn!(?grace, "stopping with requests still in flight");
+            Ok(())
+        }
+        () = signal_number(&mut signals, 2) => {
+            tracing::warn!("second termination signal received; stopping with requests still in flight");
+            Ok(())
+        }
     }
 }
 
-/// A future that completes on SIGINT or, on Unix, SIGTERM. The handlers are
-/// registered when this is called, not when the future is first polled: under
-/// `ling serve`, a signal that arrives before then reaches only `ling`'s own
-/// handlers and is lost.
-fn termination_signal() -> impl Future<Output = ()> + Send + 'static {
+/// Completes once `signals` is at least `number`; never, if the sender is
+/// dropped first.
+async fn signal_number(signals: &mut watch::Receiver<u32>, number: u32) {
+    if signals.wait_for(|&count| count >= number).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// A count of the SIGINT and, on Unix, SIGTERM signals received from now on.
+/// Must be called inside a Tokio runtime.
+fn os_signal_count() -> watch::Receiver<u32> {
+    let (count, signals) = watch::channel(0_u32);
     #[cfg(unix)]
-    let signalled = {
+    {
         use tokio::signal::unix::{SignalKind, signal};
         let mut interrupt =
             signal(SignalKind::interrupt()).expect("the SIGINT handler must be installable");
         let mut terminate =
             signal(SignalKind::terminate()).expect("the SIGTERM handler must be installable");
-        async move {
-            tokio::select! {
-                _ = interrupt.recv() => {}
-                _ = terminate.recv() => {}
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+                count.send_modify(|count| *count = count.saturating_add(1));
             }
-        }
-    };
-    #[cfg(not(unix))]
-    let signalled = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("the Ctrl-C handler must be installable");
-    };
-    async move {
-        signalled.await;
-        tracing::info!("termination signal received; finishing in-flight requests");
+        });
     }
+    #[cfg(not(unix))]
+    tokio::spawn(async move {
+        while tokio::signal::ctrl_c().await.is_ok() {
+            count.send_modify(|count| *count = count.saturating_add(1));
+        }
+    });
+    signals
 }
 
 /// The request state `args` and `config` declare, with the default corpus
@@ -205,9 +244,9 @@ mod tests {
 
     use axum::{Router, routing::get};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::sync::oneshot;
+    use tokio::sync::{oneshot, watch};
 
-    use super::serve_until;
+    use super::{block_on, serve_until};
 
     async fn request(address: std::net::SocketAddr) -> tokio::task::JoinHandle<String> {
         let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -242,25 +281,43 @@ mod tests {
         (router, entered_rx)
     }
 
+    /// A blocking task the runtime cannot cancel, such as a corpus build, does
+    /// not keep `block_on` from returning.
+    #[test]
+    fn block_on_returns_while_a_blocking_task_is_still_running() {
+        let (returned_tx, returned_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            block_on(async {
+                tokio::task::spawn_blocking(|| {
+                    loop {
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                });
+            });
+            returned_tx.send(()).unwrap();
+        });
+        returned_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("block_on returns within 5 s");
+    }
+
     #[tokio::test]
     async fn shutdown_lets_an_in_flight_request_finish() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (release_tx, release_rx) = oneshot::channel();
         let (router, entered) = slow_router(release_rx);
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (signals_tx, signals_rx) = watch::channel(0);
         let server = tokio::spawn(serve_until(
             listener,
             router,
-            async move {
-                let _ = shutdown_rx.await;
-            },
+            signals_rx,
             Duration::from_secs(60),
         ));
 
         let response = request(address).await;
         entered.await.unwrap();
-        shutdown_tx.send(()).unwrap();
+        signals_tx.send(1).unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
             !server.is_finished(),
@@ -284,22 +341,50 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let (_release_tx, release_rx) = oneshot::channel();
         let (router, entered) = slow_router(release_rx);
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (signals_tx, signals_rx) = watch::channel(0);
         let server = tokio::spawn(serve_until(
             listener,
             router,
-            async move {
-                let _ = shutdown_rx.await;
-            },
+            signals_rx,
             Duration::from_millis(200),
         ));
 
         let _response = request(address).await;
         entered.await.unwrap();
-        shutdown_tx.send(()).unwrap();
+        signals_tx.send(1).unwrap();
         tokio::time::timeout(Duration::from_secs(10), server)
             .await
             .expect("the server returns once the grace period ends")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_second_signal_returns_before_the_grace_period_ends() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (_release_tx, release_rx) = oneshot::channel();
+        let (router, entered) = slow_router(release_rx);
+        let (signals_tx, signals_rx) = watch::channel(0);
+        let server = tokio::spawn(serve_until(
+            listener,
+            router,
+            signals_rx,
+            Duration::from_secs(600),
+        ));
+
+        let _response = request(address).await;
+        entered.await.unwrap();
+        signals_tx.send(1).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !server.is_finished(),
+            "the server stopped before the grace period"
+        );
+        signals_tx.send(2).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .expect("the server returns once the second signal arrives")
             .unwrap()
             .unwrap();
     }

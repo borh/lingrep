@@ -276,6 +276,7 @@ impl PresentationProgress<io::Stderr> {
 pub struct TerminalArbiter {
     state: Arc<AtomicI32>,
     cancellation: CancellationFlag,
+    signals: Arc<tokio::sync::watch::Sender<u32>>,
 }
 
 impl Default for TerminalArbiter {
@@ -289,7 +290,14 @@ impl TerminalArbiter {
         Self {
             state: Arc::new(AtomicI32::new(RUNNING)),
             cancellation: CancellationFlag::new(),
+            signals: Arc::new(tokio::sync::watch::channel(0).0),
         }
+    }
+
+    /// The number of `try_cancel` calls so far, updated on each call, whether
+    /// or not the signal won.
+    pub fn signal_count(&self) -> tokio::sync::watch::Receiver<u32> {
+        self.signals.subscribe()
     }
 
     pub fn cancellation(&self) -> &CancellationFlag {
@@ -299,6 +307,8 @@ impl TerminalArbiter {
     /// Claim cancellation for `signal`. Returns whether this signal won.
     pub fn try_cancel(&self, signal: i32) -> bool {
         debug_assert!(signal > 0, "process signals must be positive");
+        self.signals
+            .send_modify(|count| *count = count.saturating_add(1));
         if self
             .state
             .compare_exchange(RUNNING, signal, Ordering::AcqRel, Ordering::Acquire)
