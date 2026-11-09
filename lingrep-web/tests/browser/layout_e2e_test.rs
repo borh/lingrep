@@ -132,7 +132,10 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
         .await?;
     wait_for_selector(&driver, "[data-exact-total='1']").await?;
     driver
-        .find(By::Css("[data-detail-tab='sections']"))
+        .query(By::Css("[data-detail-tab='sections']"))
+        .wait(Duration::from_secs(10), Duration::from_millis(25))
+        .and_clickable()
+        .first()
         .await?
         .click()
         .await?;
