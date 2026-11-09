@@ -720,6 +720,115 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
     .run();
 }
 
+/// Each value of `key` with the occurrences of `pattern` in the admitted
+/// documents that carry it, from `summarize --by-metadata`; values whose
+/// documents are all excluded count 0.
+fn expected_values(
+    fixture: &Fixture,
+    clause: &str,
+    pattern: &str,
+    key: &str,
+) -> Vec<(String, u64)> {
+    let mut command = crate::support::lingrep_without_dictionary();
+    command
+        .args(["--json", "summarize", "--patterns"])
+        .arg(&fixture.catalog)
+        .arg("--corpus")
+        .arg(&fixture.artifact)
+        .args(["--by-metadata", &format!("@document.{key}")]);
+    if !clause.is_empty() {
+        command.args(["--where", clause]);
+    }
+    let output = command.output().unwrap();
+    assert_success(&output);
+    let mut counts = BTreeMap::<String, u64>::new();
+    for record in parse_jsonl(&output.stdout) {
+        if record["type"] != "metadata_value" {
+            continue;
+        }
+        let Some(value) = record["data"]["value"].as_str() else {
+            continue;
+        };
+        let matches = record["data"]["patterns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|count| count["pattern"] == pattern)
+            .map_or(0, |count| count["matches"].as_u64().unwrap());
+        counts.insert(value.to_owned(), matches);
+    }
+    let all: &[&str] = match key {
+        "genre" => &GENRES,
+        "tags" => &TAGS,
+        _ => &["2001", "2002", "2003", "2004", "2005"],
+    };
+    let mut values = all
+        .iter()
+        .map(|value| {
+            (
+                (*value).to_owned(),
+                counts.get(*value).copied().unwrap_or(0),
+            )
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    values
+}
+
+#[test]
+fn condition_values_count_the_pattern_under_the_other_conditions() {
+    let fixture = fixture();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let named = |pairs: &[(&'static str, Condition)]| pairs.iter().cloned().collect::<Conditions>();
+    for conditions in [
+        Conditions::new(),
+        named(&[("genre", Condition::In(vec!["novel"]))]),
+        named(&[
+            ("tags", Condition::Out(vec!["x"])),
+            ("year", Condition::Range(Some(2002), None)),
+        ]),
+        named(&[("year", Condition::Range(Some(1999), Some(1999)))]),
+    ] {
+        for pattern in PATTERNS {
+            for key in ["genre", "tags", "year"] {
+                let mut others = conditions.clone();
+                others.remove(key);
+                let reply = get_json(
+                    &server,
+                    &format!(
+                        "/api/frequency/values?{}",
+                        query(&[
+                            ("corpus", "default"),
+                            ("catalog", "table.lx"),
+                            ("pattern", pattern),
+                            ("key", key),
+                            ("w", &conditions_json(&conditions)),
+                        ])
+                    ),
+                );
+                let context = format!("{pattern} {key} {conditions:?}");
+                assert_eq!(reply["status"], "ok", "{context}: {reply}");
+                let got = reply["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pair| {
+                        (
+                            pair[0].as_str().unwrap().to_owned(),
+                            pair[1].as_u64().unwrap(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    got,
+                    expected_values(&fixture, &clause(&others), pattern, key),
+                    "{context}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn the_shown_command_reproduces_the_rows() {
     let mut fixture = fixture();
