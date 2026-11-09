@@ -19,6 +19,10 @@ use crate::metadata_labels::KeyLabels;
 /// Rows a query returns when it names no limit.
 pub const PAGE_ROWS: usize = 100;
 const MAX_PAGE_ROWS: usize = 1_000;
+const MAX_QUERY_ITEMS: usize = 100_000;
+const MAX_QUERY_MAPPED_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROJECTED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_FACET_VALUES: usize = 10_000;
 
 #[derive(Default)]
 pub struct FrequencyViews {
@@ -28,6 +32,10 @@ pub struct FrequencyViews {
     labels: KeyLabels,
 }
 
+/// Row and facet queries admit at most 100,000 table entries, documents and
+/// patterns, and 64 MiB of mapped arrays. Projection processes at most
+/// 100,000 names and values totalling 32 MiB; facet vocabularies are limited
+/// to 10,000 distinct values.
 pub struct FrequencyPair {
     pub corpus: CorpusName,
     pub corpus_display: String,
@@ -169,8 +177,59 @@ pub struct Answer {
 pub enum QueryError {
     #[error("unknown pattern {0:?}")]
     UnknownPattern(String),
+    #[error(
+        "frequency query exceeds the {resource} limit of {limit}; use `ling table` for larger queries"
+    )]
+    ResourceLimit { resource: &'static str, limit: u64 },
     #[error(transparent)]
     Table(#[from] CountTableError),
+}
+
+#[derive(Default)]
+struct ProjectionBudget {
+    bytes: usize,
+    values: usize,
+}
+
+impl ProjectionBudget {
+    fn charge(&mut self, text: &str) -> Result<(), QueryError> {
+        self.bytes = self
+            .bytes
+            .checked_add(text.len())
+            .filter(|bytes| *bytes <= MAX_PROJECTED_BYTES)
+            .ok_or(QueryError::ResourceLimit {
+                resource: "projected bytes",
+                limit: MAX_PROJECTED_BYTES as u64,
+            })?;
+        if self.values == MAX_QUERY_ITEMS {
+            return Err(QueryError::ResourceLimit {
+                resource: "projected values",
+                limit: MAX_QUERY_ITEMS as u64,
+            });
+        }
+        self.values += 1;
+        Ok(())
+    }
+
+    fn group(&mut self, group: &Group<'_>) -> Result<(), QueryError> {
+        match group {
+            Group::Surface(text) | Group::Unit(text) | Group::Term(text) => self.charge(text),
+            Group::Key(fields) => {
+                for (name, value) in fields {
+                    self.charge(name)?;
+                    match value {
+                        FieldValue::Scalar(text) => self.charge(text)?,
+                        FieldValue::List(values) => {
+                            for text in values {
+                                self.charge(text)?;
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 pub enum Outcome {
@@ -721,6 +780,36 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
 }
 
 impl FrequencyPair {
+    fn admit_query(&self) -> Result<(), QueryError> {
+        for (resource, actual, limit) in [
+            (
+                "table entries",
+                self.table.entry_count(),
+                MAX_QUERY_ITEMS as u64,
+            ),
+            (
+                "documents",
+                self.documents.len() as u64,
+                MAX_QUERY_ITEMS as u64,
+            ),
+            (
+                "patterns",
+                self.table.pattern_names().len() as u64,
+                MAX_QUERY_ITEMS as u64,
+            ),
+            (
+                "mapped bytes",
+                self.table.mapped_bytes() as u64,
+                MAX_QUERY_MAPPED_BYTES as u64,
+            ),
+        ] {
+            if actual > limit {
+                return Err(QueryError::ResourceLimit { resource, limit });
+            }
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn patterns(&self) -> &[PatternSource] {
         &self.patterns
@@ -780,7 +869,8 @@ impl FrequencyPair {
     ///
     /// # Errors
     ///
-    /// An unknown pattern, or a table that fails to read.
+    /// An unknown pattern, a table that fails to read, or a query above the
+    /// resource limits.
     pub fn answer(&self, dimensions: &[Dimension], query: &Query) -> Result<Outcome, QueryError> {
         let pattern = self.pattern_index(&query.pattern)?;
         let (clause_text, written) = match &query.clause {
@@ -801,6 +891,7 @@ impl FrequencyPair {
             Ok(clause) => clause,
             Err(unsupported) => return Ok(Outcome::Unsupported(unsupported)),
         };
+        self.admit_query()?;
         let mask = self.mask(&self.admitted(clause.as_ref()));
         let totals = self.table.pattern_totals(&mask)?;
         let total = totals[pattern];
@@ -826,8 +917,10 @@ impl FrequencyPair {
         }
         let entries = self.table.pattern_entries(pattern, &mask)?;
         let mut rows = Vec::with_capacity(entries.len());
+        let mut budget = ProjectionBudget::default();
         for (rank, entry) in entries.iter().enumerate() {
             let group = self.table.group(entry.entry)?;
+            budget.group(&group)?;
             let text = group_text(&group);
             if query.filter.is_empty() || text.contains(&query.filter) {
                 rows.push((rank as u64 + 1, entry, group, text));
@@ -880,7 +973,8 @@ impl FrequencyPair {
     ///
     /// # Errors
     ///
-    /// An unknown pattern, or a table that fails to read.
+    /// An unknown pattern, a table that fails to read, or a query above the
+    /// resource limits.
     pub fn values(
         &self,
         dimensions: &[Dimension],
@@ -894,6 +988,7 @@ impl FrequencyPair {
                 key: key.to_owned(),
             }));
         }
+        self.admit_query()?;
         let mut others = conditions.clone();
         others.remove(key);
         let clause = match predicates(dimensions, &others).and_then(|written| {
@@ -911,21 +1006,37 @@ impl FrequencyPair {
         let admitted = self.admitted(clause.as_ref());
         let counts = self.table.pattern_document_counts(pattern)?;
         let mut values: HashMap<String, u64> = HashMap::new();
+        let mut budget = ProjectionBudget::default();
         for ((metadata, count), admitted) in self.documents.iter().zip(counts).zip(&admitted) {
-            match lookup(metadata, key) {
-                Some(MetadataValue::Scalar(scalar)) => {
-                    *values.entry(scalar_text(scalar)).or_default() +=
-                        if *admitted { count } else { 0 };
+            let scalars = match lookup(metadata, key) {
+                Some(MetadataValue::Scalar(scalar)) => std::slice::from_ref(scalar),
+                Some(MetadataValue::Scalars(scalars)) => scalars,
+                _ => continue,
+            };
+            let mut distinct = BTreeSet::new();
+            for scalar in scalars {
+                let text = match scalar {
+                    MetadataScalar::String(text) | MetadataScalar::Number(text) => text.as_str(),
+                    MetadataScalar::Bool(true) => "true",
+                    MetadataScalar::Bool(false) => "false",
+                };
+                budget.charge(text)?;
+                if distinct.len() == MAX_FACET_VALUES && !distinct.contains(text) {
+                    return Err(QueryError::ResourceLimit {
+                        resource: "facet values",
+                        limit: MAX_FACET_VALUES as u64,
+                    });
                 }
-                Some(MetadataValue::Scalars(scalars)) => {
-                    let mut distinct = scalars.iter().map(scalar_text).collect::<Vec<_>>();
-                    distinct.sort_unstable();
-                    distinct.dedup();
-                    for value in distinct {
-                        *values.entry(value).or_default() += if *admitted { count } else { 0 };
-                    }
+                distinct.insert(text.to_owned());
+            }
+            for value in distinct {
+                if values.len() == MAX_FACET_VALUES && !values.contains_key(&value) {
+                    return Err(QueryError::ResourceLimit {
+                        resource: "facet values",
+                        limit: MAX_FACET_VALUES as u64,
+                    });
                 }
-                _ => {}
+                *values.entry(value).or_default() += if *admitted { count } else { 0 };
             }
         }
         let mut values = values
@@ -940,6 +1051,167 @@ impl FrequencyPair {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table_pair(
+        values: Vec<String>,
+        schema: lingrep_corpus::GroupSchema,
+        metadata: Metadata,
+    ) -> (tempfile::TempDir, FrequencyPair) {
+        use lingrep_corpus::{CountTableWriter, DocumentTotals};
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("table");
+        let key = CountTableKey {
+            analysis_identity: "analysis".into(),
+            catalog_fingerprint: "catalog".into(),
+            matcher_revision: "matcher".into(),
+        };
+        let mut writer = CountTableWriter::create(
+            &path,
+            key.clone(),
+            vec!["p".into()],
+            vec![schema],
+            &values,
+            &[DocumentTotals {
+                document_id: 0,
+                sentences: 1,
+                tokens: 1,
+            }],
+        )
+        .expect("writer");
+        for index in 0..values.len() {
+            writer.begin_entry(0, 0, &[index as u32]).expect("entry");
+            writer.add_pair(0, 1).expect("pair");
+        }
+        writer
+            .finish(&lingrep_core::execution::CancellationFlag::new())
+            .expect("finish")
+            .publish()
+            .expect("publish");
+        let table = CountTable::open(&path, &key).expect("table");
+        (
+            directory,
+            FrequencyPair {
+                corpus: CorpusName::parse("default").expect("corpus"),
+                corpus_display: "default".into(),
+                catalog: "p.lx".into(),
+                table,
+                table_file: "table.lingtable".into(),
+                corpus_file: "corpus.lingcorpus".into(),
+                documents: vec![Arc::new(metadata)],
+                patterns: vec![PatternSource {
+                    name: "p".into(),
+                    source: None,
+                }],
+                workbench: None,
+            },
+        )
+    }
+
+    fn surface_schema() -> lingrep_corpus::GroupSchema {
+        lingrep_corpus::GroupSchema {
+            kind: lingrep_corpus::GroupKind::Surface,
+            names: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_one_row_page_rejects_tables_above_the_entry_admission_limit() {
+        for entries in [100_000, 100_001] {
+            let (_directory, pair) = table_pair(
+                (0..entries).map(|n| format!("v{n:06}")).collect(),
+                surface_schema(),
+                Box::new([]),
+            );
+            let result = pair.answer(
+                &[],
+                &Query {
+                    pattern: "p".into(),
+                    limit: 1,
+                    ..Query::default()
+                },
+            );
+            if entries == 100_000 {
+                let Ok(Outcome::Answer(answer)) = result else {
+                    panic!("admitted table failed");
+                };
+                assert_eq!(answer.rows.len(), 1);
+                assert_eq!(answer.entries, entries);
+                assert_eq!(answer.occurrences, entries);
+            } else {
+                assert!(
+                    matches!(result, Err(error) if error.to_string().contains("table entries"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn row_payloads_and_mapped_arrays_are_bounded_before_projection() {
+        for (length, resource) in [
+            (32 * 1024 * 1024 + 1, "projected bytes"),
+            (64 * 1024 * 1024 + 1, "mapped bytes"),
+        ] {
+            let (_directory, pair) =
+                table_pair(vec!["x".repeat(length)], surface_schema(), Box::new([]));
+            assert!(
+                matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }), Err(error) if error.to_string().contains(resource))
+            );
+        }
+        let (_directory, pair) = table_pair(
+            vec!["x".into()],
+            lingrep_corpus::GroupSchema {
+                kind: lingrep_corpus::GroupKind::Key,
+                names: vec!["n".repeat(32 * 1024 * 1024 + 1)],
+            },
+            Box::new([]),
+        );
+        assert!(
+            matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }), Err(error) if error.to_string().contains("projected bytes"))
+        );
+    }
+
+    #[test]
+    fn facet_vocabularies_and_scalar_payloads_have_explicit_limits() {
+        let dimension = categorical("genre", true);
+        for terms in [10_000, 10_001] {
+            let metadata = Box::new([(
+                "genre".into(),
+                MetadataValue::Scalars(
+                    (0..terms)
+                        .flat_map(|n| {
+                            [
+                                MetadataScalar::String(format!("v{n:05}")),
+                                MetadataScalar::String(format!("v{n:05}")),
+                            ]
+                        })
+                        .collect(),
+                ),
+            )]);
+            let (_directory, pair) = table_pair(vec!["x".into()], surface_schema(), metadata);
+            let result = pair.values(
+                std::slice::from_ref(&dimension),
+                "p",
+                "genre",
+                &BTreeMap::new(),
+            );
+            if terms == 10_000 {
+                let got = result.expect("query").expect("supported");
+                assert_eq!(got.len(), terms);
+                assert!(got.iter().all(|(_, count)| *count == 1));
+                assert!(got.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            } else {
+                assert!(matches!(result, Err(error) if error.to_string().contains("facet values")));
+            }
+        }
+        let metadata = Box::new([(
+            "genre".into(),
+            MetadataValue::Scalar(MetadataScalar::String("x".repeat(32 * 1024 * 1024 + 1))),
+        )]);
+        let (_directory, pair) = table_pair(vec!["x".into()], surface_schema(), metadata);
+        assert!(
+            matches!(pair.values(&[categorical("genre", false)], "p", "genre", &BTreeMap::new()), Err(error) if error.to_string().contains("projected bytes"))
+        );
+    }
 
     fn categorical(key: &str, list: bool) -> Dimension {
         Dimension {

@@ -1119,6 +1119,31 @@ impl CountTable {
             .map(|pattern| pattern.name.as_str())
     }
 
+    /// Combined byte length of mapped sections, excluding the header and
+    /// owned document indexes.
+    pub fn mapped_bytes(&self) -> usize {
+        [
+            &self.value_offsets,
+            &self.values,
+            &self.entry_key_offsets,
+            &self.entry_keys,
+            &self.entry_pair_offsets,
+            &self.pair_documents,
+            &self.pair_counts,
+            &self.ranked_entries,
+            &self.ranked_totals,
+            &self.document_pair_offsets,
+            &self.document_entries,
+            &self.document_counts,
+            &self.document_pattern_offsets,
+            &self.document_patterns,
+            &self.document_pattern_counts,
+        ]
+        .into_iter()
+        .map(|section| section.map.as_ref().map_or(0, |map| map.len()))
+        .fold(0, usize::saturating_add)
+    }
+
     pub fn entry_count(&self) -> u64 {
         self.header.entries
     }

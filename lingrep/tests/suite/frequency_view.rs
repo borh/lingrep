@@ -1026,3 +1026,56 @@ fn copy_dir(from: &Path, to: &Path) {
         fs::copy(from, to).unwrap();
     }
 }
+
+#[test]
+fn frequency_endpoints_report_resource_limits_for_large_tables() {
+    use lingrep_corpus::{CountTable, CountTableWriter, GroupKind, GroupSchema};
+    let fixture = fixture();
+    let key = CountTable::read_key(&fixture.table).unwrap();
+    let original = CountTable::open(&fixture.table, &key).unwrap();
+    let documents = original.documents().collect::<Vec<_>>();
+    let values = (0..100_001).map(|n| format!("v{n:06}")).collect::<Vec<_>>();
+    let path = fixture.directory.path().join("large.lingtable");
+    let mut writer = CountTableWriter::create(
+        &path,
+        key,
+        PATTERNS.iter().map(|name| (*name).to_owned()).collect(),
+        vec![GroupSchema {
+            kind: GroupKind::Surface,
+            names: Vec::new(),
+        }],
+        &values,
+        &documents,
+    )
+    .unwrap();
+    for index in 0..values.len() {
+        writer.begin_entry(1, 0, &[index as u32]).unwrap();
+        writer.add_pair(0, 1).unwrap();
+    }
+    writer
+        .finish(&lingrep_core::execution::CancellationFlag::new())
+        .unwrap()
+        .publish()
+        .unwrap();
+    let server = served(&fixture, &args(&[&"--count-table", &path]));
+    for endpoint in ["frequency", "frequency/values"] {
+        let (status, body) = get(
+            &server,
+            &format!(
+                "/api/{endpoint}?{}",
+                query(&[
+                    ("corpus", "default"),
+                    ("catalog", "table.lx"),
+                    ("pattern", "word"),
+                    ("limit", "1"),
+                    ("key", "genre"),
+                ])
+            ),
+        );
+        assert_eq!(status, 400, "{body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        let error = body["error"].as_str().unwrap();
+        assert!(error.contains("table entries limit of 100000"), "{error}");
+        assert!(error.contains("ling table"), "{error}");
+    }
+}

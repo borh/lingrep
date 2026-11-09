@@ -141,8 +141,21 @@ fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Resp
         })
 }
 
+async fn run_frequency_task<T: Send + 'static>(
+    coordinators: Arc<crate::coordinator::CoordinatorRegistry>,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let permit = coordinators.acquire_scan_permit().await;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+}
+
 async fn on_pair<T: Serialize + Send + 'static>(
     views: Arc<FrequencyViews>,
+    coordinators: Arc<crate::coordinator::CoordinatorRegistry>,
     corpus: String,
     catalog: String,
     work: impl FnOnce(
@@ -153,21 +166,22 @@ async fn on_pair<T: Serialize + Send + 'static>(
     + 'static,
 ) -> Response {
     let started = Instant::now();
-    let result = tokio::task::spawn_blocking(move || {
-        let Some(pair) = views.find(&corpus, &catalog) else {
-            return Ok(Reply::Unavailable);
-        };
-        Ok(match work(pair, views.dimensions(&pair.corpus))? {
-            Ok(body) => Reply::Ok {
-                body,
-                ms: started.elapsed().as_secs_f64() * 1000.0,
+    let result = run_frequency_task(coordinators, move || {
+        let reply = match views.find(&corpus, &catalog) {
+            Some(pair) => match work(pair, views.dimensions(&pair.corpus))? {
+                Ok(body) => Reply::Ok {
+                    body,
+                    ms: started.elapsed().as_secs_f64() * 1000.0,
+                },
+                Err(unsupported) => Reply::Unsupported(unsupported),
             },
-            Err(unsupported) => Reply::Unsupported(unsupported),
-        })
+            None => Reply::Unavailable,
+        };
+        Ok(Json(reply).into_response())
     })
     .await;
     match result {
-        Ok(Ok(reply)) => Json(reply).into_response(),
+        Ok(Ok(response)) => response,
         Ok(Err(message)) => bad_request(message),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -189,6 +203,7 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
     };
     on_pair(
         Arc::clone(&store.frequency),
+        Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
         move |pair, dimensions| match pair.answer(dimensions, &query) {
@@ -212,6 +227,7 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
     };
     on_pair(
         Arc::clone(&store.frequency),
+        Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
         move |pair, dimensions| {
@@ -221,4 +237,41 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::{Future, poll_fn};
+    use std::task::Poll;
+
+    #[tokio::test]
+    async fn cancelled_queries_retain_shared_admission_until_blocking_work_finishes() {
+        let registry = Arc::new(crate::coordinator::CoordinatorRegistry::new(1));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let task = tokio::spawn(run_frequency_task(Arc::clone(&registry), move || {
+            started.send(()).expect("started");
+            wait.recv().expect("release");
+        }));
+        running.await.expect("running");
+        let mut next = Box::pin(registry.acquire_scan_permit());
+        assert!(
+            poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        task.abort();
+        assert!(task.await.expect_err("cancelled request").is_cancelled());
+        assert!(
+            poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        release.send(()).expect("release work");
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(1), next)
+            .await
+            .expect("next request admitted");
+        drop(permit);
+    }
 }

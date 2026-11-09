@@ -169,7 +169,10 @@ export function shortForms(name, siblings = []) {
 async function api(path, params) {
   const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   const response = await fetch(`api/${path}?${query}`);
-  if (!response.ok) throw new Error(L().failed(response.status));
+  if (!response.ok) {
+    const reply = await response.json().catch(() => null);
+    throw new Error(reply?.error ?? L().failed(response.status));
+  }
   return response.json();
 }
 
@@ -465,7 +468,13 @@ export function mountFrequency(root) {
     popover();
     if (dim(key)?.kind !== "categorical") return;
     const mine = gen;
-    const r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key, w: conditions() });
+    let r;
+    try {
+      r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key, w: conditions() });
+    } catch (error) {
+      if (mine === gen && openPop === key) pop.querySelector(".opts").textContent = error.message;
+      return;
+    }
     if (mine !== gen || openPop !== key || r.status !== "ok") return;
     values = r.values;
     popover();
