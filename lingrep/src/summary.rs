@@ -98,12 +98,14 @@ fn resolve_value(value: ValueId, values: &[Box<str>]) -> io::Result<String> {
         .ok_or_else(|| io::Error::other("summary key value is out of range"))
 }
 
-/// The rows ranked together: one authored pattern, and under `--by-document`
-/// one admitted document of it.
+/// The rows ranked together: one authored pattern, under `--by-document`
+/// one admitted document of it, and for a count table one sentence of that
+/// document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SummaryPartition {
     pub pattern_ordinal: u64,
     pub document_ordinal: Option<u64>,
+    pub sentence_ordinal: Option<u64>,
 }
 
 impl SummaryPartition {
@@ -113,6 +115,7 @@ impl SummaryPartition {
         Self {
             pattern_ordinal,
             document_ordinal: None,
+            sentence_ordinal: None,
         }
     }
 }
@@ -561,6 +564,7 @@ struct GroupOrder {
     pattern_ordinal: u64,
     group: StoredGroup,
     document_ordinal: u64,
+    sentence_ordinal: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -920,17 +924,20 @@ fn shard_thread(
                                     "summary ordering cancelled",
                                 ));
                             }
-                            let document_ordinal =
-                                key.partition.document_ordinal.ok_or_else(|| {
-                                    io::Error::other(
-                                        "a count table requires per-document partitions",
-                                    )
-                                })?;
+                            let (Some(document_ordinal), Some(sentence_ordinal)) = (
+                                key.partition.document_ordinal,
+                                key.partition.sentence_ordinal,
+                            ) else {
+                                return Err(io::Error::other(
+                                    "a count table requires per-sentence partitions",
+                                ));
+                            };
                             ordered.add(
                                 GroupOrder {
                                     pattern_ordinal: key.partition.pattern_ordinal,
                                     group: key.group.canonicalize(&schema_remap, &value_ranks)?,
                                     document_ordinal,
+                                    sentence_ordinal,
                                 },
                                 count,
                             )?;
@@ -1375,8 +1382,11 @@ pub enum GroupEvent<'a> {
         schema: u32,
         words: &'a [u32],
     },
-    Pair {
+    /// The entry's occurrences in one sentence; sentences arrive in
+    /// ascending order.
+    Sentence {
         document_ordinal: u64,
+        sentence_ordinal: u64,
         count: u64,
     },
 }
@@ -1495,8 +1505,9 @@ impl FinalizedGroups {
                 })?;
                 current = Some((entry.pattern_ordinal, entry.group));
             }
-            visitor(GroupEvent::Pair {
+            visitor(GroupEvent::Sentence {
                 document_ordinal: entry.document_ordinal,
+                sentence_ordinal: entry.sentence_ordinal,
                 count: count as u64,
             })?;
         }
@@ -1773,11 +1784,11 @@ impl MetadataValueTally {
         merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        let mut slots = std::collections::HashMap::<String, u32>::new();
-        let mut values = Vec::new();
-        let mut ranges = Vec::<(std::ops::Range<u64>, Box<[u32]>)>::new();
-        for (range, document_values) in documents {
-            if ranges
+        let (ranges, values): (Vec<_>, Vec<_>) = documents.into_iter().unzip();
+        let slots = lingrep_corpus::ValueSlots::number(values).map_err(io::Error::other)?;
+        let mut documents = Vec::<(std::ops::Range<u64>, Box<[u32]>)>::new();
+        for (range, document_slots) in ranges.into_iter().zip(slots.documents()) {
+            if documents
                 .last()
                 .is_some_and(|(previous, _)| range.start < previous.end)
             {
@@ -1785,34 +1796,16 @@ impl MetadataValueTally {
                     "document sentence ranges are not in corpus order",
                 ));
             }
-            let mut document_slots = Vec::with_capacity(document_values.len());
-            for value in document_values {
-                let next = u32::try_from(values.len())
-                    .map_err(|_| io::Error::other("metadata value count exceeds u32"))?;
-                let slot = *slots.entry(value).or_insert_with_key(|value| {
-                    values.push(value.clone());
-                    next
-                });
-                document_slots.push(slot);
-            }
-            document_slots.sort_unstable();
-            document_slots.dedup();
             if !range.is_empty() {
-                ranges.push((range, document_slots.into_boxed_slice()));
+                documents.push((range, document_slots.clone()));
             }
         }
-        let no_value = u32::try_from(values.len())
-            .map_err(|_| io::Error::other("metadata value count exceeds u32"))?;
-        for (_, document_slots) in &mut ranges {
-            if document_slots.is_empty() {
-                *document_slots = Box::new([no_value]);
-            }
-        }
+        let values = slots.values().to_vec();
         Ok(Self {
             key,
             tally: SlotTally::new(values.len() + 1, resident_key_limit, merge_fan_in, budget)?,
             values,
-            documents: ranges,
+            documents,
             cursor: 0,
         })
     }

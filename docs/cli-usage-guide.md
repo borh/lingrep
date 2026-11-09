@@ -469,8 +469,8 @@ admitted sentence.
 ### Saving per-document counts: count tables
 
 `summarize --write-table PATH` scans a prepared corpus once and writes every
-pattern's group counts per document to a count table at `PATH`, a new
-directory. `ling table` then answers a `--where` over document metadata from
+pattern's group counts per document, and the sentences each group occurs in,
+to a count table at `PATH`, a new directory. `ling table` then answers a `--where` over document metadata from
 the table without scanning the corpus:
 
 ```bash

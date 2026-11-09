@@ -39,8 +39,8 @@ pub use compiler::{
     DriftDefinitionKind, DriftEntry, ExclusionSite, ExpandError, ExpandedDefinitionKind,
     FormatError, FormatOutcome, LexiconProjectionSite, PatternDiagram, PatternSource,
     RelatedDiagnosticLocation, SentenceFilter, SentenceFilterTerm, compile_catalog,
-    expand_pattern_definition, format_pattern_source, render_definition_diagram,
-    render_diagnostics, render_pattern_error, report_catalog_drift,
+    compile_catalog_pattern, expand_pattern_definition, format_pattern_source,
+    render_definition_diagram, render_diagnostics, render_pattern_error, report_catalog_drift,
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,

@@ -408,6 +408,7 @@ pub fn run(
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
             documents: (args.by_document || args.write_table.is_some()).then(BTreeMap::new),
+            sentences: args.write_table.is_some(),
             sections,
             metadata_values,
         };
@@ -730,6 +731,8 @@ struct SummarySink<'a> {
     records_unkeyed: u64,
     /// Per-document admission under `--by-document`, keyed by document ordinal.
     documents: Option<BTreeMap<u64, DocumentTally>>,
+    /// Whether partitions carry the sentence, which a count table records.
+    sentences: bool,
     sections: Option<SectionTally>,
     metadata_values: Option<MetadataValueTally>,
 }
@@ -850,11 +853,12 @@ fn write_count_table(
                     return Err(io::Error::other("count for an unpublished pattern"));
                 }
             },
-            crate::summary::GroupEvent::Pair {
+            crate::summary::GroupEvent::Sentence {
                 document_ordinal,
+                sentence_ordinal,
                 count,
             } => match document_index.get(&document_ordinal) {
-                Some(document) => writer.add_pair(*document, count),
+                Some(document) => writer.add_sentence(*document, sentence_ordinal, count),
                 None => {
                     return Err(io::Error::other(
                         "count for a document with no admitted sentence",
@@ -996,6 +1000,7 @@ impl SummarySink<'_> {
                 .documents
                 .is_some()
                 .then_some(location.document_ordinal),
+            sentence_ordinal: self.sentences.then_some(location.corpus_sentence_ordinal),
         }
     }
 

@@ -15,7 +15,7 @@ use lingrep_core::fsm::policy_program::BoundOp;
 use lingrep_core::fsm::{
     COMPILER_SCHEMA_IDENTITY, CompileLimits, CompileOutput, DiagnosticCode, FsmBuilder,
     GRAMMAR_SEMANTICS_REVISION, MATCHER_SEMANTICS_IDENTITY, Match, POLICY_SEMANTICS_IDENTITY,
-    PatternSource, PredicateDigest, compile_catalog, report_catalog_drift,
+    PatternSource, PredicateDigest, compile_catalog, compile_catalog_pattern, report_catalog_drift,
 };
 use lingrep_core::testing::catalogs::tracked_catalog_sources;
 use lingrep_core::token_match::{
@@ -119,6 +119,90 @@ fn match_fingerprints(matches: &[Match]) -> Vec<MatchFingerprint> {
                 .collect(),
         })
         .collect()
+}
+
+#[test]
+fn a_catalog_compiled_for_one_pattern_publishes_the_same_matches_of_it_as_the_whole_catalog() {
+    let source = "fragment x := [text=x].\n\
+                  pattern a := (?<head> @x) [text=y].\n\
+                  pattern b := @x.\n\
+                  pattern c := @a [text=z].\n";
+    let tokens = ["x", "y", "z"]
+        .map(|text| token_with_attrs(&[(TokenAttributeIndex::Orth, text)]))
+        .to_vec();
+    let whole = compile_catalog(
+        PatternSource::named("p.lx", source),
+        CompileLimits::default(),
+    )
+    .expect("catalog")
+    .matcher
+    .find_matches(&tokens);
+    let published = compile_catalog(
+        PatternSource::named("p.lx", source),
+        CompileLimits::default(),
+    )
+    .expect("catalog")
+    .matcher
+    .patterns()
+    .len();
+    for name in ["a", "b", "c"] {
+        let matcher = compile_catalog_pattern(
+            PatternSource::named("p.lx", source),
+            CompileLimits::default(),
+            name,
+        )
+        .expect("catalog for one pattern")
+        .matcher;
+        assert!(matcher.patterns().len() < published, "{name}");
+        let selected = matcher.find_matches(&tokens);
+        let expected = whole
+            .iter()
+            .filter(|matched| matched.pattern == name)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!expected.is_empty(), "{name} fixture must be non-vacuous");
+        assert_eq!(
+            match_fingerprints(&selected),
+            match_fingerprints(&expected),
+            "{name}"
+        );
+    }
+    assert!(
+        compile_catalog_pattern(
+            PatternSource::named("p.lx", source),
+            CompileLimits::default(),
+            "x"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_catalog_with_a_policy_compiles_whole_for_one_pattern() {
+    let source = include_str!("../../../patterns/alternation.lx");
+    let whole = compile_catalog(
+        PatternSource::named("alternation.lx", source),
+        CompileLimits::default(),
+    )
+    .expect("catalog")
+    .matcher;
+    let name = whole
+        .patterns()
+        .keys()
+        .next()
+        .expect("a pattern")
+        .to_string();
+    let selected = compile_catalog_pattern(
+        PatternSource::named("alternation.lx", source),
+        CompileLimits::default(),
+        &name,
+    )
+    .expect("catalog")
+    .matcher;
+    assert_eq!(
+        selected.patterns().keys().collect::<Vec<_>>(),
+        whole.patterns().keys().collect::<Vec<_>>()
+    );
 }
 
 #[test]

@@ -1266,7 +1266,9 @@ mod tests {
         for index in 0..values.len() {
             writer.begin_entry(0, 0, &[index as u32]).expect("entry");
             for document in 0..metadata.len() {
-                writer.add_pair(document as u32, 1).expect("pair");
+                writer
+                    .add_sentence(document as u32, document as u64, 1)
+                    .expect("sentence");
             }
         }
         writer

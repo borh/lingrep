@@ -8,7 +8,7 @@ use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     Admission, CorpusArtifact, CountTable, CountTableError, CountTableKey, FieldValue, Group,
-    TopRow,
+    TopRow, ValueSlots,
 };
 
 use super::CommandOutcome;
@@ -392,87 +392,47 @@ fn entry_by_metadata(
     documents: Vec<(u64, std::ops::Range<u64>, Vec<String>)>,
     admits: impl Fn(u64) -> bool,
 ) -> Result<Vec<TableMetadataValue>, CliError> {
-    let document_ids = table.document_ids();
-    let mut slot_of = std::collections::HashMap::<String, usize>::new();
-    let mut values = Vec::<String>::new();
-    let mut document_slots = vec![Vec::new(); document_ids.len()];
-    for (id, _, document_values) in documents {
-        let mut slots = document_values
-            .into_iter()
-            .map(|value| {
-                let next = values.len();
-                *slot_of.entry(value).or_insert_with_key(|value| {
-                    values.push(value.clone());
-                    next
-                })
-            })
-            .collect::<Vec<_>>();
-        if let Ok(document) = document_ids.binary_search(&id) {
-            slots.sort_unstable();
-            slots.dedup();
-            document_slots[document] = slots;
-        }
-    }
-    let no_value = values.len();
-    for slots in &mut document_slots {
-        if slots.is_empty() {
-            slots.push(no_value);
-        }
-    }
-
-    let admitted = document_ids
+    let corpus_index = documents
         .iter()
-        .map(|id| admits(*id))
-        .collect::<Vec<_>>();
-    let mut totals = vec![
-        Admission {
-            documents_admitted: 0,
-            sentences_admitted: 0,
-            tokens_admitted: 0,
-        };
-        no_value + 1
-    ];
-    for (document, totals_of) in table.documents().enumerate() {
-        if !admitted[document] {
-            continue;
-        }
-        for slot in &document_slots[document] {
-            let target = &mut totals[*slot];
-            target.documents_admitted += 1;
-            target.sentences_admitted += totals_of.sentences;
-            target.tokens_admitted += totals_of.tokens;
-        }
-    }
-    let mut counts = vec![(0u64, 0u64); no_value + 1];
+        .enumerate()
+        .map(|(index, (id, _, _))| (*id, index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let slots = ValueSlots::number(documents.into_iter().map(|(_, _, values)| values))
+        .map_err(|error| CliError::Corpus(error.to_string()))?;
+    let slots = slots.select(
+        table
+            .document_ids()
+            .iter()
+            .map(|id| corpus_index.get(id).copied()),
+    );
     let (entry_documents, entry_counts) = table.entry_documents(entry).map_err(table_error)?;
-    for (document, count) in entry_documents.iter().zip(entry_counts) {
-        let document = *document as usize;
-        if !admitted.get(document).copied().unwrap_or(false) {
-            continue;
-        }
-        for slot in &document_slots[document] {
-            counts[*slot].0 += u64::from(*count);
-            counts[*slot].1 += 1;
-        }
-    }
+    let counts = table
+        .value_counts(
+            &slots,
+            &table.mask(admits),
+            entry_documents
+                .iter()
+                .zip(entry_counts)
+                .map(|(document, count)| (*document as usize, u64::from(*count))),
+        )
+        .map_err(table_error)?;
 
     let group = group_data(&table.group(entry).map_err(table_error)?);
-    let records = totals
+    let records = counts
         .into_iter()
-        .zip(counts)
         .enumerate()
-        .filter(|(_, (totals, _))| totals.documents_admitted > 0)
-        .map(|(slot, (totals, (count, works)))| TableMetadataValue {
+        .filter(|(_, sums)| sums.admission.documents_admitted > 0)
+        .map(|(slot, sums)| TableMetadataValue {
             key: by.to_owned(),
-            value: values.get(slot).cloned(),
-            documents_admitted: totals.documents_admitted,
-            sentences_admitted: totals.sentences_admitted,
-            tokens_admitted: totals.tokens_admitted,
+            value: slots.value(slot).map(str::to_owned),
+            documents_admitted: sums.admission.documents_admitted,
+            sentences_admitted: sums.admission.sentences_admitted,
+            tokens_admitted: sums.admission.tokens_admitted,
             entry: TableEntryCount {
                 pattern: pattern_name.to_owned(),
                 group: group.clone(),
-                count,
-                works,
+                count: sums.count,
+                works: sums.works,
             },
         })
         .collect();

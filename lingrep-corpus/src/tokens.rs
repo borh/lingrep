@@ -818,6 +818,9 @@ pub struct PreparedSentenceSource {
     projection: SourceProjection,
     next_ordinal: u64,
     end_ordinal: u64,
+    /// Ascending ordinals the walk is limited to, with the index of the first
+    /// one not yet passed.
+    listed: Option<(Vec<u64>, usize)>,
     terminal_failure: Option<String>,
     admission: SentenceAdmission,
     sections: Option<SectionAdmission>,
@@ -921,6 +924,7 @@ impl PreparedSentenceSource {
             projection,
             next_ordinal: 0,
             end_ordinal,
+            listed: None,
             terminal_failure: None,
             admission: SentenceAdmission::All,
             sections: None,
@@ -1058,6 +1062,15 @@ impl PreparedSentenceSource {
     pub fn with_ordinal_range(mut self, range: std::ops::Range<u64>) -> Self {
         self.end_ordinal = range.end.min(self.reader.sentence_count());
         self.next_ordinal = range.start.min(self.end_ordinal);
+        self
+    }
+    /// Reads only the sentences whose corpus ordinals are in `ordinals`,
+    /// which ascend. A batch spans as many of them as the limits admit, so
+    /// sentences that share a block decode it once.
+    #[must_use]
+    pub fn with_ordinals(mut self, ordinals: Vec<u64>) -> Self {
+        debug_assert!(ordinals.is_sorted(), "listed ordinals ascend");
+        self.listed = Some((ordinals, 0));
         self
     }
     #[must_use]
@@ -1201,6 +1214,21 @@ impl PreparedSentenceSource {
                 limits.max_stage_sentences
             };
             while self.next_ordinal < self.end_ordinal && ordinals.len() < source_batch_sentences {
+                if let Some((listed, at)) = &mut self.listed {
+                    while listed
+                        .get(*at)
+                        .is_some_and(|next| *next < self.next_ordinal)
+                    {
+                        *at += 1;
+                    }
+                    match listed.get(*at) {
+                        Some(next) if *next < self.end_ordinal => self.next_ordinal = *next,
+                        _ => {
+                            self.next_ordinal = self.end_ordinal;
+                            break;
+                        }
+                    }
+                }
                 let ordinal = self.next_ordinal;
                 if let Some(sample) = self.block_sample {
                     let (_, block) = self
@@ -2387,7 +2415,7 @@ mod tests {
     }
 
     #[test]
-    fn block_samples_and_ordinal_ranges_decode_only_their_blocks() {
+    fn block_samples_ordinal_ranges_and_listed_ordinals_decode_only_their_blocks() {
         use crate::locations::LocationWriter;
         use lingrep_core::execution::CorpusSample;
         let directory = tempfile::tempdir().unwrap();
@@ -2503,6 +2531,29 @@ mod tests {
             (0..ordinal).collect::<Vec<_>>()
         );
         assert!(drain(&mut open(CorpusSample::new(1, 7)), 1024).is_empty());
+        let listed = [1, 2, 5, 250, 258, 259, 269, 600, 770, ordinal + 5];
+        let containing = blocks
+            .iter()
+            .filter(|b| {
+                listed
+                    .iter()
+                    .any(|o| (b.first_sentence..b.first_sentence + b.sentence_count).contains(o))
+            })
+            .count();
+        for batch_size in [1, 3, 1024] {
+            let mut source = open(None).with_ordinals(listed.to_vec());
+            assert_eq!(
+                drain(&mut source, batch_size),
+                listed[..listed.len() - 1].to_vec()
+            );
+            if batch_size == 1024 {
+                assert_eq!(source.decoded_block_count(), containing);
+            }
+            let mut source = open(None)
+                .with_ordinals(listed.to_vec())
+                .with_ordinal_range(255..600);
+            assert_eq!(drain(&mut source, batch_size), [258, 259, 269]);
+        }
         for (range, batch_size, decoded_blocks) in
             [(1..2, 1, 1), (250..270, 1024, 3), (770..9_999, 1024, 1)]
         {

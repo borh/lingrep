@@ -19,6 +19,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::publication::StagingDirectory;
+use crate::value_slots::ValueSlots;
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");
@@ -26,7 +27,7 @@ compile_error!("count tables map little-endian arrays in place");
 /// The `format` value of a count table's header.
 pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
 /// The header version this build reads and writes.
-pub const COUNT_TABLE_VERSION: u32 = 2;
+pub const COUNT_TABLE_VERSION: u32 = 3;
 
 const DOCUMENT_MAJOR_PAIRS: u64 = 2_000_000;
 
@@ -38,6 +39,8 @@ const ENTRY_KEYS: &str = "entry_keys.u32";
 const ENTRY_PAIR_OFFSETS: &str = "entry_pair_offsets.u64";
 const PAIR_DOCUMENTS: &str = "pair_documents.u32";
 const PAIR_COUNTS: &str = "pair_counts.u32";
+const ENTRY_SENTENCE_OFFSETS: &str = "entry_sentence_offsets.u64";
+const ENTRY_SENTENCES: &str = "entry_sentences.u32";
 const RANKED_ENTRIES: &str = "ranked_entries.u32";
 const RANKED_TOTALS: &str = "ranked_totals.u64";
 const DOCUMENT_PAIR_OFFSETS: &str = "document_pair_offsets.u64";
@@ -186,6 +189,7 @@ struct Header {
     entries: u64,
     key_words: u64,
     pairs: u64,
+    sentences: u64,
     documents: u64,
     document_patterns: u64,
 }
@@ -263,7 +267,9 @@ impl Staged {
 }
 
 struct OpenEntry {
-    last_document: Option<u32>,
+    /// The document of the pair being accumulated, and its count so far.
+    pair: Option<(u32, u64)>,
+    last_sentence: Option<u64>,
     total: u64,
 }
 
@@ -273,11 +279,13 @@ struct Streams {
     entry_pair_offsets: Staged,
     pair_documents: Staged,
     pair_counts: Staged,
+    entry_sentence_offsets: Staged,
+    entry_sentences: Staged,
     entry_totals: Staged,
 }
 
 /// Writes one table from a stream of entries in (pattern, key) order, each
-/// followed by its documents in ascending order.
+/// followed by the sentences it occurs in, in ascending order.
 ///
 /// The table becomes visible at its destination only when
 /// [`StagedCountTable::publish`] succeeds; dropping the writer or the staged
@@ -297,6 +305,7 @@ pub struct CountTableWriter {
     entries: u64,
     key_words: u64,
     pairs: u64,
+    sentences: u64,
     document_patterns: u64,
     open: Option<OpenEntry>,
 }
@@ -369,10 +378,13 @@ impl CountTableWriter {
             entry_pair_offsets: Staged::create(staging_path, ENTRY_PAIR_OFFSETS)?,
             pair_documents: Staged::create(staging_path, PAIR_DOCUMENTS)?,
             pair_counts: Staged::create(staging_path, PAIR_COUNTS)?,
+            entry_sentence_offsets: Staged::create(staging_path, ENTRY_SENTENCE_OFFSETS)?,
+            entry_sentences: Staged::create(staging_path, ENTRY_SENTENCES)?,
             entry_totals: Staged::create(staging_path, ENTRY_TOTALS_SCRATCH)?,
         };
         streams.entry_key_offsets.u64(0)?;
         streams.entry_pair_offsets.u64(0)?;
+        streams.entry_sentence_offsets.u64(0)?;
         Ok(Self {
             streams: Some(streams),
             current_pattern: None,
@@ -394,6 +406,7 @@ impl CountTableWriter {
             entries: 0,
             key_words: 0,
             pairs: 0,
+            sentences: 0,
             document_patterns: 0,
             open: None,
         })
@@ -458,37 +471,70 @@ impl CountTableWriter {
         streams.entry_key_offsets.u64(key_words)?;
         self.entries += 1;
         self.open = Some(OpenEntry {
-            last_document: None,
+            pair: None,
+            last_sentence: None,
             total: 0,
         });
         Ok(())
     }
 
-    /// Adds the open entry's count in one document, given as its index in the
-    /// `documents` passed to [`Self::create`].
-    pub fn add_pair(&mut self, document: u32, count: u64) -> Result<(), CountTableError> {
+    /// Adds the open entry's `count` occurrences in `sentence`, a corpus
+    /// sentence ordinal, of `document`, given as its index in the `documents`
+    /// passed to [`Self::create`]. Sentences arrive strictly ascending, so a
+    /// document's sentences are consecutive.
+    pub fn add_sentence(
+        &mut self,
+        document: u32,
+        sentence: u64,
+        count: u64,
+    ) -> Result<(), CountTableError> {
+        let documents = self.documents;
         let open = self
             .open
             .as_mut()
-            .ok_or_else(|| writer_error("pair before any entry"))?;
-        if open.last_document.is_some_and(|last| document <= last) {
-            return Err(writer_error("documents of an entry are not ascending"));
+            .ok_or_else(|| writer_error("sentence before any entry"))?;
+        if open.last_sentence.is_some_and(|last| sentence <= last) {
+            return Err(writer_error("sentences of an entry are not ascending"));
         }
-        if u64::from(document) >= self.documents {
+        let sentence32 = u32::try_from(sentence)
+            .map_err(|_| writer_error(format!("sentence {sentence} is beyond 2^32-1")))?;
+        if count == 0 {
+            return Err(writer_error("sentence count is zero"));
+        }
+        if u64::from(document) >= documents {
             return Err(writer_error(format!("document {document} is undeclared")));
         }
-        let count32 = u32::try_from(count)
-            .ok()
-            .filter(|count| *count > 0)
-            .ok_or_else(|| writer_error(format!("pair count {count} is outside 1..2^32")))?;
-        open.last_document = Some(document);
+        let finished = match open.pair {
+            Some((current, _)) if document < current => {
+                return Err(writer_error("documents of an entry are not ascending"));
+            }
+            Some((current, pending)) if document == current => {
+                open.pair = Some((current, pending + count));
+                None
+            }
+            pending => {
+                open.pair = Some((document, count));
+                pending
+            }
+        };
+        open.last_sentence = Some(sentence);
         open.total = open
             .total
             .checked_add(count)
             .ok_or_else(|| writer_error("entry total overflow"))?;
+        if let Some((document, count)) = finished {
+            self.write_pair(document, count)?;
+        }
+        self.sentences += 1;
+        self.streams()?.entry_sentences.u32(sentence32)
+    }
+
+    fn write_pair(&mut self, document: u32, count: u64) -> Result<(), CountTableError> {
+        let count = u32::try_from(count)
+            .map_err(|_| writer_error(format!("pair count {count} is beyond 2^32-1")))?;
         let streams = self.streams()?;
         streams.pair_documents.u32(document)?;
-        streams.pair_counts.u32(count32)?;
+        streams.pair_counts.u32(count)?;
         self.document_pairs[document as usize] += 1;
         self.pairs += 1;
         Ok(())
@@ -496,13 +542,15 @@ impl CountTableWriter {
 
     fn close_entry(&mut self) -> Result<(), CountTableError> {
         if let Some(open) = self.open.take() {
-            if open.last_document.is_none() {
-                return Err(writer_error("entry without a pair"));
-            }
-            let pairs = self.pairs;
+            let Some((document, count)) = open.pair else {
+                return Err(writer_error("entry without a sentence"));
+            };
+            self.write_pair(document, count)?;
+            let (pairs, sentences) = (self.pairs, self.sentences);
             let streams = self.streams()?;
             streams.entry_totals.u64(open.total)?;
             streams.entry_pair_offsets.u64(pairs)?;
+            streams.entry_sentence_offsets.u64(sentences)?;
         }
         Ok(())
     }
@@ -527,6 +575,8 @@ impl CountTableWriter {
             streams.entry_pair_offsets,
             streams.pair_documents,
             streams.pair_counts,
+            streams.entry_sentence_offsets,
+            streams.entry_sentences,
             streams.entry_totals,
         ] {
             file.finish()?;
@@ -548,6 +598,7 @@ impl CountTableWriter {
             entries: self.entries,
             key_words: self.key_words,
             pairs: self.pairs,
+            sentences: self.sentences,
             documents: self.documents,
             document_patterns: self.document_patterns,
         };
@@ -807,6 +858,8 @@ pub struct CountTable {
     entry_pair_offsets: Section,
     pair_documents: Section,
     pair_counts: Section,
+    entry_sentence_offsets: Section,
+    entry_sentences: Section,
     ranked_entries: Section,
     ranked_totals: Section,
     document_pair_offsets: Section,
@@ -864,6 +917,16 @@ pub struct Admission {
     pub documents_admitted: u64,
     pub sentences_admitted: u64,
     pub tokens_admitted: u64,
+}
+
+/// One value slot's admitted documents and the counts summed over them, from
+/// [`CountTable::value_counts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValueCount {
+    pub admission: Admission,
+    pub count: u64,
+    /// Admitted documents with a nonzero count.
+    pub works: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1047,6 +1110,14 @@ impl CountTable {
                 PAIR_COUNTS,
                 array_bytes(PAIR_COUNTS, header.pairs, false, 4)?,
             )?,
+            entry_sentence_offsets: section(
+                ENTRY_SENTENCE_OFFSETS,
+                array_bytes(ENTRY_SENTENCE_OFFSETS, header.entries, true, 8)?,
+            )?,
+            entry_sentences: section(
+                ENTRY_SENTENCES,
+                array_bytes(ENTRY_SENTENCES, header.sentences, false, 4)?,
+            )?,
             ranked_entries: section(
                 RANKED_ENTRIES,
                 array_bytes(RANKED_ENTRIES, header.entries, false, 4)?,
@@ -1132,6 +1203,8 @@ impl CountTable {
             &self.entry_pair_offsets,
             &self.pair_documents,
             &self.pair_counts,
+            &self.entry_sentence_offsets,
+            &self.entry_sentences,
             &self.ranked_entries,
             &self.ranked_totals,
             &self.document_pair_offsets,
@@ -1552,6 +1625,82 @@ impl CountTable {
         Ok((documents, counts))
     }
 
+    /// The corpus sentence ordinals of the sentences `entry` occurs in,
+    /// ascending.
+    pub fn entry_sentences(&self, entry: u32) -> Result<&[u32], CountTableError> {
+        let offsets = self.u64s(&self.entry_sentence_offsets)?;
+        let start = *offsets
+            .get(entry as usize)
+            .ok_or_else(|| corrupt("entry out of range"))? as usize;
+        let end = *offsets
+            .get(entry as usize + 1)
+            .ok_or_else(|| corrupt("entry out of range"))? as usize;
+        self.u32s(&self.entry_sentences)?
+            .get(start..end)
+            .ok_or_else(|| corrupt("entry sentence offsets out of range"))
+    }
+
+    /// Sums over the admitted documents of each slot of `slots`, in slot
+    /// order: the documents, sentences and tokens, and `counts` — pairs of
+    /// a document index of [`Self::document_ids`] and a count — as `count`,
+    /// with the documents of a nonzero count as `works`. A document counts
+    /// once under each of its slots. `slots` numbers the table's documents.
+    ///
+    /// # Errors
+    ///
+    /// A mask or slots built for another table, or a document index out of
+    /// range.
+    pub fn value_counts(
+        &self,
+        slots: &ValueSlots,
+        mask: &DocumentMask,
+        counts: impl IntoIterator<Item = (usize, u64)>,
+    ) -> Result<Vec<ValueCount>, CountTableError> {
+        if mask.admitted.len() != self.document_ids.len()
+            || slots.documents().len() != self.document_ids.len()
+        {
+            return Err(corrupt("mask or slots were built for a different table"));
+        }
+        let mut sums = vec![
+            ValueCount {
+                admission: Admission {
+                    documents_admitted: 0,
+                    sentences_admitted: 0,
+                    tokens_admitted: 0,
+                },
+                count: 0,
+                works: 0,
+            };
+            slots.slot_count()
+        ];
+        for (document, document_slots) in slots.documents().iter().enumerate() {
+            if !mask.admitted[document] {
+                continue;
+            }
+            for slot in document_slots {
+                let admission = &mut sums[*slot as usize].admission;
+                admission.documents_admitted += 1;
+                admission.sentences_admitted += self.document_sentences[document];
+                admission.tokens_admitted += self.document_tokens[document];
+            }
+        }
+        for (document, count) in counts {
+            let admitted = *mask
+                .admitted
+                .get(document)
+                .ok_or_else(|| corrupt("document out of range"))?;
+            if !admitted {
+                continue;
+            }
+            for slot in &slots.documents()[document] {
+                let sum = &mut sums[*slot as usize];
+                sum.count += count;
+                sum.works += u64::from(count > 0);
+            }
+        }
+        Ok(sums)
+    }
+
     fn conditioned(&self, entry: u32, mask: &[bool]) -> Result<TopRow, CountTableError> {
         let (documents, counts) = self.entry_documents(entry)?;
         let mut row = TopRow {
@@ -1708,6 +1857,11 @@ impl CountTable {
             self.header.pairs,
             "document pair offsets",
         )?;
+        monotonic(
+            self.u64s(&self.entry_sentence_offsets)?,
+            self.header.sentences,
+            "entry sentence offsets",
+        )?;
         for rank in 0..self.header.values as u32 {
             self.value(rank)?;
         }
@@ -1735,12 +1889,18 @@ impl CountTable {
             if counts[range.clone()].contains(&0) {
                 return Err(corrupt(format!("entry {entry} has a zero count")));
             }
-            totals.push(
-                counts[range]
-                    .iter()
-                    .map(|count| u64::from(*count))
-                    .sum::<u64>(),
-            );
+            let total = counts[range.clone()]
+                .iter()
+                .map(|count| u64::from(*count))
+                .sum::<u64>();
+            let sentences = self.entry_sentences(entry as u32)?;
+            if sentences.windows(2).any(|pair| pair[0] >= pair[1])
+                || sentences.len() < range.len()
+                || sentences.len() as u64 > total
+            {
+                return Err(corrupt(format!("entry {entry} has invalid sentences")));
+            }
+            totals.push(total);
         }
         let order = self.u32s(&self.ranked_entries)?;
         let ranked_totals = self.u64s(&self.ranked_totals)?;

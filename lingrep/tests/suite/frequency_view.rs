@@ -1248,6 +1248,77 @@ fn a_label_for_a_key_no_corpus_carries_is_reported_at_startup() {
     );
 }
 
+/// Each record's pattern and group text: the declared key's values, or else
+/// the matched surface, which is how `summarize` groups this catalog.
+fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeSet<u64>> {
+    let output = crate::support::lingrep_without_dictionary()
+        .args(["--json", "matches", "--patterns"])
+        .arg(&fixture.catalog)
+        .arg("--corpus")
+        .arg(&fixture.artifact)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let mut sentences = BTreeMap::<(String, String), BTreeSet<u64>>::new();
+    for record in parse_jsonl(&output.stdout) {
+        if record["type"] != "match" {
+            continue;
+        }
+        let data = &record["data"];
+        let group = match data["key"].as_array() {
+            Some(fields) => fields
+                .iter()
+                .map(|field| field["value"].as_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("\t"),
+            None => data["surface"].as_str().unwrap().to_owned(),
+        };
+        sentences
+            .entry((data["pattern"].as_str().unwrap().to_owned(), group))
+            .or_default()
+            .insert(data["corpus_sentence_ordinal"].as_u64().unwrap());
+    }
+    sentences
+}
+
+#[test]
+fn a_count_table_records_the_sentences_ling_matches_finds_each_entry_in() {
+    let fixture = fixture();
+    let key = lingrep_corpus::CountTable::read_key(&fixture.table).unwrap();
+    let table = lingrep_corpus::CountTable::open(&fixture.table, &key).unwrap();
+    table.verify().unwrap();
+    let names = table.pattern_names().map(str::to_owned).collect::<Vec<_>>();
+    let mut recorded = BTreeMap::new();
+    for (pattern, name) in names.iter().enumerate() {
+        for entry in table.pattern_range(pattern).unwrap() {
+            let entry = u32::try_from(entry).unwrap();
+            let group = match table.group(entry).unwrap() {
+                lingrep_corpus::Group::Surface(text)
+                | lingrep_corpus::Group::Unit(text)
+                | lingrep_corpus::Group::Term(text) => text.to_owned(),
+                lingrep_corpus::Group::Key(fields) => fields
+                    .iter()
+                    .map(|(_, value)| match value {
+                        lingrep_corpus::FieldValue::Scalar(value) => (*value).to_owned(),
+                        lingrep_corpus::FieldValue::List(values) => values.join(" "),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            };
+            let sentences = table
+                .entry_sentences(entry)
+                .unwrap()
+                .iter()
+                .map(|sentence| u64::from(*sentence))
+                .collect::<BTreeSet<_>>();
+            recorded.insert((name.clone(), group), sentences);
+        }
+    }
+    let matched = matched_sentences(&fixture);
+    assert!(matched.values().any(|sentences| sentences.len() > 1));
+    assert_eq!(recorded, matched);
+}
+
 fn copy_dir(from: &Path, to: &Path) {
     if from.is_dir() {
         fs::create_dir(to).unwrap();
@@ -1285,7 +1356,7 @@ fn frequency_endpoints_page_large_tables() {
     .unwrap();
     for index in 0..values.len() {
         writer.begin_entry(1, 0, &[index as u32]).unwrap();
-        writer.add_pair(0, 1).unwrap();
+        writer.add_sentence(0, index as u64, 1).unwrap();
     }
     writer
         .finish(&lingrep_core::execution::CancellationFlag::new())

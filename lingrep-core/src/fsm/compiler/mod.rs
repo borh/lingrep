@@ -65,8 +65,8 @@ use lower::{lower_definition_with_stats, lower_document_with_stats};
 use materialize::materialize_program;
 use model::{
     BoundDefinition, BoundDefinitionBody, BoundExpr, BoundProgram, DefinitionId,
-    DefinitionVisibility, ParsedAttr, ParsedAttrValue, ParsedDefinition, ParsedExpr,
-    ParsedGroupDecl, ParsedProgram, ParsedSet, ParsedTest, ParsedTestDecl, SourceId,
+    DefinitionVisibility, ParsedAttr, ParsedAttrValue, ParsedDefinition, ParsedDefinitionBody,
+    ParsedExpr, ParsedGroupDecl, ParsedProgram, ParsedSet, ParsedTest, ParsedTestDecl, SourceId,
     SourceRegistry,
 };
 use nfa::lower_to_nfa;
@@ -118,6 +118,47 @@ pub fn compile_catalog(
     let lowered = lower_document_with_stats(&source, &limits)?;
     let source_bytes = lowered.source_bytes;
     let program = lowered.program;
+    let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
+    compile_program(program, &limits, &mut stats, lowered.warnings)
+}
+
+/// Compiles `source` publishing only the pattern `pattern`, with the other
+/// patterns compiled as fragments. A catalog that declares a `policy` block
+/// compiles whole, since its policy may relate records of different patterns.
+///
+/// # Errors
+///
+/// Every error of [`compile_catalog`], and a catalog that declares no
+/// pattern named `pattern`.
+pub fn compile_catalog_pattern(
+    source: PatternSource<'_>,
+    limits: CompileLimits,
+    pattern: &str,
+) -> Result<CompileOutput, CompileError> {
+    let lowered = lower_document_with_stats(&source, &limits)?;
+    let source_bytes = lowered.source_bytes;
+    let mut program = lowered.program;
+    if program.policy.is_none() {
+        let mut found = false;
+        for definition in &mut program.definitions {
+            if let ParsedDefinitionBody::Pattern { visibility, .. } = &mut definition.body
+                && *visibility == DefinitionVisibility::Pattern
+            {
+                if definition.name == pattern {
+                    found = true;
+                } else {
+                    *visibility = DefinitionVisibility::Fragment;
+                    definition.key = None;
+                }
+            }
+        }
+        if !found {
+            return Err(CompileError::new(
+                source.name,
+                format!("no pattern named {pattern}"),
+            ));
+        }
+    }
     let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
     compile_program(program, &limits, &mut stats, lowered.warnings)
 }

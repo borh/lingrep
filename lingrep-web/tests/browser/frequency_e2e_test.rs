@@ -112,7 +112,9 @@ fn write_table(artifact: &std::path::Path, destination: &std::path::Path, docume
     ] {
         writer.begin_entry(pattern, 0, &[value]).unwrap();
         for (document, count) in pairs {
-            writer.add_pair(*document, *count).unwrap();
+            writer
+                .add_sentence(*document, u64::from(*document), *count)
+                .unwrap();
         }
     }
     writer

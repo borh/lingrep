@@ -614,6 +614,7 @@ pub struct SummarizeArgs {
     /// Count each group per admitted document, as --by-document does, and
     /// write the counts to a new count table at PATH instead of publishing
     /// summary records (requires --corpus or --cache). `ling table` reads it.
+    /// The table also records each group's sentences and its count in each.
     #[arg(
         long,
         value_name = "PATH",

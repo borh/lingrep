@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no value are counted in a record whose `value` is `null`. It requires
   `--json` and `--corpus` or `--cache`.
 - `summarize --write-table PATH` writes each pattern's group counts per
-  document of a prepared corpus to a count table, and `ling table PATH`
+  document of a prepared corpus, and the sentences each group occurs in, to
+  a count table, and `ling table PATH`
   reads it to rank each pattern's groups under an `@document` `--where`,
   with each group's count and number of admitted documents, without
   scanning the corpus. Before the rows, a `pattern` record per pattern gives

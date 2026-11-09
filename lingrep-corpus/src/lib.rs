@@ -38,7 +38,10 @@ pub use count_table::{
     Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, CountTable, CountTableError, CountTableKey,
     CountTableStats, CountTableWriter, DocumentMask, DocumentTotals, FieldValue, Group, GroupKind,
     GroupSchema, PatternTop, PatternTotal, StagedCountTable, TableRows, TopResult, TopRow,
+    ValueCount,
 };
+mod value_slots;
+pub use value_slots::{TooManyValues, ValueSlots};
 mod enhanced;
 mod error;
 mod identity;

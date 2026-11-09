@@ -28,6 +28,25 @@ fn surface() -> GroupSchema {
 
 type Pairs = Vec<Vec<Vec<(u32, u64)>>>;
 
+/// The sentences `writer_for` writes for `count` occurrences in `document`:
+/// up to three ordinals from `1000 * document`, with the remainder of the
+/// count on the last.
+fn sentences_of(document: u32, count: u64) -> Vec<(u64, u64)> {
+    let spread = count.min(3);
+    (0..spread)
+        .map(|index| {
+            (
+                1000 * u64::from(document) + index,
+                if index + 1 == spread {
+                    count - index
+                } else {
+                    1
+                },
+            )
+        })
+        .collect()
+}
+
 fn writer_for(path: &Path, documents: &[DocumentTotals], pairs: &Pairs) -> CountTableWriter {
     let widest = pairs.iter().map(Vec::len).max().unwrap_or(0);
     let values = (0..widest)
@@ -50,7 +69,11 @@ fn writer_for(path: &Path, documents: &[DocumentTotals], pairs: &Pairs) -> Count
                 .begin_entry(pattern, 0, &[entry as u32])
                 .expect("begin entry");
             for (document, count) in entry_pairs {
-                writer.add_pair(*document, *count).expect("add pair");
+                for (sentence, count) in sentences_of(*document, *count) {
+                    writer
+                        .add_sentence(*document, sentence, count)
+                        .expect("add sentence");
+                }
             }
         }
     }
@@ -262,6 +285,30 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
                 table.group(row.entry).expect("group")
             );
         }
+    }
+    for (entry, entry_pairs) in pairs.iter().flatten().enumerate() {
+        let (documents, counts) = table.entry_documents(entry as u32).expect("pairs");
+        assert_eq!(
+            documents
+                .iter()
+                .zip(counts)
+                .map(|(document, count)| (*document, u64::from(*count)))
+                .collect::<Vec<_>>(),
+            *entry_pairs
+        );
+        assert_eq!(
+            table
+                .entry_sentences(entry as u32)
+                .expect("sentences")
+                .iter()
+                .map(|sentence| u64::from(*sentence))
+                .collect::<Vec<_>>(),
+            entry_pairs
+                .iter()
+                .flat_map(|(document, count)| sentences_of(*document, *count))
+                .map(|(sentence, _)| sentence)
+                .collect::<Vec<_>>()
+        );
     }
     for (pattern, entries) in pairs.iter().enumerate() {
         let mut expected = vec![0u64; document_count];
@@ -504,18 +551,18 @@ fn open_rejects_another_format_version() {
     let header = std::fs::read_to_string(path.join("header.json")).expect("header");
     std::fs::write(
         path.join("header.json"),
-        header.replace("\"version\": 2", "\"version\": 1"),
+        header.replace("\"version\": 3", "\"version\": 2"),
     )
     .expect("rewrite header");
     assert!(matches!(
         CountTable::read_key(&path),
-        Err(CountTableError::UnsupportedFormat { version: 1, .. })
+        Err(CountTableError::UnsupportedFormat { version: 2, .. })
     ));
     let error = CountTable::open(&path, &key()).err();
     assert!(
         matches!(
             error,
-            Some(CountTableError::UnsupportedFormat { version: 1, .. })
+            Some(CountTableError::UnsupportedFormat { version: 2, .. })
         ),
         "{error:?}"
     );
@@ -542,26 +589,41 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
         },
     ];
     type Step = fn(&mut CountTableWriter) -> Result<(), CountTableError>;
-    let cases: [(&str, Step); 6] = [
+    let cases: [(&str, Step); 9] = [
         ("pattern goes back", |writer| {
             writer.begin_entry(1, 0, &[0])?;
-            writer.add_pair(0, 1)?;
+            writer.add_sentence(0, 0, 1)?;
             writer.begin_entry(0, 0, &[0])
         }),
-        ("document repeats", |writer| {
+        ("sentence repeats", |writer| {
             writer.begin_entry(0, 0, &[0])?;
-            writer.add_pair(1, 1)?;
-            writer.add_pair(1, 1)
+            writer.add_sentence(1, 5, 1)?;
+            writer.add_sentence(1, 5, 1)
+        }),
+        ("document goes back", |writer| {
+            writer.begin_entry(0, 0, &[0])?;
+            writer.add_sentence(1, 5, 1)?;
+            writer.add_sentence(0, 6, 1)
         }),
         ("document is undeclared", |writer| {
             writer.begin_entry(0, 0, &[0])?;
-            writer.add_pair(2, 1)
+            writer.add_sentence(2, 0, 1)
         }),
         ("count is zero", |writer| {
             writer.begin_entry(0, 0, &[0])?;
-            writer.add_pair(0, 0)
+            writer.add_sentence(0, 0, 0)
         }),
-        ("entry has no pair", |writer| {
+        ("sentence is beyond 2^32-1", |writer| {
+            writer.begin_entry(0, 0, &[0])?;
+            writer.add_sentence(0, 1 << 32, 1)
+        }),
+        ("pair count is beyond 2^32-1", |writer| {
+            writer.begin_entry(0, 0, &[0])?;
+            writer.add_sentence(0, 0, u64::from(u32::MAX))?;
+            writer.add_sentence(0, 1, 1)?;
+            writer.begin_entry(0, 0, &[0])
+        }),
+        ("entry has no sentence", |writer| {
             writer.begin_entry(0, 0, &[0])?;
             writer.begin_entry(0, 0, &[0])
         }),
@@ -638,7 +700,9 @@ fn keys_of_every_kind_decode_to_their_values_and_patterns_without_entries_stay_e
     .expect("create");
     for (schema, words) in [(0, vec![2]), (1, vec![0, 1]), (2, vec![3, 0, 1, 0, 1])] {
         writer.begin_entry(1, schema, &words).expect("begin");
-        writer.add_pair(0, 4 - u64::from(schema)).expect("pair");
+        writer
+            .add_sentence(0, 0, 4 - u64::from(schema))
+            .expect("sentence");
     }
     publish(writer);
     let table = CountTable::open(&path, &key()).expect("open");
