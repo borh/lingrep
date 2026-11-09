@@ -643,7 +643,7 @@ fn the_shown_command_reproduces_the_rows() {
     assert_eq!(
         reply["command"],
         format!(
-            "ling table works.lingtable --top 100 --where '{clause}' --corpus works.lingcorpus --patterns table.lx"
+            "ling table 'works.lingtable' --top 100 --where '{clause}' --corpus 'works.lingcorpus' --patterns 'table.lx'"
         )
     );
     let output = crate::support::lingrep_without_dictionary()
@@ -686,6 +686,71 @@ fn the_shown_command_reproduces_the_rows() {
             .collect::<Vec<_>>(),
         rows
     );
+}
+
+#[test]
+fn copied_command_preserves_shell_metacharacters_in_filenames() {
+    let mut fixture = fixture();
+    for (path, name) in [
+        (
+            &mut fixture.artifact,
+            "works ' ; $(touch injected).lingcorpus",
+        ),
+        (&mut fixture.table, "table ' ; $(touch injected).lingtable"),
+        (&mut fixture.catalog, "catalog ' ; $(touch injected).lx"),
+    ] {
+        let renamed = path.with_file_name(name);
+        fs::rename(&*path, &renamed).unwrap();
+        *path = renamed;
+    }
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let reply = get_json(
+        &server,
+        &format!(
+            "/api/frequency?{}",
+            query(&[
+                ("corpus", "default"),
+                (
+                    "catalog",
+                    fixture.catalog.file_name().unwrap().to_str().unwrap()
+                ),
+                ("pattern", "word"),
+                ("where", "@document.genre = \"novel\""),
+            ])
+        ),
+    );
+    let command = reply["command"].as_str().unwrap();
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            &format!("ling() {{ printf '%s\\0' \"$@\"; }}\n{command}"),
+        ])
+        .current_dir(fixture.directory.path())
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let got = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| std::str::from_utf8(arg).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        got,
+        [
+            "table",
+            fixture.table.file_name().unwrap().to_str().unwrap(),
+            "--top",
+            "100",
+            "--where",
+            "@document.genre = \"novel\"",
+            "--corpus",
+            fixture.artifact.file_name().unwrap().to_str().unwrap(),
+            "--patterns",
+            fixture.catalog.file_name().unwrap().to_str().unwrap(),
+        ]
+    );
+    assert!(!fixture.directory.path().join("injected").exists());
 }
 
 #[test]

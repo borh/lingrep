@@ -759,14 +759,18 @@ impl FrequencyPair {
     }
 
     fn command(&self, clause: &str) -> String {
-        let mut command = format!("ling table {} --top {PAGE_ROWS}", self.table_file);
+        let mut command = format!(
+            "ling table {} --top {PAGE_ROWS}",
+            shell_word(&self.table_file)
+        );
         if !clause.is_empty() {
             command.push_str(" --where ");
             command.push_str(&shell_word(clause));
         }
         command.push_str(&format!(
             " --corpus {} --patterns {}",
-            self.corpus_file, self.catalog
+            shell_word(&self.corpus_file),
+            shell_word(&self.catalog)
         ));
         command
     }
