@@ -877,7 +877,6 @@ impl<'catalog, 'tokens, S: TokenSequence + ?Sized> AssertionSession<'catalog, 't
         self.evaluate_local(id)
     }
 
-    /// One pass of `id`'s automaton over `self.tokens`.
     fn evaluate_local(&mut self, id: AssertionProgramId) -> BoundaryBits {
         let automaton = &self.catalog.programs[id.index()].automaton;
         match self.catalog.programs[id.index()].direction {

@@ -87,8 +87,6 @@ pub(super) async fn inspect(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
 }
 
-/// The sentences that a snapshot's scan read around each sentence, for a catalog
-/// with `within=` lookarounds.
 struct ScanWindows {
     bound: BoundCatalog,
     ready: ReadyCorpus,
@@ -98,7 +96,6 @@ struct ScanWindows {
 }
 
 impl ScanWindows {
-    /// Must run on a Tokio blocking thread.
     #[allow(clippy::result_large_err)]
     fn new(
         catalog: &CompiledCatalog,
@@ -123,9 +120,6 @@ impl ScanWindows {
         })
     }
 
-    /// Explains the sentence at `ordinal` over the sentences that the scan
-    /// read around it. The ordinal range doubles until no window reaches past
-    /// it.
     #[allow(clippy::result_large_err)]
     fn explain(&self, ordinal: u64) -> Result<SentenceExplanation, Response> {
         let corrupt =

@@ -33,11 +33,7 @@ pub struct ScopeClause {
 }
 
 impl ScopeClause {
-    /// Parses a clause, rejecting anything a document could not disambiguate.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`ScopeError`] pointing at the offending bytes.
+    /// Parses a clause, returning a [`ScopeError`] at the offending bytes on invalid input.
     pub fn parse(source: &str) -> Result<Self, ScopeError> {
         let root = parse::parse(source)?;
         let mut division_kinds = BTreeSet::new();

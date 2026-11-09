@@ -648,20 +648,6 @@ struct StoredAnalysis {
     source_end: i64,
 }
 
-/// One sentence's row, held until that sentence's fate is known.
-///
-/// [`ProvenanceWriter::push_sentence_with_text`] holds the row and
-/// [`ProvenanceWriter::attach_analyzed_sentence`], called for the same sentence
-/// immediately afterwards, completes it, so each sentence costs one statement.
-/// Holding the row costs one sentence of lookahead, which also lets the text
-/// check below read the admitted text without reading the blob back out of
-/// SQLite. A held row leaves in one of two ways: the
-/// analysis for that sentence arrives and completes it, or the next sentence
-/// arrives — or the component is finished — and it is written as provisional.
-///
-/// Integers are converted at the point the caller supplies them rather than at
-/// the point the row is written, so a value SQLite cannot hold is still
-/// rejected against the call that introduced it.
 struct PendingSentence {
     ordinal: u64,
     sentence_id: i64,
@@ -919,9 +905,6 @@ impl ProvenanceWriter {
     /// is where the borrow ends, not where the work divides: everything here
     /// is a function of the record and the row already held.
     async fn attach_analyzed(&mut self, record: AnalysisRecord) -> Result<(), CorpusError> {
-        // The analysis attaches to the provisional row this writer wrote
-        // immediately before it — `CorpusBuilder` interleaves them one for one
-        // and rejects anything else — so the admitted bytes are still in hand.
         let Some(pending) = self.pending.take() else {
             return Err(invalid("analyzed sentence has no provisional record"));
         };
@@ -930,14 +913,6 @@ impl ProvenanceWriter {
                 "analyzed sentence does not attach to the provisional record before it",
             ));
         }
-        // Under the analyzer's *own* recorded policy, not by raw equality. The
-        // provisional row keeps the admitted bytes exactly as the corpus wrote
-        // them, while the analyzer records what it actually analyzed — the
-        // text after normalization. Comparing those two directly rejected every
-        // corpus that was not already NFC, which is most Japanese text, under
-        // the default `--normalization nfc`. Reading the policy off the
-        // analyzed input is what keeps this check unable to disagree with the
-        // analyzer about which derivation it is asking about.
         if !record
             .normalization
             .normalizes(&pending.text, &record.candidate.text)
@@ -1281,8 +1256,6 @@ impl ProvenanceView {
         Ok(view)
     }
 
-    /// Applies the checks [`Self::sentence_analysis_bounded`] makes on read to
-    /// every stored sentence.
     pub(crate) async fn validate_stored_analyses(&self) -> Result<(), CorpusError> {
         let mut first = 0_u64;
         while first < self.sentence_count {
@@ -1349,10 +1322,6 @@ impl ProvenanceView {
         let mut sentence = 0u64;
         let mut last_read: Option<(u64, String)> = None;
         loop {
-            // Reads only the rows whose document or division references differ
-            // from the preceding row's, and the rows outside their document's
-            // range. Every other row repeats the last row read, so `check` at
-            // the sentences where the active set changes covers it.
             let rows=sqlx::query("SELECT sp.sentence_id,sp.document_id,CASE WHEN length(sp.division_ids_json)<=6146 THEN sp.division_ids_json END AS division_ids_json,dm.first_sentence,dm.sentence_count FROM sentence_provenance sp LEFT JOIN sentence_provenance prev ON prev.sentence_id=sp.sentence_id-1 LEFT JOIN document_metadata dm ON dm.document_id=sp.document_id WHERE sp.sentence_id>=? AND (prev.sentence_id IS NULL OR prev.document_id IS NOT sp.document_id OR prev.division_ids_json IS NOT sp.division_ids_json OR dm.document_id IS NULL OR sp.sentence_id<dm.first_sentence OR sp.sentence_id-dm.first_sentence>=dm.sentence_count) ORDER BY sp.sentence_id LIMIT 1024")
                 .bind(sqlite_integer(sentence,"sentence ID")?).fetch_all(&self.pool).await.map_err(database)?;
             let at_end = rows.is_empty();
@@ -3197,8 +3166,6 @@ async fn validate_table(
     Ok(())
 }
 
-/// The authoritative divisions active at one sentence, advanced in sentence
-/// order by [`ProvenanceView::validate_division_membership`].
 #[derive(Default)]
 struct DivisionSweep {
     queued: std::collections::VecDeque<DivisionMetadataRow>,
@@ -3209,8 +3176,6 @@ struct DivisionSweep {
 }
 
 impl DivisionSweep {
-    /// Retires the divisions that end at or before `ordinal`, then checks and
-    /// admits every division that starts at or before it.
     async fn advance(&mut self, view: &ProvenanceView, ordinal: u64) -> Result<(), CorpusError> {
         use lingrep_core::corpus::divisions::{MAX_ACTIVE_DIVISIONS, MAX_STRUCTURAL_CONTEXT_BYTES};
         self.active
@@ -3285,8 +3250,6 @@ impl DivisionSweep {
         Ok(())
     }
 
-    /// Checks a sentence of `document` whose stored division references are
-    /// `references` against the divisions active at the last advanced sentence.
     fn check(&self, document: u64, references: &str) -> Result<(), CorpusError> {
         if self
             .active
@@ -3305,8 +3268,6 @@ impl DivisionSweep {
         Ok(())
     }
 
-    /// The first sentence after the last advanced one at which a division
-    /// starts or an active division ends.
     fn next_boundary(&self) -> Option<u64> {
         self.queued
             .front()
@@ -3316,13 +3277,11 @@ impl DivisionSweep {
             .min()
     }
 
-    /// Whether every division has been read and none remains active.
     fn finished(&self) -> bool {
         self.queued.is_empty() && self.divisions_finished && self.active.is_empty()
     }
 }
 
-/// Checks that the document ranges partition the sentence IDs `0..sentence_count`.
 async fn validate_document_tiling(
     pool: &SqlitePool,
     sentence_count: u64,
@@ -3351,9 +3310,6 @@ async fn validate_document_tiling(
     Ok(())
 }
 
-/// Checks that `sentence`'s document range, joined as `first_sentence` and
-/// `sentence_count`, contains it. After [`validate_document_tiling`] that
-/// document is the only one whose range does.
 fn validate_document_membership(
     row: &sqlx::sqlite::SqliteRow,
     sentence: u64,
@@ -3376,7 +3332,6 @@ fn validate_document_membership(
     Ok(())
 }
 
-/// Checks that a row stores either every input-identity column or none.
 fn validate_input_identity(row: &sqlx::sqlite::SqliteRow) -> Result<(), CorpusError> {
     let input_unit_id: Option<i64> = row.try_get("input_unit_id").map_err(database)?;
     let required = [

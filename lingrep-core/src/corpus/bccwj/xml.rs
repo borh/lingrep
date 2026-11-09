@@ -83,13 +83,7 @@ pub struct BccwjDocument {
     pub paragraphs: Box<[BccwjParagraph]>,
 }
 
-/// The zstd magic, recognized only to reject the entry: canonical BCCWJ entries are
-/// plain UTF-8 XML. The zstd layer in the corpus-utils reference is its own
-/// local runtime cache (`zipfile-cached-files` writes `<entry>.zstd` copies
-/// into a `./cache/` directory and reads those back), not a property of the
-/// distribution — verified across all 198,312 entries of the 2012
-/// distribution, none of which carry the magic. A zstd-prefixed entry is
-/// therefore an error, not an input to decode (spec §3.4, rev 11).
+/// BCCWJ C-XML entries must be plain UTF-8 XML (distribution specification §3.4, rev 11).
 const ZSTD_MAGIC: &[u8; 4] = b"\x28\xb5\x2f\xfd";
 
 /// Parses one C-XML entry into a [`BccwjDocument`].
@@ -555,9 +549,6 @@ mod tests {
 
     #[test]
     fn zstd_compressed_entries_are_refused_not_decoded() {
-        // The reference's zstd layer is its own local cache, not a
-        // distribution input; a zstd-magic entry is rejected with the reason
-        // named instead of silently decoded.
         let compressed =
             zstd::encode_all(std::io::Cursor::new(SIMPLE.as_bytes()), 3).expect("compress");
         let error = parse_entry(&compressed, Subcorpus::LB).expect_err("zstd refused");

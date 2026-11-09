@@ -193,13 +193,7 @@ pub struct PatternDetailProjection {
     /// Counted from the tally's own slots rather than from `sections`, which is
     /// already filtered to this pattern's nonzero labels.
     pub corpus_section_labels: usize,
-    /// Whether any retained hit carries a section label.
-    ///
-    /// Distinct from `!sections.is_empty()`, which describes the *corpus*. The
-    /// KWIC section column shows each retained row's own labels,
-    /// so it is this that decides whether the column exists: exact counts can
-    /// be nonzero while every retained hit happens to be unlabelled, and a
-    /// withheld projection empties `sections` while the rows keep their labels.
+    /// Whether retained hits have section labels, independently of corpus-wide section counts or projection availability.
     pub has_hit_sections: bool,
 }
 
@@ -318,8 +312,6 @@ impl PatternDetailProjection {
         // ordering because the surface cross-tabulation is indexed by it and
         // the display order is not the tally's.
         let (ordered_sections, no_section) = match sections {
-            // A withheld projection lists nothing: falling back to the sample
-            // would put a biased distribution behind an exact contract.
             SectionAvailability::VocabularyTooLarge(_) => (Vec::new(), NoSectionCount::default()),
             SectionAvailability::Available(tally) => {
                 let counted = tally
@@ -443,9 +435,6 @@ impl PatternDetailProjection {
         let hits = hits
             .into_iter()
             .map(|hit| {
-                // Membership ids for the section filter. A label with no
-                // projected row — every label when the projection is withheld —
-                // contributes none, rather than panicking on a missing key.
                 let section_indices = hit
                     .section_labels
                     .iter()

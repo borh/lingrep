@@ -467,10 +467,6 @@ fn observe_kernel() -> Result<String, OrchestrateError> {
         .to_owned())
 }
 
-/// darwin has no procfs, so the same two facts come from sysctl. Every
-/// campaign check that compares a machine reads these, so without them
-/// `observe_machine` failed on `cpu_model` and no declaration could be
-/// sealed at all -- the orchestrator's own tests included.
 #[cfg(target_os = "macos")]
 fn observe_cpu_model() -> Result<String, OrchestrateError> {
     sysctl("machdep.cpu.brand_string", "cpu_model")
@@ -481,10 +477,6 @@ fn observe_kernel() -> Result<String, OrchestrateError> {
     sysctl("kern.osrelease", "kernel")
 }
 
-/// Shelling out rather than binding `sysctlbyname`, because `rustc --version`
-/// above already establishes that a probe here may be a subprocess and this
-/// crate carries no libc dependency to add one for. An empty value is a
-/// failure: a machine field that seals as `""` is worse than one that fails.
 #[cfg(target_os = "macos")]
 fn sysctl(name: &'static str, field: &'static str) -> Result<String, OrchestrateError> {
     let value = std::process::Command::new("sysctl")
@@ -605,12 +597,6 @@ pub fn prepared_identity(path: &Path) -> Result<String, OrchestrateError> {
     Ok(artifact.recorded_identity().digest())
 }
 
-/// Re-observe every declared workload input and reject any that moved.
-///
-/// A file is rehashed; a prepared artifact's manifest is reread. Both happen
-/// inside `record`, which runs once per measured execution, so "re-observed
-/// per block" is a property of where this is called rather than a discipline
-/// the caller has to keep.
 fn observe_workload(manifest: &Manifest) -> Result<Vec<(String, String)>, OrchestrateError> {
     let mut observed = Vec::new();
     for input in &manifest.workload {
@@ -943,12 +929,7 @@ pub struct Measurement {
     pub peak_rss_kb: f64,
 }
 
-/// Append one observation to a campaign, rejecting anything that would make the
-/// appended block incomparable with the ones already there.
-///
-/// The checks are here rather than in `adjudicate` for one reason: this is the
-/// only moment at which the *observed* world is still available. Adjudication
-/// happens later, possibly elsewhere, and sees only what was written down.
+/// Appends an observation only if its measured inputs and execution match the sealed campaign and prior observations.
 pub fn record(
     path: &Path,
     measurement: Measurement,
@@ -996,17 +977,6 @@ pub fn record(
         });
     }
 
-    // The command, reconstructed from the seal and compared exactly. This is
-    // what argv's presence in the execution fingerprint cannot do: that keeps
-    // the two arms consistent with each other, and does not check whether
-    // either ran what the campaign was declared to measure.
-    //
-    // The failure it catches is a wrapper that mangles argv between reading
-    // the seal and executing it — the class the runner's quoting bug was in.
-    // Distinct from checking for an edited manifest: editing the template
-    // changes the manifest digest, which `adjudicate` rejects with
-    // `ManifestAltered`, and duplicating the check here would leave two
-    // answers to one question.
     let expected = campaign
         .manifest
         .expected_argv(&measurement.catalog)
@@ -1033,11 +1003,6 @@ pub fn record(
         });
     }
 
-    // The pool, checked against the seal. `record` already carries it into
-    // both fingerprints, which keeps the runs consistent with each other and
-    // does not check whether they used the pool the campaign declared —
-    // and occupancy is divided by the sealed count, so a run at a different
-    // width would be reported against the wrong denominator.
     if campaign.manifest.workers.is_some() && campaign.manifest.workers != execution.workers {
         return Err(OrchestrateError::WorkerCountDiffers {
             sealed: campaign.manifest.workers,
@@ -1045,10 +1010,6 @@ pub fn record(
         });
     }
 
-    // Where this catalog left off. An interrupted campaign must resume the
-    // block it was in the middle of: skipping to the next one leaves the
-    // partial block permanently unbalanced, and adjudication then rejects the
-    // whole campaign for a reason no later run can repair.
     let (expected_block, expected_order) = progress(&campaign, &measurement.catalog).next;
     if (measurement.block, measurement.order) != (expected_block, expected_order) {
         return Err(OrchestrateError::OutOfSequence {

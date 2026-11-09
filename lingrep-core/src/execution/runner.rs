@@ -477,21 +477,7 @@ where
     }
 }
 
-/// Where a run's token schema comes from.
-///
-/// The executor takes the schema its batches' tokens are in: it rejects a
-/// catalog binding compiled against a different one, and re-projects a raw
-/// tokenized batch through it. There are exactly two answers, and this type
-/// exists so that neither can be left unsaid.
-///
-/// It replaces `Option<AnalyzerSession>`, where "no session" meant "assume
-/// [`TokenSchema::unidic_morphology`]" — correct for the only analyzer that
-/// existed when that line was written, and a hard error for every other one.
-/// A Sudachi artifact published cleanly from `corpus build --analyzer
-/// sudachi` and then failed every read with `bound lingrep patterns schema does not match
-/// the analyzer schema`, because the executor asserted the Vibrato schema
-/// against a projection bound to the artifact's own. Naming the schema is now
-/// the only way to ask for a prepared run.
+/// Selects the schema for execution: text uses the analyzer session's schema, while prepared batches must match the explicitly supplied schema.
 pub enum AnalysisBinding<A> {
     /// Text batches, analyzed by this session; its schema governs.
     Session(A),
@@ -840,9 +826,6 @@ where
         }
         let mut next_analyzed_corpus_sentence = 0_u64;
         let mut next_document_sentence = std::collections::BTreeMap::<u64, u64>::new();
-        // The document position of the last analyzed input unit. Analyzer
-        // segmentation renumbers in-document sentence ordinals, so adjacency
-        // is read from the units.
         let mut last_unit: Option<(DocumentId, u64)> = None;
         let mut feed = BatchFeed::new(threads, source, limits, cancel);
         loop {
@@ -1392,14 +1375,6 @@ where
     Ok(BatchControl::Continue)
 }
 
-/// Admits a batch whose source supplies each sentence's charge.
-///
-/// The shape is checked, because a mismatched charge list would silently pair a
-/// sentence with another sentence's residency, and the per-sentence limit is
-/// checked, because [`ExecutionError::TokenizedSentenceTooLarge`] is a
-/// guarantee the executor owes its caller whatever the source claims. The
-/// arithmetic itself is not rechecked — verifying it means the same per-token
-/// walk that supplying it exists to avoid.
 fn admit_supplied_charges(
     sentences: &[ExecutionSentence<Vec<TokenInfo>>],
     charges: Vec<usize>,
@@ -1585,9 +1560,6 @@ where
     )
 }
 
-/// The run callback of a [`Partitioner`]: target locations, every held
-/// sentence, whether each held sentence directly follows the one before it in
-/// its document, the target range, and the bytes charged for the targets.
 trait PartitionRun<V>:
     FnMut(
     &[SentenceLocation],
@@ -1612,22 +1584,11 @@ impl<V, R> PartitionRun<V> for R where
 {
 }
 
-/// Sentences between the source batches and the matcher.
-///
-/// With a `within=` reach, a sentence is matched only once the following
-/// tokens that its lookarounds can read have arrived or a gap ends its window, and
-/// published sentences stay held as preceding context, so partition and batch
-/// cuts do not change a result. With no reach, a sentence is ready on arrival
-/// and nothing is held after its partition is published.
 struct Partitioner<V> {
     windows: WindowLinks,
     values: Vec<V>,
-    /// For each of `values` and each scope, whether the sentence continues
-    /// the window of the one before it.
     links: Vec<bool>,
-    /// `values[..margin]` are published and held as context only.
     margin: usize,
-    /// `values[margin..ready]` are ready to match.
     ready: usize,
     ready_bytes: usize,
     held_bytes: usize,
@@ -1650,12 +1611,6 @@ impl<V: TokenSequence> Partitioner<V> {
         }
     }
 
-    /// Admits one source batch and matches every sentence whose context is
-    /// complete.
-    ///
-    /// `adjacency` states, per sentence, whether it directly follows the
-    /// previous one; without it, [`WindowLinks::push`] compares in-document
-    /// ordinals.
     #[allow(clippy::too_many_arguments)]
     fn push_batch<R: PartitionRun<V>>(
         &mut self,
@@ -1673,10 +1628,6 @@ impl<V: TokenSequence> Partitioner<V> {
         for (sentence, estimate) in sentences.into_iter().zip(estimates) {
             let explicit = adjacency.as_mut().and_then(Iterator::next);
             if !scope.admits(&sentence.location) {
-                // Dropped before matching, which is what scope conditioning
-                // requires. The sentence keeps its ordinal: on a prepared
-                // artifact an ordinal is identity, and two runs over one
-                // artifact must give each sentence the same ordinal.
                 continue;
             }
             let incoming = estimate
@@ -1784,8 +1735,6 @@ impl<V: TokenSequence> Partitioner<V> {
         Ok(BatchControl::Continue)
     }
 
-    /// Whether every token after `values[index]` that a `followed_by` body can
-    /// read has arrived.
     fn followed(&self, index: usize) -> bool {
         let scopes = self.windows.scope_count();
         self.windows.reach().enumerate().all(|(scope, reach)| {
@@ -1813,8 +1762,6 @@ impl<V: TokenSequence> Partitioner<V> {
         Ok(control)
     }
 
-    /// Moves the ready sentences into the margin and drops margin sentences
-    /// beyond the preceding reach.
     fn retire(&mut self) {
         let retired = self.ready - self.margin;
         self.locations.drain(..retired);

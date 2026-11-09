@@ -33,7 +33,6 @@ pub struct IndexPage {
     pub search_scope: Option<crate::search_scope::SearchScope>,
     pub workbench_id: String,
     pub current_page: &'static str,
-    /// Whether the navigation links to the frequency view.
     pub frequency_view: bool,
     pub seed_pattern: String,
     pub auto_run: bool,

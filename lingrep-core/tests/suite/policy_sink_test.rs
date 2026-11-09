@@ -1,12 +1,3 @@
-//! The publication seam: what an inner sink actually receives once policy is
-//! installed.
-//!
-//! The engine's own semantics are pinned in `policy_engine_test.rs`. What is
-//! pinned here is the decoration itself — that the inner sink sees published
-//! records and only published records, that raw mode still strips synthetics,
-//! that statistics reach the reporting channel, and that the decorator does not
-//! discard the inner sink's token demand.
-
 use std::sync::{Arc, OnceLock};
 
 use crate::policy_helpers::record;
@@ -122,10 +113,6 @@ fn catalog() -> CatalogPolicy {
     .clone()
 }
 
-/// How many records the catalog's one `admit` dropped.
-///
-/// An `admit` records its drops per statement, making the count attributable to
-/// the decision that produced it.
 fn dropped_by_admit<S: MatchSink>(sink: &PolicySink<'_, S>) -> u64 {
     sink.program_stats()
         .per_operation()
@@ -577,13 +564,6 @@ fn a_traced_record_carries_its_sentence_label() {
     );
 }
 
-/// A trace on a raw sink is accepted and collects nothing.
-///
-/// Raw publication applies no policy, so there is nothing to explain. The
-/// constructor documents that it accepts the request rather than rejecting it —
-/// the selection is the caller's, and a sink that rejected a harmless one would
-/// push that branch into every caller. An accepted request that collected
-/// *something* would be worse than a rejection, so pin the emptiness.
 #[test]
 fn a_trace_on_a_raw_sink_collects_nothing() {
     let mut sink = PolicySink::raw(Recording::default(), catalog(), anchor_free()).with_trace(64);
@@ -631,20 +611,6 @@ policy
 end
 "#;
 
-/// The seam evaluates the catalog's anchor, over the sentence it was handed.
-///
-/// Every other test in this file uses an anchor-free catalog, so a sink that
-/// held its evaluator and never called it — or called it against the wrong
-/// tokens — would be invisible here: `anchor_free()` answers the empty set and
-/// no `admit` references it. This is the production path for the whole feature,
-/// and `find_published_matches` does not exercise it: that is a separate seam,
-/// which is also why `each_definition_measures_against_the_anchor_it_names`
-/// does not cover this despite using the same `exclude` shape.
-///
-/// Both halves of "called it against the wrong tokens" are pinned: an empty
-/// slice makes the anchor fall back to `0`, and a slice one token short moves it
-/// to `1`. Neither equals the record's end, so both are dropped and both fail
-/// this assertion.
 #[test]
 fn the_sink_admits_against_the_declared_anchor() {
     let matcher = compile_catalog(
@@ -679,14 +645,6 @@ fn the_sink_admits_against_the_declared_anchor() {
     );
 }
 
-/// The sink reports an unresolvable anchor as an `ExecutionError`, not silence.
-///
-/// `a_rejected_call_leaves_statistics_untouched` in `policy_engine_test` pins
-/// the engine's error; what is pinned here is the seam's wrapping of it —
-/// `ExecutionError::PolicyAnchor` and the `map_err` that produces it, which
-/// nothing else asserts. Pairing a catalog's policy with a structurally
-/// different catalog's evaluator is the wiring mistake the whole digest check
-/// exists to catch, and it is only reachable through a constructor.
 #[test]
 fn the_sink_refuses_positions_from_a_different_catalog() {
     let punct = crate::policy_helpers::punct_anchor_matcher();

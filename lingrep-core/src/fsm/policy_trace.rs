@@ -116,12 +116,6 @@ impl PolicyTrace {
         self.truncated
     }
 
-    /// Opens a record, returning its index, or `None` at capacity.
-    ///
-    /// Sets [`Self::truncated`] at the first `None` return rather than counting
-    /// every one, which makes the flag mean "there was more" and not "how much more" — a
-    /// count of what was not collected would need the very traversal the bound
-    /// exists to avoid.
     pub(crate) fn open(
         &mut self,
         definition: &str,

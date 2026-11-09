@@ -130,16 +130,7 @@ enum PolicyMode {
 }
 
 impl<'a, S: MatchSink> PolicySink<'a, S> {
-    /// Applies the declared policy — the default behavior on every execution
-    /// surface.
-    ///
-    /// A catalog that declares nothing forwards records untouched, so this is
-    /// always safe to install.
-    ///
-    /// `anchors` must come from the same compiled catalog as `policy`; a
-    /// mismatch makes that sentence's push return `ExecutionError::PolicyAnchor`
-    /// rather than a silent answer, and
-    /// [`crate::fsm::CompiledCatalog::anchor_evaluator`] is where one comes from.
+    /// Applies publication policy; `anchors` must come from the same compiled catalog as `policy`, or pushes fail with `ExecutionError::PolicyAnchor`.
     pub fn new(inner: S, policy: CatalogPolicy, anchors: AnchorEvaluator<'a>) -> Self {
         let mode = if policy.declared() {
             PolicyMode::Apply
@@ -225,16 +216,7 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
         &self.program_stats
     }
 
-    /// Collects a bounded explanation trace for the records this sink judges.
-    ///
-    /// Opt-in, and a builder rather than a fourth constructor parameter: three
-    /// constructors already exist and every caller in the workspace uses one,
-    /// so a parameter would make every call site say "no trace" out loud.
-    ///
-    /// Raw mode applies no policy and so has nothing to explain. Installing a
-    /// trace on one is accepted and collects nothing, rather than rejected: the
-    /// selection is the caller's, and a sink that rejected a harmless request
-    /// would push that branch into every caller.
+    /// Collects at most `capacity` trace records; raw mode collects none.
     #[must_use]
     pub fn with_trace(mut self, capacity: usize) -> Self {
         self.trace = Some(PolicyTrace::with_capacity(capacity));

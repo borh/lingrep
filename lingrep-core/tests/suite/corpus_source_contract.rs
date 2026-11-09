@@ -393,8 +393,6 @@ fn a_zip_is_not_inferred_as_a_soranoha_archive() {
     );
 }
 
-/// The web/file-corpus source streams `BufRead` readers only, so an archive is
-/// rejected at construction rather than at the first sentence.
 #[test]
 fn a_soranoha_archive_is_not_a_corpus_source() {
     let error = CorpusSource::discover("archive.zip", CorpusReadConfig::Soranoha).unwrap_err();

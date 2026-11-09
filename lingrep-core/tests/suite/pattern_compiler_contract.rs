@@ -1365,8 +1365,6 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
                 .collect::<Vec<_>>()
         };
 
-    // Two binders with one test, relation and head bind two different words,
-    // in both assignments; an order constraint keeps one.
     let siblings = "(?<v> [upos=VERB]) where $v -[obj]-> (?<a> [upos=NOUN]), \
                     $v -[obj]-> (?<b> [upos=NOUN])";
     assert_eq!(
@@ -1377,8 +1375,6 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
         assignments(&format!("pattern p := {siblings}, $a < $b.")),
         ["a=2 b=3 v=1"]
     );
-    // A binder does not bind the word of a surface capture that a basic edge
-    // names.
     assert_eq!(
         assignments(
             "pattern p := (?<a> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $a, \
@@ -1386,9 +1382,6 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
         ),
         ["a=2 b=3 v=1", "a=3 b=2 v=1"]
     );
-    // A pattern for the ordered four-node shape
-    // `NOUN@1:nsubj VERB^ NOUN@1:obj NOUN@2:nmod` matches each node set once;
-    // its order constraint precedes the edges that declare the binders.
     assert_eq!(
         assignments(
             "pattern p := (?<n1> [upos=VERB]) where $n0 < $n1 < $n2 < $n3, \
@@ -1397,7 +1390,6 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
         ),
         ["n0=0 n1=1 n2=3 n3=4"]
     );
-    // Surface captures alone may be ordered.
     assert_eq!(
         assignments("pattern p := (?<x> [upos=NOUN]) []* (?<y> [upos=NOUN]) where $y < $x."),
         Vec::<String>::new()
@@ -3269,12 +3261,6 @@ fn where_clause_static_refusals_each_carry_their_own_code() {
     }
 }
 
-/// What branch exclusivity must **not** reject.
-///
-/// The rejection is sound because a single-entry alternation takes one branch,
-/// and incomplete everywhere else. Each shape here has a live
-/// precedent, so a rule that rejected too much would delete a legal query rather
-/// than merely annoy someone.
 #[test]
 fn branch_exclusivity_admits_every_shape_that_can_bind_both() {
     for (source, why) in [
@@ -3328,13 +3314,6 @@ fn branch_exclusivity_admits_every_shape_that_can_bind_both() {
     }
 }
 
-/// The re-entrant case is legal *and matches*, which compilation alone cannot
-/// show.
-///
-/// A rule keyed on branch membership alone would reject this at compile time;
-/// one that admitted it but broke the runtime would pass the test above. Both
-/// captures bind here, in different iterations of one repetition, and the
-/// clause holds over them — the counterexample the design round was built on.
 #[test]
 fn a_repetition_over_an_alternation_binds_both_branches_in_one_match() {
     let bound = compile_catalog(
@@ -3556,9 +3535,6 @@ fn a_named_set_term_matches_what_the_inline_spelling_matches() {
     assert_eq!(inline, vec!["subtyped", "plain"]);
 }
 
-/// `obl:*` matches subtypes of `obl` and excludes the
-/// unsubtyped label: `obl` and `obl:tmod` are two labels, and a wildcard that
-/// also matched the bare form would make `obl|obl:*` mean `obl:*`.
 #[test]
 fn a_subtype_wildcard_excludes_the_unsubtyped_label() {
     let object = |labels: &str| {

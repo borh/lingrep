@@ -50,9 +50,6 @@ fn the_default_key_is_a_valid_protocol_key() {
     assert_eq!(CorpusName::parse("default").unwrap().as_str(), "default");
 }
 
-/// It is rejected only where an *operator* supplies it, because `--input`
-/// already keys as `default` and two corpora cannot contend for one key.
-/// Splitting these is what keeps a default-corpus permalink readable.
 #[test]
 fn the_default_key_is_reserved_against_declaration() {
     assert_eq!(

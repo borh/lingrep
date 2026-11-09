@@ -556,8 +556,6 @@ impl Ord for SummaryOrder {
     }
 }
 
-/// A count's position in a count table: ling's key order within a pattern,
-/// then document.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct GroupOrder {
     pattern_ordinal: u64,
@@ -565,16 +563,12 @@ struct GroupOrder {
     document_ordinal: u64,
 }
 
-/// Which order a shard's ordering phase sorts its counts into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OrderBy {
-    /// [`SummaryOrder`]: what `summarize` publishes.
     Count,
-    /// [`GroupOrder`]: what a count table stores.
     Group,
 }
 
-/// One shard's counts after its ordering phase.
 enum OrderedShard {
     Count(SortedRunCounts<SummaryOrder>),
     Group(SortedRunCounts<GroupOrder>),
@@ -627,8 +621,6 @@ struct Shard {
     batch: Vec<(SummaryPartition, OwnedAggregationInput, usize)>,
 }
 
-/// Joins a shard after a send to it failed or it dropped its reply channel,
-/// which happens only on error; the join is what retrieves that error.
 fn join_shard_error(shard: &mut Shard) -> io::Error {
     shard.sender = None;
     match shard.thread.take() {
@@ -712,8 +704,6 @@ impl ShardPool {
             let Some(sender) = shard.sender.take() else {
                 continue;
             };
-            // A failed send means the shard already exited; the join below
-            // reports why, so the send error itself carries no information.
             let _ = sender.send(ShardRequest::Order {
                 schema_remap,
                 value_ranks,
@@ -932,7 +922,9 @@ fn shard_thread(
                             }
                             let document_ordinal =
                                 key.partition.document_ordinal.ok_or_else(|| {
-                                    io::Error::other("a count table needs per-document partitions")
+                                    io::Error::other(
+                                        "a count table requires per-document partitions",
+                                    )
                                 })?;
                             ordered.add(
                                 GroupOrder {
@@ -1089,7 +1081,6 @@ impl SummaryAggregator {
         self.add_group(partition, group, Some(hash))
     }
 
-    /// The temporary-storage budget this aggregator's spilled runs reserve from.
     pub fn temp_budget(&self) -> Arc<TempBudget> {
         Arc::clone(&self.budget)
     }
@@ -1375,7 +1366,6 @@ fn materialize_group(
     }
 }
 
-/// What [`FinalizedGroups::visit`] reports, in table order.
 pub enum GroupEvent<'a> {
     /// A new entry. `schema` indexes [`FinalizedGroups::schemas`]; `words`
     /// encode the key as [`lingrep_corpus::CountTableWriter::begin_entry`]
@@ -1385,11 +1375,12 @@ pub enum GroupEvent<'a> {
         schema: u32,
         words: &'a [u32],
     },
-    /// The current entry's count in one document.
-    Pair { document_ordinal: u64, count: u64 },
+    Pair {
+        document_ordinal: u64,
+        count: u64,
+    },
 }
 
-/// A `--by-document` aggregation ordered for a count table.
 pub struct FinalizedGroups {
     shards: Vec<SortedRunCounts<GroupOrder>>,
     budget: Arc<TempBudget>,
@@ -1519,10 +1510,8 @@ enum SlotCount {
     SentencesMatched,
 }
 
-/// `(slot, pattern ordinal, count)`.
 type SlotCountKey = (u32, u64, SlotCount);
 
-/// The admitted documents, sentences and tokens counted under one slot.
 #[derive(Clone, Copy, Debug, Default)]
 struct SlotTotals {
     documents: u64,
@@ -1530,12 +1519,6 @@ struct SlotTotals {
     tokens: u64,
 }
 
-/// Per-slot pattern counts for `--by-section` and `--by-metadata`, whose
-/// callers assign each admitted sentence to its slots.
-///
-/// Counts only the (slot, pattern) pairs that occur, spilling them to sorted
-/// runs under the budget; the totals and last counted document of each slot
-/// stay resident.
 struct SlotTally {
     totals: Vec<SlotTotals>,
     last_document: Vec<Option<u64>>,
@@ -1561,9 +1544,6 @@ impl SlotTally {
         })
     }
 
-    /// Counts one admitted sentence of `document` under each of `slots`, with
-    /// one pattern ordinal per published match. Sentences must arrive in
-    /// corpus order, so that a document is counted once per slot.
     fn observe(
         &mut self,
         slots: &[u32],
@@ -1596,8 +1576,6 @@ impl SlotTally {
         Ok(())
     }
 
-    /// Merges any spilled runs. `published` lists the pattern ordinals to
-    /// report, each named by `pattern_names[ordinal]`.
     fn into_drain<'a>(
         self,
         published: &[u64],
@@ -1616,7 +1594,6 @@ impl SlotTally {
     }
 }
 
-/// The counts of a [`SlotTally`], produced one slot at a time.
 struct SlotDrain<'a> {
     totals: Vec<SlotTotals>,
     next_slot: usize,
@@ -1627,8 +1604,6 @@ struct SlotDrain<'a> {
 }
 
 impl SlotDrain<'_> {
-    /// The next slot with at least one admitted sentence, with its totals and
-    /// one entry per published pattern in ordinal order.
     fn next_slot(&mut self) -> io::Result<Option<(usize, SlotTotals, Vec<PatternCount>)>> {
         while self.next_slot < self.totals.len() {
             let slot = self.next_slot;
@@ -1654,7 +1629,6 @@ impl SlotDrain<'_> {
                     }
                     self.pending = None;
                     if (entry_slot as usize, pattern) < (slot, ordinal) {
-                        // An unpublished pattern, of this slot or an earlier one.
                         continue;
                     }
                     let value = value as u64;
@@ -1678,10 +1652,7 @@ impl SlotDrain<'_> {
     }
 }
 
-/// Per-section counts for `summarize --by-section`.
-///
-/// Slots are label positions, then one slot for sentences that carry no
-/// label. One sentence-range bitmap per label stays resident.
+/// Counts matches per section label, followed by an unlabelled slot.
 pub struct SectionTally {
     labels: Vec<(String, roaring::RoaringTreemap)>,
     tally: SlotTally,
@@ -1749,7 +1720,6 @@ impl SectionTally {
     }
 }
 
-/// The section records of a [`SectionTally`], produced one slot at a time.
 pub struct SectionRecords<'a> {
     labels: Vec<String>,
     slots: SlotDrain<'a>,
@@ -1769,16 +1739,10 @@ impl SectionRecords<'_> {
     }
 }
 
-/// Per-value counts of one document metadata key for `summarize
-/// --by-metadata`.
-///
-/// Slots are the values in order of first occurrence, then one slot for
-/// documents with no value. Each document's sentence range and value slots
-/// stay resident.
+/// Counts matches per metadata value in first-occurrence order, followed by a slot for documents without values.
 pub struct MetadataValueTally {
     key: String,
     values: Vec<String>,
-    /// Document sentence ranges in corpus order, each with its value slots.
     documents: Vec<(std::ops::Range<u64>, Box<[u32]>)>,
     cursor: usize,
     tally: SlotTally,
@@ -1901,8 +1865,6 @@ impl MetadataValueTally {
     }
 }
 
-/// The `metadata_value` records of a [`MetadataValueTally`], produced one
-/// slot at a time.
 pub struct MetadataValueRecords<'a> {
     key: String,
     values: Vec<String>,

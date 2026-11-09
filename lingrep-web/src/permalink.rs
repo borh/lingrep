@@ -11,14 +11,7 @@ pub const WIRE_VERSION: &str = "1";
 /// Maximum decompressed lingrep patterns source size.
 pub const MAX_PATTERN_BYTES: usize = 1024 * 1024;
 
-/// Supported maximum for the complete `/?v=1&q=…&k=…[&c=…]` request target.
-///
-/// Sized so a full research catalog can ride the URL: the seeded
-/// `sf-experimental.lx` encodes to ~12KB, and corpus switching carries the
-/// whole editor buffer, so the 8KB value in force before 2026-08-19 rejected
-/// every switch made with such a catalog open. 32KB keeps real catalogs with
-/// headroom while staying far below browser request-line limits (~2MB) and
-/// the front proxy's (Caddy) header budget.
+/// Maximum length of the complete `/?v=1&q=…&k=…[&c=…]` request target.
 pub const MAX_REQUEST_TARGET_LEN: usize = 32_000;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,23 +20,10 @@ pub enum PermalinkError {
     Malformed,
 }
 
-/// Encode a shareable target.
+/// Encodes a shareable target with corpus selector `k`, optional content digest `c`, and optional retention `r`.
 ///
-/// `corpus` is the selector (`k`) and is always emitted. `digest` is an
-/// *assertion* about which content produced the results and is emitted only when
-/// the caller actually has one — a lazily built corpus has no identity yet, so
-/// the selector must be expressible without it. An absent `c` means "no
-/// assertion", not "no corpus".
-///
-/// `retained` is the per-pattern retention the sender was reading (`r`),
-/// emitted when the sender's page had one. The recipient maps it onto its
-/// own offers; see [`crate::state::link_retention`].
-///
-/// `corpus` must already be a validated [`crate::corpus_set::CorpusName`]
-/// (`[A-Za-z0-9_-]`), which is what makes the concatenation below safe without
-/// URL escaping. Both it and the digest are charged against
-/// [`MAX_REQUEST_TARGET_LEN`], so no name length can smuggle a target past the
-/// transport limit.
+/// `corpus` must be a validated [`crate::corpus_set::CorpusName`]; the complete
+/// target is bounded by [`MAX_REQUEST_TARGET_LEN`].
 pub fn encode(
     pattern: &str,
     corpus: &str,

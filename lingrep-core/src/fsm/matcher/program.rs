@@ -26,12 +26,6 @@ pub(crate) struct Program {
     orders: Box<[Box<[RuntimeEnhancedEndpoint]>]>,
 }
 
-/// One `where` edge constraint in executable form.
-///
-/// The locators start symbolic and are bound with the rest of the program's
-/// attributes: `required_attributes` reports `dep.head` and `dep.rel` for any
-/// relation-bearing program, so schema binding either projected both or
-/// rejected the catalog before execution could begin.
 #[derive(Clone)]
 struct RuntimeRelation {
     head: CaptureId,
@@ -584,8 +578,6 @@ impl Program {
         assignments
     }
 
-    /// Whether each operand of every order constraint precedes the next in
-    /// CoNLL-U source order.
     fn orders_hold<S: TokenSequence + ?Sized>(
         &self,
         candidate: &Candidate,
@@ -913,9 +905,6 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
         .collect()
 }
 
-/// Whether the binders of basic-layer relations bind pairwise different
-/// words, none of them the token of a surface capture that a basic-layer
-/// relation names.
 fn basic_binders_are_distinct(
     relations: &[RuntimeEnhancedRelation],
     candidate: &Candidate,
@@ -1425,18 +1414,6 @@ fn evaluate<
                 )
             })
             .collect(),
-        // Same span, exactly rather than approximately: every operand is
-        // evaluated from the *same* incoming `candidate.position`, so two
-        // operands agreeing on an end position have agreed on the whole span.
-        // No span join to get wrong, and no separate anchored-membership
-        // primitive — living inside `evaluate` is also what makes `&` compose
-        // at any nesting depth for free.
-        //
-        // Slot vectors survive from the first operand alone. That is sound
-        // rather than lossy: `analyze::inspect_intersection_operands` rejects a
-        // capture in *every* operand, so the retained candidates carry exactly
-        // the slots the enclosing expression handed in, and every operand hands
-        // back the same ones.
         RuntimeExpr::Intersection(operands) => {
             let (first, rest) = operands
                 .split_first()
@@ -1801,10 +1778,6 @@ fn collect_captures(expr: &ExecutionExpr, captures: &mut Vec<CaptureDescriptor>)
                 collect_captures(child, captures);
             }
         }
-        // Unreachable from a definition that compiled, since `analyze` rejects
-        // a capture inside `&`. Walked anyway, because the cost of being wrong
-        // here is not a missing descriptor but an out-of-range `slots` index at
-        // runtime — `Candidate::slots` is sized from exactly this list.
         ExecutionExpr::Intersection { operands, .. } => {
             for operand in operands {
                 collect_captures(operand, captures);

@@ -196,15 +196,7 @@ pub enum TransformOp {
     /// One position scan, no loop: the *first* satisfying position wins, and a
     /// span with no satisfying position is unchanged.
     TruncateBefore { stop: CompiledGuard },
-    /// Replace one edge token's rendered surface with `attr`, mapped through
-    /// `table`.
-    ///
-    /// `component:` names an **edge** token and always did: writing several
-    /// tokens from one attribute has no defined meaning, so `span` and a
-    /// `$capture` component stay rejected. What a capture selects is the *span
-    /// the edge is an edge of*, and that is [`TransformStep::scope`] — a
-    /// separate field, so the two questions "which span" and "which end of it"
-    /// keep their separate answers.
+    /// Replaces one edge token's rendered surface with an attribute value mapped through `table`; `scope` selects the span containing that edge.
     Substitute {
         target: SubstituteTarget,
         /// The attribute read off the target token. A token lacking it is left
@@ -239,11 +231,7 @@ pub enum TagSource {
     /// catalog rather than of the build graph; see the note on
     /// [`PatternPolicy::key`] for why that is not paranoia.
     CapturePresence(Vec<(CompactString, String)>),
-    /// Form (c): an attribute projected off a named capture's sole token.
-    ///
-    /// Single-token by construction — `capture_key` rejects a reference it
-    /// cannot prove covers exactly one token, and unlike [`KeyProjection`] there is
-    /// no `{first|last|span}` spelling to waive that proof.
+    /// Projects an attribute from a capture proven to contain exactly one token.
     Projection {
         capture: CompactString,
         attr: AttributeKey,
@@ -271,15 +259,7 @@ pub enum Terminal {
 }
 
 impl Terminal {
-    /// Whether a record ending at `end` is admitted against `anchor`.
-    ///
-    /// `end` is exclusive, matching `Match`'s span convention, so a record
-    /// ending at the anchor has `end == anchor`.
-    ///
-    /// **One-sided**: a record ending *past* the anchor is not admitted under
-    /// both variants, at any distance. Material after the propositional end is
-    /// citation apparatus, and a record reaching into it is not sentence-final
-    /// in the sense a researcher means.
+    /// Tests an exclusive `end` against `anchor`; ends past the anchor are rejected at every distance.
     #[must_use]
     pub fn admits(self, end: usize, anchor: usize) -> bool {
         match self {
@@ -585,18 +565,7 @@ impl AnchorSetDigest {
     }
 }
 
-/// Why an anchor position could not be read.
-///
-/// **Both variants are library wiring errors, not authoring mistakes**, so both
-/// messages are terse and factual and neither carries a fix-it. The compiler
-/// already rejects every authoring mistake in this area — an `admit` naming
-/// an undeclared anchor is an `InvalidPolicyValue` diagnostic with a source span
-/// and its own remediation — so a researcher who could act on advice here has
-/// been told already, and one who sees this string cannot act on it.
-///
-/// A caller with a user-facing surface should wrap these rather than print
-/// them, which is where remediation phrased for that surface belongs.
-/// [`AnchorResolutionError`] wraps this error to record the requested anchor name.
+/// An unavailable anchor position or a mismatch between the policy and the positions' catalog.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AnchorError {
     /// The positions were computed by a catalog that declares a different
@@ -617,29 +586,7 @@ pub enum AnchorError {
     Unknown(CompactString),
 }
 
-/// A declaration whose anchor position could not be read.
-///
-/// Produced by [`apply_policy`] when anchor resolution fails: records the
-/// requested anchor name alongside the underlying [`AnchorError`].
-///
-/// An `admit` statement is the only thing that names an anchor at publication,
-/// so the message names one without an identifier: a statement has no name, and
-/// carrying its [`PolicySpan`] would need the compiler's source registry, which
-/// no runtime caller holds — a carried span would be a pair of integers a
-/// reader could do nothing with. Reported for the first `admit` that fails, in
-/// authored order; the cause is catalog-wide rather than per-record, so there
-/// is no second failure with different information.
-///
-/// **A wiring error, not an authoring one, so the message does not mention
-/// editing lingrep patterns.** An `admit` naming an undeclared anchor is
-/// rejected at compile time with a source span and its own remediation
-/// (`compiler::policy::resolve_anchor_references`), and a compiled catalog's own
-/// positions always carry its own digest — so a researcher who reaches this
-/// string is looking at a caller that paired a policy with someone else's
-/// positions. Remediation phrased for a particular surface belongs in the
-/// caller that wraps this error and owns that surface.
-///
-/// [`PolicySpan`]: crate::fsm::policy_program::PolicySpan
+/// Reports the first unresolved `admit` anchor in authored order, with its name and underlying error.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("an `admit` statement measures against anchor `{anchor}`: {cause}")]
 pub struct AnchorResolutionError {
@@ -790,19 +737,7 @@ impl Display for NestingEntry {
     }
 }
 
-/// How deep an anchor's `exclude` fragment nests, and the sentences that prove
-/// it.
-///
-/// An `exclude` fragment is a **bounded approximation** of something unbounded:
-/// upstream's citation stripper is a scanner with a counter, and a lingrep patterns
-/// fragment is a regular expression, so it can only recognize bracket nesting
-/// to a fixed depth. This records where the approximation stops.
-///
-/// A catalog must write all three fields, with both lists non-empty; that is
-/// the load-bearing choice in the *encoding*, because it leaves a depth no
-/// sentence exercises no way to be spelled. The check lives in
-/// `compiler::policy::read_nesting_claims`, not in this type, which is a parsed
-/// result and constrains nothing on its own.
+/// A bounded nesting claim with non-empty witness and divergence lists, validated during compilation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NestingClaim {
     /// The nesting the fragment unrolls.
@@ -839,15 +774,7 @@ pub struct CatalogPolicy {
     pub anchors: BTreeMap<CompactString, CompactString>,
     /// Structural identity of [`Self::anchors`]. See [`AnchorSetDigest`].
     pub anchor_digest: AnchorSetDigest,
-    /// Each declared anchor's `max_nesting` claim, keyed by **anchor name**
-    /// rather than by the `exclude` fragment carrying it, because two anchors
-    /// may share one `exclude` and a claim is verified per anchor.
-    ///
-    /// The same keys as [`Self::anchors`]: every declared anchor must carry a
-    /// claim, so a missing one is rejected at compile
-    /// time. It is separate from `anchors` all the same — a claim is
-    /// provenance, and no part of what [`Self::anchor_digest`] hashes, because
-    /// editing a witness changes nothing about which boundary an anchor picks.
+    /// Claims keyed by anchor name, with the same keys as [`Self::anchors`]; witness edits do not change [`Self::anchor_digest`].
     pub nesting_claims: BTreeMap<CompactString, NestingClaim>,
     /// Emitters synthesized to observe a fragment named as a policy statement's
     /// operand, mapping `__policy__<fragment>` to the fragment's own name.
@@ -1224,9 +1151,6 @@ impl CatalogPolicyBuilder {
             anchor_digest: self.anchor_digest,
             nesting_claims: self.nesting_claims,
             hidden: self.hidden,
-            // Empty until `install_group_index` runs, which is after synthesis
-            // — the builder does not yet have the complete definition list,
-            // because synthesis has not appended to it yet.
             group_index: crate::fsm::policy_program::GroupIndex::empty(),
             // Empty for the same reason, and installed at the same point.
             definitions: crate::fsm::policy_program::DefinitionDomain::empty(),
@@ -1377,10 +1301,6 @@ fn project_key_fields<S: TokenSequence + ?Sized>(
             | KeyTarget::LexicalTerm
             | KeyTarget::LexicalSegments => return None,
         };
-        // A zero-width capture has no token to read, and is unkeyable for the
-        // same reason a skipped one is. The compiler rejects a declaration of
-        // one, so this guards the runtime against a shape it proved absent
-        // rather than duplicating the check.
         if start >= end || end > tokens.len() {
             return None;
         }
@@ -1874,8 +1794,6 @@ fn project_tag<S: TokenSequence + ?Sized>(
             present.next().is_none().then(|| value.clone())
         }
         TagSource::Projection { capture, attr } => {
-            // `found.start` is the capture's only token: `capture_key` rejects
-            // projections from captures it cannot prove are exactly one token.
             let found = components.iter().find(|found| found.name == *capture)?;
             Some(tokens.scalar_key(found.start, attr)?.to_string())
         }
@@ -2303,22 +2221,7 @@ pub const SENTENCE_END_ANCHOR: &str = "sentence_end";
 /// the `anchor:` declaration that names it.
 pub const MAX_NESTING_KEY: &str = "max_nesting";
 
-/// Whether the compiler, rather than the catalog, owns this key's schema.
-///
-/// Distinct from the complement of the typo detector's non-policy set: that
-/// answers which spellings the detector leaves alone, and so groups
-/// `examples`/`counterexamples` — authored content that must stay declarable —
-/// with the compiler-owned keys.
-///
-/// Two callers, and they read it for different reasons. The schema checker
-/// rejects a declaration of one of these keys, because the compiler already
-/// defines it. `lingrep-web`'s pattern browser withholds them from its grouping
-/// heuristic, because a key the compiler owns describes how a record is
-/// published rather than what a researcher wanted to ask — and the heuristic,
-/// which only asks "does this partition the catalog usefully", cannot tell the
-/// difference on its own. `priority_order` is the case that forced it: it
-/// partitions `sf-experimental.lx` exactly as `layer` does, because a
-/// `resolve` statement needed a total order over the same layers.
+/// Returns whether the compiler defines this key's schema, excluding authored example keys.
 #[must_use]
 pub fn compiler_owned_key(key: &str) -> bool {
     POLICY_KEYS.contains(&key) || matches!(key, ANCHOR_KEY | MAX_NESTING_KEY | "skip")

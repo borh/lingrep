@@ -63,19 +63,6 @@ fn next_rung(ladder: &[usize], blocks: usize) -> Option<usize> {
 pub fn plan(campaign: &Campaign) -> Vec<Row> {
     let manifest = &campaign.manifest;
 
-    // Only consulted once minimum coverage is met everywhere; before that
-    // `adjudicate` returns `Err`, and an error is not an escalation
-    // instruction.
-    //
-    // Every blocking stream, not the one the verdict names. A verdict names a
-    // single catalog because it must report one thing; escalation is owed by
-    // each catalog that blocks. Deriving the set from the verdict starved
-    // them: one catalog that reaches the ladder's end still unresolved is
-    // named forever, `next_rung` returns `None` so it owes nothing further,
-    // and every other blocking catalog is left at its tier minimum with
-    // `suite` reporting nothing outstanding. Campaign `blake3:909e124d` ran
-    // to that state with nine blocking streams un-escalated and had to be
-    // driven by hand.
     let escalating: BTreeSet<String> =
         adjudicate(campaign)
             .ok()
@@ -115,12 +102,6 @@ pub fn plan(campaign: &Campaign) -> Vec<Row> {
         };
         let partial_runs = standing.partial_runs;
 
-        // Promotion is a property of the *data*, not of the current verdict.
-        // While a promoted catalog is part-way through its blocks the
-        // campaign is short of coverage and `adjudicate` returns `Err`, so the
-        // verdict names nothing — and a catalog that decided its promotion
-        // from the verdict alone would fall back to "screen, 1 of 1" and
-        // stop mid-promotion.
         let escalating_here = escalating.contains(&catalog.path);
         let promoted = kind == "screen" && (standing.blocks > 0 || escalating_here);
 

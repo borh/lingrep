@@ -48,17 +48,12 @@ pub struct LookaroundReach {
     pub after: usize,
 }
 
-/// The sentence and its context joined into one token sequence.
 pub(super) struct WindowTokens<'a, S: TokenSequence + ?Sized> {
     segments: Vec<(&'a S, Range<usize>)>,
     len: usize,
 }
 
 impl<'a, S: TokenSequence + ?Sized> WindowTokens<'a, S> {
-    /// Joins `sentence` with at most `before` tokens of `window.before` and
-    /// `after` tokens of `window.after`. Returns the joined tokens, the index
-    /// of the sentence's first token, and the boundaries where `^` and `$`
-    /// hold.
     pub(super) fn join(
         sentence: &'a S,
         window: &ContextWindow<'a, S>,

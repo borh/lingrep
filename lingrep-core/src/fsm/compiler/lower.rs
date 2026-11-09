@@ -208,14 +208,6 @@ struct Lowerer<'a, 'src> {
     rewrite_skip: bool,
 }
 
-/// One lowered `metadata_entry`: a value to materialize, or an unset.
-///
-/// `Unset` is delete-with-provenance: the key ends up absent from the
-/// definition, but the site that merges the annotation run over the file
-/// defaults still records that an unset happened there and where it was written
-/// — which is what lets `UnsetWithoutDefault` point at the key. Only a
-/// per-definition annotation run may hold one; `lower_entry_block` rejects it
-/// for `defaults`, where the entry *is* the default.
 #[derive(Clone)]
 enum LoweredEntry {
     MetadataSet(MetadataEntry),
@@ -236,21 +228,6 @@ impl LoweredEntry {
     }
 }
 
-/// The catalog being accumulated from one document, and the rules that govern
-/// how its parts arrive.
-///
-/// `lower_root` used to keep these as eight locals and enforce their
-/// relationships inside individual match arms: "a header block must precede
-/// the first annotation or definition" was three separate checks, "a catalog
-/// declares at most one of this" was three more, and the annotation run's
-/// lifecycle was spread over four sites (push, drain, the declarations that
-/// must not swallow it, and end of document). The rules are the document's,
-/// not the walker's, so they live here — once each, as a decision that returns
-/// a [`DraftRefusal`] rather than as an effect.
-///
-/// Free of `tree_sitter` types: a rejection names a span, and the
-/// lowerer renders it. That is what keeps the ordering rules testable without
-/// a syntax tree, and what stops a rule from acquiring a rendering concern.
 #[derive(Default)]
 struct DocumentDraft {
     definitions: Vec<ParsedDefinition>,
@@ -287,12 +264,6 @@ impl DocumentDraft {
         !self.saw_definition && self.run.is_empty()
     }
 
-    /// Admits one annotation of the current run, or rejects it.
-    ///
-    /// Two facts are judged where the annotation is written: a duplicate key in
-    /// one run is ambiguous, and an unset is delete-with-provenance, so it needs
-    /// a file default to delete. Both point at the key, because that is what the
-    /// author renames or removes.
     fn admit_annotation(
         &mut self,
         key: CompactString,
@@ -341,14 +312,6 @@ impl DocumentDraft {
         })
     }
 
-    /// The effective metadata a definition leaves with, and its `key:`.
-    ///
-    /// Starts from the file defaults and lets this definition's own run
-    /// overwrite — or, for `none`, delete — per key. Every definition therefore
-    /// leaves the loop with its *effective* metadata, and nothing downstream can
-    /// see an unexpanded default. An unset key is simply absent, exactly as if
-    /// the file had no default; an `Unset` with nothing to delete was already
-    /// rejected by [`Self::admit_annotation`].
     fn materialize_metadata(&mut self) -> (Metadata, Option<ParsedKey>, Option<ParsedSkip>) {
         let mut effective = self.defaults.clone().unwrap_or_default();
         if let Some(LoweredEntry::KeySet(key)) = effective.get_mut("key") {
@@ -976,10 +939,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 "`key:` uses a non-empty ordered projection list, for example `key: [unidic.pos1, $head.norm]`",
             ));
         }
-        // An entry whose *whole* value is `none` is an unset, recognized here
-        // — before `lower_metadata_value`, which rejects `none` everywhere
-        // else — and carrying the key's span so the caller that judges it can
-        // point its diagnostic at authored source.
         if value_node.kind() == "metadata_none" {
             return Ok((key, LoweredEntry::Unset { span }));
         }
@@ -1284,10 +1243,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
                 Ok(Value::Object(map))
             }
-            // A nested `none` — a list item, a map value — is rejected at the
-            // `none` itself: only an annotation entry's whole value can mean
-            // "unset the file default", and the defect sits on the inner
-            // value, not on the key beside it.
             "metadata_none" => Err(self.error(
                 node,
                 DiagnosticCode::UnsetOutsideAnnotation,
@@ -1358,10 +1313,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         )
     }
 
-    /// Renders a [`DocumentDraft`] rejection at the span the draft named.
-    ///
-    /// The draft decides; the lowerer renders. Keeping the two apart is what
-    /// lets the ordering rules hold no syntax-tree types and no `self`.
     fn refuse_draft(&self, refusal: DraftRefusal) -> CompileError {
         self.error_at_span(refusal.span, refusal.code, refusal.message)
     }
@@ -1374,13 +1325,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
     }
 
-    /// Lowers `set NAME := {…}.` into a catalog-scoped value list.
-    ///
-    /// Members go through [`Self::lower_literal_value`], the same function an
-    /// inline `in {…}` uses, which is what makes an escape decode identically
-    /// in both places. That function's `negated` argument only selects between
-    /// naming `~` and `!~` in the regex-rejection message; a declaration has
-    /// no operator, so this passes `false` and the message names none.
     fn lower_set_definition(&mut self, node: Node<'_>) -> Result<ParsedSet, CompileError> {
         self.check_recovery_node(node)?;
         let name_node =
@@ -1743,13 +1687,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         })
     }
 
-    /// Lowers a definition's `where` clause into its authored constraints.
-    ///
-    /// Only what is decidable without capture identities is checked here: the
-    /// self-edge check compares operand *names*, which is equivalent to
-    /// comparing capture identities because duplicate capture names within
-    /// one definition are rejected. Existence and width are materialization and
-    /// analysis questions, answered after fragment expansion.
     fn lower_where_clause(
         &mut self,
         node: Node<'_>,
@@ -2041,20 +1978,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
     }
 
-    /// Lowers one `-[…]->` bracket into its authored label terms.
-    ///
-    /// A literal term is parsed here, where the grammar has already
-    /// constrained its shape, so [`RelationLabel::parse`] cannot fail — the
-    /// fallible producer is a `set` member, which bind checks. A `@name` term
-    /// stays symbolic for the same reason `[x in @S]` does: the set it names
-    /// may be declared in another document of the accumulated catalog.
-    ///
-    /// `*` is a complete predicate rather than a label term, so the grammar
-    /// makes it mutually exclusive with this listed-term path.
-    ///
-    /// A duplicate literal is a compile error here. Two set references, or a
-    /// literal already inside a referenced set, cannot be compared until bind
-    /// resolves the sets, so bind checks those duplicates.
     fn lower_relation_labels(
         &mut self,
         node: Node<'_>,
@@ -2072,12 +1995,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         for term_node in term_nodes {
             self.check_recovery_node(term_node)?;
             let term = if term_node.kind() == "set_reference" {
-                // Sole named child rather than a field, for the reason
-                // `lower_attribute`'s `in` arm gives: `set_reference` is
-                // `seq('@', $.identifier)` and declares no field on the name.
-                // `@` with no name parses as a MISSING `identifier`, which
-                // `check_recovery_node` above has already rejected, so the
-                // `ok_or_else` is total-match and not a real branch.
                 let name_node = term_node.named_child(0).ok_or_else(|| {
                     self.error(
                         term_node,
@@ -2505,11 +2422,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
     }
 
-    /// Lowers one node of the Boolean token-test grammar.
-    ///
-    /// `depth` is the enclosing expression's depth, so a deeply parenthesized
-    /// test is rejected by the same nesting limit an equally deep expression is
-    /// — this recursion is otherwise unbounded on adversarial source.
     fn lower_test(&mut self, node: Node<'_>, depth: usize) -> Result<ParsedTest, Diagnostic> {
         self.check_recovery_node(node)
             .map_err(|error| self.first_diagnostic(error, node))?;
@@ -2730,16 +2642,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 // document — so it is carried to `bind` instead.
                 if let Some(reference) = node.child_by_field_name("set") {
                     self.check_recovery_node(reference)?;
-                    // `set_reference` is `seq('@', $.identifier)` with no field
-                    // on the name, so take the sole named child rather than
-                    // inventing a field the grammar does not declare.
-                    //
-                    // The `ok_or_else` is the total-match arm and nothing
-                    // more: `@` with no name parses as a MISSING `identifier`,
-                    // which `check_recovery_node` above has already rejected.
-                    // It is a sentence rather than a panic for the reason
-                    // `compile_guard`'s `Group` arm is — a later grammar
-                    // change should reach a researcher as a diagnostic.
                     let name_node = reference.named_child(0).ok_or_else(|| {
                         self.error(
                             reference,
@@ -3366,13 +3268,6 @@ fn only_expression_child<'tree>(
     })
 }
 
-/// The sole test node inside a `parenthesized_test` or a `test_negation`.
-///
-/// The counterpart of [`only_expression_child`] for the token-test grammar.
-/// Neither rule declares a field on its operand, so this takes the one named
-/// child rather than inventing one; the kind is then checked by
-/// [`Lowerer::lower_test`]'s own dispatch, which is the only place that lists
-/// the full set.
 fn only_test_child<'tree>(
     source: &PatternSource<'_>,
     source_label: &Arc<str>,

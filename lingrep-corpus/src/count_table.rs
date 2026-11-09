@@ -28,8 +28,6 @@ pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
 /// The header version this build reads and writes.
 pub const COUNT_TABLE_VERSION: u32 = 2;
 
-/// Admitted pairs at or below which [`CountTable::top`] sums the admitted
-/// documents' own pairs instead of scanning entries.
 const DOCUMENT_MAJOR_PAIRS: u64 = 2_000_000;
 
 const HEADER: &str = "header.json";
@@ -53,7 +51,6 @@ const DOCUMENT_SENTENCES: &str = "document_sentences.u64";
 const DOCUMENT_TOKENS: &str = "document_tokens.u64";
 const ENTRY_TOTALS_SCRATCH: &str = "entry_totals.scratch";
 
-/// Elements a writer pass copies between checks of its cancellation flag.
 const CANCELLATION_INTERVAL: usize = 1 << 20;
 
 /// What a table's counts depend on. A reader serves a table only when all
@@ -147,9 +144,6 @@ fn writer_error(message: impl Into<String>) -> CountTableError {
     CountTableError::Writer(message.into())
 }
 
-/// In a debug build, waits at the writer phase that
-/// `LINGREP_TEST_PAUSE_COUNT_TABLE` names until `cancellation` is raised or
-/// 30 seconds pass, so a test can deliver a signal inside that phase.
 #[cfg(debug_assertions)]
 fn pause_for_test(phase: &str, cancellation: &CancellationFlag) {
     if std::env::var("LINGREP_TEST_PAUSE_COUNT_TABLE").is_ok_and(|named| named == phase) {
@@ -174,7 +168,6 @@ fn check_cancellation(cancellation: &CancellationFlag) -> Result<(), CountTableE
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PatternHeader {
     name: String,
-    /// The pattern's entries, `[start, end)` in entry order.
     entries: [u64; 2],
 }
 
@@ -192,20 +185,15 @@ struct Header {
     key_words: u64,
     pairs: u64,
     documents: u64,
-    /// `(document, pattern)` totals: one per pattern with an occurrence in
-    /// a document.
     document_patterns: u64,
 }
 
-/// Only the fields a reader checks before trusting the rest.
 #[derive(Deserialize)]
 struct HeaderVersion {
     format: String,
     version: u32,
 }
 
-/// Words a key of `schema` occupies at the start of `words`, after the
-/// schema word, or `None` when `words` does not hold a valid key of it.
 fn key_payload_len(schema: &GroupSchema, words: &[u32], values: u64) -> Option<usize> {
     let rank_ok = |rank: u32| u64::from(rank) < values;
     match schema.kind {
@@ -277,7 +265,6 @@ struct OpenEntry {
     total: u64,
 }
 
-/// The arrays written while entries stream in.
 struct Streams {
     entry_keys: Staged,
     entry_key_offsets: Staged,
@@ -349,7 +336,6 @@ impl CountTableWriter {
         }
         let staging = StagingDirectory::create_beside(destination)?
             .ok_or_else(|| writer_error("destination has no file name"))?;
-        // From here on, dropping `staging` removes the directory on any early return.
         let staging_path = staging.path.clone();
         let staging_path = staging_path.as_path();
         let mut value_offsets = Staged::create(staging_path, VALUE_OFFSETS)?;
@@ -417,8 +403,6 @@ impl CountTableWriter {
             .ok_or_else(|| writer_error("writer already finished"))
     }
 
-    /// Marks the patterns from the last started one up to `before` as empty
-    /// at the current entry position.
     fn skip_patterns(&mut self, before: usize) {
         let first = self.current_pattern.map_or(0, |current| current + 1);
         for skipped in first..before {
@@ -584,7 +568,6 @@ impl CountTableWriter {
         })
     }
 
-    /// Each pattern's entries by descending total, ties by entry order.
     fn write_ranking(&self, cancellation: &CancellationFlag) -> Result<(), CountTableError> {
         let totals_file = File::open(self.staging.path.join(ENTRY_TOTALS_SCRATCH))?;
         let totals_map = map_file(&totals_file)?;
@@ -627,7 +610,6 @@ impl CountTableWriter {
         Ok(())
     }
 
-    /// The pairs again, grouped by document, each document's in entry order.
     fn write_document_major(
         &mut self,
         cancellation: &CancellationFlag,
@@ -694,8 +676,6 @@ impl CountTableWriter {
         Ok(())
     }
 
-    /// Each document's occurrences per pattern, summed from its
-    /// document-major pairs, whose entries ascend and so group by pattern.
     fn write_document_patterns(
         &mut self,
         pair_offsets: &[u64],
@@ -769,7 +749,6 @@ impl StagedCountTable {
     }
 }
 
-/// What [`StagedCountTable::publish`] published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CountTableStats {
     pub entries: u64,
@@ -790,8 +769,6 @@ fn sized_file(path: &Path, bytes: u64) -> Result<File, CountTableError> {
     Ok(file)
 }
 
-/// A read-only map of `file`, or `None` for an empty file, which cannot be
-/// mapped.
 fn map_file(file: &File) -> Result<Option<Mmap>, CountTableError> {
     if file.metadata()?.len() == 0 {
         return Ok(None);
@@ -818,7 +795,6 @@ struct Section {
     name: &'static str,
 }
 
-/// A count table opened for queries.
 pub struct CountTable {
     path: PathBuf,
     header: Header,
@@ -848,7 +824,6 @@ pub struct DocumentMask {
     admitted: Vec<bool>,
 }
 
-/// One entry's counts under a mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TopRow {
     pub entry: u32,
@@ -882,7 +857,6 @@ pub struct TopResult {
     pub tokens_admitted: u64,
 }
 
-/// What a mask admits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Admission {
     pub documents_admitted: u64,
@@ -890,7 +864,6 @@ pub struct Admission {
     pub tokens_admitted: u64,
 }
 
-/// A row in descending count and then entry order.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct RowOrder {
     inverted_count: u64,
@@ -1101,7 +1074,6 @@ impl CountTable {
         })
     }
 
-    /// The mask admitting each document whose ID `admit` accepts.
     pub fn mask(&self, mut admit: impl FnMut(u64) -> bool) -> DocumentMask {
         DocumentMask {
             admitted: self.document_ids.iter().map(|id| admit(*id)).collect(),
@@ -1133,7 +1105,6 @@ impl CountTable {
         std::str::from_utf8(bytes).map_err(|_| corrupt("value is not UTF-8"))
     }
 
-    /// The key of `entry`.
     pub fn group(&self, entry: u32) -> Result<Group<'_>, CountTableError> {
         let offsets = self.u64s(&self.entry_key_offsets)?;
         let (start, end) = (
@@ -1244,8 +1215,6 @@ impl CountTable {
         Ok(result)
     }
 
-    /// The documents, sentences and tokens `mask` admits, and the pairs its
-    /// documents hold.
     fn admission(&self, mask: &DocumentMask) -> Result<(Admission, u64), CountTableError> {
         if mask.admitted.len() != self.document_ids.len() {
             return Err(corrupt("mask was built for a different table"));
@@ -1380,7 +1349,6 @@ impl CountTable {
         Ok(ranked(rows, usize::MAX))
     }
 
-    /// One pattern's rows with a nonzero count, ordered as [`RowOrder`].
     fn pattern_rows(
         &self,
         pattern: usize,
@@ -1435,7 +1403,6 @@ impl CountTable {
         Ok((documents, counts))
     }
 
-    /// One entry's count and works under `mask`.
     fn conditioned(&self, entry: u32, mask: &[bool]) -> Result<TopRow, CountTableError> {
         let (documents, counts) = self.entry_documents(entry)?;
         let mut row = TopRow {
@@ -1452,7 +1419,6 @@ impl CountTable {
         Ok(row)
     }
 
-    /// The entries of `pattern`.
     pub fn pattern_range(&self, pattern: usize) -> Result<std::ops::Range<usize>, CountTableError> {
         let [start, end] = self
             .header
@@ -1463,9 +1429,6 @@ impl CountTable {
         Ok(start as usize..end as usize)
     }
 
-    /// Scans the pattern's entries by descending total and stops once an
-    /// entry's total is below the `limit`-th count found, which no later entry
-    /// can exceed.
     fn top_by_rank(
         &self,
         pattern: usize,
@@ -1512,8 +1475,6 @@ impl CountTable {
         Ok(best)
     }
 
-    /// Sums the admitted documents' own pairs: cost proportional to the
-    /// pairs those documents hold.
     fn top_by_document(
         &self,
         mask: &DocumentMask,
@@ -1731,7 +1692,6 @@ fn read_header(path: &Path) -> Result<Header, CountTableError> {
     Ok(serde_json::from_slice(&header_bytes)?)
 }
 
-/// `rows` by descending count and then entry, truncated to `limit`.
 fn ranked(mut rows: Vec<TopRow>, limit: usize) -> Vec<TopRow> {
     let order = |left: &TopRow, right: &TopRow| {
         right

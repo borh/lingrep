@@ -510,12 +510,6 @@ fn feature_fields(feature: &str) -> Vec<Cow<'_, str>> {
     }
 }
 
-/// Reads one field, returning it and whatever follows its delimiter.
-///
-/// `None` for the remainder means the record ended. An unterminated quoted
-/// field takes the rest of the record rather than failing: a feature string is
-/// dictionary data this crate did not write, and failing to featurize a token
-/// over it would be a worse outcome than reading it literally.
 fn next_feature_field(rest: &str) -> (Cow<'_, str>, Option<&str>) {
     let Some(body) = rest.strip_prefix('"') else {
         return match rest.split_once(',') {
@@ -603,26 +597,6 @@ fn featurize_selected(
         values[Text as usize] = Some(CompactString::from(token.surface()));
     }
 
-    // For a token absent from the dictionary, attributes whose value space
-    // *is* the surface orthography fall back to the surface. An unknown-word
-    // entry carries a six-field feature string, so twenty attributes are absent
-    // on an OOV token — and a missing attribute satisfies neither polarity,
-    // making both `[orthBase=X]` and `[orthBase!=X]` fail silently on that
-    // material.
-    //
-    // Only these two qualify. A pronunciation, kana reading or inflection class
-    // is not determined by the surface; synthesising one would invent data.
-    //
-    // Two conditions, and both matter:
-    //
-    // * `LexType::Unknown`, not merely "absent". A system or user entry with a
-    //   short feature record is a *supplied* record that stops early, and
-    //   filling it would break the property this design rests on — that
-    //   `lexType=unknown` identifies every synthesised value. Read from
-    //   `token.lex_type()` rather than the `LexType` attribute, which this
-    //   function has not set yet.
-    // * `is_none`, not "is `*`". UniDic writes `*` for "does not apply here",
-    //   which is a supplied value and must survive untouched.
     if token.lex_type() == LexType::Unknown {
         for attribute in [OrthBase, Lemma] {
             if values[attribute as usize].is_none()

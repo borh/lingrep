@@ -41,7 +41,6 @@ pub(crate) enum QueryInputStats {
 }
 
 impl QueryInputStats {
-    /// The documents with at least one admitted sentence.
     pub(crate) fn documents_admitted(&self) -> u64 {
         match self {
             Self::Direct(stats) => stats.documents_admitted(),
@@ -49,8 +48,6 @@ impl QueryInputStats {
         }
     }
 
-    /// The lookaround division kinds the direct input observed; `None` for a
-    /// prepared artifact, whose observations are read before the run.
     pub(crate) fn observed_division_kinds(
         &self,
     ) -> Option<std::collections::BTreeSet<compact_str::CompactString>> {

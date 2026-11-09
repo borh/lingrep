@@ -144,8 +144,6 @@ pub fn run(
     }
 }
 
-/// Binds the compiled catalog against the named declared schema and reports
-/// what a run against such a corpus would warn about or reject.
 fn assess_binding(
     schema: crate::cli::CheckSchemaArg,
     output: &lingrep_core::fsm::CompileOutput,

@@ -535,8 +535,6 @@ pub fn run(
             .as_ref()
             .map_or(0, FinalizedSummary::peak_temp_bytes);
 
-        // A table is staged before completion is claimed, so a signal that
-        // arrives while it is written publishes nothing.
         let mut documents = documents;
         let mut staged_table = None;
         if let (Some(path), Some(aggregation)) = (args.write_table.as_deref(), aggregation.take()) {
@@ -736,8 +734,6 @@ struct SummarySink<'a> {
     metadata_values: Option<MetadataValueTally>,
 }
 
-/// Each section label of the artifact that `provenance` reads, with the
-/// corpus sentence ordinals it covers.
 fn section_labels(
     provenance: &lingrep_corpus::BlockingProvenance,
 ) -> Result<Vec<(String, RoaringTreemap)>, CliError> {
@@ -785,8 +781,6 @@ struct DocumentTally {
     source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
 }
 
-/// Writes the per-document counts of `aggregation` to a new count table at
-/// `path`, and returns what was written and the run's peak temporary storage.
 fn write_count_table(
     path: &std::path::Path,
     key: lingrep_corpus::CountTableKey,

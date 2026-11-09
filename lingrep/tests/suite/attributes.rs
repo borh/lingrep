@@ -371,9 +371,6 @@ fn both_contracts_are_discoverable_from_the_cli() {
     );
 }
 
-/// The scope record's document, sentence and token counts equal the
-/// `summarize --by-document` counters for the same `--where` clause, on direct
-/// and prepared input. `empty.md` has no sentence and is never counted.
 #[test]
 fn scope_counts_equal_summarize_counters_for_the_same_clause() {
     let directory = TempDir::new().unwrap();

@@ -23,7 +23,6 @@ pub struct ScopeResolution {
     pub sentences: ScopeUniverse,
 }
 
-/// A stored row this run rejects as uninterpretable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScopeResolutionError {
     pub document_id: Option<DocumentId>,

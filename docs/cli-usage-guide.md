@@ -408,7 +408,7 @@ ling --json summarize --by-section --corpus paper.lingcorpus \
 ```
 
 `--where` applies first, so `sentences_admitted` is the section's size within
-the scope. Like `--by-document`, `--by-section` reads every sentence.
+the scope. Like `--by-document`, `--by-section` reads every admitted sentence.
 
 ### Counting per metadata value
 
@@ -439,7 +439,7 @@ ling --json summarize --by-metadata @document.author \
 ```
 
 `--where` applies first. Like `--by-section`, `--by-metadata` reads every
-sentence.
+admitted sentence.
 
 ### Saving per-document counts: count tables
 
@@ -457,15 +457,15 @@ ling --json table soranoha.collexeme.lingtable --top 100 \
 ```
 
 Before the rows, `ling table` gives each pattern's `occurrences`, the sum of
-the counts of all its groups under the clause whatever `--top` keeps, and
+the counts of all its groups under the clause regardless of `--top`, and
 `works`, the number of admitted documents with at least one of them; a clause
 that admits nothing gives 0. For each pattern, it then gives each group's
 `count`, equal to the `count` of `summarize --where` with the same clause, and
-`works`, the number of admitted documents in which the group occurs. Rows are ordered by count,
-with ties in `summarize`'s group order. Without `--top`, every group is
-ordered through temporary files, which `--max-temp-bytes` limits as it does
-for `summarize`. The `complete` record gives the admitted documents,
-sentences and tokens. The output contract is
+`works`, the number of admitted documents in which the group occurs. Rows are
+ordered by count, with ties in `summarize`'s group order. With `--top all`, or
+JSON output without `--top`, groups are ordered through temporary files, which
+`--max-temp-bytes` limits as it does for `summarize`. The `complete` record
+gives the admitted documents, sentences and tokens. The output contract is
 `lingrep.table/v1`, whose `pattern` records carry the totals.
 
 A table records the corpus's analysis identity, the catalog fingerprint and
@@ -838,7 +838,7 @@ record declares the rate, seed and sampling unit:
 
 An unsampled run omits `sample`.
 
-### What sampling rejects
+### Options incompatible with sampling
 
 | Combination | Why |
 |---|---|
@@ -2020,16 +2020,16 @@ same corpus as another table:
 --count-table a.lingtable and --count-table b.lingtable both count catalog collexeme.lx over corpus "works"
 ```
 
-The view states its query as a sentence whose blanks are the catalog, the
-pattern, one condition per document metadata key, the order and a substring
-filter. A key becomes a condition when every value is a number (a range) or
-when its scalar or list values repeat (a set to keep or to exclude). Each
-condition shows the share of occurrences it keeps: the occurrences under every
-condition out of those under every condition but this one. The page shows the
-`ling table … --where …` command that reproduces its rows; the order it
-applies is its own. A clause with `@section` or `@sentence` is answered with
-an explanation rather than rows, because a table counts per document. The
-address holds the whole state, so a copied link reopens the same view.
+The view presents a query as a sentence with controls for the catalog,
+pattern, document metadata conditions, sort order and substring filter. A key
+becomes a condition when every value is a number (a range) or when its scalar
+or list values repeat (a set to keep or to exclude). Each condition shows the
+number of occurrences that satisfy all conditions as a share of those that
+satisfy the other conditions. The page shows the corresponding `ling table …
+--where …` command. The view applies its selected sort order and substring
+filter separately. A clause with `@section` or `@sentence` is answered with an
+explanation rather than rows, because a table counts per document. The URL
+stores the query state, so a copied link reopens the same view.
 
 `--metadata-labels PATH` reads a JSON file of display labels for document
 metadata keys, by locale. The view names a condition by its label in the
@@ -2057,11 +2057,11 @@ gives at least one non-empty label, each under `en` or `ja`, the locales the
 page is served in. Startup stops with an error naming the file when the file
 cannot be read, has an unknown or empty field, names a key or a locale twice,
 gives two keys the same label in one locale, or labels a key that another file
-labels. A labelled key that no corpus with a count table carries is reported
-at startup and does not stop it.
+labels. If no corpus with a count table contains a labelled key, the server
+reports the key at startup and continues.
 [`lingrep-web/labels/soranoha-catalog.json`](../lingrep-web/labels/soranoha-catalog.json)
-labels every Soranoha catalog column in English and Japanese. The `lingrep`
-and `lingrep-web` Nix packages install it as
+provides labels for every Soranoha catalog column in English and Japanese. The
+`lingrep` and `lingrep-web` Nix packages install it as
 `share/lingrep-web/labels/soranoha-catalog.json`:
 
 ```bash

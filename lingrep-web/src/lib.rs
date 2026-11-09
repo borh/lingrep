@@ -95,19 +95,12 @@ fn routes(store: RequestStore) -> Router {
         .with_state(store)
 }
 
-/// Builds the production HTTP surface under `base_path`.
-///
-/// The router itself owns the mount point rather than relying on a proxy to
-/// strip it. This keeps direct deployments and proxy deployments explicit and
-/// makes paths outside the configured mount return 404. A nested mount serves
-/// its start page at `<base_path>/` and redirects `<base_path>` there.
+/// Serves routes under `base_path`, returns 404 outside it, and redirects a bare non-root prefix to its trailing-slash start page.
 pub fn app_router_at(store: RequestStore, base_path: &BasePath) -> Router {
     if base_path.is_root() {
         return app_router(store);
     }
     let mount = base_path.as_str();
-    // A relative Location still resolves to the mount when an outer proxy
-    // adds a prefix of its own.
     let last_segment = mount.rsplit('/').next().unwrap_or_default().to_owned();
     let redirect = move |RawQuery(query): RawQuery| async move {
         let target = match query {
@@ -161,9 +154,6 @@ mod tests {
         assert_eq!(root.status(), StatusCode::NOT_FOUND);
     }
 
-    /// The start page's links are relative (`assets/app.js`), so it is served
-    /// at the trailing-slash form of the mount, where they resolve inside the
-    /// mount; the bare mount redirects there with its query intact.
     #[tokio::test]
     async fn mounted_router_serves_the_start_page_at_the_trailing_slash_form() {
         let base_path = BasePath::parse("/research/lingrep-web").expect("valid mount path");
@@ -189,8 +179,6 @@ mod tests {
         );
     }
 
-    /// A last segment such as `a:b` would read as a URI with scheme `a` if it
-    /// began the Location.
     #[tokio::test]
     async fn the_redirect_location_is_a_path_when_the_last_segment_contains_a_colon() {
         let base_path = BasePath::parse("/x/a:b").expect("valid mount path");
@@ -208,8 +196,6 @@ mod tests {
         assert_eq!(bare.headers()[axum::http::header::LOCATION], "./a:b/");
     }
 
-    /// The redirect and the 404s outside the mount are answered by the outer
-    /// router, and carry the same security headers as the application.
     #[tokio::test]
     async fn mounted_router_responses_outside_the_application_carry_security_headers() {
         let base_path = BasePath::parse("/mounted").expect("valid mount path");

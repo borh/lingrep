@@ -22,15 +22,7 @@ impl ActiveLabels for [String] {
     }
 }
 
-/// Nothing is active.
-///
-/// The evaluator's own type parameter needs an inhabitant when no labels are
-/// supplied, which is what [`ScopeClause::evaluate_document`] uses it for. A
-/// *corpus* that records no labels is rejected before it reaches here, because
-/// an empty set would otherwise answer "in no section" with the same confidence
-/// as a real one.
-///
-/// [`ScopeClause::evaluate_document`]: super::ScopeClause::evaluate_document
+/// An empty active-label set for document-only evaluation.
 pub struct NoLabels;
 
 impl ActiveLabels for NoLabels {

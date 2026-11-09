@@ -11,10 +11,6 @@ use lingrep_core::corpus::{Metadata, metadata_from_json};
 use lingrep_core::fsm::{CompileError, DiagnosticCode};
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
 
-/// Whether `error` carries a diagnostic with exactly this code.
-///
-/// Asserting the code rather than the message is what keeps a test honest about
-/// *which* diagnostic fired; three compile-test modules had their own copy.
 pub fn refuses_with(error: &CompileError, code: DiagnosticCode) -> bool {
     error
         .diagnostics

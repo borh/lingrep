@@ -134,13 +134,6 @@ fn catalog_contains_only_research_patterns() {
     );
 }
 
-/// The catalog's `schema` block must reject what the deleted Rust assertions
-/// rejected. Proved before deletion, or the assertions would be removed on
-/// faith.
-///
-/// Mutates the source **in memory**. Editing a real catalog and reverting with
-/// `git checkout` silently destroys uncommitted work in that file, which is a
-/// hazard the handoff records.
 #[test]
 fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
     let source = std::fs::read_to_string(
@@ -148,7 +141,6 @@ fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
     )
     .expect("catalog is readable");
 
-    // (from, to, the phrase the rejection message must contain)
     let mutations = [
         // `status:` is a defaults entry, so one edit reaches every definition.
         (
@@ -193,7 +185,6 @@ fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
         );
     }
 
-    // `required` is the other half: deleting the key entirely is rejected too.
     let without_category = source.replacen("category: \"S1a 相\"\n", "", 1);
     assert_ne!(without_category, source, "the deletion applied");
     let error = match compile_catalog(
@@ -227,12 +218,6 @@ fn the_catalog_schema_refuses_what_the_rust_assertions_refused() {
 fn research_metadata_and_approximations_are_explicit() {
     use std::collections::BTreeSet;
 
-    // `role`, `layer`, `category`, `examples`, `research_classes`, `status` and
-    // `source` are no longer asserted here: the catalog's own `schema` block
-    // declares all seven,
-    // and `the_catalog_schema_refuses_what_the_rust_assertions_refused` proves
-    // it rejects what this loop rejected. A second copy would only be a second
-    // thing to keep in step.
     let output = compile_fixture();
     let mut approximated = BTreeSet::new();
     for (name, pattern) in output.matcher.patterns() {
@@ -371,13 +356,6 @@ fn published(tokens: &[lingrep_core::token_match::TokenInfo]) -> Vec<String> {
         .collect()
 }
 
-/// Stage 2: a negated progressive is not a resultative, and is not published.
-///
-/// `ついていない` and `行っていない` are negated progressives — not
-/// resultative/perfective uses of ている — and upstream does not tag them as
-/// S1a 相 (`sf_experimental.py:1108`). The bare `ている` in the same shape
-/// without the negation survives, which is the half that proves the statement
-/// is not simply dropping every `ている`.
 #[test]
 fn a_negated_teiru_is_not_published_but_a_bare_one_is() {
     // 行っ-て-い-ない: `ている` spans `て` and `い`, and `ない` follows it.

@@ -17,9 +17,6 @@ use super::{BoundSentenceInput, SentenceLocation};
 /// document, and for a division scope both have the same innermost division
 /// of that kind.
 pub(crate) struct WindowLinks {
-    /// The reach of each scope in `lookaround_reach` order, with the index of
-    /// its kind in `SentenceLocation::lookaround_divisions` for a division
-    /// scope.
     scopes: Vec<(Option<usize>, LookaroundReach)>,
     last: Option<(DocumentId, u64)>,
     last_divisions: Option<Arc<[Option<DivisionId>]>>,

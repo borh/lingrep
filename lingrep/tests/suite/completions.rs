@@ -110,21 +110,6 @@ printf '%s\n' "${COMPREPLY[@]}"
 #[cfg(unix)]
 const SHELL_PROMPT: &str = "% ";
 
-/// Complete `input`, retrying while the shell never reached its prompt.
-///
-/// `completest_pty::comptest` writes the input to the pty and then waits for
-/// output to go quiet for 50ms, having no other signal that a shell is done. But
-/// the pty echoes those bytes back the instant they are written — before the
-/// shell has read its rcfile — so the quiet window can open against shell
-/// *startup*. Bash therefore uses [`complete_in_bash`], which invokes its
-/// generated function through the shell's completion variables without a
-/// guessed wall-clock window. These retries remain for the Zsh and Elvish pty
-/// integrations.
-///
-/// A screen without the prompt indicates the shell did not complete
-/// initialization: retry it. A screen *with* the prompt is a completion result
-/// and is returned without retry, so an incorrect completion still fails
-/// on the first attempt rather than being retried into a green run.
 #[cfg(unix)]
 fn complete_after_the_shell_is_ready(
     runtime: &mut dyn completest_pty::Runtime,

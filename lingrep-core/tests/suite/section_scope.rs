@@ -58,8 +58,6 @@ fn a_metadata_only_clause_names_no_sections() {
     assert!(clause.section_labels().is_empty());
 }
 
-/// A label is an opaque string: it has no order and no parts, so the operators
-/// that assume either are rejected where the author wrote them.
 #[test]
 fn ordered_and_containment_operators_are_refused_on_section() {
     for source in [

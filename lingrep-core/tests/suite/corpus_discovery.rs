@@ -23,19 +23,6 @@ fn limits() -> TraversalLimits {
     TraversalLimits::default()
 }
 
-/// Whether this filesystem will hold a name that is not valid UTF-8.
-///
-/// A Unix filename is a byte string and ext4 stores one verbatim, so discovery
-/// has to cope with it and the assertions below are worth making. APFS
-/// validates UTF-8 at creation and answers `EILSEQ`, so the fixture cannot be
-/// built there at all — the code under test is unaffected, only the ability to
-/// stage an input for it.
-///
-/// This is a property of the **filesystem**, not the OS: a Linux exFAT or
-/// FAT32 mount rejects the same name, and a `cfg(target_os)` gate would both
-/// mis-describe that and, worse, turn absent coverage into a silently green
-/// run. Probing reports the skip instead, and runs the assertions anywhere
-/// they can run.
 fn non_utf8_names_supported(directory: &std::path::Path) -> bool {
     use std::os::unix::ffi::OsStringExt;
 

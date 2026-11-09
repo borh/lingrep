@@ -10,13 +10,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! `--where` end to end: rejection before work, the clause echo, the four-bucket
-//! accounting, and what the denominator covers under prefix coverage.
-//!
-//! The fixture is four documents and seven sentences, one per accounting
-//! bucket under `year >= 2010`: document 0 admitted (2 sentences), document 1
-//! false (1), document 2 missing the key (3), document 3 carrying `"47-56"`,
-//! a value no ordered comparison can use (1).
 
 use std::process::Output;
 

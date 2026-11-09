@@ -1,4 +1,3 @@
-// Exempt test/bench/example code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
 
 use lingrep_core::fsm::{
@@ -98,8 +97,6 @@ fn skipping_sentence_strategy() -> impl Strategy<Value = Vec<TokenInfo>> {
         .prop_map(|texts| tokens(&texts))
 }
 
-/// The last `reach` tokens of `before`, then `sentence`, then the first
-/// `reach` tokens of `after`, with the index where `sentence` starts.
 fn joined_within_reach(
     before: &[Vec<TokenInfo>],
     sentence: &[TokenInfo],
@@ -119,9 +116,6 @@ fn joined_within_reach(
 }
 
 proptest! {
-    /// A `within=document` lookaround over whole neighbouring sentences
-    /// matches as the sentence-local lookaround does over the concatenated
-    /// sentences, and an unscoped one ignores the context.
     #[test]
     fn a_document_lookaround_matches_as_over_the_joined_sentences(
         before in prop::collection::vec(sentence_strategy(), 0..3),
@@ -159,9 +153,6 @@ proptest! {
 }
 
 proptest! {
-    /// Under `skip:`, a `within=document` lookaround matches as the
-    /// sentence-local lookaround does over the sentence joined with the
-    /// window trimmed to the lookaround's reach, skipped tokens included.
     #[test]
     fn a_skipping_document_lookaround_matches_as_over_the_sentences_within_its_reach(
         before in prop::collection::vec(skipping_sentence_strategy(), 0..3),

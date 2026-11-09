@@ -136,21 +136,13 @@ impl CatalogWork {
     }
 }
 
-/// The report format. Bumped when the counter list or the digest changes.
-///
-/// Carried explicitly so an incompatible baseline is rejected by name rather
-/// than by whatever Serde happens to do with a missing or extra field.
+/// Report format revision; change it when the counter list or digest changes.
 pub const REPORT_SCHEMA: &str = "lingrep-perf.work/v1";
 
 /// What a catalog was measured over, and what the measurement found.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogMeasurement {
-    /// BLAKE3 over the catalog source and the exact labelled token sequence.
-    ///
-    /// A sentence *count* is not identity: editing an example or a fixture
-    /// without changing how many sentences there are would otherwise produce a
-    /// counter delta reported as a matcher work change. Comparison fails
-    /// when this differs.
+    /// BLAKE3 of catalog source and labelled tokens; baseline comparison fails if it differs.
     pub input_digest: String,
     /// How many sentences the catalog was measured over.
     pub sentences: usize,
@@ -402,15 +394,7 @@ fn record_publication_work(
     Ok(())
 }
 
-/// Measure counted work over `scope`.
-///
-/// # Errors
-///
-/// Returns [`MeasureError`] when the scope selects nothing it was supposed to,
-/// or when a selected catalog does not compile. A mistyped `--catalog` must not
-/// succeed with an empty report: no work would then be indistinguishable from a
-/// successful measurement, which is the same failure the missing-feature path
-/// already rejects.
+/// Measures counted work over `scope`, returning [`MeasureError`] for an empty selection or a catalog that fails compilation.
 pub fn measure(scope: &ScopeSelection) -> Result<WorkReport, MeasureError> {
     let mut report = WorkReport::default();
     let suite: Vec<&str> = catalog_campaign_descriptors()
@@ -461,11 +445,6 @@ pub fn measure(scope: &ScopeSelection) -> Result<WorkReport, MeasureError> {
             error: error.to_string(),
         })?;
         let matcher = &output.matcher;
-        // The suite descriptor names which schema family this catalog binds
-        // against; a discovered catalog outside the suite keeps the Vibrato
-        // default. Binding a `where`-bearing catalog against the morphology
-        // schema is rejected, so measuring it means binding it
-        // against the schema its predicates require.
         let binding = catalog_campaign_descriptors()
             .into_iter()
             .find(|descriptor| descriptor.path == name)

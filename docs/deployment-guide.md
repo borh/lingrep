@@ -58,8 +58,7 @@ symlinks corpora and pattern catalogs under `/var/lib/lingrep-web/`.
 
 On SIGTERM, which `systemctl stop` sends, lingrep-web stops accepting
 connections, lets in-flight requests and open progress streams run for up to
-10 seconds, and exits 0; a second signal ends that wait at once. That is
-within systemd's default `TimeoutStopSec` of 90 seconds. `ling serve` stops
+10 seconds, and exits 0; a second signal ends that wait at once. `ling serve` stops
 the same way on SIGTERM or SIGINT.
 
 ## Serving under a subpath

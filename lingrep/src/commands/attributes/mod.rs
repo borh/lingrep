@@ -47,10 +47,6 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
-    // Rejected here rather than by clap, which would name the two flags and
-    // not the recovery. Two record shapes in one headerless fixed-column
-    // stream cannot be consumed, and silently dropping the exclusion table
-    // would be worse than rejecting the combination.
     if args.tsv && args.catalog.catalog_input().is_some() {
         return Err(CliError::InvalidArgs(
             "--tsv cannot be combined with a catalog; use --json for both tables".into(),
@@ -112,9 +108,6 @@ pub fn run(
                 .map_or(SentenceAdmission::All, |resolved| {
                     resolved.admission.clone()
                 });
-            // `sentence_source`, never `sentence_source_with_attributes`:
-            // this command's answer is *which columns are missing*, so a
-            // projection would manufacture absences it then reports.
             let source = artifact
                 .bound_sentence_source(&projection)?
                 .with_admission(admission)

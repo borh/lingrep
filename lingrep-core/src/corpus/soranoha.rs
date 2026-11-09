@@ -39,9 +39,6 @@ pub const CATALOG_COLUMNS: [&str; 17] = [
 /// ordered comparison; a value that does not parse is a catalog error.
 const NUMERIC_COLUMNS: [&str; 2] = ["body_character_count", "source_edition_year"];
 
-/// The column of a work's NDC classes: `NDC` and space-separated codes, each
-/// ASCII digits with an optional `K` (children's book) prefix, as in
-/// `NDC 712 914` or `NDC K913`. A value of another form is a catalog error.
 const NDC_COLUMN: &str = "ndc";
 
 /// The bound on `catalog.csv` itself.
@@ -168,9 +165,6 @@ impl<R: Read + Seek> SoranohaEvents<R> {
             .zip
             .by_index(index)
             .map_err(|error| context(format!("unreadable ZIP entry: {error}")))?;
-        // Checking the declared uncompressed size rejects an oversized work —
-        // and a decompression bomb — before anything is inflated. The bounded
-        // read then covers an entry that under-declares its size.
         let declared = entry.size();
         if declared > limit as u64 {
             return Err(context(format!(
@@ -1008,7 +1002,6 @@ mod tests {
             "{error}"
         );
 
-        // A physical line over the record limit is rejected.
         let mut limited = SoranohaEvents::new(
             archive(&[
                 (

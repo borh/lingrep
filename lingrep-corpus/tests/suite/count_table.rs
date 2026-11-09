@@ -26,8 +26,6 @@ fn surface() -> GroupSchema {
     }
 }
 
-/// `pairs[pattern][entry]` lists `(document, count)`; entry `i` of a pattern
-/// has the surface `v{i}`.
 type Pairs = Vec<Vec<Vec<(u32, u64)>>>;
 
 fn writer_for(path: &Path, documents: &[DocumentTotals], pairs: &Pairs) -> CountTableWriter {
@@ -72,7 +70,6 @@ fn write_table(path: &Path, documents: &[DocumentTotals], pairs: &Pairs) -> Coun
     CountTable::open(path, &key()).expect("open")
 }
 
-/// Every row of [`CountTable::rows`], grouped by pattern.
 fn streamed(
     table: &CountTable,
     mask: &DocumentMask,
@@ -95,8 +92,6 @@ fn spill_policy(max_pending_keys: usize) -> SpillPolicy {
     }
 }
 
-/// Counts and works per entry under `admitted`, ranked by count and then
-/// entry, as `ling summarize` ranks them.
 fn expected_rows(
     pairs: &Pairs,
     admitted: &[bool],
@@ -127,8 +122,6 @@ fn expected_rows(
         .collect()
 }
 
-/// Each pattern's occurrences and works under `admitted`, counted from the
-/// pairs.
 fn expected_totals(pairs: &Pairs, admitted: &[bool]) -> Vec<PatternTotal> {
     pairs
         .iter()
@@ -165,8 +158,6 @@ fn surfaces(table: &CountTable, rows: &[TopRow]) -> Vec<(String, u64, u64)> {
 #[hegel::test(test_cases = 100, derandomize = true)]
 fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
     let document_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(6));
-    // Up to 300 entries per pattern, so the ranked scan crosses several of
-    // its blocks; counts from a small range, so ties are common.
     let pattern_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(3));
     let mut pairs: Pairs = Vec::new();
     for _ in 0..pattern_count {
@@ -196,8 +187,6 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
             .min_size(document_count)
             .max_size(document_count),
     );
-    // `None` reads every row through `rows`; a limit is small, beyond the
-    // entries, or the largest representable.
     let limit = match tc.draw(generators::integers::<u8>().max_value(3)) {
         0 => None,
         1 => Some(tc.draw(generators::integers::<usize>().min_value(1).max_value(5))),
@@ -650,8 +639,6 @@ fn keys_of_every_kind_decode_to_their_values_and_patterns_without_entries_stay_e
 
 #[test]
 fn ranked_scan_reads_past_the_floor_into_entries_whose_total_equals_it() {
-    // Entries 1..=64 total 3 but count 2 under the mask; entry 0 totals 2,
-    // all admitted, ranks 65th, and wins the tie at count 2 by entry order.
     let documents = [
         DocumentTotals {
             document_id: 0,

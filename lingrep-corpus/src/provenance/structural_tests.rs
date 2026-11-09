@@ -1323,12 +1323,6 @@ async fn a_corrupt_stored_analysis_is_rejected_when_read_and_by_verification() {
     }
 }
 
-/// Three documents of 6, 6 and 4 sentences. Document 11 has a section over
-/// all six sentences, a paragraph over 1..4 and an empty paragraph at 4;
-/// document 12 has a section over 8..11; document 13 has no division. Most
-/// stored reference lists repeat their predecessor's, so each mutation below
-/// either changes a row inside such a repetition or moves a division boundary
-/// to a sentence whose stored list equals the one before it.
 async fn division_sweep_fixture(path: &Path) {
     let mut writer = ProvenanceWriter::create(path, &[]).await.unwrap();
     for (sentence, (document, ordinal)) in (0..6)
@@ -1372,9 +1366,6 @@ async fn division_sweep_fixture(path: &Path) {
     database.close().await.unwrap();
 }
 
-/// Pins the complete outcome of `ProvenanceView::open` for each defect the
-/// division sweep checks, including defects at sentences whose stored
-/// references and document equal their predecessor's.
 #[tokio::test]
 async fn open_reports_each_division_sweep_defect_at_any_sentence() {
     const DISAGREE: &str = "InvalidFormat { component: \"provenance.sqlite\", message: \"sentence division references disagree with authoritative extents\" }";

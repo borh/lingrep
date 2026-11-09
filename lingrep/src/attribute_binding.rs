@@ -107,8 +107,6 @@ pub(crate) fn write_unavailable_attribute_notices(
     Ok(())
 }
 
-/// One `division_unavailable` notice per division kind that `within=`
-/// lookarounds name and the corpus does not observe.
 pub(crate) fn write_unobserved_division_notices(
     kinds: &[compact_str::CompactString],
     observes: impl Fn(&str) -> bool,

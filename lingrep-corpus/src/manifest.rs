@@ -21,19 +21,7 @@ use crate::{
 
 pub(crate) const MANIFEST_NAME: &str = "manifest.json";
 
-/// Whether `path` names a **prepared corpus artifact** rather than a corpus
-/// source.
-///
-/// Structural and cheap: a directory carrying a `manifest.json`. It answers
-/// "which reader does this path want", not "is this artifact sound" —
-/// [`crate::CorpusArtifact::open`] is the admission check and is the thing
-/// that reports *why* a malformed artifact is rejected.
-///
-/// It lives here because the artifact's on-disk shape is this crate's to
-/// define. A consumer that hand-rolled `path.join("manifest.json")` would be a
-/// second definition of the same rule, free to drift from this one — the same
-/// reason [`crate::canonical_artifact_path`] owns the naming rule rather than
-/// each caller re-deriving it.
+/// Tests for a directory containing `manifest.json`; use [`crate::CorpusArtifact::open`] to validate it.
 #[must_use]
 pub fn is_prepared_artifact(path: &Path) -> bool {
     path.is_dir() && path.join(MANIFEST_NAME).is_file()
@@ -130,21 +118,7 @@ pub(crate) struct Manifest {
     pub admitted_inventory: ManifestInventory,
     pub configured_limits: ManifestLimits,
     pub observed: ManifestHighWater,
-    /// Sentences this build truncated to fit `--max-sentence-bytes`, when any.
-    ///
-    /// **This is the one recorded fact that makes a resource limit semantic.**
-    /// Every other limit either rejects a corpus or is invisible, which is why
-    /// limits are omitted from identity: two limits that both
-    /// complete emit the same corpus. Truncation breaks that — two limits that
-    /// both complete emit *different* corpora — so an artifact that truncated
-    /// anything must record the limit it truncated at, or a later build under
-    /// a larger limit silently reuses a shorter corpus.
-    ///
-    /// `#[serde(default)]` for the reason `identity_scheme` carries it: an
-    /// artifact written before this field existed truncated nothing, because
-    /// the build failed instead, and `None` *is* that value. So
-    /// [`MANIFEST_SCHEMA_VERSION`] does not move and no artifact on disk is
-    /// invalidated.
+    /// Records sentence truncation and its limit; absent in artifacts that truncated no sentences.
     #[serde(default)]
     pub sentence_truncation: Option<SentenceTruncation>,
     pub ordered_inventory_digest: String,

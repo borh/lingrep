@@ -199,9 +199,6 @@ fn an_analyzer_declaration_after_an_annotation_is_refused() {
 
 #[test]
 fn an_annotation_run_before_a_non_pattern_declaration_is_refused() {
-    // Every catalog-value declaration fails the same way: a run can only
-    // annotate the pattern or lexicon that follows it, so a declaration
-    // that takes no metadata must not swallow the run.
     for declaration in [
         "set S := {a}.",
         "test t := text=a.",
@@ -480,8 +477,6 @@ fn only_expr(source: &str) -> ParsedExpr {
     }
 }
 
-/// The literal-text token `text`, authored as `authored` at its first
-/// occurrence in `source`.
 fn token(source: &str, authored: &str, text: &str) -> ParsedExpr {
     ParsedExpr::Token(
         ParsedTest::Attr(resolved_attr(AttrValue {

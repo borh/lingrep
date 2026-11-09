@@ -458,15 +458,6 @@ fn compile_program(
     lowered
         .matcher
         .install_anchor_programs(assertions.anchor_programs);
-    // Ahead of the spawn gate below, which asks the matcher whether any pattern
-    // needs an assertion session. Half that answer comes from the recognition
-    // machine, which is already built; the other half is whether a capture or
-    // span-equality plan queries a lookaround, and only this call establishes
-    // it. A span-equality definition is skipped by NFA lowering, so its
-    // lookaround exists in no other half. The gate returns `Err` on rejection,
-    // so ordering it this way costs a rejected compilation the plans it then
-    // discards, and buys the gate and the per-sentence path one shared answer
-    // rather than a compiler-side copy that can drift from it.
     lowered.matcher.install_execution(execution.into_vec());
     lowered.matcher.install_lexicons(compiled_lexicons);
     if lowered.matcher.requires_assertion_session()
@@ -940,8 +931,6 @@ fn remap_expr_source(expr: &mut ParsedExpr, source: SourceId) {
                 remap_expr_source(expression, source);
             }
         }
-        // A span that is not remapped resolves against the document at
-        // `SourceId(0)`, so a diagnostic would name the wrong file.
         ParsedExpr::Intersection { operands, span } => {
             *span = span.with_source(source);
             for operand in operands {

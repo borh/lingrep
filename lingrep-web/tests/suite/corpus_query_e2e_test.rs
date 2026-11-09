@@ -169,9 +169,6 @@ async fn jsonl_sentence_arrays_reach_a_completed_verb_query() {
     );
 }
 
-/// A scan reads `within=` windows as `ling matches` does: sentences 0 and 1
-/// share a paragraph, sentence 2 ends the first section before its
-/// subsection, and sentences 3 and 4 are each alone in their section.
 #[tokio::test]
 async fn a_scan_reads_document_and_division_lookaround_windows() {
     let dictionary = MiniDictionary::new();

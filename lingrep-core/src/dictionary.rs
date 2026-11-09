@@ -188,9 +188,6 @@ pub fn create_tokenizer_with_identity(
 /// decompression per `.zst`, which the identity memo pays at most once per
 /// file.
 fn digest_from_dictionary_file(dict_path: &str) -> Option<[u8; 32]> {
-    // Restricted to the extension `load_dictionary_data` reads as raw bytes, so
-    // this maps exactly what the stream would have hashed and never guesses at
-    // a path the loader would reject.
     if dict_path.ends_with(".dic") {
         return hash_mapped_file(Path::new(dict_path));
     }
@@ -605,8 +602,6 @@ mod identity_tests {
             "the encoding must not change the identity"
         );
 
-        // A path the loader would reject must not be answered with a digest of
-        // whatever bytes happen to be there.
         let directory = tempfile::tempdir().expect("temporary directory");
         let stray = directory.path().join("dictionary.bin");
         fs::write(&stray, b"not a dictionary").expect("write");

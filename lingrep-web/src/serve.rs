@@ -49,9 +49,6 @@ fn run_with(
     block_on(async move { serve(args, config, signals()).await })
 }
 
-/// Runs `future` to completion on a new multi-thread runtime, then shuts the
-/// runtime down without waiting for blocking tasks still running, which
-/// continue until the process exits.
 fn block_on<F: Future>(future: F) -> F::Output {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -103,14 +100,8 @@ async fn serve(args: &Args, config: Config, signals: watch::Receiver<u32>) -> Re
     Ok(())
 }
 
-/// How long in-flight requests, including open event streams, may run after a
-/// termination signal. It is below systemd's default `TimeoutStopSec` of 90 s,
-/// after which systemd sends SIGKILL.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
-/// Serves `app` until `signals` is at least 1, then stops accepting
-/// connections and returns when in-flight requests have finished, `grace` has
-/// elapsed, or `signals` is at least 2, whichever is first.
 async fn serve_until(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -141,16 +132,12 @@ async fn serve_until(
     }
 }
 
-/// Completes once `signals` is at least `number`; never, if the sender is
-/// dropped first.
 async fn signal_number(signals: &mut watch::Receiver<u32>, number: u32) {
     if signals.wait_for(|&count| count >= number).await.is_err() {
         std::future::pending::<()>().await;
     }
 }
 
-/// A count of the SIGINT and, on Unix, SIGTERM signals received from now on.
-/// Must be called inside a Tokio runtime.
 fn os_signal_count() -> watch::Receiver<u32> {
     let (count, signals) = watch::channel(0_u32);
     #[cfg(unix)]
@@ -210,7 +197,6 @@ pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> 
         );
     }
     let corpus_set = Arc::new(CorpusSet::new(slots));
-    // Other declared corpora start when a request first selects them.
     corpus_set
         .resolve(None)
         .expect("config.validate() guarantees at least one declared corpus")
@@ -263,8 +249,6 @@ mod tests {
         })
     }
 
-    /// Returns a router whose `/slow` answers once `release` fires, and a
-    /// receiver that fires when `/slow` has been entered.
     fn slow_router(release: oneshot::Receiver<()>) -> (Router, oneshot::Receiver<()>) {
         let (entered_tx, entered_rx) = oneshot::channel();
         let slot = std::sync::Mutex::new(Some((entered_tx, release)));
@@ -283,8 +267,6 @@ mod tests {
         (router, entered_rx)
     }
 
-    /// A blocking task the runtime cannot cancel, such as a corpus build, does
-    /// not keep `block_on` from returning.
     #[test]
     fn block_on_returns_while_a_blocking_task_is_still_running() {
         let (returned_tx, returned_rx) = std::sync::mpsc::channel();

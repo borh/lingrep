@@ -93,22 +93,12 @@ pub(crate) struct CatalogSchema {
     entries: HashMap<(CompactString, Option<DefinitionVisibility>), SchemaEntry>,
 }
 
-/// What a catalog's schema says about one key on one definition.
-///
-/// Three cases rather than an `Option` and a flag: "declared for the other
-/// visibility" carries the visibility it *was* declared for, which only the
-/// lookup can determine, and making that a variant removes the impossible fourth
-/// combination rather than asserting against it.
 enum Declaration<'a> {
     Applies(&'a SchemaEntry),
     WrongVisibility(DefinitionVisibility),
     Undeclared,
 }
 
-/// One rejection: a message and the span it belongs on.
-///
-/// Returned rather than built into a diagnostic here so the lowerer keeps sole
-/// ownership of its source label and its line index.
 pub(crate) struct SchemaViolation {
     pub(crate) span: SourceSpan,
     pub(crate) message: String,
@@ -301,14 +291,6 @@ mod tests {
         .to_string()
     }
 
-    /// The byte range the rejection points at.
-    ///
-    /// Every schema diagnostic asserts through this as well as through
-    /// `refuse`. Prose is not a span: a message can name the right key while
-    /// the reported range still covers the whole definition. Return the range
-    /// rather than the slice
-    /// because several cases need *which* occurrence of a repeated key was
-    /// reported, not just its text.
     fn refuse_range(source: &str) -> std::ops::Range<usize> {
         lower_document(
             &PatternSource::named("t.lx", source),

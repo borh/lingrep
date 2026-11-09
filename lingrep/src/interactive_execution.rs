@@ -177,10 +177,6 @@ impl InteractiveExecution {
         // UniDic dictionary, so one schema is a constant here and binds both
         // the catalog and prepared-token projection.
         let schema = lingrep_core::token_match::TokenSchema::unidic_morphology();
-        // No unavailable-attribute notices here: the TUI owns the terminal,
-        // and this surface's schema is that one constant anyway. A binding
-        // error (dependency `where` clauses on a morphology schema) is still
-        // returned.
         let bound = matcher
             .bind_with_projection(&schema, matcher.execution_attributes())
             .map_err(|error| {
@@ -213,8 +209,6 @@ impl InteractiveExecution {
         .map_err(CliError::from)
     }
 
-    /// Opens the input and records each sentence's innermost division of each
-    /// of `division_kinds`.
     fn open_source(
         &self,
         division_kinds: Vec<compact_str::CompactString>,
@@ -357,7 +351,6 @@ mod tests {
         assert!(Arc::ptr_eq(first_tokenizer, second_tokenizer));
     }
 
-    /// The matches of each pattern, as `(pattern, document_sentence_ordinal)`.
     #[derive(Default)]
     struct Recorded(Vec<(String, u64)>);
 

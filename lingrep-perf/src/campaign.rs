@@ -1,14 +1,4 @@
-//! The campaign manifest, its refusals, and the verdict algebra.
-//!
-//! Pure: a campaign is a value, adjudication is a function of it plus the
-//! catalog set, and nothing here reads a clock, a file, or `lingrep-core`. That is
-//! what lets every rejection and every verdict be tested on a synthetic campaign
-//! rather than on a measurement that takes twenty minutes to produce.
-//!
-//! The shape of this module is set by one rule: **an invalid campaign must
-//! fail loudly rather than produce a confident wrong answer.** Rejections are
-//! therefore checked before any arithmetic runs, and they are a distinct
-//! outcome from every verdict.
+//! Validates campaign manifests and computes verdicts from recorded observations.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -290,11 +280,7 @@ impl TemplateArg {
     /// The spelling `declare` accepts for a per-catalog prepared corpus.
     pub const CORPUS_HOLE: &'static str = "{corpus}";
 
-    /// Parse one token of a declared template.
-    ///
-    /// A token that looks like a hole and names none is an error rather than a
-    /// literal, because `{catlog}` would otherwise seal a command no run can
-    /// ever match and the campaign would reject every block.
+    /// Parses a template argument, rejecting unknown placeholder names.
     pub fn parse(token: &str) -> Result<Self, String> {
         if token == Self::CATALOG_HOLE {
             return Ok(Self::Catalog);
@@ -966,14 +952,7 @@ pub fn required_coverage(manifest: &Manifest, catalog: &CampaignCatalog) -> Cove
     }
 }
 
-/// How many runs the block at `index` holds for this catalog.
-///
-/// A catalog whose tier coverage is a screen pair has a **two-run screen at
-/// block 0 and four-run blocks from 1 on**, because escalation *promotes* it
-/// rather than reinterpreting what it already measured. Treating the width as
-/// a property of the catalog instead of the block made promotion impossible to
-/// complete: the shell wrote four runs while this counted two, and the third
-/// run of a promoted block was rejected as out of sequence.
+/// Returns two runs for block zero of a screen-pair catalog, and four for every other block.
 #[must_use]
 pub fn block_width(manifest: &Manifest, catalog: &str, index: usize) -> usize {
     let screened = manifest
@@ -1096,27 +1075,7 @@ pub enum Verdict {
     NotDecisive,
 }
 
-/// A catalog whose wall clock did not move while its user time did.
-///
-/// This is the signature of work paced by something outside the measured
-/// process: the change removed CPU work — `user`'s interval excludes parity —
-/// and the wall clock did not notice, its interval still admitting parity. A
-/// digest consumer that cannot keep up with the output, a disk that cannot
-/// absorb it, or any other external rate limiter produces exactly this shape,
-/// because a limiter applies equally to both arms.
-///
-/// It is a **diagnostic, never a verdict**. The observations are valid and the
-/// arms really did take that long; what the flag says is that this catalog's
-/// `wall` is reporting the limiter rather than the change, so reading it as
-/// "neutral" is a mistake. In one recorded case a `--stream-output`
-/// campaign put four catalogs at `wall` 0.99-1.01 while their `user` sat
-/// between 0.67 and 0.89; re-run without streaming, the same catalogs moved to
-/// 0.65-0.97.
-///
-/// Threshold-free: evaluates only whether the two intervals
-/// disagree about parity, so it needs no calibrated bytes-per-second and it
-/// catches pacing this tool does not model — an un-streamed campaign
-/// whose catalog is bound by writing its own output flags identically.
+/// A diagnostic for a catalog whose user-time interval excludes parity while its wall-time interval includes parity; it does not change the verdict.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternallyPaced {
     pub catalog: String,

@@ -1,4 +1,3 @@
-// Exempt test/bench/example code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(
     clippy::string_slice,
     clippy::panic,
@@ -10,8 +9,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! The frequency view in a browser, served under a subpath from a count
-//! table over a prepared fixture.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -32,7 +29,6 @@ mod support;
 
 const CATALOG: &str = "pattern noun := [upos=NOUN].\npattern verb := [upos=VERB].\n";
 
-/// Records every response status of 400 or more.
 async fn record_errors(
     statuses: Arc<Mutex<Vec<String>>>,
     request: Request,
@@ -57,8 +53,6 @@ fn number(value: u32) -> MetadataValue {
     MetadataValue::Scalar(MetadataScalar::Number(value.to_string()))
 }
 
-/// Six documents whose two long keys share every unit but the last, so a
-/// narrow sentence shortens their labels.
 fn metadata() -> Vec<Metadata> {
     let rows = [
         ("novel", "Tokyo", "Chiyoda", 1950),
@@ -84,7 +78,6 @@ fn metadata() -> Vec<Metadata> {
         .collect()
 }
 
-/// A table over `artifact` that counts, per document, two nouns and one verb.
 fn write_table(artifact: &std::path::Path, destination: &std::path::Path) {
     let opened = lingrep_corpus::CorpusArtifact::open(artifact).unwrap();
     let key = CountTableKey {
@@ -140,7 +133,6 @@ async fn wait_for(driver: &WebDriver, script: &str, what: &str) -> WebDriverResu
     Err(WebDriverError::Timeout(format!("waiting for {what}")))
 }
 
-/// Loads `url` as a fresh document and waits until the view settles.
 async fn open(driver: &WebDriver, url: &str, settled: &str) -> WebDriverResult<()> {
     driver.goto("about:blank").await?;
     driver.goto(url).await?;
@@ -151,7 +143,6 @@ async fn open(driver: &WebDriver, url: &str, settled: &str) -> WebDriverResult<(
 const ROWS: &str = "return document.querySelectorAll('table.freq tbody tr').length > 0";
 const STATE: &str = "return document.querySelector('[data-fq-state]').textContent.trim() || null";
 
-/// Fails on any console error or uncaught exception the page recorded.
 async fn assert_no_page_errors(driver: &WebDriver) -> WebDriverResult<()> {
     let errors = driver
         .execute("return window.__pageErrors || []", Vec::new())
@@ -162,7 +153,6 @@ async fn assert_no_page_errors(driver: &WebDriver) -> WebDriverResult<()> {
     Ok(())
 }
 
-/// The visible role labels: their full names, shown texts and shares.
 const LABELS: &str = r"
 return [...document.querySelectorAll('[data-fq-sentence] .blank > .role')].map((role) => {
   const nm = role.querySelector('.nm'), n = role.querySelector('.n');
@@ -176,7 +166,6 @@ return [...document.querySelectorAll('[data-fq-sentence] .blank > .role')].map((
   };
 });";
 
-/// Each condition's key and the full name its role shows.
 const NAMES: &str = r"
 return Object.fromEntries([...document.querySelectorAll('[data-fq-sentence] .blank')]
   .filter((blank) => blank.querySelector('.pick'))
@@ -230,8 +219,6 @@ fn assert_label_invariants(labels: &Value) {
     }
 }
 
-/// The driver at `LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL`, or `None` when it is
-/// unavailable and not required.
 async fn driver() -> WebDriverResult<Option<WebDriver>> {
     let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
@@ -267,11 +254,8 @@ async fn driver() -> WebDriverResult<Option<WebDriver>> {
     Ok(Some(driver))
 }
 
-/// A server for the fixture under `/sub` with `extra` arguments.
 struct Served {
-    /// The frequency page's address.
     base: String,
-    /// Every response of 400 or more.
     statuses: Arc<Mutex<Vec<String>>>,
     server: tokio::task::JoinHandle<()>,
     _artifact: support::ArtifactFixture,
@@ -336,7 +320,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     let served = serve(&[]).await;
     let base = served.base.clone();
 
-    // A bare address gets the first pair and pattern and is not rewritten.
     open(&driver, &base, ROWS).await?;
     let bare = driver
         .execute(
@@ -352,7 +335,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     );
     assert_no_page_errors(&driver).await?;
 
-    // Stating conditions through the blanks records them in the address.
     for key in [
         "genre",
         "author_birth_place_prefecture",
@@ -419,7 +401,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         .await?
         .json()
         .clone();
-    // Without a label file each condition is named by its key.
     assert_eq!(
         driver.execute(NAMES, Vec::new()).await?.json(),
         &json!({
@@ -429,7 +410,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         })
     );
 
-    // Loading the address reproduces the view and leaves the address alone.
     open(
         &driver,
         &stated,
@@ -444,8 +424,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     assert_eq!(reloaded, json!({"href": stated, "sentence": sentence}));
     assert_label_invariants(&driver.execute(LABELS, Vec::new()).await?.json().clone());
 
-    // In a narrow window the long labels shorten, stay distinct and keep
-    // their shares whole.
     driver.set_window_rect(0, 0, 420, 900).await?;
     let labels = wait_for(
         &driver,
@@ -456,8 +434,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     assert_label_invariants(&labels);
     driver.set_window_rect(0, 0, 1280, 900).await?;
 
-    // Whatever width the sentence has, no shortened form of one label is a
-    // form of a sibling, so the labels it can show stay distinct.
     let shared = driver
         .execute_async(
             "const done = arguments[arguments.length - 1];\
@@ -475,7 +451,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     assert_eq!(shared, json!([]));
     assert_no_page_errors(&driver).await?;
 
-    // No document meets the conditions: an empty state, not an error.
     let empty = format!(
         "{base}#{}",
         "w=%7B%22year%22%3A%7B%22m%22%3A%22range%22%2C%22lo%22%3A3000%7D%7D"
@@ -503,7 +478,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         &json!(empty)
     );
 
-    // An @section clause, even from an address, is unsupported here.
     open(
         &driver,
         &format!("{base}#where=%40section%20%3D%20abstract"),
@@ -519,7 +493,6 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         "{state}"
     );
 
-    // A catalog with no table explains the missing table and keeps the address.
     let missing = format!("{base}#corpus=default&catalog=other.lx&pattern=noun");
     open(&driver, &missing, STATE).await?;
     let state = driver.execute(STATE, Vec::new()).await?.json().clone();
@@ -557,8 +530,6 @@ const LABEL_FILE: &str = r#"{
   }
 }"#;
 
-/// What the page shows of a query: the condition names, the sentence, the
-/// add menu, the command and the address.
 const SHOWN: &str = r"
 const names = (() => { NAMES })();
 document.querySelector('button.add').click();
@@ -604,7 +575,6 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
     .await?;
     let japanese = driver.execute(&script, Vec::new()).await?.json().clone();
 
-    // The labels name the conditions; a key without a label is named by the key.
     assert_eq!(
         english["names"],
         json!({"genre": "form", "year": "year of publication"})
@@ -638,7 +608,6 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
         japanese_sentence.contains("形式が") && japanese_sentence.contains("刊行年が"),
         "{japanese_sentence}"
     );
-    // A stated condition ends its phrase with の before 文書.
     assert!(
         japanese_sentence.contains("1960以上の文書における"),
         "{japanese_sentence}"
@@ -647,7 +616,6 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
         assert!(!sentence.contains("genre"), "{sentence}");
     }
 
-    // The command and the address keep the keys, in either language.
     let command = english["command"].as_str().unwrap();
     assert!(
         command.contains(r#"--where '@document.genre = "novel" & @document.year >= 1960'"#),
@@ -657,8 +625,6 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
     assert_eq!(english["href"], json!(url));
     assert_eq!(japanese["href"], json!(url));
 
-    // A value picked from the popover with labels loaded is written under the
-    // key. The key has only an English label, so the Japanese role shows it raw.
     driver.find(By::Css("button.add")).await?.click().await?;
     driver
         .find(By::Css("[data-add='author_birth_place_city']"))
@@ -699,7 +665,6 @@ async fn frequency_view_names_keys_by_their_labels_in_english_and_japanese() -> 
         "author_birth_place_city"
     );
 
-    // Back in English, a label holding markup characters is shown as text.
     driver
         .find(By::Css("[data-locale-toggle]"))
         .await?

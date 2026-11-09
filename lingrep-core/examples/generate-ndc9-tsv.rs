@@ -1,13 +1,5 @@
-//! One-way regeneration of `src/corpus/bccwj/data/ndc9.tsv` from the NDC9
-//! Linked Data map (`ndc9.edn.xz` in the `corpus-utils` checkout).
+//! Regenerates the NDC9 table from `corpus-utils/data/ndc9.edn.xz`.
 //!
-//! The table is NDL/JLA's NDC9 classification scheme — not BCCWJ text — and is
-//! checked in so the reader has no runtime data dependency. The generator is
-//! the validation: on any malformed input it exits with an error before
-//! writing, and on success it prints the provenance numbers recorded beside this example in
-//! `lingrep-core/src/corpus/bccwj/mod.rs`.
-//!
-//! Usage:
 //! ```text
 //! xz -dc /path/to/corpus-utils/data/ndc9.edn.xz \
 //!   | cargo run -p lingrep-core --example generate-ndc9-tsv -- - OUT.tsv
@@ -100,10 +92,6 @@ fn utf8_len(lead: u8) -> Option<usize> {
     }
 }
 
-/// Parses the strict EDN subset the NDC9 map uses: a flat map of
-/// double-quoted strings to vectors of one or more double-quoted strings.
-/// Anything else returns `Err`, not a warning. The returned map is
-/// sorted by notation, which fixes the TSV row order.
 fn parse_edn_map(text: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
     let mut cursor = Scanner {
         text: text.as_bytes(),

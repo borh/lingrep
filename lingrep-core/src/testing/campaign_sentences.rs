@@ -46,14 +46,7 @@ const NATSUME: &str = include_str!("../../tests/fixtures/r7_natsume_tokens.jsonl
 const ASPECT: &str = include_str!("../../tests/fixtures/r7_aspect_tokens.jsonl");
 const SYNTHETIC: &str = include_str!("../../tests/corpus/synthetic.jsonl");
 
-/// Every sentence a whole-catalog run over `matcher` should see, in a fixed
-/// order: the catalog's own `examples:` first, then the committed fixtures.
-///
-/// The order is stable so a snapshot or a delta keyed on the label does not
-/// churn. Panics if the fixture loader reads a different number of sentences
-/// than [`COMMITTED_FIXTURE_SENTENCES`] records — asserted exactly rather than
-/// as a floor, because a loader that stops finding half its input without an
-/// error would otherwise narrow every consumer's coverage in silence.
+/// Returns catalog examples followed by committed fixtures in stable order; panics if the fixture count differs from [`COMMITTED_FIXTURE_SENTENCES`].
 pub fn baseline_sentences(matcher: &CompiledCatalog) -> Vec<LabelledSentence> {
     let mut sentences = Vec::new();
     for (definition, pattern) in matcher.patterns() {

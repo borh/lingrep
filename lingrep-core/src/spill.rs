@@ -11,7 +11,6 @@ use tempfile::{NamedTempFile, TempDir};
 
 use crate::execution::CancellationFlag;
 
-/// Records a run merge copies between checks of its cancellation flag.
 const MERGE_CANCELLATION_INTERVAL: u64 = 1 << 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1002,11 +1001,6 @@ where
     }
 
     pub fn add(&mut self, key: K, count: usize) -> io::Result<()> {
-        // A byte-capped policy must compute what a new key will cost *before* it
-        // decides whether to flush, and the only honest answer is to serialize
-        // it — one encode per distinct key. An uncapped policy cannot act on
-        // that number, so it does not pay for it, and one `entry` lookup then
-        // replaces the `contains_key`/`entry` pair.
         if self.policy.max_pending_bytes == usize::MAX {
             return self.add_key_bounded(key, count);
         }

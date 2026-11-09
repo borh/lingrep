@@ -126,7 +126,6 @@
                 # offline cache; filterCargoSources drops it, breaking any
                 # hermetic build of lingrep-web.
                 isSqlxCache = lib.hasPrefix "${toString ./.sqlx}/" (toString path);
-                # The packages install the display-label files for `--metadata-labels`.
                 isWebLabels = lib.hasPrefix "${toString ./lingrep-web/labels}/" (toString path);
                 isDictionaryLicense = lib.hasPrefix "${toString ./nix/dictionary-licenses}/" (toString path);
                 # `ling analyzer` include_str!s the hash-locked adapter runtime
@@ -183,7 +182,6 @@
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          # Both packages serve lingrep-web, so both carry its label files.
           installWebLabels = ''
             mkdir -p "$out/share/lingrep-web/labels"
             cp lingrep-web/labels/*.json "$out/share/lingrep-web/labels/"
@@ -835,9 +833,6 @@
                   };
                 });
 
-            # lingrep-web has neither shell completions nor manpages, so the package
-            # body is the binary, built with the same source filter that keeps
-            # the .sqlx cache and web assets hermetic, and the label files.
             lingrep-web =
               (mkLingrepPackage {
                 cargoExtraArgs = "--package lingrep-web";

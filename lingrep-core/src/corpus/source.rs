@@ -154,15 +154,10 @@ impl CorpusFormat {
     }
 }
 
-/// The resolved reader configuration for a source: which format to read, and —
-/// for Markdown — how to read it. Configuration only; a reusable value can
-/// stream many sources without carrying observed state between them.
+/// Resolved source-reader configuration; reusable across sources without retaining observations.
 ///
-/// Two members are not [`InputFormat`]s. `Bccwj` is a distribution root rather
-/// than a file, and `Soranoha` is one archive whose reader needs a seekable
-/// handle rather than a `BufRead`. File-only consumers reject both. A future
-/// split of this enum should follow the handle each reader needs: only BCCWJ
-/// is "not a file", so a file/distribution split would not separate the two.
+/// `Bccwj` requires a distribution root; `Soranoha` requires a seekable archive,
+/// and file-only consumers reject both.
 #[derive(Debug, Clone)]
 pub enum CorpusReadConfig {
     Plain,

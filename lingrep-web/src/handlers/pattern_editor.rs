@@ -211,11 +211,6 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str) {
         DiagnosticCode::UnusedFragment => ("lint", "A fragment is never referenced."),
         DiagnosticCode::UnusedSet => ("lint", "A set is never referenced."),
         DiagnosticCode::UnusedTest => ("lint", "A test is never referenced."),
-        // A syntax error, and its own arm rather than falling through to
-        // `Syntax`, because the specific message is the whole value of the
-        // code: it names the two recoveries. This was a lint while the
-        // compiler accepted the document and only warned that the value it
-        // built was almost certainly not the one written.
         DiagnosticCode::PipeInBareValue => (
             "syntax",
             "An unquoted value contains `|`, which does not \

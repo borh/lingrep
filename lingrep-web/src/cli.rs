@@ -161,7 +161,7 @@ pub struct Args {
     /// JSON file of display labels for document-metadata keys, by locale,
     /// shown in the frequency view in place of key names. Repeatable. Clauses,
     /// commands and addresses keep the keys. A file that cannot be read or is
-    /// not a label file, or that labels a key another file labels, stops
+    /// invalid, or that labels a key also labelled by another file, stops
     /// startup.
     #[arg(long = "metadata-labels", value_name = "PATH")]
     pub metadata_labels: Vec<PathBuf>,

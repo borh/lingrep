@@ -266,7 +266,6 @@ fn a_test_may_not_share_a_name_with_a_set_or_a_definition() {
     }
 }
 
-/// A test reference cycle is rejected rather than expanded forever.
 #[test]
 fn a_test_reference_cycle_is_refused() {
     for source in [
@@ -304,18 +303,6 @@ fn a_reference_of_the_wrong_kind_inside_brackets_names_the_kind_it_found() {
     }
 }
 
-/// `|` does not terminate the grammar's bare `value` token, though `&` does.
-///
-/// So `[text=a|text=b]` — the exact analogue of the unspaced `[text=a&unidic.pos1=N]`
-/// that means what it looks like — is **one atom** whose value is the literal
-/// `a|text=b`. It compiles, matches nothing, and emits no diagnostic, which is
-/// indistinguishable from the phenomenon being absent from the corpus. This is
-/// new: before Boolean token tests, that spelling had one possible reading.
-///
-/// Rejected rather than warned about, because a warning leaves the misreading
-/// in the compiled catalog: the run still produces a matcher, the matcher
-/// still matches nothing, and a warning on stderr is the only thing standing
-/// between the author and a silently empty result set.
 #[test]
 fn an_unspaced_pipe_is_refused() {
     let error = compile_single_err("t := [text=a|text=b].");
@@ -323,9 +310,6 @@ fn an_unspaced_pipe_is_refused() {
         refuses_with(&error, DiagnosticCode::PipeInBareValue),
         "the unspaced spelling must be refused, got {error}"
     );
-    // Both recoveries, because which one is right depends on what was meant
-    // and the compiler cannot determine it: the escape if the pipe belongs to
-    // the literal, the spacing if a disjunction does.
     let message = error.to_string();
     assert!(
         message.contains("a|text=b"),
@@ -341,11 +325,6 @@ fn an_unspaced_pipe_is_refused() {
     );
 }
 
-/// And the spelling the author meant still means it.
-///
-/// The point of rejecting the unspaced form is that the spaced one is a
-/// disjunction, so a test that only asserted the rejection would leave the half
-/// that matters unpinned.
 #[test]
 fn the_spaced_disjunction_is_the_one_the_author_meant() {
     let corpus = corpus();
@@ -358,13 +337,6 @@ fn the_spaced_disjunction_is_the_one_the_author_meant() {
     assert!(!spaced.is_empty(), "the fixture must discriminate the two");
 }
 
-/// The spellings that must stay accepted: a correctly spaced disjunction has
-/// no bare value containing `|` at all, and a regex operand's `|` is
-/// alternation doing exactly its job.
-///
-/// The second is why the check lives past the regex fork in
-/// `lower_leaf_value`: `[text~/a|b/]` is the ordinary way to write this, and
-/// rejecting it would be a real loss rather than a disambiguation.
 #[test]
 fn a_spaced_disjunction_and_a_regex_alternation_still_compile() {
     for source in [
@@ -421,11 +393,6 @@ fn no_tracked_catalog_contains_a_bare_value_with_a_pipe() {
     }
 }
 
-/// The escape is the recovery the error names, so it has to work.
-///
-/// `|` decodes after tokenization, which is what lets a literal pipe
-/// survive a rule that rejects a raw one — the same mechanism `[text=a.b]`
-/// relies on for `.`.
 #[test]
 fn the_escaped_pipe_recovery_compiles_and_decodes() {
     let corpus = [token_with(&[(TokenAttributeIndex::Orth, "a|b")])];
@@ -437,15 +404,6 @@ fn the_escaped_pipe_recovery_compiles_and_decodes() {
     );
 }
 
-/// Metadata quotes every value and a token test quotes none, so the one
-/// convention carried across that boundary produces a literal with the quotes
-/// in it.
-///
-/// `[text="の"]` compiles clean and matches nothing — the
-/// [`DiagnosticCode::PipeInBareValue`] failure mode reached from the other
-/// direction. Measured on a 600-sentence GiNZA CoNLL-U corpus before the
-/// rejection existed: `[text="の"]` published 0 records where `[text=の]`
-/// published 841, and neither spelling warned.
 #[test]
 fn a_quoted_token_test_value_is_refused() {
     let error = compile_single_err("t := [text=\"の\"].");
@@ -496,8 +454,6 @@ fn every_unquoted_literal_position_refuses_a_quoted_value() {
     }
 }
 
-/// The rejection is about a value wrapped in quotes, not about a quote
-/// character, and the recovery the error names has to work.
 #[test]
 fn the_quote_escape_recovery_and_an_interior_quote_still_compile() {
     let corpus = [token_with(&[(TokenAttributeIndex::Orth, "\"x\"")])];
@@ -580,26 +536,6 @@ fn an_over_wide_token_test_is_refused_with_its_branch_count() {
     assert!(refuses_with(&error, DiagnosticCode::TokenTestTooComplex));
 }
 
-/// A `test` that names another test twice doubles the *resolved tree* at every
-/// level, so an eleven-deep chain expands past any fixed budget from four lines
-/// of source. That expansion is bounded at substitution, not at distribution.
-///
-/// The branch budget cannot catch it: the chain is a pure conjunction, so it
-/// distributes to exactly **one** branch however deep it goes, and the branch
-/// budget (`DiagnosticCode::TokenTestTooComplex`) is never approached. Only
-/// the node budget (`DiagnosticCode::TokenTestExpansionTooLarge`) stands
-/// between this and an exponential compile — its own code, distinct from the
-/// branch budget's, so the assertion below is on the code alone.
-///
-/// Both directions are checked. A budget that simply rejected every chain would
-/// satisfy the first assertion alone while making named tests unusable.
-/// `test t0 := text=a.` followed by `test tN := @t(N-1) & @t(N-1).`, and a
-/// pattern naming the deepest one `references` times.
-///
-/// Level `n` resolves to `2^(n+1) - 1` nodes, and every reference to it pays
-/// that expansion again — which is the whole point of
-/// `a_catalog_amplifying_a_deep_chain_across_many_tokens_is_refused_promptly`
-/// below.
 fn doubling_chain_with(levels: usize, references: usize) -> String {
     let mut source = String::from("test t0 := text=a.\n");
     for level in 1..levels {
@@ -638,20 +574,6 @@ fn a_test_reference_chain_that_doubles_at_each_level_is_refused() {
     );
 }
 
-/// The per-test node budget bounds one `[…]`. It cannot bound a *catalog*: a
-/// chain that fits inside it, named by thirty thousand tokens, pays its whole
-/// expansion thirty thousand times, and a budget rebuilt per token test sees
-/// only each payment.
-///
-/// This is the compile-work amplification guarded for `set` members: a
-/// budget charged after the work rather than during it — reintroduced by
-/// inlining `test` bodies. So this asserts the wall clock as well as the code:
-/// a rejection that arrives after the exponential work has already been done is
-/// not the property under test, and only elapsed time can tell the two apart.
-///
-/// Ten levels is 1,023 resolved nodes, comfortably inside the 4,096 per-test
-/// budget, so the per-test check alone would admit every one of the thirty
-/// thousand copies.
 #[test]
 fn a_catalog_amplifying_a_deep_chain_across_many_tokens_is_refused_promptly() {
     let source = doubling_chain_with(10, 30_000);
@@ -671,8 +593,6 @@ fn a_catalog_amplifying_a_deep_chain_across_many_tokens_is_refused_promptly() {
         elapsed < std::time::Duration::from_secs(15),
         "refusal must not wait for the full expansion; took {elapsed:?}"
     );
-    // One report, not one per remaining token: an exhausted document budget
-    // rejects every `[…]` that follows it.
     assert_eq!(
         error
             .diagnostics

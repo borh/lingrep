@@ -613,7 +613,7 @@ pub struct SummarizeArgs {
 
     /// Count each group per admitted document, as --by-document does, and
     /// write the counts to a new count table at PATH instead of publishing
-    /// summary records (requires --corpus). `ling table` reads it.
+    /// summary records (requires --corpus or --cache). `ling table` reads it.
     #[arg(
         long,
         value_name = "PATH",
@@ -664,16 +664,16 @@ pub struct TableArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
 
-    /// The prepared corpus the table was written from; its metadata answers --where.
+    /// The prepared corpus used to write the table; --where filters its metadata.
     #[arg(long, value_name = "ARTIFACT", help_heading = "Input")]
     pub corpus: PathBuf,
 
-    /// Count only documents this clause admits. Only document metadata
+    /// Count only documents that match this clause. Only document metadata
     /// conditions apply: the table holds counts per document.
     #[arg(long = "where", value_name = "CLAUSE", help_heading = "Selection")]
     pub clause: Option<String>,
 
-    /// Show N groups per pattern (text default: 20); `all` shows every group.
+    /// Show N groups per pattern; `all` shows every group.
     ///
     /// Default: 20 in terminal output, unlimited with --json.
     #[arg(long, value_name = "N|all", help_heading = "Output")]

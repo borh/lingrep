@@ -509,11 +509,6 @@ fn opposite_edge_detaches_carry_the_cumulative_obligation() {
     assert!(message.contains("empty"), "{message}");
 }
 
-/// Two detaches on opposite edges that provably cannot meet.
-///
-/// The obligation is a width proof, not a ban: five tokens minus one at each
-/// edge still leaves three. Without this, "reject every opposite-edge pair"
-/// would pass the test above and nothing would notice.
 #[test]
 fn opposite_edge_detaches_that_cannot_meet_are_admitted() {
     let output = compile(
@@ -555,12 +550,6 @@ fn opposite_edge_obligations_are_found_across_different_subject_spellings() {
     assert!(message.contains("empty"), "{message}");
 }
 
-/// Two detaches on the *same* edge remove the wider region, not both.
-///
-/// A public span narrows monotonically, so a second `at_start` can only push
-/// the start where the first already could — or further, never cumulatively.
-/// Summing them instead rejects this catalog, which cannot empty: the widest
-/// head is two tokens, the tail one, and the record is five.
 #[test]
 fn two_detaches_on_one_edge_do_not_accumulate() {
     let output = compile(
@@ -575,11 +564,6 @@ fn two_detaches_on_one_edge_do_not_accumulate() {
     assert_eq!(output.matcher.catalog_policy().program().ops.len(), 3);
 }
 
-/// Operands that meet exactly are rejected: the span they leave is empty.
-///
-/// The boundary the proof turns on. One token less on either side and the
-/// record survives with a token to spare, which
-/// `opposite_edge_detaches_that_cannot_meet_are_admitted` pins.
 #[test]
 fn operands_that_exactly_consume_the_record_are_refused() {
     let message = refusal(
@@ -636,13 +620,6 @@ fragment N := [text=ぬ].
 "#;
 
 proptest::proptest! {
-    /// §8: every statement over the real vocabularies either lowers to one
-    /// well-formed operation or is rejected with a diagnostic.
-    ///
-    /// Never a third outcome. A panic here is the failure mode the whole
-    /// declaration tier exists to remove: a catalog that says something the
-    /// compiler cannot name is an authoring mistake, and an authoring mistake
-    /// that aborts the process is indistinguishable from a compiler defect.
     #[test]
     fn every_generated_statement_lowers_or_is_refused(
         verb in proptest::sample::select(VERBS),
@@ -693,11 +670,6 @@ fn warns_inert(source: &str) -> bool {
         .any(|message| message.contains("can never affect a record"))
 }
 
-/// The case the design named: a group that has members and selects none.
-///
-/// The reference resolves, so no check rejects it, and the statement runs on
-/// every sentence over an empty set. This is the one shape an author cannot
-/// distinguish from a working one by reading the catalog.
 #[test]
 fn a_group_holding_only_fragments_selects_nothing_and_warns() {
     let source = "groups: [\"helpers\"]\nfragment ONE := [text=あ].\n\
@@ -739,7 +711,6 @@ fn all_warns_when_the_catalog_declares_no_publishable_pattern() {
     assert!(warns_inert(source), "got {:?}", warnings(source));
 }
 
-/// A warning, never an error: the engine executes the statement as written.
 #[test]
 fn an_inert_statement_still_compiles_and_still_lowers() {
     let output = compile(
@@ -749,7 +720,6 @@ fn an_inert_statement_still_compiles_and_still_lowers() {
     assert_eq!(output.matcher.catalog_policy().program().ops.len(), 1);
 }
 
-/// Diagnostics from a catalog expected to fail compilation.
 fn refusals(source: &str) -> Vec<String> {
     match compile_catalog(
         PatternSource::named("t.lx", source),

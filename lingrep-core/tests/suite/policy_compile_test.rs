@@ -10,14 +10,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! Compile-time acceptance for declared result policy.
-//!
-//! Policy is read off metadata at compile time and stored on the compiled
-//! matcher. What this pins is the compiler's half of that contract: what is
-//! accepted, what is rejected, what is merely warned about, what a declaration
-//! leaves behind on the compiled matcher — including the attribute projection a
-//! declared anchor widens — and, the part with teeth, that a catalog declaring
-//! no policy is completely unaffected.
 
 use crate::policy_helpers::{
     PUNCT_ANCHOR, catalog_policy_for, compile_errors, compile_warnings, matcher_for,
@@ -77,11 +69,6 @@ fn a_policy_value_diagnostic_points_at_its_own_key() {
     );
 }
 
-/// The complement, so a rewire to "always the key" fails a test.
-///
-/// A fragment declaring result policy is a defect of the *definition* — the
-/// policy keys on it are each individually fine — so it keeps the definition's
-/// span. Provenance decides the span, not file membership.
 #[test]
 fn a_whole_definition_defect_still_points_at_the_definition() {
     const SOURCE: &str = "output_name: \"published\"\nfragment f := [text=a].\n";
@@ -206,12 +193,6 @@ fn the_synthesis_namespace_is_not_authorable() {
 
 #[test]
 fn a_fragment_reference_synthesizes_an_emitter_that_matches_but_is_not_published() {
-    // The three parts of the hidden-emitter contract only mean something
-    // together: the fragment's matches must exist (the
-    // engine needs them as evidence for a `detach`), the synthesized
-    // definition must NOT appear in the public catalog (no researcher wrote
-    // it), and it must be recorded in `hidden` (the publication seam reads it
-    // to decide what to strip).
     let output = compile(
         r#"
 fragment citation := [text=引用].
@@ -698,20 +679,6 @@ fn only_the_cross_layer_resolve_ranks_by_priority_order() {
     );
 }
 
-/// Every emitting pattern carries the layer rank the cross-layer `resolve`
-/// reads.
-///
-/// A missing `priority_order:` is **not** a compile error — the key is optional
-/// and `PatternPolicy::priority_order_or_default` answers `0`. So a pattern the
-/// bulk edit skipped would silently rank as `0`, which is `S3`, the outermost
-/// layer, and would win cross-layer contests it should lose. Nothing else in
-/// the workspace would notice: the catalog compiles, the program runs, and the
-/// only symptom is a wrong research result with no diagnostic.
-///
-/// Asserted as a count per rank rather than as "all 86 are present", because
-/// the two failure modes are different. A skipped pattern and a
-/// mis-transcribed layer both leave 86 patterns carrying the key; only the
-/// distribution tells them apart.
 #[test]
 fn every_sf_experimental_pattern_declares_its_layer_rank() {
     let policy = sf_experimental_policy();
@@ -833,7 +800,6 @@ fn an_empty_groups_list_is_rejected() {
     );
 }
 
-/// A non-string element is rejected with the shape, not with a cast failure.
 #[test]
 fn a_groups_list_of_non_strings_is_refused() {
     let diagnostics = compile_errors("groups: [1]\np := [upos=NOUN].\n");
@@ -875,7 +841,6 @@ fn a_group_name_that_cannot_be_written_as_a_reference_is_refused() {
     }
 }
 
-/// The complement, so a rule that rejects everything fails a test.
 #[test]
 fn a_group_name_the_grammar_accepts_is_admitted() {
     for name in ["g", "g1", "_g", "aB_9", "ようだ"] {
@@ -888,11 +853,6 @@ fn a_group_name_the_grammar_accepts_is_admitted() {
     }
 }
 
-/// A repeated name is rejected rather than deduplicated.
-///
-/// Deduplicating would make `["g", "g"]` and `["g"]` the same declaration, so a
-/// catalog could carry a duplicate for years with nothing saying so. The author
-/// meant one of them; which is not the compiler's guess to make.
 #[test]
 fn a_repeated_group_name_is_refused() {
     let diagnostics = compile_errors("groups: [\"g\", \"g\"]\np := [upos=NOUN].\n");
@@ -904,17 +864,6 @@ fn a_repeated_group_name_is_refused() {
     );
 }
 
-// --- Transform vocabulary ----------------------------------------------------
-//
-// What extraction *accepts* is pinned end-to-end in `policy_transform_test.rs`,
-// which drives authored metadata through to a published record. What is pinned
-// here is what it **rejects**, because a rejection has no other observable
-// consequence: an unusable declaration that compiles is a researcher writing a
-// rule that silently does nothing, which is the failure this whole tier exists
-// to close.
-
-/// The message of the first fatal diagnostic, for asserting that a rejection
-/// tells the author what to write instead.
 fn refusal(text: &str, why: &str) -> String {
     let error = compile_err(text, why);
     match error
@@ -1114,21 +1063,12 @@ fn an_admit_mapping_is_closed_and_refuses_extra_fields() {
 
 #[test]
 fn an_admit_mapping_requires_exactly_one_distance() {
-    // Each case pairs its input with a fragment of the rejection message it
-    // must draw. The code alone would not distinguish these from being
-    // rejected by the closed-field check, which would leave the distance rule
-    // untested.
     for (value, expected) in [
         ("{anchor: propositional_end}", "declares a distance"),
         (
             "{exact: true, within: 5, anchor: propositional_end}",
             "not both",
         ),
-        // `exact: false` earns its own sentence rather than the generic one:
-        // seeing `false` echoed back beside a demand for `true` leaves the
-        // author unable to tell whether it is a typo or unsupported. It names
-        // the *whole statement* as the thing to delete, because deleting only
-        // `exact: false` leaves `{anchor: …}`, which draws the rejection above.
         (
             "{exact: false, anchor: propositional_end}",
             "delete the whole `admit` statement",
@@ -1206,9 +1146,6 @@ fn an_anchor_declaration_records_its_exclude_fragment() {
     );
 }
 
-/// A flow sequence, not a block one: the grammar's `metadata_line` is one line,
-/// so `anchor:` followed by indented `- …` items parses as three metadata lines
-/// and is rejected as a duplicate key.
 #[test]
 fn an_anchor_list_declares_several() {
     let catalog = r#"
@@ -1445,11 +1382,6 @@ fn an_exclude_holding_a_specialized_lookaround_is_walked_as_an_assertion_body() 
     );
 }
 
-/// An `admit` naming an anchor the catalog never declares is rejected.
-///
-/// Left unchecked, the runtime `AnchorError::Unknown` that `AnchorPositions`
-/// documents as unreachable from a compiled catalog would be reachable — and it
-/// would surface per sentence, as a wiring error, with no source span.
 #[test]
 fn an_admit_naming_an_undeclared_anchor_is_refused() {
     let catalog = "pattern p := [text=x].\n\
@@ -1479,12 +1411,6 @@ fn an_anchor_measured_against_only_by_an_admit_is_referenced() {
     );
 }
 
-/// An `admit` naming nothing is a *declaration* error, and this module reads
-/// declarations before binding precisely so one does not wait behind a body
-/// error to be seen.
-///
-/// `anchor: 7` is rejected at the surface, and `anchor: nowhere` must be
-/// reported beside it rather than swallowed by an unrelated nullable pattern.
 #[test]
 fn an_unresolvable_anchor_does_not_queue_behind_a_body_error() {
     let source = "pattern p := [text=x].\n\npattern always_empty := [text=y]*.\n\
@@ -1750,11 +1676,6 @@ fn an_exclude_fragment_without_a_nesting_claim_is_refused() {
     );
 }
 
-/// Every malformed `max_nesting` shape is rejected without a dictionary.
-///
-/// The claim's own encoding is what makes `depth:` impossible to leave inert,
-/// so a shape that would let a depth stand alone — or a witness whose expected
-/// anchor cannot be located — has to be rejected before anything is executed.
 #[test]
 fn a_malformed_nesting_claim_reports_without_a_dictionary() {
     for value in [
@@ -1796,13 +1717,6 @@ fn a_nesting_claim_on_a_fragment_that_is_no_anchor_exclude_is_refused() {
     );
 }
 
-/// A metadata block attaches its keys to every definition it wraps, so one
-/// `max_nesting:` line on a two-fragment block arrives twice — once on the
-/// `exclude` fragment and once on a fragment that is no anchor's exclude.
-///
-/// Reading the replica as a second, unreferenced claim would reject the
-/// recommended layout: `anchor:` and `max_nesting:` on the block holding the
-/// recognizer's parts.
 #[test]
 fn a_nesting_claim_replicated_across_a_block_is_read_once() {
     let source = PUNCT_ANCHOR.replace(
@@ -1812,13 +1726,6 @@ fn a_nesting_claim_replicated_across_a_block_is_read_once() {
     assert_eq!(catalog_policy_for(&source).nesting_claims.len(), 1);
 }
 
-/// A nullable `exclude` is rejected as a nullable pattern, and that diagnostic
-/// must not be displaced by the missing-claim one.
-///
-/// Both are true of the same catalog. The nullability is the cause — an anchor
-/// whose recognizer matches the empty span lands on every boundary — so it is
-/// the diagnostic the author needs, and it comes from binding while the claim
-/// check does not.
 #[test]
 fn a_nesting_claim_on_a_nullable_fragment_names_nullable_pattern() {
     let source = PUNCT_ANCHOR.replace("[upos=PUNCT]+.", "[upos=PUNCT]?.");
@@ -1962,12 +1869,6 @@ fn a_multi_line_statement_collapses_to_one_label_line() {
     assert_eq!(labels[0].line(), 4);
 }
 
-/// Every operation has a label, at its own index.
-///
-/// The two vectors are parallel and every reader `zip`s them, which truncates
-/// silently when they disagree. A reporting surface that names fewer
-/// statements than the catalog declares is the exact failure this tier exists
-/// to prevent, so the agreement is asserted rather than assumed.
 #[test]
 fn labels_and_operations_stay_index_aligned() {
     let matcher = matcher_for(
@@ -1987,14 +1888,6 @@ fn labels_and_operations_stay_index_aligned() {
 
 // --- publish: ----------------------------------------------------------------
 
-/// `publish:` declares what a record must carry and does not change what it
-/// matches.
-///
-/// The witnessed consumer is character-offset reconstruction from CoNLL-U,
-/// which needs `conllu.misc` for `SpaceAfter=No`. Before this key the only
-/// spelling was a predicate written never to fire —
-/// `[upos=VERB & !(conllu.misc has __never__)]` — which works only because a
-/// true complement holds for a missing attribute, and reads as a mistake.
 #[test]
 fn a_published_attribute_joins_the_projection_without_constraining_anything() {
     let plain = matcher_for("pattern p := [upos=VERB].\n");
@@ -2015,10 +1908,6 @@ fn a_published_attribute_joins_the_projection_without_constraining_anything() {
     assert_eq!(plain.find_matches(&tokens), declared.find_matches(&tokens));
 }
 
-/// Unlike every operator, `publish:` names no value kind: nothing reads the
-/// attribute, so a string-set one is carried as a string set and a scalar one
-/// as a scalar. A kind requirement here would reject exactly the case the key
-/// was added for.
 #[test]
 fn a_published_attribute_binds_against_either_value_kind() {
     use lingrep_core::token_match::{AttributeKind, SchemaAttribute, TokenSchema};

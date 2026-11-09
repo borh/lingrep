@@ -39,7 +39,6 @@ const DOCUMENT_OFFSETS: &str = "document_offsets.u64";
 const DOCUMENT_SENTENCES: &str = "document_sentences.u64";
 const RECORDS: &str = "records.zst";
 const ZSTD_LEVEL: i32 = 9;
-/// Documents rendered between checks of the cancellation flag.
 const DOCUMENT_BATCH: usize = 64;
 
 /// What a sidecar's contents depend on.
@@ -123,18 +122,12 @@ struct Header {
     records_blake3: String,
 }
 
-/// Only the fields a reader checks before trusting the rest.
 #[derive(Deserialize)]
 struct HeaderVersion {
     format: String,
     version: u32,
 }
 
-/// A run of a sentence's characters rendered consecutively in one element:
-/// `(first character, characters, data-c element, first UTF-16 unit, UTF-16
-/// units)`. Characters are counted in the stored sentence text. A segment
-/// holding a character outside the Basic Multilingual Plane holds only that
-/// character.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Segment(u32, u32, u32, u32, u32);
 
@@ -159,11 +152,9 @@ struct DocumentRecord {
     regions: Vec<String>,
     blocks: Vec<BlockRecord>,
     container_blocks: Vec<u32>,
-    /// One per stored sentence of the document, in order.
     sentences: Vec<SentenceRecord>,
 }
 
-/// One rendered character: its `data-c` element and UTF-16 offset there.
 #[derive(Clone, Copy, Debug)]
 struct RenderedCharacter {
     character: char,
@@ -187,8 +178,6 @@ fn rendered_characters(document: &RenderedDocument, line: usize) -> Vec<Rendered
     characters
 }
 
-/// Maps the characters of `stored` onto `rendered`: an exact or contained
-/// match, otherwise a Myers diff.
 fn align(stored: &str, rendered: &[RenderedCharacter]) -> Vec<Segment> {
     let stored_characters: Vec<char> = stored.chars().collect();
     let rendered_characters: Vec<char> = rendered.iter().map(|r| r.character).collect();
@@ -253,7 +242,6 @@ fn align(stored: &str, rendered: &[RenderedCharacter]) -> Vec<Segment> {
     segments
 }
 
-/// How many of a sentence's `chars` its segments map.
 fn covered(segments: &[Segment], chars: &Range<u32>) -> u32 {
     segments
         .iter()
@@ -302,7 +290,6 @@ fn highlight(segments: &[Segment], chars: &Range<u32>) -> Vec<HighlightRange> {
         .collect()
 }
 
-/// What [`StagedReadingSidecar::publish`] published.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReadingSidecarStats {
     pub documents: u64,
@@ -315,7 +302,6 @@ pub struct ReadingSidecarStats {
     pub bytes: u64,
 }
 
-/// Renders the documents of one Markdown artifact into a new sidecar.
 pub struct ReadingSidecarWriter<'a> {
     artifact: &'a CorpusArtifact,
     reader: MarkdownReaderConfig,
@@ -381,7 +367,6 @@ impl<'a> ReadingSidecarWriter<'a> {
             });
         }
         let view = artifact.provenance_view().await?;
-        // A document without admitted sentences has no sentence range.
         let ranges: std::collections::HashMap<u64, (u64, u64)> = view
             .document_sentence_ranges()
             .await?
@@ -634,7 +619,6 @@ impl StagedReadingSidecar {
     }
 }
 
-/// Where a page starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageRequest {
     /// The block that holds this sentence, and the blocks around it.
@@ -645,7 +629,6 @@ pub enum PageRequest {
     Before(DocumentId, u32),
 }
 
-/// One document's shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadingDocument {
     pub document: DocumentId,
@@ -655,7 +638,6 @@ pub struct ReadingDocument {
     pub sentences: Range<u64>,
 }
 
-/// The rendered stretches of one sentence on a page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SentenceAnchor {
     pub sentence: SentenceId,
@@ -670,13 +652,10 @@ pub struct ReadingPage {
     pub html: String,
     /// Every sentence with rendered text on the page, in sentence order.
     pub anchors: Vec<SentenceAnchor>,
-    /// The page before this one, if any.
     pub previous: Option<PageRequest>,
-    /// The page after this one, if any.
     pub next: Option<PageRequest>,
 }
 
-/// Where an occurrence is rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OccurrenceAnchor {
     pub document: DocumentId,
@@ -687,7 +666,6 @@ pub struct OccurrenceAnchor {
     pub exact: bool,
 }
 
-/// A reading sidecar opened for reading.
 pub struct ReadingSidecar {
     path: PathBuf,
     header: Header,
@@ -718,10 +696,6 @@ fn ascending(values: &[u64], last: u64) -> bool {
         && values.windows(2).all(|pair| pair[0] <= pair[1])
 }
 
-/// The block range a page covers: it holds `start`'s first block even when
-/// that block alone exceeds `max_bytes`, and otherwise grows while the sum of
-/// `costs` stays within `max_bytes`, both ways around a sentence and in the
-/// reading direction from a cursor.
 fn select_blocks(costs: &[usize], start: Selection, max_bytes: usize) -> Range<usize> {
     let (mut low, mut high, forward, backward) = match start {
         Selection::Around(block) => (block, block + 1, true, true),
@@ -775,7 +749,6 @@ fn region_open(regions: &[String], region: u32) -> String {
 
 const REGION_CLOSE: &str = "</div>";
 
-/// A block's HTML bytes with every region around it opened and closed.
 fn block_cost(record: &DocumentRecord, block: &BlockRecord) -> usize {
     block.html.len()
         + block
@@ -785,7 +758,6 @@ fn block_cost(record: &DocumentRecord, block: &BlockRecord) -> usize {
             .sum::<usize>()
 }
 
-/// The blocks' HTML, with regions shared by consecutive blocks opened once.
 fn assemble(record: &DocumentRecord, blocks: Range<usize>) -> String {
     let mut html = String::new();
     let mut open: Vec<u32> = Vec::new();
@@ -958,7 +930,6 @@ impl ReadingSidecar {
         Ok(record)
     }
 
-    /// The shape of one document.
     pub fn document(&self, document: DocumentId) -> Result<ReadingDocument, ReadingSidecarError> {
         let index = self.document_index(document)?;
         let record = self.record(index)?;

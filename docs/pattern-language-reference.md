@@ -489,12 +489,12 @@ pattern for_example := [text=for] [text=example].
 the pattern, `[]` included, matches a skipped token, and neither a match nor a
 capture starts or ends on one; spans and captures report sentence positions.
 Lookarounds, `^` and `$` step over skipped tokens, so `^ [text=well]` matches
-after a leading quote. A `within=` lookaround reads at most as many tokens of
-the neighbouring sentences as its body, written without the skipped tokens, is
-wide, and skipped tokens there count toward that number: under `skip: @dropped`,
-`preceded_by([text=yes], within=document)` holds after a previous sentence that
-ends in `yes` but not after one that ends in `yes ”`. `any_order` already admits any tokens between its
-operands. A pattern without `skip:` matches the skipped tokens like any other token.
+after a leading quote. A `within=` lookaround reads neighbouring sentences up
+to the body's maximum width before skip rewriting. Skipped tokens count toward
+that limit: under `skip: @dropped`, `preceded_by([text=yes], within=document)`
+holds after a previous sentence that ends in `yes` but not after one that ends
+in `yes ”`. `any_order` already admits any tokens between its operands. A
+pattern without `skip:` matches the skipped tokens like any other token.
 
 A `defaults` block may supply `skip:`, which then applies to every pattern and
 to no fragment or lexicon; `skip: none` removes it from one pattern. A `skip:`

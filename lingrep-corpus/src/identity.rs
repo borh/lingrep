@@ -132,12 +132,7 @@ impl AnalysisInputs {
         }
     }
 
-    /// Builds inputs with an independently obtained storage schema identity,
-    /// returning `IdentityError::TokenSchemaMismatch` for one that disagrees
-    /// with the descriptor.
-    ///
-    /// A caller that already holds a bound schema digest uses this to assert
-    /// the agreement rather than assume it.
+    /// Returns `IdentityError::TokenSchemaMismatch` if the supplied storage schema identity differs from the analyzer descriptor.
     pub fn with_token_schema(
         reader: ReaderIdentity,
         admission: AdmissionIdentity,

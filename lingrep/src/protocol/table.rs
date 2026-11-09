@@ -101,13 +101,10 @@ pub struct TableRun {
     pub analysis_identity: String,
     pub catalog_fingerprint: String,
     pub matcher_revision: String,
-    /// The `--where` clause, if any.
     pub clause: Option<String>,
     pub requested_top: Option<u64>,
-    /// The `--entry` argument, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
-    /// The `--by-metadata` key, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by_metadata: Option<String>,
 }
@@ -122,12 +119,10 @@ pub struct TablePattern {
     pub works: u64,
 }
 
-/// One entry of one pattern under the clause.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TableRow {
     pub pattern: String,
     pub rank: u64,
-    /// Shaped as the `group` of a `lingrep.query/v2` summary record.
     pub group: SummaryGroupData,
     pub count: u64,
     /// Admitted documents with at least one occurrence.
@@ -149,7 +144,6 @@ pub struct TableMetadataValue {
     pub entry: TableEntryCount,
 }
 
-/// The `--entry` under one metadata value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TableEntryCount {
     pub pattern: String,

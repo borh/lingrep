@@ -51,21 +51,7 @@ pub trait TokenInfoTrait {
     }
 }
 
-/// Indexed read-only token storage used by matching and publication.
-/// A half-open range of Unicode code points within one sentence's own text.
-///
-/// Code points, not UTF-8 bytes, and not the byte `SourceRange` the analysis
-/// layer uses internally: this is the quantity a standoff-annotation consumer
-/// addresses text by, and every such consumer reachable from here — brat, NIF,
-/// Python, R — counts characters. The conversion happens once, at the reader
-/// that holds the sentence text, rather than at each consumer that would have
-/// to guess which unit it was handed.
-///
-/// Sentence-relative, because that is the only origin defined on every path
-/// that can supply one. A pretokenized CoNLL-U file has no underlying document
-/// to be standoff against — offsets into the `.conllu` bytes would address the
-/// annotation, not the text it annotates — so the sentence is where the two
-/// halves of the pipeline can agree.
+/// A half-open range of Unicode code points relative to one sentence's text.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CharSpan {
     /// Inclusive first code point.

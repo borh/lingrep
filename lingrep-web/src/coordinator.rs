@@ -144,17 +144,6 @@ fn resolve_scan(
                 progress: ExecutionProgress::default(),
             }
         }
-        // Holds on *every* completed scan, unlike the corpus-count check
-        // above: it depends on no optional expectation and holds whether the
-        // section scan is `Building` or `Refused`. The sink is pushed once per
-        // sentence the matcher processed, so a divergence is a lost or
-        // duplicated publication rather than a tolerable difference.
-        //
-        // The equality rests on `SnapshotSink` always returning
-        // `SinkControl::Continue`. A sink that returned `StopAfter` would
-        // complete with `sentences_admitted` already counted for the whole
-        // partition and publication truncated inside it, and this arm would
-        // then read a legitimate early stop as corruption.
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(ref report), ref sink, _)))
             if report.sentences_admitted != sink.observed_sentences =>
         {
@@ -304,15 +293,6 @@ async fn prepare_scan(
             return Prepared::Failed(integrity_failure());
         }
     };
-    // A vocabulary past `MAX_SECTION_LABELS` is `SectionLabelCapacity` here, not
-    // a truncated list, and that fails the whole scan rather than returning a
-    // `SectionRefusal` for the projection the way the ceiling does. The
-    // difference is only in how it is reported — 100_001 slots is 800_008
-    // bytes of counters for a single pattern, so such a corpus could never be
-    // admitted anyway — and the cap is a defensive bound on what the reader
-    // will enumerate at all, which lingrep-web treats as an unreadable sidecar
-    // like any other. Reporting it as a `SectionRefusal` would require a label
-    // count this path does not have.
     let mut vocabulary = match provenance
         .section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
         .await
@@ -558,7 +538,6 @@ struct RegistryInner {
     tick: AtomicU64,
 }
 
-/// Why an admission was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmitError {
     /// Every entry is active, subscribed, or unfinished, and the id is new.
@@ -1856,10 +1835,6 @@ mod tests {
         }
     }
 
-    /// A sink that published `sentences` sentences, the first of them with a
-    /// match, and was finalized — the shape `resolve_scan` sees on a completed
-    /// scan. `sentences` must equal the report's `sentences_admitted`, which is
-    /// what the publication gate compares.
     fn completed_sink(sentences: u64) -> SnapshotSink {
         let mut sink =
             SnapshotSink::new(5, vec![("p".to_string(), Box::default())], no_sections()).unwrap();

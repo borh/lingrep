@@ -246,10 +246,6 @@ pub(super) fn check_policy_program(
         }
     }
 
-    // A `within` window so wide it admits nearly every record. Executable
-    // exactly as written, so this is a warning: what is wrong is the magnitude,
-    // and rejecting it would be the compiler overruling a declaration it can
-    // honor.
     for op in &program.ops {
         let BoundOp::Admit {
             terminal: Terminal::Within(within),
@@ -791,10 +787,6 @@ impl<'src> PolicyLowerer<'_, 'src> {
         let distance = match (exact, within) {
             (Some((true, _)), None) => Terminal::Exact,
             (None, Some(count)) => Terminal::Within(count),
-            // `exact: false` is rejected rather than read as "no constraint",
-            // in the same words the metadata key uses: a disabled constraint
-            // should be deleted, because an inert declaration that still looks
-            // executable is the failure this tier exists to close.
             (Some((false, node)), _) => {
                 return Err(vec![self.error(
                     node,
@@ -1112,28 +1104,6 @@ fn take_optional<'tree>(
         .map(|index| arguments.remove(index))
 }
 
-/// The cumulative non-emptiness obligation, narrowed to opposite-edge cases.
-///
-/// A single-edge `detach` cannot empty a record: `K`'s strict bound excludes a
-/// whole-span operand, so the region removed is always a proper part. Two
-/// detaches on *opposite* edges can still cross, and that case keeps a width
-/// proof.
-///
-/// **The proof takes the maximum per edge, not the sum over all statements.**
-/// A public span narrows monotonically — `public_start` only moves right and
-/// `public_end` only moves left — so two `at_start` detaches remove the wider
-/// of their regions, never both. Summing them would reject a catalog that
-/// cannot empty, and the same holds inside one statement whose `%group`
-/// operand has several members: exactly one region is removed per edge.
-///
-/// Accumulated per [`DefId`] because `all`, `%group` and `@definition` are
-/// three spellings that can select one definition. `eligible` is the subject
-/// domain: a fragment can never be a subject, so it can never carry an
-/// obligation.
-///
-/// Runs after binding, unlike [`check_policy_program`]: a definition's width is
-/// a property of its resolved body, and the reference inside it is a name until
-/// then.
 pub(super) fn check_detach_non_emptiness(
     program: &BoundProgram,
     groups: &GroupIndex,
@@ -1163,9 +1133,6 @@ pub(super) fn check_detach_non_emptiness(
         else {
             continue;
         };
-        // A relation naming no detachable region is already rejected; reaching
-        // here would mean this analysis had a different idea of which
-        // statements detach than the rule that admits them.
         let at_start = match relation {
             Relation::AtStart => true,
             Relation::AtEnd => false,

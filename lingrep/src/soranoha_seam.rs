@@ -65,8 +65,6 @@ pub(crate) fn open(
     }))
 }
 
-/// One archive stream that rejects a file replaced or edited between its
-/// identity hash and its parse.
 struct IntegrityChecked {
     events: SoranohaEvents<File>,
     path: PathBuf,

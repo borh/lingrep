@@ -179,9 +179,6 @@ fn probe_corpus(path: &Path) -> (ProbeData, Option<CorpusArtifact>) {
     }
 }
 
-/// Binds the catalog against the corpus's stored token schema, the same set a
-/// `matches` run binds, so `doctor` predicts exactly what that run would warn
-/// about or reject.
 fn probe_binding(
     catalog: &LoadedCatalog,
     artifact: &CorpusArtifact,

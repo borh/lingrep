@@ -85,10 +85,8 @@ struct QueryParams {
     corpus: String,
     catalog: String,
     pattern: String,
-    /// The conditions as JSON, keyed by metadata key.
     #[serde(default)]
     w: Option<String>,
-    /// A clause written as text, used instead of `w`.
     #[serde(default, rename = "where")]
     clause: Option<String>,
     #[serde(default)]
@@ -120,7 +118,6 @@ enum Reply<T> {
         ms: f64,
     },
     Unsupported(Unsupported),
-    /// No table counts this catalog over this corpus.
     Unavailable,
 }
 
@@ -144,7 +141,6 @@ fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Resp
         })
 }
 
-/// Runs `work` on the pair named by `corpus` and `catalog` off the executor.
 async fn on_pair<T: Serialize + Send + 'static>(
     views: Arc<FrequencyViews>,
     corpus: String,

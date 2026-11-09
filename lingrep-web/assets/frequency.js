@@ -1,8 +1,6 @@
-// The frequency view: the query stated as one sentence whose blanks are its
-// choices, answered from a count table. The address holds the whole state.
 import { currentLocale, onLocaleChange } from "./i18n.js";
 
-const MANY = 30; // above this many values a popover lists the most frequent and searches the rest
+const MANY = 30;
 const PAGE = 100;
 const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q"];
 
@@ -10,7 +8,6 @@ const NUM = { en: new Intl.NumberFormat("en-US"), ja: new Intl.NumberFormat("ja-
 const esc = (text) =>
   String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-/** A share as the page writes it: whole percent, "<1" below one, and one decimal where a share below 100 would round to 100. */
 export const pctOf = (x, y) =>
   !y ? "0" : x && x / y < 0.01 ? "<1" : x < y && Math.round((x / y) * 100) === 100 ? (Math.floor((x / y) * 1000) / 10).toFixed(1) : String(Math.round((x / y) * 100));
 
@@ -59,12 +56,12 @@ const S = {
       unknown_key: (r) => `This corpus has no condition named “${r.key}”.`,
       unwritable: (r) => `“${r.value}” contains a double quote, which a clause cannot hold.`,
       shape: (r) => `The condition on “${r.key}” does not fit its values.`,
-      address: () => "The conditions in this address cannot be read.",
+      address: () => "The conditions in this URL cannot be read.",
     },
     unavailable: (catalog, corpus) => `No count table is registered for ${catalog} over ${corpus}.`,
     unknownPattern: (pattern, catalog) => `${catalog} has no pattern “${pattern}”.`,
     noTables: "No count table is registered. Start ling serve with --count-table.",
-    failed: (status) => `The server answered ${status}.`,
+    failed: (status) => `Server response: ${status}.`,
   },
   ja: {
     role: { pattern: "パターン", catalog: "カタログ", order: "並び順", filter: "絞り込み" },
@@ -127,7 +124,6 @@ const S = {
 const L = () => S[currentLocale()] ?? S.en;
 const num = (n) => (NUM[currentLocale()] ?? NUM.en).format(Number(n));
 
-/** The state an address holds; absent keys stay absent so a bare address gets the defaults. */
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
   const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", bad: false };
@@ -143,7 +139,6 @@ export function readState(hash) {
   return s;
 }
 
-/** The parameters an address records for `s`, defaults left out. */
 export function stateEntries(s) {
   const out = [];
   for (const k of KEYS) {
@@ -154,17 +149,11 @@ export function stateEntries(s) {
   return out;
 }
 
-/** Whether `hash` already holds these parameters, in any order and encoding. */
 export const hashHolds = (hash, entries) => {
   const sorted = (p) => JSON.stringify([...p].sort());
   return sorted(new URLSearchParams(hash.replace(/^#/, ""))) === sorted(new URLSearchParams(entries));
 };
 
-/**
- * Forms of `name` shortened at unit boundaries, shortest change first: each replaces one run of whole units with one
- * "…", at the end or at the start. A unit ends at "_", a space, "・" or "、". A form is skipped when a sibling keeps the
- * same text beside its "…", so a shortened name stays distinct from the others.
- */
 export function shortForms(name, siblings = []) {
   const units = name.match(/[^_ ・、]+[_ ・、]*/g) ?? [name];
   const forms = [];
@@ -195,10 +184,8 @@ export function mountFrequency(root) {
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
   const dims = () => (pair() ? meta.dimensions[pair().corpus] ?? [] : []);
   const dim = (key) => dims().find((d) => d.key === key);
-  /** A key as the page names it: its label in this locale, falling back to `L().name(key)`. */
   const keyName = (key) => meta.labels?.[key]?.[currentLocale()] ?? L().name(key);
   const shownKeys = () => dims().map((d) => d.key).filter((k) => k in s.w || k === pending);
-  /** The conditions sent to the server: the address's, without a blank just added and not yet chosen. */
   const conditions = () => (Object.keys(s.w).length ? JSON.stringify(s.w) : undefined);
 
   function resolve() {
@@ -222,7 +209,6 @@ export function mountFrequency(root) {
     if (!hashHolds(location.hash, entries)) history.pushState(null, "", `#${new URLSearchParams(entries)}`);
   }
 
-  /** Changes the state, records it in the address and reloads what depends on it. */
   function set(patch) {
     Object.assign(s, patch);
     persist();
@@ -268,7 +254,6 @@ export function mountFrequency(root) {
     annotate();
   }
 
-  /** Writes each blank's kept share from the answer and fits the labels. */
   function annotate() {
     const t = L();
     for (const n of sentenceEl.querySelectorAll(".role .n")) {
@@ -292,8 +277,6 @@ export function mountFrequency(root) {
     fitRoles();
   }
 
-  // A role label runs past its blank. Where it would reach the next label on its line or the sentence's right edge, its
-  // name is shortened at unit boundaries; the share is never shortened.
   function fitRoles() {
     const roles = [...sentenceEl.querySelectorAll(".blank > .role")];
     const names = roles.map((r) => r.querySelector(".nm"));
@@ -387,7 +370,6 @@ export function mountFrequency(root) {
     const names = keyNames(r.group);
     return `<tr><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${esc(r.text)}${names ? `<small>${esc(names)}</small>` : ""}</td><td class="fig r"><b>${num(r.count)}</b></td><td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
-  /** Writes a column's numbers with one shared number of decimals: enough for the smallest nonzero value to show two significant figures, at most two. */
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), min = Math.min(...xs.filter((x) => x > 0));
     const places = Number.isFinite(min) ? Math.max(0, Math.min(2, Math.ceil(-Math.log10(min)) + 1)) : 0;
@@ -591,7 +573,6 @@ export function mountFrequency(root) {
     renderTable();
     return r;
   }
-  /** For an address naming a pair with no table: only the catalog blank, to choose one that has a table. */
   function sentenceFallback() {
     const t = L();
     const catalogs = [[`${s.corpus}\n${s.catalog}`, s.catalog], ...meta.pairs.map((x) => [`${x.corpus}\n${x.catalog}`, `${x.catalog} (${x.corpus_name})`])];

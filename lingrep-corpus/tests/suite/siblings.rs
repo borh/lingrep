@@ -387,9 +387,6 @@ async fn an_occupied_destination_with_a_contradictory_identity_is_refused() {
     }
 }
 
-/// The scan reads immediate entries only, skips non-artifact names silently,
-/// and rejects a symlinked root outright — an unknown answer is not an empty
-/// one.
 #[tokio::test]
 async fn the_scan_is_bounded_non_recursive_and_refuses_a_symlinked_root() {
     let directory = tempfile::tempdir().unwrap();

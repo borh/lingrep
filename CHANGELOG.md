@@ -36,12 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --by-metadata`, and hold the entry's `count` and `works` in place of the
   per-pattern counts. `KEY` is the `group` of the entry's JSON `row` record,
   or its key as human rows print it. It requires `--json`.
-- `ling serve --count-table PATH` (repeatable) adds a **Frequencies** view
-  to lingrep-web. It states a query as a sentence whose blanks are the
-  catalog, the pattern, conditions on document metadata, the order and a
-  filter, and answers it from count tables without scanning the corpus. Each
-  condition shows the share of occurrences it keeps, and the page shows the
-  `ling table --where` command that reproduces its rows. A table binds to a
+- `ling serve --count-table PATH` (repeatable) adds a Frequencies view
+  to lingrep-web. The view presents controls for the catalog, pattern,
+  document metadata conditions, sort order and substring filter, and reads
+  counts from tables without scanning the corpus. Each
+  condition shows the share of occurrences it keeps, and the page shows a
+  corresponding `ling table --where` command. A table binds to a
   served corpus and a catalog by the identities it records; a table that does
   not bind stops startup with an error naming it.
 - The NixOS module's `services.lingrep-web.countTables` option takes a list of
@@ -75,9 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sum of `tokens_admitted` over the `document` records of
   `summarize --by-document`.
 - Opening a prepared corpus's provenance no longer decodes every sentence's
-  stored analysis. Every `--corpus` run that reads provenance starts sooner:
-  `--where`, `--source-metadata`, lookaround divisions, `--by-section`,
-  `--by-metadata`, and `ling corpus inspect`. A stored analysis that does not
+  stored analysis. This removes eager analysis decoding from provenance reads for `--where`,
+  `--source-metadata`, lookaround divisions, `--by-section`, `--by-metadata`,
+  and `ling corpus inspect`. A stored analysis that does not
   decode, or a sentence whose input identity is only partly stored, is now
   reported when that sentence's analysis is read, as by lingrep-web's reading
   view, and by `ling corpus inspect --verify`, instead of when provenance is

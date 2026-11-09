@@ -167,7 +167,6 @@ impl DirectSourceStats {
             .unwrap_or_default()
     }
 
-    /// The lookaround division kinds that some admitted document observes.
     pub(crate) fn observed_division_kinds(
         &self,
     ) -> std::collections::BTreeSet<compact_str::CompactString> {

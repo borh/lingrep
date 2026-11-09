@@ -19,15 +19,13 @@ pub enum SectionSlot {
     None,
 }
 
-/// Why an exact section projection was rejected. Both inputs are carried so the
-/// panel can say which corpus and which catalog produced it.
+/// Reports the label and pattern counts for a rejected exact section projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionRefusal {
     pub labels: usize,
     pub patterns: usize,
 }
 
-/// The section outcome of a completed scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionAvailability {
     Available(SectionTally),
@@ -69,8 +67,6 @@ fn label_allocation(label: &str) -> usize {
     label.len().max(1).next_multiple_of(16)
 }
 
-/// `8·P·S + 8·S + 32·S + B + 128`, checked. `None` means it would overflow,
-/// which rejects rather than wrapping into a comparison that admits.
 fn retained_bytes(patterns: usize, slots: usize, label_bytes: usize) -> Option<usize> {
     let counts = patterns.checked_mul(slots)?.checked_mul(8)?;
     let universe = slots.checked_mul(8)?;
@@ -98,12 +94,6 @@ pub struct SectionTally {
 }
 
 impl SectionTally {
-    /// The tally a run over a corpus with no section labels produces: one
-    /// `None` slot and no observations.
-    ///
-    /// Test-only. Snapshot fixtures that assert nothing about sections need a
-    /// value that is honest rather than a rejection they would then have to
-    /// explain.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub fn unlabelled() -> Self {
@@ -158,15 +148,7 @@ pub struct SectionTallyBuilder {
     surfaces: SurfaceTallyBuilder,
 }
 
-/// Decides availability and, only if the vocabulary is admitted, obtains the
-/// event stream from `start_stream`.
-///
-/// The single entry point for building a sweep, and the reason
-/// [`SectionTallyBuilder`]'s constructor is private: the admission test must
-/// run before anything opens a stream. A producer whose consumer was never built fills its
-/// channel and parks forever, so `start_stream` is **not called** on the
-/// rejected branch — which is what makes that obligation testable rather than
-/// merely asserted at the call site.
+/// Calls `start_stream` only after admitting the vocabulary; rejected admissions never start a producer.
 pub fn admit<F>(
     vocabulary: &[SectionCoverage],
     patterns: usize,
@@ -201,12 +183,7 @@ pub fn build(
 }
 
 impl SectionTallyBuilder {
-    /// Decides availability *before* allocating, and before the caller starts a
-    /// span producer: a rejected admission must not leave a producer parked on a
-    /// channel nothing will drain.
-    ///
-    /// Public because a rejection is a reportable outcome; [`admit`] is how a
-    /// caller acts on it.
+    /// Checks the vocabulary and retained-byte limits before allocation.
     #[must_use]
     pub fn fits(vocabulary: &[SectionCoverage], patterns: usize) -> bool {
         let Some(slots) = vocabulary.len().checked_add(1) else {
@@ -311,10 +288,6 @@ impl SectionTallyBuilder {
         matched: &[PatternKey],
         surfaces: &[(PatternKey, String)],
     ) -> Result<(), SectionTallyError> {
-        // `<=`, not `<`: a repeated ordinal double-counts in the tally while
-        // leaving `observed_sentences` and `sentences_admitted` in agreement, so
-        // the publication gate would not catch it. Enforce the stream contract
-        // here rather than relying on its producer.
         if let Some(previous) = self.previous_ordinal
             && ordinal <= previous
         {
@@ -432,9 +405,6 @@ impl SectionTallyBuilder {
                 });
             }
             let Some(flag) = self.active.get_mut(slot) else {
-                // A producer only ever emits slots it mapped from this
-                // vocabulary, so this is unreachable in the wired path; the
-                // sweep still returns an error rather than indexing out of bounds.
                 return Err(SectionTallyError::OverlappingSpan {
                     slot: event.slot,
                     ordinal,
@@ -821,7 +791,6 @@ mod tests {
         let past = retained_bytes(100, 301, 32 * 300).expect("no overflow");
         assert!(at <= RETAINED_CEILING_BYTES, "{at} must fit");
         assert!(past > RETAINED_CEILING_BYTES, "{past} must not");
-        // Overflow returns `None`, not a wrapped value that admits.
         assert_eq!(retained_bytes(usize::MAX, 2, 0), None);
         assert_eq!(retained_bytes(1, 1, usize::MAX), None);
     }

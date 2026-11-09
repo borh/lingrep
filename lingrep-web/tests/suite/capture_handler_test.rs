@@ -150,8 +150,6 @@ async fn pattern_detail_flags_sample_overlaps_before_policy() {
     assert!(html.contains("class=\"overlap-marker\""), "{html}");
 }
 
-/// `a` matches the first sentence only with the next sentence as context,
-/// so the overlap warning appears only when the inspector reads that sentence.
 #[tokio::test]
 async fn hit_inspector_explains_a_hit_with_its_scan_lookaround_windows() {
     let source =

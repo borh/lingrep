@@ -1,15 +1,5 @@
 // Exempt test code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::string_slice)]
-//! `key: none` — unsetting a file default per definition.
-//!
-//! There is still no `null`: a key with no value is omitted, and a value
-//! is never "none". What `none` does is delete the value the `defaults` block
-//! would have supplied, so the annotated definition simply lacks the key. It
-//! is legal only as the whole value of a per-definition annotation entry;
-//! everywhere else — inside a list or map, inside the `defaults` block itself
-//! — it is rejected, and an unset with nothing to unset is rejected too. Both
-//! diagnostics point at authored metadata source, per the language's
-//! metadata-diagnostic rule.
 
 use lingrep_core::fsm::DiagnosticCode;
 use serde_json::json;
@@ -44,8 +34,6 @@ fn an_unset_key_is_absent_while_a_sibling_inherits_the_default() {
     );
 }
 
-/// An unset with nothing to unset is rejected, and the diagnostic points at
-/// the key that carried the `none`.
 #[test]
 fn unset_without_a_file_default_is_refused_at_the_key() {
     const SOURCE: &str = "source: none\np := [text=あ].\n";
@@ -61,8 +49,6 @@ fn unset_without_a_file_default_is_refused_at_the_key() {
     );
 }
 
-/// A `none` inside the `defaults` block is rejected at its key: the block is
-/// what an unset deletes *from*, so an unset inside it has no meaning.
 #[test]
 fn unset_inside_the_defaults_block_is_refused_at_the_key() {
     const SOURCE: &str = "defaults\n  source: none\nend\n\np := [text=あ].\n";
@@ -78,9 +64,6 @@ fn unset_inside_the_defaults_block_is_refused_at_the_key() {
     );
 }
 
-/// A `none` nested inside a value is rejected at the `none` itself: only an
-/// annotation entry's *whole* value can be an unset, and the defect sits on
-/// the inner value, not on the key beside it.
 #[test]
 fn unset_inside_a_list_is_refused_at_the_inner_value() {
     const SOURCE: &str = "k: [none]\np := [text=あ].\n";
@@ -96,8 +79,6 @@ fn unset_inside_a_list_is_refused_at_the_inner_value() {
     );
 }
 
-/// The map side of the same rule: a `none` as a map entry's value is rejected
-/// at the `none`, exactly as a list item is.
 #[test]
 fn unset_inside_a_map_is_refused_at_the_inner_value() {
     const SOURCE: &str = "k: {a: none}\np := [text=あ].\n";
@@ -113,9 +94,6 @@ fn unset_inside_a_map_is_refused_at_the_inner_value() {
     );
 }
 
-/// The other way a default can be missing: a `defaults` block exists but does
-/// not supply the unset key. Same error, same span — the presence of the
-/// block changes nothing when the key is not in it.
 #[test]
 fn unset_of_a_key_the_defaults_block_lacks_is_refused_at_the_key() {
     const SOURCE: &str = "defaults\n  status: \"x\"\nend\n\nsource: none\np := [text=あ].\n";

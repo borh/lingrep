@@ -586,10 +586,6 @@ fn a_long_statement_is_elided_on_its_trace_line() {
     );
 }
 
-/// Truncation is reported, not implied.
-///
-/// A trace that stopped collecting and did not say so reads as a complete
-/// account of the run — the silent cap this workspace rules out everywhere else.
 #[test]
 fn a_truncated_trace_says_so() {
     let fixture = DerivingFixture::with_catalog(TWO_RECORD_CATALOG);

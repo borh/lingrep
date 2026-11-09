@@ -309,17 +309,6 @@ enum WidthRule {
     Scope,
 }
 
-/// Why this site cannot read this occurrence, or `None` if it can.
-///
-/// The bare key form and a tag projection both claim exactly one token and are
-/// held to it. The explicit key components waive that claim — the author has
-/// said which reading they mean — and need only a token to read: an unbounded
-/// capture is admissible because it is sentence-local, so its span is concrete
-/// by projection time.
-///
-/// A zero-width capture is rejected everywhere. `span` over no tokens would key
-/// on the empty string, and an empty string is a value rather than an absence,
-/// so it would silently merge records that share nothing.
 fn width_refusal(rule: WidthRule, occurrence: &Occurrence) -> Option<&'static str> {
     match rule {
         WidthRule::Component(KeyComponent::Sole) | WidthRule::SingleToken
@@ -381,10 +370,6 @@ fn collect(expr: &ExecutionExpr, name: &str, repeated: bool, found: &mut Vec<Occ
                 collect(part, name, repeated, found);
             }
         }
-        // Unreachable from a definition that compiled — `analyze` rejects a
-        // capture inside an intersection — and walked anyway, because a
-        // walker that stops at a variant is how a later relaxation of that
-        // rule silently stops finding occurrences.
         ExecutionExpr::Intersection { operands, .. } => {
             for operand in operands {
                 collect(operand, name, repeated, found);

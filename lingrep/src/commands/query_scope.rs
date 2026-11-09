@@ -25,11 +25,7 @@ pub(crate) fn parse_scope(clause: Option<&str>) -> Result<Option<ScopeClause>, C
         .transpose()
 }
 
-/// Resolves a clause against a prepared artifact's document metadata.
-///
-/// Also returns the labels the artifact records, so the caller can report the
-/// ones the clause named and the corpus does not have. An artifact records its
-/// whole label set up front, unlike a stream.
+/// Resolves a prepared-corpus clause and returns recorded section labels for diagnostics.
 pub(crate) fn resolve_prepared_scope(
     reader: &BlockingProvenance,
     clause: &ScopeClause,

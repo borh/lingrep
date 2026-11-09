@@ -1,10 +1,4 @@
-//! Compiling a transform guard written inside metadata.
-//!
-//! A guard is parsed as a lingrep patterns token predicate, so
-//! `[upos in {AUX, ADP} & lemma != れる]` matches the same tokens here as in a
-//! definition body. A guard must be a conjunction of attribute tests with
-//! inline values; any other expression, `|`, `!`, `@test` or `@set` is a
-//! compile error, and the error for a definition reference names `detach`.
+//! Compiles transform guards from metadata; only conjunctions of inline attribute tests are accepted.
 
 use super::model::{ParsedAttr, ParsedAttrValue, ParsedExpr, ParsedTest};
 use super::{CompileLimits, PatternSource, lower::lower_document};
@@ -20,12 +14,6 @@ use crate::fsm::policy::CompiledGuard;
 /// never does.
 const GUARD_DEFINITION: &str = "guard";
 
-/// Compiles one guard source into an evaluable token predicate.
-///
-/// The error is a bare sentence rather than a `Diagnostic`: the caller holds
-/// the policy key and the definition that the guard was written on, and it
-/// composes that context around this. Reporting from here would either lose
-/// that context or duplicate it.
 pub(super) fn compile_guard(source: &str) -> Result<CompiledGuard, String> {
     let document = format!("{GUARD_DEFINITION} := {source}.");
     let program = lower_document(
@@ -84,13 +72,6 @@ pub(super) fn compile_guard(source: &str) -> Result<CompiledGuard, String> {
     }
 }
 
-/// Flattens a guard's token test to the conjunction a [`CompiledGuard`] is.
-///
-/// `|` and `!` are rejected rather than distributed. A guard is one conjunction
-/// of attributes evaluated against one token by [`CompiledGuard`], so a
-/// disjunction has no representation here — the operation that reads the guard
-/// would have to become a matcher to honour it. A test reference is rejected for
-/// the reason a set reference is, and the message below says so.
 fn flatten_guard_conjunction(test: &ParsedTest) -> Result<Vec<&ParsedAttr>, String> {
     let mut attributes = Vec::new();
     collect_guard_attrs(test, &mut attributes)?;
@@ -134,14 +115,6 @@ fn unwrap_groups(expr: &ParsedExpr) -> &ParsedExpr {
     current
 }
 
-/// Resolves one parsed guard attribute to its evaluable form.
-///
-/// A named set is rejected here rather than resolved. A guard is compiled with
-/// the definition whose metadata carries it, while a `set` is scoped to the
-/// accumulated catalog and resolves at bind — so at this point the table the
-/// name would be looked up in does not exist yet. Resolving to an empty list
-/// instead would give the author a guard that silently matches nothing, which
-/// is the one outcome worse than a compile error.
 fn resolve_guard_attr(parsed: &ParsedAttr) -> Result<crate::fsm::SymbolicAttrValue, String> {
     match &parsed.value {
         ParsedAttrValue::Resolved(value) => Ok(AttrValue {
@@ -233,14 +206,6 @@ mod tests {
         assert!(error.contains("detach"), "{error}");
     }
 
-    /// A named set inside a guard is rejected, not resolved to nothing.
-    ///
-    /// `[upos in @NAME]` is one token predicate, so it is reachable authored
-    /// syntax — the guard grammar's narrowing does not exclude it. What
-    /// excludes it is timing: a `set` resolves against the accumulated
-    /// catalog at bind, and a guard is compiled with its definition, before
-    /// any catalog exists. The only resolution available here is the empty
-    /// list, which would silently match no token at all.
     #[test]
     fn a_named_set_is_refused_because_the_catalog_does_not_exist_yet() {
         let error =
@@ -252,15 +217,6 @@ mod tests {
         );
     }
 
-    /// A named test inside a guard is rejected for the same reason a named set
-    /// is, and the mirror of
-    /// [`a_named_set_is_refused_because_the_catalog_does_not_exist_yet`].
-    ///
-    /// `[@boundary]` is one token predicate, so it is reachable authored syntax
-    /// — a guard arrives as a `transform:` metadata string, which the grammar
-    /// narrows no further than a `[…]` body. What excludes it is timing: a
-    /// `test` resolves against the accumulated catalog at bind, and a guard is
-    /// compiled with its definition, before any catalog exists.
     #[test]
     fn a_named_test_is_refused_because_the_catalog_does_not_exist_yet() {
         let error = compile_guard("[@boundary]").expect_err("a test reference is not a guard");
@@ -271,14 +227,6 @@ mod tests {
         );
     }
 
-    /// `|` and `!` inside a guard are rejected rather than distributed.
-    ///
-    /// Also reachable authored syntax, and rejected for a different reason than
-    /// the reference above: a `CompiledGuard` *is* one conjunction of
-    /// attributes, so there is nowhere to put a second branch. Distribution
-    /// would mean the operation reading the guard became a matcher, which is
-    /// the same argument `a_sequence_is_refused_because_no_operation_could_evaluate_it`
-    /// makes about width.
     #[test]
     fn a_disjunction_or_a_complement_is_refused_because_a_guard_is_one_conjunction() {
         for source in [

@@ -51,17 +51,6 @@ pub(crate) fn catalog_policy_for(source: &str) -> CatalogPolicy {
     matcher_for(source).catalog_policy().clone()
 }
 
-/// Diagnostics from a catalog expected to fail.
-///
-/// Returns the diagnostics themselves, not their text: a diagnostic's message
-/// is presentation, and callers must assert on [`Diagnostic::code`]. Where
-/// several refusals share one code, a `message.contains(..)` check naming the
-/// specific offending field is a legitimate *secondary* assertion.
-///
-/// Panicking on unexpected success is what keeps `!compile_errors(..).is_empty()`
-/// honest. Returning an empty vector instead would make "rejected, but reported
-/// nothing" and "compiled fine" the same observation, so a catalog that silently
-/// started compiling would keep passing the test written to reject it.
 pub(crate) fn compile_errors(source: &str) -> Vec<Diagnostic> {
     match compile(source) {
         Ok(_) => panic!("expected compilation to fail: {source}"),
@@ -124,17 +113,6 @@ pub(crate) fn tokens_with_orth_and_pos(pairs: &[(&str, &str)]) -> Vec<TokenInfo>
         .collect()
 }
 
-/// A catalog whose anchor excludes `[upos=PUNCT]+`, with a depth-0 claim.
-///
-/// The claim is true, executed, and required: `anchor_claim_test` runs it
-/// against a dictionary. The claim is mandatory, so an `exclude`
-/// carrying none does not compile. Fixtures derived by `replace` therefore
-/// inherit a claim that holds — check it still does when varying the
-/// `exclude`.
-///
-/// Every metadata value is single-line YAML flow style, because the grammar's
-/// `metadata_line` is one line: a block sequence under `anchor:` parses as three
-/// separate `anchor:`-less lines and is rejected as a duplicate metadata key.
 pub(crate) const PUNCT_ANCHOR: &str = r#"
 anchor: {name: "propositional_end", exclude: "TRAILING_APPARATUS"}
 max_nesting: {depth: 0, witness: ["これは重要である|。"], divergence: ["これは重要である|（田中）。"]}
@@ -205,17 +183,6 @@ pub(crate) fn positions(entries: &[(&str, usize)]) -> AnchorPositions {
     )
 }
 
-/// The positions of a catalog that declares no anchor.
-///
-/// What every engine test over a hand-built [`CatalogPolicy`] passes. Such a
-/// policy carries `AnchorSetDigest::default()`, which is exactly the digest of
-/// a catalog declaring nothing, so this is the set its own compilation would
-/// have produced rather than a stand-in.
-///
-/// It is not a way around the mandatory parameter. A `terminal:` that named an
-/// anchor would fail here with [`lingrep_core::fsm::AnchorError::Unknown`],
-/// which is the point: the empty set answers nothing, it does not fall back to
-/// the raw sentence end.
 pub(crate) fn no_anchors() -> AnchorPositions {
     AnchorPositions::new_for_test(AnchorSetDigest::default(), BTreeMap::new())
 }

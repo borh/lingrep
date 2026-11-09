@@ -290,8 +290,6 @@ async fn encode_too_large_target_yields_413() {
     let (store, _directory, _digest) = ready_store().await;
     let (status, body) = post_permalink(&store, &noisy_pattern(), None).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    // Whole-body equality, not just the field: an error response
-    // gaining an unasserted field is worth catching.
     assert_eq!(body, serde_json::json!({ "error": "too_large" }));
 }
 
@@ -448,8 +446,6 @@ async fn a_selector_less_target_is_unreadable() {
     assert!(body.contains("permalink-notice"));
 }
 
-/// Cold selection: the landing page describes and starts the **selected** slot
-/// instead of rejecting the link or answering for the default.
 #[tokio::test]
 async fn landing_on_a_cold_selection_prepares_without_autorun() {
     let harness = cold_corpus_store().await;
@@ -473,8 +469,6 @@ async fn landing_on_a_cold_selection_prepares_without_autorun() {
     // B5b: preparing is transient, so the seeded query is queued rather than
     // abandoned — the marker is what the context poll turns into one submit.
     assert!(body.contains("data-run-when-ready"));
-    // Every submit from this page names the SELECTED corpus, so an in-place
-    // re-run cannot resolve the default and then be rejected as a conflict.
     assert!(body.contains(r#"<input type="hidden" name="corpus" value="sci">"#));
     assert!(body.contains("hx-get=\"api/corpus-context?k=sci\""));
     // The step B5 exists for: a never-selected slot must leave `Checking`, or it
@@ -519,8 +513,6 @@ async fn landing_on_an_undeclared_corpus_keeps_the_query_without_pointing_anywhe
     assert!(body.contains(r#"<option value="" disabled selected"#));
     assert!(!body.contains(r#"value="sci" selected"#));
     assert!(!body.contains(r#"value="default" selected"#));
-    // No slot resolved, so the form names no corpus rather than the default: a
-    // submit from this page is rejected, not answered from somewhere else.
     assert!(body.contains(r#"<input type="hidden" name="corpus" value="">"#));
     assert!(!body.contains("data-run-when-ready"));
     for path in harness.configured_paths() {
@@ -609,11 +601,9 @@ async fn landing_malformed_query_variants_fall_back_without_400() {
         format!("/?v=3&q={encoded}&k=default&c={digest}"),
         // The corpus selector is mandatory.
         format!("/?v=1&q={encoded}"),
-        // A retired version is rejected.
         format!("/?v=2&q={encoded}&c={digest}&k=default"),
         format!("/?v=1&q={encoded}&k=default&c="),
         format!("/?v=1&q={encoded}&k="),
-        // A key outside the name charset is rejected before any lookup.
         format!("/?v=1&q={encoded}&k=has%20space"),
         format!("/?v=1&q={encoded}&q={encoded}&k=default&c={digest}"),
         format!("/?v=1&q={encoded}&k=default&c={digest}&extra=x"),

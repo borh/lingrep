@@ -1777,16 +1777,6 @@ async fn open_and_verify_reject_each_adversarial_artifact_state() {
     }
 }
 
-/// The root resolves through a symlink; a component inside it does not.
-///
-/// This is the shape the NixOS module in `nix/modules/lingrep-web/` produces for
-/// every declared corpus — `<state>/corpora/<name>` is a symlink to the
-/// operator's path — so a declared artifact reached that way has to open.
-/// `is_prepared_artifact` already resolves (it uses `Path::is_dir`), and the
-/// two disagreeing meant the gate admitted a path that the open then rejected.
-///
-/// The neighbouring `symlink_component` mutation covers the other half: a
-/// symlink *inside* the artifact is a containment escape and stays rejected.
 #[tokio::test]
 async fn an_artifact_opens_through_a_symlinked_root_but_not_a_symlinked_file() {
     let fixture = ArtifactFixture::new().await;
@@ -2171,8 +2161,6 @@ async fn section_coverage_is_empty_for_a_corpus_that_records_no_labels() {
     );
 }
 
-/// Publication fails for an artifact whose token schema identity is not this
-/// build's, because `finish` validates by opening what it wrote.
 #[tokio::test]
 async fn publication_refuses_a_different_featurization() {
     let directory = tempfile::tempdir().unwrap();

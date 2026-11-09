@@ -685,9 +685,6 @@ fn a_scope_whose_capture_did_not_bind_leaves_the_record_alone() {
     assert_eq!(record.unit.as_deref(), Some("読むです"));
 }
 
-/// A `substitute` with no `join` is not provably inert, because a `key:`
-/// projecting the written form reads the overrides too. The rejection narrows to
-/// the case where nothing reads them at all.
 #[test]
 fn a_substitute_is_observable_through_a_key_as_well_as_a_join() {
     let tokens = [token("し", "為る", "AUX", "連用形-一般")];

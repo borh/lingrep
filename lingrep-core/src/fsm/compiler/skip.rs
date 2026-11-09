@@ -1,16 +1,4 @@
-//! `skip: @T`: a pattern rewritten so that tokens satisfying `T` are absent
-//! from it.
-//!
-//! Every token test `X` becomes `X & !@T`, and a gap `[@T]*` joins any two
-//! elements that consume tokens. Lookaround bodies are padded with a gap on
-//! the side facing the match, and `^`/`$` become lookarounds over a gap, so
-//! both step over skipped tokens. A gap never begins or ends a match or a
-//! capture: where a nullable prefix or suffix could leave one there, a
-//! one-token boundary lookaround rejects that span.
-//!
-//! A `within=` body cannot contain a lookaround, so there `^` and `$` become
-//! `gap ^ gap` and `gap $ gap`. Its reach is the width of the body as
-//! written, so skipped tokens of the neighbouring sentences count toward it.
+//! Rewrites `skip:` definitions so matching and captures exclude skipped tokens.
 
 use compact_str::CompactString;
 
@@ -140,7 +128,6 @@ impl SkipRewrite {
         }
     }
 
-    /// `scoped` is set inside a `within=` lookaround body.
     fn rewrite(&self, expr: ParsedExpr, scoped: bool) -> Result<ParsedExpr, Unsupported> {
         Ok(match expr {
             ParsedExpr::Token(test, span) => {
@@ -419,8 +406,6 @@ fn zero_width(expr: &ParsedExpr) -> bool {
     }
 }
 
-/// The most tokens `expr` can match, or `None` when that is unbounded or
-/// depends on a reference.
 fn max_width(expr: &ParsedExpr) -> Option<usize> {
     match expr {
         ParsedExpr::Token(..) => Some(1),

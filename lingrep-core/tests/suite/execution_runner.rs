@@ -2534,8 +2534,6 @@ fn an_excluded_sentence_is_never_matched() {
 
 #[test]
 fn a_wholly_excluded_batch_completes_the_run_without_an_empty_partition() {
-    // `validate_batch_count` rejects an empty batch from a source; a partition
-    // that empties after skipping must simply not run, not become that error.
     let mut sink = RecordingSink::default();
 
     let outcome = execute_one_batch_scoped(
@@ -2745,12 +2743,8 @@ mod document_lookarounds {
          pattern in_paragraph := [text=x] followed_by([text=a] [text=b] [text=a], within=paragraph).\n\
          pattern after_section := preceded_by([text=a] [text=b] [text=b], within=section) [text=x].";
 
-    /// A sentence's texts and its innermost `paragraph` and `section`.
     type Sentence = (Vec<&'static str>, Option<u64>, Option<u64>);
 
-    /// Analyzer segmentation renumbers in-document ordinals, so the runner
-    /// reads a gap from the input units' ordinals: units `0, 1, 3` leave the
-    /// last `猫` without the `犬` two units back, and units `0, 1, 2` do not.
     #[test]
     fn an_analyzed_text_unit_after_a_gap_starts_a_new_window() {
         let compiled =
@@ -2807,10 +2801,6 @@ mod document_lookarounds {
         TokenSchema::new([SchemaAttribute::new("text", AttributeKind::Scalar).unwrap()]).unwrap()
     }
 
-    /// Every admitted sentence's matches, computed from windows of the
-    /// admitted sentences next to it in its document, up to the first
-    /// sentence that the scope removes; a division window also ends at the first
-    /// sentence outside the sentence's division.
     fn expected(
         catalog: &CompiledCatalog,
         documents: &[Vec<Sentence>],
@@ -2926,8 +2916,6 @@ mod document_lookarounds {
         sentences
     }
 
-    /// The published matches of a run over `documents` cut into source
-    /// batches of `batch_sizes`, beside the matches [`expected`] computes.
     fn published_and_expected(
         documents: &[Vec<Sentence>],
         batch_sizes: &[usize],
@@ -2979,9 +2967,6 @@ mod document_lookarounds {
         )
     }
 
-    /// The division-scoped bodies are wider than the document-scoped ones, so
-    /// the runner holds a sentence back, and keeps context after publishing
-    /// it, for the widest reach of any scope.
     #[test]
     fn a_division_window_reads_further_than_the_document_reach() {
         let paragraph = |text| (vec![text], Some(0), None);
@@ -3020,9 +3005,6 @@ mod document_lookarounds {
     }
 
     proptest! {
-        /// Batch and partition cuts leave every `within=` result as matching
-        /// over the uncut document or division computes it, and a sentence
-        /// that the scope removes ends the window.
         #[test]
         fn scoped_lookarounds_read_across_cuts_and_stop_at_removed_sentences(
             documents in prop::collection::vec(document_strategy(), 1..4),
@@ -3035,10 +3017,6 @@ mod document_lookarounds {
             prop_assert_eq!(published, expected);
         }
 
-        /// An explanation over the admitted sentences around a sentence
-        /// publishes what the run publishes. Over a slice of them, the
-        /// explanation is the same, or `None` when a window reaches past the
-        /// slice.
         #[test]
         fn an_explanation_in_windows_publishes_what_the_run_publishes(
             documents in prop::collection::vec(document_strategy(), 1..4),

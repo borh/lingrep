@@ -115,25 +115,6 @@ struct Compiler<'a> {
 }
 
 impl Compiler<'_> {
-    /// Register an assertion occurrence for every lookaround that needs one.
-    ///
-    /// `nested` is true while walking the body of another lookaround. It exists
-    /// because the `specialized_previous_token` fast path — a positive
-    /// `preceded_by` over a single token, lowered to
-    /// `PositionAssertion::PreviousToken` with no assertion program at all — is
-    /// only available to consumers that check for it. `materialize.rs` and
-    /// `nfa.rs` both do. [`AutomatonBuilder::compile`] cannot: inside an
-    /// assertion body a lookaround becomes a `Fact` edge, which is addressed by
-    /// occurrence. Skipping registration there left it looking up an occurrence
-    /// that was never created, aborting the process instead of compiling.
-    ///
-    /// So the specialization is applied at the top level and declined inside a
-    /// body, where the general path is the only one that works.
-    ///
-    /// Mutually recursive with [`Self::intern_program`], which walks the body it
-    /// is given before compiling it — so the descent through a nested lookaround
-    /// happens there rather than in the arm below. It terminates because `bind`
-    /// already rejected every reference cycle, leaving a DAG to walk.
     fn collect(&mut self, expr: &BoundExpr, nested: bool) -> Result<(), CompileError> {
         match expr {
             BoundExpr::Lookaround(lookaround) => {
@@ -166,10 +147,6 @@ impl Compiler<'_> {
                     self.collect(child, nested)?;
                 }
             }
-            // Walked, not rejected here. `collect` registers occurrences;
-            // `AutomatonBuilder::compile` rejects the operator, because it
-            // cannot represent an intersection, and reports against the
-            // operator's own span.
             BoundExpr::Intersection { operands, .. } | BoundExpr::AnyOrder { operands, .. } => {
                 for operand in operands {
                     self.collect(operand, nested)?;
@@ -386,9 +363,6 @@ impl Compiler<'_> {
         Ok(id)
     }
 
-    /// The most tokens a `within=` body can match, which bounds the
-    /// neighbouring-sentence context its evaluation reads; `skip_reach` when
-    /// `skip:` set it.
     fn scoped_reach(
         &self,
         scope: &LookaroundScope,

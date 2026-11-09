@@ -699,9 +699,6 @@ fn an_unavailable_attribute_produces_a_warning_and_the_run_completes() {
     assert_warned_zero_match_run(&prepared);
 }
 
-/// The one absence that stays an error, framed as what it is: a dependency
-/// `where` clause cannot mean anything on a morphology-only corpus, and the
-/// rejection is an invalid invocation (exit 2), not a source failure.
 #[test]
 fn a_where_catalog_on_a_morphology_corpus_is_refused_as_invalid_invocation() {
     let directory = TempDir::new().unwrap();

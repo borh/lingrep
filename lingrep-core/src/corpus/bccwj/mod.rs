@@ -45,7 +45,7 @@ pub fn open_zip_archive(
 
 use std::collections::BTreeMap;
 
-/// The NDC9 classification table: notation → ordered label list.
+/// NDC9 notation and ordered labels.
 ///
 /// # Provenance
 ///
@@ -53,9 +53,7 @@ use std::collections::BTreeMap;
 /// classification committee and NDL joint research and published under
 /// CC-BY (https://www.jla.or.jp/committees/bunrui/ndc-data/). It reached this
 /// tree via the `corpus-utils` checkout's `data/ndc9.edn.xz` (itself derived
-/// from the JLA `ndc9.ttl`). NDC9 is NDL/JLA's classification *scheme*, not
-/// BCCWJ text, so it is checked in as a build artifact with stated
-/// provenance rather than a runtime data dependency.
+/// from the JLA `ndc9.ttl`).
 ///
 /// # Regeneration
 ///
@@ -65,12 +63,6 @@ use std::collections::BTreeMap;
 ///       lingrep-core/src/corpus/bccwj/data/ndc9.tsv
 /// ```
 ///
-/// The generator (that example) is the validation: it exits with an error
-/// before writing on any malformed input (non-string values, duplicate or
-/// empty notations, tab/newline in a field, or an empty label outside the
-/// four known astronomy heading gaps 440.12–440.14 and 440.19). Pinned
-/// provenance of the checked-in table:
-///
 /// | fact | value |
 /// |---|---|
 /// | source (decompressed EDN) BLAKE3 | `19bd146ee793b346284990f7a888aa0809579377a1815fdc61d0c8983eaf9295` |
@@ -78,8 +70,6 @@ use std::collections::BTreeMap;
 /// | rows | 12,387 |
 /// | labels | 46,232 |
 ///
-/// A regeneration that changes any of those numbers is a visible diff, not a
-/// silent re-derivation.
 static NDC9_TSV: &str = include_str!("data/ndc9.tsv");
 
 /// The parsed NDC9 table, loaded once. The generator validates every row

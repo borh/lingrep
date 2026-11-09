@@ -833,8 +833,6 @@ pub struct PreparedSentenceSource {
     filter_stats: crate::PreparedFilterStats,
     document_stats: PreparedDocumentStats,
     last_admitted_document: Option<u64>,
-    /// Document ordinals of sentences skipped as proven absent and not yet
-    /// counted, in ascending order.
     proven_absent_documents: Vec<u64>,
 }
 
@@ -974,8 +972,6 @@ impl PreparedSentenceSource {
         self.document_stats.clone()
     }
 
-    /// Counts the documents of `batch` and of the sentences skipped since the
-    /// previous batch.
     fn count_batch_documents(&mut self, batch: &ExecutionBatch) {
         let mut documents = std::mem::take(&mut self.proven_absent_documents);
         match batch {
@@ -998,10 +994,6 @@ impl PreparedSentenceSource {
         self.count_admitted_documents(documents);
     }
 
-    /// Counts each document in `documents` not counted before.
-    ///
-    /// This source reads sentences in ascending ordinal order, so one batch's
-    /// document ordinals are never below an earlier batch's.
     fn count_admitted_documents(&mut self, mut documents: Vec<u64>) {
         documents.sort_unstable();
         for document in documents {
@@ -1605,9 +1597,6 @@ impl SentenceBatchSource for PreparedSentenceSource {
     }
 }
 
-/// Appends the distinct document ordinals of sentences `first..=last`, in
-/// ascending order, reading one location per document boundary and bisection
-/// step rather than one per sentence.
 fn push_run_documents(
     locations: &MappedLocations,
     first: u64,
@@ -1956,9 +1945,6 @@ fn decode_block(
     if next != entry.token_count || locals.iter().any(|local| *local >= sentence_count) {
         return Err(invalid("invalid sentence selection"));
     }
-    // Every caller already supplies these in ascending order — `decode_bound_ordinals`
-    // rejects a decreasing corpus ordinal and `validate_block` passes `0..count`.
-    // The cell loop's owner cursor depends on it, so it is checked rather than assumed.
     if locals.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(invalid("sentence selection must be strictly increasing"));
     }

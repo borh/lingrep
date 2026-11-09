@@ -378,8 +378,6 @@ fn doctor_binding_probe_names_unavailable_attributes() {
     assert_eq!(binding["evidence"]["unavailable"][0]["definitions"][0], "p");
 }
 
-/// A dependency `where` clause on a morphology-only artifact makes the pair
-/// not ready — the same failure a `matches` run would report, found first.
 #[test]
 fn doctor_binding_probe_fails_on_an_unsatisfiable_where_clause() {
     let temp = tempfile::tempdir().unwrap();

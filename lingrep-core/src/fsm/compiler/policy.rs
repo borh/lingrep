@@ -1,32 +1,4 @@
-//! Reading declared result policy off a compiled catalog.
-//!
-//! The vocabulary and the engine live in [`crate::fsm::policy`]; this is the
-//! compiler half, which requires three properties that `fsm::policy` does not
-//! track: definition names, visibility, and source spans.
-//!
-//! Extraction runs on the **parsed** program, before binding. Every input it
-//! needs — names, visibility, metadata, spans — is already present there, and
-//! running before `bind` is what lets the emitters synthesized for
-//! a statement's fragment operands join the program in time to be bound with it,
-//! rather than forcing a second bind over an augmented program.
-//!
-//! Two functions here are the exception, and are named so the reader does not
-//! have to find them: [`resolve_anchors`] and [`anchor_set_digest`]
-//! run on the **bound** program. What they ask — whether an anchor's `exclude`
-//! fragment can match the empty span, whether it names a capture, and what its
-//! transitive expansion is — is a question about a resolved body, and the parsed
-//! program cannot answer it. They are here rather than in `bind` because they
-//! are about a *declaration*; binding does not inspect anchors.
-//!
-//! An unresolved policy reference reuses [`DiagnosticCode::UndefinedReference`]
-//! rather than inventing a parallel vocabulary: a policy operand naming `X`
-//! and a body-level `@X` are the same mistake, and a consumer filtering that
-//! code must see both.
-//!
-//! Spans follow provenance. A defect in a metadata *value* is reported at the
-//! key that carried it, which is the line the author edits; a defect in the
-//! definition — a fragment declaring publication policy at all — keeps the
-//! definition's span.
+//! Extracts result-policy declarations and validates their references against the compiled catalog.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -64,11 +36,6 @@ const ANCHOR_FIELDS: &[&str] = &["name", "exclude"];
 /// version identifies the encoded walk if the digest becomes persistent.
 const DIGEST_DOMAIN: &[u8] = b"lingrep.anchor-set.v1";
 
-/// Renders a closed set of names for a diagnostic.
-///
-/// Every message rejecting a name lists the alternatives, because a span says
-/// where the mistake is and not what would have been right, and there is
-/// nowhere else an author learns what exists.
 pub(super) fn quoted_list(names: &[&str]) -> String {
     names
         .iter()
@@ -288,28 +255,6 @@ fn resolve_anchor_references(
     }
 }
 
-/// Collects every catalog-level `anchor:` declaration, returning the span of
-/// the block that declared each.
-///
-/// An anchor is a property of the *catalog* rather than of the definition whose
-/// metadata block happens to carry it, which is why this is one pass over every
-/// block instead of part of [`PolicyReader`]. The recommended home is the
-/// fragment block holding the `exclude` fragment.
-///
-/// A metadata block attaches its keys to *every* definition it wraps, so one
-/// `anchor:` line on a two-fragment block arrives here twice. An `anchor:` value
-/// already read is therefore skipped outright: a replicated value adds nothing, and
-/// reading it again would report a malformed declaration once per wrapped
-/// definition, each copy naming a different definition as the culprit.
-///
-/// What is rejected is disagreement — the same name excluding two different
-/// fragments — and a name repeated within one `anchor:` value, which no amount
-/// of block replication can produce.
-///
-/// Only what the parsed program can decide is decided here: the mapping's shape,
-/// its fields, whether the name is unique, and whether `exclude` names a
-/// fragment. Whether that fragment's *body* is usable as an anchor recognizer
-/// needs binding, and is checked in [`resolve_anchors`].
 fn read_anchor_declarations(
     program: &ParsedProgram,
     policy: &mut CatalogPolicyBuilder,
@@ -449,8 +394,6 @@ fn read_anchor_declaration(site: AnchorDeclarationSite<'_>) {
     // must resolve against an unpadded one rather than be reported downstream as
     // an anchor nobody declared.
     let (name, exclude) = (name.trim(), exclude.trim());
-    // Named individually: each blank field is reported by its own name; echoing
-    // "`name` or `exclude`" back would make the author check both.
     for (field, value, names) in [
         ("name", name, "what a `terminal:` refers to the anchor by"),
         (
@@ -799,18 +742,6 @@ impl PolicyReader<'_> {
         }
     }
 
-    /// `publish:` names token attributes to carry into published records
-    /// without constraining on them.
-    ///
-    /// A list of attribute names, deduplicated in authored order. An entry the
-    /// definition already reads is legal and redundant rather than an error:
-    /// what a `key:` projects is an implementation detail of the key, and a
-    /// consumer stating its own requirement should not have to track which
-    /// attributes some projection happens to pull in.
-    ///
-    /// Whether the bound corpus supplies the attribute is not decided here —
-    /// an unavailable one is the ordinary `warning[attribute_unavailable]` at
-    /// binding, which is where the schema is known.
     fn read_publish(&mut self, key: &str, value: &Value, declared: &mut PatternPolicy) {
         let Some(entries) = value.as_array().filter(|entries| !entries.is_empty()) else {
             self.invalid(key, value, "a non-empty list of token attribute names");
@@ -866,21 +797,6 @@ impl PolicyReader<'_> {
             steps.push(step);
         }
 
-        // A `substitute` writes only to the record's per-token overrides, so a
-        // declaration nothing reads back is *provably* inert: the researcher
-        // declares a transformation, `check` passes, and the output is
-        // byte-identical to not declaring it. That is the silent no-op this
-        // tier exists to close, so it is rejected at compile time.
-        //
-        // Three things read overrides. A later `join` renders them into the
-        // unit. A `key:` field projecting the written form renders them into
-        // the key — added when scoped transforms made a key the point of a
-        // substitution rather than an afterthought. And a `render:` would, the
-        // moment `RENDERER_REGISTRY` gains an entry.
-        //
-        // Reading `declared.key` here is sound because the caller visits a
-        // *sorted* key list, so `key` and `render` are both parsed before
-        // `transform`.
         let after_last_join = steps
             .iter()
             .rposition(|step| matches!(step.op, TransformOp::Join))
@@ -1043,9 +959,6 @@ impl PolicyReader<'_> {
         Some(Some(CompactString::new(name)))
     }
 
-    /// Compiles a guard, reporting the failure against the key and op that
-    /// carried it — `compile_guard` receives the predicate but not where it was
-    /// written.
     fn read_guard(
         &mut self,
         key: &str,
@@ -1079,14 +992,6 @@ impl PolicyReader<'_> {
         }
     }
 
-    /// `substitute` writes to one edge token, so its `component:` is `first` or
-    /// `last`.
-    ///
-    /// `span` and a `$capture` target are rejected rather than approximated:
-    /// projecting several tokens onto one attribute has no defined semantics
-    /// and no witness. The names are shared with `key:`'s components on purpose
-    /// — one vocabulary — which is exactly why the two that do not apply here
-    /// must produce an error instead of being accepted without one.
     fn read_substitute_target(
         &mut self,
         key: &str,
@@ -1170,13 +1075,6 @@ impl PolicyReader<'_> {
         declared.tags = tags;
     }
 
-    /// One tag's source: a scalar, a capture-presence mapping, or a projection.
-    ///
-    /// Form (b) and form (c) are both single-line flow maps, so the `$` sigil is
-    /// what tells them apart — all-`$` keys is a projection, no-`$` keys is a
-    /// presence mapping. Mixing is rejected rather than resolved: a map with one
-    /// of each is not an unusual spelling of either, it is an author who meant
-    /// one and typed the other.
     fn read_tag_source(&mut self, key: &str, name: &str, value: &Value) -> Option<TagSource> {
         match value {
             Value::String(text) => Some(TagSource::Static(text.clone())),
@@ -1369,10 +1267,6 @@ pub(crate) fn install_group_index(
     authored_groups.resize(program.definitions.len(), Vec::new());
     let mut index =
         crate::fsm::policy_program::GroupIndex::from_definition_groups(&authored_groups);
-    // A derived group whose predicate currently selects nothing still exists:
-    // `%name` resolves to it and its statements draw the empty-subject
-    // warning, rather than an unknown-group error claiming the catalog does
-    // not declare a group it declares one line up.
     for declaration in &program.groups {
         index.declare(&declaration.name);
     }
@@ -1431,31 +1325,6 @@ pub(crate) fn lexicon_definition_policy_errors(program: &ParsedProgram) -> Vec<D
         .collect()
 }
 
-/// Binds the authored policy program and installs it.
-///
-/// Runs after [`install_group_index`], which runs after
-/// [`synthesize_hidden_emitters`]. The chain is load-bearing rather than
-/// stylistic: a [`DefId`] indexes the **complete** definition list, synthesis
-/// appends to that list, and binding resolves `%name` through the index built
-/// over it. Reordering any link resolves a name to a different definition
-/// without failing to compile.
-///
-/// A catalog declaring no block installs an empty program, which is what keeps
-/// the whole mechanism inert over every tracked catalog.
-///
-/// Returns the **warnings** the static rules raised — a statement the engine
-/// runs over an empty set is honored and inert, and rejecting it would be the
-/// compiler overruling a declaration it can execute. Errors take the `Err` arm,
-/// which is the same split [`extract_policy`] makes over its own diagnostics.
-///
-/// # Errors
-///
-/// Every subject or operand naming no definition and no declared group, and
-/// every static rule the bound program violates. They are reported together,
-/// because an author fixing one name should not be told about the next on the
-/// following compile.
-///
-/// [`DefId`]: crate::fsm::policy_program::DefId
 pub(crate) fn bind_policy_program(
     program: &ParsedProgram,
     policy: &mut CatalogPolicy,
@@ -1559,38 +1428,6 @@ pub(crate) fn bind_policy_program(
     Ok(warnings)
 }
 
-/// Resolves each partitioned `resolve`'s classes from catalog metadata.
-///
-/// Here rather than in `Program::bind` because the map is a function of the
-/// accumulated catalog's metadata, which binding does not hold — and resolving
-/// it any later would put a metadata read inside the engine, which is the one
-/// place the language promises metadata never reaches at run time.
-///
-/// The walk pairs authored and bound operations by index, which is sound on
-/// binding's `Ok` arm alone: a statement abandons binding only by pushing an
-/// error, and any error takes the `Err` arm before this runs.
-///
-/// A selected definition **lacking** the key gets no entry — its records are
-/// not selected by the statement, which is the same warn-not-reject stance an
-/// empty subject takes. One **carrying** the key with a non-string value is an
-/// error at that definition's own key: a class is the key's string value, so a
-/// number names no class, and silently skipping the definition would move it
-/// out of every contest without a diagnostic.
-///
-/// A key **nothing** in a non-empty selected set carries — a typo'd
-/// `partition: layr` — leaves every class empty, and the statement runs over
-/// nothing, on every sentence, forever. That is the empty-subject warning's
-/// situation exactly, so it draws the same `IneffectivePolicy` warning rather
-/// than an error: the engine executes the statement exactly as written.
-/// An empty *subject* is not re-warned here — the subject rule already covers
-/// it, and two warnings naming one defect would send the author two ways.
-///
-/// Returns mixed severities, like `check_policy_program`:
-/// [`DiagnosticCode::PartitionKeyNotString`] errors, once per offending
-/// definition, and the inert-key warning per statement. The warning is
-/// suppressed for a statement that drew an error — an all-non-string selected
-/// set is also classless, and warning about the emptiness the errors explain
-/// would be noise atop the cause.
 fn resolve_partitions(
     authored: &crate::fsm::policy_program::Program,
     bound: &mut crate::fsm::policy_program::BoundProgram,
@@ -1677,9 +1514,6 @@ fn metadata_value_shape(value: &Value) -> &'static str {
         Value::Bool(_) => "a boolean",
         Value::Array(_) => "a list",
         Value::Object(_) => "a mapping",
-        // The metadata grammar has no `null`; a key without a value is
-        // omitted. Kept total so a future lowering change fails loudly in a
-        // message rather than silently in a panic.
         Value::Null => "nothing",
     }
 }
@@ -1885,29 +1719,6 @@ pub(crate) fn resolve_anchors(
     }
 }
 
-/// Reads every declared anchor's `max_nesting:` claim, keyed by anchor name.
-///
-/// Refuses four invalid states: a
-/// declared anchor whose `exclude` carries no claim, a claim whose shape cannot
-/// be executed, an entry whose sentinel cannot be located, and a claim on a
-/// fragment that is no anchor's `exclude`. The last is the same rule as the
-/// first read backwards — a claim nothing executes is as inert as an unchecked
-/// number, which is what the compound encoding exists to prevent.
-///
-/// Runs on the **bound** program, beside [`resolve_anchors`], although every
-/// question it asks is answerable before binding. That placement is deliberate:
-/// a nullable or capture-carrying `exclude` is rejected by `resolve_anchors`
-/// first, so an author whose anchor cannot work at all is told *that* rather
-/// than being told to document its depth. It reads nothing binding produced,
-/// so it stays dictionary-free and needs no automaton.
-///
-/// What it does **not** do is execute the claim. Whether a witness's derived
-/// anchor is where the sentinel says needs tokens, and tokens need a
-/// dictionary; [`crate::fsm::verify_anchor_claims`] is the half that has one.
-///
-/// `Err` carries errors only. Nothing a `max_nesting:` can be wrong about is
-/// non-fatal — an unexecuted bound and an honored one look identical from the
-/// catalog, which is the failure this whole tier exists to close.
 pub(crate) fn read_nesting_claims(
     policy: &CatalogPolicy,
     bound: &BoundProgram,
@@ -2173,26 +1984,6 @@ fn find_scoped_lookaround(
     }
 }
 
-/// Hashes the complete transitive semantics of every declared anchor.
-///
-/// **Not the root expression.** A [`BoundExpr`] references definitions by id,
-/// and two catalogs whose roots are byte-identical can have different referenced
-/// bodies — so hashing the root alone would call non-interchangeable catalogs
-/// equal, which is precisely the substitution [`AnchorSetDigest`] exists to
-/// reject. The walk therefore covers, for each anchor in name order:
-///
-/// * the anchor's name and its `exclude` fragment's name;
-/// * every predicate, in the order the expression reaches it;
-/// * every position assertion;
-/// * every repetition's `min` and `max`;
-/// * the alternation/sequence/group structure itself, as discriminant bytes;
-/// * each referenced definition's body, expanded transitively, each visited
-///   definition contributing its body once (a cycle is impossible — `bind`
-///   rejects one);
-/// * each nested lookaround's direction, **polarity**, and body.
-///
-/// Source spans are omitted: the digest verifies whether two catalogs compute
-/// identical positions, which comments do not affect.
 pub(crate) fn anchor_set_digest(
     anchors: &BTreeMap<CompactString, DefinitionId>,
     bound: &BoundProgram,
@@ -2298,11 +2089,6 @@ fn hash_bound_expr(
             }
             hash_bound_expr(expr, bound, visited, hasher);
         }
-        // A capture and a `same_as` are rejected inside an `exclude` by
-        // `anchor_binding_diagnostics`, so neither arm can be reached from a
-        // catalog that compiles. They exist because exhaustiveness is the
-        // guarantee, and they hash the authored name and the projection rather
-        // than the `CaptureDeclId`, which is an allocation counter.
         BoundExpr::Capture { name, expr, .. } => {
             hasher.update(&[7]);
             hash_name(hasher, name);
@@ -2438,17 +2224,6 @@ pub(crate) fn reserved_name_errors(program: &ParsedProgram) -> Vec<Diagnostic> {
         .collect()
 }
 
-/// Checks that no definition can be detached to an empty span.
-///
-/// The bridge between the catalog's installed program and the width analysis
-/// over the bound definitions. Split from
-/// [`super::policy_program::check_detach_non_emptiness`] so that function takes
-/// only what it reasons about, and so the two places that depend on how a
-/// `CatalogPolicy` stores its program and its domains stay on this side.
-///
-/// # Errors
-///
-/// Every definition detached at both edges whose operands can meet.
 pub(crate) fn check_detach_widths(
     policy: &CatalogPolicy,
     bound: &BoundProgram,

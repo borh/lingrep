@@ -207,10 +207,6 @@ fn one_compiled_catalog_binds_to_a_schema_once() {
     );
 }
 
-/// The 2026-08-28 contract move: a referenced attribute the schema cannot
-/// supply binds as universally absent — reported, not rejected. Rejecting it
-/// would fail working catalogs, because a complemented test over another
-/// analyzer's attribute legitimately holds on a corpus that lacks it.
 #[test]
 fn an_unavailable_attribute_binds_as_universally_absent() {
     let compiled = compile_catalog(
@@ -351,10 +347,6 @@ fn an_unavailable_publication_attribute_binds_and_is_reported() {
     );
 }
 
-/// The one absence that stays a binding error: `where`-clause edge attributes,
-/// whose absence makes the constraint meaningless rather than unsatisfied. The
-/// error names only those keys, even when ordinary references are missing
-/// alongside them.
 #[test]
 fn a_where_clause_refusal_names_only_the_edge_attributes() {
     let compiled = compile_catalog(

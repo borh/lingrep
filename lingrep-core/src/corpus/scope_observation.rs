@@ -66,14 +66,6 @@ impl ScopeCounts {
         Some(())
     }
 
-    /// Increments the bucket a verdict names, at document grain.
-    ///
-    /// Checked rather than wrapping because these counts are the denominator
-    /// of a published research claim: the four buckets are stated to sum
-    /// exactly to the universe, and a wrapped counter would keep making that
-    /// claim with no error after it stopped being true. The surrounding reader
-    /// checks for the same reason: the sentence-ordinal counter fails with
-    /// "document sentence ordinal overflow" rather than wrapping.
     pub(crate) fn record_document(&mut self, verdict: Verdict) -> io::Result<()> {
         increment(match verdict {
             Verdict::Admitted => &mut self.documents_admitted,
@@ -162,10 +154,6 @@ impl ScopeObservation {
         Ok(())
     }
 
-    /// Publishes from a drop, where there is no caller to return an error to.
-    ///
-    /// Failure is recorded rather than swallowed, so `counts` returns `Err`
-    /// instead of a number that is too small.
     pub(crate) fn publish_on_drop(&self, pending: ScopeCounts) {
         if let Ok(mut shared) = self.state.lock()
             && shared.counts.merge(pending).is_none()

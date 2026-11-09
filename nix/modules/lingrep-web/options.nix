@@ -136,11 +136,10 @@
         Count tables written by `ling summarize --write-table`, each passed
         as `--count-table`. A non-empty list adds the Frequencies view.
         Each table must have been written over a prepared `.lingcorpus`
-        artifact declared in `corpora` and a catalog that is in one of
-        `patterns.catalogs` with the same source, by a `ling` with the
-        same matcher revision as this package (the same lingrep release
-        has it); a table that does not match stops the unit at startup
-        with an error naming it.
+        artifact declared in `corpora` and a catalog with the same source in
+        `patterns.catalogs`. Its matcher revision must match this package;
+        use `ling` from the same release. A mismatch stops startup with an
+        error naming the table.
       '';
     };
 

@@ -91,7 +91,6 @@ pub fn run_build(
     })
 }
 
-/// Render each document of a Markdown artifact into a new reading sidecar.
 pub fn run_render(
     args: &CorpusRenderArgs,
     config: &ExecutionCliConfig,

@@ -27,7 +27,6 @@ use crate::protocol::table::{
 };
 use crate::protocol::write_jsonl;
 
-/// Rows held in memory per sorted run when every group is read.
 const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
 
@@ -152,8 +151,6 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
     let mask = table.mask(admits);
     let queried = Instant::now();
     let totals = table.pattern_totals(&mask).map_err(table_error)?;
-    // A limit returns each pattern's rows at once; without one, rows stream
-    // through sorted runs on disk.
     let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) = if let Some(top) = top {
         let result = table
             .top(&mask, usize::try_from(top).unwrap_or(usize::MAX))
@@ -294,11 +291,8 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
     Ok(CommandOutcome::Success)
 }
 
-/// An `--entry` key: the `group` of a JSON `row` record, or the key text of
-/// a human row.
 enum EntryKey {
     Group(SummaryGroupData),
-    /// For a key group, the text parses as a JSON object of its fields.
     Printed {
         text: String,
         fields: Option<serde_json::Map<String, serde_json::Value>>,
@@ -352,8 +346,6 @@ impl EntryKey {
     }
 }
 
-/// The table pattern named `pattern_name` and its one entry that `entry_key`
-/// selects.
 fn find_entry<'a>(
     table: &CountTable,
     pattern_name: &'a str,
@@ -392,12 +384,6 @@ fn find_entry<'a>(
     Ok((pattern_name, entry))
 }
 
-/// The `metadata_value` records of one entry: `documents` lists each corpus
-/// document's ID, sentence range and values for `by`, in corpus order. Values
-/// are numbered in order of first occurrence over every document, as
-/// `summarize --by-metadata` numbers them, then the slot for documents
-/// without a value; a record is published for each slot with an admitted
-/// document.
 fn entry_by_metadata(
     table: &CountTable,
     pattern_name: &str,
@@ -522,8 +508,6 @@ fn group_data(group: &Group<'_>) -> SummaryGroupData {
     }
 }
 
-/// The text of a group as `ling summarize` shows it: a bare value, or a
-/// compact JSON object in field order.
 fn group_display(group: &Group<'_>) -> Result<String, CliError> {
     Ok(match group {
         Group::Surface(value) | Group::Unit(value) | Group::Term(value) => (*value).to_owned(),

@@ -272,13 +272,6 @@ fn operands_for(
         .collect()
 }
 
-/// One decision per snapshot entry, in snapshot order.
-///
-/// The shape is what lets `resolve` be a set-wide contest; a per-record
-/// function could not express one.
-///
-/// Private: [`run_program`] is the only caller and the only place that applies
-/// a decision list before the next operation sees it.
 fn decide_operation(
     op: &BoundOp,
     raw: &[Match],

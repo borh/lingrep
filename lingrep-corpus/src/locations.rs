@@ -594,7 +594,6 @@ impl MappedLocations {
         })
     }
 
-    /// Returns the document ordinal of one sentence, without its source name.
     pub(crate) fn document_ordinal(&self, ordinal: u64) -> Result<u64, CorpusError> {
         read_u64(self.record(ordinal)?, 8)
     }

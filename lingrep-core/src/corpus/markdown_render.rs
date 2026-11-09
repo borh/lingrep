@@ -1,16 +1,7 @@
-//! HTML rendering of one Markdown-dialect document, for reading it beside the
-//! sentences a prepared artifact admitted from it.
+//! Renders Markdown-dialect documents as HTML with source-line mappings.
 //!
-//! The dialect's own line rules run first, exactly as the reader applies them:
-//! frontmatter, leading `<!-- -->` comments and fenced code delimit what is
-//! read, `:::` fences become regions, and `{.class}` spans are removed. The
-//! remaining text is rendered with pulldown-cmark, with tables and footnotes.
-//! Raw HTML is written as escaped text, a link keeps its target only for
-//! `http:`, `https:`, `mailto:` or `#`, and mathematics stays source text.
-//!
-//! Every text node the writer emits from the source is recorded as a
-//! [`TextRun`]: its source line and its UTF-16 offset in the innermost
-//! element marked `data-c`, which is how a browser addresses a DOM range.
+//! Raw HTML is escaped; link targets are limited to `http:`, `https:`,
+//! `mailto:` and `#`, and mathematics remains source text.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,12 +12,9 @@ use super::markdown_dialect::{
     strip_attribute_spans,
 };
 
-/// Names the rendering [`render_markdown`] produces. Replace it whenever the
-/// HTML, the text runs or the block division change for some input, including
-/// through a pulldown-cmark upgrade.
+/// Change this revision whenever rendered HTML, text runs or block boundaries change, including after dependency upgrades.
 pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/1";
 
-/// One rendered document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDocument {
     /// The classes of each `:::` region, space-separated, by region index.
@@ -39,7 +27,6 @@ pub struct RenderedDocument {
     pub runs: Vec<TextRun>,
 }
 
-/// One top-level element of the rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedBlock {
     pub html: String,
@@ -65,12 +52,9 @@ enum Fence {
     Close,
 }
 
-/// The source after the dialect's line rules: one entry per source line.
 struct Prepared {
     lines: Vec<String>,
-    /// `:::` fences by 1-based source line.
     fences: Vec<(usize, Fence)>,
-    /// Heading classes by 1-based source line.
     heading_classes: BTreeMap<usize, String>,
 }
 
@@ -162,8 +146,6 @@ fn prepare(source: &str) -> Prepared {
     }
 }
 
-/// Lines as `BufRead::lines` yields them: split at `\n`, one trailing `\r`
-/// removed, and no empty line after a final newline.
 fn source_lines(source: &str) -> impl Iterator<Item = &str> {
     source
         .split_inclusive('\n')
@@ -179,13 +161,9 @@ fn join(classes: &BTreeSet<String>) -> String {
         .join(" ")
 }
 
-/// The text pulldown-cmark parses: the prepared lines, with a blank line
-/// inserted before each source line in `breaks`.
 struct Assembled {
     text: String,
     line_starts: Vec<usize>,
-    /// The 1-based source line of each assembled line; `None` for an
-    /// inserted one.
     source_lines: Vec<Option<usize>>,
 }
 
@@ -241,8 +219,6 @@ fn options() -> Options {
     Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES
 }
 
-/// Source lines before which a blank line ends a table: the first body row
-/// that does not start with `|` in a table whose delimiter row does.
 fn table_breaks(assembled: &Assembled) -> BTreeSet<usize> {
     let starts_with_pipe = |index: usize| assembled.line_text(index).trim_start().starts_with('|');
     let mut breaks = BTreeSet::new();
@@ -269,7 +245,6 @@ fn table_breaks(assembled: &Assembled) -> BTreeSet<usize> {
     breaks
 }
 
-/// The cells of one pipe-table row, as `(byte offset, trimmed text)`.
 fn row_cells(line: &str) -> Vec<(usize, &str)> {
     let body_start = line.len() - line.trim_start().len();
     let first = body_start + usize::from(line.trim_start().starts_with('|'));
@@ -340,13 +315,10 @@ struct Writer<'a> {
     depth: usize,
     block_regions: Vec<u32>,
     block_first_line: usize,
-    /// Whether each open tag opened a `data-c` element.
     tags: Vec<bool>,
-    /// Open `data-c` elements and the UTF-16 length of their text so far.
     open: Vec<(u32, u32)>,
     footnotes: Vec<String>,
     in_head: bool,
-    /// The assembled line of the open body row and its cells so far.
     row: Option<(usize, usize)>,
 }
 
@@ -374,7 +346,6 @@ impl Writer<'_> {
         }
     }
 
-    /// Text that may span lines: each line is a run of its own.
     fn source_text(&mut self, text: &str, offset: usize) {
         let mut index = self.assembled.line_index(offset);
         for piece in text.split_inclusive('\n') {
@@ -552,7 +523,6 @@ impl Writer<'_> {
         }
     }
 
-    /// Cells of the open body row beyond the header width, which GFM drops.
     fn extra_cells(&mut self) {
         let Some((index, written)) = self.row else {
             return;
@@ -638,7 +608,6 @@ impl Writer<'_> {
     }
 }
 
-/// Renders one document of the Markdown dialect.
 #[must_use]
 pub fn render_markdown(source: &str) -> RenderedDocument {
     let prepared = prepare(source);
@@ -683,7 +652,6 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    /// Each `data-c` element's text content, decoded, by `data-c` value.
     fn container_texts(document: &RenderedDocument) -> BTreeMap<u32, String> {
         let mut texts = BTreeMap::new();
         for block in &document.blocks {

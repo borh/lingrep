@@ -165,9 +165,6 @@ fn sample_render_shows_composition_for_the_experimental_catalog() {
     assert!(!html.contains("ものである"));
 }
 
-/// The sample's lines are consecutive sentences of one document, so a
-/// `within=document` lookaround reads the next line, and an empty line
-/// separates nothing.
 #[test]
 fn sample_lines_are_one_document_for_document_lookarounds() {
     let lines = vec![

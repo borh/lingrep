@@ -77,16 +77,7 @@ impl NormalizationPolicy {
         }
     }
 
-    /// Whether `normalized` is exactly what this policy makes of `raw`.
-    ///
-    /// Exists because a component can hold the *raw* admitted bytes and be
-    /// handed the *analyzed* text, and asking whether they are the same
-    /// sentence is then a question about this policy rather than about string
-    /// equality. Comparing them directly made a `nfc` build reject every
-    /// corpus that was not already NFC.
-    ///
-    /// Allocation-free: a `char` sequence determines a UTF-8 string, so the
-    /// comparison streams rather than materializing the normalized form.
+    /// Returns whether applying this normalization policy to `raw` produces `normalized`.
     #[must_use]
     pub fn normalizes(self, raw: &str, normalized: &str) -> bool {
         match self {

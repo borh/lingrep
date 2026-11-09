@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 /// The locales the page is served in, one per dictionary under `assets/i18n`.
 pub const LOCALES: [&str; 2] = ["en", "ja"];
 
-/// One label file as written on disk.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LabelFile {
@@ -21,7 +20,6 @@ struct LabelFile {
     edition: String,
     source: String,
     licence: String,
-    /// Entries by qualified key, such as `@document.author`.
     #[serde(deserialize_with = "unique_map")]
     keys: BTreeMap<String, KeyEntry>,
 }
@@ -33,7 +31,6 @@ struct KeyEntry {
     labels: BTreeMap<String, String>,
 }
 
-/// A JSON object read into a map, rejecting a repeated name.
 fn unique_map<'de, D, V>(deserializer: D) -> Result<BTreeMap<String, V>, D::Error>
 where
     D: Deserializer<'de>,
@@ -66,7 +63,6 @@ where
 #[serde(transparent)]
 pub struct KeyLabels {
     labels: BTreeMap<String, BTreeMap<String, String>>,
-    /// The file that labels each key.
     #[serde(skip)]
     files: BTreeMap<String, PathBuf>,
 }
@@ -105,8 +101,6 @@ impl KeyLabels {
         Ok(read)
     }
 
-    /// Fails when two keys share a label in one locale, since their
-    /// conditions would then read alike.
     fn check_distinct(&self) -> Result<(), String> {
         let mut seen: BTreeMap<(&str, &str), &str> = BTreeMap::new();
         for (key, locales) in &self.labels {

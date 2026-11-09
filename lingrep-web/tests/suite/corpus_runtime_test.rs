@@ -366,11 +366,6 @@ async fn oversized_jsonl_record_fails_before_unbounded_staging() {
     );
 }
 
-/// A JSONL document is one physical record, and its size is a property of the
-/// corpus rather than of how execution batches raw bytes. Bounding a record at
-/// the stage batch budget rejected ordinary corpora — a science corpus whose
-/// three largest articles exceeded 128 KiB — so the record bound is its own
-/// quantity and defaults an order of magnitude higher.
 #[tokio::test]
 async fn a_record_above_the_stage_batch_budget_still_builds() {
     let directory = tempdir().unwrap();

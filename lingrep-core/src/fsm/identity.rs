@@ -33,9 +33,8 @@ pub const POLICY_SEMANTICS_IDENTITY: &str = "lingrep-core-policy/v1";
 /// catalog fingerprint and analysis identity.
 pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v1";
 
-/// The identity of a catalog's source under the current grammar, compiler
-/// and policy semantics, as `ling check` prints it and count tables record
-/// it. Surrounding whitespace is not part of it.
+/// Fingerprints trimmed catalog source together with the grammar, compiler and
+/// policy semantic revisions; excludes [`MATCHER_SEMANTICS_IDENTITY`].
 #[must_use]
 pub fn catalog_fingerprint(source: &str) -> String {
     let normalized = source.trim();

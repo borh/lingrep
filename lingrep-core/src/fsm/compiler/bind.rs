@@ -144,15 +144,6 @@ pub(super) fn bind(
         }
     }
 
-    // The catalog's set table, and the one-referent rule that keeps `@X`
-    // unambiguous. The kinds stay stratified — only a set is legal after `in`
-    // — but they share one name space, so the referent of `@X` does not depend
-    // on its position. The check is here, over the accumulated
-    // catalog, because that is the scope: two documents each legal on their
-    // own can still collide.
-    // One allocation per declared set, shared by every site that resolves to
-    // it. Built here rather than at the reference, because building it there
-    // is what made resolution cost M·N.
     let mut set_members: IndexMap<CompactString, Arc<[CompactString]>> =
         IndexMap::with_capacity(sets.len());
     let mut set_spans: IndexMap<CompactString, SourceSpan> = IndexMap::with_capacity(sets.len());
@@ -173,9 +164,6 @@ pub(super) fn bind(
                 members.sort_unstable();
                 set_members.insert(set.name.clone(), Arc::from(members.into_boxed_slice()));
             }
-            // Reported rather than overwritten: `insert` on a duplicate keeps
-            // the last declaration and emits no diagnostic, which would give
-            // this catalog scope a silent wrong answer.
             Entry::Occupied(entry) => {
                 diagnostics.push(duplicate_name(&sources, &set.name, *entry.get(), set.span));
             }
@@ -869,10 +857,6 @@ struct TestResolution<'a> {
     /// failed, captured once on the first overflow so a later charge against an
     /// already-exhausted budget cannot overwrite it.
     overflow_span: Option<SourceSpan>,
-    /// Whether it was the document budget rather than this test's own that ran
-    /// out, which the diagnostic has to state: the author of a catalog
-    /// rejected for total substitution work is not looking at one oversized
-    /// test.
     document_exhausted: bool,
 }
 
@@ -902,10 +886,6 @@ impl<'a> TestResolution<'a> {
             (per_test, _) => {
                 if !self.overflowed {
                     self.overflow_span = self.reference_spans.last().copied();
-                    // A charge that the per-test budget already rejects does
-                    // not show that the document total is exhausted, so only an
-                    // otherwise admissible charge attributes the overflow to the
-                    // document.
                     self.document_exhausted = per_test.is_some();
                 }
                 self.overflowed = true;
@@ -915,16 +895,6 @@ impl<'a> TestResolution<'a> {
     }
 }
 
-/// Resolves one parsed token test against the accumulated catalog.
-///
-/// Expansion is by substitution rather than by a pre-resolved table because a
-/// test body is a tree, not a value: two tests may share a referent without
-/// either being a prefix of the other, and the definition graph's own
-/// `validate_acyclic` runs over `DefinitionId`s that a test does not have.
-///
-/// A rejected reference resolves to `Or([])`, the empty disjunction: nothing
-/// matches it, which is the conservative answer for a compile that a diagnostic
-/// has already stopped.
 fn resolve_test(
     test: &ParsedTest,
     ctx: &BindCtx<'_>,
@@ -1171,8 +1141,6 @@ fn bind_token_test(
                 ),
                 None,
             ));
-            // No branch matches, which is the conservative answer for a
-            // rejected compile; the diagnostic stops execution.
             Box::default()
         }
     }
@@ -1237,17 +1205,6 @@ fn bind_expr(
                 .unwrap_or(incoming);
             BoundExpr::Alternation(bound.into_boxed_slice())
         }
-        // Threaded like a sequence rather than branched like an alternation:
-        // every operand of `&` matches, so a capture one of them assigns really
-        // is assigned afterwards, which is exactly what `Sequence` means and
-        // not what `Alternation` means.
-        //
-        // No accepted program observes the difference: `analyze` rejects a
-        // capture inside an intersection outright, so `assigned` is unchanged
-        // across the loop whenever the definition compiles. The arm is written
-        // for the meaning rather than for the reachable case, so that relaxing
-        // that rejection later does not silently arrive with alternation's
-        // scoping.
         ParsedExpr::Intersection { operands, span } => BoundExpr::Intersection {
             operands: operands
                 .into_iter()
@@ -1453,13 +1410,6 @@ fn expr_is_nullable(expr: &BoundExpr, definition_nullable: &[bool]) -> bool {
         BoundExpr::Alternation(expressions) => expressions
             .iter()
             .any(|expr| expr_is_nullable(expr, definition_nullable)),
-        // `nullable(A & B) = nullable(A) ∧ nullable(B)`: the empty span is in
-        // the intersection exactly when it is in every operand. Sound in the
-        // direction that matters — it never calls an expression nullable that
-        // is not — and incomplete in the other, since two operands can each
-        // accept the empty span for reasons that also make the intersection
-        // non-empty. Incompleteness here only ever rejects a repeat that would
-        // have been legal.
         BoundExpr::Intersection { operands, .. } => operands
             .iter()
             .all(|expr| expr_is_nullable(expr, definition_nullable)),

@@ -50,9 +50,6 @@ impl SearchScope {
     }
 }
 
-/// A search scope with the provenance view from which a scan reads sections
-/// and division ids. The default is unrestricted and has no view, so its
-/// sources record no division ids.
 #[derive(Default)]
 pub(crate) struct BoundScope {
     scope: SearchScope,

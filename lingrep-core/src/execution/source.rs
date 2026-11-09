@@ -219,20 +219,7 @@ pub enum ExecutionBatch {
     Tokenized {
         /// The batch's sentences, in ascending ordinal order.
         sentences: Vec<ExecutionSentence<Vec<TokenInfo>>>,
-        /// Exact per-sentence residency charges, when the source has already
-        /// computed them, parallel to `sentences`.
-        ///
-        /// The executor otherwise derives them by walking every attribute of
-        /// every token — the one piece of per-token work it does before
-        /// matching, on the thread that paces a run. A prepared V6 source
-        /// computes the same quantity exactly while preflighting a block, from
-        /// the block's own string table and without materializing a token, so
-        /// supplying it here deletes that walk rather than moving it.
-        ///
-        /// Supplying a charge is a claim the executor takes at face value: it
-        /// checks the shape and the per-sentence limit, not the arithmetic.
-        /// `None` keeps the derivation, and is right for any source that does
-        /// not compute residency as a side effect of reading.
+        /// Optional exact residency charges, one per sentence; the executor checks their count and sentence limits but trusts the supplied arithmetic.
         charges: Option<Vec<usize>>,
     },
     /// Schema-bound row-major sentences ready for bound lingrep patterns execution.
@@ -626,12 +613,6 @@ pub fn cached_run_attributes(fsm: &CompiledCatalog) -> Vec<AttributeKey> {
     if !attributes.contains(&text) {
         attributes.push(text);
     }
-    // Publication reads attributes matching never sees: a `key:` projection, a
-    // transform guard, a `substitute` target, the written form `join` renders.
-    // The compiled automaton records none of them, so a run that
-    // cached only its own requirements would publish records whose derived
-    // fields silently came back empty on a prepared corpus and correct on a
-    // direct one.
     attributes.sort_unstable();
     attributes.dedup();
     attributes

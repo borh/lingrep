@@ -103,8 +103,6 @@ fn a_document_is_admitted_even_when_no_sentence_survives() {
     assert_eq!(scope["sentences"]["admitted"], 0);
 }
 
-/// A label absent from *this* corpus is a warning, not an error: one catalog
-/// legitimately runs over several corpora and only some may record it.
 #[test]
 fn a_label_the_corpus_never_records_warns_and_completes() {
     let output = run_on("labelled", &["--where", "@section = absent_label"]);
@@ -345,11 +343,6 @@ fn the_direct_and_prepared_paths_admit_the_same_sentences() {
     );
 }
 
-/// The two paths give an admitted sentence the same in-document ordinal.
-///
-/// Direct input compacts corpus ordinals over the admitted sentences, but an
-/// excluded sentence still counts toward the in-document ordinal, as on a
-/// prepared artifact; a `within=document` lookaround window ends at that gap.
 #[test]
 fn the_two_paths_give_the_same_sentences_the_same_document_ordinals() {
     let fixture = AgreementFixture::new();
@@ -409,8 +402,6 @@ fn each_path_publishes_exactly_the_sentences_it_reports_admitting() {
     }
 }
 
-/// A metadata-only clause must not acquire section behaviour, and in
-/// particular must not be rejected against an input that records no sections.
 #[test]
 fn a_metadata_only_clause_is_unaffected_by_any_of_this() {
     let output = run_on(
@@ -510,9 +501,6 @@ fn build_tree(root: &Path, output: &Path, extra: &[&str]) -> Output {
         .unwrap()
 }
 
-/// A reader has a line number and nothing else — it was handed one stream,
-/// not a tree. The build path has no execution layer to supply the rest, so
-/// without the document name this failure would arrive as a bare `line 3:`.
 #[test]
 fn a_strict_build_names_the_document_whose_div_never_closed() {
     let directory = TempDir::new().unwrap();
@@ -534,10 +522,6 @@ fn a_strict_build_names_the_document_whose_div_never_closed() {
     );
 }
 
-/// The same tree builds when the caller opts into recovery. Before the flag
-/// existed there was nothing to pass: `lingrep-web` recovered and the CLI
-/// rejected the tree, and one unclosed div in one file made a whole tree
-/// unbuildable.
 #[test]
 fn recovery_admits_a_tree_a_strict_read_refuses() {
     let directory = TempDir::new().unwrap();
@@ -667,8 +651,6 @@ fn complete_builds_do_not_record_truncation() {
     assert_eq!(manifest_of(&artifact)["sentence_truncation"], Value::Null);
 }
 
-/// Writes `files` into a fresh corpus root and builds a prepared artifact from
-/// `input`, a path relative to that root.
 fn prepared_artifact(
     directory: &Path,
     name: &str,
@@ -698,15 +680,6 @@ fn prepared_artifact(
     artifact
 }
 
-/// Pins which sentences each clause admits from a prepared artifact, as
-/// complete records: every admitted sentence's source, corpus and document
-/// ordinals and text, and the whole scope accounting.
-///
-/// In the Markdown artifact `sections.md` carries `year` and three labelled
-/// sections and `bare.md` has no frontmatter, so every `@document` predicate
-/// meets a missing field there. In the JSONL artifact the first document
-/// carries `year`, `tags` and two authored sections, and the second carries
-/// only `year`.
 #[test]
 fn a_prepared_artifact_admits_the_pinned_sentences_for_each_clause() {
     let directory = tempfile::tempdir().unwrap();

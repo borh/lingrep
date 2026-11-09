@@ -1,11 +1,4 @@
-//! Why a section question could not be answered, said out loud.
-//!
-//! An empty active-label set is ambiguous between "this sentence sits in no
-//! labelled section" and "this input records no sections at all". The second is
-//! not data. Where it is knowable before processing, the run fails with an
-//! error; where it is only knowable afterwards — Markdown, which is
-//! structurally able to carry labels — the run warns and names what the corpus
-//! did record.
+//! Reports unavailable section labels and conflicts between scope clauses and read-time section policies.
 
 use lingrep_core::corpus::{DEFAULT_EXCLUDED_SECTIONS, SectionPolicy};
 use lingrep_core::scope::ScopeClause;
@@ -16,16 +9,7 @@ use crate::commands::query_support::write_warning;
 use crate::error::CliError;
 use crate::protocol::diagnostic::DiagnosticStage;
 
-/// Rejects a section clause against an input that records no section labels.
-///
-/// Answering it with a confident zero and a clean four-bucket accounting would
-/// be a false denominator, which is the failure the scope report exists to
-/// prevent.
-///
-/// # Errors
-///
-/// Returns [`CliError::InvalidArgs`] when the clause names a section and the
-/// subject records none.
+/// Returns [`CliError::InvalidArgs`] if a section clause targets an input that records no section labels.
 pub(crate) fn refuse_unanswerable(
     clause: &ScopeClause,
     records_labels: bool,
@@ -40,21 +24,7 @@ pub(crate) fn refuse_unanswerable(
     )))
 }
 
-/// Warns about every label the clause named that the corpus never recorded.
-///
-/// An error would be wrong: one catalog legitimately runs over several corpora
-/// and a label may be recorded by only some of them. Silence would also be
-/// wrong — an empty result and a mistyped label look identical.
-///
-/// When an unrecorded label is one the default policy excludes at *read* time,
-/// the message says so and names the flag that changes it. That pairing is the
-/// whole reason the flags and the predicates shipped together: without it,
-/// `--where '@section = references'` reports an honest empty universe for a
-/// reason the researcher cannot see and has no way to alter.
-///
-/// # Errors
-///
-/// Returns an error if the diagnostic stream cannot be written.
+/// Warns about unrecorded labels and identifies read-time exclusions; returns an error if writing diagnostics fails.
 pub(crate) fn warn_unused_labels(
     clause: &ScopeClause,
     observed: &BTreeSet<String>,
@@ -93,22 +63,7 @@ pub(crate) fn warn_unused_labels(
     emit(message, suggestions, config, run_id)
 }
 
-/// Warns that the active read-time policy excludes a label the clause names.
-///
-/// This is the interaction that makes section selection confusing without the
-/// flags. `references` is excluded by the default policy *before* a line
-/// becomes a sentence, so `--where '@section = references'` reports an entirely
-/// honest empty universe — for a reason nothing in the result mentions.
-///
-/// It is distinct from the unused-label report and cannot be folded into it:
-/// the reader still *observes* the label on the heading it excluded, so the
-/// corpus does record it. Only the policy records why nothing survived. Being a
-/// property of the clause and the policy alone, it is also checkable before a
-/// byte is read.
-///
-/// # Errors
-///
-/// Returns an error if the diagnostic stream cannot be written.
+/// Warns when read-time policy excludes a requested label; returns an error if writing diagnostics fails.
 pub(crate) fn warn_read_time_excluded(
     clause: &ScopeClause,
     policy: &SectionPolicy,

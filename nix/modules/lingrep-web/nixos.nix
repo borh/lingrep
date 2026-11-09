@@ -328,10 +328,6 @@ in
         LockPersonality = true;
         SystemCallArchitectures = "native";
 
-        # lingrep-web reads the dictionary, corpora and count tables but
-        # never writes them.
-        # StateDirectory holds the farms and lingrep-web's artifact output; the
-        # operator sources stay read-only.
         ReadOnlyPaths = [
           cfg.dictionary
         ]

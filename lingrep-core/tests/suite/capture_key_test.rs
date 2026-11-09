@@ -10,16 +10,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! A published record can be keyed by a projection of its captures.
-//!
-//! Grouping on the whole matched surface is not grouping on a collocation.
-//! Over 500
-//! documents `patterns/sketch-grammar.lx` yields 71,360 distinct
-//! (head, collocate) lemma pairs and 91,562 distinct surfaces, and
-//! `実験を行う` alone is published as seven rows ranked 2 through 11,182.
-//!
-//! This pins the compiler and projection halves: what `key:` accepts, what it
-//! rejects, and what a keyed record projects to.
 
 use lingrep_core::fsm::{
     CompileLimits, DiagnosticCode, KeyComponent, KeyProjection, PatternSource, ProjectedKeyField,
@@ -200,9 +190,6 @@ fn keying_on_a_quantified_capture_is_an_error() {
     assert_code(&error, DiagnosticCode::AmbiguousCaptureReference);
 }
 
-/// Projecting one attribute off a span that can cover several tokens has no
-/// defined answer. `substitute` already rejects this for the same reason; a
-/// head-token rule would be invented, not witnessed.
 #[test]
 fn keying_on_a_capture_that_can_span_several_tokens_is_an_error() {
     let error = compile_err(
@@ -318,9 +305,6 @@ fn last_reads_the_rightmost_token_of_the_capture() {
     );
 }
 
-/// An explicit component admits exactly what the bare form rejects. Without
-/// this the two halves could drift: a stricter width rule would make the new
-/// syntax unusable while every existing test stayed green.
 #[test]
 fn an_explicit_component_admits_the_capture_the_bare_form_refuses() {
     let wide = "pattern p := (?<c> [text=実験]{1,3}) [text=を].\n";
@@ -335,8 +319,6 @@ fn an_explicit_component_admits_the_capture_the_bare_form_refuses() {
     assert_code(&error, DiagnosticCode::MultiTokenCaptureProjection);
 }
 
-/// The rejection diagnostic is the only place an author learns the
-/// alternatives exist, so it has to name them.
 #[test]
 fn refusing_a_wide_bare_key_names_the_components_that_would_work() {
     let error = compile_err(
@@ -357,9 +339,6 @@ fn refusing_a_wide_bare_key_names_the_components_that_would_work() {
     }
 }
 
-/// An unbounded capture is fine for an explicit component — it is
-/// sentence-local, so the span is concrete when the key is projected — and
-/// still rejected for the bare form, which claims exactly one token.
 #[test]
 fn an_unbounded_capture_is_admitted_by_span_and_refused_by_the_bare_form() {
     let unbounded = "pattern p := (?<c> [text=実験]+) [text=を].\n";
@@ -623,8 +602,6 @@ fn binding_failures_precede_independent_whole_match_width_errors() {
 // step with `substitute`'s unreconciled `component:` for no witnessed demand.
 // ---------------------------------------------------------------------------
 
-/// Tag sources that name a capture but do not project one of its tokens. Every
-/// rejection below must leave these compiling.
 const QUANTIFIED: &str = "pattern p := ((?<c> [text=実験]) [text=と]){1,3} [text=行っ].\n";
 const WIDE: &str = "pattern p := (?<c> [text=実験]{1,3}) [text=を].\n";
 
@@ -697,13 +674,6 @@ fn a_zero_width_capture_is_refused_as_a_tag_projection() {
     );
 }
 
-/// The decision, pinned: a tag projection reads one token and `tags:` has no
-/// component spelling, so the rejection must not send the author looking for one.
-/// It also has to name the declaration they wrote — the same message told them
-/// `key:` when they had written `tags:`.
-/// These diagnostics were built at `0..0` — no span at all — because metadata
-/// was an opaque line with nothing to point at. They now name the key the
-/// reference was written inside.
 #[test]
 fn a_capture_reference_refusal_points_at_the_key_it_was_written_in() {
     const SOURCE: &str = "key: [$missing.lemma]\npattern p := (?<c> [text=実験]).\n";

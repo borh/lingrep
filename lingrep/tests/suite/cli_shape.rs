@@ -117,9 +117,6 @@ fn serve_reports_an_occupied_port_as_an_invocation_error() {
     assert!(stderr.contains(&address.to_string()), "{stderr}");
 }
 
-/// `ling` records a signal in its `TerminalArbiter` from the moment its
-/// handlers are installed, which is before `serve` binds its listener; a signal
-/// recorded then stops the server once it starts.
 #[cfg(all(unix, feature = "web"))]
 #[test]
 fn serve_stops_for_a_signal_recorded_before_it_started() {
@@ -160,8 +157,6 @@ fn serve_stops_for_a_signal_recorded_before_it_started() {
     );
 }
 
-/// A service manager stops the server with SIGTERM and a terminal with SIGINT;
-/// either ends `ling serve` with status 0.
 #[cfg(all(unix, feature = "web"))]
 #[test]
 fn serve_exits_zero_on_sigterm_and_sigint() {

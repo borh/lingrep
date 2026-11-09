@@ -134,7 +134,6 @@ pub(crate) fn run_at(
 /// One run, healthy by default.
 fn run(catalog: &str, arm: &str, block: usize, order: usize, wall: f64) -> Observation {
     Observation {
-        // Stamped by `seal`, the only function that computes the digest.
         manifest_digest: String::new(),
         exec_fingerprint: format!("{catalog}:{arm}"),
         input_fingerprint: format!("{catalog}:input"),
@@ -286,8 +285,6 @@ fn tier_one_is_screen_pairs_throughout_so_it_never_reports_an_interval() {
 
 #[test]
 fn a_tier_two_campaign_with_one_screen_pair_on_an_unaffected_catalog_is_accepted() {
-    // The case the first draft of this design would have wrongly rejected, at
-    // twice the measurement cost.
     let adjudication = adjudicated(&campaign_with(0.95));
     assert_eq!(adjudication.verdict, Verdict::Win);
 }
@@ -1094,9 +1091,6 @@ fn a_campaign_declared_before_the_command_was_sealed_cannot_be_checked() {
 
 #[test]
 fn a_misspelled_template_hole_is_refused_rather_than_taken_as_a_literal() {
-    // Taking it as a literal would seal a command no run can match, so every
-    // block would be rejected for a reason pointing at the run rather than at
-    // the declaration that caused it.
     assert!(TemplateArg::parse("{catlog}").is_err());
     assert!(TemplateArg::parse("{}").is_ok(), "not hole-shaped");
     assert_eq!(

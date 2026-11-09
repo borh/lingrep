@@ -1,4 +1,3 @@
-// Exempt test/bench/example code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(
     clippy::string_slice,
     clippy::panic,
@@ -10,8 +9,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! `ling serve --count-table`: the frequency view's answers against `ling
-//! summarize --where`, and how tables bind at startup.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -34,8 +31,6 @@ const CATALOG: &str = "cat := [text=猫].\n\
     pattern pair := [] [].\n";
 const PATTERNS: [&str; 3] = ["cat", "word", "pair"];
 
-/// Documents with a categorical scalar (`genre`, absent from one), a
-/// categorical list (`tags`, absent from one) and a number (`year`).
 const DOCUMENTS: &str = "\
 {\"text\":\"猫が猫を見る。犬。\",\"metadata\":{\"genre\":\"novel\",\"tags\":[\"x\",\"y\"],\"year\":2001}}
 {\"text\":\"猫。\",\"metadata\":{\"genre\":\"essay\",\"tags\":[\"x\"],\"year\":2002}}
@@ -124,8 +119,6 @@ impl Drop for Server {
     }
 }
 
-/// Starts `ling serve` with `extra` and waits until it listens, or returns
-/// its exit code and standard error when it stops first.
 fn serve(fixture: &Fixture, extra: &[OsString]) -> Result<Server, (Option<i32>, String)> {
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -199,7 +192,6 @@ fn query(params: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-/// The status and body of `GET path`.
 fn get(server: &Server, path: &str) -> (u16, String) {
     let mut stream = TcpStream::connect(&server.address).unwrap();
     write!(
@@ -228,7 +220,6 @@ fn get_json(server: &Server, path: &str) -> Value {
     serde_json::from_str(&body).unwrap()
 }
 
-/// A condition the view's blanks can state.
 #[derive(Clone, Debug)]
 enum Condition {
     In(Vec<&'static str>),
@@ -254,8 +245,6 @@ impl Condition {
         }
     }
 
-    /// The `--where` predicate for `key`, written independently of the
-    /// server, or `None` when the condition admits every document.
     fn predicate(&self, key: &str) -> Option<String> {
         let quoted = |values: &[&str]| {
             values
@@ -316,7 +305,6 @@ fn conditions_json(conditions: &Conditions) -> String {
     .to_string()
 }
 
-/// `ling summarize` over the fixture with `clause`, as JSON records.
 fn summarize(fixture: &Fixture, clause: &str, extra: &[&str]) -> Vec<Value> {
     let mut command = crate::support::lingrep_without_dictionary();
     command
@@ -337,9 +325,7 @@ fn summarize(fixture: &Fixture, clause: &str, extra: &[&str]) -> Vec<Value> {
         .collect()
 }
 
-/// What `ling summarize --where` says one pattern's view should hold.
 struct Expected {
-    /// `(rank, group, count, works)` in summarize order.
     rows: Vec<(u64, Value, u64, u64)>,
     occurrences: u64,
     works: u64,
@@ -433,8 +419,6 @@ fn answer(
     )
 }
 
-/// Checks one condition set against `ling summarize --where` for every
-/// pattern, under `sort` and `filter`.
 fn check(server: &Server, fixture: &Fixture, conditions: &Conditions, sort: &str, filter: &str) {
     let clause = clause(conditions);
     let expected = expected(fixture, &clause);
@@ -482,8 +466,6 @@ fn check(server: &Server, fixture: &Fixture, conditions: &Conditions, sort: &str
             .collect::<Vec<_>>();
         assert_eq!(got, rows, "{context}");
 
-        // Each stated condition keeps the occurrences under every condition
-        // out of those under all the others.
         let stated = conditions
             .iter()
             .filter(|(key, condition)| condition.predicate(key).is_some())
@@ -516,12 +498,6 @@ fn expected_occurrences(fixture: &Fixture, clause: &str, pattern: &str) -> u64 {
         .sum()
 }
 
-/// For condition sets over categorical in/all, list membership and numeric
-/// ranges, alone and combined, every pattern's rows are the records of
-/// `ling summarize --where` with the same rank, group and count; each row's
-/// works is its number of `--by-document` records; and each blank's kept
-/// share is the occurrences under every condition out of those under all
-/// the others.
 #[test]
 fn frequency_rows_equal_summarize_where_for_every_condition_set() {
     let fixture = fixture();
@@ -585,7 +561,6 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
             "works",
             "",
         ),
-        // Empty results: no document meets both, and no document has 1999.
         (
             named(&[
                 ("genre", Condition::In(vec!["poem"])),
@@ -599,7 +574,6 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
             "count",
             "",
         ),
-        // A blank set to any value admits every document.
         (
             named(&[
                 ("genre", Condition::In(vec![])),
@@ -654,7 +628,6 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
     .run();
 }
 
-/// The command the view shows reproduces its rows with `ling table`.
 #[test]
 fn the_shown_command_reproduces_the_rows() {
     let fixture = fixture();
@@ -715,11 +688,8 @@ fn the_shown_command_reproduces_the_rows() {
     );
 }
 
-/// A clause naming sections or sentence values, or a condition the corpus
-/// cannot state, answers with the reason it is unsupported; a catalog with
-/// no table over the corpus is unavailable. None of these is an HTTP error.
 #[test]
-fn unanswerable_queries_explain_themselves() {
+fn unsupported_frequency_queries_return_an_explanation() {
     let fixture = fixture();
     let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
     let ask = |params: &[(&str, &str)]| {
@@ -780,8 +750,6 @@ fn unanswerable_queries_explain_themselves() {
     assert_eq!(status, 400);
 }
 
-/// Without `--count-table` the workbench has no frequency link; with one it
-/// has, and the view and its API answer under `--base-path`.
 #[test]
 fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
     let fixture = fixture();
@@ -830,7 +798,6 @@ fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
     assert_eq!(reply["status"], "ok");
 }
 
-/// Each table that cannot be served stops startup with an error naming it.
 #[test]
 fn a_table_that_cannot_be_bound_stops_startup_naming_it() {
     let fixture = fixture();
@@ -919,7 +886,6 @@ fn a_table_that_cannot_be_bound_stops_startup_naming_it() {
     );
 }
 
-/// A label file that is not valid stops startup with an error naming it.
 #[test]
 fn an_invalid_label_file_stops_startup_naming_it() {
     let fixture = fixture();
@@ -948,8 +914,6 @@ fn an_invalid_label_file_stops_startup_naming_it() {
     );
 }
 
-/// A labelled key that no served corpus carries is reported at startup,
-/// naming the key and the file, and the server still starts.
 #[test]
 fn a_label_for_a_key_no_corpus_carries_is_reported_at_startup() {
     let fixture = fixture();

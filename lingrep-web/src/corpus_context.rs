@@ -167,9 +167,7 @@ impl CorpusContextView {
         }
     }
 
-    /// State 4: corpus still building. Self-refreshes; carries the build's
-    /// record counter when the runtime has one, so a first-time conversion
-    /// of a large corpus shows visible progress instead of a static line.
+    /// Shows preparation progress, including a record count when the runtime supplies one.
     pub fn preparing(name: String, lines_processed: Option<u64>) -> Self {
         let (note, note_args) = match lines_processed {
             Some(processed) => (

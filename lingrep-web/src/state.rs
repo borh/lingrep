@@ -79,10 +79,7 @@ pub enum ConfigError {
     EmptyDeclaredCorpusPath { name: String },
     #[error("{kind} path is not a readable file: {path}")]
     UnreadablePath { kind: String, path: String },
-    /// A declared path looked like a prepared artifact — a directory carrying a
-    /// `manifest.json` — but would not open as one. Carries the artifact
-    /// reader's own reason, because "not a readable file" gives an operator
-    /// nothing to act on about a directory that plainly exists.
+    /// A directory containing `manifest.json` failed artifact validation; includes the underlying reader error.
     #[error("corpus {name:?} is a prepared artifact that could not be opened: {path}: {cause}")]
     UnreadableArtifact {
         name: String,
@@ -114,9 +111,6 @@ impl Config {
                     name: name.as_str().to_owned(),
                 });
             }
-            // A prepared artifact is producer-free: it is read directly and no
-            // reader configuration applies to it, so it is admitted (or
-            // rejected) before any of the source-reading checks below.
             if lingrep_corpus::is_prepared_artifact(path) {
                 lingrep_corpus::CorpusArtifact::open(path).map_err(|error| {
                     ConfigError::UnreadableArtifact {
@@ -176,8 +170,6 @@ impl Config {
                     path: path_display,
                 });
             }
-            // Named by the declared key, not just the path, so an operator with
-            // several `--corpus` entries can see which one is wrong.
             CorpusSource::discover(path, read_config).map_err(|_| ConfigError::UnreadablePath {
                 kind: format!("corpus {:?}", name.as_str()),
                 path: path_display,

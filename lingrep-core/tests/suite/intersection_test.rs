@@ -188,10 +188,6 @@ fn intersection_is_idempotent() {
     }
 }
 
-/// `A & B` is `B & A`.
-///
-/// True only because captures are rejected in *every* operand: allowing them on
-/// one side would make the operand order observable in the emitted `Match`.
 #[test]
 fn intersection_is_commutative() {
     let forward = compile("pattern p := [text in {a, b}]+ & []{2}.\n");
@@ -414,8 +410,6 @@ fn widths_that_overlap_but_share_no_string_still_compile() {
     assert!(!accepts(&matcher, "b"));
 }
 
-/// A capture is rejected in every operand, not just the
-/// second, so that `&` keeps the commutativity the algebra tests assert.
 #[test]
 fn a_capture_inside_an_intersection_is_refused_on_either_side() {
     for source in [
@@ -444,7 +438,6 @@ fn a_capture_around_an_intersection_is_allowed() {
     );
 }
 
-/// `same_as` is likewise rejected in every operand.
 #[test]
 fn span_equality_inside_an_intersection_is_refused() {
     let error = compile_err("pattern p := (?<x> []) ([] & same_as($x)).\n");
@@ -454,7 +447,6 @@ fn span_equality_inside_an_intersection_is_refused() {
     );
 }
 
-/// `&` inside a lookaround body is rejected; the reverse nesting is not.
 #[test]
 fn an_intersection_inside_a_lookaround_is_refused() {
     let error = compile_err("pattern p := [] followed_by([] & []).\n");

@@ -228,13 +228,6 @@ pub enum ExecutionError {
     /// completed discovery.
     #[error("ordered source inventory digest disagrees with completed discovery")]
     InventoryMismatch,
-    /// The publication seam could not resolve the anchor an `admit` measures
-    /// against, so the run stopped rather than publish records the engine
-    /// declined to judge.
-    ///
-    /// Nothing here tells a researcher to edit their catalog: an `admit` naming
-    /// an undeclared anchor is rejected at compile time with a source span, so
-    /// this reports a seam wired against the wrong catalog's positions.
     #[error("result policy could not be applied: {0}")]
     PolicyAnchor(#[source] crate::fsm::policy::AnchorResolutionError),
 }

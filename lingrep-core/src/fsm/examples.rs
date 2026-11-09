@@ -248,22 +248,6 @@ fn check_entry<T: TokenInfoTrait>(
     ))
 }
 
-/// Maximum bracket nesting in a tokenized sentence.
-///
-/// **A deliberate UniDic tagset coupling in this crate's claim verifier**, and
-/// the only one. UniDic tags brackets structurally — the raw `Pos2` field is
-/// `括弧開` or `括弧閉` — which is what lets a depth recognizer be a plain
-/// alternation rather than a literal bracket list. Reading it here is what makes `depth:`
-/// load-bearing rather than decorative; the price is that this one function
-/// depends on a tagset. It runs only with an injected dictionary.
-///
-/// `Pos2` is **raw**, not the derived UPOS-like [`TokenAttributeIndex::Pos`]
-/// that `[upos=PUNCT]` matches on: UniDic writes `補助記号-括弧開`, so the
-/// bracket class is in `pos2` and the punctuation class in `pos1`.
-///
-/// Unbalanced closers clamp at zero rather than going negative. A bare `）` is
-/// a *different* approximation from the depth bound — recorded in that document
-/// as one this schema does not express — so it must not be counted as nesting.
 fn bracket_depth<T: TokenInfoTrait>(tokens: &[T]) -> u32 {
     let mut depth = 0u32;
     let mut deepest = 0u32;
@@ -417,26 +401,6 @@ fn verify_post_policy<T: TokenInfoTrait>(
             };
             for entry in entries.iter().filter_map(|entry| entry.as_str()) {
                 let tokens = tokenize(entry);
-                // The matcher's own seam rather than `apply_policy` directly,
-                // which is the same computation with one more argument list to
-                // keep right.
-                //
-                // The `expect` is the invariant this call site *is*: the
-                // positions come from the same `CompiledCatalog` whose policy is
-                // being applied, so the digest matches by construction, and
-                // `resolve_anchor_references` rejects an `admit` naming an
-                // undeclared anchor at compile time, so every reference resolves
-                // — `anchor_programs` is keyed by exactly `CatalogPolicy::anchors`.
-                // Skipping the entry instead would leave `post_policy_checked`
-                // under-counting, which is the vacuous check this module avoids
-                // everywhere else.
-                //
-                // The cost, stated because it is not free: if that invariant
-                // ever breaks, `ling check` panics rather than reporting a
-                // diagnostic. That is the right trade only while the invariant
-                // is structural — the day this function is handed a matcher
-                // whose policy came from somewhere else, it needs a failure
-                // channel instead.
                 let published = matcher
                     .find_published_matches(&tokens)
                     .expect("a compiled catalog resolves its own declared anchors");

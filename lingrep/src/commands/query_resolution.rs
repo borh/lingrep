@@ -72,7 +72,6 @@ pub(crate) struct ResolvedMatchingQuery {
     pub(crate) bound: BoundCatalog,
     pub(crate) run: QueryRunFacts,
     pub(crate) scope: QueryScope,
-    /// The prepared corpus's provenance reader, when the query opened one.
     pub(crate) provenance: Option<Arc<lingrep_corpus::BlockingProvenance>>,
 }
 

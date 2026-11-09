@@ -485,13 +485,6 @@ pub(crate) enum ParsedRelationTarget<T> {
     },
 }
 
-/// The bound dependent side of a `where` edge.
-///
-/// `Captured` relates the head to one captured dependent. `Anonymous` holds
-/// when a matching dependent exists, and allocates no capture identity or
-/// result field. `Predicate` likewise allocates no
-/// identity, but requires or excludes a witness satisfying one branch of its
-/// normalized one-token test.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelationTarget<T> {
     Captured {
@@ -557,8 +550,6 @@ pub(crate) enum ParsedEnhancedEndpoint {
     },
 }
 
-/// `$a < $b < …`: each named surface capture or graph node precedes the next
-/// in sentence order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OrderConstraint {
     pub(crate) operands: Box<[(CompactString, SourceSpan)]>,
@@ -700,8 +691,6 @@ pub(crate) struct LookaroundExpr<E> {
     pub(crate) direction: LookDirection,
     pub(crate) polarity: LookPolarity,
     pub(crate) scope: Option<crate::fsm::LookaroundScope>,
-    /// The reach of a `within=` body rewritten by `skip:`, whose skip gaps
-    /// leave it without a maximum width.
     pub(crate) skip_reach: Option<usize>,
     pub(crate) body: Box<E>,
     pub(crate) span: SourceSpan,
@@ -710,24 +699,11 @@ pub(crate) struct LookaroundExpr<E> {
 /// Closed source-level lingrep patterns expression meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ParsedExpr {
-    /// One `[…]`, carrying the whole Boolean test rather than a conjunction.
-    ///
-    /// Distribution to a one-token alternation happens at bind, so this is the
-    /// last layer that still records how the researcher spelled it — which is
-    /// what a diagnostic about the test has to point at.
     Token(ParsedTest, SourceSpan),
     Assertion(PositionAssertion),
     Lookaround(LookaroundExpr<ParsedExpr>),
     Sequence(Vec<ParsedExpr>),
     Alternation(Vec<ParsedExpr>),
-    /// `E1 & E2`: every operand must match the same span.
-    ///
-    /// Carries its own span, unlike [`Self::Sequence`] and
-    /// [`Self::Alternation`], because one diagnostic has nowhere else to point:
-    /// an intersection whose operand widths are disjoint is provably empty, and
-    /// that is a property of the *operator*, not of any node inside it. Every
-    /// other error this construct introduces reports at an inner node that
-    /// carries a span already.
     Intersection {
         operands: Vec<ParsedExpr>,
         span: SourceSpan,
@@ -1080,18 +1056,6 @@ pub(crate) struct ExecutionDefinition {
     pub(crate) span: SourceSpan,
 }
 
-/// One resolved `where` constraint: a directed basic dependency edge whose
-/// relation predicate relates two exact-width-one captures.
-///
-/// `$head -[labels]-> $dependent` holds when the dependent's `dep.rel` is
-/// present and either the predicate is `Any` or some listed member matches,
-/// and its `dep.head` — CoNLL-U's
-/// one-based sentence-local HEAD — designates the head capture's token. A
-/// token carries exactly one `dep.rel`, so at most one member can match and
-/// the matched label stays observable as the dependent capture's own
-/// `dep.rel`, so a match record has no field for the matched label. Operand
-/// spans are kept because `analyze` reports a width error at each operand,
-/// after materialization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExecutionRelation {
     pub(crate) head: CaptureId,

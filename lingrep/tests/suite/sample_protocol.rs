@@ -10,13 +10,6 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! `--sample` end to end: rejection before work, what the `run` record declares,
-//! and the property that makes a sampled result quotable — one seed selects one
-//! sample, whatever else the invocation says.
-//!
-//! The fixture is generated rather than checked in, because the interesting
-//! assertions are about proportions and a handful of sentences cannot carry
-//! one.
 
 use std::process::Output;
 

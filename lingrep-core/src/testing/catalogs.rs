@@ -1,13 +1,4 @@
-//! The repository's lingrep patterns catalog inventory, discovered rather than listed.
-//!
-//! Tests that need per-catalog expectations still pin them by name — the point
-//! is that the *set* comes from the tree, so a new catalog forces the
-//! expectation to be written rather than being skipped without a failure.
-//!
-//! This lives in `lingrep_core::testing` rather than in one crate's `tests/support`
-//! because lingrep-web's catalog-projection baseline needs the same set. A second
-//! copy over there would be a second thing to forget to update, which is the
-//! failure this module exists to prevent.
+//! Discovers the repository's pattern catalogs for shared test and campaign inventories.
 
 use std::path::{Path, PathBuf};
 
@@ -159,14 +150,7 @@ pub enum RuntimeRegime {
     DecodeFloor,
 }
 
-/// The token schema family a campaign binds a catalog against.
-///
-/// Every catalog was implicitly bound to the UniDic morphology schema until
-/// `ud-dependency.lx`,
-/// whose `where` clauses require `dep.head`/`dep.rel` and therefore fail to
-/// bind against a morphology-only schema — correctly, so the campaign harness has
-/// to bind it against a schema that carries them rather than treat the
-/// binding error as a broken catalog.
+/// The token schema used to bind a catalog during a campaign.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CampaignBinding {
     /// `TokenSchema::unidic_morphology()`, the default.
@@ -205,28 +189,7 @@ impl CatalogDescriptor {
     }
 }
 
-/// The stratified performance suite of
-/// [`docs/PERFORMANCE_REQUIREMENTS.md`](../../../../docs/PERFORMANCE_REQUIREMENTS.md),
-/// in sorted path order.
-///
-/// This is the single source for catalog roles and regimes. It lives beside
-/// catalog discovery, not inside a test, because it has consumers in two
-/// crates: the completeness guard in `lingrep-core`'s integration suite, and the
-/// `lingrep-perf` campaign adjudicator, which reads a role to decide what enters
-/// the aggregate and a regime to decide what needs paired blocks. A second
-/// copy could drift from campaign adjudication.
-///
-/// The set is pinned by name while the *discovered* set comes from the tree,
-/// so a new catalog fails the guard until someone decides what it guards. That
-/// list must account for every discovered catalog.
-///
-/// The regimes are machine tags and the description is the prose beside them.
-/// `lingrep-perf declare` rejects a tag outside this set, so a mistyped regime
-/// cannot silently select nothing — which would drop every guardrail to a
-/// screen pair and make the campaign look cheaper rather than wrong. Deriving
-/// the tags from each catalog's compiled form would be stronger still; the
-/// authored ones with a reliable source oracle are cross-checked in the
-/// integration suite in the meantime.
+/// Returns the stratified performance suite in sorted path order; see [`docs/PERFORMANCE_REQUIREMENTS.md`](../../../../docs/PERFORMANCE_REQUIREMENTS.md).
 pub fn catalog_campaign_descriptors() -> Vec<CatalogDescriptor> {
     use GuardrailRole::{Floor, Substantive};
     use RuntimeRegime::{

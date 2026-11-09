@@ -1,22 +1,5 @@
 // Exempt test code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::string_slice)]
-//! `group NAME := key <op> value(s).` — derived `%group` membership.
-//!
-//! A `group` declaration derives membership from a metadata predicate instead
-//! of a per-definition `groups:` list. `%name` membership is the union of
-//! literal `groups:` entries and derived predicates — except that a literal
-//! entry naming a derived group is rejected, because derivation and restatement
-//! must not coexist: the day the predicate and the list disagree, one of them
-//! is silently wrong.
-//!
-//! Predicate semantics are existential and two-valued over presence: `=`/`in`
-//! mean "carries the key, string-valued, value matches"; `!=`/`not in` mean
-//! "carries the key, string-valued, value differs". A definition lacking the
-//! key, or carrying a non-string value, is a member of NO predicate form —
-//! the same presence rule `resolve … partition:` applies to its classes.
-//!
-//! Group names are their own `%` namespace, shared with nothing `@` resolves:
-//! a `group` named like an existing fragment is legal.
 
 use lingrep_core::fsm::{DiagnosticCode, FsmBuilder, PatternSource};
 
@@ -159,9 +142,6 @@ fn a_fragment_is_not_derived_into_a_group() {
     );
 }
 
-/// A declared group whose predicate currently selects nothing still exists:
-/// `%g` resolves, and the statement draws the empty-subject warning rather
-/// than an unknown-group error claiming the catalog does not declare it.
 #[test]
 fn an_empty_derived_group_binds_and_warns_rather_than_failing_resolution() {
     let warnings = compile_warnings(
@@ -282,7 +262,6 @@ fn a_cross_document_duplicate_group_names_both_documents() {
     );
 }
 
-/// Two `group` declarations with one name are rejected at the second.
 #[test]
 fn a_duplicate_group_declaration_is_refused_at_the_second() {
     const SOURCE: &str = "group g := k = \"v\".\n\
@@ -304,8 +283,6 @@ fn a_duplicate_group_declaration_is_refused_at_the_second() {
     );
 }
 
-/// A literal `groups:` entry naming a derived group is rejected at the entry:
-/// derivation and restatement must not coexist.
 #[test]
 fn a_literal_entry_naming_a_derived_group_is_refused_at_the_entry() {
     const SOURCE: &str = "group g := layer = \"S1\".\n\
@@ -324,10 +301,6 @@ fn a_literal_entry_naming_a_derived_group_is_refused_at_the_entry() {
     );
 }
 
-/// The rejection a fragment author hits: a fragment joins a group only by
-/// literal list, and a derived group rejects literal entries — so together,
-/// patterns-only derivation and this rejection mean a derived group can never
-/// contain a fragment at all. The diagnostic is the same one, at the entry.
 #[test]
 fn a_fragments_literal_entry_naming_a_derived_group_is_refused_at_the_entry() {
     const SOURCE: &str = "group g := layer = \"S1\".\n\

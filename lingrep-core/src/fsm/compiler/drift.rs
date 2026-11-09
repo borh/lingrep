@@ -358,8 +358,6 @@ enum CanonicalDefinitionBody {
         /// one meaning and must not drift.
         relations: Box<[CanonicalRelation]>,
         enhanced_relations: Box<[CanonicalEnhancedRelation]>,
-        /// Each adjacent pair `$a < $b` of an order constraint, sorted and
-        /// deduplicated.
         orders: Box<[(CompactString, CompactString)]>,
     },
     Lexicon {
@@ -828,13 +826,6 @@ mod tests {
 
     #[test]
     fn a_reference_chain_that_exceeds_the_expansion_budget_is_an_error() {
-        // Reference closure inlines, so a chain of doubling references is
-        // exponential in depth. `bind` bounds definition count but NOT
-        // expansion — only `materialize`/`nfa` do that, and this path stops
-        // before both. Without the explicit budget this call does not return.
-        // `compile_catalog` rejects the same catalog with `LimitExceeded`, so
-        // accepting it here would make `--compare-with` admit what `check`
-        // rejects.
         let mut catalog = String::from("d0 := [text=a].\n");
         for depth in 1..40 {
             catalog.push_str(&format!("d{depth} := @d{} @d{}.\n", depth - 1, depth - 1));

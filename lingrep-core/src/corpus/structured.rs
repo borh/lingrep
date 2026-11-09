@@ -1030,11 +1030,6 @@ impl<I> AdmittedCorpus<I> {
                         ),
                     };
                     if let Verdict::Excluded(reason) = verdict {
-                        // Before `SentenceId::new`, so a skipped sentence
-                        // consumes no corpus ordinal and direct-input corpus
-                        // ordinals compact. It does consume an in-document
-                        // ordinal, as on a prepared corpus, so the gap ends a
-                        // `within=document` lookaround window.
                         scoped.pending.record_excluded_sentence(reason)?;
                         return Ok(None);
                     }

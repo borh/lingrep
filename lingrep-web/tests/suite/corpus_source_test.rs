@@ -201,8 +201,6 @@ fn a_bccwj_corpus_declaration_is_refused_at_validation() {
     use lingrep_web::state::{Config, ConfigError, DetailLimits};
 
     let directory = tempdir().unwrap();
-    // The corpus path need not exist: the rejection precedes any corpus
-    // access, but the dictionary check runs first, so give it a file.
     let dictionary = directory.path().join("dict.zst");
     fs::write(&dictionary, b"").unwrap();
     let config = Config {
@@ -283,8 +281,6 @@ fn a_malformed_prepared_artifact_names_the_reason_it_was_refused() {
     let directory = tempdir().unwrap();
     let dictionary = directory.path().join("dict.zst");
     fs::write(&dictionary, b"").unwrap();
-    // Artifact-shaped — a directory carrying a manifest — but the manifest is
-    // not a manifest, so `CorpusArtifact::open` rejects it.
     let artifact = directory.path().join("broken.lingcorpus");
     fs::create_dir_all(&artifact).unwrap();
     fs::write(artifact.join("manifest.json"), "not json at all").unwrap();

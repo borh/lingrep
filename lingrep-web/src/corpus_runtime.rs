@@ -49,12 +49,7 @@ const BUILD_WINDOW_SENTENCES: usize = 2_048;
 const BUILD_WINDOW_BYTES: usize = 128 * 1024;
 pub const CORPUS_DECODE_CHUNK: usize = 128;
 
-/// The reader configuration a server instance was started with.
-///
-/// `markdown` is a *parameter* rather than a default because section selection
-/// decides which lines become sentences: a server started with one policy and a
-/// cache built under another describe different corpora. It arrives already
-/// resolved from the flags, so an invalid one has been rejected at startup.
+/// Resolves a server reader configuration from the supplied format and Markdown options.
 pub fn read_config(
     path: &Path,
     override_format: Option<lingrep_core::corpus::CorpusFormat>,

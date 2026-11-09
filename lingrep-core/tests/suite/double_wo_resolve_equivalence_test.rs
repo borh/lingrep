@@ -1,36 +1,5 @@
 // Exempt test code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
-//! The cascade-vs-resolve differential verdict for `patterns/double-wo.lx`
-//! (Task A3, 2026-08-14): the `not_followed_by` cascade is **not** expressible
-//! as a publication-seam `resolve`, and this module pins why with the minimal
-//! witnesses the corpus differential surfaced.
-//!
-//! The hypothesis was plausible because the catalog's buckets are
-//! endpoint-aligned *at one start position*: each bucket fixes its evidence
-//! before the variable gap and keeps the same raw suffix language, so at one
-//! start every bucket that matches matches the same span, and the cascade's
-//! suppression looks like a same-span priority contest — exactly what
-//! `resolve … rank: [longest, priority_order, …]` adjudicates.
-//!
-//! The two are nonetheless different operations over different scopes:
-//!
-//! - the cascade's `not_followed_by(higher bodies)` fires at the **start
-//!   position** — a lower bucket is suppressed only where a higher body
-//!   matches at the *same start*, and matches at different starts never see
-//!   each other;
-//! - `resolve` is a greedy **overlap contest** over the whole
-//!   sentence — two records at *different starts* whose spans overlap
-//!   contest, and exactly one survives.
-//!
-//! On corpus-2000 the resolve form dropped 7 of the cascade's 626 records; on
-//! the science artifact, 35 of 2,542; on BCCWJ (read as direct plaintext), 41
-//! of 3,203. Every dropped record was a cross-start
-//! overlap loss and none was a same-start case. The
-//! catalog therefore keeps its cascade, and the resolve form is retained
-//! below as a string constant the way `intersection_test.rs` keeps the wrong
-//! rewrite beside the right one: so the non-equivalence stays checkable
-//! in-tree, and so a future attempt to migrate starts from the witnesses that
-//! ruled out this one.
 
 use lingrep_core::fsm::{CompileLimits, CompiledCatalog, Match, PatternSource, compile_catalog};
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};

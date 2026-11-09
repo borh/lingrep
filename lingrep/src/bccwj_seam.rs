@@ -1,18 +1,4 @@
-//! The BCCWJ half of the corpus seams, shared by everything that walks a
-//! distribution.
-//!
-//! Three callers walk the same inventory — the direct query stream
-//! ([`crate::direct_source`]), the prepared build
-//! ([`crate::prepared_source`]), and `corpus inventory`
-//! ([`crate::commands::corpus`]) — and they must agree on what a discovered
-//! source *is*: which zip is ordinal `n`, which target group it belongs to,
-//! and what the inventory digest over the whole set comes out as. If
-//! discovery and corpus commands disagree on inventory order or identity,
-//! `finish_guarded` rejects the build and
-//! [`crate::direct_source::validate_ordered_inventory`] rejects the run.
-//!
-//! [`BccwjCursor`] centralizes the two shared invariants: *ordinal indexes the
-//! zip vector* and *each zip is its own target group*.
+//! Streams BCCWJ inventories for direct queries, prepared builds and corpus commands.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -244,9 +230,6 @@ pub(crate) fn bccwj_inventory_summary<'a>(
             documents,
             distinct_targets: documents,
             alias_documents: 0,
-            // One document per target; the generic walker leaves this 0 for
-            // an empty inventory, which cannot happen here (`discover`
-            // rejects an empty selection) but keeps the shape total.
             max_target_multiplicity: documents.min(1),
             external_targets: 0,
         },

@@ -482,30 +482,13 @@ impl CompiledCatalog {
         self.anchor_evaluator().positions(tokens)
     }
 
-    /// The matches this catalog *publishes* for one sentence.
+    /// Returns policy-filtered matches, excluding synthesized evidence records.
     ///
-    /// [`Self::find_matches`] returns the canonical stream, which for a
-    /// policy-declaring catalog contains synthesized `__policy__` evidence
-    /// records that no researcher wrote and that no published stream may
-    /// contain. Every caller that displays or exports results therefore has to
-    /// apply policy, and the ones running through
-    /// [`crate::execution::execute`] get that for free from the seam it owns.
-    ///
-    /// Direct sentence consumers such as previews and embedders use this method
-    /// so publication semantics remain centralized.
-    ///
-    /// Statistics are discarded. Use [`crate::execution::execute`] when the run
-    /// reports what policy suppressed.
+    /// Policy statistics are discarded; use [`crate::execution::execute`] to retain them.
     ///
     /// # Errors
     ///
-    /// `AnchorResolutionError` when the anchor an `admit` measures against could
-    /// not be resolved. This pairs a catalog's policy with *its own* positions,
-    /// and the compiler rejects an `admit` naming an undeclared anchor, so valid
-    /// compiled catalogs cannot produce this error. The signature retains it
-    /// because the type system does not encode that invariant.
-    ///
-    /// [`AnchorResolutionError`]: crate::fsm::policy::AnchorResolutionError
+    /// Returns an anchor-resolution error if the catalog's anchor cannot be resolved.
     pub fn find_published_matches<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1177,13 +1160,7 @@ impl CompiledCatalog {
             .collect()
     }
 
-    /// The dependency edge attributes this catalog's `where` clauses require.
-    ///
-    /// Empty when no definition declares a clause. Unlike an ordinarily
-    /// referenced attribute — which binds as universally absent when a schema
-    /// lacks it — these are a bind-time error, because a dependency
-    /// constraint without its edge attributes is meaningless rather than
-    /// unsatisfied.
+    /// Returns dependency-edge attributes required by `where` clauses; missing keys are binding errors.
     #[must_use]
     pub fn relation_attributes(&self) -> Vec<AttributeKey> {
         let mut programs = self
@@ -1301,30 +1278,7 @@ pub struct AnchorEvaluator<'a> {
 }
 
 impl AnchorEvaluator<'_> {
-    /// Every declared anchor's position for one sentence.
-    ///
-    /// One pre-pass over the raw tokens, before any policy runs. An anchor whose
-    /// `exclude` matches no suffix falls back to the raw sentence end, which is
-    /// an `admit`'s shipped meaning — an unpunctuated sentence's propositional
-    /// end is its end. That is a computed answer and not the fallback
-    /// [`AnchorPositions`] rejects: a *missing* anchor stays an error there.
-    ///
-    /// The session is built unconditionally, without checking
-    /// `CompiledCatalog::requires_assertion_session`. That predicate answers a
-    /// different question — whether any *pattern* queries a lookaround — and an
-    /// anchor's `exclude` is reachable from no pattern, so it is `false` for the
-    /// common anchored catalog, `PUNCT_ANCHOR` included. Gating on it would skip
-    /// every anchor. This pass needs the session because that is where the
-    /// programs reside, regardless of pattern lookaround requirements.
-    ///
-    /// A catalog declaring no anchor returns before building either session, so
-    /// it pays nothing per sentence. That guard is not an optimization needing a
-    /// profile — the answer is known to be the empty map — and it is load-bearing
-    /// rather than tidy: this runs from the publication seam under
-    /// `PolicyMode::Apply`, which is selected by `CatalogPolicy::declared()`,
-    /// i.e. by declaring *any* policy and not by declaring an anchor. Without it
-    /// every anchor-free catalog would pay one `Rc` allocation and one zeroed
-    /// `rows` vector per sentence for an empty answer.
+    /// Evaluates each declared anchor; an exclusion that matches no suffix places the anchor at the sentence end.
     pub fn positions<S: TokenSequence + ?Sized>(&self, tokens: &S) -> AnchorPositions {
         if self.programs.is_empty() {
             return AnchorPositions::new(self.digest, BTreeMap::new());

@@ -48,18 +48,11 @@ pub trait SpanSource {
     fn next(&mut self) -> Result<Option<SpanEvent>, SpanStreamError>;
 }
 
-/// A one-event-lookahead cursor: the sweep must check whether the next span
-/// starts at or before the current sentence without consuming it.
 pub struct SpanEvents {
     source: Box<dyn SpanSource + Send>,
     peeked: Option<SpanEvent>,
     ended: bool,
     previous_first: Option<u64>,
-    /// The first terminal error, re-reported for every later `peek`.
-    ///
-    /// Without it a rejected event is simply dropped and the next `peek` can
-    /// succeed, which would turn a detected violation into a silent omission
-    /// for any caller that did not abort on the first error.
     poisoned: Option<SpanStreamError>,
 }
 
@@ -118,8 +111,6 @@ impl SpanEvents {
         Ok(self.peeked)
     }
 
-    /// Records the first terminal error and returns it, so every later `peek`
-    /// reports the same error rather than resuming past it.
     fn poison(&mut self, error: SpanStreamError) -> SpanStreamError {
         self.poisoned.get_or_insert(error).clone()
     }
@@ -230,8 +221,6 @@ mod tests {
 
     #[test]
     fn a_refusal_is_sticky() {
-        // Resuming past a rejected event would turn a detected violation into a
-        // silent omission for any caller that did not abort on the first error.
         let mut events =
             SpanEvents::from_events(vec![event(0, 10, 12), event(1, 4, 6), event(2, 20, 22)]);
         events.peek().unwrap();

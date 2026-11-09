@@ -42,19 +42,7 @@ impl SpanSource for ChannelSource {
     }
 }
 
-/// Streams `region_spans` into a bounded channel, mapping each label to its
-/// slot at the source so no row is ever materialized on the consumer's side.
-///
-/// `labels` is the vocabulary in slot order — the same order
-/// [`admit`](crate::section_tally::admit) assigns — so the mapping has exactly
-/// one owner rather than being restated by the caller.
-///
-/// The returned [`SpanEvents`] blocks on its channel, so it must be drained
-/// from a blocking thread, never from a runtime worker.
-///
-/// Read order is `span_id`, which is `first_sentence` order by the writer's
-/// invariant; the consumer validates that contract and rejects a database that
-/// violates it.
+/// Streams spans in `span_id` order, mapping labels to vocabulary slots; drain the returned [`SpanEvents`] on a blocking thread, never a runtime worker.
 pub fn spawn_span_producer(
     provenance: Arc<ProvenanceView>,
     labels: Vec<String>,

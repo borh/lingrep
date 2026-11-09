@@ -1,13 +1,5 @@
 // Exempt test code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::string_slice)]
-//! `resolve … partition: <key>` — the partition-by-dimension resolve.
-//!
-//! The statement's selected set is subdivided by the string value of the named
-//! metadata key on each record's definition, and the rank contest runs
-//! independently per class. The map is resolved at policy-compile time, so the
-//! engine stays metadata-free; a selected definition lacking the key is not
-//! selected by the statement at all, which is the language's warn-not-reject
-//! stance rather than an error.
 
 use lingrep_core::fsm::DiagnosticCode;
 
@@ -31,8 +23,6 @@ fn resolve_accepts_a_partition_argument() {
     );
 }
 
-/// A `partition:` on any verb other than `resolve` is rejected with its own
-/// diagnostic, pointing at the `partition` key rather than at the statement.
 #[test]
 fn partition_on_a_non_resolve_verb_is_refused_at_the_key() {
     const SOURCE: &str = "a := [text=あ].\n\
@@ -52,9 +42,6 @@ fn partition_on_a_non_resolve_verb_is_refused_at_the_key() {
     );
 }
 
-/// A selected definition carrying the key with a non-string value is rejected,
-/// and the diagnostic points at that definition's own key — the language's
-/// metadata-diagnostic rule.
 #[test]
 fn a_non_string_partition_value_is_refused_at_the_definitions_key() {
     const SOURCE: &str = "layer: 3\n\

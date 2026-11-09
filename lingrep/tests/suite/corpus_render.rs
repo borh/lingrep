@@ -1,6 +1,3 @@
-//! `ling corpus render` and the reading sidecar it writes.
-
-// Exempt test code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
 
 use std::fs;
@@ -130,8 +127,6 @@ fn two_renders_are_identical_and_every_sentence_anchors_in_its_page() {
         let sentence = SentenceId::new(sentence as u64);
         let length = text.chars().count() as u32;
         let anchor = sidecar.anchor(sentence, 0..length).unwrap();
-        // Table pipes and the footnote marker are the only stored characters
-        // that render as markup rather than text.
         assert_eq!(
             anchor.exact,
             !text.contains('|') && !text.contains("[^1]"),

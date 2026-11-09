@@ -47,8 +47,9 @@ PATTERN EXPRESSIONS
 Quantifiers bind before sequence, sequence before intersection, and
 intersection before alternation. Lookarounds are zero-width and read only the
 current sentence unless written with `within=document` or `within=KIND`; a
-body of bounded width written so may also match the neighbouring sentences of
-the same document or innermost division of that kind.
+scoped body must have a maximum width and contain no lookaround. It may match
+neighbouring sentences of the same document or innermost division of that
+kind; excluded sentences end the window.
 `any_order` admits implicit `[]*` gaps, publishes one longest result per
 surface permutation, and requires two or more exact-width-one captures.
 
@@ -289,10 +290,11 @@ default key.
 `skip: @T` makes a pattern match as if the tokens satisfying test `T` were
 absent: they may lie between its elements, no element matches one, and a match
 or capture neither starts nor ends on one. Lookarounds, `^` and `$` step over
-them; a `within=` lookaround reads at most as many neighbouring tokens as its
-body is wide, skipped tokens included. A `defaults` block may supply it for
-every pattern, and `skip: none` removes it from one. A pattern with `skip:` may not reference another
-definition or use `same_as`.
+them; a `within=` lookaround reads neighbouring tokens up to its maximum body
+width before skip rewriting, including skipped tokens in that limit. A
+`defaults` block may supply it for every pattern, and `skip: none` removes it
+from one. A pattern with `skip:` may not reference another definition or use
+`same_as`.
 
 LABEL SETS
 

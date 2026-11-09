@@ -35,15 +35,7 @@ pub enum DiagnosticCode {
     AnyOrderTooComplex,
     CaptureInsideLookaround,
     SpanEqualityInsideLookaround,
-    /// `&` inside a lookaround body.
-    ///
-    /// The sibling of [`Self::SpanEqualityInsideLookaround`], and rejected for
-    /// the same underlying reason: a lookaround is answered by a boundary
-    /// sweep that records only *which boundaries an accepting path reaches*,
-    /// discarding the other endpoint. Intersection is a statement
-    /// about both endpoints of one span, which that representation cannot
-    /// carry. The reverse nesting — a lookaround inside `&` — is fine, and
-    /// stays allowed.
+    /// An intersection inside a lookaround body; the reverse nesting is supported.
     IntersectionInsideLookaround,
     /// A `within=` lookaround whose body has no maximum width or contains
     /// another lookaround.
@@ -114,36 +106,16 @@ pub enum DiagnosticCode {
     /// cannot be an error — but a misspelled policy key is inert, and inert
     /// and honored look identical from the catalog.
     SuspiciousPolicyKey,
-    /// Result policy declared where it can never apply — on a `fragment`,
-    /// which never emits, or a policy statement whose subject selects no
-    /// publishable definition. Non-fatal, and the same class as
-    /// [`DiagnosticCode::UnverifiableExamples`]: the catalog compiles and
-    /// matches correctly; what is broken is the declaration.
-    ///
-    /// The statement case is the one an author cannot see: a `%group` holding
-    /// only fragments *has* members, so the reference resolves and the
-    /// statement runs — over an empty set, on every sentence. Inert and honored
-    /// look identical from the catalog, which is why this is a warning rather
-    /// than no diagnostic, and why it is not an error: the engine executes the
-    /// statement exactly as written.
+    /// A non-fatal policy declaration that selects no publishable definition.
     IneffectivePolicy,
-    /// A recognized result-policy declaration the engine can execute exactly as
-    /// written, but whose magnitude says the author meant something else — an
-    /// `admit … terminal: {within: N, …}` wide enough to admit nearly every
-    /// record.
-    /// Non-fatal: the catalog is internally consistent, and the engine can
-    /// execute the declaration as written, so the compiler does not reject it.
+    /// A non-fatal policy value outside the compiler's plausibility bounds.
     ImplausiblePolicyValue,
     /// A `partition:` argument on a policy verb other than `resolve`. Fatal,
     /// and its own code rather than the generic unknown-argument syntax error:
     /// partitioning subdivides a contest, and only `resolve` holds one — the
     /// author's mistake is the verb, not the spelling of the key.
     PartitionOnNonResolve,
-    /// A `resolve … partition: <key>` selecting a definition that carries the
-    /// key with a non-string value. Fatal: a class is the string value of the
-    /// key, so a number or list names no class, and silently skipping the
-    /// definition would move it out of every contest with no diagnostic. Points
-    /// at that definition's own key, per the metadata-diagnostic rule.
+    /// A selected definition has a non-string value for a `resolve` partition key.
     PartitionKeyNotString,
     /// A catalog-level `anchor:` declaration the compiler cannot turn into a
     /// derived sentence anchor — a malformed mapping, a name declared twice, an
@@ -177,10 +149,7 @@ pub enum DiagnosticCode {
     /// only its last iteration, so a key projected off one would be plausible
     /// and undetectable in any output.
     AmbiguousCaptureReference,
-    /// A `key:` projection onto a capture that can cover more than one token.
-    /// Fatal for the same reason `substitute` rejects the shape: reading one
-    /// attribute off a multi-token span has no defined answer, and a
-    /// head-token rule would be invented rather than witnessed.
+    /// An attribute is projected from a capture that can cover multiple tokens.
     MultiTokenCaptureProjection,
     /// A whole-match key projection on a definition not proven to consume
     /// exactly one token.
@@ -189,30 +158,7 @@ pub enum DiagnosticCode {
     /// definitions it synthesizes. Fatal: a collision would let a catalog name
     /// silently take over a synthesized emitter's records.
     ReservedName,
-    /// An unquoted attribute value or `set` member whose text contains `|`.
-    ///
-    /// The grammar's bare `value` token is terminated by `&` but not by `|`,
-    /// so `[text=a[text=b]` is one atom whose value is the seven characters
-    /// `a[text=b` — a predicate that matches nothing — while the spaced
-    /// `[text=a [text=b]` is the disjunction the author meant. The unspaced
-    /// spelling is the exact analogue of the unspaced `&` that *is* legal, so
-    /// the wrong reading is also the natural one.
-    ///
-    /// Its own code rather than [`Self::Syntax`] because the message names two
-    /// specific recoveries: `\u007C` if the pipe belongs inside the literal,
-    /// and spacing the operands if a disjunction was meant.
-    ///
-    /// An **error**. It shipped as a warning, on the argument that `|` inside
-    /// `[…]` had exactly one possible reading before the Boolean token-test
-    /// syntax existed and that rejecting it would narrow the language. What the
-    /// warning left behind is what overturned that: a catalog that compiles,
-    /// matches nothing, and publishes an empty result a reader cannot tell
-    /// from an absent phenomenon.
-    ///
-    /// Nothing is narrowed, because escape decoding runs after tokenization —
-    /// `|` reaches every position a bare literal can occupy, so a value
-    /// containing a pipe character remains writable. The check produces no
-    /// diagnostic on any tracked catalog.
+    /// An unquoted attribute value or set member contains a raw `|`; escape a literal pipe or separate disjunction operands with spaces.
     PipeInBareValue,
     /// An unquoted attribute value or `set` member wrapped in double quotes.
     ///
@@ -292,11 +238,7 @@ pub enum DiagnosticCode {
     /// A basic UD tree contains no self-edge, so the constraint could never
     /// hold and the pattern would silently never match.
     WhereSelfEdge,
-    /// One `where` label set repeating a term.
-    ///
-    /// A dependent carries exactly one `dep.rel`, so a repeat adds nothing.
-    /// Rejected rather than deduped, for the reason a duplicate name is
-    /// rejected: the repeat is more likely a typo than intent.
+    /// A `where` label set repeats a term.
     DuplicateRelationLabel,
     /// A `where` label term that is not a well-formed relation label.
     ///

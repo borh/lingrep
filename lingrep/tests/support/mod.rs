@@ -404,15 +404,6 @@ pub fn bccwj_distribution(root: &Path) -> PathBuf {
 /// each work's text.
 pub const SORANOHA_CATALOG: &str = "\u{feff}\"identifier\",\"title\",\"subtitle\",\"title_reading\",\"author\",\"orthographic_style\",\"ndc\",\"first_published\",\"body_character_count\",\"source_edition_title\",\"source_edition_publisher\",\"source_edition_year\",\"filename\",\"source_content_hash\",\"url\",\"release\",\"doi\"\r\n\"000092_000879\",\"蜘蛛の糸\",\"\",\"くものいと\",\"芥川 竜之介\",\"新字新仮名\",\"NDC 913\",\"「赤い鳥」1918（大正7）年7月\",\"7\",\"或阿呆の一生・侏儒の言葉\",\"角川文庫、角川書店\",\"1969\",\"kumo.txt\",\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"https://soranoha.org/works/000092_000879/\",\"c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916\",\"10.5281/zenodo.23469644\"\r\n\"000013_000879\",\"十本の針\",\"\",\"じっぽんのはり\",\"別 作者\",\"新字新仮名\",\"NDC 914\",\"「文藝春秋」1927（昭和2）年9月\",\"5\",\"或阿呆の一生・侏儒の言葉\",\"角川文庫、角川書店\",\"1969\",\"hari.txt\",\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"https://soranoha.org/works/000013_000879/\",\"c373bb085971c6a88d8aa1c164788c53ebf304ab501a6f5188c3077ac5482916\",\"10.5281/zenodo.23469644\"\r\n";
 
-/// Writes a synthetic Soranoha bulk plaintext archive at `path` (creating its
-/// parent): `catalog.csv` plus two works, `kumo.txt` (one sentence) and
-/// `hari.txt` (one sentence). Both texts use words the miniature dictionary
-/// contains, so a test can match them without a real dictionary. Returns the archive path.
-///
-/// The texts are self-authored, the release is one value across the archive,
-/// and each `body_character_count` equals the work's non-whitespace character
-/// count, so a test that checks the length formula is checking the fixture and
-/// the reader together.
 pub fn soranoha_archive(path: &Path) -> PathBuf {
     use std::io::Write;
 
@@ -488,8 +479,6 @@ pub fn assert_success(output: &Output) {
     );
 }
 
-/// The `(source, sentence ordinal, token index)` a missing-attribute error
-/// names.
 pub fn missing_attribute_location(error: &ExecutionError) -> (&str, u64, usize) {
     match error {
         ExecutionError::MissingRequiredAttribute {

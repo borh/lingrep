@@ -57,7 +57,6 @@ pub fn build_artifact_with_sections(
     build_artifact_with_metadata(documents, sections, Vec::new())
 }
 
-/// As [`build_artifact_with_sections`], with `metadata[i]` on document `i`.
 pub fn build_artifact_with_metadata(
     documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>,
     sections: Vec<Vec<String>>,

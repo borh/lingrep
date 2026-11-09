@@ -35,22 +35,6 @@ impl SectionPolicy {
             .collect()
     }
 
-    /// The policy's two fields, for a caller that needs to derive a value from
-    /// the whole of it. `include: None` ("admit every label") is distinct from
-    /// `Some(empty)` ("admit nothing"), so the option is preserved rather than
-    /// flattened.
-    ///
-    /// This hands back the fields rather than a rendering of them. A rendering
-    /// would have to pick separators, and a separator is only unambiguous while
-    /// it cannot occur in the data — labels are opaque strings and nothing here
-    /// constrains their bytes, so any separator this module chose could be
-    /// spelled by a label and would silently merge two fields into one. Encoding
-    /// is the caller's problem because only the caller holds every field that it
-    /// is encoding; see `markdown_dialect::reader_tag`, the only caller.
-    ///
-    /// `pub(crate)` rather than `pub`: the policy is one part of a reader
-    /// configuration, and a cache key derived from this alone would be
-    /// incomplete.
     pub(crate) fn canonical_fields(&self) -> (Option<&BTreeSet<String>>, &BTreeSet<String>) {
         (self.include.as_ref(), &self.exclude)
     }

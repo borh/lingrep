@@ -963,16 +963,6 @@ fn by_document_publishes_every_document_with_an_admitted_sentence() {
     assert_eq!(published[0], published[1]);
 }
 
-/// `counters.documents_admitted` counts the documents with at least one
-/// admitted sentence, which are the documents `--by-document` publishes.
-///
-/// `empty.md` has no sentence and `discussion.md` has none in `methods`, so a
-/// count of documents that pass the metadata predicate differs from it.
-/// `old.md` and the `zoo` documents contain no 猫, so the unscoped `summarize`
-/// without `--by-document` and `matches` skip all their sentences as proven
-/// absent. The `zoo` documents are long enough for the posting index to be
-/// used, one run of skipped sentences spans them and the empty `zoo2.md`, and
-/// `zoo5.md` starts after the last sentence the source returns.
 #[test]
 fn documents_admitted_counts_the_documents_by_document_publishes() {
     let dictionary = MiniDictionary::new();
@@ -1227,9 +1217,6 @@ fn by_section_counts_matches_and_matched_sentences_under_every_active_label() {
     assert_eq!(complete["matches_found"], 7);
 }
 
-/// Every sentence carries at most one section label: one unlabelled sentence,
-/// then two under `methods` and two under `results`. `猫` occurs in three
-/// sentences, `鳥` in two, and the last sentence has neither.
 fn partitioned_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
     let root = directory.path().join("partitioned");
     fs::create_dir_all(&root).unwrap();
@@ -1253,9 +1240,6 @@ fn partitioned_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> Pat
     artifact
 }
 
-/// The complete record's `sentences_matched` is the number of distinct
-/// sentences with a match record: for several patterns the union of their
-/// sentences, not the sum of each pattern's count.
 #[test]
 fn complete_sentences_matched_counts_the_sentences_with_a_match_record() {
     let dictionary = MiniDictionary::new();
@@ -1263,7 +1247,6 @@ fn complete_sentences_matched_counts_the_sentences_with_a_match_record() {
     let artifact = partitioned_artifact(&directory, &dictionary);
     for (catalog, matches, sentences) in [
         ("pattern cat := [text=猫].\n", 3, 3),
-        // `cat` matches three sentences and `bird` two; one sentence holds both.
         (
             "pattern cat := [text=猫].\npattern bird := [text=鳥].\n",
             5,
@@ -1304,8 +1287,6 @@ fn complete_sentences_matched_counts_the_sentences_with_a_match_record() {
     }
 }
 
-/// With sections that partition the corpus, the complete record's
-/// `sentences_matched` for one pattern is the sum over the section records.
 #[test]
 fn complete_sentences_matched_is_the_sum_over_partitioning_section_records() {
     let dictionary = MiniDictionary::new();
@@ -1407,8 +1388,6 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
             ("empty".to_owned(), RoaringTreemap::new()),
         ]
     };
-    // (sentence, tokens, pattern ordinal per match). Sentence 2 carries both
-    // labels, sentences 0 and 5 carry none, and pattern 3 is not published.
     let sentences: [(u64, usize, &[u64]); 6] = [
         (0, 3, &[0]),
         (1, 4, &[1, 1, 2]),
@@ -1510,8 +1489,6 @@ fn summarize_events(artifact: &std::path::Path, extra: &[&str]) -> Vec<Value> {
     parse_jsonl(&output.stdout)
 }
 
-/// Each `metadata_value` record equals the counters of the run whose `--where`
-/// clause adds that value, as `=` for a scalar and `contains` for a list.
 #[test]
 fn by_metadata_value_records_equal_the_where_run_for_each_value() {
     let dictionary = MiniDictionary::new();
@@ -1547,7 +1524,6 @@ fn by_metadata_value_records_equal_the_where_run_for_each_value() {
         for record in &records {
             assert_eq!(record.key, "@document.tags");
             let Some(value) = record.value.as_deref() else {
-                // Documents 3 and 4: no key, and an empty list.
                 let expected = if scope.is_some() {
                     (1, 1, 1, 1)
                 } else {
@@ -1688,8 +1664,6 @@ fn by_metadata_rejects_other_owners_tsv_output_direct_input_and_other_groupings(
 #[test]
 fn spilled_metadata_value_counts_publish_the_same_records_as_resident_counts() {
     let strings = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
-    // (sentence range, values). The empty document lists a value that no
-    // sentence can count, and "a" is listed twice by the first document.
     let documents = || {
         vec![
             (0..2, strings(&["a", "b", "a"])),
@@ -1699,8 +1673,6 @@ fn spilled_metadata_value_counts_publish_the_same_records_as_resident_counts() {
             (5..7, strings(&["a"])),
         ]
     };
-    // (sentence, tokens, pattern ordinal per match); pattern 3 is not
-    // published, and sentence 3 is not admitted.
     let sentences: [(u64, usize, &[u64]); 6] = [
         (0, 3, &[0]),
         (1, 4, &[1, 1, 2]),
@@ -2526,10 +2498,6 @@ fn write_table(
     parse_jsonl(&output.stdout)
 }
 
-/// For each clause, the table's rows are the summary records of `summarize
-/// --where` with the same rank, and each row's works is the number of
-/// `--by-document` records of its group; the admitted documents and tokens
-/// are the sums over its `document` records.
 #[test]
 fn table_rows_equal_summarize_where_and_by_document_works() {
     let dictionary = MiniDictionary::new();
@@ -2623,8 +2591,6 @@ fn table_rows_equal_summarize_where_and_by_document_works() {
                 );
             }
 
-            // Every pattern's totals precede the rows, in catalog order, and
-            // count every group under the clause whatever --top keeps.
             let mut all = vec!["--top", "all"];
             all.extend(clause.iter().flat_map(|clause| ["--where", *clause]));
             let all = summarize(&all);
@@ -2692,8 +2658,6 @@ fn table_rows_equal_summarize_where_and_by_document_works() {
     }
 }
 
-/// The text output states the same pattern totals as the `pattern` records,
-/// one line per pattern before the rows.
 #[test]
 fn table_text_output_begins_with_each_pattern_total() {
     let dictionary = MiniDictionary::new();
@@ -2741,8 +2705,6 @@ fn table_text_output_begins_with_each_pattern_total() {
     );
 }
 
-/// The `--by-metadata` values a document record's `--source-metadata` field
-/// stands for: each distinct listed value, or none.
 fn listed_values(value: Option<&Value>) -> Vec<String> {
     let text = |value: &Value| match value {
         Value::String(text) => text.clone(),
@@ -2758,10 +2720,6 @@ fn listed_values(value: Option<&Value>) -> Vec<String> {
     values
 }
 
-/// Documents whose `tags` order values over every document: `w` first
-/// appears in a 2001 document and again after `x`; `v` is only on a document
-/// without sentences, which the artifact stores no metadata for; `x` is
-/// listed twice; `1` is a string and a number; and two documents have no tag.
 fn profile_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf {
     let input = directory.path().join("profile.jsonl");
     fs::write(
@@ -2788,12 +2746,6 @@ fn profile_artifact(directory: &TempDir, dictionary: &MiniDictionary) -> PathBuf
     artifact
 }
 
-/// For one entry, `ling table --entry --by-metadata` publishes the
-/// `metadata_value` records of `summarize --by-metadata` over a catalog whose
-/// pattern matches only that entry: the same values in the same order with
-/// the same admitted documents, sentences and tokens, and the pattern's
-/// matches as the entry's count. Its works per value is the number of
-/// `--by-document` documents with a match that carry the value.
 #[test]
 fn table_entry_by_metadata_equals_summarize_by_metadata_of_a_catalog_of_that_entry() {
     let dictionary = MiniDictionary::new();
@@ -2804,8 +2756,6 @@ fn table_entry_by_metadata_equals_summarize_by_metadata_of_a_catalog_of_that_ent
     let table = directory.path().join("profile.table.lingtable");
     write_table(&artifact, &catalog, &table);
 
-    // Each entry is selected by its human row text, that text with JSON
-    // whitespace, and the `group` of its JSON row.
     for (pattern, keys, restricted) in [
         (
             "word",
@@ -2957,9 +2907,6 @@ fn table_entry_by_metadata_equals_summarize_by_metadata_of_a_catalog_of_that_ent
                     );
                 }
                 if by == "@document.tags" && clause != Some("@document.year = 1999") {
-                    // Values are numbered over every document, including one the
-                    // clause rejects; `v` has no record; documents without a tag
-                    // share the null bucket.
                     let values = expected
                         .iter()
                         .map(|record| record["value"].as_str())
@@ -2975,9 +2922,6 @@ fn table_entry_by_metadata_equals_summarize_by_metadata_of_a_catalog_of_that_ent
     }
 }
 
-/// `--entry` and `--by-metadata` are given together, as JSON, without
-/// `--top`; the entry names a table pattern and one of its keys as `ling
-/// table` prints it.
 #[test]
 fn table_entry_rejects_an_unknown_pattern_or_key_and_incomplete_requests() {
     let dictionary = MiniDictionary::new();
@@ -3051,9 +2995,6 @@ fn table_entry_rejects_an_unknown_pattern_or_key_and_incomplete_requests() {
     assert!(String::from_utf8_lossy(&text.stderr).contains("--json"));
 }
 
-/// Two definitions published under one name can print the same row text, a
-/// surface and a lexicon term; the text then exits 2 and the `group` of the
-/// JSON row selects either.
 #[test]
 fn table_entry_selects_by_group_where_the_row_text_is_ambiguous() {
     let dictionary = MiniDictionary::new();
@@ -3191,9 +3132,6 @@ fn write_table_and_table_reject_what_a_per_document_table_cannot_answer() {
     assert_eq!(output.status.code(), Some(2));
 }
 
-/// A signal delivered while the table is staged ends the run as a cancelled
-/// `summarize` ends: exit 130 or 143, no diagnostic, no `complete` record,
-/// and neither the table nor its staging directory left behind.
 #[cfg(all(unix, debug_assertions))]
 #[test]
 fn a_signal_while_a_table_is_written_publishes_nothing() {

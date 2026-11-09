@@ -23,10 +23,7 @@ pub struct SearchForm {
     /// predating the field keeps working unchanged.
     #[serde(default)]
     pub corpus: Option<String>,
-    /// How many KWIC lines this run retains per pattern. Absent means the
-    /// server's configured ceiling, so a caller predating the control — and
-    /// the export and permalink paths, which do not offer one — is unchanged.
-    /// A value above the ceiling is clamped at admission, not rejected.
+    /// Retained KWIC lines per pattern; absent values use the server ceiling and larger values are clamped to it.
     #[serde(default)]
     pub retained: Option<usize>,
     #[serde(default)]

@@ -1,44 +1,13 @@
-//! The section tally's surface dimension: sentences per (pattern, surface,
-//! slot).
-//!
-//! [`SectionTally`](super::SectionTally) is row-major `patterns × slots`, which
-//! answers "where does this pattern occur" and cannot answer "where does *this
-//! surface of it* occur" — so selecting a surface variation in the detail pane
-//! left the section panel showing the whole pattern. This adds the third axis
-//! the question needs.
-//!
-//! The axis is unbounded where the other two are not. A corpus declares its
-//! section vocabulary before the scan and the catalog declares its patterns,
-//! so [`SectionTallyBuilder::fits`](super::SectionTallyBuilder::fits) can
-//! decide admission up front; surfaces are discovered during the scan and a
-//! productive pattern can carry hundreds. Two bounds hold it, and a pattern
-//! that meets either is **withheld whole** rather than truncated: a half
-//! vocabulary would answer some surfaces and silently drop others under one
-//! heading, which is the defect this replaces rather than a smaller version of
-//! the fix.
+//! Counts sentences per pattern, surface and section slot; patterns exceeding the vocabulary or byte limit are withheld in full.
 
 use std::collections::HashMap;
 
 use crate::snapshot::PatternKey;
 
-/// Distinct surfaces one pattern may carry before its cross-tabulation is
-/// withheld.
-///
-/// Measured against `patterns/sf-experimental.lx` over a 2,000-document
-/// corpus: 73 patterns carried 942 distinct surfaces, median 4 each and 12 at
-/// the 90th percentile, with two outliers at 252 and 322. The limit is set
-/// above the bulk and below the outliers: those two are
-/// productive morphological patterns whose surface inventory belongs to the
-/// language rather than to the corpus, and no panel lists 322 rows.
+/// Maximum distinct surfaces per pattern before its cross-tabulation is withheld.
 pub const SURFACE_VOCABULARY_LIMIT: usize = 64;
 
-/// Bytes the cross-tabulation may retain per workbench.
-///
-/// Four times [`RETAINED_CEILING_BYTES`](super::RETAINED_CEILING_BYTES),
-/// because the table has one more axis, and multiplied by
-/// `DEFAULT_MAX_ENTRIES = 256` this is 64 MB across a full registry. The
-/// budget is charged as surfaces are admitted rather than predicted, since
-/// the number of surfaces is not available before the scan.
+/// Maximum retained bytes for surface cross-tabulations per workbench.
 pub const SURFACE_CEILING_BYTES: usize = 262_144;
 
 /// Why one pattern has no cross-tabulation.
@@ -128,9 +97,7 @@ enum SurfaceRow {
 }
 
 impl SurfaceTally {
-    /// One pattern's cross-tabulation. A pattern outside the catalog reads as
-    /// withheld for budget rather than panicking; nothing in the wired path reaches
-    /// it.
+    /// Returns a pattern's cross-tabulation; an out-of-catalog pattern returns a budget-withheld result.
     #[must_use]
     pub fn pattern(&self, pattern: PatternKey) -> SurfaceSections<'_> {
         static EXHAUSTED: SurfaceRefusal = SurfaceRefusal::BudgetExhausted;
@@ -151,8 +118,6 @@ impl SurfaceTally {
     }
 }
 
-/// Scan-time state. Grows as surfaces are met and shrinks when a pattern is
-/// withheld, which is what returns its budget to the patterns still counting.
 #[derive(Debug)]
 pub(crate) struct SurfaceTallyBuilder {
     slots: usize,
@@ -232,10 +197,6 @@ impl SurfaceTallyBuilder {
         }
     }
 
-    /// The surface's row within one pattern, admitting it on first sight.
-    ///
-    /// `None` when the pattern is already withheld, or has just become withheld
-    /// by this surface being one too many.
     fn position_of(&mut self, pattern: PatternKey, surface: &str) -> Option<usize> {
         let Some(SurfaceRowBuilder::Counted { index, order, .. }) = self.rows.get(pattern.index())
         else {
@@ -282,11 +243,6 @@ impl SurfaceTallyBuilder {
         Some(position)
     }
 
-    /// Withholds one pattern's cross-tabulation and returns its bytes to the
-    /// budget.
-    ///
-    /// The counts are dropped rather than kept as a partial row: a partial row
-    /// is a prefix of the corpus, not a smaller answer about it.
     fn refuse(&mut self, pattern: PatternKey, refusal: SurfaceRefusal) {
         let slots = self.slots;
         let Some(row) = self.rows.get_mut(pattern.index()) else {
@@ -390,8 +346,6 @@ mod tests {
         );
     }
 
-    /// The budget is the other bound, and withholding one pattern returns its
-    /// bytes rather than stranding them.
     #[test]
     fn refusing_a_pattern_returns_its_bytes_to_the_budget() {
         let mut builder = SurfaceTallyBuilder::new(2, 2);

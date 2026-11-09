@@ -1,7 +1,4 @@
-// Exempt test/bench/example code from the workspace panic deny-floor (see docs/lint-policy.md).
 #![allow(clippy::panic, clippy::unwrap_used)]
-//! `within=` lookarounds end to end, over direct input and a prepared
-//! artifact built from it.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -13,8 +10,6 @@ use tempfile::TempDir;
 
 use crate::support::{lingrep, lingrep_without_dictionary, parse_jsonl};
 
-/// Each pattern matches the last token of a sentence whose next sentence is
-/// in the same document, section or paragraph.
 const CATALOG: &str = "pattern document := [] $ followed_by([], within=document).\n\
                        pattern section := [] $ followed_by([], within=section).\n\
                        pattern paragraph := [] $ followed_by([], within=paragraph).";
@@ -88,7 +83,6 @@ impl Corpus {
     }
 }
 
-/// The in-document ordinals of the sentences that each pattern matched.
 fn matched(output: &Output) -> BTreeSet<(String, u64)> {
     assert!(
         output.status.success(),
@@ -121,11 +115,6 @@ fn warnings(output: &Output) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Sentences 0 and 1 share a paragraph, sentence 2 ends the first section
-/// before its subsection, sentence 3 is alone in that subsection, and
-/// sentence 4 is alone in the second section. Under analyzer segmentation,
-/// which `corpus build` rejects for Markdown, sentences 0 and 1 are one
-/// input line.
 #[test]
 fn a_division_window_ends_at_the_division_on_both_paths() {
     let expected = BTreeSet::from(
@@ -164,8 +153,6 @@ fn a_division_window_ends_at_the_division_on_both_paths() {
     }
 }
 
-/// Plain text does not observe paragraphs, so a `within=paragraph`
-/// lookaround matches sentence-locally and the run warns.
 #[test]
 fn a_division_kind_the_corpus_does_not_observe_warns_on_both_paths() {
     let corpus = Corpus::new(

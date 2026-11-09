@@ -805,7 +805,6 @@ pub struct MetadataValueData {
     pub patterns: Vec<PatternCount>,
 }
 
-/// One published pattern's counts within a section or metadata value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PatternCount {
     pub pattern: String,

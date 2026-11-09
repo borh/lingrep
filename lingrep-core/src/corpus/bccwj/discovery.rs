@@ -71,30 +71,7 @@ pub struct BccwjInventory {
 }
 
 impl BccwjInventory {
-    /// Validates the distribution root and builds the inventory, under the
-    /// run's traversal limits.
-    ///
-    /// The walk is bounded exactly as the generic lexical discovery is:
-    /// `max_depth` below `C-XML/`, `max_directory_entries` per directory,
-    /// and `max_source_entries` / `max_documents` over the selected zips.
-    /// A symlink back to an ancestor is rejected rather than enumerated once
-    /// per level. Two things secure that, and the depth bound is only one of
-    /// them: a link is resolved with an explicit `metadata` call whose error
-    /// propagates, because `is_dir()` reports a failed stat as "not a
-    /// directory" and so ended the walk silently. Which one fires is a
-    /// property of the platform's symlink budget — Linux permits 40 per
-    /// resolution, so the depth bound is reached first, while macOS gives up
-    /// at 16 with `ELOOP` (measured, not assumed). Both are named errors;
-    /// relying on the bound alone made the guarantee depend on that budget
-    /// exceeding it. The non-guarantee about cycles *inside* the bound is
-    /// unchanged, and matches the generic walker.
-    ///
-    /// # Errors
-    ///
-    /// A missing `C-XML/` or `DOC/` directory, a missing context table, a
-    /// zip outside `C-XML/{FIXED,VARIABLE}/<SUB>/` (naming the path), an
-    /// exceeded traversal limit (naming the limit and the path), or an
-    /// empty zip selection.
+    /// Builds an inventory under the supplied traversal limits and reports invalid layouts, I/O errors, exceeded limits and empty ZIP selections.
     pub fn discover(root: &Path, limits: &TraversalLimits) -> io::Result<Self> {
         let cxml = root.join("C-XML");
         if !cxml.is_dir() {
@@ -312,21 +289,7 @@ pub struct BccwEvents {
 }
 
 impl BccwEvents {
-    /// Wraps an already-open handle over one inventory zip.
-    ///
-    /// `max_entry_bytes` is the run's `max_input_record_bytes`; an entry
-    /// whose *declared* uncompressed size exceeds it is rejected before a
-    /// byte is decompressed, and the read itself is bounded so an entry that
-    /// under-declares its size cannot outgrow the limit either.
-    ///
-    /// The inventory `zip` is the one identifier: its path, logical name and
-    /// sampling travel together, so no caller can pair one zip's path with
-    /// another's name or window.
-    ///
-    /// # Errors
-    ///
-    /// An unreadable ZIP container, undecodable entry names, or duplicate
-    /// decoded entry names.
+    /// Opens an inventory ZIP, rejecting unreadable containers, undecodable or duplicate entry names; `max_entry_bytes` bounds both declared and actual uncompressed entry sizes.
     pub fn new(
         file: File,
         entry: &BccwjZip,
@@ -445,9 +408,6 @@ impl BccwEvents {
             .zip
             .by_index(index)
             .map_err(|err| context(format!("unreadable zip entry: {err}")))?;
-        // The check on the declared uncompressed size rejects an oversized
-        // entry — and a decompression bomb — before anything is inflated. The
-        // bounded read then covers an entry that under-declares its size.
         let declared = entry.size();
         if declared > limit as u64 {
             return Err(oversized(&declared.to_string()));

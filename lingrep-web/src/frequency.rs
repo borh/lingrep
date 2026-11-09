@@ -1,10 +1,4 @@
-//! The frequency view: count tables bound at startup to a served corpus and a
-//! discovered catalog, and the queries the view runs against them.
-//!
-//! A query names document-metadata conditions. They are written as one
-//! `--where` clause and evaluated in this process over the document metadata
-//! loaded at startup, so the counts are those of `ling table` with that
-//! clause.
+//! Binds count tables to served corpora and catalogs, then answers document-metadata queries from those tables.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -24,33 +18,25 @@ use crate::metadata_labels::KeyLabels;
 
 /// Rows a query returns when it names no limit.
 pub const PAGE_ROWS: usize = 100;
-/// Rows one query returns at most.
 const MAX_PAGE_ROWS: usize = 1_000;
 
-/// Every configured count table, each bound to one corpus and one catalog.
 #[derive(Default)]
 pub struct FrequencyViews {
     pairs: Vec<FrequencyPair>,
     dimensions: HashMap<CorpusName, Arc<[Dimension]>>,
-    /// Every document-metadata key of the corpora the tables count.
     metadata_keys: BTreeSet<String>,
     labels: KeyLabels,
 }
 
-/// One count table and what it counts: a catalog run over a corpus.
 pub struct FrequencyPair {
     pub corpus: CorpusName,
     pub corpus_display: String,
     pub catalog: String,
     table: CountTable,
-    /// The file names `ling table` takes, as the view's command shows them.
     table_file: String,
     corpus_file: String,
-    /// Document metadata, indexed like the table's documents.
     documents: Vec<Arc<Metadata>>,
     patterns: Vec<PatternSource>,
-    /// A relative link that opens the catalog in the workbench over the
-    /// corpus, when its source fits a permalink.
     workbench: Option<String>,
 }
 
@@ -61,7 +47,6 @@ pub struct PatternSource {
     pub source: Option<String>,
 }
 
-/// A document-metadata key offered as a condition.
 #[derive(Clone, Debug, Serialize)]
 pub struct Dimension {
     pub key: String,
@@ -81,7 +66,6 @@ pub enum DimensionKind {
     Range { min: f64, max: f64 },
 }
 
-/// One condition on a dimension, as the view's URL records it.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "m", rename_all = "snake_case")]
 pub enum Condition {
@@ -101,22 +85,30 @@ pub enum Condition {
     },
 }
 
-/// Why a query has no rows to show although it is well formed.
+/// Reasons a frequency query cannot return rows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum Unsupported {
-    /// The clause does not parse.
-    Syntax { message: String },
+    Syntax {
+        message: String,
+    },
     /// The clause names `@section`; a count table holds counts per document.
     Section,
-    /// The clause needs sentence metadata or divisions.
+    /// The clause references sentence metadata or divisions.
     Sentence,
     /// A condition names a key this corpus does not offer.
-    UnknownKey { key: String },
+    UnknownKey {
+        key: String,
+    },
     /// A value cannot be written in a clause.
-    Unwritable { key: String, value: String },
+    Unwritable {
+        key: String,
+        value: String,
+    },
     /// A condition does not fit its key's kind.
-    Shape { key: String },
+    Shape {
+        key: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -128,7 +120,6 @@ pub enum Sort {
     Key,
 }
 
-/// A query against one pair.
 #[derive(Clone, Debug, Default)]
 pub struct Query {
     pub pattern: String,
@@ -204,14 +195,12 @@ impl FrequencyViews {
             .find(|pair| pair.corpus.as_str() == corpus && pair.catalog == catalog)
     }
 
-    /// The display labels for metadata keys.
     #[must_use]
     pub fn labels(&self) -> &KeyLabels {
         &self.labels
     }
 
-    /// Adds `labels`, logging a notice for each labelled key that no corpus
-    /// a table counts carries.
+    /// Installs labels and logs each key absent from every corpus with a count table.
     #[must_use]
     pub fn with_labels(self, labels: KeyLabels) -> Self {
         if !self.is_empty() {
@@ -232,9 +221,9 @@ impl FrequencyViews {
             .map_or(&[], |dimensions| dimensions)
     }
 
-    /// Binds each table at `tables` to the served corpus whose analysis
-    /// identity and the catalog whose fingerprint its key records, then
-    /// opens and verifies it, after the corpora it needs are ready.
+    /// Binds each table to the served corpus and catalog identified by its
+    /// analysis identity and catalog fingerprint, then opens and verifies it
+    /// after the referenced corpora are ready.
     ///
     /// # Errors
     ///
@@ -404,14 +393,11 @@ fn file_name(path: &Path) -> String {
     )
 }
 
-/// Every document's metadata and the dimensions derived from it.
 struct CorpusDocuments {
     by_id: HashMap<u64, Arc<Metadata>>,
     dimensions: Arc<[Dimension]>,
 }
 
-/// Opens the corpus if it is not ready yet and reads every document's
-/// metadata once.
 async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, String> {
     runtime.start_or_observe().await;
     let mut readiness = runtime.readiness();
@@ -470,7 +456,6 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
     Ok(CorpusDocuments { by_id, dimensions })
 }
 
-/// The text a clause compares a scalar by.
 fn scalar_text(scalar: &MetadataScalar) -> String {
     match scalar {
         MetadataScalar::String(text) | MetadataScalar::Number(text) => text.clone(),
@@ -485,13 +470,6 @@ fn lookup<'a>(metadata: &'a Metadata, key: &str) -> Option<&'a MetadataValue> {
         .map(|(_, value)| value)
 }
 
-/// The keys offered as conditions, by key.
-///
-/// A key whose every value is a number is a range. A key whose values are all
-/// scalars, or all lists of scalars, is categorical when it has at least two
-/// distinct values and no more than half as many as the documents carrying
-/// it, which leaves out titles, identifiers and other per-document values. A
-/// key that a clause cannot name is left out.
 fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<Dimension> {
     #[derive(Default)]
     struct Seen {
@@ -580,8 +558,6 @@ fn quoted(key: &str, value: &str) -> Result<String, Unsupported> {
     Ok(format!("\"{value}\""))
 }
 
-/// The predicate `condition` writes on `dimension`, or `None` when it keeps
-/// every document: an empty value set, or a range with no bound.
 fn predicate(dimension: &Dimension, condition: &Condition) -> Result<Option<String>, Unsupported> {
     let key = &dimension.key;
     let shape = || Unsupported::Shape { key: key.clone() };
@@ -638,8 +614,6 @@ fn predicate(dimension: &Dimension, condition: &Condition) -> Result<Option<Stri
     }
 }
 
-/// The predicate of each condition, in dimension order, leaving out the
-/// conditions that keep every document.
 fn predicates(
     dimensions: &[Dimension],
     conditions: &BTreeMap<String, Condition>,
@@ -712,9 +686,6 @@ fn group_text(group: &Group<'_>) -> String {
     }
 }
 
-/// The text of the definitions named `name` in `source`, each with the
-/// annotation entries before it, joined by a blank line, or `None` when no
-/// definition has that name.
 fn definition_source(source: &str, name: &str) -> Option<String> {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -723,7 +694,6 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
     let text = source.replace('\r', "\n");
     let tree = parser.parse(&text, None)?;
     let mut found = Vec::new();
-    // Annotation entries before a definition belong to it.
     let mut run_start = None;
     let root = tree.root_node();
     let mut cursor = root.walk();
@@ -768,7 +738,6 @@ impl FrequencyPair {
             .ok_or_else(|| QueryError::UnknownPattern(name.to_owned()))
     }
 
-    /// Whether `clause` admits each table document.
     fn admitted(&self, clause: Option<&ScopeClause>) -> Vec<bool> {
         self.documents
             .iter()

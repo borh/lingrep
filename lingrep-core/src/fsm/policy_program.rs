@@ -441,18 +441,6 @@ impl GroupIndex {
         Self { names, members }
     }
 
-    /// Declares `name` with no members unless it already has some.
-    ///
-    /// For a derived `group` declaration whose predicate currently selects
-    /// nothing: the group still exists — `%name` must resolve to it and draw
-    /// the empty-subject warning rather than an unknown-group error claiming
-    /// the catalog does not declare it. Membership lists can never encode an
-    /// empty group, which is why this is a separate entry point rather than an
-    /// input to [`Self::from_definition_groups`].
-    ///
-    /// Sorted-position insertion keeps ids deterministic; it is sound because
-    /// every [`GroupId`] is issued by [`Self::id`] *after* installation, so no
-    /// id exists yet for an insertion to shift.
     pub(crate) fn declare(&mut self, name: &CompactString) {
         if let Err(position) = self.names.binary_search(name) {
             self.names.insert(position, name.clone());
@@ -527,31 +515,6 @@ impl GroupIndex {
         }
     }
 
-    /// Every definition a subject can select, ascending.
-    ///
-    /// `eligible` is the **subject domain**: the publishable emitting
-    /// definitions, ascending. It is passed in rather than derived here
-    /// because the two domains are not the same set and this index cannot
-    /// derive either:
-    ///
-    /// * **Subject domain** — emitting definitions only. A fragment never
-    ///   emits, and a synthesized `__policy__` emitter is stripped before the
-    ///   candidate set exists, so neither can ever be a subject record.
-    /// * **Operand domain** — patterns *and* fragments, the latter reached
-    ///   through their evidence emitters under `evidence: raw`.
-    ///
-    /// A bare definition count would be worse than incomplete: it invites a
-    /// caller to pass a number that disagrees with the list this index was
-    /// built from, and it would make `all` manufacture obligations against
-    /// definitions that can never be subjects.
-    ///
-    /// **The cumulative detach analysis must accumulate per `DefId`, never per
-    /// [`BoundSubject`].** `all`, `%group` and `@definition` are three
-    /// spellings that can select one definition, so aggregating obligations by
-    /// subject identity would miss a program whose two detaches on opposite
-    /// edges are spelled differently — `detach all … at_start` followed by
-    /// `detach @a … at_end` targets `a` twice while looking like two unrelated
-    /// subjects.
     #[must_use]
     pub(crate) fn expand_subject(&self, subject: BoundSubject, eligible: &[DefId]) -> Vec<DefId> {
         match subject {
@@ -606,16 +569,7 @@ impl DefinitionDomain {
         Self::default()
     }
 
-    /// Builds the domain from the catalog's **complete** definition list.
-    ///
-    /// Each item is a definition's name and whether it can be a *subject*
-    /// record: an emitting definition that is not a synthesized evidence
-    /// emitter. Iteration order is [`DefId`] order, so the list must be
-    /// complete and in declaration order.
-    ///
-    /// The eligibility flag is supplied rather than derived from the name,
-    /// because the compiler tracks visibility and a name test would make
-    /// the hidden-emitter prefix load-bearing in a second place.
+    /// Builds the domain from the complete definition list in declaration order; flags identify subject eligibility and ordinary patterns.
     pub fn new<'a>(definitions: impl IntoIterator<Item = (&'a str, bool, bool)>) -> Self {
         let mut ids = IndexMap::new();
         let mut eligible = Vec::new();
