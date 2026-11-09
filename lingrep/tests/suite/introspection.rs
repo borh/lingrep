@@ -5,6 +5,38 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::support::{dict_path, lingrep_without_dictionary, parse_jsonl};
 
+#[cfg(feature = "web")]
+#[test]
+fn serve_capabilities_report_successful_signal_shutdown() {
+    for command in ["serve", "matches"] {
+        let output = lingrep_without_dictionary()
+            .args(["describe", command, "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let records = parse_jsonl(&output.stdout);
+        let codes = records[0]["data"]["exit_codes"].as_array().unwrap();
+        if command == "serve" {
+            assert!(
+                codes
+                    .iter()
+                    .any(|code| code.as_str().unwrap().starts_with("0=")
+                        && code.as_str().unwrap().contains("SIGINT")
+                        && code.as_str().unwrap().contains("SIGTERM"))
+            );
+            assert!(
+                !codes
+                    .iter()
+                    .any(|code| code.as_str().unwrap().starts_with("130=")
+                        || code.as_str().unwrap().starts_with("143="))
+            );
+        } else {
+            assert!(codes.contains(&serde_json::json!("130=SIGINT")));
+            assert!(codes.contains(&serde_json::json!("143=SIGTERM")));
+        }
+    }
+}
+
 #[test]
 fn describe_is_derived_from_the_public_parser_surface() {
     let output = lingrep_without_dictionary()

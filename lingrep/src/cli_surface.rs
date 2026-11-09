@@ -106,13 +106,21 @@ fn capability(command: &Command, path: &str) -> CapabilityData {
                     .map(move |value| format!("{}={}", arg.get_id(), value.to_string_lossy()))
             })
             .collect(),
-        exit_codes: vec![
-            "0=success".into(),
-            "1=runtime failure".into(),
-            "2=invalid invocation".into(),
-            "130=SIGINT".into(),
-            "143=SIGTERM".into(),
-        ],
+        exit_codes: if path == "serve" {
+            vec![
+                "0=success, including shutdown after SIGINT or SIGTERM".into(),
+                "1=runtime failure".into(),
+                "2=invalid invocation".into(),
+            ]
+        } else {
+            vec![
+                "0=success".into(),
+                "1=runtime failure".into(),
+                "2=invalid invocation".into(),
+                "130=SIGINT".into(),
+                "143=SIGTERM".into(),
+            ]
+        },
         examples: examples_for(path)
             .iter()
             .map(|example| ExampleData {
