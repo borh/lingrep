@@ -2020,6 +2020,11 @@ same corpus as another table:
 --count-table a.lingtable and --count-table b.lingtable both count catalog collexeme.lx over corpus "works"
 ```
 
+Document metadata is indexed in temporary files shared by the corpus's table
+bindings. Set `TMPDIR` to a writable, disk-backed directory for large corpora;
+a memory-backed temporary directory consumes RAM for those files. The files
+are removed when the server releases the corpus index.
+
 The view presents a query as a sentence with controls for the catalog,
 pattern, document metadata conditions, sort order and substring filter. A key
 becomes a condition when every value is a number (a range) or when its scalar

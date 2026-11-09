@@ -14,6 +14,7 @@ description = "Browser front end over an immutable prepared corpus"
 testing = []
 
 [dependencies]
+tempfile.workspace = true
 serde_urlencoded = "0.7"
 blake3.workspace = true
 lingrep-core.workspace = true
@@ -52,7 +53,6 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 thirtyfour = { version = "0.38.1", default-features = false, features = ["reqwest", "cdp"] }
 reqwest = { version = "0.12", features = ["blocking"] }
-tempfile.workspace = true
 hegeltest.workspace = true
 rmp-serde.workspace = true
 trycmd.workspace = true

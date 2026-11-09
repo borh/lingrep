@@ -11,6 +11,17 @@ use lingrep_corpus::{
 };
 use serde::{Deserialize, Serialize};
 
+mod documents;
+
+use lingrep_core::spill::{SortedRunCounts, SpillPolicy, TempBudget};
+
+const SPILL_POLICY: SpillPolicy = SpillPolicy {
+    max_pending_bytes: 8 * 1024 * 1024,
+    max_pending_keys: 100_000,
+    merge_fan_in: 16,
+};
+const MAX_TEMP_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+
 use crate::catalog_index::CatalogIndex;
 use crate::corpus_runtime::{CacheReadiness, CorpusRuntime};
 use crate::corpus_set::{CorpusName, CorpusSet};
@@ -42,7 +53,7 @@ pub struct FrequencyPair {
     pub catalog: String,
     table: CountTable,
     command_inputs: Option<[String; 3]>,
-    documents: Vec<Arc<Metadata>>,
+    documents: Arc<documents::Documents>,
     patterns: Vec<PatternSource>,
     workbench: Option<String>,
 }
@@ -182,6 +193,8 @@ pub enum QueryError {
     ResourceLimit { resource: &'static str, limit: u64 },
     #[error(transparent)]
     Table(#[from] CountTableError),
+    #[error(transparent)]
+    Metadata(#[from] std::io::Error),
 }
 
 #[derive(Default)]
@@ -281,7 +294,8 @@ impl FrequencyViews {
 
     /// Binds each table to the served corpus and catalog identified by its
     /// analysis identity and catalog fingerprint, then opens and verifies it
-    /// after the referenced corpora are ready.
+    /// after the referenced corpora are ready. Metadata indexes and sorting use
+    /// the system temporary directory with a shared 64 GiB limit during binding.
     ///
     /// # Errors
     ///
@@ -395,29 +409,20 @@ impl FrequencyViews {
                 views
                     .dimensions
                     .insert(name.clone(), documents.dimensions.clone());
-                views.metadata_keys.extend(
-                    documents
-                        .by_id
-                        .values()
-                        .flat_map(|metadata| metadata.iter().map(|(key, _)| key.clone())),
-                );
+                views.metadata_keys.extend(documents.keys.iter().cloned());
                 loaded.insert(name.clone(), Arc::clone(&documents));
                 documents
             };
             let named = |message: String| format!("--count-table {}: {message}", path.display());
             let table = CountTable::open(&path, &key).map_err(|error| named(error.to_string()))?;
             table.verify().map_err(|error| named(error.to_string()))?;
-            let aligned = table
-                .document_ids()
-                .iter()
-                .map(|id| {
-                    documents.by_id.get(id).cloned().ok_or_else(|| {
-                        named(format!(
-                            "counts document {id}, which the corpus does not hold"
-                        ))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut reader = documents
+                .store
+                .reader()
+                .map_err(|error| named(error.to_string()))?;
+            reader
+                .check_ids(table.document_ids())
+                .map_err(|error| named(error.to_string()))?;
             let source = catalogs.get(&catalog).map_or("", |source| source);
             let patterns = table
                 .pattern_names()
@@ -436,7 +441,7 @@ impl FrequencyViews {
                 catalog,
                 command_inputs,
                 table,
-                documents: aligned,
+                documents: Arc::clone(&documents.store),
                 patterns,
                 workbench,
             });
@@ -473,7 +478,8 @@ fn command_paths(paths: [&Path; 3]) -> Option<[String; 3]> {
 }
 
 struct CorpusDocuments {
-    by_id: HashMap<u64, Arc<Metadata>>,
+    store: Arc<documents::Documents>,
+    keys: BTreeSet<String>,
     dimensions: Arc<[Dimension]>,
 }
 
@@ -501,7 +507,9 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
         .provenance()
         .await
         .map_err(|error| error.to_string())?;
-    let mut rows = Vec::new();
+    let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
+    let mut writer =
+        documents::Writer::new(Arc::clone(&budget)).map_err(|error| error.to_string())?;
     let mut next = 0;
     loop {
         let page = view
@@ -510,29 +518,43 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
             .map_err(|error| error.to_string())?;
         let Some(last) = page.last() else { break };
         next = last.first_sentence + last.sentence_count;
-        rows.extend(page);
+        for row in page {
+            let metadata = match row.metadata_json.as_deref() {
+                None => Metadata::default(),
+                Some(raw) => serde_json::from_str::<serde_json::Value>(raw)
+                    .map_err(|error| error.to_string())
+                    .and_then(|value| {
+                        metadata_from_json(value, "prepared document metadata")
+                            .map_err(|error| error.to_string())
+                    })?,
+            };
+            writer
+                .push(row.document_id.get(), &metadata)
+                .map_err(|error| error.to_string())?;
+        }
     }
-    let mut by_id = HashMap::with_capacity(rows.len());
-    for row in rows {
-        let metadata = match row.metadata_json.as_deref() {
-            None => Metadata::default(),
-            Some(raw) => serde_json::from_str::<serde_json::Value>(raw)
-                .map_err(|error| error.to_string())
-                .and_then(|value| {
-                    metadata_from_json(value, "prepared document metadata")
-                        .map_err(|error| error.to_string())
-                })
-                .map_err(|error| {
-                    format!(
-                        "document {}: stored metadata is not valid: {error}",
-                        row.document_id.get()
-                    )
-                })?,
-        };
-        by_id.insert(row.document_id.get(), Arc::new(metadata));
-    }
-    let dimensions = derive_dimensions(by_id.values().map(AsRef::as_ref)).into();
-    Ok(CorpusDocuments { by_id, dimensions })
+    let store = Arc::new(writer.finish().map_err(|error| error.to_string())?);
+    let mut reader = store.reader().map_err(|error| error.to_string())?;
+    let mut keys = BTreeSet::new();
+    let mut key_budget = ProjectionBudget::default();
+    let rows = std::iter::from_fn(|| reader.next().transpose()).map(|row| {
+        let metadata = row?;
+        for (key, _) in &metadata {
+            if !keys.contains(key) {
+                key_budget.charge(key).map_err(std::io::Error::other)?;
+                keys.insert(key.clone());
+            }
+        }
+        Ok(metadata)
+    });
+    let dimensions = derive_dimensions(rows, budget)
+        .map_err(|error| error.to_string())?
+        .into();
+    Ok(CorpusDocuments {
+        store,
+        keys,
+        dimensions,
+    })
 }
 
 fn scalar_text(scalar: &MetadataScalar) -> String {
@@ -549,7 +571,10 @@ fn lookup<'a>(metadata: &'a Metadata, key: &str) -> Option<&'a MetadataValue> {
         .map(|(_, value)| value)
 }
 
-fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<Dimension> {
+fn derive_dimensions(
+    documents: impl Iterator<Item = std::io::Result<Metadata>>,
+    budget: Arc<TempBudget>,
+) -> std::io::Result<Vec<Dimension>> {
     #[derive(Default)]
     struct Seen {
         documents: u64,
@@ -559,11 +584,12 @@ fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<D
         other: bool,
         min: f64,
         max: f64,
-        values: std::collections::HashSet<String>,
+        values: usize,
     }
     let mut keys: BTreeMap<String, Seen> = BTreeMap::new();
+    let mut distinct = SortedRunCounts::with_policy(SPILL_POLICY, budget)?;
     for metadata in documents {
-        for (key, value) in metadata {
+        for (key, value) in &metadata? {
             let seen = keys.entry(key.clone()).or_insert_with(|| Seen {
                 numbers: true,
                 min: f64::INFINITY,
@@ -584,18 +610,25 @@ fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<D
                         },
                         _ => seen.numbers = false,
                     }
-                    seen.values.insert(scalar_text(scalar));
+                    distinct.add((key.clone(), scalar_text(scalar)), 1)?;
                 }
                 MetadataValue::Scalars(scalars) => {
                     seen.lists = true;
                     seen.numbers = false;
-                    seen.values.extend(scalars.iter().map(scalar_text));
+                    for scalar in scalars {
+                        distinct.add((key.clone(), scalar_text(scalar)), 1)?;
+                    }
                 }
                 MetadataValue::Opaque(_) => seen.other = true,
             }
         }
     }
-    keys.into_iter()
+    let mut distinct = distinct.into_sorted_drain()?;
+    while let Some(((key, _), _)) = distinct.next_entry()? {
+        keys.get_mut(&key).expect("observed key").values += 1;
+    }
+    Ok(keys
+        .into_iter()
         .filter(|(key, seen)| !seen.other && writable_key(key) && !(seen.scalars && seen.lists))
         .filter_map(|(key, seen)| {
             let kind = if seen.numbers && seen.scalars {
@@ -604,13 +637,13 @@ fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<D
                     max: seen.max,
                 }
             } else {
-                let distinct = seen.values.len() as u64;
+                let distinct = seen.values as u64;
                 if distinct < 2 || distinct * 2 > seen.documents {
                     return None;
                 }
                 DimensionKind::Categorical {
                     list: seen.lists,
-                    values: seen.values.len(),
+                    values: seen.values,
                 }
             };
             Some(Dimension {
@@ -619,7 +652,7 @@ fn derive_dimensions<'a>(documents: impl Iterator<Item = &'a Metadata>) -> Vec<D
                 kind,
             })
         })
-        .collect()
+        .collect())
 }
 
 pub(crate) fn writable_key(key: &str) -> bool {
@@ -809,7 +842,7 @@ impl FrequencyPair {
             ),
             (
                 "documents",
-                self.documents.len() as u64,
+                self.table.document_ids().len() as u64,
                 MAX_QUERY_ITEMS as u64,
             ),
             (
@@ -847,14 +880,17 @@ impl FrequencyPair {
             .ok_or_else(|| QueryError::UnknownPattern(name.to_owned()))
     }
 
-    fn admitted(&self, clause: Option<&ScopeClause>) -> Vec<bool> {
-        self.documents
+    fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
+        let mut reader = self.documents.reader()?;
+        self.table
+            .document_ids()
             .iter()
-            .map(|metadata| {
-                clause.is_none_or(|clause| {
-                    clause.evaluate_document(metadata)
+            .map(|id| {
+                let metadata = reader.document(*id)?;
+                Ok(clause.is_none_or(|clause| {
+                    clause.evaluate_document(&metadata)
                         == DocumentOutcome::Decided(Verdict::Admitted)
-                })
+                }))
             })
             .collect()
     }
@@ -912,7 +948,7 @@ impl FrequencyPair {
             Err(unsupported) => return Ok(Outcome::Unsupported(unsupported)),
         };
         self.admit_query()?;
-        let mask = self.mask(&self.admitted(clause.as_ref()));
+        let mask = self.mask(&self.admitted(clause.as_ref())?);
         let totals = self.table.pattern_totals(&mask)?;
         let total = totals[pattern];
         let mut kept = BTreeMap::new();
@@ -925,7 +961,7 @@ impl FrequencyPair {
                 .collect::<Vec<_>>()
                 .join(" & ");
             let others = document_clause(&others).unwrap_or(None);
-            let others = self.mask(&self.admitted(others.as_ref()));
+            let others = self.mask(&self.admitted(others.as_ref())?);
             let of = self.table.pattern_totals(&others)?[pattern].occurrences;
             kept.insert(
                 key.clone(),
@@ -1023,12 +1059,14 @@ impl FrequencyPair {
             Ok(clause) => clause,
             Err(unsupported) => return Ok(Err(unsupported)),
         };
-        let admitted = self.admitted(clause.as_ref());
+        let admitted = self.admitted(clause.as_ref())?;
         let counts = self.table.pattern_document_counts(pattern)?;
         let mut values: HashMap<String, u64> = HashMap::new();
         let mut budget = ProjectionBudget::default();
-        for ((metadata, count), admitted) in self.documents.iter().zip(counts).zip(&admitted) {
-            let scalars = match lookup(metadata, key) {
+        let mut reader = self.documents.reader()?;
+        for ((id, count), admitted) in self.table.document_ids().iter().zip(counts).zip(&admitted) {
+            let metadata = reader.document(*id)?;
+            let scalars = match lookup(&metadata, key) {
                 Some(MetadataValue::Scalar(scalar)) => std::slice::from_ref(scalar),
                 Some(MetadataValue::Scalars(scalars)) => scalars,
                 _ => continue,
@@ -1077,6 +1115,14 @@ mod tests {
         schema: lingrep_corpus::GroupSchema,
         metadata: Metadata,
     ) -> (tempfile::TempDir, FrequencyPair) {
+        table_pair_documents(values, schema, vec![metadata])
+    }
+
+    fn table_pair_documents(
+        values: Vec<String>,
+        schema: lingrep_corpus::GroupSchema,
+        metadata: Vec<Metadata>,
+    ) -> (tempfile::TempDir, FrequencyPair) {
         use lingrep_corpus::{CountTableWriter, DocumentTotals};
         let directory = tempfile::tempdir().expect("directory");
         let path = directory.path().join("table");
@@ -1091,16 +1137,20 @@ mod tests {
             vec!["p".into()],
             vec![schema],
             &values,
-            &[DocumentTotals {
-                document_id: 0,
-                sentences: 1,
-                tokens: 1,
-            }],
+            &(0..metadata.len())
+                .map(|index| DocumentTotals {
+                    document_id: index as u64,
+                    sentences: 1,
+                    tokens: 1,
+                })
+                .collect::<Vec<_>>(),
         )
         .expect("writer");
         for index in 0..values.len() {
             writer.begin_entry(0, 0, &[index as u32]).expect("entry");
-            writer.add_pair(0, 1).expect("pair");
+            for document in 0..metadata.len() {
+                writer.add_pair(document as u32, 1).expect("pair");
+            }
         }
         writer
             .finish(&lingrep_core::execution::CancellationFlag::new())
@@ -1120,7 +1170,15 @@ mod tests {
                     "corpus.lingcorpus".into(),
                     "catalog.lx".into(),
                 ]),
-                documents: vec![Arc::new(metadata)],
+                documents: {
+                    let mut writer =
+                        documents::Writer::new(Arc::new(TempBudget::new(MAX_TEMP_BYTES)))
+                            .expect("metadata writer");
+                    for (id, metadata) in metadata.iter().enumerate() {
+                        writer.push(id as u64, metadata).expect("metadata");
+                    }
+                    Arc::new(writer.finish().expect("metadata store"))
+                },
                 patterns: vec![PatternSource {
                     name: "p".into(),
                     source: None,
@@ -1197,20 +1255,16 @@ mod tests {
     fn facet_vocabularies_and_scalar_payloads_have_explicit_limits() {
         let dimension = categorical("genre", true);
         for terms in [10_000, 10_001] {
-            let metadata = Box::new([(
-                "genre".into(),
-                MetadataValue::Scalars(
-                    (0..terms)
-                        .flat_map(|n| {
-                            [
-                                MetadataScalar::String(format!("v{n:05}")),
-                                MetadataScalar::String(format!("v{n:05}")),
-                            ]
-                        })
-                        .collect(),
-                ),
-            )]);
-            let (_directory, pair) = table_pair(vec!["x".into()], surface_schema(), metadata);
+            let metadata = (0..terms)
+                .map(|n| {
+                    metadata(&[(
+                        "genre",
+                        serde_json::json!([format!("v{n:05}"), format!("v{n:05}")]),
+                    )])
+                })
+                .collect();
+            let (_directory, pair) =
+                table_pair_documents(vec!["x".into()], surface_schema(), metadata);
             let result = pair.values(
                 std::slice::from_ref(&dimension),
                 "p",
@@ -1226,11 +1280,10 @@ mod tests {
                 assert!(matches!(result, Err(error) if error.to_string().contains("facet values")));
             }
         }
-        let metadata = Box::new([(
-            "genre".into(),
-            MetadataValue::Scalar(MetadataScalar::String("x".repeat(32 * 1024 * 1024 + 1))),
-        )]);
-        let (_directory, pair) = table_pair(vec!["x".into()], surface_schema(), metadata);
+        let metadata = (0..513)
+            .map(|_| metadata(&[("genre", serde_json::json!("x".repeat(64 * 1024)))]))
+            .collect();
+        let (_directory, pair) = table_pair_documents(vec!["x".into()], surface_schema(), metadata);
         assert!(
             matches!(pair.values(&[categorical("genre", false)], "p", "genre", &BTreeMap::new()), Err(error) if error.to_string().contains("projected bytes"))
         );
@@ -1415,7 +1468,11 @@ mod tests {
                 ])
             })
             .collect::<Vec<_>>();
-        let dimensions = derive_dimensions(documents.iter());
+        let dimensions = derive_dimensions(
+            documents.into_iter().map(Ok),
+            Arc::new(TempBudget::new(MAX_TEMP_BYTES)),
+        )
+        .expect("dimensions");
         let shapes = dimensions
             .iter()
             .map(|dimension| {
