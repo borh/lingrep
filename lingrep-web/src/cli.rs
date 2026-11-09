@@ -149,8 +149,8 @@ pub struct Args {
     pub corpus: Vec<String>,
 
     /// Count table written by `ling summarize --write-table`, served in the
-    /// frequency view. Repeatable. A table is bound to the declared prepared
-    /// corpus with the analysis identity it records and to the catalog under
+    /// Frequencies and Compare views. Repeatable. A table is bound to the
+    /// declared prepared corpus with the analysis identity it records and to the catalog under
     /// `--pattern-root` with the catalog fingerprint it records. A table that
     /// cannot be read, does not verify, was written by another matcher
     /// revision, matches no corpus or no catalog, or counts the same catalog
@@ -159,8 +159,8 @@ pub struct Args {
     pub count_table: Vec<PathBuf>,
 
     /// JSON file of display labels for document-metadata keys, by locale,
-    /// shown in the frequency view in place of key names. Repeatable. Clauses,
-    /// commands and addresses keep the keys. A file that cannot be read or is
+    /// shown in Frequencies and Compare in place of key names. Repeatable.
+    /// Clauses, commands and addresses keep the keys. A file that cannot be read or is
     /// invalid, or that labels a key also labelled by another file, stops
     /// startup.
     #[arg(long = "metadata-labels", value_name = "PATH")]

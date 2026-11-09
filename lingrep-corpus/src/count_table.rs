@@ -30,9 +30,7 @@ pub use contrast::{
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");
 
-/// The `format` value of a count table's header.
 pub const COUNT_TABLE_FORMAT: &str = "lingrep.count-table";
-/// The header version this build reads and writes.
 pub const COUNT_TABLE_VERSION: u32 = 3;
 
 const DOCUMENT_MAJOR_PAIRS: u64 = 2_000_000;
@@ -97,7 +95,6 @@ pub struct DocumentTotals {
     pub tokens: u64,
 }
 
-/// A decoded entry key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Group<'a> {
     Surface(&'a str),
@@ -336,7 +333,6 @@ impl Staged {
 }
 
 struct OpenEntry {
-    /// The document of the pair being accumulated, and its count so far.
     pair: Option<(u32, u64)>,
     last_sentence: Option<u64>,
     total: u64,
@@ -378,7 +374,6 @@ pub struct CountTableWriter {
     sentences: u64,
     document_patterns: u64,
     open: Option<OpenEntry>,
-    /// The schema and key words of the current pattern's last entry.
     last_key: Option<(u32, Vec<u32>)>,
 }
 
@@ -908,7 +903,7 @@ pub struct CountTableStats {
     pub pairs: u64,
     pub documents: u64,
     pub values: u64,
-    /// Bytes of every file in the published directory.
+    /// Total size of published files, including the header.
     pub bytes: u64,
 }
 

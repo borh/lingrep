@@ -31,8 +31,6 @@ use crate::protocol::write_jsonl;
 const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
 
-/// The documents `clause`, given as `contrast {flag}`, admits, or every
-/// document without one.
 fn scope_mask(
     table: &CountTable,
     reader: Option<&BlockingProvenance>,
@@ -72,8 +70,6 @@ fn count(count: lingrep_corpus::ScopeCount) -> protocol::ScopeCount {
 
 enum Ranking<'a> {
     Top(std::vec::IntoIter<ContrastRow>),
-    /// Rows in order through sorted runs on disk, and how many remain to be
-    /// read.
     Spilled(Box<lingrep_corpus::ContrastRows<'a>>, u64),
 }
 

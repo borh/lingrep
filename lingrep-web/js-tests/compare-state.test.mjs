@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readState, stateEntries } from "../assets/compare.js";
 
-/** A deterministic generator, so a failure names its seed. */
 function random(seed) {
   let x = seed >>> 0 || 1;
   return (n) => {

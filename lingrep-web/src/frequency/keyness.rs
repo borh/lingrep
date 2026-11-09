@@ -1,7 +1,5 @@
-//! Keyness, the compare page's query: one pattern's entries ranked by G²
-//! between two document scopes of a bound count table, as `ling contrast`
-//! ranks them. Unrelated to [`crate::section_contrast`], which orders a
-//! streamed result's section columns by signed rate difference.
+//! Ranks count-table entries by G² between two document scopes for Compare.
+//! [`crate::section_contrast`] orders streamed section columns by signed rate difference.
 
 use std::collections::BTreeMap;
 
@@ -162,7 +160,6 @@ impl FrequencyPair {
         } else {
             query.limit.min(MAX_PAGE_ROWS)
         };
-        // Past the last entry the page is empty, so no row is kept.
         let kept = if past_end { 0 } else { query.offset + limit };
         let ranked = self
             .table

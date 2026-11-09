@@ -280,8 +280,6 @@ async fn serve_metadata(extra: &[&std::ffi::OsStr], metadata: Vec<Metadata>) -> 
     .await
 }
 
-/// Serves `artifact` with `catalog` as `catalog.lx` and the count table
-/// `write` produces for it.
 async fn serve_artifact(
     artifact: support::ArtifactFixture,
     catalog: &str,
@@ -848,9 +846,6 @@ async fn exclusions_explain_missing_fields_in_both_languages() -> WebDriverResul
 
 const ENTRY_CATALOG: &str = "pattern noun := [text in {猫, 本}].\n";
 
-/// Each document's title, genre and year. Titles share whole units and
-/// brackets, and each is two documents' so the view offers it as a
-/// condition; one document has no genre.
 const WORKS: [(&str, Option<&str>, u32); 8] = [
     (
         "日本文学全集　第1巻（小説・物語・随筆）",
@@ -886,8 +881,6 @@ const WORKS: [(&str, Option<&str>, u32); 8] = [
     ),
 ];
 
-/// The sentences of document `document`: each has 猫, and every other one 本.
-/// The last document has more than a page of lines.
 fn work_sentences(document: usize) -> Vec<Vec<&'static str>> {
     let count = if document == WORKS.len() - 1 {
         LINES
@@ -905,9 +898,6 @@ fn work_sentences(document: usize) -> Vec<Vec<&'static str>> {
         .collect()
 }
 
-/// The count table `ling summarize --write-table` writes for
-/// `ENTRY_CATALOG` over the works: each entry's occurrences per document
-/// and the corpus sentences it occurs in.
 fn write_entry_table(artifact: &std::path::Path, destination: &std::path::Path) {
     let documents = (0..WORKS.len())
         .map(|document| DocumentTotals {
@@ -984,23 +974,16 @@ async fn serve_entries() -> Served {
     serve_artifact(artifact, ENTRY_CATALOG, write_entry_table, &[]).await
 }
 
-/// The lines a page of an entry shows, as `LINES` in frequency.js.
 const LINES: usize = 50;
 
-/// Counts the page's frequency requests, `started` when sent and `settled`
-/// once the body is read or the request fails, and keeps each profile
-/// request's conditions.
 const COUNT_FETCHES: &str = "window.__fetches = {started: 0, settled: 0, profiles: []}; const sent = window.fetch; \
     window.fetch = (...a) => { const url = String(a[0]); if (!url.includes('api/frequency')) return sent(...a); \
       __fetches.started++; if (url.includes('frequency/profile')) __fetches.profiles.push(JSON.parse(new URL(url, location.href).searchParams.get('w') || '{}')); \
       const done = () => __fetches.settled++; \
       return sent(...a).then((r) => { const json = r.json.bind(r); r.json = () => json().finally(done); return r; }, (e) => { done(); throw e; }); };";
 
-/// Every frequency request sent has settled.
 const FETCHES_SETTLED: &str = "return __fetches.started === __fetches.settled";
 
-/// Resolves two frames later: Chrome reports a layout shift in the frame
-/// after the layout that caused it.
 async fn two_frames(driver: &WebDriver) -> WebDriverResult<()> {
     driver
         .execute_async(
@@ -1014,14 +997,10 @@ async fn two_frames(driver: &WebDriver) -> WebDriverResult<()> {
 const ENTRY_READY: &str = "const e = document.querySelector('[data-fq-entry]'); \
     return !!e.querySelector('[data-e=profile]') && !e.hasAttribute('aria-busy')";
 
-/// Each bar label of the entry's profile, as `assert_bar_labels` reads them.
 const BAR_LABELS: &str = "return [...document.querySelectorAll('.fq-chart')].map((chart) => \
     [...chart.querySelectorAll('.fq-bars .name')].map((name) => ({full: name.dataset.full, shown: name.textContent, \
       fits: name.firstChild.scrollWidth <= name.firstChild.clientWidth})))";
 
-/// No two values of a chart share a visible label; a shortened label
-/// replaces whole units with one “…”, fits, and keeps its brackets
-/// balanced. Returns how many labels are shortened.
 fn assert_bar_labels(charts: &Value) -> usize {
     const SEPARATORS: [char; 4] = ['、', '・', ' ', '　'];
     let mut shortened = 0;
@@ -1125,7 +1104,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     );
     assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
 
-    // Two clicks on "more" before its lines arrive append the next page once.
     driver.execute(COUNT_FETCHES, Vec::new()).await?;
     driver
         .execute(
@@ -1146,7 +1124,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         &json!({"requests": 1, "lines": lines, "more": true})
     );
 
-    // The address reproduces the entry.
     let href = shown["href"].as_str().unwrap().to_owned();
     open(&driver, &href, ENTRY_READY).await?;
     assert_eq!(
@@ -1160,9 +1137,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         &json!([href, "猫"])
     );
 
-    // A sweep over every bar at 30 ms each, resting at each end, moves
-    // nothing on the page and requests previews only where it rests. The
-    // observer starts two frames after the entry is drawn.
     two_frames(&driver).await?;
     driver.execute(COUNT_FETCHES, Vec::new()).await?;
     driver
@@ -1193,8 +1167,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
             sweep = sweep.move_to(point[0].as_i64().unwrap(), point[1].as_i64().unwrap());
         }
         sweep.perform().await?;
-        // The pass has settled once the preview of the bar it rests on has
-        // been requested and every request has settled.
         let rest = pass.last().unwrap();
         wait_for(
             &driver,
@@ -1219,8 +1191,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .clone();
     assert_eq!(swept["shift"], json!(0), "{swept}");
     assert!(swept["previews"].as_u64().unwrap() > 0, "{swept}");
-    // A preview requests a profile and lines: two per rest, against two per
-    // bar without the rest delay.
     let requests = swept["requests"].as_u64().unwrap();
     assert!(
         requests <= 2 * (passes.len() as u64 + 2),
@@ -1229,8 +1199,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     );
     assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
 
-    // Setting and clearing a condition with the entry open moves nothing
-    // after the entry redraws, though the table's response comes 600 ms late.
     driver
         .execute(
             "window.__late = []; window.__clicked = 0; window.__delayed = 0; \
@@ -1262,7 +1230,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
             .json(),
         &json!([])
     );
-    // The observer reports a shift that does happen after the window opens.
     driver
         .execute(
             "const pad = document.createElement('div'); pad.id = 'shift-probe'; pad.style.height = '40px'; \
@@ -1281,8 +1248,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .clone();
     assert!(!late.as_array().unwrap().is_empty(), "{late}");
 
-    // Keyboard: Tab reaches each title bar, whose full name and counts the
-    // chart reads out; Arrow keys walk the bars.
     driver
         .execute(
             "document.querySelector('[data-e=back]').focus()",
@@ -1335,8 +1300,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         );
     }
 
-    // Touch: a tap on the chart's table toggle shows every full name, and a
-    // tap on a bar reads it out and keeps the value.
     driver
         .execute(
             "document.activeElement.blur(); window.scrollTo(0, 0);",
@@ -1426,7 +1389,6 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         )
         .await?;
 
-    // Escape returns to the table with the entry's row focused.
     driver
         .find(By::Css("body"))
         .await?

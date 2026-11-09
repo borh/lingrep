@@ -5,7 +5,6 @@ import { labelForms } from "../assets/frequency.js";
 const OPEN = "（([［「", CLOSE = "）)]］」";
 const SEPARATORS = "、・ 　";
 
-/** A deterministic generator, so a failure names its seed. */
 function random(seed) {
   let x = seed >>> 0 || 1;
   return (n) => {
@@ -38,8 +37,6 @@ const balanced = (text) => {
   }
   return !stack.length;
 };
-// A cut starts where a unit starts: after a separator or a bracket, or before
-// an opening bracket or a trailing separator the form dropped.
 const startsUnit = (full, at) =>
   at === 0 || SEPARATORS.includes(full[at - 1]) || OPEN.includes(full[at - 1]) || CLOSE.includes(full[at - 1]) || OPEN.includes(full[at]) || SEPARATORS.includes(full[at]);
 const endsUnit = (full, at) => at === full.length || CLOSE.includes(full[at]) || startsUnit(full, at);
@@ -55,8 +52,6 @@ test("every shortened label cuts whole units once, keeps brackets balanced and s
         assert.equal(form.split("…").length, 2, context);
         assert.ok(balanced(form), context);
         const at = form.indexOf("…"), left = form.slice(0, at), right = form.slice(at + 1);
-        // Either one run of units goes, or the units from inside a bracket to
-        // the end go and only the brackets they were inside close again.
         const closing = right !== "" && [...right].every((c) => CLOSE.includes(c));
         assert.ok(full.startsWith(left) && startsUnit(full, left.length), context);
         if (!closing) assert.ok(full.endsWith(right) && left.length + right.length < full.length && endsUnit(full, full.length - right.length), context);

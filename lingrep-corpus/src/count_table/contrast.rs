@@ -124,8 +124,6 @@ pub enum ScopeRelation {
 /// }
 /// ```
 pub struct Scopes {
-    /// Per table document, bit 0 when the first scope admits it and bit 1
-    /// when the second does.
     bits: Vec<u8>,
     table: u64,
     admission: [Admission; 2],
@@ -190,7 +188,6 @@ impl ContrastOrder {
     fn of(row: &ContrastRow) -> Self {
         Self {
             undefined: row.contrast.log_likelihood.is_none(),
-            // A non-negative double orders as its bits do.
             inverted_score: u64::MAX - row.contrast.log_likelihood.map_or(0, f64::to_bits),
             inverted_total: u64::MAX - row.scopes[0].count.saturating_add(row.scopes[1].count),
             entry: row.entry,

@@ -1,5 +1,3 @@
-/* The two scope colours, checked with the dataviz palette validator against
-   --surface in each scheme. */
 .cmp {
   --cmp-where: #2a6fb8;
   --cmp-versus: #c25a1c;
@@ -86,7 +84,6 @@ html { scrollbar-gutter: stable; }
 .cmp-ratio-head span[data-scope="where"] { color: var(--cmp-where); }
 .cmp-ratio-head span[data-scope="versus"] { color: var(--cmp-versus); }
 .cmp td.cmp-ratio { width: 9rem; min-width: 7rem; }
-/* A centre rule; a bar grows from it toward the scope with the higher rate. */
 .cmp-axis {
   position: relative;
   display: block;
@@ -101,7 +98,6 @@ html { scrollbar-gutter: stable; }
 }
 .cmp-axis i[data-scope="where"] { right: 50%; background: var(--cmp-where); border-radius: 4px 0 0 4px; }
 .cmp-axis i[data-scope="versus"] { left: 50%; background: var(--cmp-versus); border-radius: 0 4px 4px 0; }
-/* An entry absent from one scope has no finite ratio: a hatched bar to the edge. */
 .cmp-axis i[data-only][data-scope="where"] { background: repeating-linear-gradient(135deg, var(--cmp-where) 0 2px, transparent 2px 5px); }
 .cmp-axis i[data-only][data-scope="versus"] { background: repeating-linear-gradient(45deg, var(--cmp-versus) 0 2px, transparent 2px 5px); }
 

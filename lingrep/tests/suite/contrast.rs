@@ -104,8 +104,6 @@ pub(crate) fn contrast(fixture: &Fixture, extra: &[&str]) -> Vec<Value> {
     events
 }
 
-/// `ling table --where clause`: each pattern's (count, works) per group,
-/// and the admitted tokens.
 fn table(fixture: &Fixture, clause: Option<&str>) -> (BTreeMap<(String, String), (u64, u64)>, u64) {
     let extra = clause.map_or_else(Vec::new, |clause| vec!["--where", clause]);
     let output = run(fixture, "table", &extra);
@@ -134,7 +132,6 @@ fn table(fixture: &Fixture, clause: Option<&str>) -> (BTreeMap<(String, String),
     (rows, tokens)
 }
 
-/// G² written out from UCREL's formulas, independently of lingrep-corpus.
 fn g2(a: f64, n1: f64, b: f64, n2: f64) -> f64 {
     let e1 = n1 * (a + b) / (n1 + n2);
     let e2 = n2 * (a + b) / (n1 + n2);
@@ -552,12 +549,10 @@ mod served {
         body
     }
 
-    /// The status line and JSON body of `GET /api/contrast` with `params`.
     fn get(server: &Server, params: &[(&str, &str)]) -> (String, Value) {
         get_at(server, "contrast", params)
     }
 
-    /// The status line and JSON body of `GET /api/{endpoint}` with `params`.
     fn get_at(server: &Server, endpoint: &str, params: &[(&str, &str)]) -> (String, Value) {
         let query = params
             .iter()
@@ -588,7 +583,6 @@ mod served {
         (head.to_owned(), serde_json::from_str(body).unwrap())
     }
 
-    /// The (group, where, versus, shared, g2) of `ling contrast` rows of one pattern.
     fn row_values<'a>(rows: impl Iterator<Item = &'a Value>) -> Vec<Value> {
         rows.map(|row| {
             serde_json::json!([
@@ -746,7 +740,6 @@ mod served {
             let entries = first["entries"].as_u64().unwrap();
             assert!(entries > 0, "{endpoint}: {first}");
             let at_end: &'static str = entries.to_string().leak();
-            // 100001 is above the offset limit, but past the last entry.
             for offset in [at_end, "100001", "18446744073709551615"] {
                 let (head, past) = get_at(&server, endpoint, &params(offset));
                 assert!(

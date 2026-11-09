@@ -397,5 +397,5 @@ sentences receive placeholders and remain addressable by paging.
 Permalink decode (`GET /?v=1&q=…`) inflates through a reader capped at the 1 MiB
 pattern limit (`permalink::MAX_PATTERN_BYTES`), so a crafted small blob cannot
 expand without bound. The complete request target is bounded by
-`MAX_REQUEST_TARGET_LEN` (32,000 characters); larger patterns are rejected at
+`MAX_REQUEST_TARGET_LEN` (32,000 bytes); larger patterns are rejected at
 copy time rather than truncated.

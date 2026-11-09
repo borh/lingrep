@@ -9,8 +9,6 @@
   --fq-soft: var(--text-muted);
   --fq-shadow: rgba(29, 41, 36, 0.5);
   --fq-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
-  /* The one data colour of the entry charts, checked with the dataviz
-     palette validator against --surface in each scheme. */
   --fq-mark: #1a7a4c;
   --fq-size: 21px;
   --fq-lead: 30px;
@@ -361,7 +359,6 @@
 .fq-bars .name > span { display: block; overflow: hidden; }
 .fq-bars .name.cut > span { text-overflow: ellipsis; }
 .fq-bars .name.none { color: var(--fq-soft); font-style: italic; }
-/* Bars sit on the label's baseline side; a 4px rounded data end, square at the axis. */
 .fq-bars .b { height: 8px; }
 .fq-bars .b i { display: block; height: 100%; min-width: 2px; background: var(--fq-mark); border-radius: 0 4px 4px 0; }
 .fq-bars:has([aria-pressed="true"]) [aria-pressed="false"] .b i { background: var(--fq-bar-off); }

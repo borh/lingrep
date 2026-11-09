@@ -13,7 +13,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<ContrastEnvelope>(
         super::ContractId::Contrast,
         &["contrast"],
-        "Each pattern's entries ranked by G², UCREL's two-cell log-likelihood, between the documents --where admits and those --versus admits, with each scope's counts, rates per million tokens and document reach, read from a count table.",
+        "Read a count table and rank each pattern's entries by G², UCREL's two-cell log-likelihood, between the document scopes selected by --where and --versus. Each row includes occurrences, rates per million tokens and document counts for both scopes.",
         StreamShape::Phased {
             phases: &[
                 StreamPhase {

@@ -29,9 +29,7 @@ use crate::{
     SourceObservation, format_identity,
 };
 
-/// The `format` value of a reading sidecar's header.
 pub const READING_SIDECAR_FORMAT: &str = "lingrep.reading-sidecar";
-/// The header version this build reads and writes.
 pub const READING_SIDECAR_VERSION: u32 = 1;
 
 const HEADER: &str = "header.json";
@@ -43,7 +41,6 @@ const DOCUMENT_BATCH: usize = 64;
 const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_WINDOW_LOG: u32 = 26;
 
-/// What a sidecar's contents depend on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadingSidecarKey {
@@ -53,7 +50,6 @@ pub struct ReadingSidecarKey {
 }
 
 impl ReadingSidecarKey {
-    /// The key of a sidecar rendered from `artifact` by this build.
     pub fn for_artifact(artifact: &CorpusArtifact) -> Self {
         Self {
             analysis_identity: format_identity(artifact.analysis_identity().as_bytes()),
@@ -312,7 +308,7 @@ pub struct ReadingSidecarStats {
     pub sentences_rendered_in_full: u64,
     /// Sentences none of whose characters map to rendered text.
     pub sentences_without_rendered_text: u64,
-    /// Bytes of every file in the published directory.
+    /// Total size of published files, including the header.
     pub bytes: u64,
 }
 
@@ -361,10 +357,9 @@ impl<'a> ReadingSidecarWriter<'a> {
 
     /// Renders every document and stages the sidecar.
     ///
-    /// `observed` is an observation of the source tree, and must have the
-    /// artifact's source identity. `read_source` returns the bytes of the
-    /// document with the given logical name; the rendered bytes must also have
-    /// the artifact's source identity. Once `cancellation` is raised
+    /// `observed` must have the artifact's source identity. `read_source`
+    /// returns source bytes for each logical document name; the bytes returned
+    /// across all calls must reproduce that identity. Once `cancellation` is raised
     /// this fails with [`ReadingSidecarError::Cancelled`] and removes the
     /// staging directory.
     pub async fn write(

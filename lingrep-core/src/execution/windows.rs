@@ -93,9 +93,7 @@ impl WindowLinks {
 pub(crate) struct Window {
     pub(crate) before: Range<usize>,
     pub(crate) after: Range<usize>,
-    /// The window reaches the first sentence short of its preceding reach.
     pub(crate) open_before: bool,
-    /// The window reaches the last sentence short of its following reach.
     pub(crate) open_after: bool,
 }
 

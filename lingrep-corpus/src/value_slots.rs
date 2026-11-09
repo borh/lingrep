@@ -68,7 +68,6 @@ impl ValueSlots {
         self.values.get(slot).map(String::as_str)
     }
 
-    /// Values plus the slot for documents without one.
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.values.len() + 1
@@ -105,9 +104,7 @@ impl ValueSlots {
 /// Each table document's value slots, as [`crate::CountTable::value_counts`]
 /// sums them.
 pub trait DocumentSlots {
-    /// The documents numbered.
     fn document_count(&self) -> usize;
-    /// Values plus the slot for documents without one.
     fn slot_count(&self) -> usize;
     /// The slots of `document`, ascending and distinct; a document without a
     /// value has the slot after every value's.

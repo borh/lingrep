@@ -62,10 +62,10 @@ Options:
           Additional corpus, as `NAME=PATH`. Repeatable. `NAME` is the URL key used by shareable links and must match `[A-Za-z0-9_-]{1,64}`; `default` is reserved for `--input`. All declared corpora share one dictionary and one reader configuration. `PATH` is a corpus source, or a prepared `.lingcorpus` artifact — read directly, and so unaffected by that shared reader configuration. Preparing an artifact with `ling corpus build` allows lingrep-web to serve formats without direct reader support, such as `bccwj`
 
       --count-table <PATH>
-          Count table written by `ling summarize --write-table`, served in the frequency view. Repeatable. A table is bound to the declared prepared corpus with the analysis identity it records and to the catalog under `--pattern-root` with the catalog fingerprint it records. A table that cannot be read, does not verify, was written by another matcher revision, matches no corpus or no catalog, or counts the same catalog over the same corpus as another table stops startup
+          Count table written by `ling summarize --write-table`, served in the Frequencies and Compare views. Repeatable. A table is bound to the declared prepared corpus with the analysis identity it records and to the catalog under `--pattern-root` with the catalog fingerprint it records. A table that cannot be read, does not verify, was written by another matcher revision, matches no corpus or no catalog, or counts the same catalog over the same corpus as another table stops startup
 
       --metadata-labels <PATH>
-          JSON file of display labels for document-metadata keys, by locale, shown in the frequency view in place of key names. Repeatable. Clauses, commands and addresses keep the keys. A file that cannot be read or is invalid, or that labels a key also labelled by another file, stops startup
+          JSON file of display labels for document-metadata keys, by locale, shown in Frequencies and Compare in place of key names. Repeatable. Clauses, commands and addresses keep the keys. A file that cannot be read or is invalid, or that labels a key also labelled by another file, stops startup
 
   -h, --help
           Print help (see a summary with '-h')
@@ -81,6 +81,6 @@ Markdown input:
           Treat these heading classes as labels for the heading line only, not for the section beneath it
 
       --md-recover-conversion-artifacts
-          Recover conversion artifacts emitted by the corpus converter: presentational HTML, `<si ...>` notation, and div imbalance at physical document boundaries. `ling` rejects unrecovered artifacts unless this flag is passed; `lingrep-web` enables recovery unconditionally
+          Recover presentational HTML, `<si ...>` notation, significance asterisks before p-value comparisons, and unbalanced `:::` regions at document boundaries. CLI analysis uses strict reading unless this flag is passed; `ling serve` and `lingrep-web` always enable recovery
 
 ```

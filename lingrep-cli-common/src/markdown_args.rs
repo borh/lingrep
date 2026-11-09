@@ -56,11 +56,10 @@ pub struct MarkdownReaderArgs {
         hide_short_help = true
     )]
     pub md_self_labels: Option<String>,
-    /// Recover conversion artifacts emitted by the corpus converter:
-    /// presentational HTML, `<si ...>` notation, and div imbalance at
-    /// physical document boundaries. `ling` rejects unrecovered artifacts
-    /// unless this flag is passed; `lingrep-web` enables recovery
-    /// unconditionally.
+    /// Recover presentational HTML, `<si ...>` notation, significance asterisks
+    /// before p-value comparisons, and unbalanced `:::` regions at document
+    /// boundaries. CLI analysis uses strict reading unless this flag is passed;
+    /// `ling serve` and `lingrep-web` always enable recovery.
     #[arg(
         long = "md-recover-conversion-artifacts",
         help_heading = "Markdown input",
@@ -234,9 +233,6 @@ mod tests {
         }
     }
 
-    /// Recovery is opt-in, so omitting the flag must reproduce the strict read
-    /// every existing artifact was built under. A default that recovered without
-    /// the flag would move every Markdown artifact's identity at once.
     #[test]
     fn recovery_is_off_unless_asked_for() {
         assert_eq!(

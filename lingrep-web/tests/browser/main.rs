@@ -7,9 +7,6 @@ mod frequency_e2e_test;
 mod layout_e2e_test;
 mod query_library_e2e_test;
 
-/// The URL in `LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL`, or `None` when the
-/// variable is unset or nothing accepts connections there. Panics instead of
-/// returning `None` when `LINGREP_WEB_LAYOUT_REQUIRE_DRIVER` is set.
 async fn chromedriver_url() -> Option<String> {
     let required = std::env::var_os("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_some();
     let Ok(url) = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL") else {

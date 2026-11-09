@@ -11,7 +11,7 @@ pub const WIRE_VERSION: &str = "1";
 /// Maximum decompressed lingrep patterns source size.
 pub const MAX_PATTERN_BYTES: usize = 1024 * 1024;
 
-/// Maximum length of the complete `/?v=1&q=…&k=…[&c=…]` request target.
+/// Maximum byte length of the complete `/?v=1&q=…&k=…[&c=…]` request target.
 pub const MAX_REQUEST_TARGET_LEN: usize = 32_000;
 
 #[derive(Debug, PartialEq, Eq)]

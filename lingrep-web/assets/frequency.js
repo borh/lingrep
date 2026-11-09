@@ -3,7 +3,6 @@ import { currentLocale, onLocaleChange } from "./i18n.js";
 const MANY = 30;
 const PAGE = 100;
 const LINES = 50;
-// Milliseconds the pointer rests on a bar before its preview is requested.
 const REST = 120;
 const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "entry"];
 
@@ -39,14 +38,14 @@ const S = {
     empty: "No occurrence meets these conditions.",
     nomatch: (q) => `No entry contains “${q}”.`,
     placeholder: "anything",
-    commandUnavailable: "A copied command is unavailable because the input paths cannot be represented below a shared directory.",
+    commandUnavailable: "A CLI command cannot be shown because the table, corpus and catalog paths have no usable common parent directory.",
     commandContext: "Run from the common parent directory of the table, corpus and catalog files.",
     copy: "Copy",
     copied: "Copied",
     edit: "Edit as a clause",
     apply: "Apply",
     cancel: "Cancel",
-    blanks: "Use the blanks",
+    blanks: "Use condition controls",
     mode: ["Only these", "All except these"],
     anyButton: (name) => `Any ${name}`,
     findValue: "Find a value",
@@ -60,7 +59,7 @@ const S = {
       sentence: () => "@sentence keys and divisions cannot be answered here: a count table counts per document.",
       syntax: (r) => `The clause does not parse: ${r.message}`,
       unknown_key: (r) => `This corpus has no condition named “${r.key}”.`,
-      unwritable: (r) => `“${r.value}” contains a double quote, which a clause cannot hold.`,
+      unwritable: (r) => `“${r.value}” contains a double quote, which cannot be escaped in a scope clause.`,
       shape: (r) => `The condition on “${r.key}” does not fit its values.`,
       address: () => "The conditions in this URL cannot be read.",
       unknown_entry: () => "This entry does not occur in the table.",
@@ -75,10 +74,10 @@ const S = {
     lines: "Lines",
     linesShown: (n, of) => `${n} of ${of}`,
     document: (id) => `document ${id}`,
-    entryNeedsBlanks: "Return to the blanks to open an entry",
+    entryNeedsBlanks: "Use condition controls to open an entry",
     unavailable: (catalog, corpus) => `No count table is registered for ${catalog} over ${corpus}.`,
     unknownPattern: (pattern, catalog) => `${catalog} has no pattern “${pattern}”.`,
-    noTables: "No count table is registered. Start ling serve with --count-table.",
+    noTables: "No count table is registered. Ask the server administrator to add one with ling serve --count-table.",
     failed: (status) => `Server response: ${status}.`,
   },
   ja: {
@@ -117,7 +116,7 @@ const S = {
     edit: "条件式として編集",
     apply: "適用",
     cancel: "取り消す",
-    blanks: "空欄に戻す",
+    blanks: "条件の選択に戻す",
     mode: ["これらのみ", "これら以外"],
     anyButton: (name) => `すべての${name}`,
     findValue: "値を検索",
@@ -146,10 +145,10 @@ const S = {
     lines: "用例",
     linesShown: (n, of) => `${of}件中${n}件`,
     document: (id) => `文書${id}`,
-    entryNeedsBlanks: "項目を開くには空欄に戻してください",
+    entryNeedsBlanks: "項目を開くには条件の選択に戻してください",
     unavailable: (catalog, corpus) => `${corpus}の${catalog}には件数表が登録されていません。`,
     unknownPattern: (pattern, catalog) => `${catalog}にパターン「${pattern}」はありません。`,
-    noTables: "件数表が登録されていません。ling serve に --count-table を指定してください。",
+    noTables: "件数表が登録されていません。サーバーの管理者に ling serve --count-table での登録を依頼してください。",
     failed: (status) => `サーバーの応答：${status}`,
   },
 };
@@ -201,7 +200,6 @@ export function shortForms(name, siblings = []) {
 
 const OPEN = "（([［「", CLOSE = "）)]］」";
 
-/** A label's units: runs ending at 、, ・, a space, an ideographic space or “. ”, with each bracketed part one unit. */
 function units(name) {
   const stack = [[]];
   let cur = "";
@@ -246,11 +244,7 @@ function* tails(ns) {
   }
 }
 
-/**
- * Shorter forms of each name, longest first. A form replaces whole units with
- * one “…”, keeps the brackets around a part whose inside it cuts, and is left
- * out when another name shares everything it keeps on that side of the “…”.
- */
+/** Returns shorter labels longest first, replacing whole units with “…” and excluding forms whose retained prefix or suffix is shared by another name. */
 export function labelForms(names) {
   return names.map((name, i) => {
     const ns = units(name), others = names.filter((_, j) => j !== i && names[j] !== name), out = [];
@@ -284,8 +278,6 @@ export function mountFrequency(root) {
   let meta = null, s = readState(location.hash), answer = null, gen = 0, shown = 0;
   let openPop = null, pending = null, editing = false, find = "", values = null;
   let valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
-  // The selected entry's profile and lines under the committed conditions,
-  // and the rows each chart keeps while a preview shows other conditions.
   let profile = null, lined = null, plan = {}, preview = null, previewed = null, anchor = null, lastEntry = null;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
@@ -697,7 +689,6 @@ export function mountFrequency(root) {
     if (openPop) popover();
   });
 
-  // The entry level: one row's profile per condition and its lines.
   const entering = () => s.entry != null && s.where == null;
   const groupText = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)).join(" ") : g.value);
   const valueName = (v) => v ?? L().noValue;
@@ -708,8 +699,6 @@ export function mountFrequency(root) {
   const opened = new Set();
   let readout = null;
 
-  // Rows each chart shows under the committed conditions: a preview fills at
-  // most these and pads the rest, and the label column keeps its width.
   function planOf(p) {
     return Object.fromEntries(
       p.charts.map((c) => [c.key, c.kind === "categorical" ? { rows: barsOf(c).length, more: c.distinct > c.bars.length, lw: Math.max(2, ...barsOf(c).map((b) => ems(valueName(b.value)))) } : {}]),
@@ -763,9 +752,6 @@ export function mountFrequency(root) {
   }
   const figuresText = (p) => L().entryFigures(num(p.count), num(p.works));
 
-  // Shows each label's full name where it fits, otherwise its longest form
-  // that fits. Every full name is written before any width is read, so a
-  // chart where all fit costs one layout.
   function fitLabels(scope = entryEl) {
     const names = [...scope.querySelectorAll(".fq-bars .name")];
     for (const n of names) {
@@ -787,8 +773,6 @@ export function mountFrequency(root) {
   }
   new ResizeObserver(() => fitLabels()).observe(entryEl);
 
-  // The chart's line naming the bar last pointed at, focused or tapped, in
-  // full, with its counts as drawn now.
   function showReadout() {
     if (!readout) return;
     const chart = entryEl.querySelector(`.fq-chart[data-key="${CSS.escape(readout.key)}"]`);
@@ -864,11 +848,7 @@ export function mountFrequency(root) {
     entryEl.removeAttribute("aria-busy");
   }
 
-  // A preview shows the profile, figures and lines as if the pointed-at value
-  // were the condition on its key; the sentence and the URL stay committed.
-  // Charts a preview has drawn under other conditions than the committed ones.
   const painted = new Set();
-  // Redraws one chart's bars, keeping keyboard focus on the same value.
   function paintChart(c) {
     const body = entryEl.querySelector(`.fq-chart[data-key="${CSS.escape(c.key)}"] [data-body]`);
     if (!body) return;
@@ -888,8 +868,6 @@ export function mountFrequency(root) {
     cancelPreview();
     const controller = new AbortController();
     preview = { id, key, controller };
-    // The pointed-at chart counts under every condition but its own, which
-    // the preview leaves as committed.
     if (painted.delete(key) && committedChart(key)) {
       paintChart(committedChart(key));
       showReadout();
@@ -911,7 +889,6 @@ export function mountFrequency(root) {
       () => {},
     ), REST);
   }
-  // Stops the pending preview's requests; what it has drawn stays.
   function cancelPreview() {
     clearTimeout(preview?.timer);
     preview?.controller.abort();

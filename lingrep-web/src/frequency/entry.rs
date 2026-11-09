@@ -23,16 +23,10 @@ use super::{
 };
 use crate::corpus_runtime::ReadyCorpus;
 
-/// Lines a request returns when it names no limit, and the most it may name.
 const LINE_PAGE: usize = 50;
 const MAX_LINE_PAGE: usize = 200;
-/// Characters of context kept on each side of a line's match.
 const CONTEXT_CHARS: usize = 40;
-/// A categorical chart lists every value up to this many, and otherwise the
-/// most frequent values plus the chosen ones.
 const LISTED_VALUES: usize = 24;
-/// A range key whose values are integers spanning at most this many gets one
-/// column per integer; otherwise its span is cut into `RANGE_BINS` columns.
 const INTEGER_COLUMNS: f64 = 160.0;
 const RANGE_BINS: usize = 40;
 
@@ -163,9 +157,6 @@ impl EntryMatcher {
     }
 }
 
-/// Each of `patterns` with a catalog that publishes it: the catalog
-/// `compile` returns for it, with the names that catalog publishes, or an
-/// earlier one that publishes it too.
 fn compile_each<'p, T>(
     patterns: impl IntoIterator<Item = &'p str>,
     mut compile: impl FnMut(&str) -> Result<(T, Vec<String>), String>,
@@ -190,8 +181,6 @@ fn compile_each<'p, T>(
     Ok(compiled)
 }
 
-/// The names `catalog`'s records publish under: its patterns' and lexicons'
-/// `output_name`, else their own.
 fn published_names(catalog: &lingrep_core::fsm::CompiledCatalog) -> Vec<String> {
     let policy = catalog.catalog_policy();
     catalog
@@ -208,7 +197,6 @@ fn published_names(catalog: &lingrep_core::fsm::CompiledCatalog) -> Vec<String> 
         .collect()
 }
 
-/// The group a published record falls in, by [`RecordView::group_by`].
 enum RecordGroup<'r> {
     Key(&'r [lingrep_core::fsm::ProjectedKeyField]),
     LexicalKey(&'r [lingrep_core::fsm::LexicalProjectedKeyField]),
@@ -276,7 +264,6 @@ fn same_group(record: &RecordGroup<'_>, entry: &Group<'_>) -> bool {
     }
 }
 
-/// The group of a frequency row's JSON `group`, if it has that form.
 fn json_group(value: &serde_json::Value) -> Option<Group<'_>> {
     fn text(value: &serde_json::Value) -> Option<&str> {
         value.as_str()
@@ -312,7 +299,6 @@ fn json_group(value: &serde_json::Value) -> Option<Group<'_>> {
     })
 }
 
-/// One occurrence of the entry, with its sentence split around the match.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Line {
     pub document: u64,
@@ -452,7 +438,6 @@ pub struct Lines {
 }
 
 impl FrequencyPair {
-    /// The corpus sentences of the table document at `position`.
     fn sentences(&self, position: usize) -> Result<std::ops::Range<u64>, QueryError> {
         Ok(self.table_documents.sentences(position)?)
     }
@@ -499,7 +484,6 @@ impl FrequencyPair {
         Ok(self.table.value_counts(&column, mask, counts)?)
     }
 
-    /// The slot of `value` among `key`'s values, if a table document has it.
     fn slot_of(&self, key: &str, value: &str) -> Result<Option<usize>, QueryError> {
         let index = self.key_index(key)?;
         let (mut low, mut high) = (0, self.table_documents.value_count(index));
@@ -952,7 +936,6 @@ fn columns(min: f64, max: f64, numbers: &[f64], sums: &[ValueCount]) -> Vec<Colu
     columns
 }
 
-/// `number` as JSON, an integer when it has no fraction.
 fn json_number(number: f64) -> serde_json::Number {
     if number.fract() == 0.0 && number.abs() < 2f64.powi(53) {
         serde_json::Number::from(number as i64)
@@ -1125,9 +1108,6 @@ mod tests {
 
     #[test]
     fn each_pattern_gets_the_first_catalog_that_publishes_it() {
-        // A catalog compiled whole publishes every pattern; one compiled for
-        // `a` publishes `a`, the lexicon `w`, and `b` when `a` and `b` share
-        // an output name, but never `c`.
         let cases: [(&[&str], usize); 3] =
             [(&["a", "b", "c", "w"], 1), (&["w"], 3), (&["b", "w"], 2)];
         for (also, compiles_expected) in cases {

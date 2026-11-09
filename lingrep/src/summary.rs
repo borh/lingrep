@@ -98,9 +98,6 @@ fn resolve_value(value: ValueId, values: &[Box<str>]) -> io::Result<String> {
         .ok_or_else(|| io::Error::other("summary key value is out of range"))
 }
 
-/// The rows ranked together: one authored pattern, under `--by-document`
-/// one admitted document of it, and for a count table one sentence of that
-/// document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SummaryPartition {
     pub pattern_ordinal: u64,

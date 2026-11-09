@@ -61,15 +61,12 @@ pub struct FrequencyPair {
     table_documents: documents::TableDocuments,
     patterns: Vec<PatternSource>,
     workbench: Option<String>,
-    /// The catalog bound to the corpus, for matching an entry's lines; unit
-    /// tests build pairs without a corpus.
     matcher: Option<entry::EntryMatcher>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PatternSource {
     pub name: String,
-    /// The definitions named `name`, as written in the catalog.
     pub source: Option<String>,
 }
 
@@ -646,8 +643,6 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
     })
 }
 
-/// The values of `key` in `metadata` as `--where` compares them, and
-/// whether they are a list; `None` without a scalar or list value.
 fn value_texts(metadata: &Metadata, key: &str) -> Option<(bool, Vec<String>)> {
     match lookup(metadata, key) {
         Some(MetadataValue::Scalar(scalar)) => Some((false, vec![scalar_text(scalar)])),
@@ -1059,9 +1054,6 @@ impl FrequencyPair {
         self.ling_command("table ", &[("--where", clause)])
     }
 
-    /// `ling {head}TABLE --top 100`, then each option with a nonempty value,
-    /// then the corpus and the catalog, each path a shell word; empty when
-    /// the pair shows no command.
     fn ling_command(&self, head: &str, options: &[(&str, &str)]) -> String {
         let Some([table, corpus, catalog]) = &self.command_inputs else {
             return String::new();
@@ -1177,8 +1169,6 @@ impl FrequencyPair {
             );
         }
         let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
-        // Past the last entry the page is empty whatever the order, so only
-        // the entries are counted.
         let entries: Box<dyn Iterator<Item = Result<TopRow, CountTableError>> + '_> = if past_end {
             Box::new(
                 self.table

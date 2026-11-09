@@ -41,8 +41,6 @@ pub(super) fn table_error(error: CountTableError) -> CliError {
     }
 }
 
-/// Opens the count table at `path` for `artifact` and the catalog whose
-/// fingerprint is `catalog_fingerprint`, under the current matcher.
 pub(super) fn open_table(
     path: &Path,
     artifact: &CorpusArtifact,
@@ -64,8 +62,7 @@ fn only_documents(option: &str) -> CliError {
     ))
 }
 
-/// Parses `clause`, given as `option` (such as `table --where`), and
-/// rejects one that names sections or sentence values.
+/// Rejects clauses that reference sections, sentence metadata or divisions.
 pub(super) fn document_clause(
     option: &str,
     clause: Option<&str>,
@@ -81,7 +78,6 @@ pub(super) fn document_clause(
     Ok(clause)
 }
 
-/// The documents `clause`, from [`document_clause`], admits in `reader`'s corpus.
 pub(super) fn document_admission(
     reader: &BlockingProvenance,
     clause: &ScopeClause,
@@ -351,9 +347,6 @@ impl EntryKey {
         }
     }
 
-    /// The groups an entry printed as this key may have, given the table's
-    /// schemas: a JSON row's group, or a printed text as a surface, unit or
-    /// term, or a printed object as a key of each schema with its field names.
     fn candidates<'k>(&'k self, schemas: &'k [GroupSchema]) -> Vec<Group<'k>> {
         match self {
             Self::Group(SummaryGroupData::Surface { value }) => vec![Group::Surface(value)],

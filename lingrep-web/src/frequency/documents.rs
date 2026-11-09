@@ -140,8 +140,6 @@ impl Reader {
         self.located(wanted).map(|(_, metadata)| metadata)
     }
 
-    /// The corpus sentence range and metadata of document `wanted`, which
-    /// follows every document already read.
     pub(super) fn located(&mut self, wanted: u64) -> io::Result<(Range<u64>, Metadata)> {
         loop {
             let Some([id, offset, len, first, end]) = self.position()? else {
@@ -406,12 +404,10 @@ impl TableDocuments {
         Ok(start..end)
     }
 
-    /// The index of `name` among the numbered keys.
     pub(super) fn key(&self, name: &str) -> Option<usize> {
         self.keys.iter().position(|key| key.name == name)
     }
 
-    /// The number of distinct values of key `key`.
     pub(super) fn value_count(&self, key: usize) -> u32 {
         self.keys[key].values
     }

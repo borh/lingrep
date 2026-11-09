@@ -724,9 +724,6 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
     .run();
 }
 
-/// Each value of `key` with the occurrences of `pattern` in the admitted
-/// documents that carry it, from `summarize --by-metadata`; values whose
-/// documents are all excluded count 0.
 fn expected_values(
     fixture: &Fixture,
     clause: &str,
@@ -1252,8 +1249,6 @@ fn a_label_for_a_key_no_corpus_carries_is_reported_at_startup() {
     );
 }
 
-/// Each record's pattern and group text: the declared key's values, or else
-/// the matched surface, which is how `summarize` groups this catalog.
 fn matched_sentences(fixture: &Fixture) -> BTreeMap<(String, String), BTreeMap<u64, u64>> {
     let output = crate::support::lingrep_without_dictionary()
         .args(["--json", "matches", "--patterns"])
@@ -1406,7 +1401,6 @@ fn frequency_endpoints_page_large_tables() {
     }
 }
 
-/// Each entry of `pattern` the view lists without conditions, as its group.
 fn entries(server: &Server, pattern: &str) -> Vec<Value> {
     answer(server, pattern, &Conditions::new(), "count", "")["rows"]
         .as_array()
@@ -1435,8 +1429,6 @@ fn entry_query(
     query(&params)
 }
 
-/// The entry's count and works per value of `key` from `ling table --entry
-/// --by-metadata`, the documents without a value under `None`.
 fn table_entry_values(
     fixture: &Fixture,
     pattern: &str,
@@ -1574,9 +1566,6 @@ fn check_profile(
     }
 }
 
-/// The kind and text of the frequency row a `ling matches` record of these
-/// catalogs counts in: its key's values, else its unit, else its lexicon
-/// term, else its matched surface.
 fn record_group_text(data: &Value) -> (String, String) {
     if let Some(fields) = data["key"].as_array() {
         let text = fields
@@ -1596,8 +1585,6 @@ fn record_group_text(data: &Value) -> (String, String) {
     (kind.into(), text.into())
 }
 
-/// `ling matches --where` records of the entry, in the order `ling` prints
-/// them, as (sentence, start, end, surface).
 fn matched_lines(
     fixture: &Fixture,
     pattern: &str,
@@ -1630,7 +1617,6 @@ fn matched_lines(
         .collect()
 }
 
-/// A `ling matches` record as (sentence, start, end, surface).
 fn match_line(record: &Value) -> (u64, u64, u64, String) {
     let data = &record["data"];
     (
@@ -1641,8 +1627,6 @@ fn match_line(record: &Value) -> (u64, u64, u64, String) {
     )
 }
 
-/// Every line of the entry the server lists under `conditions`, read in
-/// pages of `page`, as (sentence, start, end, node).
 fn served_lines(
     server: &Server,
     pattern: &str,
@@ -1695,8 +1679,6 @@ fn served_lines(
     }
 }
 
-/// Runs the `ling matches … | jq` command an entry's profile shows, from
-/// the fixture's directory, and returns the records it prints as lines.
 fn shown_lines_command(
     server: &Server,
     fixture: &Fixture,
@@ -1838,8 +1820,6 @@ fn the_shown_lines_command_reproduces_the_lines() {
     }
 }
 
-/// A unit from `join` and a lexicon term, the row kinds `CATALOG` lacks,
-/// and two patterns published under one `output_name`.
 const DERIVED_CATALOG: &str = "output_name: \"animal\"\npattern dog := [text=犬].\n\
     output_name: \"animal\"\npattern bird := [text=鳥].\n\
     transform: [{op: \"join\"}]\n\
@@ -1933,8 +1913,6 @@ fn entry_queries_explain_an_unknown_or_malformed_entry_and_a_page_past_the_end()
     }
 }
 
-/// Sixty works with thirty genres, two works each, and years 7 apart over
-/// 413 years: more genres than a chart lists, and a span cut into bins.
 fn many_values_documents() -> String {
     (0..60)
         .map(|work: usize| {

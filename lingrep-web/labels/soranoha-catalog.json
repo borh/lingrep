@@ -1,7 +1,7 @@
 {
   "vocabulary": "lingrep.soranoha-catalog",
   "edition": "1",
-  "source": "lingrep: the catalog.csv columns the Soranoha reader stores as document metadata",
+  "source": "lingrep Soranoha reader: document metadata from catalog.csv",
   "licence": "MIT",
   "keys": {
     "@document.identifier": { "labels": { "en": "identifier", "ja": "識別子" } },

@@ -4,7 +4,6 @@ import { hashHolds, shortForms } from "./frequency.js";
 const MANY = 30;
 const PAGE = 100;
 const SCOPES = ["where", "versus"];
-// Each scope's conditions travel in the address as the Frequencies view's `w`.
 const CONDITIONS = { where: "w", versus: "v" };
 const KEYS = ["corpus", "catalog", "pattern", "w", "v", "where", "versus"];
 
@@ -22,7 +21,7 @@ const S = {
     values: (w) => (w.m === "out" ? `other than ${orList(w.v, "and")}` : w.v.length <= 3 ? orList(w.v, "or") : `${w.v.length} values`),
     range: (w) => (w.lo != null && w.hi != null ? `${w.lo}–${w.hi}` : w.lo != null ? `${w.lo} or more` : `${w.hi} or less`),
     scope: (items) => (items.length ? `documents ${items.map((x) => (x.any ? `with ${x.html}` : `with ${esc(x.name)} ${x.html}`)).join(", ")}` : "all documents"),
-    rawScope: "documents where its clause below holds",
+    rawScope: "documents matching the clause below",
     sentence: (b) => `Compare ${b.P} in ${b.C} between ${b.A} and ${b.B}<span class="tail">.</span>`,
     add: "+ condition",
     addLabel: (scope) => `Add a condition to ${scope}`,
@@ -33,23 +32,23 @@ const S = {
       identical: () => "Both scopes admit the same documents, so every G² is 0.",
     },
     emptyScope: (scope) => `${scope} admits no tokens, so its rates and every G² are blank.`,
-    caution: "G² is an exploratory score, not a significance test: occurrences that cluster in a few documents inflate it, so read it with each side’s documents.",
+    caution: "G² is an exploratory score. It does not account for clustering within documents; compare each side’s document counts as well.",
     heads: { rank: "Rank", entry: "Entry", count: "Occurrences", pm: "Per million", docs: "Documents", ratio: "Rate ratio", g2: "G²" },
-    ratio: (x, high, low) => `rate in ${high} ${x}× the rate in ${low}`,
+    ratio: (x, high, low) => `rate in ${high} is ${x}× the rate in ${low}`,
     only: (scope) => `only in ${scope}`,
     equal: "equal rates",
     entries: (n, shown) => `${shown} of ${n} entries, ranked by G²`,
     ranking: "Ranking entries…",
     more: (n) => `Show the next ${n}`,
     empty: "No entry occurs in either scope.",
-    commandUnavailable: "A copied command is unavailable because the input paths cannot be represented below a shared directory.",
+    commandUnavailable: "A CLI command cannot be shown because the table, corpus and catalog paths have no usable common parent directory.",
     commandContext: "Run from the common parent directory of the table, corpus and catalog files.",
     copy: "Copy",
     copied: "Copied",
     edit: "Edit as clauses",
     apply: "Apply",
     cancel: "Cancel",
-    blanks: "Use the blanks",
+    blanks: "Use condition controls",
     mode: ["Only these", "All except these"],
     anyButton: (name) => `Any ${name}`,
     findValue: "Find a value",
@@ -62,14 +61,14 @@ const S = {
       sentence: () => "@sentence keys and divisions cannot be answered here: a count table counts per document.",
       syntax: (r) => `The clause does not parse: ${r.message}`,
       unknown_key: (r) => `This corpus has no condition named “${r.key}”.`,
-      unwritable: (r) => `“${r.value}” contains a double quote, which a clause cannot hold.`,
+      unwritable: (r) => `“${r.value}” contains a double quote, which cannot be escaped in a scope clause.`,
       shape: (r) => `The condition on “${r.key}” does not fit its values.`,
       address: () => "The conditions in this URL cannot be read.",
     },
     inScope: (scope, text) => `${scope}: ${text}`,
     unavailable: (catalog, corpus) => `No count table is registered for ${catalog} over ${corpus}.`,
     unknownPattern: (pattern, catalog) => `${catalog} has no pattern “${pattern}”.`,
-    noTables: "No count table is registered. Start ling serve with --count-table.",
+    noTables: "No count table is registered. Ask the server administrator to add one with ling serve --count-table.",
     failed: (status) => `Server response: ${status}.`,
   },
   ja: {
@@ -98,7 +97,7 @@ const S = {
       identical: () => "二つの文書群は同じ文書からなるため、G²はすべて0です。",
     },
     emptyScope: (scope) => `${scope}に含まれる語がないため、その頻度とG²は空欄です。`,
-    caution: "G²は探索のための指標で、有意性の検定ではありません。用例が少数の文書に集中すると大きくなるため、両側の文書数とあわせて読んでください。",
+    caution: "G²は探索のための指標です。文書内での用例の集中は計算に反映されません。両側の出現文書数もあわせて確認してください。",
     heads: { rank: "順位", entry: "項目", count: "出現数", pm: "100万語あたり", docs: "文書数", ratio: "頻度比", g2: "G²" },
     ratio: (x, high, low) => `${high}の頻度は${low}の${x}倍`,
     only: (scope) => `${scope}のみ`,
@@ -106,7 +105,7 @@ const S = {
     entries: (n, shown) => `${n}項目中${shown}項目、G²の大きい順`,
     ranking: "順位を計算しています…",
     more: (n) => `次の${n}件を表示`,
-    empty: "どちらの文書群にも現れる項目はありません。",
+    empty: "どちらの文書群にも項目がありません。",
     commandUnavailable: "入力パスを共通ディレクトリからの相対パスで表せないため、コピー用コマンドは表示できません。",
     commandContext: "テーブル・コーパス・カタログの各ファイルに共通する親ディレクトリで実行してください。",
     copy: "コピー",
@@ -114,7 +113,7 @@ const S = {
     edit: "条件式として編集",
     apply: "適用",
     cancel: "取り消す",
-    blanks: "空欄に戻す",
+    blanks: "条件の選択に戻す",
     mode: ["これらのみ", "これら以外"],
     anyButton: (name) => `すべての${name}`,
     findValue: "値を検索",
@@ -134,7 +133,7 @@ const S = {
     inScope: (scope, text) => `${scope}：${text}`,
     unavailable: (catalog, corpus) => `${corpus}の${catalog}には件数表が登録されていません。`,
     unknownPattern: (pattern, catalog) => `${catalog}にパターン「${pattern}」はありません。`,
-    noTables: "件数表が登録されていません。ling serve に --count-table を指定してください。",
+    noTables: "件数表が登録されていません。サーバーの管理者に ling serve --count-table での登録を依頼してください。",
     failed: (status) => `サーバーの応答：${status}`,
   },
 };
@@ -142,7 +141,6 @@ const S = {
 const L = () => S[currentLocale()] ?? S.en;
 const num = (n) => (NUM[currentLocale()] ?? NUM.en).format(Number(n));
 
-/** The page state an address names. */
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
   const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), where: h.get("where"), versus: h.get("versus"), w: {}, v: {}, bad: false };
@@ -159,7 +157,6 @@ export function readState(hash) {
   return s;
 }
 
-/** The address entries of a page state, omitting empty values. */
 export function stateEntries(s) {
   const out = [];
   for (const k of KEYS) {
@@ -170,7 +167,6 @@ export function stateEntries(s) {
   return out;
 }
 
-/** Fractional digits that show the smallest nonzero value with two significant figures, at most two. */
 export const places = (xs) => {
   const min = Math.min(...xs.filter((x) => x > 0));
   return Number.isFinite(min) ? Math.max(0, Math.min(2, Math.ceil(-Math.log10(min)) + 1)) : 0;
@@ -200,7 +196,6 @@ export function mountCompare(root) {
     inflight = new AbortController();
     return api("contrast", { ...params(), ...extra }, inflight.signal);
   };
-  // The open popover: `{ scope, key }` for a condition, `{ scope, key: null }` for the add menu.
   let openPop = null, pending = null, find = "", values = null, valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
@@ -353,8 +348,6 @@ export function mountCompare(root) {
     } else if (c === "blanks") set({ where: null, versus: null });
   });
 
-  // A diverging bar from the centre: left toward A, right toward B, its
-  // length the rate ratio on a log scale shared by the shown rows.
   function ratioCell(r, extent) {
     const t = L();
     const x = r.log2_ratio;
@@ -362,7 +355,6 @@ export function mountCompare(root) {
     if (x == null && one == null) return '<td class="cmp-ratio"></td>';
     const toward = x == null ? one : x > 0 ? "where" : x < 0 ? "versus" : null;
     const width = x == null ? 50 : Math.max(0.5, (Math.abs(x) / extent) * 50);
-    // Name the higher rate first, so the factor is never below one.
     const factor = (high, low) => t.ratio(new Intl.NumberFormat(currentLocale() === "ja" ? "ja-JP" : "en-US", { maximumSignificantDigits: 3 }).format(2 ** Math.abs(x)), t.role[high], t.role[low]);
     const label = x == null ? t.only(t.role[one]) : x === 0 ? t.equal : x > 0 ? factor("where", "versus") : factor("versus", "where");
     const bar = toward ? `<i data-scope="${toward}"${x == null ? " data-only" : ""} style="width:${width.toFixed(1)}%"></i>` : "";
@@ -384,7 +376,6 @@ export function mountCompare(root) {
     const pms = SCOPES.map((scope) => places(answer.rows.map((r) => r[scope].per_million ?? 0)));
     const g2places = places(answer.rows.map((r) => r.g2 ?? 0));
     const fmt = (n, p) => (n == null ? "–" : new Intl.NumberFormat(currentLocale() === "ja" ? "ja-JP" : "en-US", { minimumFractionDigits: p, maximumFractionDigits: p }).format(n));
-    // A narrow screen keeps each scope's rate and drops its counts.
     const wide = !narrow.matches;
     const side = (r, scope, i) =>
       wide
@@ -416,7 +407,6 @@ export function mountCompare(root) {
     renderTable();
   });
 
-  // Condition popovers, as the Frequencies view's, one scope at a time.
   function placePop(anchor) {
     const r = anchor.getBoundingClientRect(), top = r.bottom + 6;
     pop.style.top = `${top}px`;

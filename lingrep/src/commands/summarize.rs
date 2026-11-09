@@ -732,7 +732,6 @@ struct SummarySink<'a> {
     records_unkeyed: u64,
     /// Per-document admission under `--by-document`, keyed by document ordinal.
     documents: Option<BTreeMap<u64, DocumentTally>>,
-    /// Whether partitions carry the sentence, which a count table records.
     sentences: bool,
     sections: Option<SectionTally>,
     metadata_values: Option<MetadataValueTally>,
@@ -1034,8 +1033,6 @@ impl SummarySink<'_> {
         Ok(())
     }
 
-    /// What one record groups by, by [`RecordView::group_by`], or `None` when
-    /// it declares a key it could not satisfy.
     fn grouping<'r>(
         &self,
         location: &lingrep_core::execution::SentenceLocation,

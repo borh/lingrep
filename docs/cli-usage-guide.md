@@ -558,9 +558,8 @@ and `N2` admitted tokens, `E_i = N_i·(a+b)/(N1+N2)` and
 `G² = 2 Σ O·ln(O/E)`, where a cell with `O = 0` contributes 0. `min_expected`
 is the smaller `E_i`, `log2_ratio` is `log2((a/N1)/(b/N2))` with no smoothing,
 and `direction` names the scope with the higher rate, or `equal`. G² is an
-exploratory score: no p-value or significance label is given, and occurrences
-that cluster in a few documents make it overstate the evidence, so read it
-with each side's `works`.
+exploratory score: no p-value or significance label is given. It does not
+account for clustering within documents, so compare each side's `works` as well.
 
 Every entry that occurs in either scope is ranked, by descending `g2`, then
 descending `a + b`, then `summarize`'s group order, and `--top` keeps the first
@@ -2153,9 +2152,9 @@ stay balanced. No two values of a chart show the same form. The full name is
 in the bar's accessible name, in the line under the chart's name for the bar
 last pointed at, focused or tapped, and in the chart's table.
 
-The entry level needs a table written by this release's `ling summarize
---write-table`, which records the sentences each entry occurs in (count table
-version 3). An earlier table stops startup with an error naming it; rewrite it.
+Opening an entry requires a version 3 count table, which records the sentences
+where each entry occurs. Rebuild an earlier table with this release's
+`ling summarize --write-table`; otherwise startup fails with an error naming it.
 
 The same tables serve the **Compare** page, at `compare` under the base path.
 It states two scopes, A and B, as a sentence with the Frequencies view's
@@ -2181,7 +2180,7 @@ keys. A label applies to the key it names in every served corpus.
 {
   "vocabulary": "lingrep.soranoha-catalog",
   "edition": "1",
-  "source": "lingrep: the catalog.csv columns the Soranoha reader stores as document metadata",
+  "source": "lingrep Soranoha reader: document metadata from catalog.csv",
   "licence": "MIT",
   "keys": {
     "@document.orthographic_style": { "labels": { "en": "orthography", "ja": "文字遣い" } },

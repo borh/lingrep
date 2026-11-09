@@ -84,8 +84,12 @@ which binds one word anywhere in the sentence:
 
 Each binding is a separate match, so `edge` matches every basic edge once,
 whatever the distance or order. A root attachment or an unusable `dep.head`
-contributes no edge. The other endpoint must be a one-token capture; a key reads
-the binder's `text`, `lemma`, `upos`, `xpos`, `node.id` and `node.kind`.
+contributes no edge. The other endpoint must reference a one-token surface
+capture or another graph-node binder. A key can read any scalar token attribute
+from a binder proven to select only words, including `norm`. A positive basic
+edge or `node.kind=word` in every predicate branch proves this. Other binders
+can project only `text`, `lemma`, `upos`, `xpos`,
+`node.id` and `node.kind`.
 A later edge may name the binder as `$name`, so one clause can bind every word
 of a connected subtree; the binders of basic edges bind distinct words.
 

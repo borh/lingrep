@@ -1330,8 +1330,6 @@ impl ProvenanceView {
                             row.try_get("sentence_id").map_err(database)?,
                             "sentence ID",
                         )?;
-                        // Together with the checked endpoints and unique primary key, this
-                        // proves the stored count without another full sentence-table scan.
                         let previous: Option<i64> = row.try_get("previous_id").map_err(database)?;
                         if sentence > 0 && previous.is_none() {
                             return Err(verification(

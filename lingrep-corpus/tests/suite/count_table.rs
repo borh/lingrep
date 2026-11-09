@@ -28,9 +28,6 @@ fn surface() -> GroupSchema {
 
 type Pairs = Vec<Vec<Vec<(u32, u64)>>>;
 
-/// The sentences `writer_for` writes for `count` occurrences in `document`:
-/// up to three ordinals from `1000 * document`, with the remainder of the
-/// count on the last.
 fn sentences_of(document: u32, count: u64) -> Vec<(u64, u64)> {
     let spread = count.min(3);
     (0..spread)
@@ -903,7 +900,6 @@ fn overflowing_header_dimensions_return_corruption_errors() {
     CountTable::open(&path, &key()).expect("empty table");
 }
 
-/// Relative difference, for comparing a double with a reference value.
 fn relative(actual: f64, expected: f64) -> f64 {
     if expected == 0.0 {
         actual.abs()
@@ -1473,7 +1469,7 @@ fn unranked_pattern_rows_are_the_ranked_rows_in_entry_order(tc: hegel::TestCase)
 }
 
 #[test]
-fn unranked_pattern_rows_stop_when_cancelled_and_refuse_a_foreign_mask() {
+fn unranked_pattern_rows_stop_when_cancelled_and_reject_a_foreign_mask() {
     let documents = (0..2u64)
         .map(|document| DocumentTotals {
             document_id: document,

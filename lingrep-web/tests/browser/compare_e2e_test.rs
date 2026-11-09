@@ -35,8 +35,6 @@ async fn record_errors(
     response
 }
 
-/// Six documents with a scalar `genre` and a list-valued `tags`, so that
-/// two `tags` scopes overlap.
 fn metadata() -> Vec<Metadata> {
     let text = |value: &str| MetadataScalar::String(value.into());
     [
@@ -225,7 +223,6 @@ return {
 };";
 
 async fn page(driver: &WebDriver) -> WebDriverResult<Value> {
-    // Two frames, so a shift caused by the last render is recorded.
     driver
         .execute_async(
             "const done = arguments[0]; requestAnimationFrame(() => requestAnimationFrame(() => done()));",
@@ -293,13 +290,10 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
         ),
         "{command}"
     );
-    // 本 occurs 32 times in x documents (0, 1, 3) and 20 in y documents (0, 2, 4).
     let rows = loaded["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 3);
     let entries = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
     assert!(entries.contains(&json!("本")), "{entries:?}");
-    // A ratio names the scope with the higher rate first, the side its bar
-    // points to, so its factor is at least one.
     let ratios = driver
         .execute(
             "return [...document.querySelectorAll('.cmp-axis')].map((axis) => \
@@ -315,7 +309,7 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
         let Some(rest) = label.strip_prefix("rate in ") else {
             continue;
         };
-        let (high, rest) = rest.split_once(' ').unwrap();
+        let (high, rest) = rest.split_once(" is ").unwrap();
         let factor: f64 = rest.split_once('×').unwrap().0.parse().unwrap();
         assert!(factor >= 1.0, "{label}");
         let side = if high == "A" { "where" } else { "versus" };
@@ -330,7 +324,6 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
         "both directions occur: {ratios}"
     );
 
-    // State the second scope through the blanks: add genre = essay to B.
     driver
         .find(By::Css("[data-scope=versus][data-add]"))
         .await?
@@ -373,7 +366,6 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
         "{stated}"
     );
 
-    // Back returns to the address as first written, and forward to the stated one.
     let href = stated["href"].as_str().unwrap().to_owned();
     driver.back().await?;
     wait_for(
@@ -394,7 +386,6 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
     .await?;
     assert_eq!(page(&driver).await?["rows"], stated["rows"]);
 
-    // The stated address reopens the same page.
     driver.goto("about:blank").await?;
     driver.goto(&href).await?;
     wait_for(&driver, SETTLED, "rows").await?;
@@ -404,7 +395,6 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
     }
     assert_eq!(reopened["shift"], 0, "{reopened}");
 
-    // Japanese labels.
     driver
         .find(By::Css("[data-locale-toggle]"))
         .await?
@@ -511,8 +501,6 @@ async fn a_slow_ranking_keeps_the_previous_answer_in_place_and_aborts_a_supersed
     driver.goto(&written).await?;
     wait_for(&driver, SETTLED, "rows").await?;
     let before = page(&driver).await?;
-    // Each ranking request is now held until the test calls `__release()`; its
-    // signal is kept.
     driver
         .execute(
             "window.__shift = 0; window.__moved = []; window.__signals = []; window.__held = []; \
