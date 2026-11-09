@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   applyCaptureKeyEdit,
   summaryContext,
+  summaryGroupText,
   ariaInvalidFor,
   checkStatusLine,
   createPositionIndex,
@@ -581,4 +582,13 @@ test("summary context follows source, corpus and scope while pattern selection r
   assert.equal(summaryContext(request), summaryContext({...request, definition:"q"}));
   for (const field of ["source","corpus","search_scope"]) assert.notEqual(summaryContext(request),summaryContext({...request,[field]:"changed"}));
   assert.notEqual(summaryContext(request),summaryContext(null));
+});
+
+test("summary labels preserve scalar and list key fields", () => {
+  assert.equal(summaryGroupText({kind:"key",fields:[
+    {kind:"scalar",name:"$word.lemma",value:"猫"},
+    {kind:"list",name:"$other.text",values:["<猫>","犬 / 鳥","\n"]},
+    {kind:"list",name:"$empty.text",values:[]},
+  ]}), '猫 / ["<猫>","犬 / 鳥","\\n"] / []');
+  assert.equal(summaryGroupText({kind:"surface",value:"猫"}), '{"kind":"surface","value":"猫"}');
 });

@@ -75,6 +75,10 @@ function summaryRequest(state) {
   };
 }
 
+export function summaryGroupText(group) {
+  return Array.isArray(group.fields) ? group.fields.map((field) => typeof field.value === "string" ? field.value : JSON.stringify(field.kind === "list" ? field.values : field.value)).join(" / ") : JSON.stringify(group);
+}
+
 function renderLiveSummary(state) {
   if (!state.summaryPanel) return;
   const request = summaryRequest(state);
@@ -114,7 +118,7 @@ function renderLiveSummary(state) {
   for (const record of result.records.filter((record) => record.type === "summary" && record.data.pattern === pattern)) {
     const row = document.createElement("tr");
     const group = document.createElement("td");
-    group.textContent = Array.isArray(record.data.group.fields) ? record.data.group.fields.map((field) => typeof field.value === "string" ? field.value : JSON.stringify(field.value)).join(" / ") : JSON.stringify(record.data.group);
+    group.textContent = summaryGroupText(record.data.group);
     const count = document.createElement("td"); count.textContent = String(record.data.count);
     row.append(group, count); body.append(row);
   }
