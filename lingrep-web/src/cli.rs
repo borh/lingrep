@@ -222,10 +222,10 @@ pub fn declared_corpora(
                 .to_owned(),
         );
     }
-    // Refused rather than ignored. A prepared artifact is read directly and no
+    // Rejected rather than ignored. A prepared artifact is read directly and no
     // reader configuration applies to it, so an accepted `--input-format` here
-    // would silently do nothing — and reader configuration reaches artifact
-    // identity, so an operator has every reason to believe it did something.
+    // would silently have no effect — and reader configuration reaches artifact
+    // identity, so an operator would expect the flag to take effect.
     if let Some((_, path, _)) = declared.first()
         && declared.len() == 1
         && args.input.input_format.is_some()

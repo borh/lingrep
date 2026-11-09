@@ -457,7 +457,7 @@ fn decide_detach(
             .map_or(Decision::Keep, |end| {
                 Decision::Narrow(candidate.public_start.max(end), candidate.public_end)
             }),
-        // Refused at compile time: `detach` removes a region at an edge, and
+        // Rejected at compile time: `detach` removes a region at an edge, and
         // the other four relations name no such region.
         Relation::After | Relation::Before | Relation::Within | Relation::InSentence => {
             Decision::Keep

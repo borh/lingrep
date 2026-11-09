@@ -721,7 +721,7 @@ fn the_tag_width_refusal_names_tags_and_offers_no_key_components() {
 
 /// Form (b) is presence, not projection: whichever occurrence participated, the
 /// tag carries the value the author wrote for that capture name, so repetition
-/// and width change nothing. Refusing it would break the acceptance minimal
+/// and width change nothing. Rejecting it would break the acceptance minimal
 /// pair, which is a presence tag over an alternation.
 #[test]
 fn a_capture_presence_tag_is_unaffected_by_repetition_or_width() {

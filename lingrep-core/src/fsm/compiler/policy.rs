@@ -695,7 +695,7 @@ impl PolicyReader<'_> {
                             );
                         }
                         if groups.iter().any(|seen| seen == name) {
-                            // Refuse duplicates rather than silently normalizing
+                            // Reject duplicates rather than silently normalizing
                             // malformed metadata.
                             return self.invalid(
                                 key,

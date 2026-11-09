@@ -589,7 +589,7 @@ impl MatchSink for SnapshotSink {
         let sentence_index = location.corpus_sentence_ordinal;
         // The section sweep's cursor cannot move backwards, so an out-of-order
         // ordinal would miscount silently rather than merely produce unsorted
-        // data. Refuse it whether or not sections are available.
+        // data. Reject it whether or not sections are available.
         if let Some(previous) = self.last_ordinal
             && sentence_index < previous
         {

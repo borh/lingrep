@@ -483,8 +483,8 @@ pub(crate) fn width(
         // The emptiness test is sound but incomplete: disjoint intervals prove
         // there is no span both operands could match, while
         // overlapping intervals prove nothing at all — two operands can agree
-        // on every width and still share no string. Refusing more than this
-        // would need language emptiness, which is not a width question.
+        // on every width and still share no string. Rejecting more than this
+        // would require a language-emptiness check, which is not a width question.
         ExecutionExpr::Intersection { operands, span } => {
             let mut result = ExprWidth { min: 0, max: None };
             for operand in operands {

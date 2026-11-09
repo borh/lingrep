@@ -1085,7 +1085,7 @@ fn an_admit_mapping_requires_exactly_one_distance() {
 
 /// An `admit` names its anchor bare, and a quoted one says so.
 ///
-/// Refused at the surface rather than left to resolution: a quoted name would
+/// Rejected at the surface rather than left to resolution: a quoted name would
 /// otherwise be reported as an anchor that was never declared, which names the
 /// consequence and not the mistake. This is the separation the metadata form
 /// could not have — there, every value was quoted.

@@ -299,7 +299,7 @@ impl DocumentDraft {
         Ok(())
     }
 
-    /// Refuses a run that no definition can absorb.
+    /// Returns a `Syntax` error for a metadata run that no definition can absorb.
     ///
     /// Reached both before a catalog-value declaration (`set`, `test`, `group`
     /// take no metadata, so a run must not drift past them to the next
@@ -1324,7 +1324,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         self.error_at_span(refusal.span, refusal.code, refusal.message)
     }
 
-    /// Refuses a run that no definition can absorb, if the draft holds one.
+    /// Fails with the `dangling_run` error if the draft holds such a run.
     fn refuse_dangling_run(&self, draft: &DocumentDraft) -> Result<(), CompileError> {
         match draft.dangling_run() {
             Some(refusal) => Err(self.refuse_draft(refusal)),
@@ -1473,9 +1473,9 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 ));
             }
             let value = self.metadata_string_text(value_node)?;
-            // Refused rather than deduplicated, exactly as a `set` member is:
-            // the author meant one of them, and which is not the compiler's
-            // guess to make.
+            // Rejected rather than deduplicated, exactly as a `set` member is:
+            // the author meant one of them, and the compiler does not guess
+            // which.
             if !seen.insert(value.clone()) {
                 return Err(self.error(
                     value_node,
@@ -2907,7 +2907,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(decoded.into())
     }
 
-    /// Refuse an unquoted literal that swallowed a `|`.
+    /// Reject an unquoted literal that contains a `|`.
     ///
     /// The grammar's bare `value` token stops at `&` and does **not** stop at
     /// `|`, so `[text=a|text=b]` lowers to one atom whose value is the seven
@@ -2916,7 +2916,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// `[text=a & unidic.pos1=N]` written unspaced means exactly what it looks like,
     /// which is what makes the wrong reading the natural one to write.
     ///
-    /// Refusing this spelling prevents a silently empty result. Literal pipes
+    /// Rejecting this spelling prevents a silently empty result. Literal pipes
     /// remain expressible because escape decoding runs after tokenization.
     ///
     /// Regex operands never reach here — [`Self::lower_leaf_value`] routes them
@@ -2937,13 +2937,14 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         ))
     }
 
-    /// Refuse an unquoted literal that carried metadata's quoting convention.
+    /// Reject an unquoted literal wrapped in double quotes, metadata's quoting
+    /// convention.
     ///
     /// lingrep patterns quotes metadata values always and token-test values never, so
-    /// `[text="の"]` is well-formed and asks for the three-character literal
-    /// `"の"`. No corpus holds one, so the catalog compiles clean, warns
-    /// nothing, and reports zero — the same silence
-    /// [`Self::refuse_unspaced_pipe`] exists to close.
+    /// `[text="の"]` is well-formed and matches the three-character literal
+    /// `"の"`. No corpus holds one, so the catalog compiles with no warning
+    /// and reports zero matches, the same empty result that
+    /// [`Self::refuse_unspaced_pipe`] rejects.
     ///
     /// Reached from [`Self::decode_literal_escapes`], so it covers every
     /// unquoted literal position at once: `=`, `!=`, `in`, `not in`, `has`,

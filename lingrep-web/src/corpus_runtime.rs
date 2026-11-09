@@ -723,7 +723,7 @@ impl ArtifactCorpusEvents {
         let format = match &self.config {
             CorpusReadConfig::Plain => InputFormat::Plaintext,
             CorpusReadConfig::Jsonl => InputFormat::Jsonl,
-            // Refused at declaration validation. Raw CoNLL-U must not pass
+            // Rejected at declaration validation. Raw CoNLL-U must not pass
             // through this worker's configured analyzer; lingrep-web accepts the
             // prepared artifact produced by ling instead.
             CorpusReadConfig::Conllu => {
@@ -733,7 +733,7 @@ impl ArtifactCorpusEvents {
                 ));
             }
             CorpusReadConfig::Markdown(config) => InputFormat::Markdown(config.clone()),
-            // Refused at declaration validation (see `State` validation); this
+            // Rejected at declaration validation (see `State` validation); this
             // arm keeps the mapping total for any construction path.
             CorpusReadConfig::Bccwj => {
                 return Err(io::Error::new(

@@ -2083,15 +2083,16 @@ fn run_policy_program(
     };
 
     // A record whose name this catalog does not declare is carried through
-    // untouched. No subject can select it and no operand can match it, so the
-    // program has nothing to say about it — and every other pass here already
-    // answers an unknown name that way, by finding no entry and keeping the
-    // record.
+    // untouched. No subject can select it and no operand can match it, so no
+    // statement in the program applies to it — and every other pass here
+    // already handles an unknown name that way, by finding no entry and keeping
+    // the record.
     //
     // Unreachable for a caller pairing a policy with its own matcher's output,
     // which is every caller in this workspace. Reachable for one that does
     // not, because this function is public and nothing in its signature pairs
-    // them. Refusing to run at all is the one answer no other pass gives.
+    // them. Failing the whole run would treat an unknown name differently from
+    // every other pass.
     let mut candidates = Vec::with_capacity(surviving.len());
     let mut foreign = Vec::new();
     for &index in &surviving {

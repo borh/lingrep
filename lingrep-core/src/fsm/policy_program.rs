@@ -283,8 +283,8 @@ impl BoundProgram {
     /// If the two lengths disagree. Every reader `zip`s them, and `zip`
     /// truncates silently — a reporting surface naming fewer statements than
     /// the catalog declares reads as a complete account of the run, which is
-    /// the one failure this whole tier exists to prevent. Refusing to build
-    /// such a program at all is cheaper than teaching each reader to notice.
+    /// the one failure this whole tier exists to prevent. Panicking at
+    /// construction is cheaper than adding a length check to every reader.
     #[must_use]
     pub(crate) fn new(ops: Vec<BoundOp>, labels: Vec<StatementLabel>) -> Self {
         assert_eq!(

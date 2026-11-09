@@ -1064,9 +1064,10 @@ fn run_work(
     _json: bool,
     _baseline: Option<&std::path::Path>,
 ) -> std::process::ExitCode {
-    // Refused rather than reported as zero work. A screen that silently
-    // measured nothing would read exactly like a change that moved nothing,
-    // which is the one answer this command must never fake.
+    // Fails rather than reporting zero work. A screen that silently
+    // measured nothing would print the same report as a change that moved no
+    // counter, and this command must not print that report for an unmeasured
+    // build.
     eprintln!(
         "lingrep-perf: this binary was built without the `screen` feature, so no matcher work \
          counters are compiled in.\n\

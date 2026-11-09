@@ -1453,7 +1453,7 @@ pub struct RuntimeArgs {
     #[command(flatten)]
     pub traversal: TraversalArgs,
 
-    /// Refuse raw sentences above this byte limit; otherwise use the input-record memory bound.
+    /// Reject raw sentences above this byte limit; otherwise use the input-record memory bound.
     #[arg(
         long,
         value_parser = positive_usize,

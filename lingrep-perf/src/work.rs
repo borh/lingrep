@@ -631,9 +631,10 @@ impl std::fmt::Display for SchemaMismatch {
 /// # Errors
 ///
 /// Returns [`SchemaMismatch`] when the baseline was written by a build with a
-/// different report format. Refusing by name beats relying on whatever Serde
-/// does with a changed field set, because a counter-list change is exactly
-/// when a stale baseline would otherwise compare as "unchanged".
+/// different report format. Rejecting on the schema name is safer than relying
+/// on whatever Serde does with a changed field set, because a counter-list
+/// change is exactly when a stale baseline would otherwise compare as
+/// "unchanged".
 pub fn compare(
     before: &WorkReport,
     after: &WorkReport,
