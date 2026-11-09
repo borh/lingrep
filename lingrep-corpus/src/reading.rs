@@ -1026,11 +1026,20 @@ impl ReadingSidecar {
                 .flat_map(|block| &block.regions)
                 .any(|region| *region >= regions)
             || record.sentences.iter().any(|sentence| {
+                let mut previous_end = 0;
                 sentence.block >= blocks
-                    || sentence
-                        .segments
-                        .iter()
-                        .any(|segment| segment.2 >= containers || segment.1 == 0)
+                    || sentence.segments.iter().any(|segment| {
+                        let Some(end) = segment.0.checked_add(segment.1) else {
+                            return true;
+                        };
+                        let invalid = segment.2 >= containers
+                            || segment.1 == 0
+                            || segment.4 == 0
+                            || segment.0 < previous_end
+                            || segment.3.checked_add(segment.4).is_none();
+                        previous_end = end;
+                        invalid
+                    })
             })
         {
             return Err(corrupt(format!(
@@ -1286,6 +1295,35 @@ mod tests {
                     segments: vec![Segment(0, 1, index, 0, 1), Segment(1, 1, index, 1, 2)],
                 })
                 .collect(),
+        }
+    }
+
+    #[test]
+    fn malformed_segment_ranges_are_rejected_before_projection() {
+        for segments in [
+            vec![Segment(u32::MAX, 1, 0, 0, 1)],
+            vec![Segment(0, 1, 0, u32::MAX, 1)],
+            vec![Segment(0, u32::MAX, 0, 0, u32::MAX), Segment(0, 1, 0, 0, 1)],
+            vec![Segment(0, 2, 0, 0, 2), Segment(1, 1, 0, 2, 1)],
+            vec![Segment(0, 1, 0, 0, 0)],
+        ] {
+            let mut record = paged_record(1);
+            record.sentences[0].segments = segments;
+            let json = serde_json::to_vec(&record).expect("JSON");
+            let frame = zstd::stream::encode_all(json.as_slice(), 1).expect("frame");
+            let (_directory, sidecar) = record_fixture(&frame, 1);
+            for result in [
+                sidecar.verify(),
+                sidecar
+                    .page(PageRequest::Around(SentenceId::new(0)), 1024)
+                    .map(|_| ()),
+                sidecar.anchor(SentenceId::new(0), 0..u32::MAX).map(|_| ()),
+                sidecar
+                    .page_at(SentenceId::new(0), 0..u32::MAX, 1024)
+                    .map(|_| ()),
+            ] {
+                assert!(matches!(result, Err(ReadingSidecarError::Corrupt(_))));
+            }
         }
     }
 
