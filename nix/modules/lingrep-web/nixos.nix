@@ -324,7 +324,7 @@ in
           cfg.dictionary
         ]
         ++ lib.mapAttrsToList (_: entry: entry.path) cfg.corpora
-        ++ cfg.countTables;
+        ++ map toString cfg.countTables;
 
         Restart = "on-failure";
         RestartSec = "5s";

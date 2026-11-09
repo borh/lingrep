@@ -3,10 +3,10 @@
 # Boots a NixOS VM with the module enabled and a minimal corpus/dictionary
 # substitute (a tiny JSONL file and a placeholder dictionary path), plus a
 # prepared corpus with one count table. The test asserts the unit starts, the
-# index and Frequencies pages respond, the table is bound, and the unit stops
-# with exit status 0. Full semantic coverage of lingrep-web lives in the
-# lingrep-web Rust suite — this test only proves the unit and its `ExecStart`
-# survive the systemd entrypoint.
+# index and Frequencies pages respond, the table is bound, and the idle unit
+# stops with exit status 0. Shutdown with requests or blocking work in flight,
+# and the rest of lingrep-web's behaviour, are covered by the Rust suites; this
+# test only proves the unit and its `ExecStart` survive the systemd entrypoint.
 #
 # The check is buildable in any environment with `nix build`; booting the VM
 # needs KVM, which may be unavailable in CI sandboxes. CI runs

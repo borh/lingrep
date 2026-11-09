@@ -141,9 +141,6 @@
         same matcher revision as this package (the same lingrep release
         has it); a table that does not match stops the unit at startup
         with an error naming it.
-
-        Write each entry as a Nix string; an unquoted path literal copies
-        the table into the store.
       '';
     };
 
