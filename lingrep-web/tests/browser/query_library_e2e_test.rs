@@ -207,14 +207,6 @@ async fn fixture_with_catalogs(root: &std::path::Path) -> String {
     address
 }
 
-async fn driver_available(url: &str) -> bool {
-    let address = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    tokio::net::TcpStream::connect(address).await.is_ok()
-}
-
 /// Read the first row's name without holding an element handle.
 async fn row_name(driver: &WebDriver) -> WebDriverResult<String> {
     driver
@@ -297,15 +289,9 @@ async fn submit_source(driver: &WebDriver, source: &str) -> WebDriverResult<()> 
 
 #[tokio::test]
 async fn query_library_uses_real_indexeddb_and_enhanced_editor() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".to_string());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     let counter = Arc::new(AtomicUsize::new(0));
     let address = fixture(Arc::clone(&counter)).await;
@@ -620,16 +606,8 @@ impl Harness {
 }
 
 fn start_harness_with_catalogs() -> Option<Harness> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".to_string());
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    if !runtime.block_on(driver_available(&driver_url)) {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        return None;
-    }
+    let driver_url = runtime.block_on(crate::chromedriver_url())?;
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("alpha.lx"), "alpha := [].\n").unwrap();

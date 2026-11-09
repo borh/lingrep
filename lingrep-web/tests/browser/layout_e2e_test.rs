@@ -44,11 +44,9 @@ struct FixtureServer {
 async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> WebDriverResult<()>
 {
     use lingrep_web::state::{Config, DetailLimits, RequestStore};
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let sentences = vec![vec![lingrep_core::token_match::TokenInfo::default().with_orth("HIT")]; 3];
     let artifact = reading_support::build_artifact_with_sections(
         vec![("fixture.md", 0, false, sentences)],
@@ -463,11 +461,9 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         state::{Config, DetailLimits, RequestStore},
         templates::HitDetailFragment,
     };
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let words = (0..30)
         .map(|i| {
             vec![
@@ -1362,19 +1358,6 @@ async fn fixture_server_with(format_mode: FormatMode) -> FixtureServer {
     FixtureServer { address, task }
 }
 
-async fn driver_available(url: &str) -> bool {
-    let address = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    let available = tokio::net::TcpStream::connect(address).await.is_ok();
-    assert!(
-        available || std::env::var_os("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_none(),
-        "required Chromedriver is unavailable at {url}"
-    );
-    available
-}
-
 async fn wait_for_selector(driver: &WebDriver, selector: &str) -> WebDriverResult<()> {
     for _ in 0..100 {
         let exists: bool = driver
@@ -1499,16 +1482,9 @@ async fn wait_for_initialization(driver: &WebDriver) -> WebDriverResult<f64> {
 #[tokio::test]
 async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -> WebDriverResult<()>
 {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     eprintln!("layout-e2e: starting fixture");
     let fixture = fixture_server().await;
@@ -2317,16 +2293,9 @@ return {
 
 #[tokio::test]
 async fn editor_chrome_follows_light_and_dark_palette() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
@@ -2702,12 +2671,9 @@ async fn row_hidden(driver: &WebDriver, ordinal: u32) -> WebDriverResult<bool> {
 
 #[tokio::test]
 async fn section_and_surface_filters_compose_and_persist() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -2906,16 +2872,9 @@ async fn section_and_surface_filters_compose_and_persist() -> WebDriverResult<()
 
 #[tokio::test]
 async fn results_explorer_is_master_detail_and_discloses_honestly() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3057,16 +3016,9 @@ async fn results_explorer_is_master_detail_and_discloses_honestly() -> WebDriver
 /// actually handed to the linter.
 #[tokio::test]
 async fn a_warning_on_a_valid_pattern_reaches_the_lint_gutter() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
@@ -3119,16 +3071,9 @@ async fn a_warning_on_a_valid_pattern_reaches_the_lint_gutter() -> WebDriverResu
 #[tokio::test]
 async fn editor_navigates_from_a_reference_to_its_definition_and_between_references()
 -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
@@ -3233,16 +3178,9 @@ async fn wait_for_settled_check(driver: &WebDriver) -> WebDriverResult<()> {
 /// pattern becomes an unstyled textarea.
 #[tokio::test]
 async fn editor_formats_on_blur_and_keeps_large_sources_readable() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
 
     // The one caller that wants the production formatter: everything else
     // echoes, so that reformatting cannot shift the cursor offsets the other
@@ -3320,12 +3258,9 @@ async fn editor_formats_on_blur_and_keeps_large_sources_readable() -> WebDriverR
 /// every `position: sticky` on the page into ordinary flow.
 #[tokio::test]
 async fn the_query_band_stays_in_view_while_the_results_scroll() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3437,12 +3372,9 @@ async fn the_query_band_stays_in_view_while_the_results_scroll() -> WebDriverRes
 #[tokio::test]
 async fn the_concordance_controls_stick_to_the_concordance_and_nothing_above_it()
 -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3514,12 +3446,9 @@ async fn displayed_views(driver: &WebDriver) -> WebDriverResult<String> {
 #[tokio::test]
 async fn detail_views_are_exclusive_and_surface_search_lives_with_the_definition()
 -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3800,12 +3729,9 @@ async fn detail_views_are_exclusive_and_surface_search_lives_with_the_definition
 /// gave each row its own track and the right-hand edge came out jagged.
 #[tokio::test]
 async fn every_bar_in_a_ranked_list_shares_one_track() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3850,12 +3776,9 @@ async fn every_bar_in_a_ranked_list_shares_one_track() -> WebDriverResult<()> {
 /// was first written, and what `data-matrix-index` exists to prevent.
 #[tokio::test]
 async fn a_selected_surface_narrows_the_section_distribution() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -3984,15 +3907,9 @@ fn provenance_fixture_html() -> String {
 
 #[tokio::test]
 async fn provenance_grains_render_separately_and_escape_metadata() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "required Chromedriver unavailable"
-        );
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4034,12 +3951,9 @@ async fn provenance_grains_render_separately_and_escape_metadata() -> WebDriverR
 
 #[tokio::test]
 async fn dendrogram_rotates_and_enters_and_leaves_fullscreen() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4117,12 +4031,9 @@ async fn dendrogram_rotates_and_enters_and_leaves_fullscreen() -> WebDriverResul
 #[tokio::test]
 async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -> WebDriverResult<()>
 {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
-        eprintln!("SKIP: layout Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4267,11 +4178,9 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
 #[tokio::test]
 async fn kwic_sort_orders_all_retained_pages_and_keeps_filtered_hit_identity() -> WebDriverResult<()>
 {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4323,11 +4232,9 @@ async fn kwic_sort_orders_all_retained_pages_and_keeps_filtered_hit_identity() -
 #[tokio::test]
 async fn kwic_pending_requests_preserve_rollback_paging_and_pattern_restore() -> WebDriverResult<()>
 {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4419,11 +4326,9 @@ direction.value = 'descending'; direction.dispatchEvent(new Event('change', {bub
 
 #[tokio::test]
 async fn controls_display_focus_pressed_disabled_and_match_styles() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
@@ -4535,11 +4440,9 @@ return ['.pattern-selector','.kwic-row'].map(selector=>{
 #[tokio::test]
 async fn request_feedback_clears_after_swaps_and_errors_and_respects_reduced_motion()
 -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    if !driver_available(&driver_url).await {
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let fixture = fixture_server().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;

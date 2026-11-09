@@ -157,8 +157,8 @@ node --test lingrep-web/js-tests/*.test.mjs
 scripts/run_lingrep_web_layout_e2e.sh
 ```
 
-The layout runner exits successfully without checking anything when Chromium
-or ChromeDriver is not on `PATH`, so run it inside `nix develop`.
+The layout runner exits with status 2 when Chromium or ChromeDriver is not on
+`PATH`, so run it inside `nix develop`.
 
 ## Performance work
 

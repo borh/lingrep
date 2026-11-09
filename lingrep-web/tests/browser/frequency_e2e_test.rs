@@ -220,20 +220,9 @@ fn assert_label_invariants(labels: &Value) {
 }
 
 async fn driver() -> WebDriverResult<Option<WebDriver>> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".into());
-    let address = driver_url
-        .strip_prefix("http://")
-        .unwrap_or(&driver_url)
-        .to_owned();
-    if tokio::net::TcpStream::connect(&address).await.is_err() {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
-        eprintln!("SKIP: Chromedriver is unavailable at {driver_url}");
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(None);
-    }
+    };
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;

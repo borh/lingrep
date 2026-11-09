@@ -67,25 +67,11 @@ async fn fixture() -> String {
     address
 }
 
-async fn driver_available(url: &str) -> bool {
-    let address = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    tokio::net::TcpStream::connect(address).await.is_ok()
-}
-
 #[tokio::test]
 async fn preparing_strip_swaps_to_ready_and_stops_polling() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".to_string());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let address = fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
@@ -307,15 +293,9 @@ where
 
 #[tokio::test]
 async fn selecting_a_corpus_navigates_to_it_and_reruns_the_query() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".to_string());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let address = selector_fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
@@ -457,15 +437,9 @@ async fn refusing_fixture() -> String {
 
 #[tokio::test]
 async fn a_refused_switch_reports_and_the_message_survives_a_poll_swap() -> WebDriverResult<()> {
-    let driver_url = std::env::var("LINGREP_WEB_LAYOUT_CHROMEDRIVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:9516".to_string());
-    if !driver_available(&driver_url).await {
-        assert!(
-            std::env::var("LINGREP_WEB_LAYOUT_REQUIRE_DRIVER").is_err(),
-            "LINGREP_WEB_LAYOUT_REQUIRE_DRIVER is set but no Chromedriver at {driver_url}"
-        );
+    let Some(driver_url) = crate::chromedriver_url().await else {
         return Ok(());
-    }
+    };
     let address = refusing_fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
