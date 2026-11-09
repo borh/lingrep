@@ -107,6 +107,12 @@ struct ValuesParams {
     key: String,
     #[serde(default)]
     w: Option<String>,
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default)]
+    limit: usize,
 }
 
 #[derive(Serialize)]
@@ -215,11 +221,6 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
     .await
 }
 
-#[derive(Serialize)]
-struct Values {
-    values: Vec<(String, u64)>,
-}
-
 async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesParams>) -> Response {
     let conditions = match conditions(params.w.as_deref()) {
         Ok(conditions) => conditions,
@@ -231,9 +232,18 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
         params.corpus,
         params.catalog,
         move |pair, dimensions| {
-            pair.values(dimensions, &params.pattern, &params.key, &conditions)
-                .map(|values| values.map(|values| Values { values }))
-                .map_err(|error| error.to_string())
+            pair.values(
+                dimensions,
+                &params.pattern,
+                &params.key,
+                &conditions,
+                &crate::frequency::ValueQuery {
+                    filter: params.q,
+                    offset: params.offset,
+                    limit: params.limit,
+                },
+            )
+            .map_err(|error| error.to_string())
         },
     )
     .await

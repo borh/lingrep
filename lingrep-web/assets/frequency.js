@@ -187,6 +187,7 @@ export function mountFrequency(root) {
   const pop = document.body.appendChild(Object.assign(document.createElement("div"), { className: "fq-pop", hidden: true }));
   let meta = null, s = readState(location.hash), answer = null, gen = 0, shown = 0;
   let openPop = null, pending = null, editing = false, find = "", values = null;
+  let valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
   const dims = () => (pair() ? meta.dimensions[pair().corpus] ?? [] : []);
@@ -427,15 +428,13 @@ export function mountFrequency(root) {
     return list.map(([v, n]) => `<label><input type="checkbox" data-v="${esc(v)}"${chosen.has(v) ? " checked" : ""}><span>${esc(v)}</span><span class="b" style="width:${((n / max) * 100).toFixed(1)}%"></span><span class="v">${num(n)}</span></label>`).join("");
   }
   function valueList(key) {
-    const t = L(), chosen = new Set(s.w[key]?.v ?? []), q = find.trim();
     if (!values) return "";
-    if (values.length <= MANY) return options(key, values);
-    if (q) {
-      const found = values.filter(([v]) => v.includes(q));
-      return options(key, found.slice(0, MANY)) + `<p class="hint">${esc(t.foundValues(num(Math.min(MANY, found.length)), num(found.length)))}</p>`;
-    }
-    const top = [...values.slice(0, MANY), ...values.slice(MANY).filter(([v]) => chosen.has(v))];
-    return options(key, top) + `<p class="hint">${esc(t.topValues(num(MANY), num(values.length)))}</p>`;
+    const t = L(), q = find.trim(), shown = new Set(values.map(([v]) => v));
+    const list = q ? values : [...values, ...selectedValues.filter(([v]) => !shown.has(v))];
+    const hint = valueMatches > values.length
+      ? (q ? t.foundValues(num(values.length), num(valueMatches)) : t.topValues(num(values.length), num(valueMatches)))
+      : "";
+    return options(key, list) + (hint ? `<p class="hint">${esc(hint)}</p>` : "");
   }
   function popover() {
     const t = L();
@@ -471,22 +470,31 @@ export function mountFrequency(root) {
     sentenceEl.querySelectorAll(".pick").forEach((b) => b.setAttribute("aria-expanded", String(b.dataset.b === key)));
     popover();
     if (dim(key)?.kind !== "categorical") return;
-    const mine = gen;
+    await loadValues(key);
+  }
+  async function loadValues(key) {
+    const mine = gen, needle = find.trim(), request = ++valueRequest;
     let r;
     try {
-      r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key, w: conditions() });
+      r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key, w: conditions(), q: needle, limit: MANY });
     } catch (error) {
-      if (mine === gen && openPop === key) pop.querySelector(".opts").textContent = error.message;
+      if (mine === gen && openPop === key && request === valueRequest && needle === find.trim()) pop.querySelector(".opts").textContent = error.message;
       return;
     }
-    if (mine !== gen || openPop !== key || r.status !== "ok") return;
+    if (mine !== gen || openPop !== key || request !== valueRequest || needle !== find.trim() || r.status !== "ok") return;
     values = r.values;
-    popover();
+    valueMatches = r.matching;
+    selectedValues = r.selected;
+    pop.querySelector(".opts").innerHTML = valueList(key);
   }
   pop.addEventListener("input", (e) => {
     if (e.target.matches("[data-find]")) {
       find = e.target.value;
-      pop.querySelector(".opts").innerHTML = valueList(openPop);
+      const key = openPop;
+      values = null;
+      pop.querySelector(".opts").replaceChildren();
+      clearTimeout(valueTimer);
+      valueTimer = setTimeout(() => { if (openPop === key) loadValues(key); }, 150);
     }
   });
   pop.addEventListener("change", (e) => {
@@ -596,6 +604,12 @@ export function mountFrequency(root) {
     const mine = ++gen;
     if (!keepSentence) answer = null;
     const r = keepSentence ? resolve() : renderAll();
+    clearTimeout(valueTimer);
+    if (openPop && dim(openPop)?.kind === "categorical") {
+      values = null;
+      pop.querySelector(".opts")?.replaceChildren();
+      loadValues(openPop);
+    }
     if (!r.query) return;
     let reply;
     try {
@@ -618,7 +632,16 @@ export function mountFrequency(root) {
     renderFigures();
     renderClause();
     renderTable();
-    if (openPop) popover();
+    if (openPop) {
+      const search = pop.querySelector("[data-find]"), focused = document.activeElement === search;
+      const start = search?.selectionStart, end = search?.selectionEnd;
+      popover();
+      if (focused) {
+        const next = pop.querySelector("[data-find]");
+        next?.focus();
+        next?.setSelectionRange(start, end);
+      }
+    }
   }
 
   addEventListener("popstate", () => {

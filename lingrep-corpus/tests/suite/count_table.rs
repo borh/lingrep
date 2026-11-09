@@ -238,6 +238,31 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
         })
         .collect::<Vec<_>>();
     assert_eq!(every_row, expected_rows(&pairs, &admitted, None));
+    for (pattern, expected) in every_row.iter().enumerate() {
+        let rows = table
+            .ranked_pattern_rows(
+                pattern,
+                &mask,
+                spill_policy(resident_rows),
+                Arc::new(TempBudget::new(u64::MAX)),
+            )
+            .expect("ranked rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows");
+        assert_eq!(surfaces(&table, &rows), *expected);
+        if let Some(row) = rows.first() {
+            assert!(matches!(
+                table.bounded_group(row.entry, 0),
+                Err(lingrep_corpus::CountTableError::GroupLimit(0))
+            ));
+            assert_eq!(
+                table
+                    .bounded_group(row.entry, usize::MAX)
+                    .expect("bounded group"),
+                table.group(row.entry).expect("group")
+            );
+        }
+    }
     for (pattern, entries) in pairs.iter().enumerate() {
         let mut expected = vec![0u64; document_count];
         for (document, count) in entries.iter().flatten() {
@@ -247,6 +272,14 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
             table.pattern_document_counts(pattern).expect("counts"),
             expected,
             "pattern {pattern}"
+        );
+        assert_eq!(
+            table
+                .pattern_document_counts_iter(pattern)
+                .expect("counts iterator")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("counts"),
+            expected
         );
     }
     let Some(limit) = limit else {

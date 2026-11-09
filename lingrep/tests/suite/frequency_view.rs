@@ -465,6 +465,34 @@ fn check(server: &Server, fixture: &Fixture, conditions: &Conditions, sort: &str
             })
             .collect::<Vec<_>>();
         assert_eq!(got, rows, "{context}");
+        for offset in [1, usize::MAX] {
+            let page = get_json(
+                server,
+                &format!(
+                    "/api/frequency?{}",
+                    query(&[
+                        ("corpus", "default"),
+                        ("catalog", "table.lx"),
+                        ("pattern", pattern),
+                        ("w", &conditions_json(conditions)),
+                        ("sort", sort),
+                        ("q", filter),
+                        ("offset", &offset.to_string()),
+                        ("limit", "1"),
+                    ])
+                ),
+            );
+            let expected = reply["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .skip(offset)
+                .take(1)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(page["rows"], json!(expected), "{context} offset {offset}");
+            assert_eq!(page["matching"], reply["matching"]);
+        }
 
         let stated = conditions
             .iter()
@@ -1060,13 +1088,15 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
-fn frequency_endpoints_report_resource_limits_for_large_tables() {
+fn frequency_endpoints_page_large_tables() {
     use lingrep_corpus::{CountTable, CountTableWriter, GroupKind, GroupSchema};
     let fixture = fixture();
     let key = CountTable::read_key(&fixture.table).unwrap();
     let original = CountTable::open(&fixture.table, &key).unwrap();
     let documents = original.documents().collect::<Vec<_>>();
-    let values = (0..100_001).map(|n| format!("v{n:06}")).collect::<Vec<_>>();
+    let values = (0..100_001)
+        .map(|n| format!("v{n:06}{}", "x".repeat(700)))
+        .collect::<Vec<_>>();
     let path = fixture.directory.path().join("large.lingtable");
     let mut writer = CountTableWriter::create(
         &path,
@@ -1089,6 +1119,12 @@ fn frequency_endpoints_report_resource_limits_for_large_tables() {
         .unwrap()
         .publish()
         .unwrap();
+    assert!(
+        CountTable::open(&path, &CountTable::read_key(&path).unwrap())
+            .unwrap()
+            .mapped_bytes()
+            > 64 * 1024 * 1024
+    );
     let server = served(&fixture, &args(&[&"--count-table", &path]));
     for endpoint in ["frequency", "frequency/values"] {
         let (status, body) = get(
@@ -1104,10 +1140,14 @@ fn frequency_endpoints_report_resource_limits_for_large_tables() {
                 ])
             ),
         );
-        assert_eq!(status, 400, "{body}");
+        assert_eq!(status, 200, "{body}");
         let body: Value = serde_json::from_str(&body).unwrap();
-        let error = body["error"].as_str().unwrap();
-        assert!(error.contains("table entries limit of 100000"), "{error}");
-        assert!(error.contains("ling table"), "{error}");
+        assert_eq!(body["status"], "ok");
+        if endpoint == "frequency" {
+            assert_eq!(body["entries"], 100_001);
+            assert_eq!(body["rows"].as_array().unwrap().len(), 1);
+        } else {
+            assert_eq!(body["values"].as_array().unwrap().len(), 1);
+        }
     }
 }

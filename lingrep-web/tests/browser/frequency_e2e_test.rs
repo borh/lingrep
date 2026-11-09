@@ -78,14 +78,14 @@ fn metadata() -> Vec<Metadata> {
         .collect()
 }
 
-fn write_table(artifact: &std::path::Path, destination: &std::path::Path) {
+fn write_table(artifact: &std::path::Path, destination: &std::path::Path, documents: usize) {
     let opened = lingrep_corpus::CorpusArtifact::open(artifact).unwrap();
     let key = CountTableKey {
         analysis_identity: lingrep_corpus::format_identity(opened.analysis_identity().as_bytes()),
         catalog_fingerprint: lingrep_core::fsm::catalog_fingerprint(CATALOG),
         matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
     };
-    let documents = (0..6)
+    let documents = (0..documents as u64)
         .map(|document_id| DocumentTotals {
             document_id,
             sentences: 1,
@@ -252,19 +252,24 @@ struct Served {
 }
 
 async fn serve(extra: &[&std::ffi::OsStr]) -> Served {
+    serve_metadata(extra, metadata()).await
+}
+
+async fn serve_metadata(extra: &[&std::ffi::OsStr], metadata: Vec<Metadata>) -> Served {
+    let count = metadata.len();
     let sentences = |surface: &str| vec![vec![TokenInfo::default().with_orth(surface)]];
     let artifact = support::build_artifact_with_metadata(
-        (0..6)
-            .map(|index| ("doc.md", index, false, sentences("x")))
+        (0..count)
+            .map(|index| ("doc.md", index as u64, false, sentences("x")))
             .collect(),
         Vec::new(),
-        metadata(),
+        metadata,
     );
     let root = artifact.directory.path().join("patterns");
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("catalog.lx"), CATALOG).unwrap();
     let table = artifact.directory.path().join("fixture.lingtable");
-    write_table(&artifact.path, &table);
+    write_table(&artifact.path, &table, count);
 
     let dictionary = lingrep_core::testing::MiniDictionary::new();
     let mut argv: Vec<&std::ffi::OsStr> = vec![
@@ -505,6 +510,87 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     driver.quit().await?;
     served.server.abort();
     Ok(())
+}
+
+#[tokio::test]
+async fn frequency_value_search_finds_options_outside_the_first_page() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let metadata = (0..80)
+        .map(|n| vec![("genre".into(), scalar(&format!("v{:02}", n / 2)))].into_boxed_slice())
+        .collect();
+    let served = serve_metadata(&[], metadata).await;
+    let result: WebDriverResult<()> = async {
+    open(&driver, &served.base, ROWS).await?;
+    driver.find(By::Css("button.add")).await?.click().await?;
+    driver
+        .find(By::Css("[data-add=genre]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelectorAll('.fq-pop .opts input').length === 30",
+        "first value page",
+    )
+    .await?;
+    assert!(
+        driver
+            .find_all(By::Css(".fq-pop [data-v=v39]"))
+            .await?
+            .is_empty()
+    );
+    let search = driver.find(By::Css("[data-find]")).await?;
+    search.send_keys("v39").await?;
+    wait_for(&driver, "return document.querySelectorAll('.fq-pop .opts input').length === 1 && document.querySelector('.fq-pop [data-v=v39]')", "server-side value search").await?;
+    assert_eq!(search.prop("value").await?.as_deref(), Some("v39"));
+    search.clear().await?;
+    search.send_keys("v00").await?;
+    wait_for(&driver, "return document.querySelector('.fq-pop [data-v=v00]')?.closest('label').querySelector('.v').textContent === '6'", "noun facet counts").await?;
+    driver.execute("const select = document.querySelector('[data-b=pattern]'); select.value = 'verb'; select.dispatchEvent(new Event('change', {bubbles:true}));", Vec::new()).await?;
+    wait_for(&driver, "return document.querySelector('.fq-pop [data-v=v00]')?.closest('label').querySelector('.v').textContent === '1'", "refreshed verb facet counts").await?;
+    wait_for(&driver, "return document.querySelector('table.freq tbody td:nth-child(2)')?.textContent === '見る'", "verb query completion").await?;
+    assert_eq!(driver.execute("return document.activeElement.matches('[data-find]') && document.activeElement.value === 'v00'", Vec::new()).await?.json(), &json!(true));
+    driver.execute("document.querySelector('[data-find]').value = 'v39'; document.querySelector('[data-find]').dispatchEvent(new Event('input', {bubbles:true}));", Vec::new()).await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('.fq-pop [data-v=v39]')",
+        "value outside the first page",
+    )
+    .await?;
+
+    driver
+        .find(By::Css(".fq-pop [data-v=v39]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return decodeURIComponent(location.hash).includes('v39')",
+        "selected value address",
+    )
+    .await?;
+    wait_for(&driver, "return document.querySelector('.fq-empty')", "selected query completion").await?;
+    driver.execute("document.body.click()", Vec::new()).await?;
+    driver
+        .find(By::Css("[data-b=genre]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('.fq-pop [data-v=v39]:checked')",
+        "selection beyond the first page",
+    )
+    .await?;
+    assert_no_page_errors(&driver).await?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+        Ok(())
+    }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
 }
 
 const LABEL_FILE: &str = r#"{

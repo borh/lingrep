@@ -2028,8 +2028,10 @@ are removed when the server releases the corpus index.
 The view presents a query as a sentence with controls for the catalog,
 pattern, document metadata conditions, sort order and substring filter. A key
 becomes a condition when every value is a number (a range) or when its scalar
-or list values repeat (a set to keep or to exclude). Each condition shows the
-number of occurrences that satisfy all conditions as a share of those that
+or list values repeat (a set to keep or to exclude). Categorical values are
+queried in bounded pages; the search box searches the complete vocabulary, and
+selected values remain available outside the first page. Each condition shows
+the number of occurrences that satisfy all conditions as a share of those that
 satisfy the other conditions. The page shows the corresponding `ling table …
 --where …` command. The view applies its selected sort order and substring
 filter separately. Command paths are relative to the common parent directory of

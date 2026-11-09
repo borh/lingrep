@@ -132,6 +132,8 @@ pub enum CountTableError {
     Writer(String),
     #[error("destination already exists at {0}")]
     DestinationExists(PathBuf),
+    #[error("entry key exceeds the {0} encoded-value limit")]
+    GroupLimit(usize),
     #[error("count table writing was cancelled")]
     Cancelled,
 }
@@ -1199,6 +1201,15 @@ impl CountTable {
     }
 
     pub fn group(&self, entry: u32) -> Result<Group<'_>, CountTableError> {
+        self.bounded_group(entry, usize::MAX)
+    }
+
+    /// Decodes a group only when its encoded key has at most `max_values` words.
+    pub fn bounded_group(
+        &self,
+        entry: u32,
+        max_values: usize,
+    ) -> Result<Group<'_>, CountTableError> {
         let offsets = self.u64s(&self.entry_key_offsets)?;
         let (start, end) = (
             *offsets
@@ -1208,6 +1219,13 @@ impl CountTable {
                 .get(entry as usize + 1)
                 .ok_or_else(|| corrupt("entry out of range"))?,
         );
+        if end
+            .checked_sub(start)
+            .ok_or_else(|| corrupt("entry key offsets decrease"))?
+            > max_values as u64
+        {
+            return Err(CountTableError::GroupLimit(max_values));
+        }
         let words = self
             .u32s(&self.entry_keys)?
             .get(start as usize..end as usize)
@@ -1398,28 +1416,66 @@ impl CountTable {
     /// The occurrences of `pattern` in each document, indexed like
     /// [`Self::document_ids`].
     pub fn pattern_document_counts(&self, pattern: usize) -> Result<Vec<u64>, CountTableError> {
+        self.pattern_document_counts_iter(pattern)?.collect()
+    }
+
+    /// Streams one pattern's count per document, in [`Self::document_ids`] order.
+    pub fn pattern_document_counts_iter(
+        &self,
+        pattern: usize,
+    ) -> Result<impl Iterator<Item = Result<u64, CountTableError>> + '_, CountTableError> {
         if pattern >= self.header.patterns.len() {
             return Err(corrupt("pattern out of range"));
         }
         let offsets = self.u64s(&self.document_pattern_offsets)?;
         let patterns = self.u32s(&self.document_patterns)?;
         let counts = self.u64s(&self.document_pattern_counts)?;
-        (0..self.document_ids.len())
-            .map(|document| {
-                let range = offsets[document] as usize..offsets[document + 1] as usize;
-                let (Some(patterns), Some(counts)) =
-                    (patterns.get(range.clone()), counts.get(range))
-                else {
-                    return Err(corrupt("document pattern offsets out of range"));
-                };
-                Ok(patterns
-                    .iter()
-                    .zip(counts)
-                    .filter(|(found, _)| **found as usize == pattern)
-                    .map(|(_, count)| *count)
-                    .sum())
-            })
-            .collect()
+        Ok((0..self.document_ids.len()).map(move |document| {
+            let range = offsets[document] as usize..offsets[document + 1] as usize;
+            let (Some(patterns), Some(counts)) = (patterns.get(range.clone()), counts.get(range))
+            else {
+                return Err(corrupt("document pattern offsets out of range"));
+            };
+            Ok(patterns
+                .iter()
+                .zip(counts)
+                .filter(|(found, _)| **found as usize == pattern)
+                .map(|(_, count)| *count)
+                .sum())
+        }))
+    }
+
+    /// Streams one pattern in count/rank order using the caller's spill policy and temporary budget.
+    pub fn ranked_pattern_rows(
+        &self,
+        pattern: usize,
+        mask: &DocumentMask,
+        policy: SpillPolicy,
+        budget: Arc<TempBudget>,
+    ) -> Result<impl Iterator<Item = Result<TopRow, CountTableError>>, CountTableError> {
+        self.admission(mask)?;
+        let mut rows = self.pattern_rows(pattern, mask, policy, &budget)?;
+        let mut finished = false;
+        Ok(std::iter::from_fn(move || {
+            if finished {
+                return None;
+            }
+            match rows.next_entry() {
+                Ok(Some((row, _))) => Some(Ok(TopRow {
+                    entry: row.entry,
+                    count: u64::MAX - row.inverted_count,
+                    works: row.works,
+                })),
+                Ok(None) => {
+                    finished = true;
+                    None
+                }
+                Err(error) => {
+                    finished = true;
+                    Some(Err(error.into()))
+                }
+            }
+        }))
     }
 
     /// Every entry of `pattern` with a nonzero count under `mask`, in
