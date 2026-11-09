@@ -2746,6 +2746,140 @@ mod document_lookarounds {
     type Sentence = (Vec<&'static str>, Option<u64>, Option<u64>);
 
     #[test]
+    fn broken_scoped_links_release_pending_context_before_residency_checks() {
+        for boundary in ["document", "paragraph", "gap", "continuous"] {
+            for batch_size in [1, 3] {
+                let scope = if boundary == "paragraph" {
+                    "paragraph"
+                } else {
+                    "document"
+                };
+                let catalog = matcher(&format!(
+                    "pattern p := [text=x] not_followed_by([], within={scope})."
+                ));
+                let schema = text_schema();
+                let bound = catalog.bind(&schema).unwrap();
+                let sentence = |paragraph| (vec!["x"], Some(paragraph), None);
+                let documents = match boundary {
+                    "document" => vec![vec![sentence(0)], vec![sentence(0)]],
+                    "paragraph" => vec![vec![sentence(0), sentence(1)]],
+                    "gap" => vec![vec![sentence(0), sentence(0), sentence(0)]],
+                    _ => vec![vec![sentence(0), sentence(0)]],
+                };
+                let mut sentences = bound_sentences(&bound, &documents);
+                let admitted: roaring::RoaringTreemap = (0..sentences.len() as u64)
+                    .filter(|ordinal| boundary != "gap" || *ordinal != 1)
+                    .collect();
+                let want: Vec<_> = admitted
+                    .iter()
+                    .map(|ordinal| (ordinal, catalog.find_matches(&[token("x")])))
+                    .collect();
+                let mut batches = Vec::new();
+                while !sentences.is_empty() {
+                    let size = batch_size.min(sentences.len());
+                    let values = sentences
+                        .drain(..size)
+                        .map(|(sentence, _)| sentence)
+                        .collect();
+                    batches.push(ExecutionBatch::bound_tokenized_with_charges(
+                        values,
+                        vec![600; size],
+                    ));
+                }
+                let mut sink = ProtocolRecordingSink::default();
+                let result = execute_analyzed::<_, VibratoSession, _, _, _>(
+                    RecordingSource::new(Arc::new(AtomicUsize::new(0)), batches),
+                    AnalysisBinding::Prepared(schema),
+                    &bound,
+                    &pool(),
+                    &ExecutionLimits {
+                        max_tokenized_bytes: 1024,
+                        ..ExecutionLimits::default()
+                    },
+                    3,
+                    &CancellationFlag::new(),
+                    &mut sink,
+                    &mut NoopProgress,
+                    &mut NoopObserver,
+                    lingrep_core::execution::PolicySelection::Apply,
+                    &SentenceAdmission::Sentences(admitted),
+                );
+                if boundary == "continuous" {
+                    assert!(matches!(
+                        result,
+                        Err(ExecutionError::LookaroundWindowTooLarge { .. })
+                    ));
+                } else {
+                    result
+                        .unwrap_or_else(|error| panic!("{boundary}, batch {batch_size}: {error}"));
+                    let found: Vec<_> = sink
+                        .locations
+                        .iter()
+                        .map(|at| at.corpus_sentence_ordinal)
+                        .zip(sink.matches)
+                        .collect();
+                    assert_eq!(found, want, "{boundary}, batch {batch_size}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn excluded_analyzed_sentences_interrupt_explicit_window_links() {
+        let compiled = matcher("pattern p := [] not_followed_by([], within=document).");
+        let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+        let bound = compiled.bind(plan.schema()).unwrap();
+        for batch_size in [1, 3] {
+            let mut units: Vec<_> = (0..3)
+                .map(|ordinal| {
+                    let mut at = location(ordinal, "direct", ordinal);
+                    at.document_id = DocumentId::new(0);
+                    ExecutionSentence {
+                        location: at,
+                        value: TextUnit::sentence(
+                            InputUnitId::new(ordinal),
+                            "猫",
+                            NormalizationPolicy::None,
+                        )
+                        .unwrap(),
+                    }
+                })
+                .collect();
+            let mut batches = Vec::new();
+            while !units.is_empty() {
+                batches.push(ExecutionBatch::Text(
+                    units.drain(..batch_size.min(units.len())).collect(),
+                ));
+            }
+            let mut sink = ProtocolRecordingSink::default();
+            execute_analyzed(
+                RecordingSource::new(Arc::new(AtomicUsize::new(0)), batches),
+                AnalysisBinding::Session(plan.create_session()),
+                &bound,
+                &pool(),
+                &ExecutionLimits::default(),
+                3,
+                &CancellationFlag::new(),
+                &mut sink,
+                &mut NoopProgress,
+                &mut NoopObserver,
+                lingrep_core::execution::PolicySelection::Apply,
+                &SentenceAdmission::Sentences(roaring::RoaringTreemap::from_iter([0, 2])),
+            )
+            .unwrap();
+            assert_eq!(
+                sink.locations
+                    .iter()
+                    .map(|at| at.corpus_sentence_ordinal)
+                    .collect::<Vec<_>>(),
+                [0, 2]
+            );
+            let expected = compiled.find_matches(&[token("猫")]);
+            assert_eq!(sink.matches, [expected.clone(), expected]);
+        }
+    }
+
+    #[test]
     fn an_analyzed_text_unit_after_a_gap_starts_a_new_window() {
         let compiled =
             matcher("pattern after_dog := preceded_by([text=犬], within=document) [text=猫].");

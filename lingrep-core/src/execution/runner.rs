@@ -1628,8 +1628,11 @@ impl<V: TokenSequence> Partitioner<V> {
         for (sentence, estimate) in sentences.into_iter().zip(estimates) {
             let explicit = adjacency.as_mut().and_then(Iterator::next);
             if !scope.admits(&sentence.location) {
+                self.windows.interrupt();
                 continue;
             }
+            self.windows
+                .push(&sentence.location, explicit, &mut self.links);
             let incoming = estimate
                 .checked_add(self.sentence_overhead())
                 .ok_or(ExecutionError::ResourceAccounting)?;
@@ -1640,13 +1643,22 @@ impl<V: TokenSequence> Partitioner<V> {
                     .ok_or(ExecutionError::ResourceAccounting)?
                     > max_tokenized_bytes
             {
+                let control = self.advance(
+                    false,
+                    max_tokenized_bytes,
+                    logical_batch_sentences,
+                    state,
+                    run,
+                )?;
+                if control != BatchControl::Continue {
+                    return Ok(control);
+                }
                 let control = self.flush(state, run)?;
                 if control != BatchControl::Continue {
                     return Ok(control);
                 }
+                self.retire();
             }
-            self.windows
-                .push(&sentence.location, explicit, &mut self.links);
             self.held_bytes = self
                 .held_bytes
                 .checked_add(incoming)
@@ -1739,6 +1751,7 @@ impl<V: TokenSequence> Partitioner<V> {
         let scopes = self.windows.scope_count();
         self.windows.reach().enumerate().all(|(scope, reach)| {
             !window_at(&self.values, &self.links, scopes, scope, reach, index).open_after
+                || self.links.get(self.values.len() * scopes + scope) == Some(&false)
         })
     }
 
@@ -1753,7 +1766,7 @@ impl<V: TokenSequence> Partitioner<V> {
         let control = run(
             &self.locations[..self.ready - self.margin],
             &self.values,
-            &self.links,
+            &self.links[..self.values.len() * self.windows.scope_count()],
             self.margin..self.ready,
             self.ready_bytes,
             state,
@@ -1777,7 +1790,7 @@ impl<V: TokenSequence> Partitioner<V> {
                 let mut start = self.margin;
                 let mut tokens = 0;
                 while start > 0 && tokens < reach.before {
-                    if start < self.values.len() && !self.links[start * scopes + scope] {
+                    if self.links.get(start * scopes + scope) == Some(&false) {
                         break;
                     }
                     start -= 1;

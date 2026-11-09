@@ -39,6 +39,11 @@ impl WindowLinks {
         }
     }
 
+    pub(crate) fn interrupt(&mut self) {
+        self.last = None;
+        self.last_divisions = None;
+    }
+
     pub(crate) fn reach(&self) -> impl Iterator<Item = LookaroundReach> + '_ {
         self.scopes.iter().map(|(_, reach)| *reach)
     }
@@ -60,10 +65,11 @@ impl WindowLinks {
         links: &mut Vec<bool>,
     ) {
         let position = (location.document_id, location.document_sentence_ordinal);
-        let adjacent = adjacent.unwrap_or_else(|| {
-            self.last
-                .is_some_and(|(document, ordinal)| (document, ordinal + 1) == position)
-        });
+        let adjacent = self.last.is_some()
+            && adjacent.unwrap_or_else(|| {
+                self.last
+                    .is_some_and(|(document, ordinal)| (document, ordinal + 1) == position)
+            });
         self.last = Some(position);
         let divisions = location.lookaround_divisions.clone();
         let innermost = |divisions: &Option<Arc<[Option<DivisionId>]>>, index: usize| {
