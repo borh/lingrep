@@ -122,14 +122,16 @@ pub fn compile_catalog(
     compile_program(program, &limits, &mut stats, lowered.warnings)
 }
 
-/// Compiles `source` publishing only the pattern `pattern`, with the other
-/// patterns compiled as fragments. A catalog that declares a `policy` block
-/// compiles whole, since its policy may relate records of different patterns.
+/// Compiles `source` publishing the definitions whose published name, their
+/// `output_name` or else their own, is `pattern`, with the other patterns
+/// compiled as fragments. Lexicons stay published. A catalog that declares a
+/// `policy` block compiles whole, since its policy may relate records of
+/// different patterns.
 ///
 /// # Errors
 ///
-/// Every error of [`compile_catalog`], and a catalog that declares no
-/// pattern named `pattern`.
+/// Every error of [`compile_catalog`], and a catalog in which no pattern or
+/// lexicon publishes `pattern`.
 pub fn compile_catalog_pattern(
     source: PatternSource<'_>,
     limits: CompileLimits,
@@ -141,15 +143,25 @@ pub fn compile_catalog_pattern(
     if program.policy.is_none() {
         let mut found = false;
         for definition in &mut program.definitions {
-            if let ParsedDefinitionBody::Pattern { visibility, .. } = &mut definition.body
-                && *visibility == DefinitionVisibility::Pattern
-            {
-                if definition.name == pattern {
-                    found = true;
-                } else {
-                    *visibility = DefinitionVisibility::Fragment;
-                    definition.key = None;
+            let publishes = definition
+                .metadata
+                .get("output_name")
+                .and_then(|entry| entry.value.as_str())
+                .unwrap_or(&definition.name)
+                == pattern;
+            match &mut definition.body {
+                ParsedDefinitionBody::Pattern { visibility, .. }
+                    if *visibility == DefinitionVisibility::Pattern =>
+                {
+                    if publishes {
+                        found = true;
+                    } else {
+                        *visibility = DefinitionVisibility::Fragment;
+                        definition.key = None;
+                    }
                 }
+                ParsedDefinitionBody::Lexicon { .. } => found |= publishes,
+                ParsedDefinitionBody::Pattern { .. } => {}
             }
         }
         if !found {

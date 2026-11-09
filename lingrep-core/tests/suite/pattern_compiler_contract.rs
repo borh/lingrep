@@ -178,6 +178,52 @@ fn a_catalog_compiled_for_one_pattern_publishes_the_same_matches_of_it_as_the_wh
 }
 
 #[test]
+fn a_catalog_compiled_for_a_published_name_matches_every_definition_publishing_it() {
+    let source = "pattern a := [text=x].\n\
+                  output_name: \"shared\"\npattern b := [text=y].\n\
+                  output_name: \"shared\"\npattern c := [text=x] [text=y].\n\
+                  lexicon words by [text] := {\"y\", \"z\"}.\n";
+    let tokens = ["x", "y", "z"]
+        .map(|text| token_with_attrs(&[(TokenAttributeIndex::Orth, text)]))
+        .to_vec();
+    let whole = compile_catalog(
+        PatternSource::named("p.lx", source),
+        CompileLimits::default(),
+    )
+    .expect("catalog")
+    .matcher;
+    let matches = whole.find_matches(&tokens);
+    for name in ["a", "shared", "words"] {
+        let matcher = compile_catalog_pattern(
+            PatternSource::named("p.lx", source),
+            CompileLimits::default(),
+            name,
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error}"))
+        .matcher;
+        let publishes = |catalog: &lingrep_core::fsm::CompiledCatalog, matched: &Match| {
+            catalog.catalog_policy().published_name(&matched.pattern) == name
+        };
+        let selected = matcher
+            .find_matches(&tokens)
+            .into_iter()
+            .filter(|matched| publishes(&matcher, matched))
+            .collect::<Vec<_>>();
+        let expected = matches
+            .iter()
+            .filter(|matched| publishes(&whole, matched))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!expected.is_empty(), "{name} fixture must be non-vacuous");
+        assert_eq!(
+            match_fingerprints(&selected),
+            match_fingerprints(&expected),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn a_catalog_with_a_policy_compiles_whole_for_one_pattern() {
     let source = include_str!("../../../patterns/alternation.lx");
     let whole = compile_catalog(

@@ -88,13 +88,17 @@ fn write_table(artifact: &Path, catalog: &Path, table: &Path) {
 }
 
 fn fixture() -> Fixture {
+    fixture_with(CATALOG, DOCUMENTS)
+}
+
+fn fixture_with(source: &str, documents: &str) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let dictionary = MiniDictionary::new();
-    let artifact = build_artifact(directory.path(), &dictionary, "works", DOCUMENTS);
+    let artifact = build_artifact(directory.path(), &dictionary, "works", documents);
     let root = directory.path().join("patterns");
     fs::create_dir(&root).unwrap();
     let catalog = root.join("table.lx");
-    fs::write(&catalog, CATALOG).unwrap();
+    fs::write(&catalog, source).unwrap();
     let table = directory.path().join("works.lingtable");
     write_table(&artifact, &catalog, &table);
     Fixture {
@@ -1570,17 +1574,26 @@ fn check_profile(
     }
 }
 
-/// The text a frequency row shows for the group of a `ling matches` record
-/// of this catalog: the key's values, or else the matched surface.
-fn record_group_text(data: &Value) -> String {
-    match data["key"].as_array() {
-        Some(fields) => fields
+/// The kind and text of the frequency row a `ling matches` record of these
+/// catalogs counts in: its key's values, else its unit, else its lexicon
+/// term, else its matched surface.
+fn record_group_text(data: &Value) -> (String, String) {
+    if let Some(fields) = data["key"].as_array() {
+        let text = fields
             .iter()
             .map(|field| field["value"].as_str().unwrap())
             .collect::<Vec<_>>()
-            .join(" "),
-        None => data["surface"].as_str().unwrap().to_owned(),
+            .join(" ");
+        return ("key".into(), text);
     }
+    let (kind, text) = if let Some(unit) = data["unit"].as_str() {
+        ("unit", unit)
+    } else if let Some(term) = data["lexical"]["term"].as_str() {
+        ("term", term)
+    } else {
+        ("surface", data["surface"].as_str().unwrap())
+    };
+    (kind.into(), text.into())
 }
 
 /// `ling matches --where` records of the entry, in the order `ling` prints
@@ -1602,7 +1615,10 @@ fn matched_lines(
     }
     let output = command.output().unwrap();
     assert_success(&output);
-    let text = group_text(group);
+    let text = (
+        group["kind"].as_str().unwrap().to_owned(),
+        group_text(group),
+    );
     parse_jsonl(&output.stdout)
         .into_iter()
         .filter(|record| {
@@ -1610,32 +1626,36 @@ fn matched_lines(
                 && record["data"]["pattern"] == pattern
                 && record_group_text(&record["data"]) == text
         })
-        .map(|record| {
-            let data = &record["data"];
-            (
-                data["corpus_sentence_ordinal"].as_u64().unwrap(),
-                data["span"]["start"].as_u64().unwrap(),
-                data["span"]["end"].as_u64().unwrap(),
-                data["surface"].as_str().unwrap().to_owned(),
-            )
-        })
+        .map(|record| match_line(&record))
         .collect()
 }
 
-fn check_lines(
+/// A `ling matches` record as (sentence, start, end, surface).
+fn match_line(record: &Value) -> (u64, u64, u64, String) {
+    let data = &record["data"];
+    (
+        data["corpus_sentence_ordinal"].as_u64().unwrap(),
+        data["span"]["start"].as_u64().unwrap(),
+        data["span"]["end"].as_u64().unwrap(),
+        data["surface"].as_str().unwrap().to_owned(),
+    )
+}
+
+/// Every line of the entry the server lists under `conditions`, read in
+/// pages of `page`, as (sentence, start, end, node).
+fn served_lines(
     server: &Server,
-    fixture: &Fixture,
     pattern: &str,
     group: &Value,
     conditions: &Conditions,
     page: usize,
-) {
+) -> Vec<(u64, u64, u64, String)> {
     let context = format!(
         "{pattern} {group} where {:?} page {page}",
         clause(conditions)
     );
-    let want = matched_lines(fixture, pattern, group, &clause(conditions));
     let mut got = Vec::new();
+    let mut total = None;
     loop {
         let offset = got.len().to_string();
         let limit = page.to_string();
@@ -1652,12 +1672,17 @@ fn check_lines(
             ),
         );
         assert_eq!(reply["status"], "ok", "{context}: {reply}");
-        assert_eq!(reply["total"], want.len(), "{context}");
+        assert_eq!(
+            *total.get_or_insert(reply["total"].clone()),
+            reply["total"],
+            "{context}"
+        );
         assert_eq!(reply["offset"], got.len(), "{context}");
         let lines = reply["lines"].as_array().unwrap();
         assert!(lines.len() <= page, "{context}");
         if lines.is_empty() {
-            break;
+            assert_eq!(reply["total"], got.len(), "{context}");
+            return got;
         }
         got.extend(lines.iter().map(|line| {
             (
@@ -1668,7 +1693,57 @@ fn check_lines(
             )
         }));
     }
-    assert_eq!(got, want, "{context}");
+}
+
+/// Runs the `ling matches … | jq` command an entry's profile shows, from
+/// the fixture's directory, and returns the records it prints as lines.
+fn shown_lines_command(
+    server: &Server,
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    conditions: &Conditions,
+) -> Vec<(u64, u64, u64, String)> {
+    let reply = get_json(
+        server,
+        &format!(
+            "/api/frequency/profile?{}",
+            entry_query(pattern, group, conditions, &[])
+        ),
+    );
+    let command = reply["command"].as_str().unwrap();
+    assert!(command.starts_with("ling --json matches "), "{command}");
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            &format!(
+                "ling() {{ \"$LINGREP_BINARY\" \"$@\"; }}\nset -o pipefail 2>/dev/null; {command}"
+            ),
+        ])
+        .env("LINGREP_BINARY", lingrep_binary_path())
+        .current_dir(fixture.directory.path())
+        .output()
+        .unwrap();
+    assert_success(&output);
+    parse_jsonl(&output.stdout).iter().map(match_line).collect()
+}
+
+fn check_lines(
+    server: &Server,
+    fixture: &Fixture,
+    pattern: &str,
+    group: &Value,
+    conditions: &Conditions,
+    page: usize,
+) {
+    let want = matched_lines(fixture, pattern, group, &clause(conditions));
+    let got = served_lines(server, pattern, group, conditions, page);
+    assert_eq!(
+        got,
+        want,
+        "{pattern} {group} where {:?} page {page}",
+        clause(conditions)
+    );
 }
 
 #[test]
@@ -1736,4 +1811,220 @@ fn an_entry_profile_equals_ling_table_and_its_lines_equal_ling_matches() {
     })
     .settings(hegel::Settings::new().test_cases(25).derandomize(true))
     .run();
+}
+
+#[test]
+fn the_shown_lines_command_reproduces_the_lines() {
+    let fixture = fixture();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let conditions = [
+        ("genre", Condition::In(vec!["novel", "essay"])),
+        ("year", Condition::Range(Some(2001), Some(2003))),
+    ]
+    .into_iter()
+    .collect::<Conditions>();
+    for pattern in PATTERNS {
+        for group in entries(&server, pattern) {
+            for conditions in [&Conditions::new(), &conditions] {
+                let shown = shown_lines_command(&server, &fixture, pattern, &group, conditions);
+                assert_eq!(
+                    shown,
+                    served_lines(&server, pattern, &group, conditions, 200),
+                    "{pattern} {group} where {:?}",
+                    clause(conditions)
+                );
+            }
+        }
+    }
+}
+
+/// A unit from `join` and a lexicon term, the row kinds `CATALOG` lacks,
+/// and two patterns published under one `output_name`.
+const DERIVED_CATALOG: &str = "output_name: \"animal\"\npattern dog := [text=犬].\n\
+    output_name: \"animal\"\npattern bird := [text=鳥].\n\
+    transform: [{op: \"join\"}]\n\
+    pattern joined := [text=猫] [].\n\
+    lexicon animals by [text] := {\"猫\", \"犬\"}.\n";
+
+#[test]
+fn unit_term_and_output_name_entries_profile_as_ling_table_and_list_lines_as_ling_matches() {
+    let fixture = fixture_with(DERIVED_CATALOG, DOCUMENTS);
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let novels = [("genre", Condition::In(vec!["novel"]))]
+        .into_iter()
+        .collect::<Conditions>();
+    for (pattern, kind) in [
+        ("joined", "unit"),
+        ("animals", "term"),
+        ("animal", "surface"),
+    ] {
+        let groups = entries(&server, pattern);
+        assert!(groups.len() > 1, "{pattern}: {groups:?}");
+        for group in &groups {
+            assert_eq!(group["kind"], kind, "{pattern}: {group}");
+            for conditions in [&Conditions::new(), &novels] {
+                check_profile(&server, &fixture, pattern, group, conditions);
+                check_lines(&server, &fixture, pattern, group, conditions, 2);
+                assert_eq!(
+                    shown_lines_command(&server, &fixture, pattern, group, conditions),
+                    served_lines(&server, pattern, group, conditions, 200),
+                    "{pattern} {group}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn entry_queries_explain_an_unknown_or_malformed_entry_and_a_page_past_the_end() {
+    let fixture = fixture();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let none = Conditions::new();
+    for endpoint in ["profile", "lines"] {
+        for entry in [
+            json!({"kind": "surface", "value": "象"}),
+            json!({"kind": "unit", "value": "猫"}),
+            json!({"kind": "lemma", "value": "猫"}),
+            json!({"kind": "key", "fields": [{"kind": "scalar", "name": "text"}]}),
+        ] {
+            assert_eq!(
+                get_json(
+                    &server,
+                    &format!(
+                        "/api/frequency/{endpoint}?{}",
+                        entry_query("word", &entry, &none, &[])
+                    )
+                ),
+                json!({"status": "unsupported", "reason": "unknown_entry"}),
+                "{endpoint} {entry}"
+            );
+        }
+        let (status, body) = get(
+            &server,
+            &format!(
+                "/api/frequency/{endpoint}?{}",
+                query(&[
+                    ("corpus", "default"),
+                    ("catalog", "table.lx"),
+                    ("pattern", "word"),
+                    ("entry", "{\"kind\":"),
+                ])
+            ),
+        );
+        assert_eq!(status, 400, "{endpoint}: {body}");
+        assert!(body.contains("entry is not a group"), "{endpoint}: {body}");
+    }
+    let cat = &entries(&server, "cat")[0];
+    let total = served_lines(&server, "cat", cat, &none, 200).len();
+    for offset in [total, total + 5] {
+        let offset = offset.to_string();
+        let reply = get_json(
+            &server,
+            &format!(
+                "/api/frequency/lines?{}",
+                entry_query("cat", cat, &none, &[("offset", &offset)])
+            ),
+        );
+        assert_eq!(
+            (&reply["status"], &reply["total"], &reply["lines"]),
+            (&json!("ok"), &json!(total), &json!([])),
+            "offset {offset}"
+        );
+    }
+}
+
+/// Sixty works with thirty genres, two works each, and years 7 apart over
+/// 413 years: more genres than a chart lists, and a span cut into bins.
+fn many_values_documents() -> String {
+    (0..60)
+        .map(|work: usize| {
+            format!(
+                "{{\"text\":\"{}\",\"metadata\":{{\"genre\":\"g{:02}\",\"year\":{}}}}}\n",
+                "猫。".repeat(work % 4 + 1),
+                work % 30,
+                1000 + 7 * work
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_profile_lists_the_most_frequent_values_and_the_chosen_ones_and_bins_a_wide_range() {
+    let fixture = fixture_with(CATALOG, &many_values_documents());
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let cat = entries(&server, "cat")[0].clone();
+    let genres = table_entry_values(&fixture, "cat", &cat, "genre", "");
+    let mut ranked = genres
+        .iter()
+        .map(|(value, (count, works))| (value.clone().unwrap(), *count, *works))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    assert_eq!(ranked.len(), 30);
+    let chosen = ranked.last().unwrap().0.clone();
+    let chosen: &'static str = Box::leak(chosen.into_boxed_str());
+    let conditions = [("genre", Condition::In(vec![chosen]))]
+        .into_iter()
+        .collect::<Conditions>();
+    let reply = get_json(
+        &server,
+        &format!(
+            "/api/frequency/profile?{}",
+            entry_query("cat", &cat, &conditions, &[])
+        ),
+    );
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let chart = |key: &str| {
+        reply["charts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|chart| chart["key"] == key)
+            .unwrap()
+            .clone()
+    };
+
+    let genre = chart("genre");
+    assert_eq!(genre["distinct"], 30);
+    let listed = ranked
+        .iter()
+        .enumerate()
+        .filter(|(rank, (value, _, _))| *rank < 12 || value == chosen)
+        .map(|(_, (value, count, works))| json!({"value": value, "count": count, "works": works}))
+        .collect::<Vec<_>>();
+    assert_eq!(listed.len(), 13);
+    assert_eq!(genre["bars"], json!(listed));
+
+    let year = chart("year");
+    assert_eq!(year["kind"], "range");
+    let columns = year["columns"].as_array().unwrap();
+    assert_eq!(columns.len(), 40);
+    let years = table_entry_values(&fixture, "cat", &cat, "year", &clause(&conditions))
+        .into_iter()
+        .map(|(value, counts)| (value.unwrap().parse::<i64>().unwrap(), counts))
+        .collect::<BTreeMap<_, _>>();
+    let mut binned = BTreeMap::new();
+    let mut previous = i64::MIN;
+    for column in columns {
+        let (Some(lo), Some(hi)) = (column["lo"].as_i64(), column["hi"].as_i64()) else {
+            assert_eq!((&column["lo"], &column["hi"]), (&Value::Null, &Value::Null));
+            assert_eq!(column["count"], 0, "{column}");
+            continue;
+        };
+        assert!(previous < lo && lo <= hi, "{columns:?}");
+        previous = hi;
+        let inside = years.range(lo..=hi).map(|(_, counts)| *counts);
+        let sums = inside.fold((0, 0), |(count, works), (c, w)| (count + c, works + w));
+        assert_eq!(
+            (
+                column["count"].as_u64().unwrap(),
+                column["works"].as_u64().unwrap()
+            ),
+            sums,
+            "{column}"
+        );
+        for (year, counts) in years.range(lo..=hi) {
+            binned.insert(*year, *counts);
+        }
+    }
+    assert_eq!(binned, years);
 }

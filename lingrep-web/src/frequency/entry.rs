@@ -95,7 +95,7 @@ impl EntryMatcher {
                     division_kinds: output.matcher.lookaround_division_kinds(),
                     bound,
                 },
-                output.matcher.patterns().len() > 1,
+                published_names(&output.matcher),
             ))
         })?;
         Ok(Self {
@@ -163,29 +163,49 @@ impl EntryMatcher {
     }
 }
 
-/// Each of `patterns` with the catalog `compile` returns for it, given
-/// whether that catalog publishes more than the one pattern; once one does,
-/// it serves every later pattern without another compile.
+/// Each of `patterns` with a catalog that publishes it: the catalog
+/// `compile` returns for it, with the names that catalog publishes, or an
+/// earlier one that publishes it too.
 fn compile_each<'p, T>(
     patterns: impl IntoIterator<Item = &'p str>,
-    mut compile: impl FnMut(&str) -> Result<(T, bool), String>,
+    mut compile: impl FnMut(&str) -> Result<(T, Vec<String>), String>,
 ) -> Result<HashMap<String, Arc<T>>, String> {
-    let mut whole: Option<Arc<T>> = None;
+    let mut publishing = HashMap::new();
     let mut compiled = HashMap::new();
     for pattern in patterns {
-        let catalog = if let Some(whole) = &whole {
-            Arc::clone(whole)
+        let catalog = if let Some(catalog) = publishing.get(pattern) {
+            Arc::clone(catalog)
         } else {
-            let (catalog, publishes_all) = compile(pattern)?;
+            let (catalog, published) = compile(pattern)?;
             let catalog = Arc::new(catalog);
-            if publishes_all {
-                whole = Some(Arc::clone(&catalog));
+            for name in published {
+                publishing
+                    .entry(name)
+                    .or_insert_with(|| Arc::clone(&catalog));
             }
             catalog
         };
         compiled.insert(pattern.to_owned(), catalog);
     }
     Ok(compiled)
+}
+
+/// The names `catalog`'s records publish under: its patterns' and lexicons'
+/// `output_name`, else their own.
+fn published_names(catalog: &lingrep_core::fsm::CompiledCatalog) -> Vec<String> {
+    let policy = catalog.catalog_policy();
+    catalog
+        .patterns()
+        .keys()
+        .map(compact_str::CompactString::as_str)
+        .chain(
+            catalog
+                .lexicons()
+                .iter()
+                .map(lingrep_core::fsm::CompiledLexiconDefinition::name),
+        )
+        .map(|name| policy.published_name(name).to_owned())
+        .collect()
 }
 
 /// The group a published record falls in, by [`RecordView::group_by`].
@@ -1104,21 +1124,33 @@ mod tests {
     }
 
     #[test]
-    fn a_catalog_that_compiles_whole_is_compiled_once_for_every_pattern() {
-        for whole in [false, true] {
-            let mut compiles = 0;
-            let compiled = compile_each(["a", "b", "c"], |pattern| {
-                compiles += 1;
-                Ok((pattern.to_owned(), whole))
+    fn each_pattern_gets_the_first_catalog_that_publishes_it() {
+        // A catalog compiled whole publishes every pattern; one compiled for
+        // `a` publishes `a`, the lexicon `w`, and `b` when `a` and `b` share
+        // an output name, but never `c`.
+        let cases: [(&[&str], usize); 3] =
+            [(&["a", "b", "c", "w"], 1), (&["w"], 3), (&["b", "w"], 2)];
+        for (also, compiles_expected) in cases {
+            let mut compiles = Vec::new();
+            let compiled = compile_each(["a", "b", "c", "w"], |pattern| {
+                compiles.push(pattern.to_owned());
+                let mut published = vec![pattern.to_owned()];
+                if pattern == "a" {
+                    published.extend(also.iter().map(|name| (*name).to_owned()));
+                }
+                Ok((pattern.to_owned(), published))
             })
             .expect("compiled");
-            assert_eq!(compiles, if whole { 1 } else { 3 });
-            assert_eq!(
-                Arc::ptr_eq(&compiled["a"], &compiled["c"]),
-                whole,
-                "whole {whole}"
-            );
-            assert_eq!(compiled.len(), 3);
+            assert_eq!(compiles.len(), compiles_expected, "{also:?}: {compiles:?}");
+            for (pattern, catalog) in &compiled {
+                let publisher = if also.contains(&pattern.as_str()) {
+                    "a"
+                } else {
+                    pattern
+                };
+                assert_eq!(catalog.as_str(), publisher, "{also:?}: {pattern}");
+            }
+            assert_eq!(compiled.len(), 4);
         }
     }
 
