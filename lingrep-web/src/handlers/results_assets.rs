@@ -35,6 +35,14 @@ const HTMX_EXT_SSE_JS: &[u8] = include_bytes!(concat!(
 
 const ASSETS: &[AssetEntry] = &[
     (
+        "/condition-picker.js",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/condition-picker.js"
+        )),
+        "text/javascript; charset=utf-8",
+    ),
+    (
         "/compare.js",
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/compare.js")),
         "text/javascript; charset=utf-8",

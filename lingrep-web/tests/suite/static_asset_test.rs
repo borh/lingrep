@@ -64,6 +64,7 @@ async fn static_assets_revalidate_with_etag() {
         "/app.js",
         "/query-library.js",
         "/editor-sizing.js",
+        "/condition-picker.js",
         "/results-explorer.js",
         "/vendor/htmx.min.js",
     ] {

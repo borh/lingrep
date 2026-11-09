@@ -1,6 +1,6 @@
 import { currentLocale, onLocaleChange } from "./i18n.js";
+import { createConditionPicker } from "./condition-picker.js";
 
-const MANY = 30;
 const PAGE = 100;
 const LINES = 50;
 const REST = 120;
@@ -46,13 +46,6 @@ const S = {
     apply: "Apply",
     cancel: "Cancel",
     blanks: "Use condition controls",
-    mode: ["Only these", "All except these"],
-    anyButton: (name) => `Any ${name}`,
-    findValue: "Find a value",
-    topValues: (n, of) => `Top ${n} of ${of}`,
-    foundValues: (n, of) => (n < of ? `Top ${n} of ${of} matches` : `${of} matches`),
-    from: "From",
-    to: "To",
     workbench: "Open in workbench",
     reasons: {
       section: () => "@section cannot be answered here: a count table counts per document.",
@@ -120,13 +113,6 @@ const S = {
     apply: "適用",
     cancel: "取り消す",
     blanks: "条件の選択に戻す",
-    mode: ["これらのみ", "これら以外"],
-    anyButton: (name) => `すべての${name}`,
-    findValue: "値を検索",
-    topValues: (n, of) => `${of}種中、上位${n}種`,
-    foundValues: (n, of) => (n < of ? `一致${of}種中、上位${n}種` : `一致${of}種`),
-    from: "下限",
-    to: "上限",
     workbench: "ワークベンチで開く",
     reasons: {
       section: () => "@section はここでは扱えません。件数表は文書ごとの件数です。",
@@ -280,18 +266,26 @@ export function mountFrequency(root) {
   const $ = (sel) => root.querySelector(sel);
   const sentenceEl = $("[data-fq-sentence]"), figuresEl = $("[data-fq-figures]"), clauseEl = $("[data-fq-clause]");
   const sourceEl = $("[data-fq-source]"), stateEl = $("[data-fq-state]"), tableEl = $("[data-fq-table]"), entryEl = $("[data-fq-entry]");
-  const pop = document.body.appendChild(Object.assign(document.createElement("div"), { className: "fq-pop", hidden: true }));
   let meta = null, s = readState(location.hash), answer = null, gen = 0, shown = 0;
-  let openPop = null, pending = null, editing = false, find = "", values = null;
-  let valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
+  let editing = false;
   let profile = null, lined = null, plan = {}, preview = null, previewed = null, anchor = null, lastEntry = null;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
   const dims = () => (pair() ? meta.dimensions[pair().corpus] ?? [] : []);
   const dim = (key) => dims().find((d) => d.key === key);
   const keyName = (key) => meta.labels?.[key]?.[currentLocale()] ?? L().name(key);
-  const shownKeys = () => dims().map((d) => d.key).filter((k) => k in s.w || k === pending);
+  const shownKeys = () => picker.shownKeys();
   const conditions = () => (Object.keys(s.w).length ? JSON.stringify(s.w) : undefined);
+  const picker = createConditionPicker({
+    sentence: sentenceEl,
+    view: () => ({ dimensions: dims(), conditions: s.w, params: { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, w: conditions() }, revision: gen }),
+    keyName,
+    label: (_scope, key) => key == null ? L().addLabel : keyName(key),
+    anchor: (_scope, key) => sentenceEl.querySelector(`[data-b="${CSS.escape(key ?? "add")}"]`),
+    commit: (_scope, key, w) => set({ w: { ...s.w, [key]: w } }),
+    render: renderSentence,
+    api,
+  });
 
   function resolve() {
     if (!meta.pairs.length) return { state: L().noTables };
@@ -340,7 +334,7 @@ export function mountFrequency(root) {
       return {
         name: keyName(key),
         any: isAny(d, w),
-        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${openPop === key}">${esc(conditionText(d, w))}</button>`),
+        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${picker.isOpen(key)}">${esc(conditionText(d, w))}</button>`),
       };
     });
     const b = {
@@ -351,7 +345,7 @@ export function mountFrequency(root) {
       Q: blank(role(t.role.filter, "filter"), `<input data-b="q" type="search" placeholder="${esc(t.placeholder)}" aria-label="${esc(t.role.filter)}" value="${esc(s.q)}">`),
     };
     const free = s.where == null && shownKeys().length < dims().length;
-    return t.sentence(b) + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${openPop === "add"}" aria-label="${esc(t.addLabel)}">${esc(t.add)}</button>` : "");
+    return t.sentence(b) + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t.addLabel)}">${esc(t.add)}</button>` : "");
   }
 
   function renderSentence() {
@@ -518,141 +512,6 @@ export function mountFrequency(root) {
     renderTable();
   });
 
-  const blankEl = (b) => sentenceEl.querySelector(`[data-b="${CSS.escape(b)}"]`);
-  function placePop(anchor) {
-    const r = anchor.getBoundingClientRect(), top = r.bottom + 6;
-    pop.style.top = `${top}px`;
-    pop.style.maxHeight = `${Math.max(160, innerHeight - top - 12)}px`;
-    pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
-  }
-  function closePop() {
-    openPop = null;
-    values = null;
-    find = "";
-    pop.hidden = true;
-    if (pending && !(pending in s.w)) {
-      pending = null;
-      renderSentence();
-    } else sentenceEl.querySelectorAll("[aria-expanded]").forEach((b) => b.setAttribute("aria-expanded", "false"));
-  }
-  function options(key, list) {
-    const chosen = new Set(s.w[key]?.v ?? []), max = Math.max(1, ...list.map(([, n]) => n));
-    return list.map(([v, n]) => `<label><input type="checkbox" data-v="${esc(v)}"${chosen.has(v) ? " checked" : ""}><span>${esc(v)}</span><span class="b" style="width:${((n / max) * 100).toFixed(1)}%"></span><span class="v">${num(n)}</span></label>`).join("");
-  }
-  function valueList(key) {
-    if (!values) return "";
-    const t = L(), q = find.trim(), shown = new Set(values.map(([v]) => v));
-    const list = q ? values : [...values, ...selectedValues.filter(([v]) => !shown.has(v))];
-    const hint = valueMatches > values.length
-      ? (q ? t.foundValues(num(values.length), num(valueMatches)) : t.topValues(num(values.length), num(valueMatches)))
-      : "";
-    return options(key, list) + (hint ? `<p class="hint">${esc(hint)}</p>` : "");
-  }
-  function popover() {
-    const t = L();
-    if (openPop === "add") {
-      const free = dims().filter((d) => !shownKeys().includes(d.key));
-      pop.innerHTML = `<ul class="addlist" role="menu">${free.map((d) => `<li><button role="menuitem" data-add="${esc(d.key)}">${esc(keyName(d.key))}</button></li>`).join("")}</ul>`;
-      pop.setAttribute("aria-label", t.addLabel);
-      pop.hidden = false;
-      placePop(blankEl("add"));
-      pop.querySelector("button")?.focus();
-      return;
-    }
-    const d = openPop && dim(openPop);
-    if (!d || !blankEl(openPop)) {
-      pop.hidden = true;
-      return;
-    }
-    const w = s.w[d.key];
-    pop.setAttribute("aria-label", keyName(d.key));
-    if (d.kind === "range") {
-      pop.innerHTML = `<div class="head"><span></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div><div class="range"><label>${esc(t.from)} <input type="number" data-lo step="any" placeholder="${esc(d.min)}" value="${esc(w?.lo ?? "")}"></label><label>${esc(t.to)} <input type="number" data-hi step="any" placeholder="${esc(d.max)}" value="${esc(w?.hi ?? "")}"></label></div>`;
-    } else {
-      const out = w?.m === "out";
-      pop.innerHTML = `<div class="head"><span class="mode" role="group"><button data-mode="in" aria-pressed="${!out}">${esc(t.mode[0])}</button><button data-mode="out" aria-pressed="${out}">${esc(t.mode[1])}</button></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div>${d.values > MANY ? `<input class="find" type="search" data-find placeholder="${esc(t.findValue)}" aria-label="${esc(t.findValue)}" value="${esc(find)}">` : ""}<div class="opts">${valueList(d.key)}</div>`;
-    }
-    pop.hidden = false;
-    placePop(blankEl(d.key));
-  }
-  async function openCondition(key) {
-    openPop = key;
-    find = "";
-    values = null;
-    sentenceEl.querySelectorAll(".pick").forEach((b) => b.setAttribute("aria-expanded", String(b.dataset.b === key)));
-    popover();
-    if (dim(key)?.kind !== "categorical") return;
-    await loadValues(key);
-  }
-  async function loadValues(key) {
-    const mine = gen, needle = find.trim(), request = ++valueRequest;
-    let r;
-    try {
-      r = await api("frequency/values", { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, key, w: conditions(), q: needle, limit: MANY });
-    } catch (error) {
-      if (mine === gen && openPop === key && request === valueRequest && needle === find.trim()) pop.querySelector(".opts").textContent = error.message;
-      return;
-    }
-    if (mine !== gen || openPop !== key || request !== valueRequest || needle !== find.trim() || r.status !== "ok") return;
-    values = r.values;
-    valueMatches = r.matching;
-    selectedValues = r.selected;
-    pop.querySelector(".opts").innerHTML = valueList(key);
-  }
-  pop.addEventListener("input", (e) => {
-    if (e.target.matches("[data-find]")) {
-      find = e.target.value;
-      const key = openPop;
-      values = null;
-      pop.querySelector(".opts").replaceChildren();
-      clearTimeout(valueTimer);
-      valueTimer = setTimeout(() => { if (openPop === key) loadValues(key); }, 150);
-    }
-  });
-  pop.addEventListener("change", (e) => {
-    const key = openPop;
-    if (e.target.matches("input[data-v]")) {
-      const set_ = new Set(s.w[key]?.v ?? []);
-      e.target.checked ? set_.add(e.target.dataset.v) : set_.delete(e.target.dataset.v);
-      pending = null;
-      set({ w: { ...s.w, [key]: { m: s.w[key]?.m === "out" ? "out" : "in", v: [...set_].sort() } } });
-    } else if (e.target.matches("[data-lo], [data-hi]")) {
-      const read = (sel) => {
-        const v = pop.querySelector(sel).value;
-        return v === "" || !Number.isFinite(+v) ? undefined : +v;
-      };
-      const w = { m: "range" }, lo = read("[data-lo]"), hi = read("[data-hi]");
-      if (lo !== undefined) w.lo = lo;
-      if (hi !== undefined) w.hi = hi;
-      pending = null;
-      set({ w: { ...s.w, [key]: w } });
-    }
-  });
-  pop.addEventListener("click", (e) => {
-    const add = e.target.closest("[data-add]");
-    if (add) {
-      e.stopPropagation();
-      pending = add.dataset.add;
-      pop.hidden = true;
-      renderSentence();
-      openCondition(pending);
-      return;
-    }
-    if (e.target.closest("[data-any]")) {
-      const key = openPop, d = dim(key);
-      pending = null;
-      closePop();
-      set({ w: { ...s.w, [key]: d.kind === "range" ? { m: "range" } : { m: "in", v: [] } } });
-      return;
-    }
-    const mode = e.target.closest("[data-mode]");
-    if (mode) {
-      const key = openPop;
-      pending = null;
-      set({ w: { ...s.w, [key]: { m: mode.dataset.mode, v: s.w[key]?.v ?? [] } } });
-    }
-  });
-
   sentenceEl.addEventListener("change", (e) => {
     const b = e.target.dataset.b;
     if (b === "catalog") {
@@ -675,24 +534,17 @@ export function mountFrequency(root) {
     const b = e.target.closest("button[data-b]")?.dataset.b;
     if (!b) return;
     e.stopPropagation();
-    if (openPop === b) return closePop();
-    if (b === "add") {
-      openPop = "add";
-      e.target.setAttribute("aria-expanded", "true");
-      popover();
-    } else openCondition(b);
-  });
-  document.addEventListener("click", (e) => {
-    if (openPop && !pop.contains(e.target) && !e.target.closest(".pick, .add")) closePop();
+    if (picker.isOpen(b === "add" ? null : b)) return picker.close();
+    picker.open(b === "add" ? null : b);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || root.querySelector("[data-fq-reader]").open) return;
-    if (openPop) closePop();
+    if (picker.opened) picker.close();
     else if (entering() && !editing && !e.target.closest?.("input, textarea, select")) leaveEntry();
   });
   addEventListener("resize", () => {
     fitRoles();
-    if (openPop) popover();
+    picker.refresh();
   });
 
   const entering = () => s.entry != null && s.where == null;
@@ -1090,12 +942,7 @@ export function mountFrequency(root) {
     const mine = ++gen;
     if (!keepSentence) answer = null;
     const r = keepSentence ? resolve() : renderAll();
-    clearTimeout(valueTimer);
-    if (openPop && dim(openPop)?.kind === "categorical") {
-      values = null;
-      pop.querySelector(".opts")?.replaceChildren();
-      loadValues(openPop);
-    }
+    picker.reloadValues();
     if (!r.query) return;
     const entryLoad = entering() && !keepSentence ? loadEntry(mine) : null;
     if (!entering()) {
@@ -1124,16 +971,7 @@ export function mountFrequency(root) {
     renderFigures();
     renderClause();
     renderTable();
-    if (openPop) {
-      const search = pop.querySelector("[data-find]"), focused = document.activeElement === search;
-      const start = search?.selectionStart, end = search?.selectionEnd;
-      popover();
-      if (focused) {
-        const next = pop.querySelector("[data-find]");
-        next?.focus();
-        next?.setSelectionRange(start, end);
-      }
-    }
+    picker.refresh({ keepSearchFocus: true });
     await entryLoad;
   }
 
@@ -1155,7 +993,7 @@ export function mountFrequency(root) {
       if (s.read != null) showReader();
       return;
     }
-    closePop();
+    picker.close();
     editing = false;
     await load();
     if (s.read != null) showReader();
