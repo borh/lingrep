@@ -72,6 +72,7 @@ pub(super) fn run(
         usize::from,
     );
     if let Some(destination) = &args.output_dir {
+        write_diagnostics(catalog)?;
         let Some(receipt) = publish_svg_files(
             &diagrams,
             &selected,
@@ -83,7 +84,6 @@ pub(super) fn run(
         else {
             return Ok(CommandOutcome::Cancelled);
         };
-        write_diagnostics(catalog)?;
         return write_receipt(&mut io::stdout().lock(), &receipt);
     }
     let mut output = if args.diagram_format == DiagramFormat::Svg {

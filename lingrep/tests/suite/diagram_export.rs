@@ -231,3 +231,38 @@ fn json_output_rejects_diagram_mode() {
         "{records:?}"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn diagnostic_write_failure_leaves_no_published_diagrams() {
+    let temp = tempfile::tempdir().unwrap();
+    let catalog = temp.path().join("catalog.lx");
+    let destination = temp.path().join("diagrams");
+    fs::write(&catalog, "fragment unused := [text=x].\np := [text=y].\n").unwrap();
+    let output = crate::support::lingrep_std()
+        .args([
+            "check",
+            "--diagram",
+            "--diagram-format",
+            "svg",
+            "--patterns",
+        ])
+        .arg(&catalog)
+        .arg("--output-dir")
+        .arg(&destination)
+        .stderr(
+            fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/full")
+                .unwrap(),
+        )
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        !destination.exists(),
+        "diagnostic failure published SVG files"
+    );
+    assert_eq!(tree(temp.path()).len(), 1, "staging directory remained");
+}
