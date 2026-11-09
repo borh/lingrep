@@ -1,3 +1,5 @@
+import { t, onLocaleChange } from "../i18n.js";
+
 const MAX_HIGHLIGHT_BYTES = 65_536;
 const encoder = new TextEncoder();
 const states = new WeakMap();
@@ -40,6 +42,204 @@ function attachDraftPersistence(textarea) {
     if (draft) textarea.value = draft;
   }
   textarea.addEventListener("input", () => saveDraft(textarea));
+}
+
+export function applyCaptureKeyEdit(source, edit, attribute) {
+  if (!edit?.attributes?.includes(attribute)) return null;
+  const bytes = encoder.encode(source);
+  const range = edit.byte_range;
+  if (!Number.isInteger(range?.start) || !Number.isInteger(range?.end) ||
+      range.start < 0 || range.end <= range.start || range.end > bytes.length) return null;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    if (decoder.decode(bytes.slice(range.start, range.end)) !== edit.attribute) return null;
+    return decoder.decode(bytes.slice(0, range.start)) + attribute + decoder.decode(bytes.slice(range.end));
+  } catch (_error) {
+    return null;
+  }
+}
+
+export function summaryContext(request) {
+  return request ? JSON.stringify([request.source, request.corpus, request.search_scope]) : null;
+}
+
+function summaryRequest(state) {
+  if (state.keyEditSource !== state.source()) return null;
+  const definition = state.keyPicker?.querySelector("[data-key-definition]")?.value;
+  if (!state.keyEdits?.some((edit) => edit.definition === definition)) return null;
+  const form = state.textarea.closest("form");
+  return {
+    source: state.source(), definition,
+    corpus: form?.querySelector("input[name=corpus]")?.value || null,
+    search_scope: form?.querySelector("[data-search-scope-value]")?.value || null,
+  };
+}
+
+function renderLiveSummary(state) {
+  if (!state.summaryPanel) return;
+  const request = summaryRequest(state);
+  const button = state.keyPicker.querySelector("[data-run-live-summary]");
+  if (button) button.disabled = Boolean(state.summaryController) || !request;
+  const panel = state.summaryPanel;
+  panel.replaceChildren();
+  if (state.summaryController || state.summaryFailure) {
+    const status = document.createElement("p");
+    status.setAttribute("role", "status");
+    status.textContent = t(state.summaryController ? "editor.summary_loading" : state.summaryFailure);
+    panel.append(status);
+  }
+  const result = state.summaryResult;
+  if (!result) return;
+  const heading = document.createElement("h3");
+  const current = summaryContext(request) === summaryContext(result.request);
+  const pattern = current ? state.keyEdits.find((edit) => edit.definition === request.definition)?.published_name : result.pattern;
+  heading.textContent = t("editor.summary_title", { pattern });
+  panel.append(heading);
+  if (!current || state.summaryController || state.summaryFailure) {
+    const stale = document.createElement("p");
+    stale.dataset.summaryStale = "";
+    stale.textContent = t("editor.grouping_stale");
+    panel.append(stale);
+  }
+  const table = document.createElement("table");
+  const caption = document.createElement("caption");
+  caption.textContent = t("editor.summary_top");
+  table.append(caption);
+  const header = document.createElement("tr");
+  for (const key of ["editor.summary_key", "editor.summary_count"]) {
+    const cell = document.createElement("th"); cell.scope = "col"; cell.textContent = t(key); header.append(cell);
+  }
+  const head = document.createElement("thead"); head.append(header); table.append(head);
+  const body = document.createElement("tbody");
+  for (const record of result.records.filter((record) => record.type === "summary" && record.data.pattern === pattern)) {
+    const row = document.createElement("tr");
+    const group = document.createElement("td");
+    group.textContent = Array.isArray(record.data.group.fields) ? record.data.group.fields.map((field) => typeof field.value === "string" ? field.value : JSON.stringify(field.value)).join(" / ") : JSON.stringify(record.data.group);
+    const count = document.createElement("td"); count.textContent = String(record.data.count);
+    row.append(group, count); body.append(row);
+  }
+  if (body.childElementCount) { table.append(body); panel.append(table); }
+  else { const empty = document.createElement("p"); empty.textContent = t("editor.summary_empty"); panel.append(empty); }
+  const complete = result.records.find((record) => record.type === "complete");
+  const unkeyed = complete?.data?.counters?.records_unkeyed ?? 0;
+  if (unkeyed) {
+    const note = document.createElement("p"); note.textContent = t("editor.summary_unkeyed", { count: unkeyed }); panel.append(note);
+  }
+}
+
+async function runLiveSummary(state) {
+  const request = summaryRequest(state);
+  if (!request) return;
+  clearTimeout(state.summaryTimer);
+  if (state.summaryController && summaryContext(state.summaryActiveRequest) === summaryContext(request)) return;
+  state.summaryController?.abort();
+  const controller = new AbortController();
+  state.summaryController = controller;
+  state.summaryActiveRequest = request;
+  state.summaryFailure = false;
+  renderLiveSummary(state);
+  try {
+    let response;
+    do {
+      if (controller.signal.aborted || summaryContext(request) !== summaryContext(summaryRequest(state))) return;
+      response = await fetch("api/pattern/summary", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(request), signal: controller.signal,
+      });
+      if (response.status === 429) await new Promise((resolve) => setTimeout(resolve, 1000));
+    } while (response.status === 429);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(failure.error || "summary_failed");
+    }
+    const records = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
+    if (controller !== state.summaryController || summaryContext(request) !== summaryContext(summaryRequest(state))) return;
+    const edit = state.keyEdits.find((edit) => edit.definition === request.definition);
+    state.summaryResult = { request, records, pattern: edit.published_name };
+  } catch (error) {
+    if (error.name !== "AbortError" && controller === state.summaryController) state.summaryFailure = error.message === "unsupported_scope" ? "editor.summary_scope_failed" : "editor.summary_failed";
+  } finally {
+    if (controller === state.summaryController) { state.summaryController = null; renderLiveSummary(state); }
+  }
+}
+
+function markDraftResults(state) {
+  if (!state.keyPicker) return;
+  const notice = document.getElementById("results-stale");
+  if (!notice || !document.querySelector("#results:not(:empty)")) return;
+  if (state.completedSource === state.source()) {
+    notice.querySelector("[data-key-draft]")?.remove();
+    return;
+  }
+  const message = document.createElement("p");
+  message.className = "stale-notice";
+  message.dataset.keyDraft = "";
+  message.dataset.i18n = "editor.concordance_stale";
+  message.textContent = t("editor.concordance_stale");
+  notice.replaceChildren(message);
+}
+
+function captureKeyPicker(state, edits = [], checkedSource = null) {
+  if (!state.keyPicker) return;
+  const picker = state.keyPicker;
+  if (checkedSource === null && picker.childElementCount) {
+    for (const select of picker.querySelectorAll("select")) select.disabled = true;
+    picker.querySelector("p").textContent = t("editor.grouping_text_only");
+    return;
+  }
+  const selected = picker.querySelector("[data-key-definition]")?.value;
+  picker.replaceChildren();
+  const summary = document.createElement("summary");
+  summary.textContent = t("editor.grouping");
+  picker.append(summary);
+  const message = document.createElement("p");
+  message.textContent = edits.length ? t("editor.grouping_run") : t("editor.grouping_text_only");
+  picker.append(message);
+  if (!edits.length || checkedSource !== state.source()) return;
+  const patternLabel = document.createElement("label");
+  patternLabel.append(t("editor.grouping_pattern"));
+  const patterns = document.createElement("select");
+  patterns.dataset.keyDefinition = "";
+  for (const edit of edits) {
+    const option = document.createElement("option");
+    option.value = edit.definition;
+    option.textContent = `${edit.definition} ($${edit.capture})`;
+    patterns.append(option);
+  }
+  if (edits.some((edit) => edit.definition === selected)) patterns.value = selected;
+  patternLabel.append(patterns);
+  const attributeLabel = document.createElement("label");
+  attributeLabel.append(t("editor.grouping_attribute"));
+  const attributes = document.createElement("select");
+  attributes.dataset.keyAttribute = "";
+  attributeLabel.append(attributes);
+  function choosePattern() {
+    const edit = edits.find((entry) => entry.definition === patterns.value);
+    attributes.replaceChildren();
+    for (const attribute of edit.attributes) {
+      const option = document.createElement("option");
+      option.value = attribute;
+      option.textContent = attribute;
+      attributes.append(option);
+    }
+    attributes.value = edit.attribute;
+    renderLiveSummary(state);
+  }
+  patterns.addEventListener("change", choosePattern);
+  attributes.addEventListener("change", () => {
+    if (state.source() !== checkedSource) return;
+    const edit = edits.find((entry) => entry.definition === patterns.value);
+    const source = applyCaptureKeyEdit(checkedSource, edit, attributes.value);
+    if (source === null) return;
+    state.refreshSummary = true;
+    state.textarea.value = source;
+    state.textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const run = document.createElement("button");
+  run.type = "button"; run.dataset.runLiveSummary = ""; run.textContent = t("editor.summary_run");
+  run.addEventListener("click", () => { void runLiveSummary(state); });
+  picker.append(patternLabel, attributeLabel, run);
+  choosePattern();
 }
 
 export function shouldPublish(requestSource, currentSource) {
@@ -1123,6 +1323,10 @@ async function checkSource(state, source, reason = "input") {
     const result = await response.json();
     if (!shouldPublish(source, state.source())) return [];
     if (result.status === "valid") {
+      state.keyEdits = result.capture_key_edits ?? [];
+      state.keyEditSource = source;
+      captureKeyPicker(state, state.keyEdits, source);
+      if (state.refreshSummary) { state.refreshSummary = false; void runLiveSummary(state); }
       state.textarea.setAttribute("aria-invalid", ariaInvalidFor(result));
       // Warnings arrive here, on the success path, and go through the same
       // mapping as errors so they reach the lint gutter. The caret excerpt
@@ -1141,6 +1345,9 @@ async function checkSource(state, source, reason = "input") {
       return diagnostics;
     }
     if (result.status === "invalid") {
+      state.keyEdits = [];
+      state.keyEditSource = null;
+      captureKeyPicker(state);
       state.textarea.setAttribute("aria-invalid", "true");
       const diagnostic = result.diagnostics?.[0];
       const where = diagnostic?.location
@@ -1404,6 +1611,41 @@ async function enhance(textarea, grammar, cm) {
     lastCheck: null,
     source: () => state.view.state.doc.toString(),
   };
+  if (textarea.id === "corpus-pattern") {
+    const picker = document.createElement("details");
+    picker.className = "pattern-key-picker";
+    picker.dataset.captureKeyPicker = "";
+    diagnosticNode.after(picker);
+    state.keyPicker = picker;
+    const summaryPanel = document.createElement("section");
+    summaryPanel.className = "pattern-live-summary"; summaryPanel.dataset.liveSummary = "";
+    const results = document.getElementById("results");
+    if (results) results.before(summaryPanel); else picker.after(summaryPanel);
+    state.summaryPanel = summaryPanel;
+    captureKeyPicker(state);
+    onLocaleChange(() => {
+      captureKeyPicker(state, state.keyEditSource === state.source() ? state.keyEdits ?? [] : [], state.keyEditSource);
+      markDraftResults(state);
+      renderLiveSummary(state);
+    });
+    textarea.closest("form")?.addEventListener("scope:updated", () => {
+      const previous = state.summaryController ? state.summaryActiveRequest : state.summaryResult?.request;
+      const changed = previous && summaryContext(previous) !== summaryContext(summaryRequest(state));
+      if (changed) { state.summaryController?.abort(); state.summaryController = null; }
+      renderLiveSummary(state);
+      if (changed) {
+        clearTimeout(state.summaryTimer);
+        state.summaryTimer = setTimeout(() => { void runLiveSummary(state); }, 400);
+      }
+    });
+    document.addEventListener("htmx:beforeRequest", (event) => {
+      if (event.detail?.elt === textarea.closest("form")) state.submittedSource = state.source();
+    });
+    document.addEventListener("htmx:oobAfterSwap", (event) => {
+      if (event.detail?.target?.id === "results") state.completedSource = state.submittedSource;
+      if (["results", "results-stale"].includes(event.detail?.target?.id)) markDraftResults(state);
+    });
+  }
   states.set(textarea, state);
 
   const view = new cm.EditorView({
@@ -1442,6 +1684,14 @@ async function enhance(textarea, grammar, cm) {
         if (!update.docChanged) return;
         textarea.value = update.state.doc.toString();
         saveDraft(textarea);
+        state.keyEdits = [];
+        state.keyEditSource = null;
+        state.summaryController?.abort();
+        state.summaryController = null;
+        state.summaryFailure = false;
+        captureKeyPicker(state);
+        renderLiveSummary(state);
+        markDraftResults(state);
         state.diagnosticRange = null;
         diagnosticNode.replaceChildren();
       }),

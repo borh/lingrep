@@ -820,6 +820,12 @@ impl CoordinatorRegistry {
     /// Acquire the shared scan permit. The export path holds this INSIDE its
     /// blocking task so it is released when the scan actually ends — not when the
     /// request future drops — and so exports never oversubscribe the Rayon pool.
+    pub(crate) fn try_acquire_scan_permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        std::sync::Arc::clone(&self.inner.permit)
+            .try_acquire_owned()
+            .ok()
+    }
+
     pub async fn acquire_scan_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
         std::sync::Arc::clone(&self.inner.permit)
             .acquire_owned()

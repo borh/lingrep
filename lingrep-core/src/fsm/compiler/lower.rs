@@ -1030,6 +1030,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         }
 
         let mut projections = Vec::new();
+        let mut attribute_span = None;
         let mut seen = HashSet::new();
         let mut cursor = value_node.walk();
         for projection_node in value_node.named_children(&mut cursor) {
@@ -1061,6 +1062,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "key projection attribute has an unknown named node",
                 ));
             }
+            attribute_span = Some(self.span_of(attribute_node)?);
             let attribute_name = self.text(attribute_node)?;
             let edge_relation_syntax = attribute_node.kind() == "identifier";
             if edge_relation_syntax && attribute_name != "rel" {
@@ -1157,6 +1159,11 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok((
             "key".into(),
             LoweredEntry::KeySet(ParsedKey {
+                attribute_span: if projections.len() == 1 {
+                    attribute_span
+                } else {
+                    None
+                },
                 projections,
                 source_span,
                 inherited: false,

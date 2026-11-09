@@ -574,3 +574,57 @@ fn graph_binding_is_word(definition: &ExecutionDefinition, name: &str) -> bool {
             })
     })
 }
+
+/// A single-token capture key whose attribute can be replaced at its original UTF-8 byte range.
+/// Inherited keys and keys with multiple fields have no edit descriptor.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CaptureKeyEdit {
+    pub definition: String,
+    pub published_name: String,
+    pub capture: String,
+    pub attribute: String,
+    pub attributes: [&'static str; 3],
+    pub source_name: std::sync::Arc<str>,
+    pub byte_range: std::ops::Range<usize>,
+}
+
+pub(crate) fn editable_capture_keys(
+    policy: &CatalogPolicy,
+    definitions: &[ExecutionDefinition],
+    sources: &SourceRegistry,
+) -> Vec<CaptureKeyEdit> {
+    definitions
+        .iter()
+        .filter_map(|definition| {
+            let key = definition.key.as_ref()?;
+            if key.inherited {
+                return None;
+            }
+            let span = key.attribute_span?;
+            let fields = &policy.get(&definition.name)?.key;
+            let [field] = fields.as_slice() else {
+                return None;
+            };
+            let KeyTarget::Capture {
+                name,
+                component: KeyComponent::Sole,
+            } = &field.target
+            else {
+                return None;
+            };
+            let attributes = ["text", "lemma", "norm"];
+            if !attributes.contains(&field.attribute.as_str()) {
+                return None;
+            }
+            Some(CaptureKeyEdit {
+                definition: definition.name.to_string(),
+                published_name: policy.published_name(&definition.name).to_owned(),
+                capture: name.to_string(),
+                attribute: field.attribute.to_string(),
+                attributes,
+                source_name: sources.source_label(span.source()),
+                byte_range: span.byte_range().start as usize..span.byte_range().end as usize,
+            })
+        })
+        .collect()
+}

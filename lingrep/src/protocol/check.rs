@@ -60,6 +60,34 @@ pub struct DefinitionDescriptor {
     pub source_span: SourceSpan,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CaptureKeyEdit {
+    pub definition: String,
+    pub published_name: String,
+    pub capture: String,
+    pub attribute: String,
+    pub attributes: Vec<String>,
+    pub source_name: String,
+    pub byte_range: SourceSpan,
+}
+
+impl From<lingrep_core::fsm::CaptureKeyEdit> for CaptureKeyEdit {
+    fn from(edit: lingrep_core::fsm::CaptureKeyEdit) -> Self {
+        Self {
+            definition: edit.definition,
+            published_name: edit.published_name,
+            capture: edit.capture,
+            attribute: edit.attribute,
+            attributes: edit.attributes.into_iter().map(str::to_owned).collect(),
+            source_name: edit.source_name.to_string(),
+            byte_range: SourceSpan {
+                start: edit.byte_range.start as u64,
+                end: edit.byte_range.end as u64,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompileStats {
     pub source_bytes: u64,
@@ -152,6 +180,8 @@ pub struct BindingData {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CheckData {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capture_key_edits: Vec<CaptureKeyEdit>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comparison: Vec<ComparedDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]

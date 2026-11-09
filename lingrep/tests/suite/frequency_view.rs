@@ -2028,3 +2028,67 @@ fn a_profile_lists_the_most_frequent_values_and_the_chosen_ones_and_bins_a_wide_
     }
     assert_eq!(binned, years);
 }
+
+#[test]
+fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() {
+    let source = "key: [$word.text]\npattern p := (?<word> []).\n";
+    let fixture = fixture_with(source, DOCUMENTS);
+    let table_bytes = || {
+        fs::read_dir(&fixture.table)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let saved = table_bytes();
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let _ = get(&server, "/");
+    for attribute in ["lemma", "norm"] {
+        let source = source.replace("$word.text", &format!("$word.{attribute}"));
+        let path = fixture.directory.path().join("edited.lx");
+        fs::write(&path, &source).unwrap();
+        let direct = crate::support::lingrep_without_dictionary()
+            .args(["summarize", "--json", "--top", "50", "--patterns"])
+            .arg(&path)
+            .arg("--corpus")
+            .arg(&fixture.artifact)
+            .output()
+            .unwrap();
+        assert_success(&direct);
+        let body = json!({"source": source, "definition":"p"}).to_string();
+        let mut last = (0, String::new());
+        for _ in 0..100 {
+            let mut stream = TcpStream::connect(&server.address).unwrap();
+            write!(stream, "POST /api/pattern/summary HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", server.address, body.len(), body).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            let (head, body) = response.split_once("\r\n\r\n").unwrap();
+            last = (
+                head.split(' ').nth(1).unwrap().parse::<u16>().unwrap(),
+                body.to_owned(),
+            );
+            if last.0 != 409 && last.0 != 429 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(last.0, 200, "{}", last.1);
+        let actual = parse_jsonl(last.1.as_bytes());
+        let expected = parse_jsonl(&direct.stdout);
+        let groups = |records: &[Value]| {
+            records
+                .iter()
+                .filter(|row| row["type"] == "summary")
+                .map(|row| row["data"].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(groups(&actual), groups(&expected));
+        assert_eq!(
+            actual[0]["data"]["matcher_semantics_identity"],
+            lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY
+        );
+        assert_eq!(table_bytes(), saved);
+    }
+}

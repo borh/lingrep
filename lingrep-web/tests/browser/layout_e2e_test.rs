@@ -1215,13 +1215,31 @@ async fn fixture_server_with(format_mode: FormatMode) -> FixtureServer {
             "/navigation",
             get(|| async { Html(navigation_fixture_html()) }),
         )
+        .route("/capture-key", get(|| async { Html(r#"<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/editor/pattern-editor.css"></head><body><label for="corpus-pattern">Pattern</label><form><textarea id="corpus-pattern" data-pattern-editor>description: "capture-picker-fixture 猫😀"
+key: [$word.lemma]
+pattern p := (?&lt;word&gt; [text=猫]).
+</textarea><details data-search-scope data-imrad-labels='["methods"]'><summary data-scope-summary>All text</summary><input type="hidden" data-search-scope-value value='{"included_sections":null,"include_unlabelled":true}'><div data-search-scope-options><input type="checkbox" data-scope-include value="methods" checked><input type="checkbox" data-scope-include value="results" checked></div><input type="checkbox" data-scope-unlabelled checked><span data-scope-pending hidden></span><button type="button" data-scope-preset="main">Main</button><button type="button" data-scope-preset="all">All</button></details></form><div class="corpus-context" data-corpus-digest="fixture"><i data-corpus-section-label="methods"></i><i data-corpus-section-label="results"></i></div><button type="button" data-locale-toggle>日本語</button><div id="results">Previous summary</div><div id="results-stale" role="status"></div><script type="module" src="/assets/editor/pattern-editor.js"></script><script type="module" src="/assets/search-scope.js"></script></body></html>"#) }))
+        .route("/assets/search-scope.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")], include_str!("../../assets/search-scope.js")) }))
+        .route("/api/pattern/summary", post(|axum::Json(body): axum::Json<serde_json::Value>| async move {
+            let scope: serde_json::Value = serde_json::from_str(body["search_scope"].as_str().unwrap_or("null")).unwrap();
+            let count = if scope["included_sections"].is_array() { 1 } else { 2 };
+            let records = [json!({"schema":"lingrep.query/v2","type":"summary","data":{"pattern":"p","group":{"kind":"key","fields":[{"kind":"scalar","name":"$word.norm","value":"猫"}]},"count":count,"rank":1}}),json!({"schema":"lingrep.query/v2","type":"complete","data":{"counters":{}}})];
+            ([(header::CONTENT_TYPE,"application/x-ndjson")], records.iter().map(|record|format!("{record}\n")).collect::<String>())
+        }))
         .route(
             "/api/pattern/check",
-            post(|| async {
+            post(|axum::Json(body): axum::Json<serde_json::Value>| async move {
+                if let Some(source) = body["source"].as_str().filter(|source| source.contains("capture-picker-fixture")) {
+                    let body = match lingrep_web::patterns::compile_web_pattern(source) {
+                        Ok(output) => json!({"status":"valid", "diagnostics":[], "capture_key_edits":output.capture_key_edits}),
+                        Err(_) => json!({"status":"invalid", "diagnostics":[]}),
+                    };
+                    return axum::Json(body).into_response();
+                }
                 (
                     [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
                     r#"{"status":"valid","stats":{"definitions":1,"expressions":2,"references":0,"depth":1,"nfa_states":3,"transitions":4},"diagnostics":[{"code":"UnusedFragment","category":"lint","severity":"warning","message":"A fragment is never referenced.","location":{"source_name":"lingrep-web.lx","line":1,"column":1,"byte_range":{"start":0,"end":1}}}]}"#,
-                )
+                ).into_response()
             }),
         )
         .route(
@@ -4538,4 +4556,119 @@ return ['#results','#detail-body','#sample-results','#inspector-body'].map(selec
         }
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+#[tokio::test]
+async fn capture_key_picker_preserves_source_and_disables_invalid_drafts() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    let driver = WebDriver::new(driver_url, capabilities).await?;
+    driver
+        .goto(format!("{}/capture-key", fixture.address))
+        .await?;
+    wait_for_enhanced_editor(&driver).await?;
+    wait_for_selector(&driver, "[data-key-attribute]:not([disabled])").await?;
+    let before: String = driver
+        .execute(
+            "return document.querySelector('#corpus-pattern').value",
+            vec![],
+        )
+        .await?
+        .convert()?;
+    driver
+        .find(By::Css("[data-capture-key-picker] summary"))
+        .await?
+        .click()
+        .await?;
+    let attribute_select = driver.find(By::Css("[data-key-attribute]")).await?;
+    thirtyfour::components::SelectElement::new(&attribute_select)
+        .await?
+        .select_by_value("norm")
+        .await?;
+    wait_for_selector(
+        &driver,
+        "[data-key-attribute]:not([disabled]) option[value=norm]:checked",
+    )
+    .await?;
+    let after: String = driver
+        .execute(
+            "return document.querySelector('#corpus-pattern').value",
+            vec![],
+        )
+        .await?
+        .convert()?;
+    assert_eq!(after, before.replace("$word.lemma", "$word.norm"));
+    driver
+        .query(By::Css("[data-live-summary] tbody td:last-child"))
+        .with_text("2")
+        .first()
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-preset=main]"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .query(By::Css("[data-live-summary] tbody td:last-child"))
+        .with_text("1")
+        .first()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-unlabelled]"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-summary-stale]").await?;
+
+    assert_eq!(
+        driver.find(By::Id("results")).await?.text().await?,
+        "Previous summary"
+    );
+    assert!(
+        !driver
+            .find(By::Id("results-stale"))
+            .await?
+            .text()
+            .await?
+            .is_empty()
+    );
+    driver.execute("const textarea=document.querySelector('#corpus-pattern');textarea.value+='broken := [';textarea.dispatchEvent(new Event('input',{bubbles:true}));",vec![]).await?;
+    wait_for_selector(&driver, "#corpus-pattern[aria-invalid=true]").await?;
+    driver
+        .execute(
+            "document.querySelector('[data-locale-toggle]').click();",
+            vec![],
+        )
+        .await?;
+    wait_for_selector(&driver, "html[data-locale=ja]").await?;
+    assert!(
+        driver
+            .find_all(By::Css("[data-capture-key-picker] select:not([disabled])"))
+            .await?
+            .is_empty()
+    );
+    assert_eq!(
+        driver.find(By::Id("results")).await?.text().await?,
+        "Previous summary"
+    );
+    driver.execute("const notice=document.querySelector('#results-stale');notice.replaceChildren();document.dispatchEvent(new CustomEvent('htmx:oobAfterSwap',{detail:{target:notice}}));",vec![]).await?;
+    assert!(
+        !driver
+            .find(By::Id("results-stale"))
+            .await?
+            .text()
+            .await?
+            .is_empty()
+    );
+    driver.quit().await
 }

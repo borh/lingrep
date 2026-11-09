@@ -962,3 +962,55 @@ fn accumulated_key_errors_preserve_registered_source_coordinates(tc: hegel::Test
         prefix.len()..prefix.len() + 3
     );
 }
+
+#[hegel::test(test_cases = 60, derandomize = true)]
+fn capture_key_edit_ranges_round_trip_without_changing_recognition(tc: hegel::TestCase) {
+    use hegel::generators as g;
+    let prefix = serde_json::to_string(&tc.draw(g::text())).unwrap();
+    let newline = tc.draw(g::sampled_from(vec!["\n", "\r\n"]));
+    let source = format!(
+        "description: {prefix}{newline}key: [$word.lemma]{newline}pattern p := (?<word> [text=猫]).{newline}"
+    );
+    let output = compile(&source).unwrap();
+    let [edit] = output.capture_key_edits.as_slice() else {
+        panic!("one eligible key");
+    };
+    assert_eq!(&source[edit.byte_range.clone()], "lemma");
+    let tokens = [token("猫", "猫")];
+    let expected = output.matcher.find_matches(&tokens);
+    for attribute in edit.attributes {
+        let mut changed = source.clone();
+        changed.replace_range(edit.byte_range.clone(), attribute);
+        let changed = compile(&changed).unwrap();
+        assert_eq!(changed.matcher.find_matches(&tokens), expected);
+        assert_eq!(changed.capture_key_edits[0].attribute, attribute);
+        let key = project_key(changed.matcher.catalog_policy(), &expected[0], &tokens);
+        if attribute == "norm" {
+            assert_eq!(key, None);
+        } else {
+            assert_eq!(key, Some(vec![field(&format!("$word.{attribute}"), "猫")]));
+        }
+    }
+}
+
+#[test]
+fn accumulated_capture_key_edits_name_their_own_source_files() {
+    let mut builder = lingrep_core::fsm::FsmBuilder::new();
+    for name in ["first", "second"] {
+        builder
+            .add_definition(PatternSource::named(
+                name,
+                &format!("key: [$word.lemma]\npattern {name} := (?<word> [])."),
+            ))
+            .unwrap();
+    }
+    let output = builder.build().unwrap();
+    assert_eq!(
+        output
+            .capture_key_edits
+            .iter()
+            .map(|edit| edit.source_name.as_ref())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+}

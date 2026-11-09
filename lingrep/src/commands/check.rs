@@ -105,6 +105,12 @@ pub fn run(
         .as_ref()
         .is_some_and(|binding| binding.refusal.is_some());
     let check = CheckEnvelope::new(CheckEvent::Check(CheckData {
+        capture_key_edits: catalog
+            .output
+            .capture_key_edits
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         comparison,
         examples,
         catalog_fingerprint: catalog.fingerprint,
@@ -638,6 +644,7 @@ mod tests {
 
     fn check_fixture() -> CheckEnvelope {
         CheckEnvelope::new(CheckEvent::Check(CheckData {
+            capture_key_edits: Vec::new(),
             comparison: Vec::new(),
             examples: None,
             catalog_fingerprint: "catalog".into(),

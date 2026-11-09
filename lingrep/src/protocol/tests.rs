@@ -974,6 +974,7 @@ fn sources_aggregate_state_distinguishes_known_inventory_from_pending() {
 #[test]
 fn check_drift_round_trips_and_keeps_the_v2_schema_string() {
     let envelope = CheckEnvelope::new(CheckEvent::Check(CheckData {
+        capture_key_edits: Vec::new(),
         comparison: Vec::new(),
         examples: None,
         catalog_fingerprint: "catalog".into(),
@@ -1069,6 +1070,7 @@ fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
         (
             "check",
             jsonl(CheckEnvelope::new(CheckEvent::Check(CheckData {
+                capture_key_edits: Vec::new(),
                 comparison: Vec::new(),
                 examples: None,
                 catalog_fingerprint: "catalog".into(),
@@ -1396,6 +1398,7 @@ fn resources() -> ResourceHighWater {
 }
 fn query_run() -> QueryEnvelope {
     QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
+        matcher_semantics_identity: String::new(),
         run_id: "run-1".into(),
         analyzer: fixture_analyzer_run(),
         mode: QueryMode::Matches,

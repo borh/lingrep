@@ -33,8 +33,8 @@ pub use binding::{
     BoundCatalog, BoundExecutionError, BoundExplanationError, SchemaBindError, ScopeWindow,
 };
 pub use compiler::{
-    AttributeReferenceSite, CatalogAnalysis, CatalogDriftReport, CompileError, CompileLimits,
-    CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic, DiagnosticCode,
+    AttributeReferenceSite, CaptureKeyEdit, CatalogAnalysis, CatalogDriftReport, CompileError,
+    CompileLimits, CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic, DiagnosticCode,
     DiagnosticLocation, DiagnosticSeverity, DiagramCatalog, DiagramError, DriftBody, DriftCarrier,
     DriftDefinitionKind, DriftEntry, ExclusionSite, ExpandError, ExpandedDefinitionKind,
     FormatError, FormatOutcome, LexiconProjectionSite, PatternDiagram, PatternSource,

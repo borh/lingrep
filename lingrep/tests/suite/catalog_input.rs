@@ -332,3 +332,22 @@ fn human_check_reports_definitions_and_warnings_without_a_fingerprint() {
         64
     );
 }
+
+#[test]
+fn check_exposes_the_compilers_capture_key_edit_ranges() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("keys.lx");
+    let source = "description: \"猫😀\"\r\nkey: [$word.lemma]\r\np := (?<word> [text=猫]).\r\n";
+    std::fs::write(&path, source).unwrap();
+    let report = successful_check(&["check", "--json", "--patterns", path.to_str().unwrap()]);
+    let compiled = lingrep_core::fsm::compile_catalog(
+        lingrep_core::fsm::PatternSource::named(path.to_str().unwrap(), source),
+        lingrep_core::fsm::CompileLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(report["schema"], "lingrep.check/v1");
+    assert_eq!(
+        report["data"]["capture_key_edits"],
+        serde_json::to_value(compiled.capture_key_edits).unwrap()
+    );
+}

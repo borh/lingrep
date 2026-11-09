@@ -15,6 +15,7 @@ use crate::state::RequestStore;
 
 pub fn routes() -> Router<RequestStore> {
     Router::new()
+        .merge(super::live_summary::routes())
         .route("/check", post(check))
         .route("/format", post(format))
 }
@@ -78,6 +79,7 @@ impl From<&CompilerStats> for EditorStats {
 #[serde(tag = "status", rename_all = "snake_case")]
 enum CheckResponse {
     Valid {
+        capture_key_edits: Vec<lingrep_core::fsm::CaptureKeyEdit>,
         diagnostics: Vec<EditorDiagnostic>,
         stats: EditorStats,
     },
@@ -104,6 +106,7 @@ async fn check(request: Result<Json<EditorRequest>, JsonRejection>) -> Response 
         Ok(output) => (
             StatusCode::OK,
             Json(CheckResponse::Valid {
+                capture_key_edits: output.capture_key_edits,
                 diagnostics: editor_diagnostics(&output.diagnostics),
                 stats: EditorStats::from(&output.stats),
             }),

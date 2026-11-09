@@ -40,6 +40,7 @@ function update(control, changed = true) {
     summary.textContent = scope.included_sections === null && scope.include_unlabelled
         ? t("scope.all") : labels.join(", ") || t("scope.none");
     if (changed) control.querySelector("[data-scope-pending]").hidden = false;
+    control.dispatchEvent(new CustomEvent("scope:updated", { bubbles: true }));
 }
 
 function refreshVocabulary() {

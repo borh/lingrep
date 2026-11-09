@@ -304,6 +304,7 @@ pub fn run(
         &run_id,
     )?;
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
+        matcher_semantics_identity: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
         run_id: run_id.clone(),
         mode: QueryMode::Summarize,
         catalog_fingerprint,

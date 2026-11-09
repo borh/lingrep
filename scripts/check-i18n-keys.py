@@ -22,6 +22,7 @@ JS = [
     WEB / "assets" / "query-library.js",
     # Relabels the editor size toggle, so it owns two keys of its own.
     WEB / "assets" / "editor-sizing.js",
+    WEB / "assets" / "editor" / "pattern-editor.js",
 ]
 
 KEY_ATTR = re.compile(r'data-i18n(?:-title|-placeholder|-aria-label)?="([a-z][\w.]*\w)"')

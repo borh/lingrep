@@ -125,3 +125,29 @@ async fn format_returns_canonical_lf_and_located_errors() {
     assert_eq!(body["status"], "invalid");
     assert!(body["diagnostics"][0]["location"]["line"].is_number());
 }
+
+#[tokio::test]
+async fn capture_key_edits_preserve_unicode_source_and_exclude_unsupported_keys() {
+    let source =
+        "description: \"猫😀\"\r\nkey: [$word.lemma]\r\npattern p := (?<word> [text=猫]).\r\n";
+    let (status, body) = post("/check", json!({"source": source})).await;
+    assert_eq!(status, StatusCode::OK);
+    let edits = body["capture_key_edits"]
+        .as_array()
+        .expect("capture key edits");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["capture"], "word");
+    let start = edits[0]["byte_range"]["start"].as_u64().unwrap() as usize;
+    let end = edits[0]["byte_range"]["end"].as_u64().unwrap() as usize;
+    assert_eq!(&source[start..end], "lemma");
+    for source in [
+        "defaults\nkey: [$word.lemma]\nend\np := (?<word> []).",
+        "key: [$word.text, $word.lemma]\np := (?<word> []).",
+        "key: [$word.span.lemma]\np := (?<word> []+).",
+        "key: [$word.node.id]\np := (?<n> []) where (?<word> []) -[obj]-> $n.",
+    ] {
+        let (status, body) = post("/check", json!({"source": source})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["capture_key_edits"], json!([]));
+    }
+}

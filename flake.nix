@@ -836,7 +836,9 @@
             lingrep-web =
               (mkLingrepPackage {
                 cargoExtraArgs = "--package lingrep-web";
-                postInstall = installWebLabels;
+                postInstall = installWebLabels + ''
+                  ln -s ${self'.packages.lingrep}/bin/ling "$out/bin/ling"
+                '';
               }).overrideAttrs
                 (old: {
                   meta = (old.meta or { }) // {

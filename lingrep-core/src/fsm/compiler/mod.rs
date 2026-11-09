@@ -36,6 +36,7 @@ pub(crate) use sentence_filter::derive_sentence_filter;
 pub use sentence_filter::{SentenceFilter, SentenceFilterTerm};
 
 pub use analysis::{AttributeReferenceSite, CatalogAnalysis, ExclusionSite, LexiconProjectionSite};
+pub use capture_key::CaptureKeyEdit;
 pub use diagnostic::{
     CompileError, Diagnostic, DiagnosticCode, DiagnosticLocation, DiagnosticSeverity,
     RelatedDiagnosticLocation,
@@ -98,6 +99,7 @@ impl<'a> PatternSource<'a> {
 /// A complete immutable matcher, non-fatal diagnostics, and compile metrics.
 #[derive(Clone)]
 pub struct CompileOutput {
+    pub capture_key_edits: Vec<CaptureKeyEdit>,
     pub matcher: CompiledCatalog,
     pub diagnostics: Vec<Diagnostic>,
     pub stats: CompilerStats,
@@ -499,6 +501,8 @@ fn compile_program(
     if !reference_errors.is_empty() {
         return Err(CompileError::from_diagnostics(reference_errors));
     }
+    let capture_key_edits =
+        capture_key::editable_capture_keys(&catalog_policy, &execution, &bound.sources);
     analyze_program(&mut execution, &bound.sources)?;
     let mut lowered = lower_to_nfa(&bound, &nfa_limits, &execution, &assertions.occurrences)?;
     lowered.matcher.install_assertions(assertions.catalog);
@@ -568,6 +572,7 @@ fn compile_program(
     });
 
     Ok(CompileOutput {
+        capture_key_edits,
         matcher: lowered.matcher,
         diagnostics,
         stats: *stats,
@@ -919,6 +924,7 @@ fn remap_definition_source(definition: &mut ParsedDefinition, source: SourceId) 
     definition.span = definition.span.with_source(source);
     if let Some(key) = &mut definition.key {
         key.source_span = key.source_span.with_source(source);
+        key.attribute_span = key.attribute_span.map(|span| span.with_source(source));
     }
     if let model::ParsedDefinitionBody::Pattern { expr, .. } = &mut definition.body {
         remap_expr_source(expr, source);

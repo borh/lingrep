@@ -201,3 +201,14 @@
 .pattern-definition, .lx-definition { color: var(--pattern-definition); font-weight: 600; }
 .pattern-variable, .lx-variable { color: var(--pattern-variable); }
 .pattern-punctuation, .lx-punctuation { color: var(--pattern-punctuation); }
+
+.pattern-key-picker { margin: .5rem 0; color: var(--pattern-mirror-text); font-size: .875rem; }
+.pattern-key-picker p { margin: .25rem 0; color: var(--pattern-status-text); }
+.pattern-key-picker label { display: inline-flex; align-items: center; gap: .4rem; margin: .25rem .75rem .25rem 0; flex-wrap: wrap; max-width: 100%; }
+.pattern-key-picker select { max-width: 100%; font: inherit; }
+
+.pattern-live-summary { overflow-x: auto; max-block-size: 24rem; overflow-y: auto; }
+.pattern-live-summary:empty { display: none; }
+.pattern-live-summary table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+.pattern-live-summary th, .pattern-live-summary td { padding: .25rem .5rem; text-align: left; overflow-wrap: anywhere; }
+.pattern-live-summary th:last-child, .pattern-live-summary td:last-child { text-align: right; }

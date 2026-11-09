@@ -1557,6 +1557,11 @@ impl CorpusArtifact {
         self
     }
 
+    /// The path supplied when opening the artifact, which may be relative.
+    pub fn directory(&self) -> &Path {
+        &self.root
+    }
+
     pub fn analysis_identity(&self) -> &AnalysisIdentity {
         &self.analysis_identity
     }

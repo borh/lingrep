@@ -8,6 +8,7 @@ pub mod frequency;
 pub mod help;
 pub mod index;
 pub mod inspect;
+mod live_summary;
 mod overlaps;
 pub mod pattern_detail;
 pub mod pattern_editor;

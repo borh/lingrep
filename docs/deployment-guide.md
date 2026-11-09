@@ -150,6 +150,14 @@ A file that is not a valid label file stops the unit at startup with an error
 naming it. The file format is in
 [the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
 
+The workbench's capture-key picker runs fresh summaries through a companion
+`ling` executable beside `lingrep-web`; the Nix package includes it. A CLI whose
+matcher semantics differ is rejected. Each live summary counts all admitted
+input, shows at most 50 groups per pattern, and uses the selected search scope.
+The web path allows 1 GiB of temporary aggregation, a 16 MiB response and
+120 seconds of execution. Use `ling summarize` directly for larger runs.
+Saved count tables are unchanged by these edits.
+
 ## Caddy vhost
 
 ```caddyfile

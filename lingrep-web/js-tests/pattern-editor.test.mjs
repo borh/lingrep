@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyCaptureKeyEdit,
+  summaryContext,
   ariaInvalidFor,
   checkStatusLine,
   createPositionIndex,
@@ -558,4 +560,25 @@ test("a duplicated definition is reported rather than silently picking one", () 
     to: 10,
     message: "pattern F, 1 reference — 2 declarations, showing the first.",
   });
+});
+
+test("capture key replacement preserves all bytes outside its UTF-8 range", () => {
+  for (const prefix of ["", "description: \"猫😀 <tag>\"\r\n".replaceAll('\\"', '"')]) {
+    const source = `${prefix}key: [$word.lemma]\r\np := (?<word> []).\r\n`;
+    const start = Buffer.byteLength(source.slice(0, source.indexOf("lemma")), "utf8");
+    const edit = { attribute: "lemma", attributes: ["text", "lemma", "norm"], byte_range: { start, end: start + 5 } };
+    for (const attribute of edit.attributes) {
+      assert.equal(applyCaptureKeyEdit(source, edit, attribute), source.replace("$word.lemma", `$word.${attribute}`));
+    }
+    assert.equal(applyCaptureKeyEdit(source, edit, "xpos"), null);
+    assert.equal(applyCaptureKeyEdit("😀" + source, edit, "norm"), null);
+    assert.equal(applyCaptureKeyEdit(source, { ...edit, byte_range: { start: -1, end: 5 } }, "norm"), null);
+  }
+});
+
+test("summary context follows source, corpus and scope while pattern selection reuses the run", () => {
+  const request = {source:"p := [].",corpus:"main",search_scope:null,definition:"p"};
+  assert.equal(summaryContext(request), summaryContext({...request, definition:"q"}));
+  for (const field of ["source","corpus","search_scope"]) assert.notEqual(summaryContext(request),summaryContext({...request,[field]:"changed"}));
+  assert.notEqual(summaryContext(request),summaryContext(null));
 });

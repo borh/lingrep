@@ -292,6 +292,9 @@ impl AnalyzerRun {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueryRun {
+    /// Result reuse requires this revision as well as the catalog and analysis identities.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub matcher_semantics_identity: String,
     pub run_id: String,
     pub mode: QueryMode,
     pub catalog_fingerprint: String,
