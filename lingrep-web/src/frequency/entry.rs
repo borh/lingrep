@@ -53,8 +53,9 @@ struct PatternCatalog {
 impl EntryMatcher {
     /// Compiles `source` for each of `patterns` and binds it to the corpus's
     /// token schema; a catalog that compiles whole for one pattern, as one
-    /// with a policy block does, is compiled and bound once for all of them. Must be called inside a Tokio runtime, which later
-    /// answers lookaround division queries.
+    /// with a policy block does, is compiled and bound once for all of them.
+    /// Must be called inside a Tokio runtime, which later answers lookaround
+    /// division queries.
     ///
     /// # Errors
     ///
@@ -396,9 +397,9 @@ pub struct Column {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Chart {
-    /// Values with a nonzero count by descending count, then first
-    /// occurrence: every one up to `LISTED_VALUES`, otherwise the most
-    /// frequent of them and the chosen ones. `none` counts the documents
+    /// Values with a nonzero count by descending count, then ascending
+    /// value: every one up to `LISTED_VALUES`, otherwise the most frequent
+    /// `LISTED_VALUES / 2` of them and the chosen ones. `none` counts the documents
     /// without a value.
     Categorical {
         key: String,
