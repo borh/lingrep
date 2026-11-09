@@ -254,6 +254,26 @@ At startup lingrep-web checks a declared artifact's manifest and component
 lengths without hashing its contents. Run `ling corpus inspect --verify` for a
 complete check.
 
+## Interrupted corpus builds
+
+A build writes a sibling directory named `.NAME.staging-PID-N` before publishing
+its artifact. Process termination during a build can leave that directory behind;
+later starts ignore it rather than remove it. These leftovers can accumulate in
+`/var/lib/lingrep-web/corpora`.
+
+Stop the service and every other corpus builder using the directory before
+cleanup. Inspect the candidates; the name alone does not establish that a build
+has stopped. Replace the example removal path with an inspected staging directory
+from a stopped build. Remove neither published `.lingcorpus` artifacts nor
+unrelated directories.
+
+```sh
+sudo systemctl stop lingrep-web
+sudo find /var/lib/lingrep-web/corpora -maxdepth 1 -type d -name '.*.staging-*' -print
+sudo rm -r -- /var/lib/lingrep-web/corpora/.news.lingcorpus.staging-12345-0
+sudo systemctl start lingrep-web
+```
+
 ## Pattern catalogs
 
 `patterns.catalogs` accepts paths or Nix packages, each a directory searched
