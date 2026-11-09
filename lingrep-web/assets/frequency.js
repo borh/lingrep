@@ -980,11 +980,17 @@ export function mountFrequency(root) {
       leaveEntry();
       return;
     }
-    if (e.target.closest("[data-e=more]")) {
-      const mine = gen, l = await api("frequency/lines", { ...entryParams(s.w), offset: lined.lines.length, limit: LINES });
-      if (mine !== gen || l.status !== "ok") return;
-      lined.lines.push(...l.lines);
-      entryEl.querySelector("[data-e=lines]").innerHTML = linesHtml(lined, false);
+    const more = e.target.closest("[data-e=more]");
+    if (more) {
+      more.disabled = true;
+      try {
+        const mine = gen, l = await api("frequency/lines", { ...entryParams(s.w), offset: lined.lines.length, limit: LINES });
+        if (mine !== gen || l.status !== "ok") return;
+        lined.lines.push(...l.lines);
+        entryEl.querySelector("[data-e=lines]").innerHTML = linesHtml(lined, false);
+      } finally {
+        more.disabled = false;
+      }
       return;
     }
     const b = pointed(e);

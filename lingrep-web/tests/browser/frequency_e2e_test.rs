@@ -887,8 +887,14 @@ const WORKS: [(&str, Option<&str>, u32); 8] = [
 ];
 
 /// The sentences of document `document`: each has 猫, and every other one 本.
+/// The last document has more than a page of lines.
 fn work_sentences(document: usize) -> Vec<Vec<&'static str>> {
-    (0..=(document % 3))
+    let count = if document == WORKS.len() - 1 {
+        LINES
+    } else {
+        document % 3 + 1
+    };
+    (0..count)
         .map(|sentence| {
             if (document + sentence).is_multiple_of(2) {
                 vec!["猫", "が", "本"]
@@ -976,6 +982,33 @@ async fn serve_entries() -> Served {
         metadata,
     );
     serve_artifact(artifact, ENTRY_CATALOG, write_entry_table, &[]).await
+}
+
+/// The lines a page of an entry shows, as `LINES` in frequency.js.
+const LINES: usize = 50;
+
+/// Counts the page's frequency requests, `started` when sent and `settled`
+/// once the body is read or the request fails, and keeps each profile
+/// request's conditions.
+const COUNT_FETCHES: &str = "window.__fetches = {started: 0, settled: 0, profiles: []}; const sent = window.fetch; \
+    window.fetch = (...a) => { const url = String(a[0]); if (!url.includes('api/frequency')) return sent(...a); \
+      __fetches.started++; if (url.includes('frequency/profile')) __fetches.profiles.push(JSON.parse(new URL(url, location.href).searchParams.get('w') || '{}')); \
+      const done = () => __fetches.settled++; \
+      return sent(...a).then((r) => { const json = r.json.bind(r); r.json = () => json().finally(done); return r; }, (e) => { done(); throw e; }); };";
+
+/// Every frequency request sent has settled.
+const FETCHES_SETTLED: &str = "return __fetches.started === __fetches.settled";
+
+/// Resolves two frames later: Chrome reports a layout shift in the frame
+/// after the layout that caused it.
+async fn two_frames(driver: &WebDriver) -> WebDriverResult<()> {
+    driver
+        .execute_async(
+            "const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(true)));",
+            Vec::new(),
+        )
+        .await?;
+    Ok(())
 }
 
 const ENTRY_READY: &str = "const e = document.querySelector('[data-fq-entry]'); \
@@ -1076,19 +1109,13 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         json!(format!("{cats} occurrences in {} documents", WORKS.len()))
     );
     assert_eq!(shown["charts"], json!(["genre", "title", "year"]));
-    assert_eq!(
-        shown["lines"],
-        json!(
-            sentences
-                .iter()
-                .enumerate()
-                .flat_map(|(document, n)| std::iter::repeat_n(
-                    format!("猫 document {document}"),
-                    *n
-                ))
-                .collect::<Vec<_>>()
-        )
-    );
+    let lines = sentences
+        .iter()
+        .enumerate()
+        .flat_map(|(document, n)| std::iter::repeat_n(format!("猫 document {document}"), *n))
+        .collect::<Vec<_>>();
+    assert!(lines.len() > LINES);
+    assert_eq!(shown["lines"], json!(lines[..LINES]));
     assert_eq!(
         shown["none"],
         json!([format!(
@@ -1097,6 +1124,27 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         )])
     );
     assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
+
+    // Two clicks on "more" before its lines arrive append the next page once.
+    driver.execute(COUNT_FETCHES, Vec::new()).await?;
+    driver
+        .execute(
+            "const more = document.querySelector('[data-e=more]'); more.click(); more.click();",
+            Vec::new(),
+        )
+        .await?;
+    wait_for(&driver, FETCHES_SETTLED, "the next lines").await?;
+    assert_eq!(
+        driver
+            .execute(
+                "return {requests: __fetches.started, lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src').textContent), \
+                  more: document.querySelector('[data-e=more]').hidden}",
+                Vec::new(),
+            )
+            .await?
+            .json(),
+        &json!({"requests": 1, "lines": lines, "more": true})
+    );
 
     // The address reproduces the entry.
     let href = shown["href"].as_str().unwrap().to_owned();
@@ -1114,14 +1162,9 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
 
     // A sweep over every bar at 30 ms each, resting at each end, moves
     // nothing on the page and requests previews only where it rests. The
-    // observer starts two frames after the entry is drawn, because Chrome
-    // reports a layout shift in the frame after the layout that caused it.
-    driver
-        .execute_async(
-            "const done = arguments[arguments.length - 1]; requestAnimationFrame(() => requestAnimationFrame(() => done(true)));",
-            Vec::new(),
-        )
-        .await?;
+    // observer starts two frames after the entry is drawn.
+    two_frames(&driver).await?;
+    driver.execute(COUNT_FETCHES, Vec::new()).await?;
     driver
         .execute(
             "window.__shift = 0; window.__moved = []; window.__previews = 0; window.__requests = 0; \
@@ -1133,7 +1176,9 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .await?;
     let points = driver
         .execute(
-            "return [...document.querySelectorAll('.fq-chart [data-bar], .fq-chart [data-col]')].map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; })",
+            "return [...document.querySelectorAll('.fq-chart [data-bar], .fq-chart [data-col]')].map((b) => { const r = b.getBoundingClientRect(); \
+               return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2), b.closest('.fq-chart').dataset.key, \
+                 b.hasAttribute('data-bar') ? {m: 'in', v: [b.dataset.v]} : {m: 'range', lo: +b.dataset.lo, hi: +b.dataset.hi}]; })",
             Vec::new(),
         )
         .await?
@@ -1148,7 +1193,21 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
             sweep = sweep.move_to(point[0].as_i64().unwrap(), point[1].as_i64().unwrap());
         }
         sweep.perform().await?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The pass has settled once the preview of the bar it rests on has
+        // been requested and every request has settled.
+        let rest = pass.last().unwrap();
+        wait_for(
+            &driver,
+            &format!(
+                "const last = __fetches.profiles.at(-1), canon = (w) => w && JSON.stringify(Object.keys(w).sort().map((k) => [k, w[k]])); \
+                 return __fetches.started === __fetches.settled && !!last && canon(last[{key}]) === canon({want})",
+                key = rest[2],
+                want = rest[3],
+            ),
+            "the preview where the sweep rests",
+        )
+        .await?;
+        two_frames(&driver).await?;
     }
     let swept = driver
         .execute(
@@ -1174,13 +1233,13 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     // after the entry redraws, though the table's response comes 600 ms late.
     driver
         .execute(
-            "window.__late = []; window.__clicked = 0; \
-             window.__fetch = window.fetch; window.fetch = async (...a) => { const r = await __fetch(...a); if (/api\\/frequency\\?/.test(String(a[0]))) await new Promise((done) => setTimeout(done, 600)); return r; }; \
+            "window.__late = []; window.__clicked = 0; window.__delayed = 0; \
+             window.__fetch = window.fetch; window.fetch = async (...a) => { const r = await __fetch(...a); if (/api\\/frequency\\?/.test(String(a[0]))) { await new Promise((done) => setTimeout(done, 600)); __delayed++; } return r; }; \
              new PerformanceObserver((list) => { for (const e of list.getEntries()) if (e.startTime - __clicked > 300) __late.push(e.value); }).observe({type: 'layout-shift'});",
             Vec::new(),
         )
         .await?;
-    for _ in 0..2 {
+    for clicks in 1..=2 {
         driver
             .execute(
                 "window.__clicked = performance.now(); document.querySelector('.fq-chart[data-key=genre] [data-bar]').click()",
@@ -1188,7 +1247,13 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
             )
             .await?;
         wait_for(&driver, ENTRY_READY, "the entry under the condition").await?;
-        tokio::time::sleep(Duration::from_millis(900)).await;
+        wait_for(
+            &driver,
+            &format!("return __delayed >= {clicks} && __fetches.started === __fetches.settled"),
+            "the late table",
+        )
+        .await?;
+        two_frames(&driver).await?;
     }
     assert_eq!(
         driver
@@ -1197,6 +1262,24 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
             .json(),
         &json!([])
     );
+    // The observer reports a shift that does happen after the window opens.
+    driver
+        .execute(
+            "const pad = document.createElement('div'); pad.id = 'shift-probe'; pad.style.height = '40px'; \
+             document.querySelector('[data-fq-entry]').prepend(pad);",
+            Vec::new(),
+        )
+        .await?;
+    two_frames(&driver).await?;
+    let late = driver
+        .execute(
+            "document.getElementById('shift-probe').remove(); return __late",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    assert!(!late.as_array().unwrap().is_empty(), "{late}");
 
     // Keyboard: Tab reaches each title bar, whose full name and counts the
     // chart reads out; Arrow keys walk the bars.
