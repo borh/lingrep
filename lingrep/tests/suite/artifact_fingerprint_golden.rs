@@ -79,11 +79,11 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "41d949c5a655e045ca65c371e29f96bed26fcee3a63190e08cfeaf537c62aa1f"
+        "d39cd1fa5bc261569a1f6e842ebb02bf5531f54d6b329c3f2769529411396cb3"
     );
     assert_eq!(
         manifest["reader_identity"],
-        "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1"
+        "ffd37bad1675ab8ab0fccfb5cb1863afff7eec8c1b12215fd2c05a1079169a74"
     );
     assert_eq!(
         manifest["admission_identity"],
@@ -122,7 +122,7 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     assert_eq!(components["locations.v1"]["length"], 376);
     assert_eq!(
         components["locations.v1"]["blake3"],
-        "e9f167622c9fe69fa55f4b626e5be342fc7734d4bcdfdc67ea35213affc4dd0c"
+        "59ba4668592abf809a2e57281f4917efd30c826840e6cff078da733ab2b6fa7f"
     );
 }
 
@@ -169,7 +169,7 @@ fn the_prepared_tokens_decode_to_the_pinned_records() {
     let bytes = fs::read(artifact.join("tokens.v1.zst")).unwrap();
     assert_eq!(
         decompressed_tokens_digest(&bytes),
-        "adebf240e1c5e887f2c62f148ed402180a9295d0e08ce203b7f266ccaba804ba"
+        "71f36a200799572899d38ff8d337267c305f41925639a0d3209f2c0002e4cc22"
     );
 }
 

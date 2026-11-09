@@ -112,9 +112,6 @@ fn two_renders_are_identical_and_every_sentence_anchors_in_its_page() {
         [
             "最初の文です。",
             "本文太字です。",
-            "| 項目 | 値 |",
-            "|---|---|",
-            "| 甲 | 一 | 余り |",
             "表の後の文です。",
             "注の文です。[^1]",
             "一つ目の項目です。",

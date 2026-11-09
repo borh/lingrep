@@ -481,7 +481,7 @@ mod reader_identity_tests {
             (
                 &markdown,
                 NormalizationPolicy::Nfc,
-                "ea21e88cc5d2a659d5320dc455846c10392dae1a031bc3fe1f8c14280e9223f1",
+                "ffd37bad1675ab8ab0fccfb5cb1863afff7eec8c1b12215fd2c05a1079169a74",
             ),
             (
                 &CorpusReadConfig::Bccwj,

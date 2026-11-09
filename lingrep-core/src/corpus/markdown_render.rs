@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use super::markdown_dialect::{
-    DivLine, closes_fence, opens_fence, parse_classes, parse_div, parse_heading,
+    DivLine, closes_fence, opens_fence, parse_classes, parse_div, parse_heading, row_cells,
     strip_attribute_spans,
 };
 
@@ -243,41 +243,6 @@ fn table_breaks(assembled: &Assembled) -> BTreeSet<usize> {
         }
     }
     breaks
-}
-
-fn row_cells(line: &str) -> Vec<(usize, &str)> {
-    let body_start = line.len() - line.trim_start().len();
-    let first = body_start + usize::from(line.trim_start().starts_with('|'));
-    let mut start = first;
-    let mut cells = Vec::new();
-    let mut escaped = false;
-    for (offset, character) in line
-        .char_indices()
-        .skip_while(|(offset, _)| *offset < first)
-    {
-        if escaped {
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == '|' {
-            cells.push((start, offset));
-            start = offset + 1;
-        }
-    }
-    if line
-        .get(start..)
-        .is_some_and(|rest| !rest.trim().is_empty())
-    {
-        cells.push((start, line.len()));
-    }
-    cells
-        .into_iter()
-        .filter_map(|(start, end)| {
-            let cell = line.get(start..end)?;
-            let leading = cell.len() - cell.trim_start().len();
-            Some((start + leading, cell.trim()))
-        })
-        .collect()
 }
 
 fn escape(text: &str, out: &mut String) {

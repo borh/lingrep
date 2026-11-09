@@ -43,12 +43,22 @@ such a label prints a warning identifying the admitting flag.
   colon fence that is neither is an error, not an open region.
 - **`#{1,6} text {.classes}` labels the section it introduces.** Headings are
   structure and are never emitted as sentences.
-- **`{.class}` spans are structure; every other `{...}` is content.** LaTeX such
-  as `{T \to \infty}` is preserved.
+- **`{.class}` spans are structure; every other `{...}` is content.** Unmarked
+  braces such as `{T \to \infty}` are preserved.
+- **Dollar-delimited math is excluded from analysis.** Paired `$…$` and
+  `$$…$$` spans become a space, preserving a boundary between surrounding words.
+  A line containing only `$$` opens or closes a display-math block; its inner
+  lines are skipped. An unclosed block is an error. Escaped dollar signs remain
+  text. Document rendering preserves the math source.
 - **`<!-- ... -->` is skipped. Every other raw HTML form is an error**:
   elements, declarations, processing instructions and CDATA alike. Autolinks
   (`<https://…>`) are prose.
 - **Fenced code is skipped.**
+- **List markers are removed at every indentation level.** Each physical item
+  line remains one sentence.
+- **Pipe tables carry the `table` section label**, so the default policy excludes
+  them. When included, each header or data row is one sentence of cell text
+  separated by spaces; delimiter rows are structure.
 - **Unbalanced structure is an error**, at the fence and at end of input.
 
 ## Conversion-artifact recovery
@@ -58,6 +68,9 @@ Markdown converters emit and that the strict reader rejects:
 
 - presentational HTML and `<si ...>` linguistic notation, which the strict
   reader rejects as raw HTML;
+- unescaped asterisk runs before `p` or `P` comparisons (`<`, `>` or `=`), with
+  an optional colon and spaces: these remain literal significance marks rather
+  than emphasis delimiters. Strict reading keeps the Markdown interpretation;
 - div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 

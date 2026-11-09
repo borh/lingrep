@@ -7,7 +7,7 @@
 //! - a leading `---` block is YAML frontmatter and becomes document metadata
 //! - `:::+ {.classes}` opens a region; a bare `:::+` closes it
 //! - `#{1,6} text {.classes}` labels the section it introduces
-//! - `{.class}` spans are structure; every other `{...}` is mathematics
+//! - `{.class}` spans are structure; every other `{...}` is content
 //! - `<!-- ... -->` is skipped; every other raw HTML form is an error
 //!
 //! Callers ingesting converter-produced documents may explicitly enable a
@@ -33,6 +33,9 @@ static BREAK_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)<br\s*/?>").expect("break tag regex"));
 static SI_NOTATION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)<si(?:\s+[^>]*)?>").expect("si notation regex"));
+static SIGNIFICANCE_MARK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\*+)([ \t]*:?[ \t]*[pP][ \t]*[<=>])").expect("significance mark regex")
+});
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DivLine {
@@ -220,18 +223,65 @@ pub fn closes_fence(trimmed: &str, marker: char, minimum_length: usize) -> bool 
         && trimmed.chars().skip(length).all(char::is_whitespace)
 }
 
+pub(super) fn row_cells(line: &str) -> Vec<(usize, &str)> {
+    let body_start = line.len() - line.trim_start().len();
+    let first = body_start + usize::from(line.trim_start().starts_with('|'));
+    let mut start = first;
+    let mut cells = Vec::new();
+    let mut escaped = false;
+    for (offset, character) in line
+        .char_indices()
+        .skip_while(|(offset, _)| *offset < first)
+    {
+        if escaped {
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == '|' {
+            cells.push((start, offset));
+            start = offset + 1;
+        }
+    }
+    if line
+        .get(start..)
+        .is_some_and(|rest| !rest.trim().is_empty())
+    {
+        cells.push((start, line.len()));
+    }
+    cells
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let cell = line.get(start..end)?;
+            let leading = cell.len() - cell.trim_start().len();
+            Some((start + leading, cell.trim()))
+        })
+        .collect()
+}
+
 /// Convert one source line to its text content.
 ///
 /// Every `Text` event is joined into a single unit: under this dialect a line
-/// is exactly one sentence, so splitting per event would shatter it. `Code` and
-/// `Html` contents are dropped, matching the reader this replaces.
+/// is exactly one sentence, so splitting per event would shatter it. Inline
+/// code and HTML are omitted; paired dollar-delimited math becomes a space.
 pub fn inline_text(line: &str) -> String {
-    use pulldown_cmark::{Event, Parser};
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+
+    let trimmed = line.trim_start();
+    let line = if trimmed.len() < line.len()
+        && matches!(
+            Parser::new(trimmed).next(),
+            Some(Event::Start(Tag::List(_)))
+        ) {
+        trimmed
+    } else {
+        line
+    };
 
     let mut text = String::with_capacity(line.len());
-    for event in Parser::new(line) {
+    for event in Parser::new_ext(line, Options::ENABLE_MATH) {
         match event {
             Event::Text(chunk) => text.push_str(&chunk),
+            Event::InlineMath(_) | Event::DisplayMath(_) => text.push(' '),
             Event::SoftBreak | Event::HardBreak => text.push(' '),
             _ => {}
         }
@@ -242,7 +292,7 @@ pub fn inline_text(line: &str) -> String {
 fn recover_known_conversion_artifacts(line: &str) -> String {
     let line = BREAK_TAG.replace_all(line, " ");
     let line = PRESENTATION_TAG.replace_all(&line, "");
-    SI_NOTATION
+    let line = SI_NOTATION
         .replace_all(&line, |captures: &regex::Captures<'_>| {
             let notation = captures.get(0).expect("whole regex capture").as_str();
             // `SI_NOTATION` matches `<si…>`, so the capture starts with ASCII
@@ -254,6 +304,56 @@ fn recover_known_conversion_artifacts(line: &str) -> String {
             )]
             let notation_body = &notation[1..notation.len() - 1];
             format!("&lt;{notation_body}&gt;")
+        })
+        .into_owned();
+    if !SIGNIFICANCE_MARK.is_match(&line) {
+        return line;
+    }
+    use pulldown_cmark::{Event, LinkType, Parser, Tag};
+    let autolinks = Parser::new(&line)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(
+                event,
+                Event::Start(Tag::Link {
+                    link_type: LinkType::Autolink | LinkType::Email,
+                    ..
+                })
+            )
+            .then_some(range)
+        })
+        .collect::<Vec<_>>();
+    SIGNIFICANCE_MARK
+        .replace_all(&line, |captures: &regex::Captures<'_>| {
+            let mark = captures.get(1).expect("asterisk capture");
+            let index = autolinks.partition_point(|range| range.end <= mark.start());
+            if autolinks
+                .get(index)
+                .is_some_and(|range| range.contains(&mark.start()))
+            {
+                return captures
+                    .get(0)
+                    .expect("whole significance capture")
+                    .as_str()
+                    .to_owned();
+            }
+            let prefix = line
+                .as_bytes()
+                .get(..mark.start())
+                .expect("capture lies inside input");
+            let escaped = prefix
+                .iter()
+                .rev()
+                .take_while(|&&byte| byte == b'\\')
+                .count()
+                % 2
+                == 1;
+            format!(
+                "{}{}{}",
+                if escaped { "*" } else { "" },
+                "&#42;".repeat(mark.len() - usize::from(escaped)),
+                captures.get(2).expect("comparison capture").as_str()
+            )
         })
         .into_owned()
 }
@@ -359,10 +459,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-///
-/// Revision 2 introduced bounded cumulative frontmatter. Revision 1 tags,
-/// including the historical untagged default `0`, must never be reused.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 4;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 8;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -543,6 +640,9 @@ enum Block {
     Comment {
         opened_at: usize,
     },
+    DisplayMath {
+        opened_at: usize,
+    },
     Body,
 }
 
@@ -555,13 +655,46 @@ impl Block {
             Block::Frontmatter { opened_at } => Some(("YAML frontmatter", opened_at)),
             Block::FencedCode { opened_at, .. } => Some(("code fence", opened_at)),
             Block::Comment { opened_at } => Some(("`<!--` comment", opened_at)),
+            Block::DisplayMath { opened_at } => Some(("display math", opened_at)),
             Block::Body => None,
         }
     }
 }
 
-struct DialectIterator<R> {
-    lines: std::io::Lines<R>,
+struct PipeTable {
+    header: String,
+    leading_pipe: bool,
+    delimiter_pending: bool,
+}
+
+impl PipeTable {
+    fn new(header: &str, delimiter: &str) -> Option<Self> {
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+        let header = strip_attribute_spans(header);
+        let prefix = format!("{header}\n{delimiter}\n");
+        let table = Parser::new_ext(&prefix, Options::ENABLE_TABLES)
+            .any(|event| matches!(event, Event::Start(Tag::Table(_))));
+        table.then(|| Self {
+            header,
+            leading_pipe: delimiter.trim_start().starts_with('|'),
+            delimiter_pending: true,
+        })
+    }
+
+    fn text(&self, row: Option<&str>) -> String {
+        let source = row.unwrap_or(&self.header);
+        row_cells(source)
+            .into_iter()
+            .map(|(_, cell)| inline_text(&strip_attribute_spans(cell)))
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+struct DialectIterator<R: BufRead> {
+    lines: std::iter::Peekable<std::io::Lines<R>>,
+    table: Option<PipeTable>,
     block: Block,
     stacks: LabelStacks,
     /// The line that opened each currently open div, outermost first, mirroring
@@ -609,7 +742,8 @@ fn dialect_iterator<R: BufRead>(
     source_name: String,
 ) -> DialectIterator<R> {
     DialectIterator {
-        lines: reader.lines(),
+        lines: reader.lines().peekable(),
+        table: None,
         block: Block::Body,
         stacks: LabelStacks::default(),
         div_lines: Vec::new(),
@@ -643,7 +777,7 @@ pub fn read_markdown_sentence_lines<R: BufRead>(
     reader: R,
     config: MarkdownReaderConfig,
 ) -> io::Result<Vec<SentenceLine>> {
-    struct Tracked<R> {
+    struct Tracked<R: BufRead> {
         inner: DialectIterator<R>,
         line: std::rc::Rc<std::cell::Cell<usize>>,
     }
@@ -882,7 +1016,20 @@ impl<R: BufRead> DialectIterator<R> {
                 }
                 return Ok(None);
             }
+            Block::DisplayMath { .. } => {
+                if line.trim() == "$$" {
+                    self.block = Block::Body;
+                }
+                return Ok(None);
+            }
             Block::Body => {}
+        }
+
+        if let Some(table) = &mut self.table
+            && table.delimiter_pending
+        {
+            table.delimiter_pending = false;
+            return Ok(None);
         }
 
         // `content` is the line minus any comments that prefix it. It is what
@@ -891,6 +1038,7 @@ impl<R: BufRead> DialectIterator<R> {
         let mut content = line;
         let mut trimmed = content.trim_start();
         if trimmed.is_empty() {
+            self.table = None;
             return Ok(self.close_paragraph());
         }
 
@@ -913,6 +1061,7 @@ impl<R: BufRead> DialectIterator<R> {
         // and raw HTML behind one is still an error.
         while trimmed.starts_with("<!--") {
             let Some(end) = trimmed.find("-->") else {
+                self.table = None;
                 self.block = Block::Comment {
                     opened_at: self.line_number,
                 };
@@ -927,6 +1076,7 @@ impl<R: BufRead> DialectIterator<R> {
             let tail = &trimmed[end + "-->".len()..];
             trimmed = tail.trim_start();
             if trimmed.is_empty() {
+                self.table = None;
                 return Ok(None);
             }
             content = trimmed;
@@ -941,12 +1091,19 @@ impl<R: BufRead> DialectIterator<R> {
             recovered = recover_known_conversion_artifacts(content);
             let recovered_trimmed = recovered.trim_start();
             if recovered_trimmed.is_empty() {
+                self.table = None;
                 return Ok(None);
             }
             (recovered.as_str(), recovered_trimmed)
         } else {
             (content, trimmed)
         };
+
+        if let Some(table) = &self.table
+            && (!trimmed.contains('|') || (table.leading_pipe && !trimmed.starts_with('|')))
+        {
+            self.table = None;
+        }
 
         if let Some(form) = raw_html_form(trimmed) {
             return Err(self.at_line(format!(
@@ -955,7 +1112,16 @@ impl<R: BufRead> DialectIterator<R> {
             )));
         }
 
+        if trimmed.trim_end() == "$$" {
+            self.table = None;
+            self.block = Block::DisplayMath {
+                opened_at: self.line_number,
+            };
+            return Ok(None);
+        }
+
         if let Some((marker, minimum_length)) = opens_fence(trimmed) {
+            self.table = None;
             self.block = Block::FencedCode {
                 marker,
                 minimum_length,
@@ -965,6 +1131,7 @@ impl<R: BufRead> DialectIterator<R> {
         }
 
         if let Some(div) = parse_div(trimmed) {
+            self.table = None;
             match div {
                 DivLine::Open(classes) => {
                     self.observe(&classes);
@@ -1022,6 +1189,7 @@ impl<R: BufRead> DialectIterator<R> {
         // label the whole section beneath with something that names nothing.
         // `LabelStacks` stays a pure structure and never learns the concept.
         if let Some((level, classes)) = parse_heading(trimmed) {
+            self.table = None;
             self.observe(&classes);
             let introduces = classes
                 .difference(&self.config.self_labels)
@@ -1044,16 +1212,48 @@ impl<R: BufRead> DialectIterator<R> {
             }));
         }
 
-        if !self.config.policy.admits(self.stacks.active()) {
+        let mut table_header = false;
+        if self.table.is_none() && content.contains('|') {
+            self.table = self
+                .lines
+                .peek()
+                .and_then(|line| line.as_ref().ok())
+                .and_then(|delimiter| {
+                    let mut delimiter = delimiter.trim_start();
+                    while delimiter.starts_with("<!--") {
+                        delimiter = delimiter.split_once("-->")?.1.trim_start();
+                    }
+                    let delimiter = if self.config.recover_conversion_artifacts {
+                        recover_known_conversion_artifacts(delimiter)
+                    } else {
+                        delimiter.to_owned()
+                    };
+                    PipeTable::new(content, &delimiter)
+                });
+            table_header = self.table.is_some();
+        }
+        let mut table_sections;
+        let sections = if self.table.is_some() {
+            table_sections = self.stacks.active().clone();
+            table_sections.insert("table".to_owned());
+            self.observe(&table_sections);
+            &table_sections
+        } else {
+            self.stacks.active()
+        };
+        if !self.config.policy.admits(sections) {
             return Ok(None);
         }
 
-        let sentence = inline_text(&strip_attribute_spans(content));
+        let sentence = match &self.table {
+            Some(table) => table.text((!table_header).then_some(content)),
+            None => inline_text(&strip_attribute_spans(content)),
+        };
         let event = CorpusEvent::Sentence {
             text: sentence,
             words: None,
             enhanced_graph: None,
-            active_labels: self.stacks.active().iter().cloned().collect(),
+            active_labels: sections.iter().cloned().collect(),
             metadata: Box::new([]),
         };
         if !self.paragraph_open {
@@ -1141,7 +1341,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&4u32.to_le_bytes());
+        encoded.extend_from_slice(&8u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -1700,6 +1900,226 @@ mod reader_tests {
             read_all(markdown, permissive()),
             ["本文です。", "続きです。"]
         );
+    }
+
+    #[test]
+    fn pipe_tables_follow_the_table_section_policy() {
+        let input = "前文。\n| 区分 | 数 |\n| :--- | ---: |\n| 甲 | 2 |\n後文。\n";
+        assert_eq!(
+            read_all(input, SectionPolicy::default()),
+            ["前文。", "後文。"]
+        );
+        assert_eq!(
+            read_all(input, permissive()),
+            ["前文。", "区分 数", "甲 2", "後文。"]
+        );
+    }
+
+    #[test]
+    fn table_cells_preserve_inline_text_and_source_lines() {
+        let input = "a | b\n--- | ---\n**甲** {.label} | 乙\\|丙 | 余分\n\n普通の | 文。\n";
+        let found = read_markdown_sentence_lines(
+            Cursor::new(input),
+            MarkdownReaderConfig::new(permissive()),
+        )
+        .unwrap();
+        let rows = found
+            .iter()
+            .map(|line| (line.line, line.text.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [(1, "a b"), (3, "甲 乙|丙 余分"), (5, "普通の | 文。")]
+        );
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn normalized_table_rows_follow_the_section_policy(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let recovering = tc.draw(g::booleans());
+        let include = tc.draw(g::booleans());
+        let prefix = if recovering {
+            tc.draw(g::sampled_from(vec![
+                "",
+                "<!-- note --> ",
+                "<p>",
+                "<center>",
+            ]))
+        } else {
+            tc.draw(g::sampled_from(vec![
+                "",
+                "<!-- note --> ",
+                "<!-- a --><!-- b --> ",
+            ]))
+        };
+        let mut values = tc.draw(g::vecs(g::integers::<u64>()));
+        values.truncate(16);
+        let mut input = format!("{prefix}| a | b |\n{prefix}| --- | --- |\n");
+        let mut expected = if include {
+            vec!["a b".to_owned()]
+        } else {
+            Vec::new()
+        };
+        for value in values {
+            input.push_str(&format!("{prefix}| {value} | 文 |\n"));
+            if include {
+                expected.push(format!("{value} 文"));
+            }
+        }
+        let mut config = MarkdownReaderConfig::new(if include {
+            permissive()
+        } else {
+            SectionPolicy::default()
+        });
+        if recovering {
+            config = config.recover_conversion_artifacts();
+        }
+        let found =
+            read_markdown_dialect(Cursor::new(input), config, MarkdownDiagnostics::default())
+                .collect::<io::Result<Vec<_>>>()
+                .unwrap();
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn excluded_tables_preserve_structural_errors() {
+        for (tail, error) in [
+            ("::: bad\n", "colon fence"),
+            ("```\n", "unclosed code fence"),
+            (":::\n", "never opened"),
+            ("<p>|x|\n", "raw HTML"),
+        ] {
+            let input = format!("| a | b |\n| --- | --- |\n{tail}");
+            assert!(
+                read(&input, SectionPolicy::default())
+                    .unwrap_err()
+                    .to_string()
+                    .contains(error)
+            );
+        }
+    }
+
+    #[test]
+    fn nested_list_markers_do_not_enter_sentence_text() {
+        for marker in ["*", "-", "+", "1.", "2)"] {
+            for indent in ["", "  ", "    ", "\t"] {
+                let input = format!("* 親。\n{indent}{marker} **子**。\n");
+                assert_eq!(
+                    read_all(&input, permissive()),
+                    ["親。", "子。"],
+                    "{input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn marked_math_is_omitted_without_joining_prose() {
+        let input = "前$x^2$後。\n$x$\n$$x=1$$\n値は {ij} です。\n価格は\\$5です。\n金額は$5です。\n前`$x$`後。\n";
+        assert_eq!(
+            read_all(input, permissive()),
+            [
+                "前 後。",
+                "値は {ij} です。",
+                "価格は$5です。",
+                "金額は$5です。",
+                "前後。"
+            ]
+        );
+    }
+
+    #[test]
+    fn display_math_blocks_do_not_admit_their_source() {
+        let input = "前文。\n$$\nx = 1\n# not a heading\n::: not a div\n$$\n後文。\n";
+        assert_eq!(read_all(input, permissive()), ["前文。", "後文。"]);
+        assert_eq!(read_recovering(input), ["前文。", "後文。"]);
+    }
+
+    #[test]
+    fn display_math_preserves_source_lines_and_rejects_an_unclosed_block() {
+        let found = read_markdown_sentence_lines(
+            Cursor::new("前文。\n$$\nx=1\n$$\n後文。\n"),
+            MarkdownReaderConfig::new(permissive()),
+        )
+        .unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .map(|line| (line.line, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            [(1, "前文。"), (5, "後文。")]
+        );
+        assert!(
+            read("$$\nx=1\n", permissive())
+                .unwrap_err()
+                .to_string()
+                .contains("unclosed display math")
+        );
+    }
+
+    #[test]
+    fn significance_marks_are_recovered_only_with_the_recovery_flag() {
+        let input = "*注) ***p<.001, **:p<.01, *:p<.05. VIF はすべて2未満.*\n";
+        assert_eq!(
+            read_all(input, permissive()),
+            ["*注) ***p<.001, **:p<.01, :p<.05. VIF はすべて2未満."]
+        );
+        assert_eq!(
+            read_recovering(input),
+            ["注) ***p<.001, **:p<.01, *:p<.05. VIF はすべて2未満."]
+        );
+    }
+
+    #[test]
+    fn recovery_preserves_escaped_marks_and_ordinary_emphasis() {
+        assert_eq!(
+            read_recovering("注) \\*:p<.05。 **強調**と*pH*。\n"),
+            ["注) *:p<.05。 強調とpH。"]
+        );
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn recovery_retains_significance_runs_before_comparisons(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let count = tc.draw(g::integers::<usize>()).min(1024);
+        let mark = "*".repeat(count);
+        let separator = tc.draw(g::sampled_from(vec!["", ":", " : "]));
+        let comparison = tc.draw(g::sampled_from(vec!["<", ">", "="]));
+        let name = tc.draw(g::sampled_from(vec!["p", "P"]));
+        let number = tc.draw(g::integers::<u64>());
+        let content = format!("注) {mark}{separator}{name}{comparison}{number}.");
+        assert_eq!(read_recovering(&format!("*{content}*\n")), [content]);
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn recovery_retains_escaped_significance_runs(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let count = usize::from(tc.draw(g::integers::<u8>())) + 1;
+        let escapes = tc.draw(g::sampled_from(vec![0usize, 1, 2, 3, 4]));
+        let mark = "*".repeat(count);
+        let input = format!("*注) {}{mark}:p<.05.*\n", "\\".repeat(escapes));
+        let expected = format!("注) {}{mark}:p<.05.", "\\".repeat(escapes / 2));
+        assert_eq!(read_recovering(&input), [expected]);
+    }
+
+    #[test]
+    fn significance_recovery_preserves_autolink_text() {
+        for (input, expected) in [
+            ("<https://example.org/*p=1>\n", "https://example.org/*p=1"),
+            ("<a*p=1@example.org>\n", "a*p=1@example.org"),
+            ("[ラベル](https://example.org/*p=1)\n", "ラベル"),
+        ] {
+            assert_eq!(read_recovering(input), [expected]);
+        }
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn recovery_retains_autolink_comparisons(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let stars = "*".repeat(usize::from(tc.draw(g::integers::<u8>())));
+        let number = tc.draw(g::integers::<u64>());
+        let url = format!("https://example.org/{stars}p={number}");
+        assert_eq!(read_recovering(&format!("<{url}>\n")), [url]);
     }
 
     #[test]
