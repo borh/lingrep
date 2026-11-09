@@ -10,6 +10,7 @@ mod catalog_labels;
 mod cli;
 mod cli_shape;
 mod completions;
+mod contrast;
 mod corpus_mode;
 mod corpus_render;
 mod corpus_sources;

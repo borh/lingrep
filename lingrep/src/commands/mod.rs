@@ -5,6 +5,7 @@ pub(crate) mod attributes;
 pub mod check;
 mod check_diagram;
 pub mod completions;
+pub mod contrast;
 pub mod corpus;
 mod corpus_metadata;
 pub mod describe;
@@ -73,6 +74,7 @@ pub fn dispatch(
         Command::Matches(args) => matches::run(args, config, terminal, output, cli.color),
         Command::Summarize(args) => summarize::run(args, config, terminal, output),
         Command::Table(args) => table::run(args, output),
+        Command::Contrast(args) => contrast::run(args, output),
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Sources(args) => corpus::run_sources(args, config, terminal, output),
             CorpusCommand::Build(args) => corpus::run_build(args, config, terminal, output),

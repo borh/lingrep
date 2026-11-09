@@ -13,11 +13,19 @@ use crate::section_diagnostics::refuse_unanswerable;
 
 /// Parses a `--where` clause, reporting the offending byte.
 pub(crate) fn parse_scope(clause: Option<&str>) -> Result<Option<ScopeClause>, CliError> {
+    parse_scope_flag("--where", clause)
+}
+
+/// [`parse_scope`] for a clause given to `flag`, which the error names.
+pub(crate) fn parse_scope_flag(
+    flag: &str,
+    clause: Option<&str>,
+) -> Result<Option<ScopeClause>, CliError> {
     clause
         .map(|source| {
             ScopeClause::parse(source).map_err(|error| {
                 CliError::InvalidArgs(format!(
-                    "--where is not a valid scope clause at byte {}: {error}",
+                    "{flag} is not a valid scope clause at byte {}: {error}",
                     error.byte_range.start
                 ))
             })

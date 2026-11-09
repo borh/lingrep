@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --by-metadata`, and hold the entry's `count` and `works` in place of the
   per-pattern counts. `KEY` is the `group` of the entry's JSON `row` record,
   or its key as human rows print it. It requires `--json`.
+- `ling contrast --table PATH --where A --versus B` ranks each pattern's
+  entries of a count table by G², UCREL's two-cell log-likelihood, between
+  the documents two `@document` clauses admit, with each scope's count,
+  documents and rate per million tokens, the minimum expected count, an
+  unsmoothed log2 ratio and the direction. Every entry is ranked before
+  `--top` applies. A `scopes` record reports the documents and tokens the
+  scopes share and whether they are disjoint, overlapping or identical, and
+  each row reports its count in the shared documents. A scope without tokens
+  gives `null` statistics. The output contract is `lingrep.contrast/v1`.
 - `ling serve --count-table PATH` (repeatable) adds a Frequencies view
   to lingrep-web. The view presents controls for the catalog, pattern,
   document metadata conditions, sort order and substring filter, and reads
@@ -45,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corresponding `ling table --where` command. A table binds to a
   served corpus and a catalog by the identities it records; a table that does
   not bind stops startup with an error naming it.
+- lingrep-web adds a Compare page beside the Frequencies view, served from the
+  same `--count-table` bindings. It states two document scopes with the
+  Frequencies view's condition controls, or as two clauses, ranks one
+  pattern's entries by G² as `ling contrast` does, shows each scope's rate,
+  documents and the shared documents, and shows the `ling contrast` command
+  that reproduces the page. The URL stores both scopes.
 - Selecting a row of the Frequencies view opens that entry: a chart per
   document metadata key of the entry's occurrences and documents under each
   value, counted under the other conditions as `ling table --entry

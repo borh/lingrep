@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+{% block title %}Compare{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="assets/frequency.css">
+    <link rel="stylesheet" href="assets/compare.css">
+    <script type="module" src="assets/compare.js"></script>
+{% endblock %}
+{% block content %}
+<section class="fq cmp" data-compare>
+  <div class="fq-head">
+    <p class="fq-sentence" data-cmp-sentence></p>
+    <div class="cmp-scopes" data-cmp-scopes></div>
+    <div class="fq-clause" data-cmp-clause></div>
+  </div>
+  <p class="fq-state" data-cmp-state role="status"></p>
+  <div data-cmp-table></div>
+</section>
+{% endblock %}

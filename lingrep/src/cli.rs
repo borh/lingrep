@@ -191,6 +191,12 @@ pub enum Command {
     ///
     /// The table is written by `ling summarize --write-table`.
     Table(TableArgs),
+    /// Rank each pattern's entries by how differently two document scopes use
+    /// them, from a saved count table.
+    ///
+    /// The score is G², UCREL's two-cell log-likelihood, reported with each
+    /// scope's rate per million tokens and document reach.
+    Contrast(ContrastArgs),
     /// Split text into tokens; --json includes linguistic attributes.
     Tokenize(TokenizeArgs),
     /// Count the tokens that carry each attribute.
@@ -702,6 +708,48 @@ pub struct TableArgs {
     pub by_metadata: Option<String>,
 
     /// Maximum bytes of temporary storage for ordering every group.
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAX_TEMP_BYTES,
+        value_parser = positive_u64,
+        help_heading = "Safety limits",
+        hide_short_help = true
+    )]
+    pub max_temp_bytes: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct ContrastArgs {
+    /// Count table written by `ling summarize --write-table`.
+    #[arg(long, value_name = "TABLE", help_heading = "Input")]
+    pub table: PathBuf,
+
+    #[command(flatten)]
+    pub catalog: CatalogArgs,
+
+    /// The prepared corpus used to write the table; the clauses filter its
+    /// metadata.
+    #[arg(long, value_name = "ARTIFACT", help_heading = "Input")]
+    pub corpus: PathBuf,
+
+    /// The first scope: documents that match this clause; omit for every
+    /// document. Only document metadata conditions apply.
+    #[arg(long = "where", value_name = "CLAUSE", help_heading = "Selection")]
+    pub clause: Option<String>,
+
+    /// The second scope, as --where; omit for every document. The scopes may
+    /// share documents; the shared documents and tokens are reported.
+    #[arg(long, value_name = "CLAUSE", help_heading = "Selection")]
+    pub versus: Option<String>,
+
+    /// Show the N highest-scoring entries per pattern; `all` shows every
+    /// entry.
+    ///
+    /// Default: 20 in terminal output, unlimited with --json.
+    #[arg(long, value_name = "N|all", help_heading = "Output")]
+    pub top: Option<ExplicitLimit<u64>>,
+
+    /// Maximum bytes of temporary storage for ranking every entry.
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_TEMP_BYTES,
@@ -1803,6 +1851,7 @@ impl Cli {
             | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Table(_)
+            | Command::Contrast(_)
             | Command::Corpus(_)
             | Command::Explore(_)
             | Command::Describe(_)
@@ -1834,6 +1883,7 @@ impl Cli {
             | Command::Matches(_)
             | Command::Summarize(_)
             | Command::Table(_)
+            | Command::Contrast(_)
             | Command::Corpus(_)
             | Command::Tokenize(_)
             | Command::Attributes(_)
@@ -1887,6 +1937,7 @@ impl Cli {
             | Command::Dictionary(_)
             | Command::Analyzer(_)
             | Command::Table(_)
+            | Command::Contrast(_)
             | Command::Corpus(CorpusArgs {
                 command:
                     CorpusCommand::Inspect(_) | CorpusCommand::Variants(_) | CorpusCommand::Render(_),

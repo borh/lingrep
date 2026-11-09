@@ -5,6 +5,8 @@
     {% if frequency_view %}
     <span class="site-nav-sep">|</span>
     <a href="frequencies" class="site-nav-link"{% if current_page == "frequencies" %} aria-current="page"{% endif %}><span data-i18n="nav.frequencies">Frequencies</span></a>
+    <span class="site-nav-sep">|</span>
+    <a href="compare" class="site-nav-link"{% if current_page == "compare" %} aria-current="page"{% endif %}><span data-i18n="nav.compare">Compare</span></a>
     {% endif %}
     <span class="site-nav-sep">|</span>
     <a href="sample" target="_blank" rel="noopener" title="Open Sample Debugger in a new tab" data-i18n-title="nav.sample_new_tab" class="site-nav-link"{% if current_page == "sample" %} aria-current="page"{% endif %}><span data-i18n="nav.sample">Sample Debugger</span></a>

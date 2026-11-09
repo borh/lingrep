@@ -7,13 +7,18 @@ use std::sync::Arc;
 use lingrep_core::corpus::{Metadata, MetadataScalar, MetadataValue, metadata_from_json};
 use lingrep_core::scope::{DocumentOutcome, ExclusionReason, ScopeClause, Verdict};
 use lingrep_corpus::{
-    CountTable, CountTableError, CountTableKey, DocumentMask, FieldValue, Group, format_identity,
+    CountTable, CountTableError, CountTableKey, DocumentMask, FieldValue, Group, TopRow,
+    format_identity,
 };
 use serde::{Deserialize, Serialize};
 
 mod documents;
 mod entry;
+mod keyness;
 
+pub use keyness::{ContrastAnswer, ContrastQuery, Scope, ScopeUnsupported};
+
+use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SortedRunCounts, SpillPolicy, TempBudget};
 
 const SPILL_POLICY: SpillPolicy = SpillPolicy {
@@ -1051,13 +1056,21 @@ impl FrequencyPair {
     }
 
     fn command(&self, clause: &str) -> String {
+        self.ling_command("table ", &[("--where", clause)])
+    }
+
+    /// `ling {head}TABLE --top 100`, then each option with a nonempty value,
+    /// then the corpus and the catalog, each path a shell word; empty when
+    /// the pair shows no command.
+    fn ling_command(&self, head: &str, options: &[(&str, &str)]) -> String {
         let Some([table, corpus, catalog]) = &self.command_inputs else {
             return String::new();
         };
-        let mut command = format!("ling table {} --top {PAGE_ROWS}", shell_word(table));
-        if !clause.is_empty() {
-            command.push_str(" --where ");
-            command.push_str(&shell_word(clause));
+        let mut command = format!("ling {head}{} --top {PAGE_ROWS}", shell_word(table));
+        for (flag, value) in options {
+            if !value.is_empty() {
+                command.push_str(&format!(" {flag} {}", shell_word(value)));
+            }
         }
         command.push_str(&format!(
             " --corpus {} --patterns {}",
@@ -1067,15 +1080,40 @@ impl FrequencyPair {
         command
     }
 
+    /// Whether `offset` is at or past `pattern`'s last entry, read from the
+    /// table's unmasked entry count, so its page is empty under any scope.
+    ///
+    /// # Errors
+    ///
+    /// An offset before the last entry and above [`MAX_QUERY_ITEMS`], which
+    /// would rank that many entries to skip them.
+    fn past_last_entry(&self, pattern: usize, offset: usize) -> Result<bool, QueryError> {
+        let past_end = offset >= self.table.pattern_range(pattern)?.len();
+        if offset > MAX_QUERY_ITEMS && !past_end {
+            return Err(QueryError::ResourceLimit {
+                resource: "offset",
+                limit: MAX_QUERY_ITEMS as u64,
+            });
+        }
+        Ok(past_end)
+    }
+
     /// Answers `query` over `dimensions`, the dimensions of this pair's
     /// corpus.
     ///
     /// # Errors
     ///
     /// An unknown pattern, a table that fails to read, or a query above the
-    /// resource limits.
-    pub fn answer(&self, dimensions: &[Dimension], query: &Query) -> Result<Outcome, QueryError> {
+    /// resource limits. An offset at or past the last entry is an empty
+    /// page, not an error.
+    pub fn answer(
+        &self,
+        dimensions: &[Dimension],
+        query: &Query,
+        cancellation: &CancellationFlag,
+    ) -> Result<Outcome, QueryError> {
         let pattern = self.pattern_index(&query.pattern)?;
+        let past_end = self.past_last_entry(pattern, query.offset)?;
         let (clause_text, written) = match &query.clause {
             Some(clause) => (clause.trim().to_owned(), Vec::new()),
             None => match predicates(dimensions, &query.conditions) {
@@ -1139,12 +1177,28 @@ impl FrequencyPair {
             );
         }
         let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
-        let entries =
-            self.table
-                .ranked_pattern_rows(pattern, &mask, SPILL_POLICY, Arc::clone(&budget))?;
-        let mut reordered = (query.sort != Sort::Count)
+        // Past the last entry the page is empty whatever the order, so only
+        // the entries are counted.
+        let entries: Box<dyn Iterator<Item = Result<TopRow, CountTableError>> + '_> = if past_end {
+            Box::new(
+                self.table
+                    .unranked_pattern_rows(pattern, &mask, cancellation)?,
+            )
+        } else {
+            Box::new(self.table.ranked_pattern_rows(
+                pattern,
+                &mask,
+                SPILL_POLICY,
+                Arc::clone(&budget),
+                cancellation,
+            )?)
+        };
+        let mut reordered = (!past_end && query.sort != Sort::Count)
             .then(|| SortedRunCounts::<ViewRow>::with_policy(SPILL_POLICY, budget))
             .transpose()?;
+        if let Some(reordered) = &mut reordered {
+            reordered.set_cancellation(cancellation.clone());
+        }
         let limit = if query.limit == 0 {
             PAGE_ROWS
         } else {
@@ -1156,7 +1210,7 @@ impl FrequencyPair {
         for entry in entries {
             let entry = entry?;
             entry_count += 1;
-            let text = if query.sort == Sort::Key || !query.filter.is_empty() {
+            let text = if (query.sort == Sort::Key && !past_end) || !query.filter.is_empty() {
                 let group = self.table.bounded_group(entry.entry, MAX_QUERY_ITEMS)?;
                 ProjectionBudget::default().group(&group)?;
                 group_text(&group)
@@ -1188,6 +1242,9 @@ impl FrequencyPair {
             let mut rows = reordered.into_sorted_drain()?;
             let mut offset = query.offset;
             while let Some((mut row, _)) = rows.next_entry()? {
+                if cancellation.is_cancelled() {
+                    return Err(CountTableError::Cancelled.into());
+                }
                 if offset > 0 {
                     offset -= 1;
                     continue;
@@ -1470,6 +1527,7 @@ mod tests {
                     limit: 1,
                     ..Query::default()
                 },
+                &CancellationFlag::new(),
             );
             let Ok(Outcome::Answer(answer)) = result else {
                 panic!("admitted table failed");
@@ -1477,6 +1535,197 @@ mod tests {
             assert_eq!(answer.rows.len(), 1);
             assert_eq!(answer.entries, entries);
             assert_eq!(answer.occurrences, entries);
+        }
+    }
+
+    #[test]
+    fn a_raised_cancellation_stops_a_contrast_query() {
+        let (_directory, pair) = table_pair(
+            (0..3).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let cancelled = CancellationFlag::new();
+        cancelled.cancel();
+        let query = ContrastQuery {
+            pattern: "p".into(),
+            ..ContrastQuery::default()
+        };
+        assert!(matches!(
+            pair.contrast(&[], &query, &cancelled),
+            Err(QueryError::Table(
+                lingrep_corpus::CountTableError::Cancelled
+            ))
+        ));
+    }
+
+    #[test]
+    fn contrast_pages_reach_the_offset_limit_and_reject_a_deeper_offset() {
+        let entries = MAX_QUERY_ITEMS + 5;
+        let (_directory, pair) = table_pair(
+            (0..entries).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let page = |offset| {
+            let query = ContrastQuery {
+                pattern: "p".into(),
+                offset,
+                limit: 10,
+                ..ContrastQuery::default()
+            };
+            pair.contrast(&[], &query, &CancellationFlag::new())
+        };
+        for offset in [MAX_QUERY_ITEMS - 8, MAX_QUERY_ITEMS] {
+            let Ok(Ok(answer)) = page(offset) else {
+                panic!("contrast page failed");
+            };
+            assert_eq!(answer.entries, entries as u64);
+            let expected = (offset..entries.min(offset + 10)).collect::<Vec<_>>();
+            assert_eq!(
+                answer.rows.iter().map(|row| row.rank).collect::<Vec<_>>(),
+                expected.iter().map(|at| *at as u64 + 1).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                answer
+                    .rows
+                    .iter()
+                    .map(|row| row.text.clone())
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|at| format!("v{at:06}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(matches!(
+            page(MAX_QUERY_ITEMS + 1),
+            Err(QueryError::ResourceLimit {
+                resource: "offset",
+                limit
+            }) if limit == MAX_QUERY_ITEMS as u64
+        ));
+    }
+
+    #[test]
+    fn a_frequency_offset_inside_the_entries_above_the_limit_is_rejected() {
+        let entries = MAX_QUERY_ITEMS + 5;
+        let (_directory, pair) = table_pair(
+            (0..entries).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let query = |offset| Query {
+            pattern: "p".into(),
+            offset,
+            limit: 10,
+            ..Query::default()
+        };
+        let never = CancellationFlag::new();
+        let Ok(Outcome::Answer(answer)) = pair.answer(&[], &query(MAX_QUERY_ITEMS), &never) else {
+            panic!("a page at the offset limit is answered");
+        };
+        assert_eq!(
+            answer.rows.iter().map(|row| row.rank).collect::<Vec<_>>(),
+            (MAX_QUERY_ITEMS as u64 + 1..=entries as u64).collect::<Vec<_>>()
+        );
+        assert!(matches!(
+            pair.answer(&[], &query(MAX_QUERY_ITEMS + 1), &never),
+            Err(QueryError::ResourceLimit {
+                resource: "offset",
+                limit
+            }) if limit == MAX_QUERY_ITEMS as u64
+        ));
+    }
+
+    #[test]
+    fn a_frequency_offset_at_or_past_the_last_entry_is_an_empty_page() {
+        let (_directory, pair) = table_pair(
+            (0..12).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let never = CancellationFlag::new();
+        for sort in [Sort::Count, Sort::Works, Sort::Key] {
+            for filter in ["", "v00000"] {
+                let query = |offset| Query {
+                    pattern: "p".into(),
+                    sort,
+                    filter: filter.into(),
+                    offset,
+                    ..Query::default()
+                };
+                let Ok(Outcome::Answer(first)) = pair.answer(&[], &query(0), &never) else {
+                    panic!("the first page is answered");
+                };
+                assert_eq!(first.entries, 12);
+                for offset in [12, 13, MAX_QUERY_ITEMS + 1, usize::MAX] {
+                    let Ok(Outcome::Answer(past)) = pair.answer(&[], &query(offset), &never) else {
+                        panic!("{sort:?} {filter:?} offset {offset} is answered");
+                    };
+                    assert!(past.rows.is_empty(), "{sort:?} {filter:?} {offset}");
+                    assert_eq!(
+                        (past.entries, past.matching, past.occurrences, past.works),
+                        (
+                            first.entries,
+                            first.matching,
+                            first.occurrences,
+                            first.works
+                        ),
+                        "{sort:?} {filter:?} {offset}"
+                    );
+                    assert_eq!(past.command, first.command);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_raised_cancellation_stops_a_frequency_query() {
+        let (_directory, pair) = table_pair(
+            (0..3).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let raised = CancellationFlag::new();
+        raised.cancel();
+        let query = Query {
+            pattern: "p".into(),
+            ..Query::default()
+        };
+        assert!(matches!(
+            pair.answer(&[], &query, &raised),
+            Err(QueryError::Table(
+                lingrep_corpus::CountTableError::Cancelled
+            ))
+        ));
+    }
+
+    #[test]
+    fn a_contrast_offset_at_or_past_the_last_entry_is_an_empty_page() {
+        let (_directory, pair) = table_pair(
+            (0..12).map(|n| format!("v{n:06}")).collect(),
+            surface_schema(),
+            Box::new([]),
+        );
+        let never = CancellationFlag::new();
+        let query = |offset| ContrastQuery {
+            pattern: "p".into(),
+            offset,
+            ..ContrastQuery::default()
+        };
+        let Ok(Ok(first)) = pair.contrast(&[], &query(0), &never) else {
+            panic!("the first page is answered");
+        };
+        assert_eq!(first.entries, 12);
+        for offset in [12, 13, MAX_QUERY_ITEMS + 1, usize::MAX] {
+            let Ok(Ok(past)) = pair.contrast(&[], &query(offset), &never) else {
+                panic!("offset {offset} is answered");
+            };
+            assert!(past.rows.is_empty(), "{offset}");
+            assert_eq!(past.entries, first.entries, "{offset}");
+            assert_eq!(past.relation, first.relation);
+            assert_eq!(past.command, first.command);
         }
     }
 
@@ -1489,7 +1738,7 @@ mod tests {
             let (_directory, pair) =
                 table_pair(vec!["x".repeat(length)], surface_schema(), Box::new([]));
             assert!(
-                matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }), Err(error) if error.to_string().contains(resource))
+                matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }, &CancellationFlag::new()), Err(error) if error.to_string().contains(resource))
             );
         }
         let (_directory, pair) = table_pair(
@@ -1501,7 +1750,7 @@ mod tests {
             Box::new([]),
         );
         assert!(
-            matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }), Err(error) if error.to_string().contains("projected bytes"))
+            matches!(pair.answer(&[], &Query { pattern: "p".into(), limit: 1, ..Query::default() }, &CancellationFlag::new()), Err(error) if error.to_string().contains("projected bytes"))
         );
     }
 
@@ -1522,6 +1771,7 @@ mod tests {
                         limit: 1,
                         ..Query::default()
                     },
+                    &CancellationFlag::new(),
                 )
                 .expect("query")
             else {

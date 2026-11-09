@@ -256,6 +256,7 @@
   "library.unsave": "保存解除",
   "library.unsupported_schema": "クエリ履歴は新しいバージョンで保存されているため読み込めません。",
   "library.updated": "クエリライブラリを更新しました。",
+  "nav.compare": "比較",
   "nav.corpus": "コーパス検索",
   "nav.frequencies": "頻度",
   "nav.help": "ヘルプ",

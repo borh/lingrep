@@ -1,0 +1,113 @@
+/* The two scope colours, checked with the dataviz palette validator against
+   --surface in each scheme. */
+.cmp {
+  --cmp-where: #2a6fb8;
+  --cmp-versus: #c25a1c;
+}
+@media (prefers-color-scheme: dark) {
+  .cmp {
+    --cmp-where: #4a8fd8;
+    --cmp-versus: #d4702f;
+  }
+}
+
+html { scrollbar-gutter: stable; }
+
+.cmp-swatch {
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  border-radius: 2px;
+  margin-right: 0.3em;
+  vertical-align: 0.06em;
+  background: var(--cmp-where);
+}
+.cmp-swatch[data-scope="versus"] { background: var(--cmp-versus); }
+
+.cmp-scope { white-space: normal; }
+.cmp-scope-name {
+  font: 600 0.62em/1 var(--font-sans);
+  color: var(--fq-soft);
+  margin-right: 0.35em;
+  vertical-align: 0.15em;
+}
+.cmp .fq-sentence .add { margin-left: 0.4rem; }
+
+.cmp-scopes:empty { display: none; }
+.cmp-figures {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font: 13px/1.6 var(--font-sans);
+  color: var(--fq-soft);
+  font-variant-numeric: tabular-nums;
+}
+.cmp-figures b { color: var(--text); font-weight: 600; margin-right: 0.25em; }
+.cmp-relation {
+  margin: 0.35rem 0 0;
+  max-width: 46rem;
+  font: 13px/1.55 var(--font-cjk);
+  color: var(--fq-soft);
+}
+
+.cmp .fq-clause > p { margin: 0.3rem 0 0; font: 12px/1.5 var(--font-sans); color: var(--fq-soft); }
+.cmp-edit { flex-wrap: wrap; }
+.cmp-edit label {
+  flex: 1 1 18rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font: 12px/1.4 var(--font-sans);
+  color: var(--fq-soft);
+}
+.cmp-edit label code { font: 11px var(--font-mono); }
+
+.cmp[aria-busy] .cmp-scopes,
+.cmp[aria-busy] .cmp-wrap,
+.cmp[aria-busy] .more { opacity: 0.45; transition: opacity 0.15s 0.2s; }
+@media (prefers-reduced-motion: reduce) {
+  .cmp[aria-busy] .cmp-scopes, .cmp[aria-busy] .cmp-wrap, .cmp[aria-busy] .more { transition: none; }
+}
+.cmp-count-line { margin: 1.2rem 0 0; font: 12px/1.4 var(--font-sans); color: var(--fq-soft); font-variant-numeric: tabular-nums; }
+.cmp-wrap { overflow-x: auto; }
+.cmp table.cmp-table { margin-top: 0.2rem; }
+.cmp table.cmp-table th { top: auto; position: static; }
+.cmp table.cmp-table thead tr:first-child th { border-bottom: 0; padding-bottom: 0; }
+.cmp table.cmp-table th.cmp-group { text-align: center; color: var(--text); font-weight: 600; }
+.cmp table.cmp-table th.cmp-group[data-scope="where"] { box-shadow: inset 0 -2px var(--cmp-where); }
+.cmp table.cmp-table th.cmp-group[data-scope="versus"] { box-shadow: inset 0 -2px var(--cmp-versus); }
+.cmp table.cmp-table td[data-scope="where"] { border-left: 1px solid var(--fq-rule); }
+.cmp table.cmp-table td[data-scope="versus"] { border-left: 1px solid var(--fq-rule); }
+@media (min-width: 40rem) { .cmp table.cmp-table thead th { white-space: nowrap; } }
+.cmp .cmp-g2 { font-weight: 600; }
+
+.cmp-ratio-head { text-align: center !important; }
+.cmp-ratio-head span { font-weight: 600; margin: 0 0.4em; }
+.cmp-ratio-head span[data-scope="where"] { color: var(--cmp-where); }
+.cmp-ratio-head span[data-scope="versus"] { color: var(--cmp-versus); }
+.cmp td.cmp-ratio { width: 9rem; min-width: 7rem; }
+/* A centre rule; a bar grows from it toward the scope with the higher rate. */
+.cmp-axis {
+  position: relative;
+  display: block;
+  height: 10px;
+  background: linear-gradient(var(--fq-rule), var(--fq-rule)) center / 1px 100% no-repeat;
+}
+.cmp-axis i {
+  position: absolute;
+  top: 1px;
+  height: 8px;
+  min-width: 2px;
+}
+.cmp-axis i[data-scope="where"] { right: 50%; background: var(--cmp-where); border-radius: 4px 0 0 4px; }
+.cmp-axis i[data-scope="versus"] { left: 50%; background: var(--cmp-versus); border-radius: 0 4px 4px 0; }
+/* An entry absent from one scope has no finite ratio: a hatched bar to the edge. */
+.cmp-axis i[data-only][data-scope="where"] { background: repeating-linear-gradient(135deg, var(--cmp-where) 0 2px, transparent 2px 5px); }
+.cmp-axis i[data-only][data-scope="versus"] { background: repeating-linear-gradient(45deg, var(--cmp-versus) 0 2px, transparent 2px 5px); }
+
+@media (max-width: 40rem) {
+  .cmp table.cmp-table th.cmp-group { font-size: 11px; }
+  .cmp td.cmp-ratio { width: 5rem; min-width: 4rem; }
+  .cmp table.cmp-table { font-size: 13px; }
+  .cmp table.cmp-table th, .cmp table.cmp-table td { padding-left: 0.3rem; padding-right: 0.3rem; }
+}

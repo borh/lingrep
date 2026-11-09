@@ -1,5 +1,6 @@
 pub(crate) mod asset;
 pub mod catalogs;
+pub mod compare;
 pub mod corpus_context;
 pub mod editor_assets;
 pub mod export;

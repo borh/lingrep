@@ -260,6 +260,13 @@ static SEMANTICS: &[CommandSemantics] = &[
         },
     },
     CommandSemantics {
+        command: "contrast",
+        input_modes: &["prepared"],
+        examples: ExamplePublication::Omitted {
+            reason: "reads a count table that `summarize --write-table` writes first",
+        },
+    },
+    CommandSemantics {
         command: "tokenize",
         input_modes: &["direct", "stdin", "prepared"],
         examples: ExamplePublication::Published(TOKENIZE_EXAMPLES),

@@ -256,6 +256,7 @@
   "library.unsave": "Unsave",
   "library.unsupported_schema": "Query history uses a newer browser-storage format.",
   "library.updated": "Query library updated.",
+  "nav.compare": "Compare",
   "nav.corpus": "Corpus Search",
   "nav.frequencies": "Frequencies",
   "nav.help": "Help",

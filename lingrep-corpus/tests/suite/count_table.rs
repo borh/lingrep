@@ -268,6 +268,7 @@ fn top_and_rows_equal_a_direct_count_under_every_strategy(tc: hegel::TestCase) {
                 &mask,
                 spill_policy(resident_rows),
                 Arc::new(TempBudget::new(u64::MAX)),
+                &CancellationFlag::new(),
             )
             .expect("ranked rows")
             .collect::<Result<Vec<_>, _>>()
@@ -900,4 +901,641 @@ fn overflowing_header_dimensions_return_corruption_errors() {
     std::fs::write(&header_path, serde_json::to_vec(&original).expect("JSON"))
         .expect("restore header");
     CountTable::open(&path, &key()).expect("empty table");
+}
+
+/// Relative difference, for comparing a double with a reference value.
+fn relative(actual: f64, expected: f64) -> f64 {
+    if expected == 0.0 {
+        actual.abs()
+    } else {
+        ((actual - expected) / expected).abs()
+    }
+}
+
+#[test]
+#[allow(clippy::excessive_precision)]
+fn contrast_statistics_equal_an_independent_reference() {
+    // (a, N1, b, N2) and the reference G², min E, rates per million and log2
+    // ratio, evaluated with 50-digit decimals from UCREL's formulas
+    // (https://ucrel.lancs.ac.uk/llwizard.html). The first row checks by hand:
+    // E1 = E2 = 15, G² = 2 (10 ln(10/15) + 20 ln(20/15)).
+    let cases: [((u64, u64, u64, u64), f64, f64, f64, f64, Option<f64>); 7] = [
+        (
+            (10, 1000, 20, 1000),
+            3.397980735907949,
+            15.0,
+            1.0e4,
+            2.0e4,
+            Some(-1.0),
+        ),
+        (
+            (52, 50_000, 7, 120_000),
+            89.17160904682299,
+            17.35294117647059,
+            1040.0,
+            58.33333333333333,
+            Some(4.156119201917282),
+        ),
+        (
+            (0, 1000, 15, 3000),
+            8.630462173553428,
+            3.75,
+            0.0,
+            5000.0,
+            None,
+        ),
+        (
+            (15, 3000, 0, 1000),
+            8.630462173553428,
+            3.75,
+            5000.0,
+            0.0,
+            None,
+        ),
+        (
+            (1, 154_059_223, 1, 154_059_223),
+            0.0,
+            1.0,
+            6.491010278560213e-3,
+            6.491010278560213e-3,
+            Some(0.0),
+        ),
+        (
+            (123_456, 80_000_000, 4321, 74_059_223),
+            130_371.1137199899,
+            61_424.85437091293,
+            1543.2,
+            58.34519759949412,
+            Some(4.725167325864036),
+        ),
+        (
+            (3, 17, 9, 400),
+            6.452383940038862,
+            0.4892086330935252,
+            176_470.5882352941,
+            22_500.0,
+            Some(2.971430847803229),
+        ),
+    ];
+    for ((a, n1, b, n2), g2, min_expected, rate1, rate2, log2_ratio) in cases {
+        let contrast = lingrep_corpus::Contrast::of([a, b], [n1, n2]);
+        let case = (a, n1, b, n2);
+        assert!(
+            relative(contrast.log_likelihood.expect("G²"), g2) < 1e-12,
+            "{case:?}: {contrast:?}"
+        );
+        assert!(
+            relative(contrast.min_expected.expect("min E"), min_expected) < 1e-12,
+            "{case:?}"
+        );
+        assert!(
+            relative(contrast.rates_per_million[0].expect("rate"), rate1) < 1e-12,
+            "{case:?}"
+        );
+        assert!(
+            relative(contrast.rates_per_million[1].expect("rate"), rate2) < 1e-12,
+            "{case:?}"
+        );
+        match (contrast.log2_ratio, log2_ratio) {
+            (Some(actual), Some(expected)) => {
+                assert!((actual - expected).abs() < 1e-12, "{case:?}")
+            }
+            (actual, expected) => assert_eq!(actual, expected, "{case:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_scope_without_tokens_yields_no_rate_score_or_direction() {
+    use lingrep_corpus::Contrast;
+    for (counts, tokens, rates) in [
+        ([0, 4], [0, 100], [None, Some(40_000.0)]),
+        ([4, 0], [100, 0], [Some(40_000.0), None]),
+        ([0, 0], [0, 0], [None, None]),
+    ] {
+        assert_eq!(
+            Contrast::of(counts, tokens),
+            Contrast {
+                rates_per_million: rates,
+                log_likelihood: None,
+                min_expected: None,
+                log2_ratio: None,
+                direction: None,
+            }
+        );
+    }
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn contrast_is_symmetric_in_its_scopes_and_zero_at_equal_rates(tc: hegel::TestCase) {
+    use lingrep_corpus::{Contrast, Direction};
+    let count = || generators::integers::<u64>().max_value(1 << 40);
+    let tokens = || {
+        generators::integers::<u64>()
+            .min_value(1)
+            .max_value(1 << 40)
+    };
+    let (a, b) = (tc.draw(count()), tc.draw(count()));
+    let (n1, n2) = (tc.draw(tokens()), tc.draw(tokens()));
+    let forward = Contrast::of([a, b], [n1, n2]);
+    let backward = Contrast::of([b, a], [n2, n1]);
+    let g2 = forward.log_likelihood.expect("G²");
+    assert!(g2 >= 0.0);
+    assert!(relative(backward.log_likelihood.expect("G²"), g2) < 1e-9);
+    assert_eq!(forward.log2_ratio.map(|ratio| -ratio), backward.log2_ratio);
+    let flipped = |direction| match direction {
+        Direction::First => Direction::Second,
+        Direction::Second => Direction::First,
+        Direction::Equal => Direction::Equal,
+    };
+    assert_eq!(forward.direction.map(flipped), backward.direction);
+    let equal_rates = u128::from(a) * u128::from(n2) == u128::from(b) * u128::from(n1);
+    assert_eq!(forward.direction == Some(Direction::Equal), equal_rates);
+    if equal_rates {
+        assert_eq!(g2, 0.0);
+    }
+}
+
+#[hegel::test(test_cases = 200, derandomize = true)]
+fn contrast_g2_scales_with_the_counts_and_tokens(tc: hegel::TestCase) {
+    use lingrep_corpus::Contrast;
+    let draw = |min| tc.draw(generators::integers::<u64>().min_value(min));
+    let (a, b, n1, n2) = (draw(0), draw(0), draw(1), draw(1));
+    let k = tc.draw(
+        generators::integers::<u64>()
+            .min_value(1)
+            .max_value(u64::from(u32::MAX)),
+    );
+    // Draws whose scaled values do not fit a u64 are discarded.
+    let scale = |value: u64| value.checked_mul(k);
+    let (Some(ka), Some(kb), Some(kn1), Some(kn2)) = (scale(a), scale(b), scale(n1), scale(n2))
+    else {
+        tc.reject();
+    };
+    let once = Contrast::of([a, b], [n1, n2]);
+    let scaled = Contrast::of([ka, kb], [kn1, kn2]);
+    let g2 = once.log_likelihood.expect("G²");
+    assert!(
+        (scaled.log_likelihood.expect("G²") - k as f64 * g2).abs()
+            <= 1e-9 * (k as f64 * g2).max(1.0)
+    );
+    assert_eq!(scaled.direction, once.direction);
+}
+
+#[test]
+fn contrast_of_counts_near_the_integer_limit_does_not_overflow() {
+    let contrast = lingrep_corpus::Contrast::of([u64::MAX, 1], [u64::MAX, u64::MAX]);
+    assert!(contrast.log_likelihood.expect("G²") > 0.0);
+    assert_eq!(contrast.direction, Some(lingrep_corpus::Direction::First));
+}
+
+#[hegel::test(test_cases = 100, derandomize = true)]
+fn contrast_ranks_every_entry_by_g2_as_a_direct_count_does(tc: hegel::TestCase) {
+    use lingrep_corpus::{Contrast, ScopeCount, ScopeRelation};
+    let document_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(6));
+    let pattern_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(2));
+    let pairs: Pairs = (0..pattern_count)
+        .map(|_| {
+            let entry_count = tc.draw(generators::integers::<usize>().max_value(200));
+            (0..entry_count)
+                .map(|_| {
+                    let present = tc.draw(
+                        generators::integers::<u32>()
+                            .min_value(1)
+                            .max_value((1 << document_count) - 1),
+                    );
+                    (0..document_count as u32)
+                        .filter(|document| present & (1 << document) != 0)
+                        .map(|document| {
+                            (
+                                document,
+                                tc.draw(generators::integers::<u64>().min_value(1).max_value(4)),
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let draw_admitted = || {
+        tc.draw(
+            generators::vecs(generators::booleans())
+                .min_size(document_count)
+                .max_size(document_count),
+        )
+    };
+    let first = draw_admitted();
+    let second = if tc.draw(generators::booleans()) {
+        first.clone()
+    } else {
+        draw_admitted()
+    };
+    let limit = tc.draw(generators::integers::<usize>().max_value(250));
+    let resident_rows = tc.draw(generators::integers::<usize>().min_value(1).max_value(64));
+    let documents = (0..document_count as u64)
+        .map(|document| DocumentTotals {
+            document_id: 10 + 2 * document,
+            sentences: document + 1,
+            tokens: 7 * (document + 1),
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(&directory.path().join("t.lingtable"), &documents, &pairs);
+    let mask = |admitted: &[bool]| {
+        table.mask(|id| {
+            documents
+                .iter()
+                .zip(admitted)
+                .any(|(document, admitted)| *admitted && document.document_id == id)
+        })
+    };
+    let (first_mask, second_mask) = (mask(&first), mask(&second));
+    let scopes = table.scopes([&first_mask, &second_mask]).expect("scopes");
+
+    let tokens = |admitted: &[bool]| -> u64 {
+        documents
+            .iter()
+            .zip(admitted)
+            .filter(|(_, admitted)| **admitted)
+            .map(|(document, _)| document.tokens)
+            .sum()
+    };
+    let both = first
+        .iter()
+        .zip(&second)
+        .map(|(first, second)| *first && *second)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scopes
+            .admission()
+            .map(|admission| admission.tokens_admitted),
+        [tokens(&first), tokens(&second)]
+    );
+    assert_eq!(scopes.shared().tokens_admitted, tokens(&both));
+    assert_eq!(
+        scopes.shared().documents_admitted,
+        both.iter().filter(|both| **both).count() as u64
+    );
+    let relation = if first == second {
+        ScopeRelation::Identical
+    } else if both.contains(&true) {
+        ScopeRelation::Overlapping
+    } else {
+        ScopeRelation::Disjoint
+    };
+    assert_eq!(scopes.relation(), relation);
+
+    let counted = |entry_pairs: &Vec<(u32, u64)>, admitted: &[bool]| {
+        let mut scope = ScopeCount::default();
+        for (document, count) in entry_pairs {
+            if admitted[*document as usize] {
+                scope.count += count;
+                scope.works += 1;
+            }
+        }
+        scope
+    };
+    let mut entry = 0u32;
+    for (pattern, entries) in pairs.iter().enumerate() {
+        let mut expected = Vec::new();
+        for entry_pairs in entries {
+            let counts = [counted(entry_pairs, &first), counted(entry_pairs, &second)];
+            if counts[0].count + counts[1].count > 0 {
+                let contrast = Contrast::of(
+                    counts.map(|scope| scope.count),
+                    [tokens(&first), tokens(&second)],
+                );
+                expected.push((entry, counts, counted(entry_pairs, &both), contrast));
+            }
+            entry += 1;
+        }
+        expected.sort_by(|left, right| {
+            let score = |row: &(u32, [ScopeCount; 2], ScopeCount, Contrast)| {
+                row.3.log_likelihood.unwrap_or(-1.0)
+            };
+            score(right)
+                .total_cmp(&score(left))
+                .then(
+                    (right.1[0].count + right.1[1].count).cmp(&(left.1[0].count + left.1[1].count)),
+                )
+                .then(left.0.cmp(&right.0))
+        });
+        let as_tuples = |rows: Vec<lingrep_corpus::ContrastRow>| {
+            rows.into_iter()
+                .map(|row| (row.entry, row.scopes, row.shared, row.contrast))
+                .collect::<Vec<_>>()
+        };
+        let ranked = table
+            .ranked_contrast_rows(
+                pattern,
+                &scopes,
+                spill_policy(resident_rows),
+                Arc::new(TempBudget::new(u64::MAX)),
+                &CancellationFlag::new(),
+            )
+            .expect("ranked rows");
+        assert_eq!(ranked.entries, expected.len() as u64);
+        assert_eq!(
+            as_tuples(ranked.collect::<Result<_, _>>().expect("rows")),
+            expected
+        );
+        let top = table
+            .contrast_top(pattern, &scopes, limit, &CancellationFlag::new())
+            .expect("top");
+        assert_eq!(top.entries, expected.len() as u64);
+        expected.truncate(limit);
+        assert_eq!(as_tuples(top.rows), expected);
+        if relation == ScopeRelation::Identical {
+            assert!(
+                expected
+                    .iter()
+                    .all(|row| row.3.log_likelihood.is_none_or(|g2| g2 == 0.0))
+            );
+        }
+    }
+}
+
+#[hegel::test(test_cases = 300, derandomize = true)]
+fn contrast_g2_and_ratio_follow_the_exact_rate_comparison(tc: hegel::TestCase) {
+    use lingrep_corpus::{Contrast, Direction};
+    // Rates c1/(c1 m) and c2/(c2 m) are equal; `step` moves the second scope's
+    // tokens off equality by one. Token totals beyond 2^53 are not exact in f64.
+    let draw =
+        |min: u64, max: u64| tc.draw(generators::integers::<u64>().min_value(min).max_value(max));
+    let (c1, c2) = (draw(1, 1000), draw(1, 1000));
+    let m = draw(1 << 40, 1 << 53);
+    let step = draw(0, 2);
+    let tokens = [c1 * m, c2 * m + step - 1];
+    let contrast = Contrast::of([c1, c2], tokens);
+    let first = u128::from(c1) * u128::from(tokens[1]);
+    let second = u128::from(c2) * u128::from(tokens[0]);
+    let g2 = contrast.log_likelihood.expect("G²");
+    let ratio = contrast.log2_ratio.expect("ratio");
+    let (first_f, second_f) = (first as f64, second as f64);
+    match first.cmp(&second) {
+        std::cmp::Ordering::Equal => {
+            assert_eq!(contrast.direction, Some(Direction::Equal));
+            assert_eq!((g2, ratio), (0.0, 0.0), "{tokens:?}");
+            return;
+        }
+        std::cmp::Ordering::Greater => {
+            assert_eq!(contrast.direction, Some(Direction::First));
+            assert!(ratio >= 0.0, "{tokens:?}: {ratio}");
+        }
+        std::cmp::Ordering::Less => {
+            assert_eq!(contrast.direction, Some(Direction::Second));
+            assert!(ratio <= 0.0, "{tokens:?}: {ratio}");
+        }
+    }
+    // The rate ratio is first / second; the difference of the f64 logarithms
+    // carries about 2^-46 of absolute error at these magnitudes.
+    let expected = first_f.log2() - second_f.log2();
+    assert!(
+        (ratio - expected).abs() <= 1e-12,
+        "{tokens:?}: {ratio} vs {expected}"
+    );
+    assert_eq!(
+        ratio.partial_cmp(&0.0),
+        Some(first.cmp(&second)),
+        "{tokens:?}: the sign survives products that round to the same f64: {first_f} {second_f}"
+    );
+    assert!(g2.is_finite() && g2 >= 0.0, "{tokens:?}: {g2}");
+}
+
+#[test]
+fn masks_and_scopes_of_another_table_are_rejected() {
+    let documents = (0..3u64)
+        .map(|document| DocumentTotals {
+            document_id: 10 + document,
+            sentences: 1,
+            tokens: 100,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    let pairs: Pairs = vec![vec![vec![(0, 3), (1, 1)], vec![(2, 5)]]];
+    let table = write_table(&path, &documents, &pairs);
+    let other = write_table(
+        &directory.path().join("u.lingtable"),
+        &documents,
+        &vec![vec![vec![(2, 1)]]],
+    );
+    let reopened = CountTable::open(&path, &key()).expect("open");
+    let mask = table.mask(|id| id != 11);
+    let scopes = table.scopes([&mask, &mask]).expect("scopes");
+    for foreign in [&other, &reopened] {
+        assert!(foreign.scopes([&mask, &mask]).is_err());
+        assert!(foreign.pattern_totals(&mask).is_err());
+        assert!(
+            foreign
+                .contrast_top(0, &scopes, 10, &CancellationFlag::new())
+                .is_err()
+        );
+        assert!(
+            foreign
+                .ranked_contrast_rows(
+                    0,
+                    &scopes,
+                    spill_policy(4),
+                    Arc::new(TempBudget::new(u64::MAX)),
+                    &CancellationFlag::new(),
+                )
+                .is_err()
+        );
+    }
+    assert_eq!(
+        table
+            .contrast_top(0, &scopes, 10, &CancellationFlag::new())
+            .expect("top")
+            .entries,
+        2
+    );
+}
+
+#[test]
+fn a_raised_cancellation_stops_contrast_ranking() {
+    let documents = (0..2u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(
+        &directory.path().join("t.lingtable"),
+        &documents,
+        &vec![vec![vec![(0, 2)], vec![(1, 3)]]],
+    );
+    let mask = table.mask(|_| true);
+    let scopes = table.scopes([&mask, &mask]).expect("scopes");
+    let cancellation = CancellationFlag::new();
+    assert_eq!(
+        table
+            .contrast_top(0, &scopes, 10, &cancellation)
+            .expect("top")
+            .entries,
+        2
+    );
+    cancellation.cancel();
+    assert!(matches!(
+        table.contrast_top(0, &scopes, 10, &cancellation),
+        Err(CountTableError::Cancelled)
+    ));
+    assert!(matches!(
+        table.ranked_contrast_rows(
+            0,
+            &scopes,
+            spill_policy(4),
+            Arc::new(TempBudget::new(u64::MAX)),
+            &cancellation,
+        ),
+        Err(CountTableError::Cancelled)
+    ));
+
+    let draining = CancellationFlag::new();
+    let mut rows = table
+        .ranked_contrast_rows(
+            0,
+            &scopes,
+            spill_policy(1),
+            Arc::new(TempBudget::new(u64::MAX)),
+            &draining,
+        )
+        .expect("rows");
+    assert!(rows.next().expect("first row").is_ok());
+    draining.cancel();
+    assert!(matches!(rows.next(), Some(Err(CountTableError::Cancelled))));
+    assert!(rows.next().is_none());
+}
+
+#[hegel::test(test_cases = 100, derandomize = true)]
+fn unranked_pattern_rows_are_the_ranked_rows_in_entry_order(tc: hegel::TestCase) {
+    let document_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(6));
+    let pattern_count = tc.draw(generators::integers::<usize>().min_value(1).max_value(3));
+    let pairs: Pairs = (0..pattern_count)
+        .map(|_| {
+            let entry_count = tc.draw(generators::integers::<usize>().max_value(200));
+            (0..entry_count)
+                .map(|_| {
+                    let present = tc.draw(
+                        generators::integers::<u32>()
+                            .min_value(1)
+                            .max_value((1 << document_count) - 1),
+                    );
+                    (0..document_count as u32)
+                        .filter(|document| present & (1 << document) != 0)
+                        .map(|document| {
+                            let count = generators::integers::<u64>().min_value(1).max_value(4);
+                            (document, tc.draw(count))
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let admitted = tc.draw(
+        generators::vecs(generators::booleans())
+            .min_size(document_count)
+            .max_size(document_count),
+    );
+    let documents = (0..document_count as u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(&directory.path().join("t.lingtable"), &documents, &pairs);
+    let mask = table.mask(|id| admitted[id as usize]);
+    let never = CancellationFlag::new();
+    for pattern in 0..pattern_count {
+        let unranked = table
+            .unranked_pattern_rows(pattern, &mask, &never)
+            .expect("unranked")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows");
+        let mut ranked = table
+            .ranked_pattern_rows(
+                pattern,
+                &mask,
+                spill_policy(4),
+                Arc::new(TempBudget::new(u64::MAX)),
+                &never,
+            )
+            .expect("ranked")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows");
+        ranked.sort_by_key(|row| row.entry);
+        assert_eq!(unranked, ranked, "pattern {pattern}");
+    }
+}
+
+#[test]
+fn unranked_pattern_rows_stop_when_cancelled_and_refuse_a_foreign_mask() {
+    let documents = (0..2u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let pairs: Pairs = vec![vec![vec![(0, 2)], vec![(1, 3)]]];
+    let table = write_table(&directory.path().join("t.lingtable"), &documents, &pairs);
+    let other = write_table(&directory.path().join("u.lingtable"), &documents, &pairs);
+    let mask = table.mask(|_| true);
+    let raised = CancellationFlag::new();
+    raised.cancel();
+    let mut rows = table
+        .unranked_pattern_rows(0, &mask, &raised)
+        .expect("rows");
+    assert!(matches!(rows.next(), Some(Err(CountTableError::Cancelled))));
+    assert!(rows.next().is_none());
+    assert!(
+        other
+            .unranked_pattern_rows(0, &mask, &CancellationFlag::new())
+            .is_err()
+    );
+}
+
+#[test]
+fn a_raised_cancellation_stops_ranked_pattern_rows() {
+    let documents = (0..2u64)
+        .map(|document| DocumentTotals {
+            document_id: document,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(
+        &directory.path().join("t.lingtable"),
+        &documents,
+        &vec![vec![vec![(0, 2)], vec![(1, 3)], vec![(0, 1), (1, 1)]]],
+    );
+    let mask = table.mask(|_| true);
+    let rows = |cancellation: &CancellationFlag| {
+        table.ranked_pattern_rows(
+            0,
+            &mask,
+            spill_policy(1),
+            Arc::new(TempBudget::new(u64::MAX)),
+            cancellation,
+        )
+    };
+    let raised = CancellationFlag::new();
+    raised.cancel();
+    assert!(matches!(rows(&raised), Err(CountTableError::Cancelled)));
+
+    let draining = CancellationFlag::new();
+    let mut drain = rows(&draining).expect("rows");
+    assert!(drain.next().expect("first row").is_ok());
+    draining.cancel();
+    assert!(matches!(
+        drain.next(),
+        Some(Err(CountTableError::Cancelled))
+    ));
+    assert!(drain.next().is_none());
 }

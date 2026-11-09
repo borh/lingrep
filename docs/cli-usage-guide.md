@@ -537,6 +537,53 @@ under each value, documents without a value are counted under `value: null`,
 and `--where` restricts the documents. It requires `--json` and cannot be
 combined with `--top`.
 
+### Comparing two scopes: `ling contrast`
+
+`ling contrast` reads the same count table and ranks each pattern's entries by
+how differently two `@document` scopes use them, without scanning the corpus:
+
+```bash
+ling --json contrast --table soranoha.collexeme.lingtable --top 100 \
+  --where '@document.ndc contains "914"' \
+  --versus '@document.ndc contains "913"' \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
+```
+
+Omitting `--where` or `--versus` makes that scope every document, which
+compares one scope with the whole corpus. Each row gives, per scope, the
+entry's `count`, `works` (the admitted documents it occurs in) and
+`per_million`, its count per million admitted tokens. Its `g2` is the two-cell
+log-likelihood of UCREL's calculator: for counts `a` and `b` in scopes of `N1`
+and `N2` admitted tokens, `E_i = N_i·(a+b)/(N1+N2)` and
+`G² = 2 Σ O·ln(O/E)`, where a cell with `O = 0` contributes 0. `min_expected`
+is the smaller `E_i`, `log2_ratio` is `log2((a/N1)/(b/N2))` with no smoothing,
+and `direction` names the scope with the higher rate, or `equal`. G² is an
+exploratory score: no p-value or significance label is given, and occurrences
+that cluster in a few documents make it overstate the evidence, so read it
+with each side's `works`.
+
+Every entry that occurs in either scope is ranked, by descending `g2`, then
+descending `a + b`, then `summarize`'s group order, and `--top` keeps the first
+rows of that ranking. Every pattern is ranked before the first `pattern`
+record, since each record carries its `entries` count, so memory and temporary
+storage grow with the number of patterns. A `--top` up to 1,048,576 holds that
+many rows per pattern in memory. With `--top all`, a larger `--top`, or JSON
+output without `--top`, every pattern's ranking goes through temporary files at
+once, within `--max-temp-bytes`, keeping up to 1,048,576 keys per pattern in
+memory.
+
+The two scopes may share documents, as when both name values of a list-valued
+key. The `scopes` record gives the documents, sentences and tokens each scope
+admits and that both admit, and a `relation` of `disjoint`, `overlapping` or
+`identical`. Nothing is subtracted: an overlapping comparison is computed over
+both scopes as given, and each row's `shared` gives its count and documents in
+the documents both admit. When a scope admits no tokens, its `per_million` and
+the row's `g2`, `min_expected`, `log2_ratio` and `direction` are `null`.
+Identical scopes give a `g2` of 0 for every entry. The output contract is
+`lingrep.contrast/v1`; like `ling table`, `ling contrast` rejects a table
+written for another corpus, catalog or matcher, and a clause that names
+`@section` or sentence values exits with code `2`.
+
 ### Counting authored word lists
 
 Use `lexicon target_words by [text, norm] := {"大学院", "行う"}.` when a term
@@ -2103,6 +2150,19 @@ last pointed at, focused or tapped, and in the chart's table.
 The entry level needs a table written by this release's `ling summarize
 --write-table`, which records the sentences each entry occurs in (count table
 version 3). An earlier table stops startup with an error naming it; rewrite it.
+
+The same tables serve the **Compare** page, at `compare` under the base path.
+It states two scopes, A and B, as a sentence with the Frequencies view's
+condition controls, one set per scope, or as two clauses through "Edit as
+clauses". It ranks one pattern's entries by G² as `ling contrast` does, 100 per
+page, and shows the `ling contrast --where … --versus …` command that
+reproduces the first page. Each row gives each scope's occurrences, rate per
+million tokens and documents, a bar from the centre toward the scope with the
+higher rate on a log2 scale shared by the shown rows, hatched for an entry
+absent from one scope, and G². Below the sentence the page gives each scope's
+documents and tokens and states whether the scopes share documents, are
+identical, or are disjoint. A narrow screen keeps each scope's rate and drops
+its counts. The URL stores both scopes, so a copied link reopens the page.
 
 `--metadata-labels PATH` reads a JSON file of display labels for document
 metadata keys, by locale. The view names a condition by its label in the

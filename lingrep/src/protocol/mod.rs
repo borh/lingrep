@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod check;
 pub mod completions;
 pub mod contract;
+pub mod contrast;
 pub mod diagnostic;
 pub mod dictionary;
 pub mod discovery;

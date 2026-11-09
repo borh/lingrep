@@ -35,6 +35,16 @@ const HTMX_EXT_SSE_JS: &[u8] = include_bytes!(concat!(
 
 const ASSETS: &[AssetEntry] = &[
     (
+        "/compare.js",
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/compare.js")),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "/compare.css",
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/compare.css")),
+        "text/css; charset=utf-8",
+    ),
+    (
         "/frequency.js",
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/frequency.js")),
         "text/javascript; charset=utf-8",

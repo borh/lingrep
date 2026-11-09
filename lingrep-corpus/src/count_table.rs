@@ -21,6 +21,12 @@ use serde::{Deserialize, Serialize};
 use crate::publication::StagingDirectory;
 use crate::value_slots::DocumentSlots;
 
+mod contrast;
+pub use contrast::{
+    Contrast, ContrastRow, ContrastRows, Direction, RankedContrast, ScopeCount, ScopeRelation,
+    Scopes,
+};
+
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");
 
@@ -138,7 +144,7 @@ pub enum CountTableError {
     DestinationExists(PathBuf),
     #[error("entry key exceeds the {0} encoded-value limit")]
     GroupLimit(usize),
-    #[error("count table writing was cancelled")]
+    #[error("count table work was cancelled")]
     Cancelled,
 }
 
@@ -162,6 +168,14 @@ fn pause_for_test(phase: &str, cancellation: &CancellationFlag) {
 
 #[cfg(not(debug_assertions))]
 fn pause_for_test(_phase: &str, _cancellation: &CancellationFlag) {}
+
+fn cancelled_or(cancellation: &CancellationFlag, error: CountTableError) -> CountTableError {
+    if cancellation.is_cancelled() {
+        CountTableError::Cancelled
+    } else {
+        error
+    }
+}
 
 fn check_cancellation(cancellation: &CancellationFlag) -> Result<(), CountTableError> {
     if cancellation.is_cancelled() {
@@ -958,12 +972,17 @@ pub struct CountTable {
     document_ids: Vec<u64>,
     document_sentences: Vec<u64>,
     document_tokens: Vec<u64>,
+    instance: u64,
 }
 
-/// The documents a query admits, indexed like the table's documents.
+static NEXT_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The documents a query admits, indexed like the table's documents. Only
+/// the table that built it reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentMask {
     admitted: Vec<bool>,
+    table: u64,
 }
 
 impl DocumentMask {
@@ -1079,10 +1098,13 @@ impl Iterator for TableRows<'_> {
                 return None;
             }
             self.next_pattern += 1;
-            match self
-                .table
-                .pattern_rows(pattern, self.mask, self.policy, &self.budget)
-            {
+            match self.table.pattern_rows(
+                pattern,
+                self.mask,
+                self.policy,
+                &self.budget,
+                &CancellationFlag::new(),
+            ) {
                 Ok(drain) => self.current = Some((pattern, drain)),
                 Err(error) => {
                     self.failed = true;
@@ -1253,6 +1275,7 @@ impl CountTable {
             document_ids: small(DOCUMENT_IDS)?,
             document_sentences: small(DOCUMENT_SENTENCES)?,
             document_tokens: small(DOCUMENT_TOKENS)?,
+            instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             path: path.to_path_buf(),
             header,
         };
@@ -1346,6 +1369,7 @@ impl CountTable {
     pub fn mask(&self, mut admit: impl FnMut(u64) -> bool) -> DocumentMask {
         DocumentMask {
             admitted: self.document_ids.iter().map(|id| admit(*id)).collect(),
+            table: self.instance,
         }
     }
 
@@ -1629,7 +1653,7 @@ impl CountTable {
     }
 
     fn admission(&self, mask: &DocumentMask) -> Result<(Admission, u64), CountTableError> {
-        if mask.admitted.len() != self.document_ids.len() {
+        if mask.table != self.instance {
             return Err(corrupt("mask was built for a different table"));
         }
         let document_offsets = self.u64s(&self.document_pair_offsets)?;
@@ -1658,7 +1682,7 @@ impl CountTable {
         &self,
         mask: &DocumentMask,
     ) -> Result<Vec<PatternTotal>, CountTableError> {
-        if mask.admitted.len() != self.document_ids.len() {
+        if mask.table != self.instance {
             return Err(corrupt("mask was built for a different table"));
         }
         let offsets = self.u64s(&self.document_pattern_offsets)?;
@@ -1748,19 +1772,31 @@ impl CountTable {
     }
 
     /// Streams one pattern in count/rank order using the caller's spill policy and temporary budget.
+    ///
+    /// # Errors
+    ///
+    /// Besides the table's own errors, [`CountTableError::Cancelled`] once
+    /// `cancellation` is raised, from this call or from the next row.
     pub fn ranked_pattern_rows(
         &self,
         pattern: usize,
         mask: &DocumentMask,
         policy: SpillPolicy,
         budget: Arc<TempBudget>,
-    ) -> Result<impl Iterator<Item = Result<TopRow, CountTableError>>, CountTableError> {
+        cancellation: &CancellationFlag,
+    ) -> Result<impl Iterator<Item = Result<TopRow, CountTableError>> + use<>, CountTableError>
+    {
         self.admission(mask)?;
-        let mut rows = self.pattern_rows(pattern, mask, policy, &budget)?;
+        let mut rows = self.pattern_rows(pattern, mask, policy, &budget, cancellation)?;
+        let cancellation = cancellation.clone();
         let mut finished = false;
         Ok(std::iter::from_fn(move || {
             if finished {
                 return None;
+            }
+            if let Err(error) = check_cancellation(&cancellation) {
+                finished = true;
+                return Some(Err(error));
             }
             match rows.next_entry() {
                 Ok(Some((row, _))) => Some(Ok(TopRow {
@@ -1780,6 +1816,58 @@ impl CountTable {
         }))
     }
 
+    /// Every entry of `pattern` with a nonzero count under `mask`, in entry
+    /// order: the rows of [`Self::ranked_pattern_rows`] without ordering
+    /// them, holding one block of rows at a time.
+    ///
+    /// # Errors
+    ///
+    /// A mask built for another table, a corrupt table, or
+    /// [`CountTableError::Cancelled`] once `cancellation` is raised, checked
+    /// before every block.
+    pub fn unranked_pattern_rows<'a>(
+        &'a self,
+        pattern: usize,
+        mask: &'a DocumentMask,
+        cancellation: &CancellationFlag,
+    ) -> Result<impl Iterator<Item = Result<TopRow, CountTableError>> + 'a, CountTableError> {
+        if mask.table != self.instance {
+            return Err(corrupt("mask was built for a different table"));
+        }
+        let std::ops::Range { mut start, end } = self.pattern_range(pattern)?;
+        let cancellation = cancellation.clone();
+        let mut block = Vec::new().into_iter();
+        Ok(std::iter::from_fn(move || {
+            loop {
+                if let Some(row) = block.next() {
+                    return Some(Ok(row));
+                }
+                if start >= end {
+                    return None;
+                }
+                if let Err(error) = check_cancellation(&cancellation) {
+                    start = end;
+                    return Some(Err(error));
+                }
+                let stop = start.saturating_add(CANCELLATION_INTERVAL).min(end);
+                let rows = (start..stop)
+                    .into_par_iter()
+                    .with_min_len(4096)
+                    .map(|entry| self.conditioned(entry as u32, &mask.admitted))
+                    .filter(|row| row.as_ref().map_or(true, |row| row.count > 0))
+                    .collect::<Result<Vec<_>, _>>();
+                start = stop;
+                match rows {
+                    Ok(rows) => block = rows.into_iter(),
+                    Err(error) => {
+                        start = end;
+                        return Some(Err(error));
+                    }
+                }
+            }
+        }))
+    }
+
     /// Every entry of `pattern` with a nonzero count under `mask`, in
     /// [`PatternTop`]'s order, held in memory.
     pub fn pattern_entries(
@@ -1787,7 +1875,7 @@ impl CountTable {
         pattern: usize,
         mask: &DocumentMask,
     ) -> Result<Vec<TopRow>, CountTableError> {
-        if mask.admitted.len() != self.document_ids.len() {
+        if mask.table != self.instance {
             return Err(corrupt("mask was built for a different table"));
         }
         let rows = self
@@ -1806,11 +1894,14 @@ impl CountTable {
         mask: &DocumentMask,
         policy: SpillPolicy,
         budget: &Arc<TempBudget>,
+        cancellation: &CancellationFlag,
     ) -> Result<SortedDrain<RowOrder>, CountTableError> {
         let std::ops::Range { start, end } = self.pattern_range(pattern)?;
         let mut ordered = SortedRunCounts::with_policy(policy, Arc::clone(budget))?;
+        ordered.set_cancellation(cancellation.clone());
         let mut at = start;
         while at < end {
+            check_cancellation(cancellation)?;
             let stop = (at + CANCELLATION_INTERVAL).min(end);
             let rows = (at..stop)
                 .into_par_iter()
@@ -1830,7 +1921,9 @@ impl CountTable {
             }
             at = stop;
         }
-        Ok(ordered.into_sorted_drain()?)
+        ordered
+            .into_sorted_drain()
+            .map_err(|error| cancelled_or(cancellation, error.into()))
     }
 
     /// The documents holding `entry`, indexed like [`Self::document_ids`] and
@@ -1892,9 +1985,7 @@ impl CountTable {
         mask: &DocumentMask,
         counts: impl IntoIterator<Item = (usize, u64)>,
     ) -> Result<Vec<ValueCount>, CountTableError> {
-        if mask.admitted.len() != self.document_ids.len()
-            || slots.document_count() != self.document_ids.len()
-        {
+        if mask.table != self.instance || slots.document_count() != self.document_ids.len() {
             return Err(corrupt("mask or slots were built for a different table"));
         }
         let mut sums = vec![

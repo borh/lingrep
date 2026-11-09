@@ -131,7 +131,7 @@ enum Reply<T> {
     Unavailable,
 }
 
-fn bad_request(message: String) -> Response {
+pub(super) fn bad_request(message: String) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({ "error": message })),
@@ -139,7 +139,7 @@ fn bad_request(message: String) -> Response {
         .into_response()
 }
 
-fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Response>> {
+pub(super) fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Response>> {
     raw.filter(|raw| !raw.is_empty())
         .map(serde_json::from_str)
         .transpose()
@@ -153,7 +153,7 @@ fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Resp
 
 /// Runs `work` under a scan permit, which it holds until it returns. Its
 /// cancellation flag is raised when the request is dropped.
-async fn run_frequency_task<T: Send + 'static>(
+pub(super) async fn run_frequency_task<T: Send + 'static>(
     coordinators: Arc<crate::coordinator::CoordinatorRegistry>,
     work: impl FnOnce(&CancellationFlag) -> T + Send + 'static,
 ) -> Result<T, tokio::task::JoinError> {
@@ -226,7 +226,7 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions, _| match pair.answer(dimensions, &query) {
+        move |pair, dimensions, cancel| match pair.answer(dimensions, &query, cancel) {
             Ok(Outcome::Answer(answer)) => Ok(Ok(answer)),
             Ok(Outcome::Unsupported(unsupported)) => Ok(Err(unsupported)),
             Err(error) => Err(error.to_string()),

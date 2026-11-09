@@ -67,6 +67,7 @@ fn routes(store: RequestStore) -> Router {
         .merge(handlers::help::routes())
         .merge(handlers::sample::page_routes())
         .merge(handlers::frequency::page_routes())
+        .merge(handlers::compare::page_routes())
         .nest(
             "/assets/editor",
             handlers::editor_assets::routes().layer(CompressionLayer::new()),
@@ -90,6 +91,7 @@ fn routes(store: RequestStore) -> Router {
                 .merge(handlers::permalink::routes())
                 .merge(handlers::catalogs::routes())
                 .merge(handlers::frequency::routes())
+                .merge(handlers::compare::routes())
                 .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES)),
         )
         .with_state(store)

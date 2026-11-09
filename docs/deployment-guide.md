@@ -101,9 +101,10 @@ route {
 `services.lingrep-web.countTables` lists count tables written by
 `ling summarize --write-table`; the module passes each as `--count-table` and
 mounts it read-only. A non-empty list adds the Frequencies view at
-`frequencies` under the base path. Each table binds to a prepared
-`.lingcorpus` corpus and a catalog by the identities it records, so declare
-that corpus in `corpora` and its catalog in `patterns.catalogs`. A table also
+`frequencies` under the base path, and the Compare page at `compare`. Each
+table binds to a prepared `.lingcorpus` corpus and a catalog by the identities
+it records, so declare that corpus in `corpora` and its catalog in
+`patterns.catalogs`. A table also
 records the matcher revision, so write it with the `ling` from the same lingrep
 release as the unit's `lingrep-web`:
 

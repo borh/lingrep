@@ -1,18 +1,22 @@
 //! `ling table`: per-pattern counts under `--where`, read from a count table.
 
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use lingrep_core::execution::SentenceAdmission;
+use lingrep_core::scope::ScopeClause;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
-    Admission, CorpusArtifact, CountTable, CountTableError, CountTableKey, FieldValue, Group,
-    GroupKind, GroupSchema, TopRow, ValueSlots,
+    Admission, BlockingProvenance, CorpusArtifact, CountTable, CountTableError, CountTableKey,
+    FieldValue, Group, GroupKind, GroupSchema, TopRow, ValueSlots,
 };
 
+use roaring::RoaringTreemap;
+
 use super::CommandOutcome;
-use super::query_scope::{document_values, parse_scope, resolve_prepared_scope};
+use super::query_scope::{document_values, parse_scope_flag, resolve_prepared_scope};
 use super::query_support::{execution_output_error, execution_output_io};
 use crate::catalog_input::load_and_compile;
 use crate::cli::TableArgs;
@@ -30,27 +34,70 @@ use crate::protocol::write_jsonl;
 const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
 
-fn table_error(error: CountTableError) -> CliError {
+pub(super) fn table_error(error: CountTableError) -> CliError {
     match error {
         CountTableError::Io(error) => CliError::Aggregation(error),
         error => CliError::Corpus(error.to_string()),
     }
 }
 
-pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliError> {
-    let started = Instant::now();
-    let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
-    let clause = parse_scope(args.clause.as_deref())?;
+/// Opens the count table at `path` for `artifact` and the catalog whose
+/// fingerprint is `catalog_fingerprint`, under the current matcher.
+pub(super) fn open_table(
+    path: &Path,
+    artifact: &CorpusArtifact,
+    catalog_fingerprint: &str,
+) -> Result<(CountTable, CountTableKey), CliError> {
+    let key = CountTableKey {
+        analysis_identity: encode_digest(artifact.analysis_identity().as_bytes()),
+        catalog_fingerprint: catalog_fingerprint.to_owned(),
+        matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
+    };
+    let table =
+        CountTable::open(path, &key).map_err(|error| CliError::Corpus(error.to_string()))?;
+    Ok((table, key))
+}
+
+fn only_documents(option: &str) -> CliError {
+    CliError::InvalidArgs(format!(
+        "{option} accepts only @document conditions: a count table holds counts per document"
+    ))
+}
+
+/// Parses `clause`, given as `option` (such as `table --where`), and
+/// rejects one that names sections or sentence values.
+pub(super) fn document_clause(
+    option: &str,
+    clause: Option<&str>,
+) -> Result<Option<ScopeClause>, CliError> {
+    let flag = option.rsplit(' ').next().unwrap_or(option);
+    let clause = parse_scope_flag(flag, clause)?;
     if clause
         .as_ref()
         .is_some_and(|clause| clause.names_sections() || clause.requires_sentence_values())
     {
-        return Err(CliError::InvalidArgs(
-            "table --where accepts only @document conditions: a count table holds counts per \
-             document"
-                .to_owned(),
-        ));
+        return Err(only_documents(option));
     }
+    Ok(clause)
+}
+
+/// The documents `clause`, from [`document_clause`], admits in `reader`'s corpus.
+pub(super) fn document_admission(
+    reader: &BlockingProvenance,
+    clause: &ScopeClause,
+    option: &str,
+) -> Result<RoaringTreemap, CliError> {
+    let (resolution, _) = resolve_prepared_scope(reader, clause)?;
+    let SentenceAdmission::Documents(admitted) = resolution.admission else {
+        return Err(only_documents(option));
+    };
+    Ok(admitted)
+}
+
+pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliError> {
+    let started = Instant::now();
+    let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
+    let clause = document_clause("table --where", args.clause.as_deref())?;
     if args.by_metadata.is_some() && output != OutputMode::Jsonl {
         return Err(CliError::InvalidArgs(
             "table --by-metadata requires --json".to_owned(),
@@ -76,13 +123,7 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         .transpose()?;
     let top = resolve_summary_top(output, args.top);
     let artifact = CorpusArtifact::open(&args.corpus)?;
-    let key = CountTableKey {
-        analysis_identity: encode_digest(artifact.analysis_identity().as_bytes()),
-        catalog_fingerprint: catalog.fingerprint.clone(),
-        matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
-    };
-    let table =
-        CountTable::open(&args.table, &key).map_err(|error| CliError::Corpus(error.to_string()))?;
+    let (table, key) = open_table(&args.table, &artifact, &catalog.fingerprint)?;
     let lookup = Instant::now();
     let entry = entry
         .map(|(pattern, entry_key)| find_entry(&table, pattern, entry_key))
@@ -92,15 +133,7 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         .then(|| artifact.provenance_reader())
         .transpose()?;
     let admitted = match (&clause, &provenance) {
-        (Some(clause), Some(reader)) => {
-            let (resolution, _) = resolve_prepared_scope(reader, clause)?;
-            let SentenceAdmission::Documents(admitted) = resolution.admission else {
-                return Err(CliError::InvalidArgs(
-                    "table --where accepts only @document conditions".to_owned(),
-                ));
-            };
-            Some(admitted)
-        }
+        (Some(clause), Some(reader)) => Some(document_admission(reader, clause, "table --where")?),
         _ => None,
     };
     let admits = |id: u64| {
@@ -473,7 +506,7 @@ fn entry_by_metadata(
     Ok(records)
 }
 
-fn group_data(group: &Group<'_>) -> SummaryGroupData {
+pub(super) fn group_data(group: &Group<'_>) -> SummaryGroupData {
     match group {
         Group::Surface(value) => SummaryGroupData::Surface {
             value: (*value).to_owned(),
@@ -502,7 +535,7 @@ fn group_data(group: &Group<'_>) -> SummaryGroupData {
     }
 }
 
-fn group_display(group: &Group<'_>) -> Result<String, CliError> {
+pub(super) fn group_display(group: &Group<'_>) -> Result<String, CliError> {
     Ok(match group {
         Group::Surface(value) | Group::Unit(value) | Group::Term(value) => (*value).to_owned(),
         Group::Key(fields) => {

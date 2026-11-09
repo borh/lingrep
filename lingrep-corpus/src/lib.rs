@@ -35,10 +35,11 @@
 mod artifact;
 mod count_table;
 pub use count_table::{
-    Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, CountTable, CountTableError, CountTableKey,
-    CountTableStats, CountTableWriter, DocumentMask, DocumentTotals, FieldValue, Group, GroupKind,
-    GroupSchema, PatternTop, PatternTotal, StagedCountTable, TableRows, TopResult, TopRow,
-    ValueCount,
+    Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, Contrast, ContrastRow, ContrastRows,
+    CountTable, CountTableError, CountTableKey, CountTableStats, CountTableWriter, Direction,
+    DocumentMask, DocumentTotals, FieldValue, Group, GroupKind, GroupSchema, PatternTop,
+    PatternTotal, RankedContrast, ScopeCount, ScopeRelation, Scopes, StagedCountTable, TableRows,
+    TopResult, TopRow, ValueCount,
 };
 mod value_slots;
 pub use value_slots::{DocumentSlots, TooManyValues, ValueSlots};
