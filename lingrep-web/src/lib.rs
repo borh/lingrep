@@ -57,6 +57,10 @@ const MAX_API_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// Builds the production HTTP surface. Keeping the complete layer composition
 /// here lets integration tests exercise security boundaries exactly as served.
 pub fn app_router(store: RequestStore) -> Router {
+    routes(store).layer(middleware::from_fn(security_headers::security_headers))
+}
+
+fn routes(store: RequestStore) -> Router {
     Router::new()
         .merge(handlers::index::routes())
         .merge(handlers::help::routes())
@@ -88,7 +92,6 @@ pub fn app_router(store: RequestStore) -> Router {
                 .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES)),
         )
         .with_state(store)
-        .layer(middleware::from_fn(security_headers::security_headers))
 }
 
 /// Builds the production HTTP surface under `base_path`.
@@ -98,9 +101,8 @@ pub fn app_router(store: RequestStore) -> Router {
 /// makes paths outside the configured mount return 404. A nested mount serves
 /// its start page at `<base_path>/` and redirects `<base_path>` there.
 pub fn app_router_at(store: RequestStore, base_path: &BasePath) -> Router {
-    let router = app_router(store);
     if base_path.is_root() {
-        return router;
+        return app_router(store);
     }
     let mount = base_path.as_str();
     // A relative Location still resolves to the mount when an outer proxy
@@ -108,14 +110,15 @@ pub fn app_router_at(store: RequestStore, base_path: &BasePath) -> Router {
     let last_segment = mount.rsplit('/').next().unwrap_or_default().to_owned();
     let redirect = move |RawQuery(query): RawQuery| async move {
         let target = match query {
-            Some(query) => format!("{last_segment}/?{query}"),
-            None => format!("{last_segment}/"),
+            Some(query) => format!("./{last_segment}/?{query}"),
+            None => format!("./{last_segment}/"),
         };
         Redirect::permanent(&target)
     };
     Router::new()
         .route(mount, get(redirect))
-        .nest(&format!("{mount}/"), router)
+        .nest(&format!("{mount}/"), routes(store))
+        .layer(middleware::from_fn(security_headers::security_headers))
 }
 
 #[cfg(test)]
@@ -176,10 +179,56 @@ mod tests {
         assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
         assert_eq!(
             bare.headers()[axum::http::header::LOCATION],
-            "lingrep-web/?v=1&q=x"
+            "./lingrep-web/?v=1&q=x"
         );
         let bare = get("/research/lingrep-web").await.unwrap();
-        assert_eq!(bare.headers()[axum::http::header::LOCATION], "lingrep-web/");
+        assert_eq!(
+            bare.headers()[axum::http::header::LOCATION],
+            "./lingrep-web/"
+        );
+    }
+
+    /// A last segment such as `a:b` would read as a URI with scheme `a` if it
+    /// began the Location.
+    #[tokio::test]
+    async fn the_redirect_location_is_a_path_when_the_last_segment_contains_a_colon() {
+        let base_path = BasePath::parse("/x/a:b").expect("valid mount path");
+        let app = app_router_at(RequestStore::default(), &base_path);
+        let bare = app
+            .oneshot(
+                Request::builder()
+                    .uri("/x/a:b")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(bare.headers()[axum::http::header::LOCATION], "./a:b/");
+    }
+
+    /// The redirect and the 404s outside the mount are answered by the outer
+    /// router, and carry the same security headers as the application.
+    #[tokio::test]
+    async fn mounted_router_responses_outside_the_application_carry_security_headers() {
+        let base_path = BasePath::parse("/mounted").expect("valid mount path");
+        let app = app_router_at(RequestStore::default(), &base_path);
+        for (uri, status) in [
+            ("/mounted", StatusCode::PERMANENT_REDIRECT),
+            ("/elsewhere", StatusCode::NOT_FOUND),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{uri}");
+            assert_eq!(
+                response.headers()["x-content-type-options"],
+                "nosniff",
+                "{uri}"
+            );
+        }
     }
 }
 
