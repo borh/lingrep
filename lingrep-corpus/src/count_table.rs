@@ -149,6 +149,12 @@ fn corrupt(message: impl Into<String>) -> CountTableError {
     CountTableError::Corrupt(message.into())
 }
 
+fn checked_sum(total: u64, value: u64, name: &str) -> Result<u64, CountTableError> {
+    total
+        .checked_add(value)
+        .ok_or_else(|| corrupt(format!("{name} exceed u64")))
+}
+
 fn writer_error(message: impl Into<String>) -> CountTableError {
     CountTableError::Writer(message.into())
 }
@@ -1661,8 +1667,16 @@ impl CountTable {
         for (document, admitted) in mask.admitted.iter().enumerate() {
             if *admitted {
                 admission.documents_admitted += 1;
-                admission.sentences_admitted += self.document_sentences[document];
-                admission.tokens_admitted += self.document_tokens[document];
+                admission.sentences_admitted = checked_sum(
+                    admission.sentences_admitted,
+                    self.document_sentences[document],
+                    "document sentences",
+                )?;
+                admission.tokens_admitted = checked_sum(
+                    admission.tokens_admitted,
+                    self.document_tokens[document],
+                    "document tokens",
+                )?;
                 admitted_pairs += document_offsets[document + 1]
                     .checked_sub(document_offsets[document])
                     .ok_or_else(|| corrupt("document pair offsets decrease"))?;
@@ -1703,7 +1717,8 @@ impl CountTable {
                 let total = totals
                     .get_mut(*pattern as usize)
                     .ok_or_else(|| corrupt("document pattern out of range"))?;
-                total.occurrences += count;
+                total.occurrences =
+                    checked_sum(total.occurrences, *count, "document pattern counts")?;
                 total.works += 1;
             }
         }
@@ -1757,12 +1772,13 @@ impl CountTable {
             else {
                 return Err(corrupt("document pattern offsets out of range"));
             };
-            Ok(patterns
+            patterns
                 .iter()
                 .zip(counts)
                 .filter(|(found, _)| **found as usize == pattern)
-                .map(|(_, count)| *count)
-                .sum())
+                .try_fold(0u64, |total, (_, count)| {
+                    checked_sum(total, *count, "document pattern counts")
+                })
         }))
     }
 
@@ -1972,8 +1988,8 @@ impl CountTable {
     ///
     /// # Errors
     ///
-    /// A mask or slots built for another table, or a document index out of
-    /// range.
+    /// A mask or slots built for another table, a document index out of
+    /// range, or a sum that exceeds `u64`.
     pub fn value_counts(
         &self,
         slots: &impl DocumentSlots,
@@ -2002,8 +2018,16 @@ impl CountTable {
             for slot in slots.slots(document) {
                 let admission = &mut sums[*slot as usize].admission;
                 admission.documents_admitted += 1;
-                admission.sentences_admitted += self.document_sentences[document];
-                admission.tokens_admitted += self.document_tokens[document];
+                admission.sentences_admitted = checked_sum(
+                    admission.sentences_admitted,
+                    self.document_sentences[document],
+                    "document sentences",
+                )?;
+                admission.tokens_admitted = checked_sum(
+                    admission.tokens_admitted,
+                    self.document_tokens[document],
+                    "document tokens",
+                )?;
             }
         }
         for (document, count) in counts {
@@ -2016,7 +2040,7 @@ impl CountTable {
             }
             for slot in slots.slots(document) {
                 let sum = &mut sums[*slot as usize];
-                sum.count += count;
+                sum.count = checked_sum(sum.count, count, "document counts")?;
                 sum.works += u64::from(count > 0);
             }
         }
@@ -2209,6 +2233,18 @@ impl CountTable {
         }
         if self.document_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(corrupt("document IDs are not ascending"));
+        }
+        for (values, name) in [
+            (&self.document_sentences[..], "document sentences"),
+            (&self.document_tokens[..], "document tokens"),
+            (
+                self.u64s(&self.document_pattern_counts)?,
+                "document pattern counts",
+            ),
+        ] {
+            values
+                .iter()
+                .try_fold(0u64, |total, value| checked_sum(total, *value, name))?;
         }
         let entry_offsets = self.u64s(&self.entry_pair_offsets)?;
         let documents = self.u32s(&self.pair_documents)?;

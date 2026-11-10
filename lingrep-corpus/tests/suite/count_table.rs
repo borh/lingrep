@@ -8,7 +8,7 @@ use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     CountTable, CountTableError, CountTableKey, CountTableWriter, DocumentMask, DocumentTotals,
-    FieldValue, Group, GroupKind, GroupSchema, PatternTotal, TopRow,
+    FieldValue, Group, GroupKind, GroupSchema, PatternTotal, TopRow, ValueSlots,
 };
 
 fn key() -> CountTableKey {
@@ -462,6 +462,86 @@ fn verify_rejects_document_pattern_totals_that_differ_from_the_pairs() {
         .expect("rewrite totals");
     let table = CountTable::open(&path, &key()).expect("open");
     assert!(matches!(table.verify(), Err(CountTableError::Corrupt(_))));
+}
+
+fn is_corrupt<T>(result: Result<T, CountTableError>) -> bool {
+    matches!(result, Err(CountTableError::Corrupt(_)))
+}
+
+#[test]
+fn document_totals_whose_sum_exceeds_u64_are_corruption_errors() {
+    for (sentences, tokens) in [(u64::MAX, 1), (1, u64::MAX)] {
+        let documents = (0..2)
+            .map(|document_id| DocumentTotals {
+                document_id,
+                sentences,
+                tokens,
+            })
+            .collect::<Vec<_>>();
+        let directory = tempfile::tempdir().expect("tempdir");
+        let table = write_table(
+            &directory.path().join("t.lingtable"),
+            &documents,
+            &vec![vec![vec![(0, 1), (1, 1)]]],
+        );
+        let all = table.mask(|_| true);
+        let first = table.mask(|id| id == 0);
+        let budget = || Arc::new(TempBudget::new(u64::MAX));
+        let slots =
+            ValueSlots::number([vec!["a".to_owned()], vec!["a".to_owned()]]).expect("slots");
+        assert!(is_corrupt(table.verify()));
+        assert!(is_corrupt(table.top(&all, 10)));
+        assert!(is_corrupt(table.top_with_crossover(&all, 10, 0)));
+        assert!(is_corrupt(table.rows(&all, spill_policy(4), budget())));
+        assert!(is_corrupt(table.ranked_pattern_rows(
+            0,
+            &all,
+            spill_policy(4),
+            budget(),
+            &CancellationFlag::new(),
+        )));
+        assert!(is_corrupt(table.scopes([&all, &first])));
+        assert!(is_corrupt(table.scopes([&first, &all])));
+        assert!(is_corrupt(table.value_counts(
+            &slots,
+            &all,
+            [(0, 1), (1, 1)]
+        )));
+        table.top(&first, 10).expect("one document's totals fit");
+    }
+}
+
+#[test]
+fn document_pattern_counts_whose_sum_exceeds_u64_are_corruption_errors() {
+    let documents = (0..2)
+        .map(|document_id| DocumentTotals {
+            document_id,
+            sentences: 1,
+            tokens: 1,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    write_table(&path, &documents, &vec![vec![vec![(0, 1), (1, 1)]]]);
+    let counts = [u64::MAX, 1]
+        .iter()
+        .flat_map(|count| count.to_le_bytes())
+        .collect::<Vec<_>>();
+    std::fs::write(path.join("document_pattern_counts.u64"), counts).expect("rewrite totals");
+    let table = CountTable::open(&path, &key()).expect("open");
+    let all = table.mask(|_| true);
+    let slots = ValueSlots::number([vec!["a".to_owned()], vec!["a".to_owned()]]).expect("slots");
+    assert!(is_corrupt(table.verify()));
+    assert!(is_corrupt(table.pattern_totals(&all)));
+    let per_document = table
+        .pattern_document_counts(0)
+        .expect("per-document counts");
+    assert_eq!(per_document, [u64::MAX, 1]);
+    assert!(is_corrupt(table.value_counts(
+        &slots,
+        &all,
+        per_document.into_iter().enumerate(),
+    )));
 }
 
 #[test]
