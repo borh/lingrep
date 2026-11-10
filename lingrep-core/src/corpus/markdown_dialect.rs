@@ -263,6 +263,8 @@ pub(super) fn row_cells(line: &str) -> Vec<(usize, &str)> {
 /// Every `Text` event is joined into a single unit: under this dialect a line
 /// is exactly one sentence, so splitting per event would shatter it. Inline
 /// code and HTML are omitted; paired dollar-delimited math becomes a space.
+/// As in Pandoc's `tex_math_dollars`, a closing `$` followed by a digit does
+/// not close inline math, so `$5から$10` remains text.
 pub fn inline_text(line: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag};
 
@@ -277,8 +279,9 @@ pub fn inline_text(line: &str) -> String {
         line
     };
 
+    let line = escape_math_closed_before_digit(line);
     let mut text = String::with_capacity(line.len());
-    for event in Parser::new_ext(line, Options::ENABLE_MATH) {
+    for event in Parser::new_ext(&line, Options::ENABLE_MATH) {
         match event {
             Event::Text(chunk) => text.push_str(&chunk),
             Event::InlineMath(_) | Event::DisplayMath(_) => text.push(' '),
@@ -287,6 +290,32 @@ pub fn inline_text(line: &str) -> String {
         }
     }
     text
+}
+
+/// Escape the opening `$` of each inline math span whose closing `$` is
+/// followed by an ASCII digit, so pulldown-cmark reads it as text and the
+/// closing `$` can open a later span.
+fn escape_math_closed_before_digit(line: &str) -> std::borrow::Cow<'_, str> {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let mut line = std::borrow::Cow::Borrowed(line);
+    loop {
+        let rejected = Parser::new_ext(&line, Options::ENABLE_MATH)
+            .into_offset_iter()
+            .find_map(|(event, range)| {
+                (matches!(event, Event::InlineMath(_))
+                    && line.as_bytes().get(range.start) == Some(&b'$')
+                    && line
+                        .as_bytes()
+                        .get(range.end)
+                        .is_some_and(u8::is_ascii_digit))
+                .then_some(range.start)
+            });
+        let Some(opening) = rejected else {
+            return line;
+        };
+        line.to_mut().insert(opening, '\\');
+    }
 }
 
 fn recover_known_conversion_artifacts(line: &str) -> String {
@@ -459,7 +488,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 8;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 9;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -1341,7 +1370,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&8u32.to_le_bytes());
+        encoded.extend_from_slice(&9u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -2026,6 +2055,33 @@ mod reader_tests {
                 "前後。"
             ]
         );
+    }
+
+    #[test]
+    fn dollar_amounts_remain_prose_in_both_modes() {
+        let input = "価格は$5から$10です。\n";
+        assert_eq!(read_all(input, permissive()), ["価格は$5から$10です。"]);
+        assert_eq!(read_recovering(input), ["価格は$5から$10です。"]);
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn a_closing_dollar_before_a_digit_does_not_close_math(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let recovering = tc.draw(g::booleans());
+        let body = tc.draw(g::sampled_from(vec!["x", "5から", "x^2", "T \\to \\infty"]));
+        let follower = tc.draw(g::sampled_from(vec!["0", "1", "9", "a", "。", " ", "後"]));
+        let input = format!("前${body}${follower}後。\n");
+        let expected = if follower.starts_with(|c: char| c.is_ascii_digit()) {
+            input.trim_end().to_owned()
+        } else {
+            format!("前 {follower}後。")
+        };
+        let read = if recovering {
+            read_recovering(&input)
+        } else {
+            read_all(&input, permissive())
+        };
+        assert_eq!(read, [expected]);
     }
 
     #[test]

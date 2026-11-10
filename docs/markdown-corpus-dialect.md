@@ -47,6 +47,9 @@ such a label prints a warning identifying the admitting flag.
   braces such as `{T \to \infty}` are preserved.
 - **Dollar-delimited math is excluded from analysis.** Paired `$…$` and
   `$$…$$` spans become a space, preserving a boundary between surrounding words.
+  Inline `$…$` follows Pandoc's `tex_math_dollars` rule: the opening `$` is
+  followed by a non-space character, the closing `$` is preceded by one and is
+  not followed by a digit, so `$5から$10` remains text in both readings.
   A line containing only `$$` opens or closes a display-math block; its inner
   lines are skipped. An unclosed block is an error. Escaped dollar signs remain
   text. Document rendering preserves the math source.
