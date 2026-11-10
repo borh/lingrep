@@ -19,7 +19,10 @@ fn dict_path_and_input_parse() {
     let args = Args::try_parse_from(["lingrep-web", "--dict-path", "d", "--input", "c.jsonl"])
         .expect("--dict-path and --input should parse");
 
-    assert_eq!(args.dict.dict_path.to_str(), Some("d"));
+    assert_eq!(
+        args.dict.dict_path.as_deref(),
+        Some(std::path::Path::new("d"))
+    );
     assert_eq!(
         args.input.input.as_deref().and_then(|p| p.to_str()),
         Some("c.jsonl")
@@ -74,7 +77,7 @@ fn startup_validation_accepts_a_markdown_directory_without_input_format() {
 
     let input_path = args.input.input.clone().expect("--input directory");
     let config = Config {
-        dict_path: args.dict.dict_path.display().to_string(),
+        dict_path: dictionary.display().to_string(),
         corpora: vec![(CorpusName::default_key(), input_path, "d".to_owned())],
         max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
         detail_limits: DetailLimits { max_kwic: 1_000 },

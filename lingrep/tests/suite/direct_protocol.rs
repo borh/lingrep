@@ -1517,6 +1517,50 @@ fn direct_dictionary_falls_back_to_the_environment_then_the_installed_default() 
 }
 
 #[test]
+fn serve_dictionary_falls_back_to_the_environment_then_the_installed_default() {
+    let directory = tempfile::tempdir().unwrap();
+    let corpus = directory.path().join("one.txt");
+    std::fs::write(&corpus, "猫。\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let data_home = directory.path().join("data");
+    let serve = |environment: Option<&Path>| {
+        let mut command = std::process::Command::new(crate::support::lingrep_binary_path());
+        command.arg("serve").env("XDG_DATA_HOME", &data_home);
+        match environment {
+            Some(path) => command.env("LINGREP_DICTIONARY_PATH", path),
+            None => command.env_remove("LINGREP_DICTIONARY_PATH"),
+        };
+        crate::support::serve_command(
+            directory.path(),
+            command,
+            &["--input".into(), corpus.clone().into()],
+        )
+    };
+
+    drop(
+        serve(Some(dictionary.path())).unwrap_or_else(|(code, stderr)| {
+            panic!("LINGREP_DICTIONARY_PATH: exit {code:?}: {stderr}")
+        }),
+    );
+
+    let (code, stderr) = serve(None).err().expect("served without a dictionary");
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("ling dictionary install"), "{stderr}");
+
+    let installed_directory = data_home.join("lingrep/dictionaries");
+    std::fs::create_dir_all(&installed_directory).unwrap();
+    std::fs::copy(
+        dictionary.path(),
+        installed_directory.join("unidic-cwj-202512.dic"),
+    )
+    .unwrap();
+    drop(
+        serve(None)
+            .unwrap_or_else(|(code, stderr)| panic!("installed default: exit {code:?}: {stderr}")),
+    );
+}
+
+#[test]
 fn empty_read_buffers_do_not_claim_source_eof() {
     let stdin = StdinObservation::default();
     let mut stdin_reader = stdin.reader(Cursor::new(b"stdin"));

@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 
 use crate::error::CliError;
+pub use lingrep_cli_common::{
+    MISSING_DICTIONARY_HINT, fallback_dictionary_path, install_directory,
+};
 
 /// Base URL for `<file_name>.zst` release assets.
 const RELEASE_URL: &str = "https://github.com/borh/lingrep/releases/download/unidic-202512";
@@ -29,7 +32,7 @@ const CC_BY_NC_SA: &str = "CC BY-NC-SA 4.0: non-commercial use only, with attrib
 pub const DICTIONARIES: [PackagedDictionary; 7] = [
     PackagedDictionary {
         name: "cwj",
-        file_name: "unidic-cwj-202512.dic",
+        file_name: lingrep_cli_common::DEFAULT_DICTIONARY_FILE_NAME,
         blake3: "80aeaf4225676386368932b1f632d71e05d81b4be185e0b786c360656944abbf",
         license: BSD,
     },
@@ -71,10 +74,6 @@ pub const DICTIONARIES: [PackagedDictionary; 7] = [
     },
 ];
 
-/// How to supply a Vibrato dictionary, for errors that report none.
-pub const MISSING_DICTIONARY_HINT: &str =
-    "run `ling dictionary install`, pass --dict-path, or set LINGREP_DICTIONARY_PATH";
-
 /// The dictionary `ling` loads when neither `--dict-path` nor
 /// `LINGREP_DICTIONARY_PATH` names one.
 pub const DEFAULT: PackagedDictionary = DICTIONARIES[0];
@@ -100,31 +99,6 @@ impl ValueEnum for DictionaryName {
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         Some(clap::builder::PossibleValue::new(self.0.name).help(self.0.license))
     }
-}
-
-/// `$XDG_DATA_HOME/lingrep/dictionaries`, or `~/.local/share/lingrep/dictionaries`
-/// when `XDG_DATA_HOME` is unset or empty, matching `install.sh`.
-#[must_use]
-pub fn install_directory() -> Option<PathBuf> {
-    let non_empty = |name| std::env::var_os(name).filter(|value| !value.is_empty());
-    let data_home = non_empty("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| non_empty("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
-    Some(data_home.join("lingrep").join("dictionaries"))
-}
-
-/// `LINGREP_DICTIONARY_PATH` when set and non-empty, otherwise the installed
-/// default dictionary when that file exists.
-#[must_use]
-pub fn fallback_dictionary_path() -> Option<PathBuf> {
-    std::env::var_os("LINGREP_DICTIONARY_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            install_directory()
-                .map(|directory| directory.join(DEFAULT.file_name))
-                .filter(|path| path.is_file())
-        })
 }
 
 /// Result of [`install`].

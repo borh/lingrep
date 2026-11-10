@@ -66,7 +66,17 @@ fn block_on<F: Future>(future: F) -> F::Output {
 /// A message naming the invalid argument.
 pub fn config(args: &Args) -> Result<Config, String> {
     let config = Config {
-        dict_path: args.dict.dict_path.display().to_string(),
+        dict_path: args
+            .dict
+            .resolve()
+            .ok_or_else(|| {
+                format!(
+                    "no dictionary: {}",
+                    lingrep_cli_common::MISSING_DICTIONARY_HINT
+                )
+            })?
+            .display()
+            .to_string(),
         corpora: crate::cli::declared_corpora(args)?,
         input_format: args.input.input_format,
         markdown: args.markdown.resolve()?,

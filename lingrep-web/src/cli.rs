@@ -285,17 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn dictionary_argument_uses_devshell_environment_default() {
-        let command = Args::command();
-        let dict = command
-            .get_arguments()
-            .find(|argument| argument.get_id() == "dict_path")
-            .expect("dictionary argument should exist");
-
-        assert_eq!(dict.get_env(), Some(OsStr::new("LINGREP_DICTIONARY_PATH")));
-    }
-
-    #[test]
     fn host_defaults_to_loopback() {
         let args = super::Args::try_parse_from(["lingrep-web", "--dict-path", "/tmp/d"])
             .expect("defaults should parse");

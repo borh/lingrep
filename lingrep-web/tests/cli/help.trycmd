@@ -2,13 +2,11 @@
 $ lingrep-web --help
 Web interface for lingrep pattern matching
 
-Usage: lingrep-web [OPTIONS] --dict-path <DICT_PATH>
+Usage: lingrep-web [OPTIONS]
 
 Options:
-  -d, --dict-path <DICT_PATH>
-          Path to the Vibrato dictionary (.dic.zst or .dic)
-          
-          [env: LINGREP_DICTIONARY_PATH]
+  -d, --dict-path <PATH>
+          Path to the Vibrato dictionary (.dic.zst or .dic); overrides LINGREP_DICTIONARY_PATH and the installed default dictionary
 
   -i, --input <INPUT>
           Corpus input path; stdin is unsupported. Omit only when using --corpus.

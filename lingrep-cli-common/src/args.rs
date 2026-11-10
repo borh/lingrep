@@ -5,24 +5,54 @@ use clap::Args;
 /// Shared dictionary-path argument for the lingrep binaries.
 #[derive(Args, Debug, Clone)]
 pub struct DictArgs {
-    /// Path to the Vibrato dictionary (.dic.zst or .dic).
+    /// Path to the Vibrato dictionary (.dic.zst or .dic); overrides
+    /// LINGREP_DICTIONARY_PATH and the installed default dictionary.
     // The two spellings named above are the ones every consumer accepts. The
     // loader branches only on the `.zst` suffix and maps anything else as
     // uncompressed. Any consumer-specific acquisition nuance belongs in
     // `docs/cli-usage-guide.md`, not in a shared one-line help string.
-    //
-    // `hide_env_values` keeps `--help` deterministic: without it, clap prints
-    // the live `LINGREP_DICTIONARY_PATH` value, which differs between a bare shell
-    // and the nix dev shell (which sets it) — breaking the trycmd `--help`
-    // snapshots under `cargo test` / `ci.sh`.
-    #[arg(
-        short = 'd',
-        long = "dict-path",
-        required = true,
-        env = "LINGREP_DICTIONARY_PATH",
-        hide_env_values = true
-    )]
-    pub dict_path: PathBuf,
+    #[arg(short = 'd', long = "dict-path", value_name = "PATH")]
+    pub dict_path: Option<PathBuf>,
+}
+
+impl DictArgs {
+    /// `--dict-path`, otherwise [`fallback_dictionary_path`].
+    #[must_use]
+    pub fn resolve(&self) -> Option<PathBuf> {
+        self.dict_path.clone().or_else(fallback_dictionary_path)
+    }
+}
+
+/// File name of the dictionary `ling dictionary install` installs by default.
+pub const DEFAULT_DICTIONARY_FILE_NAME: &str = "unidic-cwj-202512.dic";
+
+/// How to supply a Vibrato dictionary, for errors that report none.
+pub const MISSING_DICTIONARY_HINT: &str =
+    "run `ling dictionary install`, pass --dict-path, or set LINGREP_DICTIONARY_PATH";
+
+/// `$XDG_DATA_HOME/lingrep/dictionaries`, or `~/.local/share/lingrep/dictionaries`
+/// when `XDG_DATA_HOME` is unset or empty, matching `install.sh`.
+#[must_use]
+pub fn install_directory() -> Option<PathBuf> {
+    let non_empty = |name| std::env::var_os(name).filter(|value| !value.is_empty());
+    let data_home = non_empty("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| non_empty("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+    Some(data_home.join("lingrep").join("dictionaries"))
+}
+
+/// `LINGREP_DICTIONARY_PATH` when set and non-empty, otherwise the installed
+/// default dictionary when that file exists.
+#[must_use]
+pub fn fallback_dictionary_path() -> Option<PathBuf> {
+    std::env::var_os("LINGREP_DICTIONARY_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            install_directory()
+                .map(|directory| directory.join(DEFAULT_DICTIONARY_FILE_NAME))
+                .filter(|path| path.is_file())
+        })
 }
 
 /// Shared corpus-input arguments: an optional `--input` path (stdin when
@@ -58,33 +88,8 @@ mod tests {
             let harness = Harness::try_parse_from(["x", flag, "/tmp/dict"]).unwrap();
             assert_eq!(
                 harness.dict.dict_path,
-                PathBuf::from("/tmp/dict"),
+                Some(PathBuf::from("/tmp/dict")),
                 "flag: {flag}"
-            );
-        }
-    }
-
-    /// `--dict-path` is satisfied either by the flag or by the
-    /// `LINGREP_DICTIONARY_PATH` env var (`required = true` + `env`). This test is
-    /// robust to the ambient environment — the nix dev shell sets that var, so
-    /// a plain `cargo test --workspace` runs with it present. When the var is
-    /// set and non-empty, env satisfies the requirement and parsing succeeds
-    /// (verifying the `env` wiring); otherwise the missing flag errors
-    /// (verifying the `required` wiring).
-    #[test]
-    fn dict_path_required_or_supplied_by_env() {
-        let env_set =
-            std::env::var_os("LINGREP_DICTIONARY_PATH").is_some_and(|value| !value.is_empty());
-        let result = Harness::try_parse_from(["x"]);
-        if env_set {
-            assert!(
-                result.is_ok(),
-                "expected LINGREP_DICTIONARY_PATH to satisfy required --dict-path"
-            );
-        } else {
-            assert!(
-                result.is_err(),
-                "expected missing --dict-path with no LINGREP_DICTIONARY_PATH to error"
             );
         }
     }

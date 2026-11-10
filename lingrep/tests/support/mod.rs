@@ -516,16 +516,25 @@ pub fn serve(
     dictionary: &Path,
     extra: &[OsString],
 ) -> Result<Server, (Option<i32>, String)> {
+    let mut command = Command::new(lingrep_binary_path());
+    command.arg("serve").arg("--dict-path").arg(dictionary);
+    serve_command(scratch, command, extra)
+}
+
+/// Starts `command`, a `ling serve` invocation, with `extra` on a free port,
+/// as [`serve`] does.
+pub fn serve_command(
+    scratch: &Path,
+    mut command: Command,
+    extra: &[OsString],
+) -> Result<Server, (Option<i32>, String)> {
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port();
     let stderr_path = scratch.join(format!("serve-{port}.stderr"));
-    let mut child = Command::new(lingrep_binary_path())
-        .arg("serve")
-        .arg("--dict-path")
-        .arg(dictionary)
+    let mut child = command
         .args(["--host", "127.0.0.1", "--port", &port.to_string()])
         .args(extra)
         .stdout(Stdio::piped())
