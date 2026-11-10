@@ -1527,6 +1527,79 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
 }
 
 #[test]
+fn ordered_sibling_binders_over_a_wide_head_finish_with_one_match_per_ordered_choice() {
+    const DEPENDENTS: usize = 12;
+    let mut sentence = String::from("1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n");
+    for word in 2..=DEPENDENTS + 1 {
+        writeln!(sentence, "{word}\tn\tn\tNOUN\t_\t_\t1\tobj\t_\t_").unwrap();
+    }
+    for binders in [7_usize, 10] {
+        let relations = (1..=binders)
+            .map(|binder| format!("$v -[obj]-> (?<b{binder}> [upos=NOUN])"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let order = (1..=binders)
+            .map(|binder| format!("$b{binder}"))
+            .collect::<Vec<_>>()
+            .join(" < ");
+        let source = format!("pattern p := (?<v> [upos=VERB]) where {relations}, {order}.");
+        let sentence = sentence.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let bound = compile_catalog(
+                PatternSource::named("wide-ordered-binders.lx", &source),
+                CompileLimits::default(),
+            )
+            .unwrap_or_else(|error| panic!("{source} compiles: {:?}", error.diagnostics))
+            .matcher
+            .bind(&lingrep_core::corpus::conllu::token_schema())
+            .expect("the CoNLL-U schema carries dep.head and dep.rel");
+            let matches = bound
+                .find_matches(&conllu_sentence(&sentence, &bound))
+                .expect("schema matches");
+            let _ = sender.send(matches);
+        });
+        let matches = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("{binders} ordered binders did not finish within 10 s"));
+        let choices = (0..binders).fold(1_usize, |choices, taken| {
+            choices * (DEPENDENTS - taken) / (taken + 1)
+        });
+        assert_eq!(matches.len(), choices, "{binders} binders");
+        let mut previous = None;
+        for matched in &matches {
+            let mut bound_words = matched
+                .graph_bindings
+                .iter()
+                .map(|binding| match binding {
+                    lingrep_core::fsm::GraphBinding::Node {
+                        name,
+                        node: lingrep_core::corpus::conllu::EnhancedNodeId::Word { token_index },
+                        ..
+                    } => (name[1..].parse::<usize>().unwrap(), *token_index),
+                    other => panic!("a word binding expected, got {other:?}"),
+                })
+                .collect::<Vec<_>>();
+            bound_words.sort_unstable();
+            let bound_words = bound_words
+                .into_iter()
+                .map(|(_, token_index)| token_index)
+                .collect::<Vec<_>>();
+            assert_eq!(bound_words.len(), binders);
+            assert!(
+                bound_words.is_sorted_by(|before, after| before < after),
+                "{bound_words:?}"
+            );
+            assert!(
+                previous.as_ref() < Some(&matched.graph_bindings),
+                "matches are distinct and canonically ordered"
+            );
+            previous = Some(matched.graph_bindings.clone());
+        }
+    }
+}
+
+#[test]
 fn enhanced_where_clause_reaches_empty_nodes_from_a_surface_anchor() {
     let source = "# text = I saw\n1\tI\tI\tPRON\t_\t_\t2\tnsubj\t2:nsubj\t_\n2\tsaw\tsee\tVERB\t_\t_\t0\troot\t0:root\t_\n2.1\tpro\tpro\tPRON\t_\t_\t_\t_\t2:obj\t_\n2.2\tthere\tthere\tADV\t_\t_\t_\t_\t2.1:dep\t_\n";
     let compiled = compile_catalog(

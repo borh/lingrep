@@ -562,6 +562,14 @@ impl Program {
             tokens,
             graph,
             &GraphAssignment::default(),
+            &|partial| {
+                #[cfg(test)]
+                if tests::UNPRUNED_ORACLE.get() {
+                    return true;
+                }
+                basic_binders_are_distinct(&self.enhanced_relations, candidate, partial)
+                    && self.orders_can_hold(candidate, tokens, partial)
+            },
         );
         assignments.retain(|assignment| {
             basic_binders_are_distinct(&self.enhanced_relations, candidate, assignment)
@@ -593,6 +601,27 @@ impl Program {
                 })
                 .collect::<Option<Vec<_>>>();
             nodes.is_some_and(|nodes| nodes.is_sorted_by(|before, after| before < after))
+        })
+    }
+
+    /// Whether every order can still hold once `assignment` is extended.
+    ///
+    /// Resolved operands keep their nodes under extension, so a strict chain
+    /// requires their subsequence to be strictly ordered already.
+    fn orders_can_hold<S: TokenSequence + ?Sized>(
+        &self,
+        candidate: &Candidate,
+        tokens: &S,
+        assignment: &GraphAssignment,
+    ) -> bool {
+        self.orders.iter().all(|order| {
+            order
+                .iter()
+                .filter_map(|operand| {
+                    enhanced_endpoint_assignment(operand, candidate, tokens, assignment)
+                        .map(EnhancedNodeId::source_order_key)
+                })
+                .is_sorted_by(|before, after| before < after)
         })
     }
 
@@ -847,6 +876,7 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
     tokens: &S,
     graph: Option<&EnhancedGraph>,
     assignment: &GraphAssignment,
+    admissible: &dyn Fn(&GraphAssignment) -> bool,
 ) -> Vec<GraphAssignment> {
     if index == relations.len() {
         return enhanced_negative_relations_hold(relations, candidate, tokens, graph, assignment)
@@ -863,6 +893,7 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             tokens,
             graph,
             assignment,
+            admissible,
         );
     }
     layer_edges(&relation.layer, tokens, graph)
@@ -900,7 +931,18 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
                 }
                 next.edges.insert(name.clone(), value);
             }
-            enhanced_assignments_from(relations, index + 1, candidate, tokens, graph, &next)
+            if !admissible(&next) {
+                return Vec::new();
+            }
+            enhanced_assignments_from(
+                relations,
+                index + 1,
+                candidate,
+                tokens,
+                graph,
+                &next,
+                admissible,
+            )
         })
         .collect()
 }
@@ -1846,5 +1888,207 @@ fn first_same_as(expr: &ExecutionExpr) -> Option<(CaptureId, CaptureProjection)>
             first_same_as(expr)
         }
         ExecutionExpr::Token(_) | ExecutionExpr::Assertion(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::execution::{BoundSentenceInput, EnhancedGraphInput};
+    use crate::fsm::{CompileLimits, PatternSource, compile_catalog};
+    use hegel::generators;
+    use std::cell::Cell;
+    use std::fmt::Write as _;
+
+    thread_local! {
+        /// Disables partial-assignment pruning, so enumeration runs every
+        /// edge combination and filters distinctness and order afterwards.
+        pub(super) static UNPRUNED_ORACLE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    const UPOS: [&str; 3] = ["VERB", "NOUN", "NOUN"];
+    const LABELS: [&str; 3] = ["obj", "obj", "nmod"];
+
+    /// A CoNLL-U sentence over a random tree biased toward one wide head. Its
+    /// enhanced graph copies the basic edges and, optionally, adds an empty
+    /// node under one word that heads another word.
+    fn draw_sentence(tc: &hegel::TestCase) -> String {
+        let words = tc.draw(generators::integers::<usize>().min_value(3).max_value(8));
+        let order = tc.draw(generators::permutations((0..words).collect::<Vec<_>>()));
+        let mut heads = vec![0; words];
+        for (position, &word) in order.iter().enumerate().skip(1) {
+            let parent = if tc.draw(generators::booleans()) {
+                0
+            } else {
+                tc.draw(generators::integers::<usize>().max_value(position - 1))
+            };
+            heads[word] = order[parent] + 1;
+        }
+        let labels = heads
+            .iter()
+            .map(|head| {
+                if *head == 0 {
+                    "root"
+                } else {
+                    tc.draw(generators::sampled_from(LABELS.to_vec()))
+                }
+            })
+            .collect::<Vec<_>>();
+        let empty = tc.draw(generators::booleans()).then(|| {
+            let at = tc.draw(
+                generators::integers::<usize>()
+                    .min_value(1)
+                    .max_value(words),
+            );
+            let head = tc.draw(
+                generators::integers::<usize>()
+                    .min_value(1)
+                    .max_value(words),
+            );
+            let dependent = tc.draw(
+                generators::integers::<usize>()
+                    .min_value(1)
+                    .max_value(words),
+            );
+            (at, head, dependent)
+        });
+        let mut sentence = String::new();
+        for word in 1..=words {
+            let mut deps = vec![(heads[word - 1].to_string(), labels[word - 1].to_owned())];
+            if let Some((at, _, dependent)) = empty
+                && dependent == word
+            {
+                deps.push((format!("{at}.1"), "nmod".to_owned()));
+            }
+            deps.sort_by_key(|(head, _)| {
+                let (whole, fraction) = head.split_once('.').unwrap_or((head, "0"));
+                (
+                    whole.parse::<usize>().unwrap(),
+                    fraction.parse::<usize>().unwrap(),
+                )
+            });
+            let deps = deps
+                .iter()
+                .map(|(head, label)| format!("{head}:{label}"))
+                .collect::<Vec<_>>()
+                .join("|");
+            let upos = tc.draw(generators::sampled_from(UPOS.to_vec()));
+            writeln!(
+                sentence,
+                "{word}\tw\tw\t{upos}\t_\t_\t{}\t{}\t{deps}\t_",
+                heads[word - 1],
+                labels[word - 1],
+            )
+            .unwrap();
+            if let Some((at, head, _)) = empty
+                && at == word
+            {
+                writeln!(sentence, "{word}.1\te\te\tNOUN\t_\t_\t_\t_\t{head}:obj\t_").unwrap();
+            }
+        }
+        sentence
+    }
+
+    /// A where clause of up to four binders hung off `$v` or an earlier
+    /// binder over either layer, with optional edge names, negative enhanced
+    /// constraints and order chains.
+    fn draw_pattern(tc: &hegel::TestCase) -> String {
+        let node_test = || tc.draw(generators::sampled_from(vec!["[upos=NOUN]", "[]", "[]"]));
+        let binders = tc.draw(generators::integers::<usize>().min_value(1).max_value(4));
+        let mut nodes = vec!["v".to_owned()];
+        let mut clauses = Vec::new();
+        for binder in 1..=binders {
+            let anchor = if tc.draw(generators::booleans()) {
+                nodes[0].clone()
+            } else {
+                tc.draw(generators::sampled_from(nodes.clone()))
+            };
+            let name = format!("b{binder}");
+            let test = node_test();
+            let labels = tc.draw(generators::sampled_from(vec!["obj", "*", "*", "obj|nmod"]));
+            let bracket = if tc.draw(generators::integers::<u8>().max_value(2)) == 0 {
+                let edge = if tc.draw(generators::booleans()) {
+                    format!(" as $e{binder}")
+                } else {
+                    String::new()
+                };
+                format!("enhanced {labels}{edge}")
+            } else {
+                labels.to_owned()
+            };
+            clauses.push(if tc.draw(generators::integers::<u8>().max_value(3)) > 0 {
+                format!("${anchor} -[{bracket}]-> (?<{name}> {test})")
+            } else {
+                format!("(?<{name}> {test}) -[{bracket}]-> ${anchor}")
+            });
+            nodes.push(name);
+        }
+        if tc.draw(generators::integers::<u8>().max_value(3)) == 0 {
+            let pair = tc.draw(generators::permutations(nodes.clone()));
+            let labels = tc.draw(generators::sampled_from(vec!["obj", "nmod", "*"]));
+            clauses.push(format!(
+                "not ${} -[enhanced {labels}]-> ${}",
+                pair[0], pair[1]
+            ));
+        }
+        for _ in 0..tc.draw(generators::integers::<usize>().max_value(2)) {
+            let chain = tc.draw(generators::permutations(nodes.clone()));
+            let length = tc.draw(
+                generators::integers::<usize>()
+                    .min_value(2)
+                    .max_value(chain.len().min(3)),
+            );
+            clauses.push(
+                chain[..length]
+                    .iter()
+                    .map(|node| format!("${node}"))
+                    .collect::<Vec<_>>()
+                    .join(" < "),
+            );
+        }
+        format!(
+            "pattern p := (?<v> {}) where {}.",
+            node_test(),
+            clauses.join(", ")
+        )
+    }
+
+    #[hegel::test(test_cases = 400, derandomize = true)]
+    fn pruned_binder_enumeration_publishes_the_unpruned_matches(tc: hegel::TestCase) {
+        let sentence = draw_sentence(&tc);
+        let source = draw_pattern(&tc);
+        tc.note(&source);
+        tc.note(&sentence);
+
+        let compiled = match compile_catalog(
+            PatternSource::named("pruning-oracle.lx", &source),
+            CompileLimits::default(),
+        ) {
+            Ok(output) => output.matcher,
+            Err(error) => {
+                tc.assume(!error.diagnostics.iter().all(|diagnostic| {
+                    diagnostic.code() == crate::fsm::DiagnosticCode::WhereContradictoryExistence
+                }));
+                panic!("{source} compiles: {:?}", error.diagnostics);
+            }
+        };
+        let bound = compiled
+            .bind(&crate::corpus::conllu::token_schema())
+            .expect("the CoNLL-U schema carries dep.head, dep.rel and dep.enhanced");
+        let read = crate::corpus::conllu::Reader::new(sentence.as_bytes(), "oracle")
+            .next()
+            .expect("one sentence")
+            .expect("the generated sentence parses");
+        let input = BoundSentenceInput::new(
+            read.project(bound.projection())
+                .expect("the generated sentence projects"),
+            EnhancedGraphInput::Observation(read.enhanced_graph().clone()),
+        );
+
+        let pruned = bound.find_matches_input(&input).expect("schema matches");
+        tc.target(pruned.len() as f64);
+        UNPRUNED_ORACLE.set(true);
+        let unpruned = bound.find_matches_input(&input);
+        UNPRUNED_ORACLE.set(false);
+        assert_eq!(pruned, unpruned.expect("schema matches"));
     }
 }
