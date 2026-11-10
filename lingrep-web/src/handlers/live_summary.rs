@@ -91,21 +91,19 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
     let Ok(program) = std::env::current_exe().and_then(|path| program(&path)) else {
         return failure(StatusCode::BAD_GATEWAY, "summary_failed");
     };
-    let task = tokio::spawn(async move {
-        let _permit = permit;
-        run(
-            program,
-            request.source,
-            artifact,
-            clause,
-            &identity,
-            &source_identity,
-            &fingerprint,
-        )
-        .await
-    });
-    match task.await {
-        Ok(Ok(output)) => (
+    match summarize_admitted(
+        permit,
+        program,
+        request.source,
+        artifact,
+        clause,
+        identity,
+        source_identity,
+        fingerprint,
+    )
+    .await
+    {
+        Ok(output) => (
             [
                 (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
                 (header::CACHE_CONTROL, "no-store"),
@@ -115,6 +113,29 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
             .into_response(),
         _ => failure(StatusCode::BAD_GATEWAY, "summary_failed"),
     }
+}
+
+async fn summarize_admitted(
+    permit: tokio::sync::OwnedSemaphorePermit,
+    program: PathBuf,
+    source: String,
+    artifact: PathBuf,
+    clause: Option<String>,
+    identity: String,
+    source_identity: String,
+    fingerprint: String,
+) -> Result<Vec<u8>, ()> {
+    let _permit = permit;
+    run(
+        program,
+        source,
+        artifact,
+        clause,
+        &identity,
+        &source_identity,
+        &fingerprint,
+    )
+    .await
 }
 
 fn scope_clause(scope: &SearchScope, all: &[String]) -> Result<Option<String>, ()> {
@@ -451,6 +472,53 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(10));
         let pid = std::fs::read_to_string(program.with_extension("pid")).unwrap();
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_dropped_summary_request_kills_its_child_and_frees_the_scan_permit() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("sleeper.py");
+        std::fs::write(&program, "#!/usr/bin/env python3\nimport os,pathlib,time\npathlib.Path(__file__).with_suffix('.pid').write_text(str(os.getpid()))\ntime.sleep(60)\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let pid_file = program.with_extension("pid");
+        let registry = crate::coordinator::CoordinatorRegistry::new(1);
+        let permit = registry.try_acquire_scan_permit().unwrap();
+        let request = tokio::spawn(summarize_admitted(
+            permit,
+            program.clone(),
+            "p := [].".into(),
+            directory.path().to_path_buf(),
+            None,
+            "identity".into(),
+            "source".into(),
+            "fingerprint".into(),
+        ));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !pid_file.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the summary child did not start"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        assert!(registry.try_acquire_scan_permit().is_none());
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        let permit = tokio::time::timeout(Duration::from_secs(1), registry.acquire_scan_permit())
+            .await
+            .expect("the scan permit is released once the request is dropped");
+        drop(permit);
+        let process = std::path::PathBuf::from(format!("/proc/{pid}"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while process.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "summary child {pid} is still running after the request was dropped"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
     #[test]
     fn summary_program_requires_the_sibling_cli() {
