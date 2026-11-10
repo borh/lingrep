@@ -242,12 +242,6 @@ use TokenAttributeIndex::*;
 /// An array rather than named fields, so an indexed access on the serial decode
 /// path is not a 32-arm jump table; generated accessors keep names and indices
 /// in one definition.
-///
-/// `size_of::<TokenInfo>()` is **768** and must stay there:
-/// [`crate::execution::estimate_token_info_bytes`] starts from
-/// `size_of_val`, and its result is the residency quantity every V6 artifact
-/// recorded in its index. `token_info_occupies_the_size_the_residency_index_was_written_with`
-/// is the guard.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(into = "SerdeTokenInfo", from = "SerdeTokenInfo")]
 pub struct TokenInfo {
@@ -324,14 +318,7 @@ impl TokenInfo {
     }
 }
 
-/// Generates the named accessors, the named builders, and the serde mirror
-/// from one list, so field name, builder name and variant cannot drift apart.
-///
-/// The order of this list **is** `TokenAttributeIndex::ALL` order, and the
-/// serde mirror's field order is the wire format `TokenTable` is persisted
-/// with. `token_info_named_accessors_agree_with_the_indexed_schema` checks the
-/// first; the mirror's field order is checked by the second half of the same
-/// test.
+// Keep named accessors and Serde fields tied to the same physical attribute list.
 macro_rules! token_attribute_accessors {
     ($(($field:ident, $setter:ident, $builder:ident) => $variant:ident,)*) => {
         impl TokenInfo {
@@ -361,12 +348,7 @@ macro_rules! token_attribute_accessors {
             )*
         }
 
-        /// The persisted shape of [`TokenInfo`].
-        ///
-        /// `TokenTable` is written to disk with `TokenInfo`'s derived `serde`
-        /// representation, so that representation is an on-disk format and
-        /// does not follow the in-memory one. This mirror keeps the named
-        /// 32-field encoding the array replaced.
+        // Annotated JSON corpus fixtures use named fields independently of the array layout.
         #[derive(Debug, Clone, Default, Serialize, Deserialize)]
         struct SerdeTokenInfo {
             $( $field: Option<CompactString>, )*
@@ -731,17 +713,8 @@ mod tests {
     };
     use crate::token_match::TokenInfoTrait;
 
-    /// `size_of::<TokenInfo>()` is a published quantity, not an implementation
-    /// detail: `estimate_token_info_bytes` starts from `size_of_val(sentence)`,
-    /// and that result is what the V6 writer records in its residency index,
-    /// `verify_integrity` checks decoded sentences against, preflight compares
-    /// the encoded estimate to, and deferred execution partitions by. Changing
-    /// it invalidates the residency index of every artifact on disk.
-    ///
-    /// 32 attributes, each an `Option<CompactString>` occupying a
-    /// niche-optimized 24 bytes.
     #[test]
-    fn token_info_occupies_the_size_the_residency_index_was_written_with() {
+    fn physical_token_size_matches_the_attribute_count() {
         assert_eq!(size_of::<TokenInfo>(), 768);
         assert_eq!(size_of::<Option<compact_str::CompactString>>(), 24);
         assert_eq!(TokenAttributeIndex::ALL.len(), 32);
@@ -776,10 +749,6 @@ mod tests {
         }
     }
 
-    /// The generated named accessors are only sound if the list that generates
-    /// them is in `TokenAttributeIndex::ALL` order — that ordering is what maps
-    /// each accessor to its array slot, and what fixes the serde mirror's field
-    /// order, which is the on-disk shape `TokenTable` is persisted with.
     #[test]
     fn token_info_named_accessors_agree_with_the_indexed_schema() {
         assert_eq!(super::NAMED_ACCESSOR_ORDER, TokenAttributeIndex::ALL);
