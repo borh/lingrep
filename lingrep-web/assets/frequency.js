@@ -504,12 +504,18 @@ export function mountFrequency(root) {
       set({ entry: JSON.stringify(answer.rows[+row.dataset.i].group) });
       return;
     }
-    if (!e.target.closest(".more")) return;
-    const mine = gen, more = await api("frequency", { ...params(), offset: shown });
-    if (mine !== gen || more.status !== "ok") return;
-    answer.rows.push(...more.rows);
-    shown = answer.rows.length;
-    renderTable();
+    const button = e.target.closest(".more");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const mine = gen, more = await api("frequency", { ...params(), offset: shown });
+      if (mine !== gen || more.status !== "ok") return;
+      answer.rows.push(...more.rows);
+      shown = answer.rows.length;
+      renderTable();
+    } finally {
+      button.disabled = false;
+    }
   });
 
   sentenceEl.addEventListener("change", (e) => {

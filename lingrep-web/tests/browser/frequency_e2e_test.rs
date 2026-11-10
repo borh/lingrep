@@ -1054,6 +1054,52 @@ fn assert_bar_labels(charts: &Value) -> usize {
 }
 
 #[tokio::test]
+async fn a_double_click_on_the_table_more_button_appends_one_page() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__tableRequests = 0; const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init) => { const url = String(input); \
+                  if (!url.includes('api/frequency?')) return fetched(input, init); \
+                  __tableRequests++; return fetched(url.replace('limit=100', 'limit=1'), init); };"}),
+        )
+        .await?;
+    open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+    driver.execute(COUNT_FETCHES, Vec::new()).await?;
+    driver
+        .execute(
+            "window.__tableRequests = 0; const more = document.querySelector('[data-fq-table] > .more'); more.click(); more.click();",
+            Vec::new(),
+        )
+        .await?;
+    wait_for(&driver, FETCHES_SETTLED, "the next page").await?;
+    two_frames(&driver).await?;
+    let table = driver
+        .execute(
+            "return {requests: __tableRequests, ranks: [...document.querySelectorAll('table.freq tbody tr')].map((row) => row.cells[0].textContent), \
+              more: document.querySelector('[data-fq-table] > .more').hidden}",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    assert_no_page_errors(&driver).await?;
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(
+        table,
+        json!({"requests": 1, "ranks": ["1", "2"], "more": true})
+    );
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value()
 -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
