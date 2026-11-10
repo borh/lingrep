@@ -175,11 +175,10 @@ export function mountCompare(root) {
   const narrow = matchMedia("(max-width: 40rem)");
   narrow.addEventListener("change", () => renderTable());
   let meta = null, s = readState(location.hash), answer = null, gen = 0, editing = false;
-  let inflight = null;
-  const request = (extra = {}) => {
+  let inflight = null, paging = null;
+  const cancel = () => {
     inflight?.abort();
-    inflight = new AbortController();
-    return api("contrast", { ...params(), ...extra }, inflight.signal);
+    paging?.abort();
   };
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
@@ -387,16 +386,22 @@ export function mountCompare(root) {
     tableEl.innerHTML = `<p class="cmp-count-line">${esc(t.entries(num(answer.entries), num(answer.rows.length)))}</p><div class="cmp-wrap"><table class="freq cmp-table"><thead><tr><th rowspan="2" class="r">${esc(h.rank)}</th><th rowspan="2">${esc(h.entry)}</th>${group("where")}${group("versus")}<th rowspan="2" class="cmp-ratio-head"><span data-scope="where">${esc(t.role.where)}</span>${esc(h.ratio)}<span data-scope="versus">${esc(t.role.versus)}</span></th><th rowspan="2" class="r">${esc(h.g2)}</th></tr><tr>${sub}${sub}</tr></thead><tbody>${rows}</tbody></table></div><button class="more"${answer.rows.length >= answer.entries ? " hidden" : ""}>${esc(t.more(PAGE))}</button>`;
   }
   tableEl.addEventListener("click", async (e) => {
-    if (!e.target.closest(".more") || !answer) return;
+    const button = e.target.closest(".more");
+    if (!button || button.disabled || !answer) return;
     const mine = gen;
-    let more;
+    button.disabled = true;
+    paging = new AbortController();
+    let more = null;
     try {
-      more = await request({ offset: answer.rows.length });
+      more = await api("contrast", { ...params(), offset: answer.rows.length }, paging.signal);
     } catch (error) {
       if (mine === gen && error.name !== "AbortError") stateEl.textContent = error.message;
+    }
+    if (mine !== gen) return;
+    if (more?.status !== "ok") {
+      button.disabled = false;
       return;
     }
-    if (mine !== gen || more.status !== "ok") return;
     answer.rows.push(...more.rows);
     renderTable();
   });
@@ -443,7 +448,7 @@ export function mountCompare(root) {
     if (r.sentence) renderSentence();
     else sentenceEl.innerHTML = "";
     if (!r.query) {
-      inflight?.abort();
+      cancel();
       answer = null;
       root.removeAttribute("aria-busy");
       renderScopes();
@@ -453,14 +458,17 @@ export function mountCompare(root) {
     }
     root.setAttribute("aria-busy", "true");
     if (answer) {
-      const line = tableEl.querySelector(".cmp-count-line");
+      const line = tableEl.querySelector(".cmp-count-line"), more = tableEl.querySelector(".more");
       if (line) line.textContent = L().ranking;
+      if (more) more.disabled = true;
     } else {
       scopesEl.innerHTML = `<p class="cmp-figures">${esc(L().ranking)}</p>`;
     }
     let reply;
+    cancel();
+    inflight = new AbortController();
     try {
-      reply = await request();
+      reply = await api("contrast", params(), inflight.signal);
     } catch (error) {
       if (mine === gen) {
         stateEl.textContent = error.name === "AbortError" ? "" : error.message;

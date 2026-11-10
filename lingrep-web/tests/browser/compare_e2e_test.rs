@@ -549,6 +549,80 @@ async fn a_slow_ranking_keeps_the_previous_answer_in_place_and_aborts_a_supersed
 }
 
 #[tokio::test]
+async fn show_more_during_a_reload_leaves_only_the_reloaded_first_page() -> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; \
+                window.__release = () => { for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init = {}) => { \
+                  const url = String(input); \
+                  if (!url.includes('api/contrast')) return fetched(input, init); \
+                  const paged = url.replace('limit=100', 'limit=1'); \
+                  if (!__holding) return fetched(paged, init); \
+                  return new Promise((resolve, reject) => { \
+                    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                    __held.push(() => fetched(paged, init).then(resolve, reject)); \
+                  }); \
+                };"}),
+        )
+        .await?;
+    driver
+        .goto(address(
+            &served.base,
+            &[
+                ("corpus", "default"),
+                ("catalog", "catalog.lx"),
+                ("pattern", "noun"),
+            ],
+        ))
+        .await?;
+    wait_for(&driver, SETTLED, "the first noun page").await?;
+    let noun = page(&driver).await?;
+    assert_eq!(noun["rows"].as_array().unwrap().len(), 1, "{noun}");
+    let pending = driver
+        .execute(
+            "__holding = true; \
+             const select = document.querySelector('select[data-b=pattern]'); \
+             select.value = 'verb'; select.dispatchEvent(new Event('change', {bubbles: true})); \
+             document.querySelector('[data-cmp-table] .more').click(); \
+             return __held.length;",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver.execute("window.__release();", Vec::new()).await?;
+    wait_for(&driver, SETTLED, "the first verb page").await?;
+    let verb = page(&driver).await?;
+    let more_hidden = driver
+        .execute(
+            "return document.querySelector('[data-cmp-table] .more').hidden",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(pending, json!(1), "the click sent no request of its own");
+    let rows = verb["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{verb}");
+    assert_eq!(rows[0][1], "見る", "{verb}");
+    assert_eq!(more_hidden, json!(true), "{verb}");
+    assert_eq!(verb["state"], "", "{verb}");
+    assert_eq!(verb["errors"], json!([]));
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
 async fn value_search_ignores_errors_for_an_earlier_query() -> WebDriverResult<()> {
     let Some(driver) = driver(1280).await? else {
         return Ok(());
