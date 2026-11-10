@@ -1527,7 +1527,7 @@ fn basic_node_binders_bind_distinct_words_and_an_order_constraint_keeps_one_assi
 }
 
 #[test]
-fn ordered_sibling_binders_over_a_wide_head_finish_with_one_match_per_ordered_choice() {
+fn ordered_sibling_binders_on_a_wide_head_publish_each_word_combination() {
     const DEPENDENTS: usize = 12;
     let mut sentence = String::from("1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n");
     for word in 2..=DEPENDENTS + 1 {

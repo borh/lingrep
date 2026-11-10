@@ -8,7 +8,6 @@ use crate::execution::*;
 use crate::fsm::CompiledCatalog;
 use crate::token_match::{BoundProjection, BoundTokenSentence, TokenInfo, TokenSchema};
 
-/// A fixture tokenizer whose words share the input's complete source span.
 pub(crate) struct FixtureSession<F> {
     tokenize: F,
     schema: TokenSchema,
@@ -61,7 +60,8 @@ impl<F: Fn(&str) -> Vec<TokenInfo>> AnalyzerSession for FixtureSession<F> {
     }
 }
 
-/// Bind all fixture attributes, preserving fields inspected by test sinks.
+/// Each fixture word receives the full input's source span; all UniDic attributes
+/// remain available to test sinks.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_fixture<S, F, K, P, O>(
     source: S,

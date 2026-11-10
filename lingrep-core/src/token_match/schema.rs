@@ -164,7 +164,6 @@ impl TokenSchema {
         Self::new(
             TokenAttributeIndex::ALL
                 .into_iter()
-                // Orth supplies portable text; exclude the duplicate physical Text slot.
                 .filter(|index| *index != TokenAttributeIndex::Text)
                 .map(AttributeKey::from)
                 .map(|key| SchemaAttribute {

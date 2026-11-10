@@ -7,31 +7,25 @@ use clap::Args;
 pub struct DictArgs {
     /// Path to the Vibrato dictionary (.dic.zst or .dic); overrides
     /// LINGREP_DICTIONARY_PATH and the installed default dictionary.
-    // The two spellings named above are the ones every consumer accepts. The
-    // loader branches only on the `.zst` suffix and maps anything else as
-    // uncompressed. Any consumer-specific acquisition nuance belongs in
-    // `docs/cli-usage-guide.md`, not in a shared one-line help string.
     #[arg(short = 'd', long = "dict-path", value_name = "PATH")]
     pub dict_path: Option<PathBuf>,
 }
 
 impl DictArgs {
-    /// `--dict-path`, otherwise [`fallback_dictionary_path`].
+    /// Return the explicit dictionary path or [`fallback_dictionary_path`].
     #[must_use]
     pub fn resolve(&self) -> Option<PathBuf> {
         self.dict_path.clone().or_else(fallback_dictionary_path)
     }
 }
 
-/// File name of the dictionary `ling dictionary install` installs by default.
 pub const DEFAULT_DICTIONARY_FILE_NAME: &str = "unidic-cwj-202512.dic";
 
-/// How to supply a Vibrato dictionary, for errors that report none.
 pub const MISSING_DICTIONARY_HINT: &str =
     "run `ling dictionary install`, pass --dict-path, or set LINGREP_DICTIONARY_PATH";
 
-/// `$XDG_DATA_HOME/lingrep/dictionaries`, or `~/.local/share/lingrep/dictionaries`
-/// when `XDG_DATA_HOME` is unset or empty, matching `install.sh`.
+/// Use `$XDG_DATA_HOME/lingrep/dictionaries`, or `$HOME/.local/share/lingrep/dictionaries`
+/// when `XDG_DATA_HOME` is unset or empty; return `None` if both variables are unset or empty.
 #[must_use]
 pub fn install_directory() -> Option<PathBuf> {
     let non_empty = |name| std::env::var_os(name).filter(|value| !value.is_empty());

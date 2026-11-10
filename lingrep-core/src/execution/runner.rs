@@ -57,23 +57,11 @@ pub struct ExecutionProgress {
     pub tokens_scanned: u64,
     /// Number of canonical matches produced by the matcher.
     pub matches_found: u64,
-    /// Number of match records the sink reported publishing.
-    ///
-    /// What the sink emitted, not what it was handed: a filtering sink counts
-    /// only what it published. Compare against `matches_found` to see what
-    /// publication dropped.
+    /// Number of match records that the sink reported publishing after filtering.
     pub records_emitted: u64,
 }
 
-/// Cumulative lifecycle counters for one execution run.
-///
-/// Bounded by the catalog rather than by the run: every field is a scalar
-/// except [`Self::program_stats`], which holds one entry per authored policy
-/// statement, and [`Self::trace`], which holds at most the number of records the
-/// caller asked to have explained. A run over ten million sentences reports the
-/// same shape as a run over one. That bound is what the struct's earlier
-/// "fixed-size" wording was worth, and it survives; only the `Copy` derive it
-/// also implied is gone.
+/// Cumulative lifecycle counters and policy reports for one execution run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecutionReport {
     /// Number of sentences admitted to a matching partition.
@@ -84,38 +72,14 @@ pub struct ExecutionReport {
     pub tokens_scanned: u64,
     /// Number of canonical matches produced by the matcher.
     pub matches_found: u64,
-    /// Number of match records the sink reported publishing.
-    ///
-    /// What the sink emitted, not what it was handed: a filtering sink counts
-    /// only what it published. Compare against `matches_found` to see what
-    /// publication dropped.
+    /// Number of match records that the sink reported publishing after filtering.
     pub records_emitted: u64,
-    /// What the publication seam suppressed or dropped during this run.
-    ///
-    /// Reported here because the seam is owned by [`execute_analyzed`], not by the
-    /// caller's sink: a surface that wants to report policy activity can no
-    /// longer reach into a decorator it does not construct.
+    /// Counts of records suppressed or dropped by publication policy.
     pub policy_stats: crate::fsm::PolicyStats,
-    /// What each statement of the catalog's policy program did, in authored
-    /// order.
-    ///
-    /// Empty for a catalog declaring no `policy` block. Sized by the program,
-    /// so an authored statement that never fired reports zeroes rather than
-    /// being absent — "ran and did nothing" and "was never reached" are the
-    /// same observation only if the entry is missing, and the first is what a
-    /// researcher debugging an inert statement is looking for.
-    ///
-    /// Reaches here by the same route and for the same reason as
-    /// [`Self::policy_stats`]: the seam is [`execute_analyzed`]'s, so a surface wanting
-    /// to report policy activity cannot reach into a decorator it does not
-    /// construct.
+    /// Per-statement policy counts in authored order, including zero-count statements.
+    /// Empty when the catalog declares no policy block.
     pub program_stats: crate::fsm::ProgramStats,
-    /// The per-record explanation trace, or `None` when tracing is disabled.
-    ///
-    /// `None` unless the publication request carried a capacity, and bounded by
-    /// that capacity when present — which is what keeps the struct's opening
-    /// claim true. A caller that asks for an unbounded explanation cannot: the
-    /// request is a number.
+    /// At most the requested number of record explanations, or `None` when tracing is disabled.
     pub trace: Option<crate::fsm::PolicyTrace>,
     /// Indexed like [`CompiledCatalog::label_declarations`](crate::fsm::CompiledCatalog::label_declarations),
     /// or empty when no sentence was observed.
@@ -378,13 +342,6 @@ pub trait MatchSink {
     }
 }
 
-/// A mutable borrow publishes exactly as the sink it borrows.
-///
-/// This exists so [`execute_analyzed`] can own the publication seam: it wraps the
-/// caller's `&mut K` in the policy decorator internally, which requires the
-/// borrow itself to be a sink. Without it every caller would have to construct
-/// the decorator, which is precisely the arrangement that let `summarize` ship
-/// without one.
 impl<T: MatchSink + ?Sized> MatchSink for &mut T {
     fn wants_parallel_records_partition(&self) -> bool {
         (**self).wants_parallel_records_partition()
@@ -596,10 +553,6 @@ where
     })
 }
 
-/// Presents the caller's sink to the caller's progress observer.
-///
-/// The seam is an implementation detail of [`execute_analyzed`], so a `ProgressSink`
-/// written against the caller's own sink type keeps working unchanged.
 struct SealedProgress<'p, P: ?Sized> {
     inner: &'p mut P,
 }
@@ -1002,12 +955,6 @@ impl PublicationState {
         Ok(())
     }
 
-    /// The run's accounting at a cancellation checkpoint.
-    ///
-    /// Clones, which costs nothing here: `program_stats` is assembled by
-    /// [`execute_analyzed`] at teardown from the sink, so the accumulator this reads
-    /// still carries the empty program. If that ever changes, this becomes a
-    /// per-checkpoint vector clone and should move to a `take`.
     fn cancelled(&self) -> RunOutcome {
         RunOutcome::Cancelled(self.current.clone())
     }

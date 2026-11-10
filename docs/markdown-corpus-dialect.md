@@ -47,9 +47,9 @@ such a label prints a warning identifying the admitting flag.
   braces such as `{T \to \infty}` are preserved.
 - **Dollar-delimited math is excluded from analysis.** Paired `$…$` and
   `$$…$$` spans become a space, preserving a boundary between surrounding words.
-  Inline `$…$` follows Pandoc's `tex_math_dollars` rule: the opening `$` is
-  followed by a non-space character, the closing `$` is preceded by one and is
-  not followed by a digit, so `$5から$10` remains text in both readings.
+  Inline `$…$` requires a non-space character after the opening `$` and before
+  the closing `$`. A `$` followed by an ASCII digit does not close inline math,
+  so `$5から$10` remains text in both strict and recovery modes.
   A line containing only `$$` opens or closes a display-math block; its inner
   lines are skipped. An unclosed block is an error. Escaped dollar signs remain
   text. Document rendering preserves the math source.
@@ -73,10 +73,11 @@ Markdown converters emit and that the strict reader rejects:
   reader rejects as raw HTML;
 - unescaped asterisk runs before `p` or `P` comparisons (`<`, `>` or `=`), with
   an optional colon and spaces: these remain literal significance marks rather
-  than emphasis delimiters. A run remains an emphasis delimiter when Markdown
-  pairs it with a closer that no earlier opener would take, so `**p < 0.05**`
-  and `*p<.05*` lose their asterisks as under strict reading. Strict reading
-  keeps the Markdown interpretation;
+  than emphasis delimiters. When Markdown pairs a run with a closing delimiter,
+  recovery preserves that emphasis if replacing the run with a literal mark
+  would leave the closing delimiter unpaired with earlier openers. For example,
+  `**p < 0.05**` and `*p<.05*` lose their asterisks in both modes.
+  Strict mode uses the Markdown interpretation;
 - div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 

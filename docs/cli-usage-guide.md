@@ -1020,8 +1020,8 @@ Progress does not change stdout or identity. Select JSON diagnostics with
 Direct commands, `ling serve` and `lingrep-web` resolve their dictionary from
 an explicit `--dict-path` first, then from `LINGREP_DICTIONARY_PATH`, then from
 the `cwj` dictionary that `ling dictionary install` installs. If none is
-present, invocation fails with exit status 2 before publishing stdout. Prepared commands never consult that
-environment variable.
+present, invocation fails with exit status 2 before writing to stdout.
+CLI queries over prepared corpora do not consult that environment variable.
 
 ### CoNLL-U and UD treebanks
 

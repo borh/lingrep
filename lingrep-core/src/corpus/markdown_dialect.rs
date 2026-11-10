@@ -258,13 +258,8 @@ pub(super) fn row_cells(line: &str) -> Vec<(usize, &str)> {
         .collect()
 }
 
-/// Convert one source line to its text content.
-///
-/// Every `Text` event is joined into a single unit: under this dialect a line
-/// is exactly one sentence, so splitting per event would shatter it. Inline
-/// code and HTML are omitted; paired dollar-delimited math becomes a space.
-/// As in Pandoc's `tex_math_dollars`, a closing `$` followed by a digit does
-/// not close inline math, so `$5から$10` remains text.
+/// Return one line's text with inline code and HTML omitted and paired math spans
+/// replaced by spaces; a `$` followed by an ASCII digit does not close inline math.
 pub fn inline_text(line: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag};
 
@@ -292,9 +287,6 @@ pub fn inline_text(line: &str) -> String {
     text
 }
 
-/// Escape the opening `$` of each inline math span whose closing `$` is
-/// followed by an ASCII digit, so pulldown-cmark reads it as text and the
-/// closing `$` can open a later span.
 fn escape_math_closed_before_digit(line: &str) -> std::borrow::Cow<'_, str> {
     use pulldown_cmark::{Event, Options, Parser};
 
@@ -351,8 +343,6 @@ fn recover_known_conversion_artifacts(line: &str) -> String {
             _ => {}
         }
     }
-    // A run opens emphasis when Markdown pairs it with a closer that no
-    // earlier opener takes once the run is read as a mark.
     let opens_emphasis = |mark: std::ops::Range<usize>| {
         emphasis
             .iter()
@@ -2081,14 +2071,14 @@ mod reader_tests {
     }
 
     #[test]
-    fn dollar_amounts_remain_prose_in_both_modes() {
+    fn dollar_amounts_remain_text_in_strict_and_recovery_modes() {
         let input = "価格は$5から$10です。\n";
         assert_eq!(read_all(input, permissive()), ["価格は$5から$10です。"]);
         assert_eq!(read_recovering(input), ["価格は$5から$10です。"]);
     }
 
     #[hegel::test(test_cases = 100, derandomize = true)]
-    fn a_closing_dollar_before_a_digit_does_not_close_math(tc: hegel::TestCase) {
+    fn a_dollar_followed_by_an_ascii_digit_does_not_close_inline_math(tc: hegel::TestCase) {
         use hegel::generators as g;
         let recovering = tc.draw(g::booleans());
         let body = tc.draw(g::sampled_from(vec!["x", "5から", "x^2", "T \\to \\infty"]));
@@ -2182,7 +2172,7 @@ mod reader_tests {
     }
 
     #[hegel::test(test_cases = 100, derandomize = true)]
-    fn recovery_and_strict_agree_on_emphasised_p_values(tc: hegel::TestCase) {
+    fn recovery_and_strict_produce_identical_text_for_emphasised_p_values(tc: hegel::TestCase) {
         use hegel::generators as g;
         let mark = "*".repeat(tc.draw(g::integers::<usize>().min_value(1).max_value(3)));
         let name = tc.draw(g::sampled_from(vec!["p", "P"]));

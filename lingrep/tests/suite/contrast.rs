@@ -484,9 +484,6 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
     assert_eq!(observed, expected, "{observed:#?}");
 }
 
-/// `ling table` and `ling contrast` stop with the signal's exit code, publish
-/// nothing and leave `TMPDIR` empty when the signal arrives while the catalog
-/// is still being read.
 #[cfg(unix)]
 #[test]
 fn a_signal_stops_table_and_contrast_without_output() {
@@ -532,8 +529,6 @@ fn a_signal_stops_table_and_contrast_without_output() {
                 .unwrap();
             let mut catalog_writer = fs::OpenOptions::new().write(true).open(&catalog).unwrap();
             assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
-            // The open FIFO blocks the catalog read until the signal thread
-            // has recorded the signal.
             std::thread::sleep(std::time::Duration::from_millis(50));
             catalog_writer.write_all(CATALOG.as_bytes()).unwrap();
             drop(catalog_writer);

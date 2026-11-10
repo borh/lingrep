@@ -40,7 +40,7 @@ impl MatchSink for RecordingMatchSink {
 }
 
 #[test]
-fn v6_executor_delivers_authored_capture_values_to_the_sink() {
+fn schema_bound_executor_delivers_authored_capture_values_to_the_sink() {
     let fixture = build_artifact(vec![(
         "captures.md",
         0,
@@ -64,7 +64,7 @@ fn v6_executor_delivers_authored_capture_values_to_the_sink() {
     let mut observer = |_: TokenizedBatchObservation| Ok(());
     let outcome = execute_fixture(
         artifact.sentence_source().unwrap(),
-        |_| unreachable!("V7 artifact sentences are tokenized"),
+        |_| unreachable!("prepared artifact sentences are tokenized"),
         &fsm,
         &pool,
         &ExecutionLimits::default(),
@@ -141,7 +141,7 @@ fn cancellation_is_observed_before_the_next_capture_push() {
     let mut observer = |_: TokenizedBatchObservation| Ok(());
     let outcome = execute_fixture(
         artifact.sentence_source().unwrap(),
-        |_| unreachable!("V7 artifact sentences are tokenized"),
+        |_| unreachable!("prepared artifact sentences are tokenized"),
         &fsm,
         &pool,
         &ExecutionLimits::default(),
@@ -205,7 +205,7 @@ fn capture_execution_preserves_match_and_capture_counts() {
             let mut observer = |_: TokenizedBatchObservation| Ok(());
             let outcome = execute_fixture(
                 artifact.sentence_source().unwrap(),
-                |_| unreachable!("V7 artifact sentences are tokenized"),
+                |_| unreachable!("prepared artifact sentences are tokenized"),
                 &fsm,
                 &pool,
                 &ExecutionLimits::default(),

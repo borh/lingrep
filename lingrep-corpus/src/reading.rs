@@ -155,8 +155,6 @@ struct SentenceRecord {
     segments: Vec<Segment>,
 }
 
-/// The classes of each `:::` region by region index, held in one buffer and
-/// encoded as a list of strings.
 #[derive(Clone, Debug, Default)]
 struct Regions {
     classes: String,
@@ -209,13 +207,13 @@ impl<'de> Deserialize<'de> for Regions {
             type Value = ();
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("region classes")
+                formatter.write_str("a string of region classes")
             }
 
             fn visit_str<E: serde::de::Error>(self, classes: &str) -> Result<(), E> {
                 self.0
                     .push(classes)
-                    .map_err(|_| E::custom("region classes exceed u32 bytes"))
+                    .map_err(|_| E::custom("text for region classes exceeds u32::MAX bytes"))
             }
         }
 
@@ -225,7 +223,7 @@ impl<'de> Deserialize<'de> for Regions {
             type Value = Regions;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a list of region classes")
+                formatter.write_str("a list of strings, one for each region")
             }
 
             fn visit_seq<A: serde::de::SeqAccess<'de>>(
@@ -635,9 +633,9 @@ impl<'a> ReadingSidecarWriter<'a> {
             regions: {
                 let mut regions = Regions::default();
                 for classes in &rendered.regions {
-                    regions
-                        .push(classes)
-                        .map_err(|_| replay("the region classes exceed u32 bytes".into()))?;
+                    regions.push(classes).map_err(|_| {
+                        replay("text for region classes exceeds u32::MAX bytes".into())
+                    })?;
                 }
                 regions
             },
@@ -1472,7 +1470,7 @@ mod tests {
     }
 
     #[test]
-    fn decoded_regions_take_at_most_twice_their_encoded_bytes() {
+    fn empty_regions_decode_within_twice_the_json_record_size() {
         let count = 1 << 20;
         let mut json = String::from(r#"{"source_name":"a","regions":["#);
         for region in 0..count {

@@ -236,12 +236,7 @@ impl FromStr for TokenAttributeIndex {
 
 use TokenAttributeIndex::*;
 
-/// One value per [`TokenAttributeIndex`], stored in `TokenAttributeIndex::ALL`
-/// order.
-///
-/// An array rather than named fields, so an indexed access on the serial decode
-/// path is not a 32-arm jump table; generated accessors keep names and indices
-/// in one definition.
+/// Serializes as named fields for the physical token attributes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(into = "SerdeTokenInfo", from = "SerdeTokenInfo")]
 pub struct TokenInfo {
@@ -318,7 +313,6 @@ impl TokenInfo {
     }
 }
 
-// Keep named accessors and Serde fields tied to the same physical attribute list.
 macro_rules! token_attribute_accessors {
     ($(($field:ident, $setter:ident, $builder:ident) => $variant:ident,)*) => {
         impl TokenInfo {
@@ -348,7 +342,6 @@ macro_rules! token_attribute_accessors {
             )*
         }
 
-        // Annotated JSON corpus fixtures use named fields independently of the array layout.
         #[derive(Debug, Clone, Default, Serialize, Deserialize)]
         struct SerdeTokenInfo {
             $( $field: Option<CompactString>, )*

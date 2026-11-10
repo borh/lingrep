@@ -1,29 +1,14 @@
 #!/usr/bin/env python3
-"""Emit the third-party notices for a `ling` release archive.
+"""Emit third-party notices for a `ling` release archive after `cargo build`.
 
-The notices are generated from the resolved dependency graph rather than
-maintained by hand: a checked-in list of transitive dependencies goes stale on
-the next `cargo update` and then quietly under-reports what the binary links.
+Include normal dependencies reachable from the CLI crate and browser notices from
+`lingrep-web/assets/THIRD-PARTY-NOTICES.md`; workspace crates use the root `LICENSE`.
+Search crate directories, Git checkout roots and `scripts/third-party-licenses/`
+for license text, and deduplicate matching texts by content.
 
-Scope is what ships. The walk starts at the `lingrep` CLI crate, follows normal
-dependencies only (build and dev dependencies are not in the binary), and drops
-workspace members, whose license is the repository's own `LICENSE`.
-
-Browser asset notices are included from `lingrep-web/assets/THIRD-PARTY-NOTICES.md`.
-
-License texts are collected from each crate's source directory, which exists
-once the crate has been built, so this runs after `cargo build` — that is where
-`scripts/package-release.sh` calls it. Texts are deduplicated by content, which
-is why a single copy of Apache-2.0 covers dozens of crates.
-
-A git dependency's texts are also looked up at the root of its checkout. A
-crate that publishes no text gets it from
-`scripts/third-party-licenses/<name>-<version>/`, copied from the crate's
-upstream repository.
-
-Exit status is non-zero when a crate with no text found declares no license, or
-declares one of `REPRODUCED_LICENSES`, which require their text to accompany
-a binary, and is not listed in `TEXT_EXCEPTIONS`.
+Exit with status 1 if a dependency has no license text and either declares no
+license or declares an identifier in `REPRODUCED_LICENSES`, unless its name and
+version are listed in `TEXT_EXCEPTIONS` with a reason for omitting the text.
 """
 
 from __future__ import annotations
@@ -54,8 +39,6 @@ REPRODUCED_LICENSES = {
     "Unicode-3.0",
     "Unicode-DFS-2016",
 }
-# `"<name> <version>"` of a crate that ships without its license text, mapped
-# to the reason the archive may omit it.
 TEXT_EXCEPTIONS: dict[str, str] = {}
 
 
@@ -243,7 +226,8 @@ def main() -> int:
         names = ", ".join(f"{p['name']} {p['version']}" for p in undocumented)
         print(
             f"error: no license text for: {names}; add it under "
-            f"{VENDORED_TEXTS.name}/<name>-<version>/ or to TEXT_EXCEPTIONS",
+            "scripts/third-party-licenses/<name>-<version>/ or record an exception "
+            "in TEXT_EXCEPTIONS",
             file=sys.stderr,
         )
         return 1

@@ -40,21 +40,13 @@ pub struct SentenceLocation {
 
 /// How a sentence source treats a sentence whose tokenized residency
 /// estimate exceeds `ExecutionLimits::max_tokenized_bytes`.
-///
-/// This is source-construction policy, not an executor limit: limits stay
-/// numeric bounds (with their 1:1 CLI flags and protocol serialization),
-/// while the disposition belongs to the source that materializes sentences,
-/// matching where the direct (unprepared) path put its equivalent in
-/// `ling`.
 #[derive(Debug, Default)]
 pub enum TokenizedAdmission {
     /// Fail the run on the first oversized sentence.
     #[default]
     Fail,
-    /// Skip oversized sentences and count the omissions instead. The handle is
-    /// bundled so an `Omit` run cannot silently lose the count: the source
-    /// owns the lock while it decodes, and the caller reads the summary after
-    /// the run completes (the source is consumed by `execute_analyzed`).
+    /// Skip oversized sentences and record omissions in the shared handle; read the final
+    /// counts after execution completes.
     Omit(Arc<Mutex<OversizedSentenceOmissions>>),
 }
 
@@ -294,7 +286,7 @@ pub trait SentenceBatchSource {
     /// derived from it, may depend on the reader's position rather than on
     /// what was published.
     ///
-    /// The prepared V6 source qualifies: its scope universe is precomputed from
+    /// A prepared-corpus source qualifies: its scope universe is precomputed from
     /// the whole artifact and stays `basis: Corpus` whether or not the run
     /// stopped early. A direct source does not — it reports
     /// `basis: ObservedPrefix`, whose counts are by definition whatever its

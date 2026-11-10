@@ -809,8 +809,6 @@ fn plans_validate_only_the_resources_of_the_selected_analyzer() {
     assert!(parse_jsonl(&output.stdout)[0]["data"]["dictionary_path"].is_null());
 }
 
-/// `ling --json PATH` with a placeholder for each required argument reports
-/// `unsupported_output` exactly when `ling describe PATH` omits `json`.
 #[test]
 fn describe_lists_json_exactly_for_commands_that_accept_json() {
     use clap::CommandFactory as _;
@@ -864,8 +862,6 @@ fn describe_lists_json_exactly_for_commands_that_accept_json() {
             .map_err(|error| error.kind())
         };
         if parses(&argv) == Err(clap::error::ErrorKind::MissingRequiredArgument) {
-            // A positional required only without some option, such as ROOT
-            // without --corpus.
             argv.extend(
                 command
                     .get_positionals()

@@ -181,15 +181,6 @@ pub struct LexicalMatch {
     pub matched_by: Box<[AttributeKey]>,
 }
 
-/// A membership list is `Arc<[CompactString]>` rather than `Vec`, because a
-/// named `set` is resolved into every site that references it. With `Vec`,
-/// M reference sites to an N-member set materialized M·N strings from
-/// O(N + M) bytes of source — so a catalog well inside `max_source_bytes`
-/// could allocate past the generated-owned-bytes budget before that budget
-/// is charged, which happens after binding. Sharing makes resolution a
-/// refcount bump, so materialized size tracks source size the way every
-/// other budget assumes. Matching is unaffected: `Arc<[T]>` derefs to the
-/// same slice the scan already walked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum AttrValueType {
     Single(CompactString),

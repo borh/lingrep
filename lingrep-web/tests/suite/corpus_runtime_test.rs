@@ -137,7 +137,7 @@ impl MatchSink for MatchLog {
 }
 
 #[tokio::test]
-async fn web_runtime_executes_nested_alias_artifact_through_v6() {
+async fn web_runtime_matches_prepared_sentences_from_nested_aliases() {
     let nested = build_artifact(vec![
         ("a.md", 0, false, vec![vec![token("猫")]]),
         ("nested/b.md", 1, true, vec![vec![token("犬")]]),
@@ -163,7 +163,7 @@ async fn web_runtime_executes_nested_alias_artifact_through_v6() {
     assert_eq!(ready.artifact.inventory_stats().external_targets, 2);
 
     let compiled = compile_catalog(
-        PatternSource::named("web-v6.lx", "cat := [text=猫]."),
+        PatternSource::named("web-runtime.lx", "cat := [text=猫]."),
         CompileLimits::default(),
     )
     .unwrap();
@@ -172,7 +172,7 @@ async fn web_runtime_executes_nested_alias_artifact_through_v6() {
     let mut observer = |_: TokenizedBatchObservation| Ok(());
     execute_fixture(
         ready.artifact.sentence_source().unwrap(),
-        |_| unreachable!("V7 sentences are tokenized"),
+        |_| unreachable!("prepared artifact sentences are tokenized"),
         &compiled.matcher,
         &ready.pool,
         &ExecutionLimits::default(),
@@ -256,7 +256,7 @@ async fn prepared_jsonl_identity_matches_direct_physical_source_observation() {
     assert_eq!(
         ready.identity,
         reopened.ready().await.unwrap().identity,
-        "raw-source and artifact constructors must expose one V7 analysis identity"
+        "raw-source and artifact constructors must expose the same analysis identity"
     );
 }
 

@@ -387,7 +387,6 @@ fn run_scan_blocking_with_options(
     )
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
-    // `execute_analyzed` applies publication policy; this surface only selects records.
     let mut sink = snapshot;
     sink.search_scope = scope.specification();
     let mut attributes = output.matcher.execution_attributes();

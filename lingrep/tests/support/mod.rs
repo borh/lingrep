@@ -521,8 +521,8 @@ pub fn serve(
     serve_command(scratch, command, extra)
 }
 
-/// Starts `command`, a `ling serve` invocation, with `extra` on a free port,
-/// as [`serve`] does.
+/// The supplied command must invoke `ling serve`; this helper adds a loopback
+/// host and an available port.
 pub fn serve_command(
     scratch: &Path,
     mut command: Command,

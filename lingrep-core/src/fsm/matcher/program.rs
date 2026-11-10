@@ -604,10 +604,6 @@ impl Program {
         })
     }
 
-    /// Whether every order can still hold once `assignment` is extended.
-    ///
-    /// Resolved operands keep their nodes under extension, so a strict chain
-    /// requires their subsequence to be strictly ordered already.
     fn orders_can_hold<S: TokenSequence + ?Sized>(
         &self,
         candidate: &Candidate,
@@ -1900,17 +1896,12 @@ mod tests {
     use std::fmt::Write as _;
 
     thread_local! {
-        /// Disables partial-assignment pruning, so enumeration runs every
-        /// edge combination and filters distinctness and order afterwards.
         pub(super) static UNPRUNED_ORACLE: Cell<bool> = const { Cell::new(false) };
     }
 
     const UPOS: [&str; 3] = ["VERB", "NOUN", "NOUN"];
     const LABELS: [&str; 3] = ["obj", "obj", "nmod"];
 
-    /// A CoNLL-U sentence over a random tree biased toward one wide head. Its
-    /// enhanced graph copies the basic edges and, optionally, adds an empty
-    /// node under one word that heads another word.
     fn draw_sentence(tc: &hegel::TestCase) -> String {
         let words = tc.draw(generators::integers::<usize>().min_value(3).max_value(8));
         let order = tc.draw(generators::permutations((0..words).collect::<Vec<_>>()));
@@ -1988,9 +1979,6 @@ mod tests {
         sentence
     }
 
-    /// A where clause of up to four binders hung off `$v` or an earlier
-    /// binder over either layer, with optional edge names, negative enhanced
-    /// constraints and order chains.
     fn draw_pattern(tc: &hegel::TestCase) -> String {
         let node_test = || tc.draw(generators::sampled_from(vec!["[upos=NOUN]", "[]", "[]"]));
         let binders = tc.draw(generators::integers::<usize>().min_value(1).max_value(4));

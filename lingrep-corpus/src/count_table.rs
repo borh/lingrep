@@ -152,7 +152,7 @@ fn corrupt(message: impl Into<String>) -> CountTableError {
 fn checked_sum(total: u64, value: u64, name: &str) -> Result<u64, CountTableError> {
     total
         .checked_add(value)
-        .ok_or_else(|| corrupt(format!("{name} exceed u64")))
+        .ok_or_else(|| corrupt(format!("sum of {name} exceeds u64::MAX")))
 }
 
 fn writer_error(message: impl Into<String>) -> CountTableError {
@@ -1988,8 +1988,9 @@ impl CountTable {
     ///
     /// # Errors
     ///
-    /// A mask or slots built for another table, a document index out of
-    /// range, or a sum that exceeds `u64`.
+    /// Returns an error if the mask belongs to another table, the number of documents
+    /// in `slots` differs from the table's count, a document index is out of range,
+    /// or a sum exceeds `u64::MAX`.
     pub fn value_counts(
         &self,
         slots: &impl DocumentSlots,

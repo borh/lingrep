@@ -30,8 +30,6 @@ class ReleaseNoticesTests(unittest.TestCase):
 
 
     def run_notices(self, crates):
-        """`main()`'s exit status, stdout and stderr over `crates`, each a
-        (name, version, license, source, crate directory) shipped by `lingrep`."""
         metadata = {
             "packages": [{"id": "lingrep", "name": "lingrep", "version": "0.7.0"}]
             + [
@@ -65,7 +63,7 @@ class ReleaseNoticesTests(unittest.TestCase):
             status = NOTICES.main()
         return status, stdout.getvalue(), stderr.getvalue()
 
-    def test_a_crate_whose_license_requires_its_text_fails_without_one(self):
+    def test_missing_required_license_text_returns_an_error(self):
         registry = "registry+https://github.com/rust-lang/crates.io-index"
         for license_expression in ["MIT", "BSD-3-Clause", "Apache-2.0", "MIT OR Apache-2.0"]:
             with self.subTest(license_expression), tempfile.TemporaryDirectory() as directory:
@@ -100,7 +98,7 @@ class ReleaseNoticesTests(unittest.TestCase):
         self.assertIn("licenses-directory text", stdout)
         self.assertIn("checkout-root text", stdout)
 
-    def test_alloc_stdlib_carries_its_bsd_3_clause_text_from_the_repository(self):
+    def test_alloc_stdlib_notices_include_the_vendored_bsd_3_clause_text(self):
         registry = "registry+https://github.com/rust-lang/crates.io-index"
         with tempfile.TemporaryDirectory() as directory:
             crate = Path(directory) / "alloc-stdlib-0.3.0"
