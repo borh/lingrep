@@ -11,6 +11,11 @@ import time
 import unittest
 from unittest.mock import patch
 
+# Git exports GIT_DIR to hooks (githooks(5)), which would point fixture commands at the pushing repository.
+for name in subprocess.run(['git', 'rev-parse', '--local-env-vars'], check=True,
+                           capture_output=True, text=True).stdout.split():
+    os.environ.pop(name, None)
+
 SCRIPT = Path(__file__).resolve().parents[1] / 'perf_measure.py'
 spec = importlib.util.spec_from_file_location('perf_measure', SCRIPT)
 measure = importlib.util.module_from_spec(spec)
