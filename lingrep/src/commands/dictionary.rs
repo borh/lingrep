@@ -27,7 +27,7 @@ pub fn run_install(
             "neither XDG_DATA_HOME nor HOME is set, so there is no install directory; {MISSING_DICTIONARY_HINT}"
         ))
     })?;
-    let installed = install(dictionary, &directory)?;
+    let installed = install(dictionary, &directory, &args.download_base)?;
     let data = InstalledData {
         name: dictionary.name.into(),
         path: installed.path.display().to_string(),

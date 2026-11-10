@@ -282,6 +282,15 @@ pub struct DictionaryInstallArgs {
     /// Dictionary to install.
     #[arg(value_enum, default_value = "cwj")]
     pub name: crate::packaged_dictionaries::DictionaryName,
+    /// Mirror whose `unidic-202512/` directory copies the GitHub release of that
+    /// name; the download must match the digest built into `ling`.
+    #[arg(
+        long,
+        env = "LING_DOWNLOAD_BASE",
+        value_name = "URL",
+        default_value = crate::packaged_dictionaries::DEFAULT_DOWNLOAD_BASE
+    )]
+    pub download_base: String,
 }
 
 #[derive(Debug, Args)]

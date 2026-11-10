@@ -12,8 +12,9 @@ pub use lingrep_cli_common::{
     MISSING_DICTIONARY_HINT, fallback_dictionary_path, install_directory,
 };
 
-/// Base URL for `<file_name>.zst` release assets.
-const RELEASE_URL: &str = "https://github.com/borh/lingrep/releases/download/unidic-202512";
+pub const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/borh/lingrep/releases/download";
+
+const DICTIONARY_RELEASE: &str = "unidic-202512";
 
 /// A dictionary built by the flake's `vibrato-dict-*` package.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,9 +111,21 @@ pub struct Installed {
     pub already_present: bool,
 }
 
-/// Downloads `dictionary` into `directory` and checks its digest, unless the
-/// file is already there with that digest.
-pub fn install(dictionary: PackagedDictionary, directory: &Path) -> Result<Installed, CliError> {
+fn download_url(download_base: &str, dictionary: PackagedDictionary) -> String {
+    format!(
+        "{}/{DICTIONARY_RELEASE}/{}.zst",
+        download_base.trim_end_matches('/'),
+        dictionary.file_name
+    )
+}
+
+/// Downloads `dictionary` from `download_base` into `directory` and checks its
+/// digest, unless the file is already there with that digest.
+pub fn install(
+    dictionary: PackagedDictionary,
+    directory: &Path,
+    download_base: &str,
+) -> Result<Installed, CliError> {
     install_license_notices(dictionary, directory)?;
     let path = directory.join(dictionary.file_name);
     if path.is_file() {
@@ -125,7 +138,7 @@ pub fn install(dictionary: PackagedDictionary, directory: &Path) -> Result<Insta
             });
         }
     }
-    let url = format!("{RELEASE_URL}/{}.zst", dictionary.file_name);
+    let url = download_url(download_base, dictionary);
     let response = reqwest::blocking::Client::builder()
         .timeout(None)
         .build()
@@ -334,6 +347,28 @@ mod tests {
     }
 
     #[test]
+    fn download_url_is_the_dictionary_asset_in_the_unidic_release_directory_of_the_base() {
+        let novel = DICTIONARIES
+            .iter()
+            .find(|d| d.name == "novel")
+            .copied()
+            .unwrap();
+        assert_eq!(
+            download_url(DEFAULT_DOWNLOAD_BASE, novel),
+            "https://github.com/borh/lingrep/releases/download/unidic-202512/unidic-novel-202512.dic.zst"
+        );
+        for base in [
+            "https://mirror.example/lingrep/releases/download",
+            "https://mirror.example/lingrep/releases/download/",
+        ] {
+            assert_eq!(
+                download_url(base, novel),
+                "https://mirror.example/lingrep/releases/download/unidic-202512/unidic-novel-202512.dic.zst"
+            );
+        }
+    }
+
+    #[test]
     fn a_download_with_the_expected_digest_is_installed() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("nested/unidic-test.dic");
@@ -395,7 +430,7 @@ mod tests {
             fs::write(&path, content).unwrap();
 
             assert!(
-                install(dictionary, directory.path())
+                install(dictionary, directory.path(), "https://unreachable.invalid")
                     .unwrap()
                     .already_present
             );

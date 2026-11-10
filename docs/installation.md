@@ -42,6 +42,7 @@ rights. [scripts/install.sh](../scripts/install.sh) is its source.
 | `LING_VERSION=0.3.2` | Install that release instead of the script's own |
 | `LING_INSTALL_DIR=/path/to/bin` | Install `ling` there; takes precedence over `XDG_BIN_HOME` |
 | `LING_NO_MODIFY_PATH=1` | Leave shell startup files unchanged |
+| `LING_DOWNLOAD_BASE=https://host/path` | Download from a mirror whose `v<version>/` directories copy the GitHub releases; `ling dictionary install` reads the same variable for its `unidic-202512/` directory |
 | `XDG_BIN_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME` | Move the locations above; a relative path is ignored, as the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) requires |
 
 Bash and fish load the completions from these locations without further

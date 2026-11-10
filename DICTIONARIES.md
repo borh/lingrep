@@ -16,6 +16,9 @@ and writes it to `$XDG_DATA_HOME/lingrep/dictionaries/`
 (`~/.local/share/lingrep/dictionaries/` when `XDG_DATA_HOME` is unset). `ling`
 loads the installed `cwj` when neither `--dict-path` nor
 `LINGREP_DICTIONARY_PATH` names a dictionary; pass any other with `--dict-path`.
+`--download-base URL` or `LING_DOWNLOAD_BASE` downloads from a mirror whose
+`unidic-202512/` directory copies the GitHub release of that name; the digest
+check is the same.
 
 The installer copies upstream license notices into `licenses/<name>/` beside
 the dictionaries, including when the dictionary is already installed. Treat

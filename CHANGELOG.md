@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `install.sh` and `ling dictionary install` download from a mirror when
+  `LING_DOWNLOAD_BASE` names a URL laid out like
+  `https://github.com/borh/lingrep/releases/download`; `ling dictionary
+  install --download-base URL` does the same. The installer accepts only an
+  `https://` URL. A mirrored dictionary must still match the digest built into
+  `ling`.
+
 ## [0.7.0] - 2026-11-10
 
 ### Added

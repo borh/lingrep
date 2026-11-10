@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 printf '%s\n' "$url" >>"$TEST_CURL_LOG"
-[[ $url == https://github.com/borh/lingrep/releases/download/v* ]] || exit 22
+[[ $url == https://github.com/borh/lingrep/releases/download/v* || $url == https://mirror.example/lingrep/releases/download/v* ]] || exit 22
 cp "$TEST_RELEASE/${url##*/}" "$output" 2>/dev/null || exit 22
 EOF
 cat >"$stubs/uname" <<'EOF'
@@ -175,6 +175,11 @@ for shell in "${shells[@]}"; do
     run 1 TEST_LDD='musl libc (x86_64)' && [[ $out == *musl* ]] || fail "musl refusal"
     run 1 LING_VERSION=latest && [[ $out == *"must look like"* ]] || fail "version validation"
     run 1 LING_INSTALL_DIR=relative/bin && [[ $out == *absolute* ]] || fail "relative install dir"
+    run 0 LING_DOWNLOAD_BASE=https://mirror.example/lingrep/releases/download/ \
+        && [[ $(grep -c '^https://mirror.example/lingrep/releases/download/v[^/]*/ling-' "$temporary/curl.log") == 2 \
+            && $(grep -c github.com "$temporary/curl.log") == 0 ]] || fail "LING_DOWNLOAD_BASE mirror"
+    run 1 LING_DOWNLOAD_BASE=http://mirror.example/lingrep/releases/download \
+        && [[ $out == *"must be an https:// URL"* && ! -e "$temporary/curl.log" ]] || fail "plain-HTTP download base"
     [[ ! -e "$home/.local/bin/ling" ]] || fail "a refusal left a binary behind"
 
     # LING_NO_MODIFY_PATH leaves startup files alone; a directory on PATH requires no line.

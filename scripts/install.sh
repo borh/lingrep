@@ -18,6 +18,8 @@
 #
 # Environment:
 #   LING_VERSION         release to install, such as 0.3.2 (default: this script's release)
+#   LING_DOWNLOAD_BASE   HTTPS URL holding v<version>/ release directories
+#                        (default: https://github.com/borh/lingrep/releases/download)
 #   LING_INSTALL_DIR     directory for `ling` (default: $XDG_BIN_HOME, else ~/.local/bin)
 #   LING_NO_MODIFY_PATH  1 leaves shell startup files unchanged
 #   XDG_DATA_HOME        manual pages, completions and notices (default: ~/.local/share)
@@ -205,9 +207,16 @@ main() {
         *'"'* | *'$'* | *'`'* | *'\'*) die "LING_INSTALL_DIR must not contain quotes, \$, \` or \\" ;;
     esac
 
+    download_base=${LING_DOWNLOAD_BASE:-$REPOSITORY/releases/download}
+    case "$download_base" in
+        https://?*) ;;
+        *) die "LING_DOWNLOAD_BASE must be an https:// URL, not '$download_base'" ;;
+    esac
+    download_base=${download_base%/}
+
     target=$(detect_target)
     name="ling-$version-$target"
-    base="$REPOSITORY/releases/download/v$version"
+    base="$download_base/v$version"
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/lingrep-install.XXXXXX")
     trap 'rm -rf "$tmp"' EXIT

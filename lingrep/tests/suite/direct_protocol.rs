@@ -1561,6 +1561,70 @@ fn serve_dictionary_falls_back_to_the_environment_then_the_installed_default() {
 }
 
 #[test]
+fn dictionary_install_requests_the_asset_under_ling_download_base() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let (stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(std::time::Instant::now() < deadline, "no request arrived");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        let mut request_line = String::new();
+        BufReader::new(&stream)
+            .read_line(&mut request_line)
+            .unwrap();
+        (&stream)
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        request_line.trim_end().to_owned()
+    });
+    let data_home = tempfile::tempdir().unwrap();
+
+    let output = lingrep()
+        .env("XDG_DATA_HOME", data_home.path())
+        .env(
+            "LING_DOWNLOAD_BASE",
+            format!("http://127.0.0.1:{port}/mirror/"),
+        )
+        .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env("NO_PROXY", "127.0.0.1")
+        .args(["dictionary", "install", "novel"])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        server.join().unwrap(),
+        "GET /mirror/unidic-202512/unidic-novel-202512.dic.zst HTTP/1.1"
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("http://127.0.0.1:{port}/mirror/unidic-202512/")),
+        "{stderr}"
+    );
+    assert!(
+        !data_home
+            .path()
+            .join("lingrep/dictionaries/unidic-novel-202512.dic")
+            .exists()
+    );
+}
+
+#[test]
 fn empty_read_buffers_do_not_claim_source_eof() {
     let stdin = StdinObservation::default();
     let mut stdin_reader = stdin.reader(Cursor::new(b"stdin"));
