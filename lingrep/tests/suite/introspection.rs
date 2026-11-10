@@ -808,3 +808,104 @@ fn plans_validate_only_the_resources_of_the_selected_analyzer() {
     );
     assert!(parse_jsonl(&output.stdout)[0]["data"]["dictionary_path"].is_null());
 }
+
+/// `ling --json PATH` with a placeholder for each required argument reports
+/// `unsupported_output` exactly when `ling describe PATH` omits `json`.
+#[test]
+fn describe_lists_json_exactly_for_commands_that_accept_json() {
+    use clap::CommandFactory as _;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    fn subcommand<'a>(command: &'a clap::Command, path: &str) -> &'a clap::Command {
+        path.split(' ').fold(command, |command, name| {
+            command.find_subcommand(name).unwrap()
+        })
+    }
+
+    let root = lingrep::cli::Cli::command();
+    let described = lingrep_without_dictionary()
+        .args(["--json", "describe"])
+        .output()
+        .unwrap();
+    assert!(described.status.success());
+    let scratch = tempfile::tempdir().unwrap();
+    let mut mismatches = Vec::new();
+    for record in parse_jsonl(&described.stdout) {
+        let path = record["data"]["command"].as_str().unwrap().to_owned();
+        let command = subcommand(&root, &path);
+        if command.has_subcommands() {
+            continue;
+        }
+        let mut argv = vec!["--json".to_owned()];
+        argv.extend(path.split(' ').map(str::to_owned));
+        let group_members = command
+            .get_groups()
+            .filter(|group| group.is_required_set())
+            .filter_map(|group| group.get_args().next().cloned())
+            .collect::<Vec<_>>();
+        for argument in command.get_arguments().filter(|argument| {
+            argument.is_required_set() || group_members.contains(argument.get_id())
+        }) {
+            let value = argument.get_possible_values().first().map_or_else(
+                || "placeholder".to_owned(),
+                |value| value.get_name().to_owned(),
+            );
+            if let Some(long) = argument.get_long() {
+                argv.push(format!("--{long}"));
+            }
+            argv.push(value);
+        }
+        let parses = |argv: &[String]| {
+            lingrep::cli::Cli::try_parse_from(
+                std::iter::once("ling").chain(argv.iter().map(String::as_str)),
+            )
+            .map(drop)
+            .map_err(|error| error.kind())
+        };
+        if parses(&argv) == Err(clap::error::ErrorKind::MissingRequiredArgument) {
+            // A positional required only without some option, such as ROOT
+            // without --corpus.
+            argv.extend(
+                command
+                    .get_positionals()
+                    .filter(|argument| !argument.is_required_set())
+                    .map(|_| "placeholder".to_owned()),
+            );
+        }
+        assert_eq!(parses(&argv), Ok(()), "ling {argv:?}");
+        let mut child = std::process::Command::new(crate::support::lingrep_binary_path())
+            .args(&argv)
+            .current_dir(scratch.path())
+            .env("HOME", scratch.path())
+            .env("XDG_DATA_HOME", scratch.path())
+            .env_remove("LINGREP_DICTIONARY_PATH")
+            .env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env("HTTP_PROXY", "http://127.0.0.1:9")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while child.try_wait().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "ling {argv:?} did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        let unsupported = parse_jsonl(&output.stderr)
+            .iter()
+            .any(|record| record["data"]["code"] == "unsupported_output");
+        let listed = record["data"]["output_modes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("json"));
+        if listed == unsupported {
+            mismatches.push(format!(
+                "{path}: describe lists json: {listed}; ling {argv:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}

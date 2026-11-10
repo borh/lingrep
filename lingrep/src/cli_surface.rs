@@ -64,7 +64,10 @@ fn capability(command: &Command, path: &str) -> CapabilityData {
     if has_tsv {
         output_modes.push("tsv".into());
     }
-    if matches!(path, "explore" | "serve" | "analyzer" | "analyzer prepare") {
+    if matches!(
+        path,
+        "explore" | "serve" | "analyzer" | "analyzer prepare" | "corpus render"
+    ) {
         output_modes = vec!["human".into()];
     }
     CapabilityData {
