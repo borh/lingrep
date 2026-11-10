@@ -1,10 +1,11 @@
+use lingrep_core::testing::execution::execute_fixture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lingrep_core::dictionary::create_tokenizer_from_path;
 use lingrep_core::execution::{
     CancellationFlag, ExecutionError, ExecutionLimits, ExecutionProgress, MatchSink, RunOutcome,
     SentenceAdmission, SentenceLocation, SinkControl, TextIteratorSource,
-    TokenizedBatchObservation, TokenizedBatchObserver, execute,
+    TokenizedBatchObservation, TokenizedBatchObserver,
 };
 use lingrep_core::fsm::{CompileLimits, Match, PatternSource, compile_catalog};
 use lingrep_core::token_match::{TokenSequence, tokenize};
@@ -76,7 +77,7 @@ fn public_executor_bounds_adversarial_64k_records_and_rejects_64k_plus_one() {
         assert_eq!(fixture.len(), SENTENCE_BYTES);
         let tokenizations = AtomicUsize::new(0);
         let mut observer = ResidencyObserver::default();
-        let outcome = execute(
+        let outcome = execute_fixture(
             TextIteratorSource::new(std::iter::once(fixture.clone())),
             |sentence| {
                 tokenizations.fetch_add(1, Ordering::SeqCst);
@@ -109,7 +110,7 @@ fn public_executor_bounds_adversarial_64k_records_and_rejects_64k_plus_one() {
         oversized.push('x');
         let rejected_tokenizations = AtomicUsize::new(0);
         let mut rejected_observer = ResidencyObserver::default();
-        let error = execute(
+        let error = execute_fixture(
             TextIteratorSource::new(std::iter::once(oversized)),
             |sentence| {
                 rejected_tokenizations.fetch_add(1, Ordering::SeqCst);

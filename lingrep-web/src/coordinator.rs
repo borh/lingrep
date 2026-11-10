@@ -387,7 +387,7 @@ fn run_scan_blocking_with_options(
     )
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
-    // `execute` applies publication policy; this surface only selects records.
+    // `execute_analyzed` applies publication policy; this surface only selects records.
     let mut sink = snapshot;
     sink.search_scope = scope.specification();
     let mut attributes = output.matcher.execution_attributes();
@@ -1138,7 +1138,8 @@ mod tests {
     use crate::revision::AttemptPhase;
     use crate::revision_status::project_revision_status;
     use crate::snapshot::{MatchRef, PatternDescriptor, PatternKey, PatternOrigin};
-    use lingrep_core::execution::{MatchSink, SentenceBatchSource, execute};
+    use lingrep_core::execution::{MatchSink, SentenceBatchSource};
+    use lingrep_core::testing::execution::execute_fixture;
     use lingrep_core::token_match::TokenInfo;
 
     /// A minimal `CorpusSlot` for tests that need one only to admit an entry,
@@ -1744,7 +1745,7 @@ mod tests {
         let execution_source = ready.artifact.sentence_source().unwrap();
         let mut progress = |_: ExecutionProgress, _: &SnapshotSink| {};
         let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
-        let outcome = execute(
+        let outcome = execute_fixture(
             execution_source,
             |_| {
                 #[expect(

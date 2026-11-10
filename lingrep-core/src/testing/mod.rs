@@ -15,6 +15,7 @@ pub use crate::token_match::{TokenInfo, tokenize};
 pub mod campaign_sentences;
 pub mod catalogs;
 pub mod corpus;
+pub mod execution;
 pub mod helpers;
 mod mini_dictionary;
 

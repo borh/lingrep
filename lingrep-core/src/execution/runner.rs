@@ -11,8 +11,7 @@ use std::ops::Range;
 
 use crate::corpus::DocumentId;
 use crate::fsm::{
-    BoundCatalog, BoundSentenceMatcher, CompiledCatalog, LookaroundReach, LookaroundScope, Match,
-    PublishedRecord, SentenceMatcher,
+    BoundCatalog, BoundSentenceMatcher, LookaroundReach, LookaroundScope, Match, PublishedRecord,
 };
 use crate::token_match::{
     BoundProjection, BoundTokenSentence, TokenInfo, TokenSchema, TokenSequence,
@@ -93,7 +92,7 @@ pub struct ExecutionReport {
     pub records_emitted: u64,
     /// What the publication seam suppressed or dropped during this run.
     ///
-    /// Reported here because the seam is owned by [`execute`], not by the
+    /// Reported here because the seam is owned by [`execute_analyzed`], not by the
     /// caller's sink: a surface that wants to report policy activity can no
     /// longer reach into a decorator it does not construct.
     pub policy_stats: crate::fsm::PolicyStats,
@@ -107,7 +106,7 @@ pub struct ExecutionReport {
     /// researcher debugging an inert statement is looking for.
     ///
     /// Reaches here by the same route and for the same reason as
-    /// [`Self::policy_stats`]: the seam is [`execute`]'s, so a surface wanting
+    /// [`Self::policy_stats`]: the seam is [`execute_analyzed`]'s, so a surface wanting
     /// to report policy activity cannot reach into a decorator it does not
     /// construct.
     pub program_stats: crate::fsm::ProgramStats,
@@ -381,7 +380,7 @@ pub trait MatchSink {
 
 /// A mutable borrow publishes exactly as the sink it borrows.
 ///
-/// This exists so [`execute`] can own the publication seam: it wraps the
+/// This exists so [`execute_analyzed`] can own the publication seam: it wraps the
 /// caller's `&mut K` in the policy decorator internally, which requires the
 /// borrow itself to be a sink. Without it every caller would have to construct
 /// the decorator, which is precisely the arrangement that let `summarize` ship
@@ -597,79 +596,9 @@ where
     })
 }
 
-/// Executes the canonical matcher over caller-owned `TokenInfo` values.
-///
-/// New analyzer-backed callers should bind once and use [`execute_analyzed`].
-/// This entry point remains for callers that already own canonical `TokenInfo`
-/// values, including artifact construction.
-#[allow(clippy::too_many_arguments)]
-pub fn execute<S, F, K, P, O>(
-    source: S,
-    tokenize: F,
-    fsm: &CompiledCatalog,
-    pool: &rayon::ThreadPool,
-    limits: &ExecutionLimits,
-    logical_batch_sentences: usize,
-    cancel: &CancellationFlag,
-    sink: &mut K,
-    progress: &mut P,
-    observer: &mut O,
-    policy: impl Into<Publication>,
-    scope: &SentenceAdmission,
-) -> Result<RunOutcome, ExecutionError>
-where
-    S: SentenceBatchSource + Send,
-    F: Fn(&str) -> Vec<TokenInfo> + Sync,
-    K: MatchSink,
-    P: ProgressSink<K>,
-    O: TokenizedBatchObserver,
-{
-    let publication: Publication = policy.into();
-    let mut sealed = PolicySink::with_selection(
-        sink,
-        fsm.catalog_policy().clone(),
-        fsm.anchor_evaluator(),
-        publication.selection(),
-    );
-    if let Some(capacity) = publication.trace_capacity() {
-        sealed = sealed.with_trace(capacity);
-    }
-    let mut adapted = SealedProgress { inner: progress };
-    let outcome = execute_with_matcher(
-        source,
-        tokenize,
-        pool,
-        limits,
-        logical_batch_sentences,
-        cancel,
-        &mut sealed,
-        &mut adapted,
-        observer,
-        scope,
-        fsm.label_declarations(),
-        |sentences| SentenceMatcher::new(fsm).match_all(pool, sentences),
-    )?;
-    let stats = sealed.stats();
-    let (program_stats, trace) = sealed.into_reporting();
-    Ok(match outcome {
-        RunOutcome::Completed(mut report) => {
-            report.policy_stats = stats;
-            report.program_stats = program_stats;
-            report.trace = trace;
-            RunOutcome::Completed(report)
-        }
-        RunOutcome::Cancelled(mut report) => {
-            report.policy_stats = stats;
-            report.program_stats = program_stats;
-            report.trace = trace;
-            RunOutcome::Cancelled(report)
-        }
-    })
-}
-
 /// Presents the caller's sink to the caller's progress observer.
 ///
-/// The seam is an implementation detail of [`execute`], so a `ProgressSink`
+/// The seam is an implementation detail of [`execute_analyzed`], so a `ProgressSink`
 /// written against the caller's own sink type keeps working unchanged.
 struct SealedProgress<'p, P: ?Sized> {
     inner: &'p mut P,
@@ -1076,7 +1005,7 @@ impl PublicationState {
     /// The run's accounting at a cancellation checkpoint.
     ///
     /// Clones, which costs nothing here: `program_stats` is assembled by
-    /// [`execute`] at teardown from the sink, so the accumulator this reads
+    /// [`execute_analyzed`] at teardown from the sink, so the accumulator this reads
     /// still carries the empty program. If that ever changes, this becomes a
     /// per-checkpoint vector clone and should move to a `take`.
     fn cancelled(&self) -> RunOutcome {
@@ -1084,126 +1013,6 @@ impl PublicationState {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_with_matcher<S, F, K, P, O, M>(
-    source: S,
-    tokenize: F,
-    pool: &rayon::ThreadPool,
-    limits: &ExecutionLimits,
-    logical_batch_sentences: usize,
-    cancel: &CancellationFlag,
-    sink: &mut K,
-    progress: &mut P,
-    observer: &mut O,
-    scope: &SentenceAdmission,
-    labels: &[crate::fsm::LabelDeclaration],
-    mut match_batch: M,
-) -> Result<RunOutcome, ExecutionError>
-where
-    S: SentenceBatchSource + Send,
-    F: Fn(&str) -> Vec<TokenInfo> + Sync,
-    K: MatchSink,
-    P: ProgressSink<K>,
-    O: TokenizedBatchObserver,
-    M: FnMut(&[Vec<TokenInfo>]) -> Vec<Vec<Match>>,
-{
-    limits.validate()?;
-    if logical_batch_sentences == 0 {
-        return Err(ExecutionError::InvalidLimit {
-            field: "logical_batch_sentences",
-            message: "must be greater than zero".to_owned(),
-        });
-    }
-
-    std::thread::scope(|threads| {
-        let mut state = PublicationState::new(labels);
-        let mut feed = BatchFeed::new(threads, source, limits, cancel);
-        loop {
-            if cancel.is_cancelled() {
-                return Ok(state.cancelled());
-            }
-
-            let batch = feed.next()?;
-            if cancel.is_cancelled() {
-                return Ok(state.cancelled());
-            }
-            let Some(batch) = batch else {
-                if state.logical_pending != 0 {
-                    state.finalize(sink, progress)?;
-                }
-                if cancel.is_cancelled() {
-                    return Ok(state.cancelled());
-                }
-                return Ok(RunOutcome::Completed(state.current));
-            };
-
-            let control = match batch {
-                ExecutionBatch::Text(sentences) => {
-                    validate_batch_count(sentences.len(), limits)?;
-                    validate_raw_sentences(&sentences, limits)?;
-                    execute_text_partitions(
-                        sentences,
-                        &tokenize,
-                        limits.max_tokenized_bytes,
-                        logical_batch_sentences,
-                        pool,
-                        cancel,
-                        sink,
-                        progress,
-                        observer,
-                        &mut match_batch,
-                        &mut state,
-                    )?
-                }
-                ExecutionBatch::Tokenized { sentences, charges } => {
-                    validate_batch_count(sentences.len(), limits)?;
-                    let estimates = match charges {
-                        Some(charges) => admit_supplied_charges(&sentences, charges, limits)?,
-                        None => validate_tokenized_sentences(&sentences, limits)?,
-                    };
-                    execute_partitions(
-                        sentences,
-                        estimates,
-                        scope,
-                        limits.max_tokenized_bytes,
-                        logical_batch_sentences,
-                        pool,
-                        cancel,
-                        sink,
-                        progress,
-                        observer,
-                        &mut match_batch,
-                        &mut state,
-                    )?
-                }
-                ExecutionBatch::BoundTokenized { sentences, .. } => {
-                    return Err(ExecutionError::Source {
-                        ordinal: sentences
-                            .first()
-                            .map_or(0, |sentence| sentence.location.corpus_sentence_ordinal),
-                        message: "bound token batch reached the legacy test matcher".to_owned(),
-                    });
-                }
-            };
-            if control == BatchControl::Cancelled {
-                return Ok(state.cancelled());
-            }
-            if control == BatchControl::Stop {
-                if state.logical_pending != 0 {
-                    state.finalize(sink, progress)?;
-                }
-                return Ok(RunOutcome::Completed(state.current));
-            }
-        }
-    })
-}
-
-/// Supplies batches to the executor, optionally one ahead of publication.
-///
-/// A source that declares [`SentenceBatchSource::wants_lookahead`] is run on
-/// its own thread so its read, verify, decompress and decode overlap the
-/// matching and publication of the previous batch. Everything else pulls
-/// inline, exactly as before.
 enum BatchFeed<'a, S> {
     Inline {
         source: S,
@@ -1311,71 +1120,6 @@ fn validate_raw_sentences(
         });
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-// Raw text intentionally enters the matcher as singleton token partitions.
-// This gives up cross-sentence matcher parallelism on this adapter, but proves
-// that no completed tokenized sentence remains resident while the next one is
-// tokenized. Logical batch accounting still finalizes at the configured size.
-fn execute_text_partitions<F, K, P, O, M>(
-    sentences: Vec<ExecutionSentence<TextUnit>>,
-    tokenize: &F,
-    max_tokenized_bytes: usize,
-    logical_batch_sentences: usize,
-    pool: &rayon::ThreadPool,
-    cancel: &CancellationFlag,
-    sink: &mut K,
-    progress: &mut P,
-    observer: &mut O,
-    match_batch: &mut M,
-    state: &mut PublicationState,
-) -> Result<BatchControl, ExecutionError>
-where
-    F: Fn(&str) -> Vec<TokenInfo> + Sync,
-    K: MatchSink,
-    P: ProgressSink<K>,
-    O: TokenizedBatchObserver,
-    M: FnMut(&[Vec<TokenInfo>]) -> Vec<Vec<Match>>,
-{
-    for ExecutionSentence { location, value } in sentences {
-        if cancel.is_cancelled() {
-            return Ok(BatchControl::Cancelled);
-        }
-        let tokens = tokenize(value.text());
-        if cancel.is_cancelled() {
-            return Ok(BatchControl::Cancelled);
-        }
-        let estimate = estimate_token_info_bytes(&tokens)?;
-        if estimate > max_tokenized_bytes {
-            return Err(ExecutionError::TokenizedSentenceTooLarge {
-                ordinal: location.corpus_sentence_ordinal,
-                actual: estimate,
-                limit: max_tokenized_bytes,
-            });
-        }
-        let control = run_partition(
-            &[location],
-            &[tokens],
-            &[false],
-            0..1,
-            estimate,
-            logical_batch_sentences,
-            pool,
-            cancel,
-            sink,
-            progress,
-            observer,
-            &mut |held: &[Vec<TokenInfo>], _: &[bool], targets: Range<usize>| {
-                match_batch(&held[targets])
-            },
-            state,
-        )?;
-        if control != BatchControl::Continue {
-            return Ok(control);
-        }
-    }
-    Ok(BatchControl::Continue)
 }
 
 fn admit_supplied_charges(
@@ -1505,62 +1249,6 @@ where
         }
         Ok(BatchControl::Continue)
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn execute_partitions<K, P, O, M>(
-    sentences: Vec<ExecutionSentence<Vec<TokenInfo>>>,
-    estimates: Vec<usize>,
-    scope: &SentenceAdmission,
-    max_tokenized_bytes: usize,
-    logical_batch_sentences: usize,
-    pool: &rayon::ThreadPool,
-    cancel: &CancellationFlag,
-    sink: &mut K,
-    progress: &mut P,
-    observer: &mut O,
-    match_batch: &mut M,
-    state: &mut PublicationState,
-) -> Result<BatchControl, ExecutionError>
-where
-    K: MatchSink,
-    P: ProgressSink<K>,
-    O: TokenizedBatchObserver,
-    M: FnMut(&[Vec<TokenInfo>]) -> Vec<Vec<Match>>,
-{
-    Partitioner::new(BTreeMap::new()).push_batch(
-        sentences,
-        estimates,
-        None,
-        scope,
-        max_tokenized_bytes,
-        logical_batch_sentences,
-        state,
-        &mut |locations: &[SentenceLocation],
-              held: &[Vec<TokenInfo>],
-              links: &[bool],
-              targets: Range<usize>,
-              charged_bytes: usize,
-              state: &mut PublicationState| {
-            run_partition(
-                locations,
-                held,
-                links,
-                targets,
-                charged_bytes,
-                logical_batch_sentences,
-                pool,
-                cancel,
-                sink,
-                progress,
-                observer,
-                &mut |held: &[Vec<TokenInfo>], _: &[bool], targets: Range<usize>| {
-                    match_batch(&held[targets])
-                },
-                state,
-            )
-        },
-    )
 }
 
 trait PartitionRun<V>:
@@ -2148,10 +1836,153 @@ mod tests {
         ));
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn execute_fixture_with_matcher<S, F, K, P, O, M>(
+        source: S,
+        tokenize: F,
+        pool: &rayon::ThreadPool,
+        limits: &ExecutionLimits,
+        logical_batch_sentences: usize,
+        cancel: &CancellationFlag,
+        sink: &mut K,
+        progress: &mut P,
+        observer: &mut O,
+        scope: &SentenceAdmission,
+        labels: &[crate::fsm::LabelDeclaration],
+        mut matcher: M,
+    ) -> Result<RunOutcome, ExecutionError>
+    where
+        S: SentenceBatchSource + Send,
+        F: Fn(&str) -> Vec<TokenInfo>,
+        K: MatchSink,
+        P: ProgressSink<K>,
+        O: TokenizedBatchObserver,
+        M: FnMut(&[BoundSentenceInput]) -> Vec<Vec<Match>>,
+    {
+        let mut session = crate::testing::execution::FixtureSession::new(tokenize);
+        let schema = session.schema().clone();
+        let projection = schema
+            .bind_projection(schema.keys().iter().cloned())
+            .unwrap();
+        execute_bound_with_matcher(
+            source,
+            &mut SessionAnalyzer {
+                session: Some(&mut session),
+            },
+            &schema,
+            &projection,
+            pool,
+            limits,
+            logical_batch_sentences,
+            cancel,
+            sink,
+            progress,
+            observer,
+            scope,
+            labels,
+            BTreeMap::new(),
+            |sentences, _, targets| matcher(&sentences[targets]),
+        )
+    }
+
     struct NoopProgress;
 
     impl ProgressSink<Sink> for NoopProgress {
         fn update(&mut self, _progress: ExecutionProgress, _sink: &Sink) {}
+    }
+
+    #[test]
+    fn analyzer_finish_runs_only_after_completion_and_propagates_failure() {
+        use crate::analysis::{AnalysisError, ValidatedAnalysisBatch};
+
+        struct ProbeSession {
+            schema: TokenSchema,
+            calls: Arc<AtomicUsize>,
+            fail: bool,
+        }
+        impl crate::analysis::analyzer::sealed::Session for ProbeSession {}
+        impl AnalyzerSession for ProbeSession {
+            fn schema(&self) -> &TokenSchema {
+                &self.schema
+            }
+            fn analyze_bounded_batch(
+                &mut self,
+                _: Vec<TextUnit>,
+                _: &BoundProjection,
+            ) -> Result<ValidatedAnalysisBatch, AnalysisError> {
+                Err(AnalysisError::UnsupportedProjection)
+            }
+            fn finish(&mut self) -> Result<(), AnalysisError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail {
+                    Err(AnalysisError::InvalidAlignment)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        struct ProbeSink(bool);
+        impl MatchSink for ProbeSink {
+            fn push(
+                &mut self,
+                _: &SentenceLocation,
+                _: &dyn TokenSequence,
+                _: &[Match],
+            ) -> Result<SinkControl, ExecutionError> {
+                if self.0 {
+                    Ok(SinkControl::StopAfter { records_emitted: 0 })
+                } else {
+                    Ok(SinkControl::Continue { records_emitted: 0 })
+                }
+            }
+        }
+
+        for mode in ["eof", "stop", "cancel", "invalid_limit", "finish_error"] {
+            let catalog = crate::testing::compile_test_pattern("[]");
+            let schema = TokenSchema::unidic_morphology();
+            let bound = catalog.bind(&schema).unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let session = ProbeSession {
+                schema,
+                calls: Arc::clone(&calls),
+                fail: mode == "finish_error",
+            };
+            let cancel = CancellationFlag::new();
+            if mode == "cancel" {
+                cancel.cancel();
+            }
+            let mut limits = ExecutionLimits::default();
+            if mode == "invalid_limit" {
+                limits.max_stage_sentences = 0;
+            }
+            let result = execute_analyzed(
+                source([vec![(0, vec![token("a")])], vec![(1, vec![token("b")])]]),
+                AnalysisBinding::Session(session),
+                &bound,
+                &pool(),
+                &limits,
+                2,
+                &cancel,
+                &mut ProbeSink(mode == "stop"),
+                &mut |_, _: &ProbeSink| {},
+                &mut |_: TokenizedBatchObservation| Ok(()),
+                super::super::PolicySelection::Apply,
+                &SentenceAdmission::All,
+            );
+            match mode {
+                "eof" | "stop" => assert!(matches!(result, Ok(RunOutcome::Completed(_)))),
+                "cancel" => assert!(matches!(result, Ok(RunOutcome::Cancelled(_)))),
+                "invalid_limit" => {
+                    assert!(matches!(result, Err(ExecutionError::InvalidLimit { .. })))
+                }
+                _ => assert!(matches!(result, Err(ExecutionError::Source { .. }))),
+            }
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                usize::from(matches!(mode, "eof" | "stop" | "finish_error")),
+                "{mode}"
+            );
+        }
     }
 
     #[test]
@@ -2163,7 +1994,7 @@ mod tests {
         let mut progress_updates = 0usize;
         let mut sink = Sink::default();
 
-        let outcome = execute_with_matcher(
+        let outcome = execute_fixture_with_matcher(
             CancellingSource {
                 batch: Some(ExecutionBatch::Text(vec![ExecutionSentence {
                     location: SentenceLocation::run_local(0),
@@ -2217,7 +2048,7 @@ mod tests {
         let mut matcher_calls = 0usize;
         let mut sink = Sink::default();
 
-        let outcome = execute_with_matcher(
+        let outcome = execute_fixture_with_matcher(
             source([vec![(0, vec![token("a")])]]),
             |_| {
                 #[expect(clippy::unreachable, reason = "tokenized source bypasses tokenization")]
@@ -2263,7 +2094,7 @@ mod tests {
         let mut matcher_calls = 0usize;
         let mut sink = Sink::default();
 
-        let outcome = execute_with_matcher(
+        let outcome = execute_fixture_with_matcher(
             source([vec![(0, vec![token("a")])]]),
             |_| {
                 #[expect(clippy::unreachable, reason = "tokenized source bypasses tokenization")]
@@ -2314,7 +2145,7 @@ mod tests {
             }
         }
 
-        let outcome = execute_with_matcher(
+        let outcome = execute_fixture_with_matcher(
             source([vec![(0, vec![token("a")])], vec![(1, vec![token("b")])]]),
             |_| {
                 #[expect(clippy::unreachable, reason = "tokenized source bypasses tokenization")]

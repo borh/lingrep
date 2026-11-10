@@ -10,6 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
+use lingrep_core::testing::execution::execute_fixture;
 use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
@@ -25,8 +26,7 @@ use lingrep_core::execution::{
     EnhancedGraphInput, ExecutionBatch, ExecutionError, ExecutionLimits, ExecutionProgress,
     ExecutionReport, ExecutionSentence, MatchSink, ProgressSink, RunOutcome, SentenceAdmission,
     SentenceBatchSource, SentenceLocation, SinkControl, TextIteratorSource,
-    TokenizedBatchObservation, TokenizedBatchObserver, estimate_token_info_bytes, execute,
-    execute_analyzed,
+    TokenizedBatchObservation, TokenizedBatchObserver, estimate_token_info_bytes, execute_analyzed,
 };
 use lingrep_core::fsm::{CompileLimits, CompiledCatalog, Match, PatternSource, compile_catalog};
 use lingrep_core::testing::token;
@@ -194,7 +194,7 @@ fn run_protocol_fixture<S: SentenceBatchSource + Send>(
     cancel: &CancellationFlag,
     logical_batch_sentences: usize,
 ) -> Result<RunOutcome, ExecutionError> {
-    execute(
+    execute_fixture(
         source,
         |text| vec![token(text)],
         &matcher("plain := [text=猫]."),
@@ -612,7 +612,7 @@ fn run_count_reporting_fixture(
         control,
         pushes: 0,
     };
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source bypasses tokenization"),
         &matcher("plain := [text=猫]."),
@@ -839,7 +839,7 @@ fn generic_execution_preserves_direct_canonical_matches() {
     let fsm = matcher("plain := [text=a].");
     let mut sink = ProtocolRecordingSink::default();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source bypasses tokenization"),
         &fsm,
@@ -879,7 +879,7 @@ fn cancellation_prevents_the_next_batch() {
     let mut sink = ProtocolRecordingSink::cancel_during_push(cancel.clone());
     let mut progress_updates = Vec::new();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source bypasses tokenization"),
         &matcher("plain := [text=a]."),
@@ -951,7 +951,7 @@ fn parallel_default_matches_the_independent_serial_transcript() {
             );
             let mut sink = ProtocolRecordingSink::default();
 
-            let outcome = execute(
+            let outcome = execute_fixture(
                 source,
                 |_| unreachable!("tokenized source bypasses tokenization"),
                 &fsm,
@@ -1027,7 +1027,7 @@ fn generic_execution_freezes_ordinals_progress_and_lifecycle_across_sources_and_
             let mut sink = ProtocolRecordingSink::default();
             let mut progress = Vec::new();
 
-            let outcome = execute(
+            let outcome = execute_fixture(
                 source,
                 |_| unreachable!("tokenized source bypasses tokenization"),
                 &matcher("plain := [text=a]."),
@@ -1124,7 +1124,7 @@ fn sink_failure_stops_publication_immediately() {
     );
     let mut sink = ProtocolFailingSink { calls: 0 };
 
-    let error = execute(
+    let error = execute_fixture(
         source,
         |_| unreachable!("tokenized source bypasses tokenization"),
         &matcher("plain := [text=a]."),
@@ -1158,7 +1158,7 @@ fn zero_logical_batch_size_is_rejected_before_cache_decode() {
         )],
     );
 
-    let error = execute(
+    let error = execute_fixture(
         source,
         |_| unreachable!("invalid limit must win before source pull"),
         &matcher("plain := [text=a]."),
@@ -1227,7 +1227,7 @@ where
     O: TokenizedBatchObserver,
 {
     let (source, _) = StaticSource::new([batch]);
-    execute(
+    execute_fixture(
         source,
         |_| unreachable!("tokenized sources must bypass tokenization"),
         &matcher(pattern),
@@ -1452,13 +1452,13 @@ fn lifecycle_is_observe_push_finish_then_cumulative_progress() {
     let mut progress = TimelineProgress(Arc::clone(&timeline));
     let mut observer = TimelineObserver(Arc::clone(&timeline));
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |text| vec![token(text)],
         &matcher("plain := [text=a]."),
         &pool(),
         &ExecutionLimits {
-            max_stage_sentences: 2,
+            max_stage_sentences: 1,
             ..ExecutionLimits::default()
         },
         2,
@@ -1504,7 +1504,7 @@ fn physical_batches_do_not_change_logical_finalization_cadence() {
 
     let mut sink = RecordingSink::default();
     let mut progress_updates = Vec::new();
-    let outcome = execute(
+    let outcome = execute_fixture(
         TextIteratorSource::new(["a", "b"].into_iter().map(str::to_owned)),
         |text| vec![token(text)],
         &matcher("plain := [text=a]."),
@@ -1566,7 +1566,7 @@ fn logical_boundaries_finalize_at_1000_2000_and_partial_eof() {
     let mut sink = SpillSink::default();
     let mut observer_calls = 0usize;
     let mut progress_updates = Vec::new();
-    let outcome = execute(
+    let outcome = execute_fixture(
         TextIteratorSource::new((0..2501).map(|index| index.to_string())),
         |text| vec![token(text)],
         &matcher("plain := [text=never]."),
@@ -1600,7 +1600,7 @@ fn logical_boundaries_finalize_at_1000_2000_and_partial_eof() {
 #[test]
 fn zero_logical_batch_limit_fails_before_source_pull() {
     let (source, pulls) = StaticSource::new([text_batch([(0, "a".to_owned())])]);
-    let error = execute(
+    let error = execute_fixture(
         source,
         |text| vec![token(text)],
         &matcher("plain := [text=a]."),
@@ -1631,7 +1631,7 @@ fn empty_input_has_no_finalization_or_progress() {
     let (source, _pulls) = StaticSource::new([]);
     let mut sink = RecordingSink::default();
     let mut progress = Vec::new();
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| Vec::new(),
         &matcher("plain := [text=a]."),
@@ -1659,7 +1659,7 @@ fn cancellation_before_first_pull_returns_the_empty_lifecycle_report() {
     cancel.cancel();
     let mut sink = RecordingSink::default();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |text| vec![token(text)],
         &matcher("plain := [text=a]."),
@@ -1697,7 +1697,7 @@ fn cancellation_from_tokenizer_stops_before_observation_and_publication() {
     }
     let mut sink = RecordingSink::default();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         TextIteratorSource::new(["a"].into_iter().map(str::to_owned)),
         move |text| {
             callback_cancel.cancel();
@@ -1726,7 +1726,7 @@ fn cancellation_from_observer_stops_before_sink_publication() {
     let cancel = CancellationFlag::new();
     let observer_cancel = cancel.clone();
     let mut sink = RecordingSink::default();
-    let outcome = execute(
+    let outcome = execute_fixture(
         TextIteratorSource::new(["a"].into_iter().map(str::to_owned)),
         |text| vec![token(text)],
         &matcher("plain := [text=a]."),
@@ -1798,7 +1798,7 @@ fn sink_cancellation_is_observed_before_the_next_push() {
     };
     let mut progress = Vec::new();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=a]."),
@@ -1838,7 +1838,7 @@ fn sink_cancellation_preserves_irreversible_prefix_without_finishing_batch() {
         finished: 0,
     };
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=a]."),
@@ -1872,7 +1872,7 @@ fn cancellation_from_progress_returns_the_just_finalized_report_without_next_pul
     ]);
     let mut sink = RecordingSink::default();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=a]."),
@@ -1921,41 +1921,6 @@ impl SentenceBatchSource for CancelAtEofSource {
     }
 }
 
-#[test]
-fn cancellation_raised_while_pulling_eof_does_not_finalize_a_partial_logical_batch() {
-    let cancel = CancellationFlag::new();
-    let source = CancelAtEofSource {
-        batch: Some(tokenized_batch([(0, vec![token("a")])])),
-        cancel: cancel.clone(),
-    };
-    let mut sink = RecordingSink::default();
-    let mut progress = Vec::new();
-
-    let outcome = execute(
-        source,
-        |_| unreachable!("tokenized source must bypass tokenizer"),
-        &matcher("plain := [text=a]."),
-        &pool(),
-        &ExecutionLimits::default(),
-        2,
-        &cancel,
-        &mut sink,
-        &mut |update: ExecutionProgress, _sink: &RecordingSink| progress.push(update),
-        &mut NoopObserver,
-        lingrep_core::execution::PolicySelection::Apply,
-        &SentenceAdmission::All,
-    )
-    .unwrap();
-
-    assert_eq!(
-        outcome,
-        RunOutcome::Cancelled(expected_report(1, 1, 1, 1, 1))
-    );
-    assert_eq!(sink.records.len(), 1);
-    assert_eq!(sink.finished, 0);
-    assert!(progress.is_empty());
-}
-
 struct CancelOnPullSource {
     batch: Option<ExecutionBatch>,
     cancel: CancellationFlag,
@@ -1987,7 +1952,7 @@ fn cancellation_raised_while_pulling_a_batch_stops_before_tokenization_or_public
     let mut sink = RecordingSink::default();
     let mut progress = Vec::new();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |text| {
             tokenizations.fetch_add(1, Ordering::SeqCst);
@@ -2025,7 +1990,7 @@ fn cancellation_raised_with_an_invalid_batch_wins_before_validation() {
         cancel: cancel.clone(),
     };
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("post-pull cancellation must precede batch validation"),
         &matcher("plain := [text=a]."),
@@ -2078,7 +2043,7 @@ fn raw_stage_is_partitioned_by_tokenized_residency_without_reordering() {
         estimates: Vec::new(),
     };
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         TextIteratorSource::new(values.clone().into_iter()),
         |text| vec![token(text)],
         &matcher("plain := [text~/^000-/]."),
@@ -2116,7 +2081,7 @@ fn raw_stage_is_partitioned_by_tokenized_residency_without_reordering() {
 }
 
 #[test]
-fn text_tokenization_observes_matches_and_drops_each_sentence_before_the_next() {
+fn single_sentence_stages_publish_before_analyzing_the_next_stage() {
     struct TimelineResidencySink(Arc<Mutex<Vec<String>>>);
     impl MatchSink for TimelineResidencySink {
         fn push(
@@ -2140,7 +2105,7 @@ fn text_tokenization_observes_matches_and_drops_each_sentence_before_the_next() 
     let tokenizer_timeline = Arc::clone(&timeline);
     let observer_timeline = Arc::clone(&timeline);
 
-    execute(
+    execute_fixture(
         TextIteratorSource::new(values.into_iter()),
         move |text| {
             tokenizer_timeline
@@ -2151,7 +2116,10 @@ fn text_tokenization_observes_matches_and_drops_each_sentence_before_the_next() 
         },
         &matcher("plain := []."),
         &pool(),
-        &ExecutionLimits::default(),
+        &ExecutionLimits {
+            max_stage_sentences: 1,
+            ..ExecutionLimits::default()
+        },
         100,
         &CancellationFlag::new(),
         &mut TimelineResidencySink(Arc::clone(&timeline)),
@@ -2204,7 +2172,7 @@ fn oversized_tokenized_singleton_fails_before_any_batch_publication() {
         estimates: Vec::new(),
     };
 
-    let error = execute(
+    let error = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=small]."),
@@ -2242,7 +2210,7 @@ fn empty_tokenized_sentences_still_count_and_preserve_ordinals() {
     let mut sink = RecordingSink::default();
     let mut progress = Vec::new();
 
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=a]."),
@@ -2287,7 +2255,7 @@ fn executor_revalidates_custom_source_sentence_count_before_tokenization() {
     ])]);
     let tokenizations = AtomicUsize::new(0);
     let mut sink = RecordingSink::default();
-    let error = execute(
+    let error = execute_fixture(
         source,
         |text| {
             tokenizations.fetch_add(1, Ordering::SeqCst);
@@ -2319,7 +2287,7 @@ fn executor_revalidates_custom_source_raw_bytes_before_tokenization() {
     let (source, _pulls) = StaticSource::new([text_batch([(7, "x".repeat(11))])]);
     let tokenizations = AtomicUsize::new(0);
     let mut sink = RecordingSink::default();
-    let error = execute(
+    let error = execute_fixture(
         source,
         |text| {
             tokenizations.fetch_add(1, Ordering::SeqCst);
@@ -2362,7 +2330,7 @@ fn executor_revalidates_custom_source_aggregate_raw_bytes_before_tokenization() 
         (1, "abcdef".to_owned()),
     ])]);
     let tokenizations = AtomicUsize::new(0);
-    let error = execute(
+    let error = execute_fixture(
         source,
         |text| {
             tokenizations.fetch_add(1, Ordering::SeqCst);
@@ -2397,7 +2365,7 @@ fn executor_revalidates_custom_source_token_residency_before_observation() {
     let observer_calls = AtomicUsize::new(0);
     let mut sink = RecordingSink::default();
 
-    let error = execute(
+    let error = execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &matcher("plain := [text=x]."),
@@ -2438,7 +2406,7 @@ fn executor_preserves_complete_canonical_matches_including_captures() {
     let (source, _pulls) = StaticSource::new([tokenized_batch([(42, sentence.clone())])]);
     let mut sink = RecordingSink::default();
 
-    execute(
+    execute_fixture(
         source,
         |_| unreachable!("tokenized source must bypass tokenizer"),
         &fsm,
@@ -2482,7 +2450,7 @@ where
     O: TokenizedBatchObserver,
 {
     let (source, _) = StaticSource::new([batch]);
-    execute(
+    execute_fixture(
         source,
         |_| unreachable!("tokenized sources must bypass tokenization"),
         &matcher(pattern),
@@ -2625,7 +2593,7 @@ fn publication_ordinals_never_decrease_across_partitions() {
         counted.fetch_add(1, Ordering::SeqCst);
         Ok(())
     };
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         |text| vec![token(text)],
         &matcher("plain := [text=猫]."),

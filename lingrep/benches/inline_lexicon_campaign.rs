@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use lingrep_core::execution::{
-    CancellationFlag, ExecutionError, ExecutionLimits, MatchSink, PolicySelection,
-    SentenceAdmission, SentenceLocation, SinkControl, execute,
+    AnalysisBinding, CancellationFlag, ExecutionError, ExecutionLimits, MatchSink, PolicySelection,
+    SentenceAdmission, SentenceLocation, SinkControl, execute_analyzed,
 };
 use lingrep_core::fsm::{CompileLimits, Match, PatternSource, compile_catalog};
 use lingrep_core::token_match::TokenSequence;
@@ -96,9 +96,11 @@ fn main() {
     .unwrap()
     .matcher;
     let artifact = CorpusArtifact::open(&corpus).unwrap();
-    let source = artifact
-        .deferred_sentence_source(&compiled.execution_attributes())
+    let schema = artifact.token_schema().unwrap();
+    let bound = compiled
+        .bind_with_projection(&schema, compiled.execution_attributes())
         .unwrap();
+    let source = artifact.bound_sentence_source(bound.projection()).unwrap();
     let pool = ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
@@ -106,10 +108,10 @@ fn main() {
     let limits = ExecutionLimits::default();
     let mut sink = CountSink::default();
     let started = Instant::now();
-    let outcome = execute(
+    let outcome = execute_analyzed::<_, lingrep_core::analysis::VibratoSession, _, _, _>(
         source,
-        |_text| Vec::new(),
-        &compiled,
+        AnalysisBinding::Prepared(schema),
+        &bound,
         &pool,
         &limits,
         limits.max_stage_sentences,

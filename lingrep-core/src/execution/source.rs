@@ -54,7 +54,7 @@ pub enum TokenizedAdmission {
     /// Skip oversized sentences and count the omissions instead. The handle is
     /// bundled so an `Omit` run cannot silently lose the count: the source
     /// owns the lock while it decodes, and the caller reads the summary after
-    /// the run completes (the source is consumed by `execute`).
+    /// the run completes (the source is consumed by `execute_analyzed`).
     Omit(Arc<Mutex<OversizedSentenceOmissions>>),
 }
 

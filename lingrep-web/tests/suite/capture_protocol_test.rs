@@ -12,9 +12,10 @@
 )]
 use lingrep_core::execution::{
     CancellationFlag, ExecutionError, ExecutionLimits, ExecutionReport, MatchSink, RunOutcome,
-    SentenceAdmission, SentenceLocation, SinkControl, TokenizedBatchObservation, execute,
+    SentenceAdmission, SentenceLocation, SinkControl, TokenizedBatchObservation,
 };
 use lingrep_core::fsm::{CompileLimits, Match, PatternSource, compile_catalog};
+use lingrep_core::testing::execution::execute_fixture;
 use lingrep_core::token_match::{TokenInfo, TokenSequence};
 
 use crate::v6_support::{build_artifact, open_artifact};
@@ -61,7 +62,7 @@ fn v6_executor_delivers_authored_capture_values_to_the_sink() {
 
     let mut progress = |_, _: &RecordingMatchSink| {};
     let mut observer = |_: TokenizedBatchObservation| Ok(());
-    let outcome = execute(
+    let outcome = execute_fixture(
         artifact.sentence_source().unwrap(),
         |_| unreachable!("V7 artifact sentences are tokenized"),
         &fsm,
@@ -138,7 +139,7 @@ fn cancellation_is_observed_before_the_next_capture_push() {
 
     let mut progress = |_, _: &CancellingCaptureSink| {};
     let mut observer = |_: TokenizedBatchObservation| Ok(());
-    let outcome = execute(
+    let outcome = execute_fixture(
         artifact.sentence_source().unwrap(),
         |_| unreachable!("V7 artifact sentences are tokenized"),
         &fsm,
@@ -202,7 +203,7 @@ fn capture_execution_preserves_match_and_capture_counts() {
             let mut sink = RecordingMatchSink::default();
             let mut progress = |_, _: &RecordingMatchSink| {};
             let mut observer = |_: TokenizedBatchObservation| Ok(());
-            let outcome = execute(
+            let outcome = execute_fixture(
                 artifact.sentence_source().unwrap(),
                 |_| unreachable!("V7 artifact sentences are tokenized"),
                 &fsm,

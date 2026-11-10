@@ -46,8 +46,8 @@ not qualify for this fast path even when a local benchmark shows a large gain.
 ## Memory and scheduling
 
 The global matcher requirement is bounded memory: do not collect an entire
-corpus before matching. `lingrep_core::execution::execute` owns the canonical
-pull/tokenize/match/publish lifecycle. `SentenceMatcher::match_all` schedules
+corpus before matching. `lingrep_core::execution::execute_analyzed` owns the canonical
+pull/tokenize/match/publish lifecycle. `BoundSentenceMatcher::match_in_windows` schedules
 only the physical batch supplied by that executor on a caller-owned Rayon
 pool; it preserves sentence order and does not select another matching engine.
 

@@ -362,7 +362,8 @@ async fn export(
 mod tests {
     use super::*;
     use crate::export::sink::ExportSink;
-    use lingrep_core::execution::{ExecutionError, RunOutcome, execute};
+    use lingrep_core::execution::{ExecutionError, RunOutcome};
+    use lingrep_core::testing::execution::execute_fixture;
 
     #[test]
     fn export_attributes_add_orth_beside_kwic_demand() {
@@ -402,7 +403,7 @@ mod tests {
         let execution_source = ready.artifact.sentence_source().unwrap();
         let mut progress = |_, _: &ExportSink| {};
         let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
-        let outcome = execute(
+        let outcome = execute_fixture(
             execution_source,
             |_| {
                 #[expect(

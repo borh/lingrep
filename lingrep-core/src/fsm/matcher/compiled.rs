@@ -484,7 +484,7 @@ impl CompiledCatalog {
 
     /// Returns policy-filtered matches, excluding synthesized evidence records.
     ///
-    /// Policy statistics are discarded; use [`crate::execution::execute`] to retain them.
+    /// Policy statistics are discarded; use [`crate::execution::execute_analyzed`] to retain them.
     ///
     /// # Errors
     ///

@@ -40,7 +40,7 @@ pub use record_reader::{BoundedRecordError, BoundedRecordReader, BoundedRecordSt
 pub use runner::{
     AnalysisBinding, CancellationFlag, ExecutionProgress, ExecutionReport, MatchSink,
     PARTITION_PUBLICATION_WIDTH, ProgressSink, RunOutcome, SinkControl, TokenizedBatchObservation,
-    TokenizedBatchObserver, execute, execute_analyzed,
+    TokenizedBatchObserver, execute_analyzed,
 };
 pub use sampling::{CorpusSample, RATE_SCALE, SampledSentences, reservoir_draw};
 pub use source::{

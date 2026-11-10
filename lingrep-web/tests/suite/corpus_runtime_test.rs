@@ -11,6 +11,7 @@
     clippy::unwrap_used
 )]
 use lingrep_core::execution::SentenceAdmission;
+use lingrep_core::testing::execution::execute_fixture;
 use std::{
     fs::{self, File, FileTimes},
     path::{Path, PathBuf},
@@ -22,7 +23,7 @@ use lingrep_core::{
     dictionary::load_dictionary_data,
     execution::{
         CancellationFlag, ExecutionError, ExecutionLimits, MatchSink, SentenceLocation,
-        SinkControl, TokenizedBatchObservation, execute,
+        SinkControl, TokenizedBatchObservation,
     },
     fsm::{CompileLimits, Match, PatternSource, compile_catalog},
     testing::MiniDictionary,
@@ -169,7 +170,7 @@ async fn web_runtime_executes_nested_alias_artifact_through_v6() {
     let mut sink = MatchLog::default();
     let mut progress = |_, _: &MatchLog| {};
     let mut observer = |_: TokenizedBatchObservation| Ok(());
-    execute(
+    execute_fixture(
         ready.artifact.sentence_source().unwrap(),
         |_| unreachable!("V7 sentences are tokenized"),
         &compiled.matcher,

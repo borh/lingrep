@@ -11,6 +11,7 @@
     clippy::unwrap_used
 )]
 
+use lingrep_core::testing::execution::execute_fixture;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ use lingrep_core::corpus::DocumentId;
 use lingrep_core::execution::{
     CancellationFlag, ExecutionBatch, ExecutionError, ExecutionLimits, ExecutionSentence,
     MatchSink, RunOutcome, SentenceAdmission, SentenceBatchSource, SentenceLocation, SinkControl,
-    TokenizedBatchObservation, execute,
+    TokenizedBatchObservation,
 };
 use lingrep_core::fsm::{CompileLimits, CompiledCatalog, Match, PatternSource, compile_catalog};
 use lingrep_core::testing::MiniDictionary;
@@ -567,7 +568,7 @@ where
     let mut sink = RecordingSink::default();
     let mut progress = |_, _: &RecordingSink| {};
     let mut observer = |_: TokenizedBatchObservation| Ok(());
-    let outcome = execute(
+    let outcome = execute_fixture(
         source,
         tokenize,
         matcher,
@@ -601,7 +602,7 @@ where
     let mut sink = SurfaceSink;
     let mut progress = |_, _: &SurfaceSink| {};
     let mut observer = |_: TokenizedBatchObservation| Ok(());
-    execute(
+    execute_fixture(
         source,
         tokenize,
         matcher,

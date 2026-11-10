@@ -64,10 +64,10 @@ pub enum PolicySelection {
 
 /// Everything a caller asks of the publication seam.
 ///
-/// [`crate::execution::execute`] owns the seam, so a caller wanting a trace
+/// [`crate::execution::execute_analyzed`] owns the seam, so a caller wanting a trace
 /// cannot install one on a decorator it does not construct — the request has to
 /// travel. It travels *inside the selection* rather than as another parameter,
-/// because `execute` takes `impl Into<Self>`: a caller wanting nothing but
+/// because `execute_analyzed` takes `impl Into<Self>`: a caller wanting nothing but
 /// policy still writes [`PolicySelection::Apply`], and only the one surface that
 /// wants an explanation says so. A parameter would make every other call site
 /// decline a trace out loud, which is the same reason [`PolicySink::with_trace`]
