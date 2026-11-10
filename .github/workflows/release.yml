@@ -46,7 +46,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
           # Intel Macs. GitHub's Intel macOS image; the linkage check below
           # applies to it as to the Apple silicon build.
           - target: x86_64-apple-darwin
