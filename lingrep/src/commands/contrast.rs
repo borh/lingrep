@@ -5,7 +5,6 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
-use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     Admission, BlockingProvenance, ContrastRow, CorpusArtifact, CountTable, CountTableError,
@@ -27,6 +26,7 @@ use crate::protocol::contrast::{
     ContrastRun, ContrastScopes, ContrastSide, ScopeAdmission,
 };
 use crate::protocol::write_jsonl;
+use crate::terminal::TerminalArbiter;
 
 const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
@@ -87,7 +87,11 @@ impl Iterator for Ranking<'_> {
     }
 }
 
-pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, CliError> {
+pub fn run(
+    args: &ContrastArgs,
+    terminal: &TerminalArbiter,
+    output: OutputMode,
+) -> Result<CommandOutcome, CliError> {
     let started = Instant::now();
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let top = resolve_summary_top(output, args.top);
@@ -113,14 +117,14 @@ pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, Cl
         table.pattern_totals(&masks[1]).map_err(table_error)?,
     ];
     let budget = Arc::new(TempBudget::new(args.max_temp_bytes));
-    let cancellation = CancellationFlag::new();
+    let cancellation = terminal.cancellation();
     let resident = top
         .and_then(|top| usize::try_from(top).ok())
         .filter(|top| *top <= RESIDENT_ROWS);
     let rankings = (0..table.pattern_names().len())
         .map(|pattern| {
             Ok(if let Some(top) = resident {
-                let ranked = table.contrast_top(pattern, &scopes, top, &cancellation)?;
+                let ranked = table.contrast_top(pattern, &scopes, top, cancellation)?;
                 (ranked.entries, Ranking::Top(ranked.rows.into_iter()))
             } else {
                 let rows = table.ranked_contrast_rows(
@@ -132,7 +136,7 @@ pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, Cl
                         merge_fan_in: MERGE_FAN_IN,
                     },
                     Arc::clone(&budget),
-                    &cancellation,
+                    cancellation,
                 )?;
                 (
                     rows.entries,
@@ -140,8 +144,11 @@ pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, Cl
                 )
             })
         })
-        .collect::<Result<Vec<_>, CountTableError>>()
-        .map_err(table_error)?;
+        .collect::<Result<Vec<_>, CountTableError>>();
+    if cancellation.is_cancelled() {
+        return Ok(CommandOutcome::Cancelled);
+    }
+    let rankings = rankings.map_err(table_error)?;
 
     let names = table.pattern_names().collect::<Vec<_>>();
     let stdout = io::stdout();
@@ -243,6 +250,9 @@ pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, Cl
     for (pattern, (_, ranking)) in rankings.into_iter().enumerate() {
         let name = names[pattern];
         for (rank, row) in (1u64..).zip(ranking) {
+            if cancellation.is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
             let row = row.map_err(table_error)?;
             let group = table.group(row.entry).map_err(table_error)?;
             emitted += 1;
@@ -292,6 +302,9 @@ pub fn run(args: &ContrastArgs, output: OutputMode) -> Result<CommandOutcome, Cl
         query_millis: queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
     };
+    if !terminal.try_claim_completion() {
+        return Ok(CommandOutcome::Cancelled);
+    }
     if jsonl {
         emit(&mut writer, ContrastEvent::Complete(complete))?;
     } else {

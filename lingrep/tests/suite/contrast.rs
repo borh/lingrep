@@ -484,6 +484,73 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
     assert_eq!(observed, expected, "{observed:#?}");
 }
 
+/// `ling table` and `ling contrast` stop with the signal's exit code, publish
+/// nothing and leave `TMPDIR` empty when the signal arrives while the catalog
+/// is still being read.
+#[cfg(unix)]
+#[test]
+fn a_signal_stops_table_and_contrast_without_output() {
+    use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::process::Stdio;
+
+    let fixture = fixture();
+    let contrast_scopes = [
+        "--where",
+        "@document.tags contains \"x\"",
+        "--versus",
+        "@document.tags contains \"y\"",
+    ];
+    for (command, extra) in [("table", &[][..]), ("contrast", &contrast_scopes[..])] {
+        for (signal, expected) in [(libc::SIGINT, 130), (libc::SIGTERM, 143)] {
+            let case = format!("{command} with signal {signal}");
+            let scratch = tempfile::tempdir().unwrap();
+            let catalog = scratch.path().join("catalog.lx");
+            let catalog_c = std::ffi::CString::new(catalog.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(catalog_c.as_ptr(), 0o600) }, 0);
+            let temporary = scratch.path().join("tmp");
+            fs::create_dir(&temporary).unwrap();
+
+            let mut invocation = std::process::Command::new(crate::support::lingrep_binary_path());
+            invocation.args(["--json", command]);
+            if command == "table" {
+                invocation.arg(&fixture.table);
+            } else {
+                invocation.arg("--table").arg(&fixture.table);
+            }
+            let child = invocation
+                .arg("--patterns")
+                .arg(&catalog)
+                .arg("--corpus")
+                .arg(&fixture.artifact)
+                .args(["--top", "all"])
+                .args(extra)
+                .env("TMPDIR", &temporary)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut catalog_writer = fs::OpenOptions::new().write(true).open(&catalog).unwrap();
+            assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+            // The open FIFO blocks the catalog read until the signal thread
+            // has recorded the signal.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            catalog_writer.write_all(CATALOG.as_bytes()).unwrap();
+            drop(catalog_writer);
+            let output = child.wait_with_output().unwrap();
+
+            assert_eq!(
+                output.status.code(),
+                Some(expected),
+                "{case}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stdout.is_empty(), "{case}");
+            assert_eq!(fs::read_dir(&temporary).unwrap().count(), 0, "{case}");
+        }
+    }
+}
+
 #[cfg(feature = "web")]
 mod served {
     use std::ffi::OsString;

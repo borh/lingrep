@@ -73,8 +73,8 @@ pub fn dispatch(
         Command::Check(args) => check::run(args, config, terminal, output),
         Command::Matches(args) => matches::run(args, config, terminal, output, cli.color),
         Command::Summarize(args) => summarize::run(args, config, terminal, output),
-        Command::Table(args) => table::run(args, output),
-        Command::Contrast(args) => contrast::run(args, output),
+        Command::Table(args) => table::run(args, terminal, output),
+        Command::Contrast(args) => contrast::run(args, terminal, output),
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Sources(args) => corpus::run_sources(args, config, terminal, output),
             CorpusCommand::Build(args) => corpus::run_build(args, config, terminal, output),

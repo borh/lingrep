@@ -30,6 +30,7 @@ use crate::protocol::table::{
     TableRow, TableRun,
 };
 use crate::protocol::write_jsonl;
+use crate::terminal::TerminalArbiter;
 
 const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
@@ -90,7 +91,11 @@ pub(super) fn document_admission(
     Ok(admitted)
 }
 
-pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliError> {
+pub fn run(
+    args: &TableArgs,
+    terminal: &TerminalArbiter,
+    output: OutputMode,
+) -> Result<CommandOutcome, CliError> {
     let started = Instant::now();
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let clause = document_clause("table --where", args.clause.as_deref())?;
@@ -148,6 +153,9 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
             .as_millis()
             .try_into()
             .unwrap_or(u64::MAX);
+        if terminal.cancellation().is_cancelled() {
+            return Ok(CommandOutcome::Cancelled);
+        }
         let stdout = io::stdout();
         let mut writer = stdout.lock();
         let mut emit = |event: TableEvent| {
@@ -166,6 +174,9 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         }))?;
         for record in records {
             emit(TableEvent::MetadataValue(record))?;
+        }
+        if !terminal.try_claim_completion() {
+            return Ok(CommandOutcome::Cancelled);
         }
         emit(TableEvent::Complete(TableComplete {
             documents_admitted: admission.documents_admitted,
@@ -211,6 +222,9 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         (rows.admission(), Box::new(rows))
     };
 
+    if terminal.cancellation().is_cancelled() {
+        return Ok(CommandOutcome::Cancelled);
+    }
     let names = table.pattern_names().collect::<Vec<_>>();
     let stdout = io::stdout();
     let mut writer = stdout.lock();
@@ -263,6 +277,9 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
     let mut previous_pattern = None;
     let mut rank = 0u64;
     for row in &mut rows {
+        if terminal.cancellation().is_cancelled() {
+            return Ok(CommandOutcome::Cancelled);
+        }
         let (pattern, row) = row.map_err(table_error)?;
         let name = names
             .get(pattern)
@@ -307,6 +324,9 @@ pub fn run(args: &TableArgs, output: OutputMode) -> Result<CommandOutcome, CliEr
         query_millis,
         elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
     };
+    if !terminal.try_claim_completion() {
+        return Ok(CommandOutcome::Cancelled);
+    }
     if jsonl {
         emit(&mut writer, TableEvent::Complete(complete))?;
     } else {
