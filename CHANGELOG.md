@@ -171,6 +171,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI summary over the selected corpus scope. Saved count tables are unchanged.
 - Word-constrained graph-node keys can project any scalar token attribute,
   including `norm`; missing values make the match unkeyable.
+- The `lingrep.check/v1` record of `ling --json check` lists
+  `capture_key_edits`: each local, single-field key that projects `text`,
+  `lemma` or `norm` from a single-token surface capture, with its definition,
+  capture, source file, choices and the UTF-8 byte range of the attribute in
+  the source.
+- The query/v2 `run` record of `matches` and `summarize` carries
+  `matcher_semantics_identity`, the matcher revision that must match, along
+  with the catalog and analysis identities, before a saved result is reused.
 
 ### Changed
 
@@ -205,6 +213,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Markdown analysis excludes marked LaTeX math, strips nested list markers,
   and reads included pipe-table rows as cell text. Significance asterisks before
   p-value comparisons are preserved only with conversion-artifact recovery.
+- The Soranoha readers, `--input-format soranoha` and `soranoha-tei`, store
+  `@document.ndc` as the list of distinct NDC class codes in the catalog field,
+  in catalog order and without the `NDC ` prefix: `NDC 712 914` becomes
+  `["712", "914"]`. `@document.ndc = "NDC 913"` no longer matches; write
+  `@document.ndc contains "913"`. Codes keep their leading zeros and the `K`
+  prefix of children's books, so `913` and `K913` are distinct. A field that
+  is not `NDC` followed by codes is a catalog error naming the row. Both
+  reader identities change, so an artifact built from a Soranoha archive has
+  a new analysis identity; an artifact built by an earlier release keeps its
+  identity and its string `ndc`.
 
 ### Fixed
 
