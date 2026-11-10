@@ -13,7 +13,7 @@ use crossbeam_channel::{Receiver, Sender};
 use indexmap::IndexSet;
 use lingrep_core::execution::CancellationFlag;
 use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, ProjectedKeyField};
-use lingrep_core::spill::{SortedDrain, SortedRunCounts, TempBudget};
+use lingrep_core::spill::{SortedDrain, SortedRunCounts, SpillPolicy, TempBudget};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::query::{MetadataValueData, PatternCount, SectionData};
@@ -844,9 +844,12 @@ fn shard_thread(
     merge_fan_in: usize,
     budget: Arc<TempBudget>,
 ) -> io::Result<OrderedShard> {
-    let mut counts = SortedRunCounts::<SummaryKey>::new_budgeted(
-        resident_key_limit,
-        merge_fan_in,
+    let mut counts = SortedRunCounts::<SummaryKey>::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: resident_key_limit,
+            merge_fan_in,
+        },
         Arc::clone(&budget),
     )?;
     let mut store = GroupStore::default();
@@ -884,9 +887,12 @@ fn shard_thread(
                 let mut drain = counts.into_sorted_drain()?;
                 return match by {
                     OrderBy::Count => {
-                        let mut ordered = SortedRunCounts::new_budgeted(
-                            resident_key_limit,
-                            merge_fan_in,
+                        let mut ordered = SortedRunCounts::with_policy(
+                            SpillPolicy {
+                                max_pending_bytes: usize::MAX,
+                                max_pending_keys: resident_key_limit,
+                                merge_fan_in,
+                            },
                             Arc::clone(&budget),
                         )?;
                         while let Some((key, count)) = drain.next_entry()? {
@@ -903,9 +909,12 @@ fn shard_thread(
                         Ok(OrderedShard::Count(ordered))
                     }
                     OrderBy::Group => {
-                        let mut ordered = SortedRunCounts::new_budgeted(
-                            resident_key_limit,
-                            merge_fan_in,
+                        let mut ordered = SortedRunCounts::with_policy(
+                            SpillPolicy {
+                                max_pending_bytes: usize::MAX,
+                                max_pending_keys: resident_key_limit,
+                                merge_fan_in,
+                            },
                             Arc::clone(&budget),
                         )?;
                         if let Some(cancellation) = &cancellation {
@@ -1547,7 +1556,14 @@ impl SlotTally {
         Ok(Self {
             totals: vec![SlotTotals::default(); slots],
             last_document: vec![None; slots],
-            counts: SortedRunCounts::new_budgeted(resident_key_limit, merge_fan_in, budget)?,
+            counts: SortedRunCounts::with_policy(
+                SpillPolicy {
+                    max_pending_bytes: usize::MAX,
+                    max_pending_keys: resident_key_limit,
+                    merge_fan_in,
+                },
+                budget,
+            )?,
             matched: Vec::new(),
         })
     }

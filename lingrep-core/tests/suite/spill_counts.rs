@@ -33,7 +33,15 @@ where
 }
 
 fn two_runs(budget: Arc<TempBudget>) -> SortedRunCounts<String> {
-    let mut counts = SortedRunCounts::new_budgeted(1, 16, budget).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 16,
+        },
+        budget,
+    )
+    .unwrap();
     counts.add("a".repeat(40), 1).unwrap();
     counts.add("b".repeat(40), 1).unwrap();
     counts
@@ -61,7 +69,15 @@ fn forced_visit_failure() -> io::Error {
 
 fn forced_compact_failure() -> io::Error {
     let budget = Arc::new(TempBudget::new(retained_two_run_bytes()));
-    let mut counts = SortedRunCounts::new_budgeted(1, 2, budget).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 2,
+        },
+        budget,
+    )
+    .unwrap();
     counts.add("a".repeat(40), 1).unwrap();
     counts.add("b".repeat(40), 1).unwrap_err()
 }
@@ -102,7 +118,15 @@ fn temp_budget_tracks_peak_across_growth_and_release() {
 
 #[test]
 fn visiting_empty_counts_is_a_noop() {
-    let mut counts = SortedRunCounts::<String>::new(2, 4).unwrap();
+    let mut counts = SortedRunCounts::<String>::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 2,
+            merge_fan_in: 4,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     let mut visited = false;
     counts
         .visit_sorted(|_, _| {
@@ -170,7 +194,15 @@ fn typed_grow_failure_leaves_reservation_and_budget_unchanged() {
 #[test]
 fn second_sorted_visit_replays_without_allocating_another_run() {
     let budget = Arc::new(TempBudget::new(1 << 20));
-    let mut counts = SortedRunCounts::new_budgeted(1, 4, budget.clone()).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 4,
+        },
+        budget.clone(),
+    )
+    .unwrap();
     counts.add("b".to_owned(), 1).unwrap();
     counts.add("a".to_owned(), 2).unwrap();
     counts.visit_sorted(|_, _| Ok(())).unwrap();
@@ -182,7 +214,15 @@ fn second_sorted_visit_replays_without_allocating_another_run() {
 #[test]
 fn successful_visit_collapses_live_spill_state() {
     let budget = Arc::new(TempBudget::new(1 << 20));
-    let mut counts = SortedRunCounts::new_budgeted(1, 8, budget).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 8,
+        },
+        budget,
+    )
+    .unwrap();
     for key in ["d", "c", "b", "a"] {
         counts.add(key.to_owned(), 1).unwrap();
     }
@@ -197,7 +237,15 @@ fn successful_visit_collapses_live_spill_state() {
 #[test]
 fn spill_snapshot_retains_high_water_and_record_denominators() {
     let budget = Arc::new(TempBudget::new(1 << 20));
-    let mut counts = SortedRunCounts::new_budgeted(1, 2, budget).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 2,
+        },
+        budget,
+    )
+    .unwrap();
     for key in ["d", "c", "b", "a"] {
         counts.add(key.to_owned(), 1).unwrap();
     }
@@ -219,7 +267,15 @@ fn spill_snapshot_retains_high_water_and_record_denominators() {
 
 #[test]
 fn repeated_visits_increment_reads_without_rewriting_runs() {
-    let mut counts = SortedRunCounts::new(1, 2).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 2,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     counts.add("b".to_owned(), 1).unwrap();
     counts.add("a".to_owned(), 1).unwrap();
     counts.visit_sorted(|_, _| Ok(())).unwrap();
@@ -276,7 +332,15 @@ fn spill_operation_is_stamped_once_by_the_owning_operation() {
 fn compact_failure_snapshot_precedes_drained_run_release() {
     let retained = retained_two_run_bytes();
     let budget = Arc::new(TempBudget::new(retained));
-    let mut counts = SortedRunCounts::new_budgeted(1, 2, budget.clone()).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 2,
+        },
+        budget.clone(),
+    )
+    .unwrap();
     counts.add("a".repeat(40), 1).unwrap();
     let error = counts.add("b".repeat(40), 1).unwrap_err();
     let envelope = error
@@ -306,8 +370,15 @@ fn partial_flush_failure_snapshot_precedes_reservation_release() {
     // bytes are charged before a later block is rejected — which is the
     // partial-flush state this test pins.
     let measurement_budget = Arc::new(TempBudget::new(u64::MAX));
-    let mut measured =
-        SortedRunCounts::new_budgeted(PARTIAL_FLUSH_KEYS, 8, measurement_budget.clone()).unwrap();
+    let mut measured = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: PARTIAL_FLUSH_KEYS,
+            merge_fan_in: 8,
+        },
+        measurement_budget.clone(),
+    )
+    .unwrap();
     for index in 0..PARTIAL_FLUSH_KEYS {
         measured.add(partial_flush_key(index), 1).unwrap();
     }
@@ -317,7 +388,15 @@ fn partial_flush_failure_snapshot_precedes_reservation_release() {
     assert!(full_run_bytes > 0, "a flushed run must charge something");
 
     let budget = Arc::new(TempBudget::new(full_run_bytes / 2));
-    let mut counts = SortedRunCounts::new_budgeted(PARTIAL_FLUSH_KEYS, 8, budget.clone()).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: PARTIAL_FLUSH_KEYS,
+            merge_fan_in: 8,
+        },
+        budget.clone(),
+    )
+    .unwrap();
     let mut error = None;
     for index in 0..PARTIAL_FLUSH_KEYS {
         if let Err(failure) = counts.add(partial_flush_key(index), 1) {
@@ -349,7 +428,15 @@ fn partial_flush_failure_snapshot_precedes_reservation_release() {
 
 #[test]
 fn taking_a_snapshot_does_not_flush_or_finalize() {
-    let mut counts = SortedRunCounts::new(8, 8).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 8,
+            merge_fan_in: 8,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     counts.add("pending".to_owned(), 1).unwrap();
     let before_runs = counts.run_count();
     let before_pending = counts.buffered_keys();
@@ -425,7 +512,15 @@ fn pending_byte_and_key_caps_flush_independently() {
 #[test]
 fn budgeted_runs_fail_before_exceeding_their_limit() {
     let budget = Arc::new(TempBudget::new(1));
-    let mut counts = SortedRunCounts::new_budgeted(1, 2, budget.clone()).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 2,
+        },
+        budget.clone(),
+    )
+    .unwrap();
 
     let error = counts.add("a".to_owned(), 1).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::StorageFull);
@@ -434,7 +529,15 @@ fn budgeted_runs_fail_before_exceeding_their_limit() {
 
 #[test]
 fn sorted_runs_merge_duplicate_keys_in_lexical_order() {
-    let mut counts = SortedRunCounts::new(2, 4).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 2,
+            merge_fan_in: 4,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     counts.add(("b".to_owned(), "one".to_owned()), 1).unwrap();
     counts.add(("a".to_owned(), "two".to_owned()), 1).unwrap();
     counts.add(("b".to_owned(), "one".to_owned()), 2).unwrap();
@@ -459,7 +562,15 @@ fn sorted_runs_merge_duplicate_keys_in_lexical_order() {
 
 #[test]
 fn pending_counts_reject_usize_overflow() {
-    let mut counts = SortedRunCounts::new(2, 4).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 2,
+            merge_fan_in: 4,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     counts.add("a".to_owned(), usize::MAX).unwrap();
 
     let error = counts.add("a".to_owned(), 1).unwrap_err();
@@ -470,7 +581,15 @@ fn pending_counts_reject_usize_overflow() {
 
 #[test]
 fn merged_runs_reject_usize_overflow() {
-    let mut counts = SortedRunCounts::new(1, 4).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: 4,
+        },
+        Arc::new(TempBudget::new(u64::MAX)),
+    )
+    .unwrap();
     counts.add("a".to_owned(), usize::MAX).unwrap();
     counts.add("a".to_owned(), 1).unwrap();
 
@@ -834,7 +953,15 @@ fn framed_records_round_trip_across_a_wide_merge() {
 #[test]
 fn unspilled_counts_visit_and_drain_without_creating_runs() {
     let budget = Arc::new(TempBudget::new(u64::MAX));
-    let mut counts = SortedRunCounts::new_budgeted(1000, 16, Arc::clone(&budget)).unwrap();
+    let mut counts = SortedRunCounts::with_policy(
+        SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1000,
+            merge_fan_in: 16,
+        },
+        Arc::clone(&budget),
+    )
+    .unwrap();
     counts.add("b".to_owned(), 2).unwrap();
     counts.add("a".to_owned(), 1).unwrap();
     counts.add("b".to_owned(), 3).unwrap();
@@ -885,8 +1012,28 @@ fn drained_streams_agree_between_resident_and_spilled_buffers() {
     };
 
     let budget = Arc::new(TempBudget::new(u64::MAX));
-    let resident = drain_all(SortedRunCounts::new_budgeted(1000, 16, Arc::clone(&budget)).unwrap());
-    let spilled = drain_all(SortedRunCounts::new_budgeted(1, 16, budget).unwrap());
+    let resident = drain_all(
+        SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: 1000,
+                merge_fan_in: 16,
+            },
+            Arc::clone(&budget),
+        )
+        .unwrap(),
+    );
+    let spilled = drain_all(
+        SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: 1,
+                merge_fan_in: 16,
+            },
+            budget,
+        )
+        .unwrap(),
+    );
     assert_eq!(resident, spilled);
     assert_eq!(
         resident,

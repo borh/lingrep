@@ -8,7 +8,7 @@ use lingrep_core::execution::{
     CancellationFlag, ExecutionError, MatchSink, RunOutcome, SentenceLocation, SinkControl,
 };
 use lingrep_core::fsm::{CompiledCatalog, Match};
-use lingrep_core::spill::SortedRunCounts;
+use lingrep_core::spill::{SortedRunCounts, SpillPolicy};
 use serde::{Deserialize, Serialize};
 
 use super::TaskHandle;
@@ -101,7 +101,7 @@ impl SurfaceWorker {
 }
 
 const MAX_BUFFERED_SURFACES: usize = 4_096;
-const MAX_SPILL_RUNS: usize = 16;
+const MERGE_FAN_IN: usize = 16;
 
 struct SurfaceSink {
     pattern: String,
@@ -113,7 +113,14 @@ impl SurfaceSink {
     fn new(pattern: String, budget: Arc<lingrep_core::spill::TempBudget>) -> io::Result<Self> {
         Ok(Self {
             pattern,
-            counts: SortedRunCounts::new_budgeted(MAX_BUFFERED_SURFACES, MAX_SPILL_RUNS, budget)?,
+            counts: SortedRunCounts::with_policy(
+                SpillPolicy {
+                    max_pending_bytes: usize::MAX,
+                    max_pending_keys: MAX_BUFFERED_SURFACES,
+                    merge_fan_in: MERGE_FAN_IN,
+                },
+                budget,
+            )?,
             failure: None,
         })
     }
@@ -130,8 +137,14 @@ impl SurfaceSink {
         if let Some(error) = failure {
             return Err(error);
         }
-        let mut ordered =
-            SortedRunCounts::new_budgeted(MAX_BUFFERED_SURFACES, MAX_SPILL_RUNS, budget.clone())?;
+        let mut ordered = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: MAX_BUFFERED_SURFACES,
+                merge_fan_in: MERGE_FAN_IN,
+            },
+            budget.clone(),
+        )?;
         counts.visit_sorted(|form, count| {
             ordered.add(
                 SurfaceOrder {

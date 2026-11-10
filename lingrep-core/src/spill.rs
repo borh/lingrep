@@ -940,31 +940,6 @@ impl<K> SortedRunCounts<K>
 where
     K: Clone + Ord + Serialize + DeserializeOwned,
 {
-    /// Compatibility constructor: `max_runs` is now the leveled merge fan-in.
-    pub fn new(max_pending_keys: usize, max_runs: usize) -> io::Result<Self> {
-        Self::new_budgeted(
-            max_pending_keys,
-            max_runs,
-            Arc::new(TempBudget::new(u64::MAX)),
-        )
-    }
-
-    /// Compatibility constructor: `max_runs` is now the leveled merge fan-in.
-    pub fn new_budgeted(
-        max_pending_keys: usize,
-        max_runs: usize,
-        budget: Arc<TempBudget>,
-    ) -> io::Result<Self> {
-        Self::with_policy(
-            SpillPolicy {
-                max_pending_bytes: usize::MAX,
-                max_pending_keys,
-                merge_fan_in: max_runs,
-            },
-            budget,
-        )
-    }
-
     #[expect(
         clippy::panic_in_result_fn,
         reason = "spill policy invariants are checked before construction returns"
@@ -1589,7 +1564,15 @@ mod tests {
 
         // Key-bounded: no estimate, so the flush encode is the *first*
         // serialization the key ever sees.
-        let mut uncapped = SortedRunCounts::new_budgeted(1, 4, budget).unwrap();
+        let mut uncapped = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: 1,
+                merge_fan_in: 4,
+            },
+            budget,
+        )
+        .unwrap();
         let error = uncapped.add(FailingKey::new("uncapped", 0), 1).unwrap_err();
         assert_eq!(
             codec_source(&error).operation(),
@@ -1599,7 +1582,15 @@ mod tests {
 
     #[test]
     fn decode_failure_carries_completed_run_identity_and_offset() {
-        let mut counts = SortedRunCounts::new(1, 4).unwrap();
+        let mut counts = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: 1,
+                merge_fan_in: 4,
+            },
+            Arc::new(TempBudget::new(u64::MAX)),
+        )
+        .unwrap();
         counts
             .add(DecodeFailingKey("decode".to_owned()), 1)
             .unwrap();
@@ -1657,7 +1648,15 @@ mod tests {
     fn a_raised_cancellation_interrupts_a_run_merge() {
         let records = MERGE_CANCELLATION_INTERVAL * 2;
         let build = |cancellation: Option<CancellationFlag>| {
-            let mut counts = SortedRunCounts::<u64>::new(records as usize / 4, 16).unwrap();
+            let mut counts = SortedRunCounts::<u64>::with_policy(
+                SpillPolicy {
+                    max_pending_bytes: usize::MAX,
+                    max_pending_keys: records as usize / 4,
+                    merge_fan_in: 16,
+                },
+                Arc::new(TempBudget::new(u64::MAX)),
+            )
+            .unwrap();
             if let Some(cancellation) = cancellation {
                 counts.set_cancellation(cancellation);
             }
