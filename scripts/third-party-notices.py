@@ -16,9 +16,14 @@ once the crate has been built, so this runs after `cargo build` — that is wher
 `scripts/package-release.sh` calls it. Texts are deduplicated by content, which
 is why a single copy of Apache-2.0 covers dozens of crates.
 
-Exit status is non-zero only when a crate declares no license *and* carries no
-license file: that is a real gap in what the archive would be redistributing,
-and it should be answered rather than printed.
+A git dependency's texts are also looked up at the root of its checkout. A
+crate that publishes no text gets it from
+`scripts/third-party-licenses/<name>-<version>/`, copied from the crate's
+upstream repository.
+
+Exit status is non-zero when a crate with no text found declares no license, or
+declares one of `REPRODUCED_LICENSES`, which require their text to accompany
+a binary, and is not listed in `TEXT_EXCEPTIONS`.
 """
 
 from __future__ import annotations
@@ -31,7 +36,27 @@ import subprocess
 import sys
 
 ROOT_PACKAGE = "lingrep"
-LICENSE_FILE_GLOBS = ("LICENSE*", "LICENCE*", "COPYING*", "NOTICE*", "UNLICENSE*")
+LICENSE_FILE_GLOBS = (
+    "LICENSE*",
+    "LICENCE*",
+    "COPYING*",
+    "NOTICE*",
+    "UNLICENSE*",
+    "LICENSES/*",
+)
+VENDORED_TEXTS = pathlib.Path(__file__).resolve().parent / "third-party-licenses"
+REPRODUCED_LICENSES = {
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+}
+# `"<name> <version>"` of a crate that ships without its license text, mapped
+# to the reason the archive may omit it.
+TEXT_EXCEPTIONS: dict[str, str] = {}
 
 
 def cargo_metadata(target: str | None) -> dict:
@@ -91,7 +116,7 @@ def shipped_packages(metadata: dict) -> list[dict]:
     return sorted(shipped, key=lambda package: (package["name"], package["version"]))
 
 
-def license_texts(directory: pathlib.Path) -> list[tuple[str, str]]:
+def texts_in(directory: pathlib.Path) -> list[tuple[str, str]]:
     found = []
     if not directory.is_dir():
         return found
@@ -100,6 +125,31 @@ def license_texts(directory: pathlib.Path) -> list[tuple[str, str]]:
             if path.is_file() and path.stat().st_size:
                 found.append((path.name, path.read_text(errors="replace")))
     return found
+
+
+def git_checkout_root(directory: pathlib.Path) -> pathlib.Path | None:
+    for candidate in (directory, *directory.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def license_texts(package: dict) -> list[tuple[str, str]]:
+    found = texts_in(package["directory"])
+    if not found and (package["source"] or "").startswith("git+"):
+        root = git_checkout_root(package["directory"])
+        if root is not None:
+            found = texts_in(root)
+    if not found:
+        found = texts_in(VENDORED_TEXTS / f"{package['name']}-{package['version']}")
+    return found
+
+
+def requires_text(license_expression: str | None) -> bool:
+    if not license_expression:
+        return True
+    identifiers = license_expression.replace("(", " ").replace(")", " ").replace("/", " ")
+    return bool(set(identifiers.split()) & REPRODUCED_LICENSES)
 
 
 def main() -> int:
@@ -121,7 +171,7 @@ def main() -> int:
     texts: dict[str, dict] = {}
     undocumented: list[dict] = []
     for package in shipped:
-        collected = license_texts(package["directory"])
+        collected = license_texts(package)
         if collected:
             for filename, text in collected:
                 digest = hashlib.sha256(text.encode()).hexdigest()
@@ -130,7 +180,10 @@ def main() -> int:
                 )
                 entry["files"].add(filename)
                 entry["crates"].append(f"{package['name']} {package['version']}")
-        elif not package["license"]:
+        elif (
+            requires_text(package["license"])
+            and f"{package['name']} {package['version']}" not in TEXT_EXCEPTIONS
+        ):
             undocumented.append(package)
 
     print(f"# Third-party notices for ling {version}")
@@ -189,7 +242,8 @@ def main() -> int:
     if undocumented:
         names = ", ".join(f"{p['name']} {p['version']}" for p in undocumented)
         print(
-            f"error: no declared license and no license file for: {names}",
+            f"error: no license text for: {names}; add it under "
+            f"{VENDORED_TEXTS.name}/<name>-<version>/ or to TEXT_EXCEPTIONS",
             file=sys.stderr,
         )
         return 1
