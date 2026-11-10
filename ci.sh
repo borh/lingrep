@@ -4,7 +4,6 @@
 #   ./ci.sh               comprehensive correctness
 #   ./ci.sh --full        comprehensive correctness
 #   ./ci.sh --fast        routine local/pre-push correctness
-#   ./ci.sh --quick       deprecated alias for --full
 #   ./ci.sh --fuzz        bounded fuzz smoke only
 #   ./ci.sh --performance retained benchmarks and real-corpus measurement only
 
@@ -14,7 +13,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$repo_root"
 
 usage() {
-    echo "usage: $0 [--fast|--full|--quick|--fuzz|--performance]" >&2
+    echo "usage: $0 [--fast|--full|--fuzz|--performance]" >&2
 }
 
 if [[ $# -gt 1 ]]; then
@@ -25,10 +24,6 @@ fi
 case "${1:-}" in
     "" | --full) mode=full ;;
     --fast) mode=fast ;;
-    --quick)
-        echo "warning: --quick is deprecated; use --full" >&2
-        mode=full
-        ;;
     --fuzz) mode=fuzz ;;
     --performance) mode=performance ;;
     *)

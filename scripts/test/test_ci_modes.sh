@@ -146,9 +146,14 @@ assert_has "warmup-estimator:$temporary/build cache/debug/lingrep-perf"
 CARGO_TARGET_DIR="$temporary/absolute cache" run_mode --fast
 assert_has "warmup-estimator:$temporary/absolute cache/debug/lingrep-perf"
 
-run_mode --quick
-assert_full_contract
-grep -F "deprecated" "$temporary/stderr.log" >/dev/null
+if run_mode --quick; then
+    echo "retired --quick mode must fail" >&2
+    exit 1
+else
+    [[ $? -eq 2 ]]
+fi
+[[ ! -s "$LINGREP_CI_TEST_LOG" ]]
+grep -F "usage:" "$temporary/stderr.log" >/dev/null
 
 run_mode --fast
 assert_has "python:scripts/check-adapter-wheels.py"
