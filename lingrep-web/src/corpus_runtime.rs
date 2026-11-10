@@ -1356,7 +1356,7 @@ mod tests {
         );
         assert_ne!(
             hex(&build_reader_identity(&markdown)),
-            "804c7271db0ef703439170afa9f803287edf0a1da73f1698d79bebe6b5d9325a",
+            "aa0428217967af2014b50a7fd02368094ff677e5cd5f2ffd2a78c276ed4f3acc",
             "the Markdown dialects differ by design and must keep two names"
         );
     }

@@ -339,19 +339,41 @@ fn recover_known_conversion_artifacts(line: &str) -> String {
         return line;
     }
     use pulldown_cmark::{Event, LinkType, Parser, Tag};
-    let autolinks = Parser::new(&line)
-        .into_offset_iter()
-        .filter_map(|(event, range)| {
-            matches!(
-                event,
-                Event::Start(Tag::Link {
-                    link_type: LinkType::Autolink | LinkType::Email,
-                    ..
-                })
-            )
-            .then_some(range)
-        })
-        .collect::<Vec<_>>();
+    let mut autolinks = Vec::new();
+    let mut emphasis = Vec::new();
+    for (event, range) in Parser::new(&line).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link {
+                link_type: LinkType::Autolink | LinkType::Email,
+                ..
+            }) => autolinks.push(range),
+            Event::Start(Tag::Emphasis | Tag::Strong) => emphasis.push(range),
+            _ => {}
+        }
+    }
+    // A run opens emphasis when Markdown pairs it with a closer that no
+    // earlier opener takes once the run is read as a mark.
+    let opens_emphasis = |mark: std::ops::Range<usize>| {
+        emphasis
+            .iter()
+            .filter(|span| mark.contains(&span.start))
+            .any(|span| {
+                let shift = mark.len() * ("&#42;".len() - 1);
+                let neutralised = format!(
+                    "{}{}{}",
+                    line.get(..mark.start).unwrap_or_default(),
+                    "&#42;".repeat(mark.len()),
+                    line.get(mark.end..).unwrap_or_default()
+                );
+                !Parser::new(&neutralised)
+                    .into_offset_iter()
+                    .any(|(event, range)| {
+                        matches!(event, Event::Start(Tag::Emphasis | Tag::Strong))
+                            && range.start < mark.start
+                            && range.end == span.end + shift
+                    })
+            })
+    };
     SIGNIFICANCE_MARK
         .replace_all(&line, |captures: &regex::Captures<'_>| {
             let mark = captures.get(1).expect("asterisk capture");
@@ -359,6 +381,7 @@ fn recover_known_conversion_artifacts(line: &str) -> String {
             if autolinks
                 .get(index)
                 .is_some_and(|range| range.contains(&mark.start()))
+                || opens_emphasis(mark.range())
             {
                 return captures
                     .get(0)
@@ -488,7 +511,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 9;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 10;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -1370,7 +1393,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&9u32.to_le_bytes());
+        encoded.extend_from_slice(&10u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -2145,6 +2168,35 @@ mod reader_tests {
         let number = tc.draw(g::integers::<u64>());
         let content = format!("注) {mark}{separator}{name}{comparison}{number}.");
         assert_eq!(read_recovering(&format!("*{content}*\n")), [content]);
+    }
+
+    #[test]
+    fn recovery_reads_emphasised_p_values_as_emphasis() {
+        for (input, expected) in [
+            ("**p < 0.05** で有意。\n", "p < 0.05 で有意。"),
+            ("*p<.05*\n", "p<.05"),
+        ] {
+            assert_eq!(read_all(input, permissive()), [expected]);
+            assert_eq!(read_recovering(input), [expected]);
+        }
+    }
+
+    #[hegel::test(test_cases = 100, derandomize = true)]
+    fn recovery_and_strict_agree_on_emphasised_p_values(tc: hegel::TestCase) {
+        use hegel::generators as g;
+        let mark = "*".repeat(tc.draw(g::integers::<usize>().min_value(1).max_value(3)));
+        let name = tc.draw(g::sampled_from(vec!["p", "P"]));
+        let space = tc.draw(g::sampled_from(vec!["", " "]));
+        let comparison = tc.draw(g::sampled_from(vec!["<", ">", "="]));
+        let value = tc.draw(g::sampled_from(vec!["0.05", ".05", "0.001", "1"]));
+        let tail = tc.draw(g::sampled_from(vec!["", " で有意。", "であった。"]));
+        let input = format!("前{mark}{name}{space}{comparison}{space}{value}{mark}{tail}\n");
+        let strict = read_all(&input, permissive());
+        assert_eq!(read_recovering(&input), strict);
+        assert_eq!(
+            strict,
+            [format!("前{name}{space}{comparison}{space}{value}{tail}")]
+        );
     }
 
     #[hegel::test(test_cases = 100, derandomize = true)]

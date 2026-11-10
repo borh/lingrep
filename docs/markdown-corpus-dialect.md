@@ -73,7 +73,10 @@ Markdown converters emit and that the strict reader rejects:
   reader rejects as raw HTML;
 - unescaped asterisk runs before `p` or `P` comparisons (`<`, `>` or `=`), with
   an optional colon and spaces: these remain literal significance marks rather
-  than emphasis delimiters. Strict reading keeps the Markdown interpretation;
+  than emphasis delimiters. A run remains an emphasis delimiter when Markdown
+  pairs it with a closer that no earlier opener would take, so `**p < 0.05**`
+  and `*p<.05*` lose their asterisks as under strict reading. Strict reading
+  keeps the Markdown interpretation;
 - div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 
