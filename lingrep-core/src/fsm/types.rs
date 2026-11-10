@@ -11,13 +11,13 @@ use std::sync::Arc;
 use crate::corpus::conllu::EnhancedNodeId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct FinalState {
+pub(crate) struct FinalState {
     pub state_id: usize,
     pub pattern_name: CompactString,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StateInfo {
+pub(crate) struct StateInfo {
     pub state: usize,          // Current state in the state machine
     pub start_token: usize,    // Index of the first token in the sequence that led to this state
     pub position: usize,       // Current position in token stream (tokens consumed total)
@@ -60,16 +60,11 @@ impl Ord for StateInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     Reject,
     Match,
     Advance,
-    Retry,
     MatchExtend,
-    RetryAdvance,
-    RetryExtend,
-    MatchReject,
-    MatchDouble,
 }
 
 /// A pattern match found in a token sequence
@@ -196,7 +191,7 @@ pub struct LexicalMatch {
 /// other budget assumes. Matching is unaffected: `Arc<[T]>` derefs to the
 /// same slice the scan already walked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AttrValueType {
+pub(crate) enum AttrValueType {
     Single(CompactString),
     OneOf(Arc<[CompactString]>),
     NotIn(Arc<[CompactString]>),
@@ -318,7 +313,7 @@ impl fmt::Display for AttrValueType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Operator {
+pub(crate) enum Operator {
     Exact(usize),        // Represents {n}
     Range(usize, usize), // Represents {n,m}
     AtLeast(usize),      // Represents {n,}
@@ -391,7 +386,7 @@ impl fmt::Display for Operator {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttrValue<A = TokenAttributeIndex> {
+pub(crate) struct AttrValue<A = TokenAttributeIndex> {
     pub attr: A,
     pub value: AttrValueType,
     /// Whether this atom is a **true complement** (`!(attr op value)`).
@@ -471,7 +466,7 @@ impl<A: Ord> Ord for AttrValue<A> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TokenSpec {
+pub(crate) struct TokenSpec {
     pub op: Operator,
     pub attrs: Vec<SymbolicAttrValue>,
 }
@@ -503,8 +498,7 @@ impl TokenSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[doc(hidden)]
-pub struct AssertionOccurrenceId(u32);
+pub(crate) struct AssertionOccurrenceId(u32);
 
 impl AssertionOccurrenceId {
     pub(crate) fn new(value: usize) -> Self {
@@ -535,7 +529,7 @@ impl LookaroundScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum PositionAssertion {
+pub(crate) enum PositionAssertion {
     SentenceStart,
     SentenceEnd,
     PreviousToken(Box<[SymbolicAttrValue]>),
@@ -544,14 +538,14 @@ pub enum PositionAssertion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TransitionKind {
+pub(crate) enum TransitionKind {
     Epsilon,
     Consume,
     Assert(PositionAssertion),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TransitionLabel {
+pub(crate) struct TransitionLabel {
     kind: TransitionKind,
     spec: TokenSpec,
 }

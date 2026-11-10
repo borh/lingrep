@@ -206,7 +206,9 @@ struct PredicateCounters {
 pub(super) const PREDICATE_SITE_DENSE_MAIN: usize = 0;
 pub(super) const PREDICATE_SITE_DENSE_MATCH_CLOSURE: usize = 1;
 pub(super) const PREDICATE_SITE_DENSE_ADVANCE: usize = 2;
+#[cfg(feature = "bench-instrumentation")]
 pub(super) const PREDICATE_SITE_DENSE_RETRY_ADVANCE: usize = 3;
+#[cfg(feature = "bench-instrumentation")]
 pub(super) const PREDICATE_SITE_DENSE_RETRY_EXTEND: usize = 4;
 const PREDICATE_SITE_SPAWN: usize = 5;
 const PREDICATE_SITE_NFA_PREVIOUS_TOKEN: usize = 6;
