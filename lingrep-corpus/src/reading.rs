@@ -155,11 +155,98 @@ struct SentenceRecord {
     segments: Vec<Segment>,
 }
 
+/// The classes of each `:::` region by region index, held in one buffer and
+/// encoded as a list of strings.
+#[derive(Clone, Debug, Default)]
+struct Regions {
+    classes: String,
+    ends: Vec<u32>,
+}
+
+impl Regions {
+    fn push(&mut self, classes: &str) -> Result<(), std::num::TryFromIntError> {
+        let end = u32::try_from(self.classes.len() + classes.len())?;
+        self.classes.push_str(classes);
+        self.ends.push(end);
+        Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    fn get(&self, region: usize) -> Option<&str> {
+        let end = *self.ends.get(region)? as usize;
+        let start = region
+            .checked_sub(1)
+            .map_or(0, |previous| self.ends[previous] as usize);
+        self.classes.get(start..end)
+    }
+}
+
+impl Serialize for Regions {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq((0..self.len()).filter_map(|region| self.get(region)))
+    }
+}
+
+impl<'de> Deserialize<'de> for Regions {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Append<'a>(&'a mut Regions);
+
+        impl<'de> serde::de::DeserializeSeed<'de> for Append<'_> {
+            type Value = ();
+
+            fn deserialize<D: serde::Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<(), D::Error> {
+                deserializer.deserialize_str(self)
+            }
+        }
+
+        impl serde::de::Visitor<'_> for Append<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("region classes")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, classes: &str) -> Result<(), E> {
+                self.0
+                    .push(classes)
+                    .map_err(|_| E::custom("region classes exceed u32 bytes"))
+            }
+        }
+
+        struct List;
+
+        impl<'de> serde::de::Visitor<'de> for List {
+            type Value = Regions;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a list of region classes")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Regions, A::Error> {
+                let mut regions = Regions::default();
+                while seq.next_element_seed(Append(&mut regions))?.is_some() {}
+                Ok(regions)
+            }
+        }
+
+        deserializer.deserialize_seq(List)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DocumentRecord {
     source_name: String,
-    regions: Vec<String>,
+    regions: Regions,
     blocks: Vec<BlockRecord>,
     container_blocks: Vec<u32>,
     sentences: Vec<SentenceRecord>,
@@ -545,7 +632,15 @@ impl<'a> ReadingSidecarWriter<'a> {
         }
         Ok(DocumentRecord {
             source_name: source_name.to_owned(),
-            regions: rendered.regions,
+            regions: {
+                let mut regions = Regions::default();
+                for classes in &rendered.regions {
+                    regions
+                        .push(classes)
+                        .map_err(|_| replay("the region classes exceed u32 bytes".into()))?;
+                }
+                regions
+            },
             blocks: rendered
                 .blocks
                 .into_iter()
@@ -777,11 +872,8 @@ enum Selection {
     Before(usize),
 }
 
-fn region_open(regions: &[String], region: u32) -> String {
-    let classes = regions
-        .get(region as usize)
-        .map(String::as_str)
-        .unwrap_or_default();
+fn region_open(regions: &Regions, region: u32) -> String {
+    let classes = regions.get(region as usize).unwrap_or_default();
     let mut tag = String::from("<div class=\"");
     for character in classes.chars() {
         match character {
@@ -805,14 +897,20 @@ fn validate_rendered_size(record: &DocumentRecord) -> Result<(), ReadingSidecarE
             .filter(|total| *total <= MAX_RECORD_BYTES)
             .ok_or_else(|| record_limit("rendered"))
     };
-    let regions = record
-        .regions
-        .iter()
-        .enumerate()
-        .map(|(index, classes)| {
-            classes.bytes().try_fold(
-                region_open(&[], index as u32).len() + REGION_CLOSE.len(),
-                |total, byte| {
+    record.blocks.iter().try_fold(0, |total, block| {
+        block
+            .regions
+            .iter()
+            .try_fold(add(total, block.html.len())?, |total, region| {
+                let classes = record
+                    .regions
+                    .get(*region as usize)
+                    .ok_or_else(|| corrupt("region index out of range"))?;
+                let tag = add(
+                    total,
+                    region_open(&Regions::default(), *region).len() + REGION_CLOSE.len(),
+                )?;
+                classes.bytes().try_fold(tag, |total, byte| {
                     add(
                         total,
                         match byte {
@@ -822,19 +920,7 @@ fn validate_rendered_size(record: &DocumentRecord) -> Result<(), ReadingSidecarE
                             _ => 1,
                         },
                     )
-                },
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    record.blocks.iter().try_fold(0, |total, block| {
-        block
-            .regions
-            .iter()
-            .try_fold(add(total, block.html.len())?, |total, region| {
-                let bytes = regions
-                    .get(*region as usize)
-                    .ok_or_else(|| corrupt("region index out of range"))?;
-                add(total, *bytes)
+                })
             })
     })?;
     Ok(())
@@ -1281,7 +1367,7 @@ mod tests {
     fn paged_record(blocks: u32) -> DocumentRecord {
         DocumentRecord {
             source_name: "a.md".into(),
-            regions: Vec::new(),
+            regions: Regions::default(),
             blocks: (0..blocks)
                 .map(|index| BlockRecord {
                     html: format!("<p data-c=\"{index}\">猫𝑥</p>"),
@@ -1386,9 +1472,51 @@ mod tests {
     }
 
     #[test]
+    fn decoded_regions_take_at_most_twice_their_encoded_bytes() {
+        let count = 1 << 20;
+        let mut json = String::from(r#"{"source_name":"a","regions":["#);
+        for region in 0..count {
+            json.push_str(if region == 0 { r#""""# } else { r#","""# });
+        }
+        json.push_str(r#"],"blocks":[],"container_blocks":[],"sentences":[]}"#);
+        let frame = zstd::bulk::compress(json.as_bytes(), 19).expect("compress");
+        let (_directory, sidecar) = record_fixture(&frame, 0);
+        let record = sidecar.record(0).expect("record");
+        assert_eq!(record.regions.len(), count);
+        let decoded = record.regions.classes.capacity()
+            + record.regions.ends.capacity() * std::mem::size_of::<u32>();
+        assert!(
+            decoded <= 2 * json.len(),
+            "{decoded} bytes from {}",
+            json.len()
+        );
+    }
+
+    #[test]
+    fn regions_round_trip_through_their_encoding() {
+        let mut regions = Regions::default();
+        for classes in ["outer", "", "a b", "猫"] {
+            regions.push(classes).expect("region");
+        }
+        let json = serde_json::to_string(&regions).expect("JSON");
+        assert_eq!(json, r#"["outer","","a b","猫"]"#);
+        let decoded: Regions = serde_json::from_str(&json).expect("decode");
+        assert_eq!(
+            (0..decoded.len())
+                .map(|region| decoded.get(region))
+                .collect::<Vec<_>>(),
+            [Some("outer"), Some(""), Some("a b"), Some("猫")]
+        );
+        assert_eq!(decoded.get(4), None);
+    }
+
+    #[test]
     fn escaped_regions_are_bounded_before_page_assembly() {
         let mut record = paged_record(1);
-        record.regions.push("\"".repeat(12 * 1024 * 1024));
+        record
+            .regions
+            .push(&"\"".repeat(12 * 1024 * 1024))
+            .expect("region");
         record.blocks[0].regions.push(0);
         let frame =
             zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
@@ -1587,9 +1715,12 @@ mod tests {
 
     #[test]
     fn assembled_regions_cost_no_more_than_their_blocks() {
+        let mut regions = Regions::default();
+        regions.push("outer").expect("region");
+        regions.push("inner").expect("region");
         let record = DocumentRecord {
             source_name: "a.md".into(),
-            regions: vec!["outer".into(), "inner".into()],
+            regions,
             blocks: vec![
                 BlockRecord {
                     html: "<p>a</p>".into(),
