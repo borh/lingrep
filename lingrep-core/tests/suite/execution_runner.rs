@@ -3191,3 +3191,41 @@ mod document_lookarounds {
         }
     }
 }
+
+#[test]
+fn analyzed_executor_does_not_finalize_after_cancellation_while_pulling_eof() {
+    let cancel = CancellationFlag::new();
+    let source = CancelAtEofSource {
+        batch: Some(tokenized_batch([(0, vec![token("a")])])),
+        cancel: cancel.clone(),
+    };
+    let mut sink = RecordingSink::default();
+    let mut progress = Vec::new();
+
+    let catalog = matcher("plain := [text=a].");
+    let schema = TokenSchema::unidic_morphology();
+    let bound = catalog.bind(&schema).unwrap();
+    let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
+        source,
+        AnalysisBinding::Prepared(schema),
+        &bound,
+        &pool(),
+        &ExecutionLimits::default(),
+        2,
+        &cancel,
+        &mut sink,
+        &mut |update: ExecutionProgress, _sink: &RecordingSink| progress.push(update),
+        &mut NoopObserver,
+        lingrep_core::execution::PolicySelection::Apply,
+        &SentenceAdmission::All,
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Cancelled(expected_report(1, 1, 1, 1, 1))
+    );
+    assert_eq!(sink.records.len(), 1);
+    assert_eq!(sink.finished, 0);
+    assert!(progress.is_empty());
+}

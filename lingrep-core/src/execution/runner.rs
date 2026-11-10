@@ -833,6 +833,9 @@ where
                 return Ok(state.cancelled());
             }
             let Some(batch) = feed.next()? else {
+                if cancel.is_cancelled() {
+                    return Ok(state.cancelled());
+                }
                 let control = partitioner.finish(
                     limits.max_tokenized_bytes,
                     logical_batch_sentences,
