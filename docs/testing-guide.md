@@ -75,6 +75,47 @@ integration inventory, the matcher correctness gate, the adapter suites, and
 the browser layout checks.
 Fuzz and performance are independent `--fuzz` and `--performance` modes.
 
+### Soranoha corpus validation
+
+Run Soranoha validation locally for corpus or web behavior changes. This is a
+development check, separate from GitHub CI. Use a real Soranoha plaintext author
+archive during iteration; it exercises catalog metadata and literary text that
+Markdown and constructed fixtures do not cover.
+
+Inside the development shell:
+
+```bash
+cargo build -p lingrep --bin ling
+python3 scripts/check-soranoha.py target/debug/ling \
+  --archive /path/to/soranoha-Akutagawa_Ryunosuke-000879-plaintext.zip
+```
+
+The check compares the first 20 complete direct and prepared match records,
+verifies artifact components, scans the corpus to build a count table, and checks
+list-valued NDC
+metadata, filtered frequencies, the web search stream, concordance, and Japanese
+XLSX export. It starts and stops its own loopback server and removes its temporary
+artifacts. Existing Markdown and synthetic tests retain their format-specific
+and boundary coverage. For a UI change, also check the changed view in a browser
+using that Soranoha corpus.
+
+Before a new version or release, run the same check against the full Soranoha
+corpus:
+
+```bash
+cargo build --release -p lingrep --bin ling
+python3 scripts/check-soranoha.py target/release/ling --corpus /path/to/soranoha.lingcorpus
+```
+
+The full check verifies every artifact component and scans every sentence when
+building its count table; displayed concordance and export rows are bounded.
+It fails on an unavailable or incompatible artifact rather than substituting
+Markdown or an author subset. Rebuild an incompatible artifact from the full
+Soranoha ZIP into a new destination with `ling corpus build --input-format
+soranoha --output NEW.lingcorpus ARCHIVE.zip`. Report the corpus path and the
+validation result when finishing work or preparing a release; report unavailable
+validation as pending.
+
 ### Matcher properties and fuzzing after parser or matcher changes
 
 Run matcher property tests after matcher changes. For parser or matcher changes,

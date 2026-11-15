@@ -183,9 +183,16 @@ full test inventory, the adapters, and the browser checks. See
 [docs/testing-guide.md](docs/testing-guide.md) for what each lane runs and
 [docs/development-environment.md](docs/development-environment.md) for setup.
 
-Use focused tests during iteration, then validate the workspace. For behavior
-changes, write a characterization or regression test first. Compare complete
-`Match` values, including captures, graph bindings and lexical identity, rather
+Use focused tests during iteration, then validate the workspace. For corpus or
+web behavior changes, run the local Soranoha validation in
+[docs/testing-guide.md](docs/testing-guide.md#soranoha-corpus-validation) using a
+real author archive. Before a new version or release, run it against the full
+Soranoha corpus. Include the tested corpus and result in the completion report;
+if the required corpus is unavailable or incompatible, report validation as
+pending. Markdown-only validation does not complete a corpus or web change.
+
+For behavior changes, write a characterization or regression test first. Compare
+complete `Match` values, including captures, graph bindings and lexical identity, rather
 than only counts or spans.
 
 When editing doc comments, also run the doc lane for that crate:
