@@ -1374,7 +1374,7 @@ message_args: None,
         };
         let html = explorer.render().expect("renders");
         assert!(
-            html.contains(r#"<div id="export-control"><a class="export-download" download"#),
+            html.contains(r#"<div id="export-control"><a class="export-download" data-export-link target="_blank" rel="noopener""#),
             "{html}"
         );
         assert!(html.contains("href=\"api/export/wb1/5\""));
@@ -1409,7 +1409,7 @@ message_args: None,
         let html = render(&status(Some(5)));
         assert!(
             html.contains(
-                r#"<div id="export-control" hx-swap-oob="innerHTML"><a class="export-download" download"#
+                r#"<div id="export-control" hx-swap-oob="innerHTML"><a class="export-download" data-export-link target="_blank" rel="noopener""#
             ),
             "{html}"
         );

@@ -589,6 +589,30 @@ async fn missing_and_abandoned_search_streams_close_without_retries_or_lost_noti
 }
 
 #[tokio::test]
+async fn export_links_follow_locale_changes_and_new_result_swaps() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(served.base.trim_end_matches("sample")).await?;
+        wait_for(&driver, "return !!document.querySelector('[data-corpus-search]') && !!window.htmx", "the search form").await?;
+        driver.execute("const pattern = document.querySelector('#corpus-pattern'); pattern.value = 'p := [text=x].'; pattern.dispatchEvent(new Event('input', {bubbles:true})); document.querySelector('[data-corpus-search]').requestSubmit();", vec![]).await?;
+        wait_for(&driver, "return document.querySelector('a[data-export-link]')?.href.includes('locale=en')", "English export links").await?;
+        driver.find(By::Css("[data-locale-toggle]")).await?.click().await?;
+        wait_for(&driver, "return document.querySelector('a[data-export-link]')?.href.includes('locale=ja')", "Japanese export links").await?;
+        driver.execute("window.__oldExport = document.querySelector('a[data-export-link]'); document.querySelector('[data-corpus-search]').requestSubmit();", vec![]).await?;
+        wait_for(&driver, "return !__oldExport.isConnected && document.querySelector('a[data-export-link]')?.href.includes('locale=ja')", "a Japanese export link after a result swap").await?;
+        driver.find(By::Css("[data-locale-toggle]")).await?.click().await?;
+        wait_for(&driver, "return document.querySelector('a[data-export-link]')?.href.includes('locale=en')", "restored English export links").await?;
+        Ok(())
+    }.await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
 async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
 -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::get,
@@ -21,7 +21,7 @@ use lingrep_core::token_match::AttributeKey;
 use crate::coordinator::SnapshotLookupError;
 use crate::corpus_context::{corpus_display_name, identity_digest};
 use crate::export::sink::{ExportScanData, ExportSink};
-use crate::export::workbook::{AboutMeta, build_workbook};
+use crate::export::workbook::{AboutMeta, WorkbookLocale, build_workbook};
 use crate::patterns::compile_web_pattern;
 use crate::provenance_view::section_labels;
 use crate::revision::{RevisionId, WorkbenchId};
@@ -239,9 +239,16 @@ fn lookup_rejection(error: SnapshotLookupError) -> Response {
     }
 }
 
+#[derive(Default, serde::Deserialize)]
+struct ExportOptions {
+    #[serde(default)]
+    locale: WorkbookLocale,
+}
+
 async fn export(
     State(store): State<RequestStore>,
     Path((workbench_id, revision)): Path<(String, u64)>,
+    Query(options): Query<ExportOptions>,
 ) -> Response {
     let workbench = WorkbenchId::new(&workbench_id);
     let revision_id = RevisionId(revision);
@@ -375,6 +382,7 @@ async fn export(
             |slot| slot.display_name.clone(),
         );
     let about = AboutMeta {
+        locale: options.locale,
         scan_scope: match (snapshot.search_scope.is_unrestricted(), &omissions) {
             (true, None) => "complete unfiltered corpus",
             (true, Some(_)) => "unfiltered corpus except the skipped sentences",
@@ -382,7 +390,7 @@ async fn export(
             (false, Some(_)) => "accepted search scope except the skipped sentences",
         }
         .into(),
-        skipped_sentences: crate::revision_status::omission_notice(omissions.as_ref()),
+        skipped_sentences: options.locale.omission_notice(omissions.as_ref()),
         filters: serde_json::to_string(&snapshot.search_scope).unwrap_or_default(),
         overlaps: crate::templates::overlaps_value(snapshot.overlaps).unwrap_or("catalog"),
         corpus: corpus_name,

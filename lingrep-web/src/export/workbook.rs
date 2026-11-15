@@ -8,7 +8,67 @@ use crate::export::text::truncate_cell;
 
 const EXCEL_CELL_LIMIT: usize = 32_767;
 
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+pub(crate) enum WorkbookLocale {
+    #[default]
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+impl WorkbookLocale {
+    fn text(self, key: &str) -> &str {
+        if matches!(self, Self::English) {
+            return key;
+        }
+        match key {
+            "corpus" => "コーパス",
+            "corpus_id" => "コーパス識別子",
+            "dictionary" => "辞書",
+            "revision" => "検索の版",
+            "exported" => "出力日時",
+            "scan_scope" => "検索範囲",
+            "skipped_sentences" => "省略した文",
+            "filters" => "絞り込み条件",
+            "overlaps" => "重複の扱い",
+            "exact_matches" => "一致の総数",
+            "exported_rows" => "出力した行数",
+            "rows_truncated" => "行数の上限による省略",
+            "pattern" => "パターン",
+            "pattern (cont.)" => "パターン（続き）",
+            "sheet" => "シート",
+            "complete unfiltered corpus" => "コーパス全体（絞り込みなし）",
+            "unfiltered corpus except the skipped sentences" => {
+                "省略した文を除くコーパス全体（絞り込みなし）"
+            }
+            "accepted search scope" => "検索時に確定した範囲",
+            "accepted search scope except the skipped sentences" => {
+                "省略した文を除く、検索時に確定した範囲"
+            }
+            _ => key,
+        }
+    }
+
+    pub(crate) fn omission_notice(
+        self,
+        omissions: Option<&lingrep_core::execution::OversizedSentenceOmissions>,
+    ) -> Option<String> {
+        if matches!(self, Self::English) {
+            return crate::revision_status::omission_notice(omissions);
+        }
+        let omissions = omissions.filter(|omissions| omissions.count > 0)?;
+        let size = omissions.first_actual as f64 / (1 << 20) as f64;
+        let limit = omissions.limit as f64 / (1 << 20) as f64;
+        Some(format!(
+            "サイズの上限を超えた {} 文を省略しました（最初の文: {}、トークン化後の推定サイズ: 約 {size:.1} MiB、上限: 約 {limit:.1} MiB）。",
+            omissions.count, omissions.first_ordinal
+        ))
+    }
+}
+
 pub(crate) struct AboutMeta {
+    pub locale: WorkbookLocale,
     pub scan_scope: String,
     pub skipped_sentences: Option<String>,
     pub filters: String,
@@ -50,42 +110,42 @@ pub(crate) fn build_workbook(
         sheet.set_name("About")?;
         let mut r = 0u32;
 
-        write_cell(sheet, r, 0, "corpus")?;
+        write_cell(sheet, r, 0, about.locale.text("corpus"))?;
         write_cell(sheet, r, 1, &about.corpus)?;
         r += 1;
-        write_cell(sheet, r, 0, "corpus_id")?;
+        write_cell(sheet, r, 0, about.locale.text("corpus_id"))?;
         write_cell(sheet, r, 1, &about.corpus_id)?;
         r += 1;
-        write_cell(sheet, r, 0, "dictionary")?;
+        write_cell(sheet, r, 0, about.locale.text("dictionary"))?;
         write_cell(sheet, r, 1, &about.dictionary)?;
         r += 1;
-        write_cell(sheet, r, 0, "revision")?;
+        write_cell(sheet, r, 0, about.locale.text("revision"))?;
         sheet.write_number(r, 1, about.revision as f64)?;
         r += 1;
-        write_cell(sheet, r, 0, "exported")?;
+        write_cell(sheet, r, 0, about.locale.text("exported"))?;
         write_cell(sheet, r, 1, exported_at)?;
         r += 1;
-        write_cell(sheet, r, 0, "scan_scope")?;
-        write_cell(sheet, r, 1, &about.scan_scope)?;
+        write_cell(sheet, r, 0, about.locale.text("scan_scope"))?;
+        write_cell(sheet, r, 1, about.locale.text(&about.scan_scope))?;
         r += 1;
         if let Some(skipped) = &about.skipped_sentences {
-            write_cell(sheet, r, 0, "skipped_sentences")?;
+            write_cell(sheet, r, 0, about.locale.text("skipped_sentences"))?;
             write_cell(sheet, r, 1, skipped)?;
             r += 1;
         }
-        write_cell(sheet, r, 0, "filters")?;
+        write_cell(sheet, r, 0, about.locale.text("filters"))?;
         write_cell(sheet, r, 1, &about.filters)?;
         r += 1;
-        write_cell(sheet, r, 0, "overlaps")?;
+        write_cell(sheet, r, 0, about.locale.text("overlaps"))?;
         write_cell(sheet, r, 1, about.overlaps)?;
         r += 1;
-        write_cell(sheet, r, 0, "exact_matches")?;
+        write_cell(sheet, r, 0, about.locale.text("exact_matches"))?;
         sheet.write_number(r, 1, about.exact_matches as f64)?;
         r += 1;
-        write_cell(sheet, r, 0, "exported_rows")?;
+        write_cell(sheet, r, 0, about.locale.text("exported_rows"))?;
         sheet.write_number(r, 1, about.exported_rows as f64)?;
         r += 1;
-        write_cell(sheet, r, 0, "rows_truncated")?;
+        write_cell(sheet, r, 0, about.locale.text("rows_truncated"))?;
         write_cell(
             sheet,
             r,
@@ -101,14 +161,14 @@ pub(crate) fn build_workbook(
         // pattern source, preserved across continuation rows (never destroyed)
         let chars: Vec<char> = about.pattern_source.chars().collect();
         if chars.is_empty() {
-            write_cell(sheet, r, 0, "pattern")?;
+            write_cell(sheet, r, 0, about.locale.text("pattern"))?;
             write_cell(sheet, r, 1, "")?;
             r += 1;
         } else {
             for (i, chunk) in chars.chunks(EXCEL_CELL_LIMIT).enumerate() {
                 let key = if i == 0 { "pattern" } else { "pattern (cont.)" };
                 let value: String = chunk.iter().collect();
-                write_cell(sheet, r, 0, key)?;
+                write_cell(sheet, r, 0, about.locale.text(key))?;
                 write_cell(sheet, r, 1, &value)?;
                 r += 1;
             }
@@ -123,7 +183,7 @@ pub(crate) fn build_workbook(
             sheet.write_string_with_format(
                 r,
                 i as u16,
-                truncate_cell(h, EXCEL_CELL_LIMIT),
+                truncate_cell(about.locale.text(h), EXCEL_CELL_LIMIT),
                 &bold,
             )?;
         }
@@ -185,6 +245,7 @@ mod tests {
 
     fn about() -> AboutMeta {
         AboutMeta {
+            locale: WorkbookLocale::English,
             scan_scope: "complete unfiltered corpus".into(),
             skipped_sentences: None,
             filters: "none".into(),

@@ -3,6 +3,7 @@
 
 mod compare_e2e_test;
 mod corpus_context_e2e_test;
+mod export_e2e_test;
 mod frequency_e2e_test;
 mod layout_e2e_test;
 mod query_library_e2e_test;

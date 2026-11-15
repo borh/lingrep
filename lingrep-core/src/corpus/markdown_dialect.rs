@@ -927,7 +927,9 @@ impl<R: BufRead> DialectIterator<R> {
             }
             writeln!(spool, "{line}")?;
         }
-        let mut file = spool.into_inner().map_err(|error| error.into_error())?;
+        let mut file = spool
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?;
         file.rewind()?;
         self.replay = Some(BufReader::new(file).lines().peekable());
         Ok(false)

@@ -524,3 +524,38 @@ async fn export_applies_and_states_the_overlap_setting_of_the_displayed_run() {
         );
     }
 }
+
+#[tokio::test]
+async fn export_about_labels_follow_the_requested_locale_and_default_to_english() {
+    let (store, _dir) = store_with_verbs(3, 1_000).await;
+    let workbench = WorkbenchId::new("export-locale");
+    let revision = complete(&store, &workbench, "verb := [upos=VERB].").await;
+    for (query, expected) in [
+        ("", "corpus"),
+        ("?locale=en", "corpus"),
+        ("?locale=ja", "コーパス"),
+    ] {
+        let response = get(
+            &store,
+            &format!("{}{query}", export_uri(&workbench, revision)),
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let mut workbook = open(body_bytes(response).await);
+        let sheet = workbook.worksheet_range("About").unwrap();
+        assert_eq!(
+            sheet.get_value((0, 0)),
+            Some(&Data::String(expected.into()))
+        );
+        assert!(workbook.sheet_names().iter().any(|name| name == "verb"));
+    }
+    assert_eq!(
+        get(
+            &store,
+            &format!("{}?locale=fr", export_uri(&workbench, revision))
+        )
+        .await
+        .status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+}

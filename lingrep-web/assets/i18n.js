@@ -86,7 +86,7 @@ function readArgs(element) {
 }
 
 const SLOT_ATTRIBUTES = ["title", "placeholder", "aria-label"];
-const SLOTS = ["[data-i18n]", ...SLOT_ATTRIBUTES.map((attr) => `[data-i18n-${attr}]`)].join(",");
+const SLOTS = ["[data-export-link]", "[data-i18n]", ...SLOT_ATTRIBUTES.map((attr) => `[data-i18n-${attr}]`)].join(",");
 
 /**
  * Applies the active locale over `root` (element or document), `root` itself
@@ -101,6 +101,11 @@ export function localize(root = document, dict = undefined, locale = current) {
   const elements = root.querySelectorAll ? [...root.querySelectorAll(SLOTS)] : [];
   if (root.matches?.(SLOTS)) elements.unshift(root);
   for (const element of elements) {
+    if (element.dataset.exportLink !== undefined) {
+      const url = new URL(element.getAttribute("href"), document.baseURI);
+      url.searchParams.set("locale", locale);
+      if (element.href !== url.href) element.href = url.href;
+    }
     const args = readArgs(element);
     const key = element.dataset.i18n;
     if (key && locale !== "en") {

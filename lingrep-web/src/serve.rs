@@ -145,7 +145,13 @@ pub fn config(args: &Args) -> Result<Config, ServeError> {
         | crate::state::ConfigError::UnreadableArtifact { .. } => {
             ServeError::Runtime(error.to_string())
         }
-        _ => ServeError::InvalidArguments(error.to_string()),
+        crate::state::ConfigError::EmptyDictionaryPath
+        | crate::state::ConfigError::EmptyCorpusPath
+        | crate::state::ConfigError::EmptyDeclaredCorpusPath { .. }
+        | crate::state::ConfigError::ZeroDetailLimit
+        | crate::state::ConfigError::InvalidLimit(_) => {
+            ServeError::InvalidArguments(error.to_string())
+        }
     })?;
     Ok(config)
 }
