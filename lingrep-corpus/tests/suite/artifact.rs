@@ -2591,3 +2591,48 @@ async fn nfc_artifact_requires_the_current_unicode_table_version() {
         assert!(!error.is_artifact_corruption());
     }
 }
+
+#[tokio::test]
+async fn document_membership_accepts_sparse_ids_and_subsets() {
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("sparse.lingcorpus");
+    let documents = [
+        source_document(0, "a.md", 0, false),
+        source_document(1, "b.md", 1, false),
+    ];
+    let mut builder = CorpusBuilder::begin(build_config(), &destination)
+        .await
+        .unwrap();
+    for (source, id) in documents.iter().zip([3, 100]) {
+        builder.register_source_document(source).unwrap();
+        observe_and_add_empty_document(&mut builder, source, id).await;
+    }
+    builder.finish(discovery_for(&documents)).await.unwrap();
+    let artifact = CorpusArtifact::open(&destination).unwrap();
+    for ids in [&[][..], &[3][..], &[100][..], &[3, 100][..]] {
+        artifact.check_document_ids(ids).unwrap();
+    }
+    for id in [0, 1, 4, 99, 101, u64::MAX] {
+        let error = artifact.check_document_ids(&[id]).unwrap_err();
+        assert!(error.to_string().contains(&id.to_string()));
+    }
+}
+
+#[tokio::test]
+async fn opening_a_missing_component_reports_its_path_and_preserves_the_io_kind() {
+    let fixture = ArtifactFixture::new().await;
+    let component = fixture.root.join("tokens.v1.zst");
+    fs::remove_file(&component).unwrap();
+    let error = CorpusArtifact::open(&fixture.root)
+        .err()
+        .expect("missing component");
+    assert!(
+        error.to_string().contains(&*component.to_string_lossy()),
+        "{error}"
+    );
+    assert!(
+        matches!(&error, CorpusError::Io(source) if source.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(!error.is_artifact_corruption());
+    assert!(fixture.root.exists());
+}

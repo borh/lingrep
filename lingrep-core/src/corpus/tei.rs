@@ -66,7 +66,9 @@ impl TeiReading {
     /// Reads the principal TEI body; annotation ranges address the projected reading, never XML bytes.
     pub fn parse(xml: &str, max_record_bytes: usize) -> io::Result<Self> {
         if xml.len() > MAX_WORK_BYTES {
-            return Err(invalid("TEI work exceeds 64 MiB"));
+            return Err(invalid(
+                "TEI work exceeds the fixed 64 MiB format limit; split the work into smaller TEI documents",
+            ));
         }
         let doc = Document::parse_with_options(
             xml,
@@ -260,7 +262,9 @@ impl ReadingBuilder {
             .saturating_add(text.len())
             > MAX_WORK_BYTES
         {
-            return Err(invalid("projected TEI reading exceeds 64 MiB"));
+            return Err(invalid(
+                "projected TEI reading exceeds the fixed 64 MiB format limit; split the work into smaller TEI documents",
+            ));
         }
         if remove != 0 {
             self.text.pop();

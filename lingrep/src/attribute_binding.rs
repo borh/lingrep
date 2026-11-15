@@ -54,10 +54,9 @@ pub(crate) fn unavailable_attribute_messages(
                     )
                 })
                 .collect();
+            let definition_reference = !referrers.is_empty();
             let referenced_by = if referrers.is_empty() {
-                // Reference sites cover definition bodies; what remains is the
-                // publication policy's projection (`key:`, `transform:`).
-                "the catalog's publication policy".to_owned()
+                "the catalog configuration".to_owned()
             } else if referrers.len() > NAMED_REFERRERS {
                 format!(
                     "{}, and {} more",
@@ -67,10 +66,14 @@ pub(crate) fn unavailable_attribute_messages(
             } else {
                 referrers.join(", ")
             };
+            let consequence = if definition_reference {
+                "; positive tests over it match nothing, and only `!(…)` complements hold"
+            } else {
+                ""
+            };
             format!(
                 "`{attribute}` is referenced by {referenced_by} but this corpus's token schema \
-                 ({schema}) does not carry it; positive tests over it match nothing, and only \
-                 `!(…)` complements hold"
+                 ({schema}) does not carry it{consequence}"
             )
         })
         .collect()
@@ -260,8 +263,7 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert!(
-            messages[0]
-                .starts_with("`unidic.pos1` is referenced by the catalog's publication policy"),
+            messages[0].starts_with("`unidic.pos1` is referenced by the catalog configuration"),
             "{}",
             messages[0]
         );

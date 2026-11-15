@@ -55,12 +55,20 @@ pub(crate) struct ExternalPlan {
 }
 
 fn invalid(error: impl std::fmt::Display) -> CliError {
-    CliError::InvalidArgs(format!("analyzer configuration: {error}"))
+    CliError::InvalidArgs(format!(
+        "analyzer configuration: {error}; check --analyzer-config. For a generated spaCy/Stanza bundle, rerun its original setup command with a new --output directory"
+    ))
 }
 fn digest_file(path: &Path) -> Result<[u8; 32], CliError> {
-    let mut reader = std::fs::File::open(path)?;
+    let mut reader = std::fs::File::open(path).map_err(|source| CliError::InputIo {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let mut hasher = blake3::Hasher::new();
-    std::io::copy(&mut reader, &mut hasher)?;
+    std::io::copy(&mut reader, &mut hasher).map_err(|source| CliError::InputIo {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(*hasher.finalize().as_bytes())
 }
 fn entries(
@@ -68,7 +76,10 @@ fn entries(
     path: &Path,
     output: &mut Vec<(PathBuf, [u8; 32])>,
 ) -> Result<(), CliError> {
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| CliError::InputIo {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if metadata.is_symlink() {
         return Err(invalid(format!(
             "symlink in analyzer resources: {}",
@@ -81,9 +92,17 @@ fn entries(
             digest_file(path)?,
         ));
     } else if metadata.is_dir() {
-        let mut paths = std::fs::read_dir(path)?
+        let mut paths = std::fs::read_dir(path)
+            .map_err(|source| CliError::InputIo {
+                path: path.to_path_buf(),
+                source,
+            })?
             .map(|entry| entry.map(|e| e.path()))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|source| CliError::InputIo {
+                path: path.to_path_buf(),
+                source,
+            })?;
         paths.sort();
         for path in paths {
             entries(root, &path, output)?;
@@ -114,10 +133,20 @@ impl ExternalPlan {
         let path = path
             .canonicalize()
             .map_err(|error| invalid(format!("cannot open {}: {error}", path.display())))?;
-        let file: AnalyzerFile = toml::from_str(&std::fs::read_to_string(&path)?)
+        let file: AnalyzerFile =
+            toml::from_str(&std::fs::read_to_string(&path).map_err(|source| {
+                CliError::InputIo {
+                    path: path.clone(),
+                    source,
+                }
+            })?)
             .map_err(|error| invalid(format!("{}: {error}", path.display())))?;
         if file.version != 1 {
-            return Err(invalid("unsupported analyzer file version; expected 1"));
+            return Err(invalid(format!(
+                "{}: unsupported analyzer file version {}; expected 1",
+                path.display(),
+                file.version
+            )));
         }
         let base = path
             .parent()
@@ -133,7 +162,11 @@ impl ExternalPlan {
         let python = python
             .parent()
             .ok_or_else(|| invalid("python path has no parent"))?
-            .canonicalize()?
+            .canonicalize()
+            .map_err(|source| CliError::InputIo {
+                path: python.clone(),
+                source,
+            })?
             .join(
                 python
                     .file_name()
@@ -169,7 +202,11 @@ impl ExternalPlan {
             })
             .transpose()?;
         if let Some(protocol) = &protocol_project {
-            let metadata = std::fs::symlink_metadata(protocol)?;
+            let metadata =
+                std::fs::symlink_metadata(protocol).map_err(|source| CliError::InputIo {
+                    path: protocol.clone(),
+                    source,
+                })?;
             if !metadata.is_dir() || metadata.is_symlink() {
                 return Err(invalid(
                     "adapter protocol project must be a regular directory",

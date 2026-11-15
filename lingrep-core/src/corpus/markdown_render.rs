@@ -8,12 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use super::markdown_dialect::{
-    DivLine, closes_fence, opens_fence, parse_classes, parse_div, parse_heading, row_cells,
-    strip_attribute_spans,
+    DivLine, closes_display_math, closes_fence, opens_display_math, opens_fence, parse_classes,
+    parse_div, parse_heading, row_cells, strip_attribute_spans,
 };
 
 /// Change this revision whenever rendered HTML, text runs or block boundaries change, including after dependency upgrades.
-pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/1";
+pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDocument {
@@ -64,6 +64,7 @@ fn prepare(source: &str) -> Prepared {
         Frontmatter,
         Comment,
         Fenced(char, usize),
+        DisplayMath,
     }
     let mut lines = Vec::new();
     let mut fences = Vec::new();
@@ -98,6 +99,13 @@ fn prepare(source: &str) -> Prepared {
                 lines.push(raw.to_owned());
                 continue;
             }
+            Block::DisplayMath => {
+                if closes_display_math(raw.trim_start()) {
+                    block = Block::Body;
+                }
+                lines.push(raw.to_owned());
+                continue;
+            }
             Block::Body => {}
         }
         let mut content = raw;
@@ -118,6 +126,11 @@ fn prepare(source: &str) -> Prepared {
         }
         if blank {
             lines.push(String::new());
+            continue;
+        }
+        if opens_display_math(trimmed) {
+            block = Block::DisplayMath;
+            lines.push(content.to_owned());
             continue;
         }
         if let Some((marker, minimum)) = opens_fence(trimmed) {
@@ -229,13 +242,15 @@ fn table_breaks(assembled: &Assembled) -> BTreeSet<usize> {
                 let delimiter = assembled.line_index(range.start) + 1;
                 table = Some(starts_with_pipe(delimiter));
             }
-            Event::Start(Tag::TableRow) if table == Some(true) => {
+            Event::Start(Tag::TableRow) if table.is_some() => {
                 let row = assembled.line_index(range.start);
-                if !starts_with_pipe(row) {
+                if !assembled.line_text(row).contains('|')
+                    || (table == Some(true) && !starts_with_pipe(row))
+                {
                     if let Some(line) = assembled.source_line(row) {
                         breaks.insert(line);
                     }
-                    table = Some(false);
+                    table = None;
                 }
             }
             Event::End(TagEnd::Table) => table = None,
@@ -679,6 +694,29 @@ mod tests {
             .iter()
             .map(|block| block.html.as_str())
             .collect()
+    }
+
+    #[test]
+    fn tables_without_leading_pipes_stop_before_non_row_prose() {
+        let document = render_markdown("a | b\n--- | ---\n1 | 2\n本文。\n後文。\n");
+        let rendered = html(&document);
+        let end = rendered.find("</table>").expect("table");
+        assert!(rendered.find("本文。").expect("prose") > end);
+        assert_eq!(line_text(&document, 4), "本文。");
+        assert_eq!(line_text(&document, 5), "後文。");
+    }
+
+    #[test]
+    fn div_fences_inside_display_math_do_not_label_following_blocks() {
+        for source in [
+            "$$\n::: {.note}\n$$\n本文。\n",
+            "$$ x=1\n::: {.note}\nx=2 $$\n本文。\n",
+        ] {
+            let document = render_markdown(source);
+            assert!(document.regions.is_empty());
+            assert!(document.blocks.iter().all(|block| block.regions.is_empty()));
+            assert!(html(&document).contains("::: {.note}"));
+        }
     }
 
     #[test]

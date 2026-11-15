@@ -271,11 +271,16 @@ that file; the module has no option for it.
 
 lingrep-web reads declared artifacts in place, never writes beside them,
 and retains them on failure with their corpora marked failed.
-When corruption is detected in an artifact
-beside a declared source, at startup or during a read, the server deletes
-and rebuilds it regardless of which program created it. Each corpus is
-rebuilt once per server process. If the replacement is corrupt, it is
-deleted and the corpus fails until restart.
+An existing artifact that cannot be opened at startup is left unchanged,
+including an incomplete copy beside a declared source. Its corpus is marked
+failed. Finish or quarantine that copy before restarting; publish complete
+artifact directories with an atomic rename rather than copying into a live
+artifact path.
+
+If corruption is detected during a read of an artifact that this process
+already opened successfully beside a declared source, the server deletes
+and rebuilds it once. If the replacement is corrupt, it is deleted and the
+corpus fails until restart.
 
 Other open errors leave the artifact unchanged and mark its corpus failed:
 permission or I/O errors, missing components, symbolic-link components,

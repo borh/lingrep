@@ -41,6 +41,15 @@ pub enum OutputError {
     Protocol(#[from] ProtocolError),
 }
 
+impl From<OutputError> for io::Error {
+    fn from(error: OutputError) -> Self {
+        match error {
+            OutputError::Io(source) => source,
+            source => io::Error::other(source),
+        }
+    }
+}
+
 impl OutputError {
     /// A closed stdout pipe is an output failure, never a successful prefix.
     pub fn is_broken_pipe(&self) -> bool {

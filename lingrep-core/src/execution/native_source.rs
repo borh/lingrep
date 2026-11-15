@@ -107,9 +107,10 @@ where
         let analyzed = self
             .analyzer
             .analyze_bounded_batch(inputs, &self.projection)
-            .map_err(|error| ExecutionError::Source {
-                ordinal: self.next_corpus_sentence,
-                message: error.to_string(),
+            .map_err(|error| ExecutionError::Analysis {
+                ordinal: Some(self.next_corpus_sentence),
+                source_name: None,
+                source: Box::new(error),
             })?;
         if analyzed.inputs().len() != locations.len() {
             return Err(ExecutionError::Source {
@@ -146,7 +147,7 @@ where
                         ordinal: candidate_ordinal,
                         actual: sentence_bytes,
                         limit: limits.max_sentence_bytes,
-                        context: format!(" in {}", input_location.source_name),
+                        source_name: Some(input_location.source_name.to_string()),
                     });
                 }
                 let words = analyzed_sentence.into_words();
@@ -161,6 +162,7 @@ where
                         ordinal: candidate_ordinal,
                         actual: aggregate.max(charge),
                         limit: limits.max_tokenized_bytes,
+                        source_name: Some(input_location.source_name.to_string()),
                     });
                 }
                 let location = match self.segmentation {

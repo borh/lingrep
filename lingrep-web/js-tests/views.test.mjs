@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { currentLocale, initI18n } from "../assets/i18n.js";
-import { conditionText, fieldName, phrase, reasonText, scopeDocuments } from "../assets/views.js";
+import { api, conditionText, fieldName, phrase, reasonText, scopeDocuments } from "../assets/views.js";
 
 async function useJapanese() {
   globalThis.localStorage = { getItem: () => "ja", setItem() {} };
@@ -87,4 +87,10 @@ test("a slot's content is not read as another slot", () => {
   const html = phrase("views.scope_is", { name: "{value}", value: "V" });
   assert.equal(html.split("{value}").length, 2);
   assert.equal(html.split("V").length, 2);
+});
+
+test("server error recovery guidance uses the active locale", async () => {
+  await useJapanese();
+  globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({ code: "server_error", error: "English fallback" }) });
+  await assert.rejects(api("frequency", {}), { message: "リクエストを完了できませんでした。もう一度お試しください。再び失敗する場合は、サーバー管理者にログの確認を依頼してください。" });
 });

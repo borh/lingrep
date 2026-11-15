@@ -145,8 +145,7 @@ pub(super) fn failure(error: &QueryError) -> Response {
     if error.is_request_error() {
         bad_request(error.to_string())
     } else {
-        tracing::error!(%error, "frequency query failed");
-        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        super::server_error(error)
     }
 }
 
@@ -231,7 +230,7 @@ async fn on_pair<T: Serialize + Send + 'static>(
     match result {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => failure(&error),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(error) => super::server_error(error),
     }
 }
 
@@ -443,6 +442,7 @@ mod tests {
             let (status, body) = status_and_body(reply(error).await).await;
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
             assert!(!body.contains("/srv"), "{body}");
+            assert!(body.contains("Try again"), "{body}");
         }
     }
 

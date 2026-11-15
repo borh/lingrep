@@ -120,7 +120,7 @@ async fn create_permalink(
             (StatusCode::OK, Json(PathResponse { path })).into_response()
         }
         Err(PermalinkError::TooLarge) => error(StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
-        Err(PermalinkError::Malformed) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(error @ PermalinkError::Malformed) => super::server_error(error),
     }
 }
 

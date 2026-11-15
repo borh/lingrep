@@ -50,8 +50,7 @@ pub fn run(args: &NeighborsArgs, mode: OutputMode) -> Result<CommandOutcome, Cli
     let mut writer = stdout.lock();
     if mode == OutputMode::Jsonl {
         let mut emit = |event| {
-            write_jsonl(&mut writer, &NeighborsEnvelope::new(event))
-                .map_err(|error| CliError::Io(io::Error::other(error)))
+            write_jsonl(&mut writer, &NeighborsEnvelope::new(event)).map_err(CliError::from)
         };
         emit(NeighborsEvent::Run(NeighborsRun {
             word: args.word.clone(),
@@ -108,12 +107,15 @@ fn write_set<W: Write>(
         members.len(),
         literal(&args.word).unwrap_or_default(),
         cut.join(", ")
-    )?;
-    writeln!(writer, "set {} := {{{}}}.", args.name, members.join(", "))?;
+    )
+    .map_err(CliError::stdout)?;
+    writeln!(writer, "set {} := {{{}}}.", args.name, members.join(", "))
+        .map_err(CliError::stdout)?;
     if omitted > 0 {
-        eprintln!(
+        writeln!(
+            io::stderr().lock(),
             "note: {omitted} values contain a character that a set member cannot spell and were left out"
-        );
+        )?;
     }
     Ok(())
 }

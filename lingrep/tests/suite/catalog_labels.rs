@@ -165,3 +165,34 @@ fn out_of_set_counts_cover_untested_attributes_and_only_the_sentences_read() {
         }
     }
 }
+
+#[test]
+fn absent_label_only_attributes_do_not_report_nonexistent_pattern_tests() {
+    let directory = TempDir::new().unwrap();
+    let catalog = directory.path().join("labels.lx");
+    fs::write(
+        &catalog,
+        "labels: { dep.rel: \"ud-v2\" }\npattern p := [text=猫].\n",
+    )
+    .unwrap();
+    let input = directory.path().join("input.txt");
+    fs::write(&input, "猫。").unwrap();
+    for command in ["matches", "summarize"] {
+        let output = lingrep()
+            .arg(command)
+            .arg(&input)
+            .arg("--patterns")
+            .arg(&catalog)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("warning[attribute_unavailable]"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("catalog configuration"), "{stderr}");
+        assert!(!stderr.contains("publication policy"), "{stderr}");
+        assert!(!stderr.contains("positive tests"), "{stderr}");
+    }
+}

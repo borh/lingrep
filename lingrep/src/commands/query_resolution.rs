@@ -385,7 +385,7 @@ pub(crate) fn resolve_matching_query(
             &descriptor,
             TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes()),
         )
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+        .map_err(CliError::corpus)?;
         let dictionary_identity = encode_digest(dictionary_digest);
         let reader_identity_text = encode_digest(reader_identity.as_bytes());
         let token_schema_identity = encode_digest(analysis_inputs.token_schema().as_bytes());

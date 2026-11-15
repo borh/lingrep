@@ -151,7 +151,7 @@ pub struct DriftData {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UnavailableAttributeData {
     pub attribute: String,
-    /// Empty when only the catalog's publication policy references it.
+    /// Empty for attributes referenced only by catalog configuration.
     pub sites: Vec<BindingSiteData>,
 }
 

@@ -36,8 +36,8 @@ impl CliAnalyzerPlan {
         if !matches!(format, CorpusFormat::Tei | CorpusFormat::SoranohaTei) {
             return Ok(self);
         }
-        let schema = lingrep_core::corpus::tei::annotated_schema(self.schema())
-            .map_err(|e| CliError::Corpus(e.to_string()))?;
+        let schema =
+            lingrep_core::corpus::tei::annotated_schema(self.schema()).map_err(CliError::corpus)?;
         let descriptor = Box::new(lingrep_core::corpus::tei::annotated_descriptor(
             self.descriptor(),
             &schema,

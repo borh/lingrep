@@ -61,6 +61,8 @@ impl ReadingSidecarKey {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReadingSidecarError {
+    #[error(transparent)]
+    Publication(#[from] crate::PublicationError),
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
     #[error("reading sidecar header is not valid: {0}")]
@@ -76,7 +78,7 @@ pub enum ReadingSidecarError {
         version: u32,
     },
     #[error(
-        "reading sidecar {path} was written for {field} {found}, but the current one is {expected}; rebuild it with `ling corpus render`"
+        "Rendered text in '{path}' was built with a different {field}. Rebuild it with 'ling corpus render' (saved: {found}; current: {expected})"
     )]
     KeyMismatch {
         path: PathBuf,
@@ -85,7 +87,7 @@ pub enum ReadingSidecarError {
         found: String,
     },
     #[error(
-        "these Markdown reader options have reader identity {found}, but the artifact was read with {expected}; pass the --md-* options the artifact was built with"
+        "The Markdown options or reader version differ from those used to build this corpus. Use the original --md-* options and a compatible ling version. The original options cannot be recovered from these hashes. If unavailable, rebuild with 'ling corpus build ROOT --output NEW_ARTIFACT' using the chosen --md-* options, then render with those options (requested reader: {found}; corpus reader: {expected})"
     )]
     ReaderMismatch { expected: String, found: String },
     #[error(
@@ -103,7 +105,9 @@ pub enum ReadingSidecarError {
     Corrupt(String),
     #[error("{0}")]
     OutOfRange(String),
-    #[error("destination already exists at {0}")]
+    #[error(
+        "destination already exists at {0}; the existing sidecar was preserved; choose a new --output directory"
+    )]
     DestinationExists(PathBuf),
     #[error("reading sidecar writing was cancelled")]
     Cancelled,
@@ -709,22 +713,15 @@ impl StagedReadingSidecar {
     /// Renames the staged sidecar to its destination without replacing
     /// anything there.
     pub fn publish(mut self) -> Result<ReadingSidecarStats, ReadingSidecarError> {
-        crate::rename_noreplace(&self.staging.path, &self.destination).map_err(|error| {
-            if matches!(error.raw_os_error(), Some(libc::EEXIST | libc::ENOTEMPTY)) {
-                ReadingSidecarError::DestinationExists(self.destination.clone())
-            } else {
-                ReadingSidecarError::Io(error)
-            }
-        })?;
-        self.staging.published = true;
-        if let Some(parent) = self.destination.parent()
-            && let Ok(directory) = File::open(parent)
-        {
-            directory.sync_all()?;
-        }
-        self.stats.bytes = fs::read_dir(&self.destination)?
-            .map(|entry| Ok(entry?.metadata()?.len()))
-            .sum::<io::Result<u64>>()?;
+        self.stats.bytes =
+            self.staging
+                .publish(&self.destination)
+                .map_err(|error| match error {
+                    crate::PublicationError::DestinationExists { path } => {
+                        ReadingSidecarError::DestinationExists(path)
+                    }
+                    error => ReadingSidecarError::Publication(error),
+                })?;
         Ok(self.stats)
     }
 }
@@ -781,42 +778,22 @@ pub struct OccurrenceAnchor {
 pub struct ReadingSidecar {
     path: PathBuf,
     header: Header,
-    document_offsets: Vec<u64>,
-    document_sentences: Vec<u64>,
+    document_offsets: crate::mapped_index::U64Index,
+    document_sentences: crate::mapped_index::U64Index,
     records: Option<Mmap>,
 }
 
-fn read_u64s(path: &Path, count: u64) -> Result<Vec<u64>, ReadingSidecarError> {
-    let expected = count
-        .checked_mul(8)
-        .filter(|bytes| *bytes <= isize::MAX as u64)
-        .ok_or_else(|| {
-            corrupt(format!(
-                "{} dimensions exceed the addressable size",
-                path.display()
-            ))
-        })?;
-    let file = File::open(path)?;
-    if file.metadata()?.len() != expected {
-        return Err(corrupt(format!(
-            "{} is not {count} u64 values",
-            path.display()
-        )));
-    }
-    let mut bytes = Vec::new();
-    file.take(expected + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != expected {
-        return Err(corrupt(format!(
-            "{} is not {count} u64 values",
-            path.display()
-        )));
-    }
-    Ok(bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|chunk| u64::from_le_bytes(*chunk))
-        .collect())
+fn read_u64s(
+    path: &Path,
+    count: u64,
+) -> Result<crate::mapped_index::U64Index, ReadingSidecarError> {
+    crate::mapped_index::U64Index::open(path, count).map_err(|error| {
+        if error.kind() == io::ErrorKind::InvalidData {
+            corrupt(error.to_string())
+        } else {
+            ReadingSidecarError::Io(error)
+        }
+    })
 }
 
 fn read_header(path: &Path) -> Result<Header, ReadingSidecarError> {
@@ -1309,6 +1286,36 @@ impl ReadingSidecar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sparse_indexes_open_under_a_small_heap_limit() {
+        const CHILD: &str = "LINGREP_SPARSE_READING_INDEX";
+        let count = 1u64 << 26;
+        if let Some(path) = std::env::var_os(CHILD) {
+            let values = read_u64s(Path::new(&path), count).expect("open sparse index");
+            assert_eq!(values.len() as u64, count);
+            assert_eq!(values.last(), Some(&0));
+            return;
+        }
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("index.u64");
+        File::create(&path)
+            .expect("create")
+            .set_len(count * 8)
+            .expect("sparse length");
+        let output = std::process::Command::new("sh")
+            .args(["-c", "ulimit -c 0; ulimit -d 131072; exec \"$1\" --exact reading::tests::sparse_indexes_open_under_a_small_heap_limit --test-threads=1", "sh"])
+            .arg(std::env::current_exe().expect("test executable"))
+            .env(CHILD, &path).output().expect("child");
+        assert!(
+            output.status.success(),
+            "{:?}: {} {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn characters(text: &str, container: u32) -> Vec<RenderedCharacter> {
         let mut utf16 = 0;

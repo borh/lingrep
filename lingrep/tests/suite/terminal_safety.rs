@@ -527,3 +527,148 @@ fn a_build_warning_written_during_transient_status_starts_on_an_erased_line() {
         "{stderr:?}"
     );
 }
+
+#[test]
+fn command_output_closure_preserves_human_and_json_pipe_contracts() {
+    let directory = TempDir::new().unwrap();
+    let patterns = directory.path().join("patterns.lx");
+    fs::write(&patterns, "p := [text=x].\n").unwrap();
+    for subcommand in ["check", "describe", "contracts"] {
+        for json in [false, true] {
+            let mut command = lingrep_std();
+            if json {
+                command.arg("--json");
+            }
+            let (reader, writer) = std::io::pipe().unwrap();
+            drop(reader);
+            command.arg(subcommand);
+            if subcommand == "check" {
+                command.arg("--patterns").arg(&patterns);
+            }
+            let child = command
+                .stdout(writer)
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            if json {
+                assert_eq!(output.status.code(), Some(1));
+                assert_eq!(
+                    parse_jsonl(&output.stderr)[0]["data"]["code"],
+                    "broken_pipe"
+                );
+            } else {
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(output.stderr.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn diagnostic_delivery_failure_uses_the_output_failure_exit_status() {
+    for json in [false, true] {
+        let mut command = lingrep_std();
+        if json {
+            command.arg("--json");
+        }
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let output = command
+            .args(["check", "--unknown-option"])
+            .stdout(Stdio::piped())
+            .stderr(writer)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+    }
+}
+
+#[test]
+fn unreadable_catalog_is_an_input_failure_with_a_path_and_recovery_hint() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("missing.lx");
+    let valid = directory.path().join("valid.lx");
+    fs::write(&valid, "p := [text=x].\n").unwrap();
+    for comparison in [false, true] {
+        let mut command = lingrep_std();
+        command.args(["--json", "check", "--patterns"]);
+        if comparison {
+            command.arg(&valid).arg("--compare-with");
+        }
+        let output = command.arg(&path).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let diagnostic = &parse_jsonl(&output.stderr)[0]["data"];
+        assert_eq!(diagnostic["code"], "io");
+        assert_eq!(diagnostic["stage"], "input");
+        assert_eq!(
+            diagnostic["location"]["source_name"],
+            path.to_string_lossy().as_ref()
+        );
+        assert!(
+            diagnostic["suggestions"][0]
+                .as_str()
+                .unwrap()
+                .contains("input path")
+        );
+    }
+}
+
+#[test]
+fn sentence_limit_descriptions_match_human_and_json_output_with_recovery_guidance() {
+    let directory = TempDir::new().unwrap();
+    let corpus = directory.path().join("one.txt");
+    fs::write(&corpus, "猫".repeat(128)).unwrap();
+    let dictionary = MiniDictionary::new();
+    let mut human_message = None;
+    for json in [false, true] {
+        let mut command = lingrep_std();
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .args(["corpus", "build", "--dict-path"])
+            .arg(dictionary.path())
+            .arg(&corpus)
+            .arg("--output")
+            .arg(directory.path().join("prepared"))
+            .args(["--max-sentence-bytes", "128"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(!directory.path().join("prepared").exists());
+        let message = if json {
+            let diagnostic = &parse_jsonl(&output.stderr)[0]["data"];
+            assert_eq!(diagnostic["code"], "sentence_too_large");
+            assert!(
+                diagnostic["suggestions"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("--max-sentence-bytes")
+            );
+            diagnostic["message"].as_str().unwrap().to_owned()
+        } else {
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(stderr.contains("help: If this input size is expected, rerun"));
+            stderr
+                .lines()
+                .next()
+                .unwrap()
+                .strip_prefix("error[sentence_too_large]: ")
+                .unwrap()
+                .to_owned()
+        };
+        assert!(message.contains("one.txt"), "{message}");
+        assert!(message.contains("128 bytes"), "{message}");
+        assert!(message.contains("is too long"), "{message}");
+        if let Some(previous) = &human_message {
+            assert_eq!(&message, previous);
+        } else {
+            human_message = Some(message);
+        }
+    }
+}

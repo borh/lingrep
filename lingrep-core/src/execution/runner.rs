@@ -578,9 +578,10 @@ where
     if matches!(outcome, RunOutcome::Completed(_))
         && let Some(session) = analyzer.session
     {
-        session.finish().map_err(|error| ExecutionError::Source {
-            ordinal: 0,
-            message: error.to_string(),
+        session.finish().map_err(|error| ExecutionError::Analysis {
+            ordinal: None,
+            source_name: None,
+            source: Box::new(error),
         })?;
     }
     let stats = sealed.stats();
@@ -654,9 +655,10 @@ impl<A: AnalyzerSession> SessionAnalyzer<'_, A> {
             })?;
         let batch = session
             .analyze_bounded_batch(inputs, projection)
-            .map_err(|error| ExecutionError::Source {
-                ordinal: first_ordinal,
-                message: error.to_string(),
+            .map_err(|error| ExecutionError::Analysis {
+                ordinal: Some(first_ordinal),
+                source_name: None,
+                source: Box::new(error),
             })?;
         let analyzed = batch.into_inputs().into_vec();
         if analyzed.len() != identities.len() {
@@ -852,6 +854,7 @@ where
                                     ordinal: output_location.corpus_sentence_ordinal,
                                     actual: estimate,
                                     limit: limits.max_tokenized_bytes,
+                                    source_name: Some(output_location.source_name.to_string()),
                                 });
                             }
                             projected.push(ExecutionSentence {
@@ -1100,7 +1103,7 @@ fn validate_raw_sentences(
                 ordinal: sentence.location.corpus_sentence_ordinal,
                 actual,
                 limit: limits.max_sentence_bytes,
-                context: String::new(),
+                source_name: Some(sentence.location.source_name.to_string()),
             });
         }
         stage_bytes = stage_bytes
@@ -1140,6 +1143,7 @@ fn admit_supplied_charges(
                 ordinal: sentence.location.corpus_sentence_ordinal,
                 actual: *charge,
                 limit: limits.max_tokenized_bytes,
+                source_name: Some(sentence.location.source_name.to_string()),
             });
         }
     }
@@ -1175,6 +1179,7 @@ fn admit_bound_charges(
                 ordinal: sentence.location.corpus_sentence_ordinal,
                 actual: *charge,
                 limit: limits.max_tokenized_bytes,
+                source_name: Some(sentence.location.source_name.to_string()),
             });
         }
     }
@@ -1194,6 +1199,7 @@ fn validate_tokenized_sentences(
                     ordinal: sentence.location.corpus_sentence_ordinal,
                     actual,
                     limit: limits.max_tokenized_bytes,
+                    source_name: Some(sentence.location.source_name.to_string()),
                 });
             }
             Ok(actual)
@@ -2006,7 +2012,9 @@ mod tests {
                 "invalid_limit" => {
                     assert!(matches!(result, Err(ExecutionError::InvalidLimit { .. })))
                 }
-                _ => assert!(matches!(result, Err(ExecutionError::Source { .. }))),
+                _ => assert!(matches!(result, Err(ExecutionError::Analysis {
+                    ordinal: None, source_name: None, source,
+                }) if matches!(*source, AnalysisError::InvalidAlignment))),
             }
             assert_eq!(
                 calls.load(Ordering::SeqCst),

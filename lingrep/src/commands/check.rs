@@ -1,4 +1,3 @@
-use std::fs;
 use std::io::{self, Write};
 
 #[cfg(test)]
@@ -233,9 +232,7 @@ fn publish_check<W: Write>(
         return Ok(CommandOutcome::Cancelled);
     }
     match format {
-        CheckFormat::Json => {
-            write_jsonl(writer, check).map_err(|error| CliError::Io(io::Error::other(error)))?
-        }
+        CheckFormat::Json => write_jsonl(writer, check).map_err(CliError::from)?,
         CheckFormat::Human => {
             let CheckEvent::Check(data) = &check.event;
             writeln!(
@@ -244,7 +241,7 @@ fn publish_check<W: Write>(
                 data.definitions.len(),
                 data.warnings.len()
             )
-            .map_err(CliError::Io)?;
+            .map_err(crate::protocol::OutputError::from)?;
             if let Some(examples) = &data.examples {
                 writeln!(
                     writer,
@@ -253,7 +250,8 @@ fn publish_check<W: Write>(
                     examples.failures.len(),
                     examples.post_policy_checked,
                     examples.post_policy_failures.len()
-                )?;
+                )
+                .map_err(crate::protocol::OutputError::from)?;
                 for failure in examples
                     .failures
                     .iter()
@@ -265,7 +263,8 @@ fn publish_check<W: Write>(
                         SafeText::from_untrusted(&failure.definition),
                         failure.kind,
                         SafeText::from_untrusted(&failure.example)
-                    )?;
+                    )
+                    .map_err(crate::protocol::OutputError::from)?;
                 }
             }
             if let Some(binding) = &data.binding {
@@ -276,7 +275,7 @@ fn publish_check<W: Write>(
                         SafeText::from_untrusted(&binding.schema),
                         SafeText::from_untrusted(refusal)
                     )
-                    .map_err(CliError::Io)?;
+                    .map_err(crate::protocol::OutputError::from)?;
                 } else {
                     writeln!(
                         writer,
@@ -284,7 +283,7 @@ fn publish_check<W: Write>(
                         SafeText::from_untrusted(&binding.schema),
                         binding.unavailable.len()
                     )
-                    .map_err(CliError::Io)?;
+                    .map_err(crate::protocol::OutputError::from)?;
                     for attribute in &binding.unavailable {
                         let sites: Vec<String> = attribute
                             .sites
@@ -297,7 +296,7 @@ fn publish_check<W: Write>(
                             })
                             .collect();
                         let referenced_by = if sites.is_empty() {
-                            "the catalog's publication policy".to_owned()
+                            "the catalog configuration".to_owned()
                         } else {
                             sites.join(", ")
                         };
@@ -307,7 +306,7 @@ fn publish_check<W: Write>(
                             SafeText::from_untrusted(&attribute.attribute),
                             SafeText::from_untrusted(&referenced_by)
                         )
-                        .map_err(CliError::Io)?;
+                        .map_err(crate::protocol::OutputError::from)?;
                     }
                 }
             }
@@ -332,7 +331,7 @@ fn publish_check<W: Write>(
                     entry.bodies.len(),
                     SafeText::from_untrusted(&bodies.join("; "))
                 )
-                .map_err(CliError::Io)?;
+                .map_err(crate::protocol::OutputError::from)?;
             }
         }
     }
@@ -365,16 +364,7 @@ fn compare_catalogs(
         text: primary.text.clone(),
     }];
     for path in compare_with {
-        let text = fs::read_to_string(path).map_err(|error| {
-            CliError::PatternParse(format!(
-                "failed to read lingrep patterns catalog {}: {error}",
-                path.display()
-            ))
-        })?;
-        catalogs.push(CatalogSource {
-            name: path.display().to_string(),
-            text,
-        });
+        catalogs.push(load(&CatalogInput::File(path.clone()))?);
     }
 
     let sources: Vec<PatternSource<'_>> = catalogs
@@ -567,10 +557,7 @@ fn verify_examples(
             "example analysis failed: {error}"
         )));
     }
-    session
-        .borrow_mut()
-        .finish()
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+    session.borrow_mut().finish().map_err(CliError::corpus)?;
     let convert = |f: lingrep_core::fsm::ExampleFailure| crate::protocol::check::ExampleFailure {
         definition: f.definition,
         example: f.example,
@@ -722,7 +709,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, CliError::Io(_)));
+        assert!(matches!(
+            error,
+            CliError::Output(crate::protocol::OutputError::Io(_))
+        ));
+        assert!(error.is_broken_pipe());
         assert_eq!(terminal.winning_signal(), None);
     }
 }

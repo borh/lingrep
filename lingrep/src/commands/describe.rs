@@ -35,8 +35,9 @@ pub fn run(args: &DescribeArgs, output: OutputMode) -> Result<CommandOutcome, Cl
     let mut writer = stdout.lock();
     for entry in entries {
         match output {
-            OutputMode::Jsonl => write_jsonl(&mut writer, &CapabilityEnvelope::new(entry))
-                .map_err(|error| CliError::Io(io::Error::other(error)))?,
+            OutputMode::Jsonl => {
+                write_jsonl(&mut writer, &CapabilityEnvelope::new(entry)).map_err(CliError::from)?
+            }
             OutputMode::Human => {
                 writeln!(
                     writer,
@@ -45,15 +46,17 @@ pub fn run(args: &DescribeArgs, output: OutputMode) -> Result<CommandOutcome, Cl
                     SafeText::from_untrusted(&entry.purpose),
                     entry.output_modes.join(", "),
                     SafeText::from_untrusted(&entry.command)
-                )?;
+                )
+                .map_err(CliError::stdout)?;
                 for example in examples_for(&entry.command) {
                     writeln!(
                         writer,
                         "\n  example — {}",
                         SafeText::from_untrusted(example.purpose)
                     )
-                    .map_err(CliError::Io)?;
-                    writeln!(writer, "    ling {}", render_posix(example)).map_err(CliError::Io)?;
+                    .map_err(CliError::stdout)?;
+                    writeln!(writer, "    ling {}", render_posix(example))
+                        .map_err(CliError::stdout)?;
                     for placeholder in example.placeholders {
                         writeln!(
                             writer,
@@ -61,7 +64,7 @@ pub fn run(args: &DescribeArgs, output: OutputMode) -> Result<CommandOutcome, Cl
                             SafeText::from_untrusted(placeholder.name),
                             SafeText::from_untrusted(placeholder.description)
                         )
-                        .map_err(CliError::Io)?;
+                        .map_err(CliError::stdout)?;
                     }
                 }
             }

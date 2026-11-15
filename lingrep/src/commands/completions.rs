@@ -19,7 +19,9 @@ pub fn run(args: &CompletionsArgs, output: OutputMode) -> Result<CommandOutcome,
     let stdout = io::stdout();
     let mut writer = stdout.lock();
     match output {
-        OutputMode::Human => writer.write_all(script.as_bytes()).map_err(CliError::Io)?,
+        OutputMode::Human => writer
+            .write_all(script.as_bytes())
+            .map_err(CliError::stdout)?,
         OutputMode::Jsonl => {
             write_jsonl(
                 &mut writer,
@@ -28,7 +30,7 @@ pub fn run(args: &CompletionsArgs, output: OutputMode) -> Result<CommandOutcome,
                     script,
                 }),
             )
-            .map_err(|error| CliError::Io(io::Error::other(error)))?;
+            .map_err(CliError::from)?;
         }
         OutputMode::Tsv => {
             return Err(CliError::UnsupportedOutput {

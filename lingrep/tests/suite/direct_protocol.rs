@@ -903,7 +903,7 @@ fn markdown_matches_reports_two_omissions_after_publishing_later_evidence() {
         diagnostic["data"]["message"]
             .as_str()
             .unwrap()
-            .contains("count=2")
+            .contains("Skipped 2 oversized sentences")
     );
 }
 
@@ -929,7 +929,7 @@ fn human_and_tsv_publish_later_matches_before_the_degraded_exit() {
     assert!(String::from_utf8(human.stdout).unwrap().contains('猫'));
     let human_stderr = String::from_utf8(human.stderr).unwrap();
     assert!(human_stderr.contains("matched 1 sentences, found 1 matches"));
-    assert!(human_stderr.contains("count=1"));
+    assert!(human_stderr.contains("Skipped 1 oversized sentence"));
 
     let tsv = run_direct_with_pattern(
         &corpus,
@@ -1122,7 +1122,7 @@ fn one_markdown_omission_capacity_control() {
         diagnostic["data"]["message"]
             .as_str()
             .unwrap()
-            .contains("count=1")
+            .contains("Skipped 1 oversized sentence")
     );
 }
 
@@ -1136,7 +1136,7 @@ fn one_thousand_markdown_omissions_retain_one_sample() {
         diagnostic["data"]["message"]
             .as_str()
             .unwrap()
-            .contains("count=1000")
+            .contains("Skipped 1000 oversized sentences")
     );
     assert_eq!(diagnostic["data"]["location"]["source_name"], "0000.md");
 }
@@ -1843,7 +1843,7 @@ fn oversized_record_diagnostic_separates_physical_record_and_global_sentence_ord
         diagnostic["data"]["message"]
             .as_str()
             .unwrap()
-            .contains("input record 1")
+            .contains("Input record 1")
     );
 }
 

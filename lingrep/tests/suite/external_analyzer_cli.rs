@@ -689,3 +689,33 @@ fn graph_norm_keys_group_orthographic_variants_in_direct_and_prepared_summaries(
     ]));
     assert_eq!(prepared, direct);
 }
+
+#[test]
+fn unsupported_analyzer_config_error_includes_path_version_and_recovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("analyzer.toml");
+    std::fs::write(
+        &config,
+        "version = 77\nkind = 'protocol'\npython = 'python'\nentrypoint = 'adapter.py'\n",
+    )
+    .unwrap();
+    let input = directory.path().join("input.txt");
+    std::fs::write(&input, "hello\n").unwrap();
+    let output = lingrep_std()
+        .args(["tokenize", "--json", "--analyzer-config"])
+        .arg(&config)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for detail in [
+        "analyzer.toml",
+        "version 77",
+        "expected 1",
+        "--analyzer-config",
+        "new --output",
+    ] {
+        assert!(stderr.contains(detail), "{stderr}");
+    }
+}

@@ -340,10 +340,10 @@ mod tests {
             .unwrap();
         assert_eq!(value.text(), "é猫");
         assert_eq!(value.annotations()[0].range, 0..2);
-        assert_eq!(
+        assert!(matches!(
             annotated("e\u{301}", 0..1).normalize(NormalizationPolicy::Nfc),
             Err(AnalysisError::InvalidAlignment)
-        );
+        ));
         let value = annotated("\u{1100}\u{1161}猫", 0..6)
             .normalize(NormalizationPolicy::Nfc)
             .unwrap();
@@ -484,7 +484,7 @@ mod tests {
                 before.len()..before.len() + selected.len()
             );
         } else {
-            assert_eq!(result, Err(AnalysisError::InvalidAlignment));
+            assert!(matches!(result, Err(AnalysisError::InvalidAlignment)));
         }
     }
 

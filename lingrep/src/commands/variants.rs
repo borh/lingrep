@@ -228,7 +228,7 @@ fn publish<W: Write>(
     event: &VariantsEnvelope,
 ) -> Result<(), CliError> {
     if output == OutputMode::Jsonl {
-        return write_jsonl(writer, event).map_err(|error| CliError::Corpus(error.to_string()));
+        return write_jsonl(writer, event).map_err(CliError::corpus);
     }
     match &event.event {
         VariantsEvent::Run(run) => match &run.reference {
@@ -268,7 +268,7 @@ fn publish<W: Write>(
         // of forty says forty.
         VariantsEvent::Complete(complete) => write_complete(writer, complete),
     }
-    .map_err(CliError::Io)
+    .map_err(CliError::stdout)
 }
 
 fn write_complete<W: Write>(writer: &mut W, complete: &VariantsComplete) -> io::Result<()> {

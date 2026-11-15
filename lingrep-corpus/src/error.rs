@@ -52,7 +52,9 @@ pub enum CorpusError {
         producer_version: String,
         reader_version: &'static str,
     },
-    #[error("expected artifact directory at {path}")]
+    #[error(
+        "'{path}' is not a prepared corpus: expected a directory containing manifest.json, created by 'ling corpus build'"
+    )]
     ExpectedArtifactDirectory { path: PathBuf },
     #[error("artifact component {component} is a symbolic link")]
     SymlinkComponent { component: &'static str },
@@ -78,15 +80,19 @@ pub enum CorpusError {
     SqliteSidecar,
     #[error("artifact component {component} is truncated")]
     TruncatedComponent { component: &'static str },
-    #[error("raw source observation and admitted source inventory differ")]
+    #[error(
+        "The source files observed while reading do not match the files found during discovery"
+    )]
     SourceInventoryMismatch,
     #[error("builder source inventory and discovery report differ")]
     DiscoveryReportMismatch,
-    #[error("destination already exists at {path}")]
+    #[error("Cannot create '{path}': the destination already exists and was left unchanged")]
     DestinationExists { path: PathBuf },
-    #[error("unsupported publication at {path} (errno {errno})")]
+    #[error(
+        "Cannot save '{path}' safely: atomic rename without replacement is not supported (OS error {errno})"
+    )]
     UnsupportedPublication { path: PathBuf, errno: i32 },
-    #[error("publication durability is uncertain at {path}")]
+    #[error("Created '{path}', but could not confirm it will survive a system crash")]
     PublicationDurabilityUncertain { path: PathBuf },
     #[error("verification mismatch in {component}: {message}")]
     VerificationMismatch {

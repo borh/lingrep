@@ -3263,7 +3263,7 @@ fn a_signal_while_a_table_is_written_publishes_nothing() {
 }
 
 #[test]
-fn table_human_output_precedes_a_later_row_decode_error() {
+fn table_rejects_a_corrupt_row_before_publishing_human_output() {
     let dictionary = MiniDictionary::new();
     let directory = tempfile::tempdir().unwrap();
     let artifact = tagged_artifact(&directory, &dictionary);
@@ -3290,13 +3290,54 @@ fn table_human_output_precedes_a_later_row_decode_error() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("entry key schema out of range"), "{stderr}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout
-            .lines()
-            .any(|line| !line.starts_with("pattern ") && !line.trim().is_empty()),
-        "no rows emitted before error: {stdout}"
+        stderr.contains("entry key does not match its schema"),
+        "{stderr}"
     );
-    assert!(!stdout.contains("rows in"));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn write_table_rejects_unusable_destinations_before_opening_the_corpus() {
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = directory.path().join("patterns.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let existing = directory.path().join("existing");
+    fs::create_dir(&existing).unwrap();
+    fs::write(existing.join("keep"), b"untouched").unwrap();
+    let parent_file = directory.path().join("parent-file");
+    fs::write(&parent_file, b"untouched").unwrap();
+    let dangling = directory.path().join("dangling");
+    std::os::unix::fs::symlink("absent", &dangling).unwrap();
+    for (destination, code) in [
+        (existing.clone(), "destination_exists"),
+        (dangling, "destination_exists"),
+        (directory.path().join("missing-parent/table"), "io"),
+        (parent_file.join("table"), "io"),
+    ] {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "summarize", "--patterns"])
+            .arg(&catalog)
+            .arg("--corpus")
+            .arg(directory.path().join("missing-corpus"))
+            .arg("--write-table")
+            .arg(&destination)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let diagnostics = parse_jsonl(&output.stderr);
+        assert_eq!(
+            diagnostics[0]["data"]["code"], code,
+            "{destination:?}: {output:?}"
+        );
+        assert!(
+            diagnostics[0]["data"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&destination.display().to_string())
+        );
+    }
+    assert_eq!(fs::read(existing.join("keep")).unwrap(), b"untouched");
+    assert_eq!(fs::read(parent_file).unwrap(), b"untouched");
 }

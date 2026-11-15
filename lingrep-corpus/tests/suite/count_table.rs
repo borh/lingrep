@@ -767,6 +767,8 @@ fn writer_rejects_input_out_of_order_and_publishes_nothing() {
 fn writer_does_not_replace_an_existing_destination() {
     let directory = tempfile::tempdir().expect("tempdir");
     let path = directory.path().join("t.lingtable");
+    CountTableWriter::check_destination(&path).expect("preflight");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     std::fs::create_dir(&path).expect("occupy destination");
     assert!(matches!(
         CountTableWriter::create(&path, key(), Vec::new(), Vec::new(), &[] as &[&str], &[]),
@@ -1618,4 +1620,95 @@ fn a_raised_cancellation_stops_ranked_pattern_rows() {
         Some(Err(CountTableError::Cancelled))
     ));
     assert!(drain.next().is_none());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sparse_document_indexes_open_under_a_small_heap_limit() {
+    const CHILD: &str = "LINGREP_SPARSE_COUNT_INDEX";
+    let documents = 1u64 << 26;
+    if let Some(path) = std::env::var_os(CHILD) {
+        let table = CountTable::open(Path::new(&path), &key()).expect("open sparse table");
+        assert_eq!(table.document_ids().len() as u64, documents);
+        assert_eq!(table.document_ids().last(), Some(&0));
+        return;
+    }
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("table");
+    write_table(&path, &[], &vec![]);
+    let header_path = path.join("header.json");
+    let mut header: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&header_path).expect("read")).expect("JSON");
+    header["documents"] = documents.into();
+    std::fs::write(header_path, serde_json::to_vec(&header).expect("JSON")).expect("header");
+    for name in [
+        "document_ids.u64",
+        "document_sentences.u64",
+        "document_tokens.u64",
+        "document_pair_offsets.u64",
+        "document_pattern_offsets.u64",
+    ] {
+        let sentinel = u64::from(name.contains("offsets"));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path.join(name))
+            .expect("index")
+            .set_len((documents + sentinel) * 8)
+            .expect("sparse length");
+    }
+    let output = std::process::Command::new("sh")
+        .args(["-c", "ulimit -c 0; ulimit -d 131072; exec \"$1\" --exact count_table::sparse_document_indexes_open_under_a_small_heap_limit --test-threads=1", "sh"])
+        .arg(std::env::current_exe().expect("test executable"))
+        .env(CHILD, &path).output().expect("child");
+    assert!(
+        output.status.success(),
+        "{:?}: {} {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn verification_rejects_repeated_ranks_and_inconsistent_document_major_cells() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("table");
+    let documents = [DocumentTotals {
+        document_id: 0,
+        sentences: 2,
+        tokens: 2,
+    }];
+    drop(write_table(
+        &path,
+        &documents,
+        &vec![vec![vec![(0, 1)], vec![(0, 2)]]],
+    ));
+    for component in [
+        "ranked_entries.u32",
+        "ranked_totals.u64",
+        "document_entries.u32",
+        "document_counts.u32",
+    ] {
+        let file = path.join(component);
+        let original = std::fs::read(&file).expect("read");
+        let mut changed = original.clone();
+        if component.ends_with("u64") {
+            changed[..8].copy_from_slice(&99u64.to_le_bytes());
+        } else if component == "document_counts.u32" {
+            changed[..4].copy_from_slice(&99u32.to_le_bytes());
+        } else {
+            let first = changed[..4].to_vec();
+            changed[4..8].copy_from_slice(&first);
+        }
+        std::fs::write(&file, changed).expect("corrupt");
+        {
+            let table = CountTable::open(&path, &key()).expect("open");
+            assert!(is_corrupt(table.verify()), "{component}");
+        }
+        std::fs::write(file, original).expect("restore");
+    }
+    CountTable::open(&path, &key())
+        .expect("open")
+        .verify()
+        .expect("valid table");
 }

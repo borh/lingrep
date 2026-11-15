@@ -109,6 +109,20 @@ fn checked_add(left: usize, right: usize) -> Result<usize, ExecutionError> {
         .ok_or(ExecutionError::ResourceAccounting)
 }
 
+fn source_suffix(source_name: Option<&str>) -> String {
+    source_name.map_or_else(String::new, |name| format!(" in '{name}'"))
+}
+
+fn diagnostic_bytes(bytes: usize) -> String {
+    for (unit, name) in [(1 << 30, "GiB"), (1 << 20, "MiB"), (1 << 10, "KiB")] {
+        if bytes >= unit {
+            let tenths = ((bytes as u128) * 10 + (unit as u128) / 2) / (unit as u128);
+            return format!("{}.{} {name} ({bytes} bytes)", tenths / 10, tenths % 10);
+        }
+    }
+    format!("{bytes} bytes")
+}
+
 /// Errors reported while enforcing execution resource bounds.
 #[derive(Debug, Error)]
 pub enum ExecutionError {
@@ -121,7 +135,7 @@ pub enum ExecutionError {
         message: String,
     },
     /// An intermediate resource-accounting calculation overflowed.
-    #[error("token residency accounting overflow")]
+    #[error("The estimated memory needed for analyzed tokens is too large to calculate")]
     ResourceAccounting,
     /// A source failed before yielding its next sentence.
     #[error("source failed before sentence {ordinal}: {message}")]
@@ -131,8 +145,15 @@ pub enum ExecutionError {
         /// Source-provided failure description.
         message: String,
     },
+    #[error("{source}")]
+    Analysis {
+        ordinal: Option<u64>,
+        source_name: Option<String>,
+        #[source]
+        source: Box<crate::analysis::AnalysisError>,
+    },
     /// An input sentence exceeds the configured byte limit.
-    #[error("sentence {ordinal} is {actual} bytes; limit is {limit}{context}")]
+    #[error("Sentence {ordinal}{location} is too long: {size}; the limit is {maximum}.", location = source_suffix(.source_name.as_deref()), size = diagnostic_bytes(*.actual), maximum = diagnostic_bytes(*.limit))]
     SentenceTooLarge {
         /// Ordinal of the rejected sentence.
         ordinal: u64,
@@ -140,12 +161,11 @@ pub enum ExecutionError {
         actual: usize,
         /// Configured upper bound.
         limit: usize,
-        /// Optional source context, including any leading separator.
-        context: String,
+        source_name: Option<String>,
     },
     /// A bounded reader stopped after proving that an input sentence exceeds
     /// the configured byte limit, before its exact length was known.
-    #[error("sentence {ordinal} is at least {minimum} bytes; limit is {limit}{context}")]
+    #[error("Sentence {ordinal}{location} is too long: at least {size}; the limit is {maximum}.", location = source_suffix(.source_name.as_deref()), size = diagnostic_bytes(*.minimum), maximum = diagnostic_bytes(*.limit))]
     SentenceTooLargeAtLeast {
         /// Ordinal of the rejected sentence.
         ordinal: u64,
@@ -153,14 +173,14 @@ pub enum ExecutionError {
         minimum: usize,
         /// Configured upper bound.
         limit: usize,
-        /// Optional source context, including any leading separator.
-        context: String,
+        source_name: Option<String>,
     },
     /// A physical input record exceeded its bound before a parser could
     /// allocate or interpret the complete record.
     #[error(
-        "input record {record_ordinal} from {source_name} is at least {actual_at_least} bytes; \
-         limit is {limit}; next corpus sentence is {corpus_sentence_ordinal}"
+        "Input record {record_ordinal} in '{source_name}' is too large: at least {size}; \
+         the limit is {maximum}. Reading stopped before sentence {corpus_sentence_ordinal}.",
+        size = diagnostic_bytes(*.actual_at_least), maximum = diagnostic_bytes(*.limit)
     )]
     InputRecordTooLarge {
         source_name: String,
@@ -185,7 +205,9 @@ pub enum ExecutionError {
         message: String,
     },
     /// A tokenized sentence exceeds the configured residency estimate.
-    #[error("tokenized sentence {ordinal} is estimated at {actual} bytes; limit is {limit}")]
+    #[error(
+        "Sentence {ordinal}{location} exceeds the memory limit for analyzed tokens: estimated {size}; limit {maximum}.", location = source_suffix(.source_name.as_deref()), size = diagnostic_bytes(*.actual), maximum = diagnostic_bytes(*.limit)
+    )]
     TokenizedSentenceTooLarge {
         /// Ordinal of the rejected sentence.
         ordinal: u64,
@@ -193,8 +215,9 @@ pub enum ExecutionError {
         actual: usize,
         /// Configured upper bound.
         limit: usize,
+        source_name: Option<String>,
     },
-    #[error("lookaround window is estimated at {actual} bytes; limit is {limit}")]
+    #[error("Matching this sentence and its lookaround context requires an estimated {size} of memory; the limit is {maximum}.", size = diagnostic_bytes(*.actual), maximum = diagnostic_bytes(*.limit))]
     LookaroundWindowTooLarge { actual: usize, limit: usize },
     /// Decoding a cache failed.
     #[error("cache decode failed: {0}")]
@@ -226,7 +249,9 @@ pub enum ExecutionError {
     },
     /// The independently observed ordered logical-name stream disagreed with
     /// completed discovery.
-    #[error("ordered source inventory digest disagrees with completed discovery")]
+    #[error(
+        "The source files observed while reading do not match the files found during discovery"
+    )]
     InventoryMismatch,
     #[error("result policy could not be applied: {0}")]
     PolicyAnchor(#[source] crate::fsm::policy::AnchorResolutionError),
@@ -235,6 +260,21 @@ pub enum ExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{ExecutionError, checked_add};
+
+    #[test]
+    fn diagnostic_sizes_include_readable_units_and_exact_bytes() {
+        for (bytes, expected) in [
+            (0, "0 bytes"),
+            (1023, "1023 bytes"),
+            (1024, "1.0 KiB (1024 bytes)"),
+            (1_048_576, "1.0 MiB (1048576 bytes)"),
+            (1_073_741_824, "1.0 GiB (1073741824 bytes)"),
+            (36_804_067, "35.1 MiB (36804067 bytes)"),
+        ] {
+            assert_eq!(super::diagnostic_bytes(bytes), expected);
+        }
+        assert!(super::diagnostic_bytes(usize::MAX).contains(&format!("({} bytes)", usize::MAX)));
+    }
 
     #[test]
     fn checked_add_reports_resource_accounting_overflow() {

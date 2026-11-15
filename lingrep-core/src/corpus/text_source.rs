@@ -138,7 +138,7 @@ impl<R: BufRead> Iterator for JsonLines<R> {
                 self.failed = true;
                 Some(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "JSONL record exceeds 16 MiB",
+                    "JSONL record exceeds the fixed 16 MiB format limit; split the document into smaller JSONL records",
                 )))
             }
             Ok(_) => {

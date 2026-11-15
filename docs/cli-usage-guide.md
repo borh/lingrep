@@ -488,7 +488,11 @@ admitted sentence.
 
 ### Saving per-document counts: count tables
 
-`summarize --write-table PATH` scans a prepared corpus once and writes every
+`summarize --write-table PATH` checks that the destination is absent and its
+parent permits creating output before opening the corpus. Publication also
+checks for a competing destination without replacing it.
+
+It scans a prepared corpus once and writes every
 pattern's group counts per document, and the sentences each group occurs in,
 to a count table at `PATH`, a new directory. `ling table` then answers a
 `--where` over document metadata from the table without scanning the corpus:
@@ -512,6 +516,10 @@ JSON output without `--top`, groups are ordered through temporary files, which
 `--max-temp-bytes` limits as it does for `summarize`. The `complete` record
 gives the admitted documents, sentences and tokens. The output contract is
 `lingrep.table/v1`, whose `pattern` records carry the totals.
+
+`ling table` and `ling contrast` verify the table's contents before publishing
+results. This integrity read scales with the table size; it does not repeat
+matching or tokenization.
 
 A table records the corpus's analysis identity, the catalog fingerprint and
 the matcher revision. `ling table` rejects a table when any of the three
@@ -1914,8 +1922,14 @@ comments are not rendered, `:::` regions become `<div>` elements carrying
 their classes, `{.class}` spans are removed and heading classes are kept. It
 renders the rest as CommonMark with tables and footnotes. Raw HTML is shown as
 text, a link keeps its target only for `http:`, `https:`, `mailto:` and `#`,
-and mathematics stays source text. A table ends at the first line that does
-not start with `|`, and cells beyond the header's width are rendered.
+and mathematics stays source text. A table ends at the first line without
+`|`; if its delimiter row starts with `|`, every body row must also start
+with `|`. Cells beyond the header's width are rendered. A `:::` line inside
+a `$$` math block is math text and does not open or close a region.
+
+Rebuild Markdown artifacts and their reading sidecars created before these
+math and table rules to apply them. Existing artifacts retain their recorded
+analysis.
 
 Each stored sentence is mapped to the rendered characters of its source line.
 Characters that render as markup, such as table pipes and footnote markers,
@@ -2093,7 +2107,9 @@ owned:
   apply to an artifact; they were applied when it was built.
 - A declared artifact is retained if corrupt, and its corpus is marked failed.
   An artifact beside a declared source is deleted and rebuilt once per corpus
-  per server process when corruption is detected at startup or during a read.
+  per server process when corruption is detected during a read after a successful
+  open. Existing artifacts that fail to open at startup are preserved; finish
+  or quarantine an incomplete copy before restarting.
   If the rebuilt artifact is corrupt, it is deleted and the corpus fails.
   Other open errors leave the artifact on disk and mark its corpus failed.
   See [artifact recovery](deployment-guide.md#prepared-artifacts-and-how-bccwj-is-served)

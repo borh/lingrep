@@ -374,7 +374,7 @@ pub fn render_posix(example: &CommandExample) -> String {
         .join(" ")
 }
 
-fn quote_posix(token: &str) -> String {
+pub(crate) fn quote_posix(token: &str) -> String {
     if !token.is_empty()
         && token
             .bytes()

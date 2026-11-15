@@ -34,6 +34,7 @@
 
 mod artifact;
 mod count_table;
+mod mapped_index;
 pub use count_table::{
     Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, Contrast, ContrastRow, ContrastRows,
     CountTable, CountTableError, CountTableKey, CountTableStats, CountTableWriter, Direction,
@@ -54,7 +55,7 @@ pub use postings::PreparedFilterStats;
 mod provenance;
 mod publication;
 mod reading;
-pub use publication::rename_noreplace;
+pub use publication::{PublicationError, rename_noreplace};
 pub use reading::{
     HighlightRange, OccurrenceAnchor, PageRequest, READING_SIDECAR_FORMAT, READING_SIDECAR_VERSION,
     ReadingDocument, ReadingPage, ReadingSidecar, ReadingSidecarError, ReadingSidecarKey,

@@ -50,9 +50,12 @@ such a label prints a warning identifying the admitting flag.
   Inline `$…$` requires a non-space character after the opening `$` and before
   the closing `$`. A `$` followed by an ASCII digit does not close inline math,
   so `$5から$10` remains text in both strict and recovery modes.
-  A line containing only `$$` opens or closes a display-math block; its inner
-  lines are skipped. An unclosed block is an error. Escaped dollar signs remain
-  text. Document rendering preserves the math source.
+  A line beginning with `$$` and no closing `$$` on that line opens a
+  display-math block; a subsequent line ending in `$$` closes it. Delimiter
+  lines may contain math source. All block lines are skipped for analysis,
+  and `:::` inside the block does not open or close a region. An unclosed
+  block is an error in strict and recovery modes. Escaped dollar signs
+  remain text. Document rendering preserves the math source.
 - **`<!-- ... -->` is skipped. Every other raw HTML form is an error**:
   elements, declarations, processing instructions and CDATA alike. Autolinks
   (`<https://…>`) are prose.
@@ -61,7 +64,9 @@ such a label prints a warning identifying the admitting flag.
   line remains one sentence.
 - **Pipe tables carry the `table` section label**, so the default policy excludes
   them. When included, each header or data row is one sentence of cell text
-  separated by spaces; delimiter rows are structure.
+  separated by spaces; delimiter rows are structure. A table ends at the first
+  line without `|`. If the delimiter row begins with `|`, body rows must also
+  begin with `|`. Reader and renderer apply the same termination rules.
 - **Unbalanced structure is an error**, at the fence and at end of input.
 
 ## Conversion-artifact recovery

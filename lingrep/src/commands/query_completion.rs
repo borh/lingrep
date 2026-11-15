@@ -92,10 +92,7 @@ impl CompletionObservation {
                 let discovery = observation.discovery_report().ok_or_else(|| {
                     CliError::Corpus("filesystem discovery did not reach clean EOF".into())
                 })?;
-                let observed = observation
-                    .source
-                    .finish()
-                    .map_err(|error| CliError::Corpus(error.to_string()))?;
+                let observed = observation.source.finish().map_err(CliError::corpus)?;
                 validate_ordered_inventory(&observation.inventory, &discovery)?;
                 if observed.document_count() != discovery.inventory.documents {
                     return Err(ExecutionError::InventoryMismatch.into());

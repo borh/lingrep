@@ -212,6 +212,16 @@ pub fn opens_fence(trimmed: &str) -> Option<(char, usize)> {
     (length >= 3).then_some((marker, length))
 }
 
+pub(super) fn opens_display_math(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix("$$")
+        .is_some_and(|body| !body.contains("$$"))
+}
+
+pub(super) fn closes_display_math(trimmed: &str) -> bool {
+    trimmed.trim_end().ends_with("$$")
+}
+
 /// Whether an already left-trimmed line closes an open fence. Takes its line
 /// exactly as `opens_fence` does; see there.
 pub fn closes_fence(trimmed: &str, marker: char, minimum_length: usize) -> bool {
@@ -501,7 +511,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 10;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 11;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -939,7 +949,12 @@ impl<R: BufRead> DialectIterator<R> {
         {
             return Some(Err(self.at(
                 opened_at,
-                format!("unclosed pandoc div at end of input ({open} still open)"),
+                format!(
+                    "Markdown input ended with {open} unclosed ':::' fenced {}. \
+                     Add a closing ':::' line for each open block, or rerun the same command \
+                     with --md-recover-conversion-artifacts to recover conversion artifacts",
+                    if open == 1 { "block" } else { "blocks" },
+                ),
             )));
         }
         if !self.document_started {
@@ -1032,7 +1047,7 @@ impl<R: BufRead> DialectIterator<R> {
                     .ok_or_else(|| self.at_line("YAML frontmatter byte count overflow".into()))?;
                 if observed > self.config.max_frontmatter_bytes {
                     return Err(self.at_line(format!(
-                        "YAML frontmatter is at least {observed} bytes; limit is {}",
+                        "YAML frontmatter is at least {observed} bytes; limit is {}; rerun with --batch-raw-bytes {observed} or higher",
                         self.config.max_frontmatter_bytes
                     )));
                 }
@@ -1059,7 +1074,7 @@ impl<R: BufRead> DialectIterator<R> {
                 return Ok(None);
             }
             Block::DisplayMath { .. } => {
-                if line.trim() == "$$" {
+                if closes_display_math(line.trim_start()) {
                     self.block = Block::Body;
                 }
                 return Ok(None);
@@ -1150,11 +1165,11 @@ impl<R: BufRead> DialectIterator<R> {
         if let Some(form) = raw_html_form(trimmed) {
             return Err(self.at_line(format!(
                 "raw HTML `<{form}>` is not part of the Markdown corpus dialect; \
-                 only `<!-- ... -->` comments are supported"
+                 only `<!-- ... -->` comments are supported. For supported presentational HTML and <si ...> notation, rerun with --md-recover-conversion-artifacts; otherwise convert the HTML to Markdown"
             )));
         }
 
-        if trimmed.trim_end() == "$$" {
+        if opens_display_math(trimmed) {
             self.table = None;
             self.block = Block::DisplayMath {
                 opened_at: self.line_number,
@@ -1203,7 +1218,7 @@ impl<R: BufRead> DialectIterator<R> {
                             self.unmatched_close_at_end = true;
                         } else {
                             return Err(self.at_line(
-                                "pandoc div fence closes a div that was never opened".to_owned(),
+                                "pandoc div fence closes a div that was never opened; if this is an extra trailing close, rerun with --md-recover-conversion-artifacts; otherwise correct the div fences".to_owned(),
                             ));
                         }
                     }
@@ -1383,7 +1398,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&10u32.to_le_bytes());
+        encoded.extend_from_slice(&11u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -2056,6 +2071,17 @@ mod reader_tests {
     }
 
     #[test]
+    fn display_math_with_content_on_delimiter_lines_does_not_enter_prose_or_divisions() {
+        for input in [
+            "$$ x=1\nx=2 $$\n本文。\n",
+            "$$ x=1\n::: {.note}\nx=2 $$\n本文。\n",
+        ] {
+            assert_eq!(read_all(input, permissive()), ["本文。"]);
+            assert_eq!(read_recovering(input), ["本文。"]);
+        }
+    }
+
+    #[test]
     fn marked_math_is_omitted_without_joining_prose() {
         let input = "前$x^2$後。\n$x$\n$$x=1$$\n値は {ij} です。\n価格は\\$5です。\n金額は$5です。\n前`$x$`後。\n";
         assert_eq!(
@@ -2361,6 +2387,12 @@ mod reader_tests {
     fn raw_html_blocks_are_a_loud_error() {
         let error = read("前です。\n<div>\nhidden\n</div>\n", permissive())
             .expect_err("raw HTML must not be silently skipped");
+        assert!(
+            error
+                .to_string()
+                .contains("--md-recover-conversion-artifacts"),
+            "{error}"
+        );
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("div"), "{error}");
         assert!(error.to_string().contains("line 2"), "{error}");
@@ -2383,6 +2415,16 @@ mod reader_tests {
     #[test]
     fn an_unmatched_close_is_a_loud_error() {
         let error = read("本文です。\n:::\n", permissive()).expect_err("unmatched div close");
+        assert!(
+            error.to_string().contains("extra trailing close"),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("--md-recover-conversion-artifacts"),
+            "{error}"
+        );
         assert!(error.to_string().contains("line 2"), "{error}");
     }
 
@@ -2440,7 +2482,10 @@ mod reader_tests {
         let markdown = "本文です。\n\n::: {.outer}\n::: {.inner}\n図です。\n";
         let error = read(markdown, permissive()).expect_err("two unclosed divs");
         let message = error.to_string();
-        assert!(message.contains("2 still open"), "{message}");
+        assert!(
+            message.contains("2 unclosed ':::' fenced blocks"),
+            "{message}"
+        );
         assert!(message.contains("line 3"), "{message}");
         assert!(!message.contains("line 4"), "{message}");
     }
@@ -2452,7 +2497,10 @@ mod reader_tests {
         let markdown = "::: {.outer}\n::: {.inner}\n図です。\n:::\n";
         let error = read(markdown, permissive()).expect_err("outer div never closed");
         let message = error.to_string();
-        assert!(message.contains("1 still open"), "{message}");
+        assert!(
+            message.contains("1 unclosed ':::' fenced block"),
+            "{message}"
+        );
         assert!(message.contains("line 1"), "{message}");
         assert!(!message.contains("line 2"), "{message}");
     }

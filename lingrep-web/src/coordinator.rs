@@ -69,16 +69,16 @@ pub(crate) struct ScanOptions {
 fn execution_failure() -> AttemptFailure {
     AttemptFailure {
         category: ErrorCategory::Execution,
-        message: "The corpus scan could not be completed.".into(),
+        message:
+            "Try the search again. If it fails again, ask the server operator to check the logs."
+                .into(),
     }
 }
 
 fn integrity_failure() -> AttemptFailure {
     AttemptFailure {
         category: ErrorCategory::Integrity,
-        // Same user-facing text as execution_failure per the shared error
-        // contract; only the category (telemetry/state) distinguishes it.
-        message: "The corpus scan could not be completed.".into(),
+        message: "The corpus data could not be verified or read. Search again when the corpus is ready; if it remains unavailable, ask the server operator to check the logs.".into(),
     }
 }
 
@@ -128,10 +128,21 @@ fn scope_failure(error: crate::search_scope::ResolveError) -> AttemptFailure {
 }
 
 fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
-    // Log the detail, but expose only the generic message and error category.
-    // Never reveal `error`'s display to the browser.
     tracing::warn!(%error, "corpus scan execution error");
     match error {
+        ExecutionError::TokenizedSentenceTooLarge { actual, limit, .. }
+        | ExecutionError::LookaroundWindowTooLarge { actual, limit } => AttemptFailure {
+            category: ErrorCategory::Execution,
+            message: format!(
+                "This search requires at least {actual} bytes of token memory; the server limit is {limit}. Use a smaller search scope or ask the server operator to review the limit."
+            ),
+        },
+        ExecutionError::SentenceTooLarge { actual, limit, .. } => AttemptFailure {
+            category: ErrorCategory::Execution,
+            message: format!(
+                "An input sentence is {actual} bytes; the server limit is {limit}. Ask the server operator to review the source and sentence limit."
+            ),
+        },
         ExecutionError::Cache(_) | ExecutionError::Source { .. } => integrity_failure(),
         _ => execution_failure(),
     }
@@ -1298,12 +1309,27 @@ mod tests {
     }
 
     #[test]
+    fn resource_limit_message_includes_sizes_without_the_source_path() {
+        let failure = classify_execution_error(&ExecutionError::TokenizedSentenceTooLarge {
+            ordinal: 3,
+            actual: 123,
+            limit: 100,
+            source_name: Some("/srv/private/corpus.md".into()),
+        });
+        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert!(failure.message.contains("123"));
+        assert!(failure.message.contains("100"));
+        assert!(failure.message.contains("server operator"));
+        assert!(!failure.message.contains("/srv"));
+    }
+
+    #[test]
     fn execution_failure_is_a_generic_execution_error() {
         assert_eq!(
             super::execution_failure(),
             AttemptFailure {
                 category: ErrorCategory::Execution,
-                message: "The corpus scan could not be completed.".into(),
+                message: "Try the search again. If it fails again, ask the server operator to check the logs.".into(),
             }
         );
     }

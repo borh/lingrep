@@ -298,6 +298,16 @@ pub fn run(
         )
     };
 
+    if let Some(path) = &args.write_table {
+        if args.input.corpus.is_none() && !args.cache.cache {
+            return Err(CliError::InvalidArgs(
+                "--write-table requires a prepared corpus: pass --corpus or --cache".to_owned(),
+            ));
+        }
+        lingrep_corpus::CountTableWriter::check_destination(path)
+            .map_err(|error| CliError::from(error).at_path(path))?;
+    }
+
     // Before query execution: direct execution is the default; `--cache`
     // observes ROOT, then reuses or creates a compatible artifact beside it.
     let resolved_corpus = crate::corpus_mode::resolve(
@@ -697,15 +707,9 @@ pub fn run(
         let table_stats = match staged_table {
             Some((staged, peak)) => {
                 temp_high_water = peak;
-                Some(staged.publish().map_err(|error| {
-                    CliError::Corpus(format!(
-                        "count table {}: {error}",
-                        args.write_table
-                            .as_deref()
-                            .map(std::path::Path::display)
-                            .map(|path| path.to_string())
-                            .unwrap_or_default()
-                    ))
+                Some(staged.publish().map_err(|error| match &args.write_table {
+                    Some(path) => CliError::from(error).at_path(path),
+                    None => CliError::from(error),
                 })?)
             }
             None => None,
@@ -906,9 +910,7 @@ fn write_count_table(
     pattern_names: &[&str],
     cancellation: &lingrep_core::execution::CancellationFlag,
 ) -> Result<(lingrep_corpus::StagedCountTable, u64), CliError> {
-    let table_error = |error: lingrep_corpus::CountTableError| {
-        CliError::Corpus(format!("count table {}: {error}", path.display()))
-    };
+    let table_error = |error| CliError::from(error).at_path(path);
     let mut ordinals = pattern_ordinals.values().copied().collect::<Vec<_>>();
     ordinals.sort_unstable();
     let names = ordinals

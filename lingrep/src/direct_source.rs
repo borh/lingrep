@@ -308,7 +308,7 @@ enum TerminalFailure {
         ordinal: u64,
         actual: usize,
         limit: usize,
-        context: String,
+        source_name: Option<String>,
     },
     InputRecordTooLarge {
         source_name: String,
@@ -337,12 +337,12 @@ impl TerminalFailure {
                 ordinal,
                 actual,
                 limit,
-                context,
+                source_name,
             } => ExecutionError::SentenceTooLarge {
                 ordinal: *ordinal,
                 actual: *actual,
                 limit: *limit,
-                context: context.clone(),
+                source_name: source_name.clone(),
             },
             Self::InputRecordTooLarge {
                 source_name,
@@ -707,7 +707,7 @@ where
                     ordinal: sentence.location.corpus_sentence_ordinal,
                     actual: sentence_bytes,
                     limit: limits.max_sentence_bytes,
-                    context: format!(" in {}", sentence.location.source_name),
+                    source_name: Some(sentence.location.source_name.to_string()),
                 };
                 if batch.is_empty() {
                     let error = failure.execution_error();
@@ -818,6 +818,26 @@ mod tests {
 
     use super::*;
     use lingrep_core::corpus::{AdmittedSentence, SentenceId};
+
+    #[test]
+    fn traversal_limit_errors_include_the_corresponding_cli_option() {
+        for (field, flag) in [
+            ("max_depth", "--max-traversal-depth"),
+            ("max_source_entries", "--max-source-entries"),
+            ("max_directory_entries", "--max-directory-entries"),
+            ("max_documents", "--max-documents"),
+            ("max_index_bytes", "--max-source-index-bytes"),
+        ] {
+            let error = execution_discovery_error(&DiscoveryError::Limit {
+                field,
+                limit: 5,
+                observed: 6,
+                logical_path: "source/nested".into(),
+            });
+            assert!(error.to_string().contains(&format!("{flag} 6")), "{error}");
+            assert!(error.to_string().contains("source/nested"), "{error}");
+        }
+    }
 
     fn sentence(
         document: lingrep_core::corpus::DocumentId,
@@ -1036,10 +1056,26 @@ fn terminal_failure_from_discovery(error: &DiscoveryError) -> TerminalFailure {
             ("discovery_io", logical_path.to_string_lossy().into_owned())
         }
     };
+    let message = match error {
+        DiscoveryError::Limit {
+            field, observed, ..
+        } => {
+            let flag = match *field {
+                "max_depth" => "--max-traversal-depth",
+                "max_source_entries" => "--max-source-entries",
+                "max_directory_entries" => "--max-directory-entries",
+                "max_documents" => "--max-documents",
+                "max_index_bytes" => "--max-source-index-bytes",
+                other => other,
+            };
+            format!("{error}; rerun with {flag} {observed} or higher to admit this input")
+        }
+        _ => error.to_string(),
+    };
     TerminalFailure::Discovery {
         code,
         logical_path,
-        message: error.to_string(),
+        message,
     }
 }
 

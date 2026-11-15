@@ -8,7 +8,6 @@ use askama::Template;
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -125,6 +124,6 @@ async fn contrast(
     match result {
         Ok(Ok(reply)) => Json(reply).into_response(),
         Ok(Err(error)) => failure(&error),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(error) => super::server_error(error),
     }
 }

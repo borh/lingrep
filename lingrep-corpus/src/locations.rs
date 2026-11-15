@@ -776,7 +776,10 @@ impl MappedLocations {
                 std::cmp::Ordering::Equal => return Ok(entry),
             }
         }
-        Err(invalid("document ID is absent from the document table"))
+        Err(invalid(format!(
+            "document ID {} is absent from the document table",
+            document_id.get()
+        )))
     }
 
     fn block(&self, ordinal: u64) -> Result<DecodedBlockEntry, CorpusError> {

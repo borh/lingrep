@@ -580,35 +580,36 @@ const FAILED_CORRUPTION: CacheReadiness = CacheReadiness::Failed {
 };
 
 #[tokio::test]
-async fn a_corrupt_artifact_beside_its_source_is_rebuilt_once_at_startup() {
+async fn an_incomplete_artifact_is_preserved_at_startup_and_a_copy_can_finish() {
     let fixture = BuiltBesideSource::new().await;
+    let tokens = fixture.artifact.join("tokens.v1.zst");
+    let completed_tokens = fs::read(&tokens).unwrap();
     fixture.truncate_tokens();
-    let runtime = fixture.restarted();
-
-    runtime.start_or_observe().await;
-    let rebuilt = wait_ready(&runtime).await;
+    let before = file_bytes(&fixture.artifact);
 
     assert_eq!(
-        artifact_directories(fixture.directory.path()),
-        vec![fixture.artifact.clone()]
+        terminal_readiness(&fixture.restarted()).await,
+        FAILED_CORRUPTION
     );
+    assert_eq!(file_bytes(&fixture.artifact), before);
+    fs::write(&tokens, completed_tokens).unwrap();
+    let runtime = fixture.restarted();
+    runtime.start_or_observe().await;
+    let ready = wait_ready(&runtime).await;
     assert!(
-        rebuilt
+        ready
             .reader()
             .unwrap()
-            .bind(&rebuilt.identity)
+            .bind(&ready.identity)
             .unwrap()
             .sentence(0)
             .await
             .unwrap()
             .is_some()
     );
-
-    assert!(runtime.invalidator().invalidate_corrupt(&rebuilt).await);
-    assert_eq!(*runtime.readiness().borrow(), FAILED_CORRUPTION);
     assert_eq!(
         artifact_directories(fixture.directory.path()),
-        Vec::<PathBuf>::new()
+        vec![fixture.artifact.clone()]
     );
 }
 

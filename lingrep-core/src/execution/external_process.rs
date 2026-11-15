@@ -781,8 +781,12 @@ impl Default for ExternalAdapterCancellation {
 #[derive(Debug)]
 pub enum ExternalProcessError {
     Manifest(String),
-    Spawn(String),
-    Io(String),
+    Spawn {
+        executable: PathBuf,
+        entrypoint: PathBuf,
+        source: std::io::Error,
+    },
+    Io(std::io::Error),
     Protocol(ExternalProtocolError),
     Exit {
         status: Option<i32>,
@@ -796,8 +800,20 @@ pub enum ExternalProcessError {
 impl fmt::Display for ExternalProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Manifest(message) => write!(formatter, "adapter manifest rejected: {message}"),
-            Self::Spawn(message) => write!(formatter, "adapter spawn failed: {message}"),
+            Self::Manifest(message) => write!(
+                formatter,
+                "adapter manifest rejected: {message}; restore the recorded adapter resources. For a generated spaCy/Stanza bundle, rerun its original setup command with a new --output directory"
+            ),
+            Self::Spawn {
+                executable,
+                entrypoint,
+                source,
+            } => write!(
+                formatter,
+                "adapter spawn failed: cannot start {} for {}: {source}; check executable permissions and the interpreter path",
+                executable.display(),
+                entrypoint.display()
+            ),
             Self::Io(message) => write!(formatter, "adapter I/O failed: {message}"),
             Self::Protocol(error) => write!(formatter, "{error}"),
             Self::Exit {
@@ -816,7 +832,15 @@ impl fmt::Display for ExternalProcessError {
     }
 }
 
-impl std::error::Error for ExternalProcessError {}
+impl std::error::Error for ExternalProcessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Protocol(source) => Some(source),
+            Self::Spawn { source, .. } | Self::Io(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<ExternalProtocolError> for ExternalProcessError {
     fn from(value: ExternalProtocolError) -> Self {
@@ -836,8 +860,8 @@ pub struct ExternalAdapterProcess {
     next_batch_id: u64,
     last_input_id: Option<u64>,
     writer: Option<SyncSender<Vec<Vec<u8>>>>,
-    stdout: Receiver<Result<Vec<u8>, String>>,
-    writer_worker: Option<JoinHandle<Result<(), String>>>,
+    stdout: Receiver<Result<Vec<u8>, std::io::Error>>,
+    writer_worker: Option<JoinHandle<Result<(), std::io::Error>>>,
     stdout_worker: Option<JoinHandle<()>>,
     stderr_worker: Option<JoinHandle<()>>,
     stderr_tail: Arc<Mutex<VecDeque<u8>>>,
@@ -899,7 +923,7 @@ impl ExternalAdapterProcess {
             .interpreter
             .clone()
             .unwrap_or_else(|| entrypoint.clone());
-        let mut child_command = Command::new(executable);
+        let mut child_command = Command::new(&executable);
         child_command.env("PYTHONDONTWRITEBYTECODE", "1");
         if command.interpreter.is_some() {
             child_command.arg(&entrypoint);
@@ -913,34 +937,38 @@ impl ExternalAdapterProcess {
             .process_group(0);
         let child = child_command
             .spawn()
-            .map_err(|error| ExternalProcessError::Spawn(error.to_string()))?;
+            .map_err(|error| ExternalProcessError::Spawn {
+                executable: executable.clone(),
+                entrypoint: entrypoint.clone(),
+                source: error,
+            })?;
         let process_group = i32::try_from(child.id())
-            .map_err(|_| ExternalProcessError::Spawn("child PID exceeds i32".to_owned()))?;
+            .map_err(|_| ExternalProcessError::Worker("child PID exceeds i32".to_owned()))?;
         let mut spawn_guard = SpawnGuard::new(child, process_group);
         let stdin =
             spawn_guard.child_mut().stdin.take().ok_or_else(|| {
-                ExternalProcessError::Spawn("child stdin was not piped".to_owned())
+                ExternalProcessError::Worker("child stdin was not piped".to_owned())
             })?;
         let stdout =
             spawn_guard.child_mut().stdout.take().ok_or_else(|| {
-                ExternalProcessError::Spawn("child stdout was not piped".to_owned())
+                ExternalProcessError::Worker("child stdout was not piped".to_owned())
             })?;
         let stderr =
             spawn_guard.child_mut().stderr.take().ok_or_else(|| {
-                ExternalProcessError::Spawn("child stderr was not piped".to_owned())
+                ExternalProcessError::Worker("child stderr was not piped".to_owned())
             })?;
 
         let (writer, writer_rx) = mpsc::sync_channel::<Vec<Vec<u8>>>(1);
         let writer_worker = thread::Builder::new()
             .name("lingrep-external-stdin".to_owned())
             .spawn(move || writer_loop(stdin, writer_rx))
-            .map_err(|error| ExternalProcessError::Spawn(error.to_string()))?;
+            .map_err(ExternalProcessError::Io)?;
         let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
         let max_record_bytes = config.limits().max_record_bytes;
         let stdout_worker = thread::Builder::new()
             .name("lingrep-external-stdout".to_owned())
             .spawn(move || stdout_loop(stdout, stdout_tx, max_record_bytes))
-            .map_err(|error| ExternalProcessError::Spawn(error.to_string()))?;
+            .map_err(ExternalProcessError::Io)?;
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         let diagnostic_failure = Arc::new(Mutex::new(None));
         let stderr_worker = spawn_stderr_worker(
@@ -1149,7 +1177,7 @@ impl ExternalAdapterProcess {
             let record = self.receive()?;
             response_bytes = response_bytes
                 .checked_add(record.len())
-                .ok_or_else(|| ExternalProcessError::Io("response byte overflow".to_owned()))?;
+                .ok_or_else(|| ExternalProcessError::Worker("response byte overflow".to_owned()))?;
             if response_bytes > self.config.limits().max_response_batch_bytes {
                 return Err(ExternalProtocolError::new_for_execution(
                     "limit",
@@ -1270,7 +1298,7 @@ impl ExternalAdapterProcess {
         self.next_batch_id = self
             .next_batch_id
             .checked_add(1)
-            .ok_or_else(|| ExternalProcessError::Io("batch identity overflow".to_owned()))?;
+            .ok_or_else(|| ExternalProcessError::Worker("batch identity overflow".to_owned()))?;
         self.last_input_id = prior;
         Ok(batch)
     }
@@ -1374,7 +1402,7 @@ impl ExternalAdapterProcess {
                 .as_mut()
                 .ok_or_else(|| ExternalProcessError::Worker("child handle missing".to_owned()))?
                 .try_wait()
-                .map_err(|error| ExternalProcessError::Io(error.to_string()))?;
+                .map_err(ExternalProcessError::Io)?;
             match observed {
                 Some(status) => {
                     self.child.take();
@@ -1584,19 +1612,19 @@ fn hash_file_nofollow(path: &Path) -> Result<[u8; 32], ExternalProcessError> {
 fn writer_loop(
     mut stdin: std::process::ChildStdin,
     receiver: Receiver<Vec<Vec<u8>>>,
-) -> Result<(), String> {
+) -> std::io::Result<()> {
     for records in receiver {
         for bytes in records {
-            stdin.write_all(&bytes).map_err(|error| error.to_string())?;
+            stdin.write_all(&bytes)?;
         }
-        stdin.flush().map_err(|error| error.to_string())?;
+        stdin.flush()?;
     }
     Ok(())
 }
 
 fn stdout_loop(
     stdout: std::process::ChildStdout,
-    sender: SyncSender<Result<Vec<u8>, String>>,
+    sender: SyncSender<Result<Vec<u8>, std::io::Error>>,
     max_record_bytes: usize,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -1619,24 +1647,29 @@ fn stdout_loop(
 fn read_bounded_line(
     reader: &mut impl BufRead,
     max_record_bytes: usize,
-) -> Result<Option<Vec<u8>>, String> {
+) -> std::io::Result<Option<Vec<u8>>> {
     let mut bytes = Vec::new();
     let bound = max_record_bytes
         .checked_add(1)
-        .ok_or_else(|| "record bound overflow".to_owned())?;
+        .ok_or_else(|| std::io::Error::other("record bound overflow"))?;
     let read = reader
         .by_ref()
         .take(bound as u64)
-        .read_until(b'\n', &mut bytes)
-        .map_err(|error| error.to_string())?;
+        .read_until(b'\n', &mut bytes)?;
     if read == 0 {
         return Ok(None);
     }
     if bytes.len() > max_record_bytes {
-        return Err("adapter stdout record exceeds max_record_bytes".to_owned());
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "adapter stdout record exceeds max_record_bytes",
+        ));
     }
     if bytes.last() != Some(&b'\n') {
-        return Err("adapter stdout record is missing its final LF".to_owned());
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "adapter stdout record is missing its final LF",
+        ));
     }
     Ok(Some(bytes))
 }
@@ -1672,11 +1705,11 @@ fn spawn_stderr_worker(
                 }
             }
         })
-        .map_err(|error| ExternalProcessError::Spawn(error.to_string()))
+        .map_err(ExternalProcessError::Io)
 }
 
 fn join_writer(
-    worker: &mut Option<JoinHandle<Result<(), String>>>,
+    worker: &mut Option<JoinHandle<Result<(), std::io::Error>>>,
 ) -> Result<(), ExternalProcessError> {
     let Some(worker) = worker.take() else {
         return Ok(());

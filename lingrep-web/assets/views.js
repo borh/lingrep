@@ -69,14 +69,17 @@ export const reasonText = (reply) => (Object.hasOwn(REASONS, reply.reason) ? t(R
 
 /**
  * GET `api/<path>` and read the reply as JSON. Parameters that are undefined, null or "" are left out.
- * A failed status rejects with the reply's `error`, or with the status when the reply has none.
+ * For failed HTTP statuses, the returned promise rejects with the server error or a localized fallback.
  */
 export async function api(path, params, signal) {
   const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""));
   const response = await fetch(`api/${path}?${query}`, { signal });
   if (!response.ok) {
     const reply = await response.json().catch(() => null);
-    throw new Error(reply?.error ?? t("views.failed", { status: response.status }));
+    const message = reply?.code === "server_error" || (!reply?.error && response.status >= 500)
+      ? t("status.server_error")
+      : reply?.error ?? t("views.failed", { status: response.status });
+    throw new Error(message);
   }
   return response.json();
 }

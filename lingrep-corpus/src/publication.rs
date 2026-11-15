@@ -16,6 +16,24 @@ use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 use crate::{CorpusError, artifact::CompletedStagingArtifact};
 
+#[derive(Debug, thiserror::Error)]
+pub enum PublicationError {
+    #[error("Could not save the output: {0}")]
+    Io(#[from] io::Error),
+    #[error("Cannot create '{path}': the destination already exists and was left unchanged")]
+    DestinationExists { path: PathBuf },
+    #[error(
+        "Cannot save '{path}' safely: atomic rename without replacement is not supported (OS error {errno})"
+    )]
+    Unsupported { path: PathBuf, errno: i32 },
+    #[error("Created '{path}', but could not confirm it will survive a system crash: {source}")]
+    DurabilityUncertain {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
 #[cfg(test)]
 pub(crate) fn publish(completed: &mut CompletedStagingArtifact) -> Result<(), CorpusError> {
     let published = publish_guarded_with_ops(&RealOps, completed, || true, || true)?;
@@ -261,6 +279,44 @@ pub(crate) struct StagingDirectory {
 }
 
 impl StagingDirectory {
+    pub(crate) fn publish(&mut self, destination: &Path) -> Result<u64, PublicationError> {
+        self.publish_with_ops(destination, &RealOps)
+    }
+
+    fn publish_with_ops(
+        &mut self,
+        destination: &Path,
+        ops: &impl PublicationOps,
+    ) -> Result<u64, PublicationError> {
+        let bytes = fs::read_dir(&self.path)?
+            .map(|entry| Ok(entry?.metadata()?.len()))
+            .sum::<io::Result<u64>>()?;
+        ops.fsync(&self.path)?;
+        ops.rename_noreplace(&self.path, destination)
+            .map_err(|source| {
+                let errno = source.raw_os_error().unwrap_or(libc::EIO);
+                if matches!(errno, libc::EEXIST | libc::ENOTEMPTY) {
+                    PublicationError::DestinationExists {
+                        path: destination.to_path_buf(),
+                    }
+                } else if UNSUPPORTED_RENAME_ERRNOS.contains(&errno) {
+                    PublicationError::Unsupported {
+                        path: destination.to_path_buf(),
+                        errno,
+                    }
+                } else {
+                    PublicationError::Io(source)
+                }
+            })?;
+        self.published = true;
+        ops.fsync(destination_parent(destination))
+            .map_err(|source| PublicationError::DurabilityUncertain {
+                path: destination.to_path_buf(),
+                source,
+            })?;
+        Ok(bytes)
+    }
+
     /// Creates a new, uniquely named directory beside `destination`, or
     /// returns `None` when `destination` has no file name.
     pub(crate) fn create_beside(destination: &Path) -> io::Result<Option<Self>> {
@@ -420,6 +476,44 @@ mod tests {
             match self.rename_errno {
                 Some(errno) => Err(std::io::Error::from_raw_os_error(errno)),
                 None => super::rename_noreplace(from, to),
+            }
+        }
+    }
+
+    #[test]
+    fn staged_directory_publication_tracks_the_commit_point_on_sync_failure() {
+        for after_commit in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("output");
+            let mut staging = super::StagingDirectory::create_beside(&destination)
+                .unwrap()
+                .unwrap();
+            std::fs::write(staging.path.join("component"), b"data").unwrap();
+            let staging_path = staging.path.clone();
+            let failure = if after_commit {
+                directory.path().to_path_buf()
+            } else {
+                staging.path.clone()
+            };
+            let error = staging
+                .publish_with_ops(&destination, &RecordingOps::failing_sync(failure))
+                .unwrap_err();
+            if after_commit {
+                assert!(matches!(
+                    error,
+                    super::PublicationError::DurabilityUncertain { .. }
+                ));
+            } else {
+                assert!(matches!(error, super::PublicationError::Io(_)));
+            }
+            drop(staging);
+            assert!(!staging_path.exists());
+            assert_eq!(destination.exists(), after_commit);
+            if after_commit {
+                assert_eq!(
+                    std::fs::read(destination.join("component")).unwrap(),
+                    b"data"
+                );
             }
         }
     }

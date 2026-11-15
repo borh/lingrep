@@ -1457,6 +1457,10 @@ impl CorpusBuilder {
 impl CorpusArtifact {
     /// Opens fixed regular components without hashing payloads or opening SQLite; root symlinks are followed, but component symlinks and non-directory roots are rejected.
     pub fn open(path: &Path) -> Result<Self, CorpusError> {
+        Self::open_components(path).map_err(|error| artifact_read_error(path, error))
+    }
+
+    fn open_components(path: &Path) -> Result<Self, CorpusError> {
         let metadata = fs::metadata(path)?;
         if !metadata.file_type().is_dir() {
             return Err(CorpusError::ExpectedArtifactDirectory {
@@ -1464,8 +1468,17 @@ impl CorpusArtifact {
             });
         }
 
-        ensure_regular(path, MANIFEST_NAME)?;
-        let manifest = Manifest::open(&path.join(MANIFEST_NAME))?;
+        match ensure_regular(path, MANIFEST_NAME) {
+            Err(CorpusError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(CorpusError::ExpectedArtifactDirectory {
+                    path: path.to_owned(),
+                });
+            }
+            result => result?,
+        }
+        let manifest_path = path.join(MANIFEST_NAME);
+        let manifest = Manifest::open(&manifest_path)
+            .map_err(|error| artifact_read_error(&manifest_path, error))?;
         reject_sqlite_sidecars(path)?;
         for (name, fact) in &manifest.components {
             ensure_regular(path, component_name(name))?;
@@ -1894,6 +1907,14 @@ impl CorpusArtifact {
             .collect()
     }
 
+    /// Checks membership of stable document IDs, allowing subsets and gaps.
+    pub fn check_document_ids(&self, ids: &[u64]) -> Result<(), CorpusError> {
+        for id in ids {
+            self.locations.document_name(crate::DocumentId::new(*id))?;
+        }
+        Ok(())
+    }
+
     pub fn documents(&self) -> impl Iterator<Item = Result<StoredDocument, CorpusError>> + '_ {
         (0..self.locations.document_count())
             .map(|ordinal| self.locations.document(ordinal).map(stored_document))
@@ -2059,8 +2080,33 @@ fn metadata_json(metadata: &Metadata) -> Result<Option<String>, CorpusError> {
         .map_err(json_error)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("cannot read '{path}' while opening a prepared corpus: {source}")]
+struct ArtifactReadError {
+    path: PathBuf,
+    #[source]
+    source: std::io::Error,
+}
+
+fn artifact_read_error(path: &Path, error: CorpusError) -> CorpusError {
+    match error {
+        CorpusError::Io(source) if !matches!(source.get_ref(), Some(error) if error.is::<ArtifactReadError>()) => {
+            CorpusError::Io(std::io::Error::new(
+                source.kind(),
+                ArtifactReadError {
+                    path: path.to_owned(),
+                    source,
+                },
+            ))
+        }
+        other => other,
+    }
+}
+
 fn ensure_regular(root: &Path, name: &'static str) -> Result<(), CorpusError> {
-    let metadata = fs::symlink_metadata(root.join(name))?;
+    let path = root.join(name);
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|error| artifact_read_error(&path, error.into()))?;
     if metadata.file_type().is_symlink() {
         return Err(CorpusError::SymlinkComponent { component: name });
     }

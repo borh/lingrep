@@ -360,7 +360,7 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
                 .replace(&fixture.directory.path().display().to_string(), "DIR")
                 .split(' ')
                 .map(|word| {
-                    let digest = word.trim_end_matches([',', ';']);
+                    let digest = word.trim_end_matches([',', ';', ')']);
                     if digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                         word.replace(digest, "DIGEST")
                     } else {
@@ -409,7 +409,7 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
             Some(&missing),
             None,
             1,
-            "Corpus error: I/O error: No such file or directory (os error 2)",
+            "'DIR/missing.lingtable': I/O error: No such file or directory (os error 2)",
         ),
         (
             "table",
@@ -417,7 +417,7 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
             None,
             Some(&other),
             1,
-            "Corpus error: count table DIR/works.lingtable was written for catalog fingerprint DIGEST, but the current one is DIGEST; rebuild it with `ling summarize --write-table`",
+            "Count table 'DIR/works.lingtable' was built with a different catalog fingerprint. Rebuild it with 'ling summarize --write-table' (saved: DIGEST; current: DIGEST)",
         ),
         (
             "contrast",
@@ -457,7 +457,7 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
             Some(&missing),
             None,
             1,
-            "Corpus error: I/O error: No such file or directory (os error 2)",
+            "'DIR/missing.lingtable': I/O error: No such file or directory (os error 2)",
         ),
         (
             "contrast",
@@ -465,7 +465,7 @@ fn table_and_contrast_report_unusable_inputs_with_these_messages() {
             None,
             Some(&other),
             1,
-            "Corpus error: count table DIR/works.lingtable was written for catalog fingerprint DIGEST, but the current one is DIGEST; rebuild it with `ling summarize --write-table`",
+            "Count table 'DIR/works.lingtable' was built with a different catalog fingerprint. Rebuild it with 'ling summarize --write-table' (saved: DIGEST; current: DIGEST)",
         ),
     ];
     let mut observed = Vec::new();
@@ -757,5 +757,59 @@ mod served {
                 assert_eq!(past["entries"], first["entries"], "{endpoint} {offset}");
             }
         }
+    }
+}
+
+#[test]
+fn table_and_contrast_reject_corrupt_document_indexes_before_publishing_results() {
+    for component in ["pair_documents.u32", "document_ids.u64"] {
+        let fixture = fixture();
+        let path = fixture.table.join(component);
+        let mut bytes = fs::read(&path).unwrap();
+        if component == "pair_documents.u32" {
+            bytes[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        } else {
+            bytes[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        }
+        fs::write(&path, bytes).unwrap();
+        for command in ["table", "contrast"] {
+            let output = run(&fixture, command, &[]);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{component}: {command}: {output:?}"
+            );
+            assert!(output.stdout.is_empty(), "{component}: {command}");
+            let diagnostic = parse_jsonl(&output.stderr);
+            assert_eq!(diagnostic[0]["data"]["code"], "corpus");
+            assert!(
+                diagnostic[0]["data"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("corrupt")
+            );
+        }
+    }
+}
+
+#[test]
+fn table_and_contrast_reject_document_ids_absent_from_the_corpus() {
+    let fixture = fixture();
+    let path = fixture.table.join("document_ids.u64");
+    let mut bytes = fs::read(&path).unwrap();
+    let last = bytes.len() - 8;
+    bytes[last..].copy_from_slice(&u64::MAX.to_le_bytes());
+    fs::write(&path, bytes).unwrap();
+    for command in ["table", "contrast"] {
+        let output = run(&fixture, command, &[]);
+        assert_eq!(output.status.code(), Some(1), "{command}: {output:?}");
+        assert!(output.stdout.is_empty());
+        let diagnostics = parse_jsonl(&output.stderr);
+        let message = diagnostics[0]["data"]["message"].as_str().unwrap();
+        assert!(message.contains("document"), "{message}");
+        assert!(
+            message.contains(&fixture.table.display().to_string()),
+            "{message}"
+        );
     }
 }

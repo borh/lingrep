@@ -280,7 +280,7 @@ fn a_sidecar_that_matches_no_served_corpus_stops_startup() {
     fs::write(
         revised.join("header.json"),
         header.replace(
-            "lingrep-core/markdown-render/1",
+            lingrep_core::corpus::markdown_render::MARKDOWN_RENDERER_REVISION,
             "lingrep-core/markdown-render/0",
         ),
     )

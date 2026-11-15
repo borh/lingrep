@@ -1084,7 +1084,7 @@ fn matches_and_summarize_recover_from_a_poisoned_artifact_the_same_way() {
             diagnostic[0]["data"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("count=1"),
+                .contains("Skipped 1 oversized sentence"),
             "{command}: the count is what stopping at the first cannot report",
         );
         assert!(
@@ -1300,10 +1300,11 @@ fn build_enforces_tokenized_residency_before_publication() {
     let root = directory.path().join("corpus");
     fs::create_dir(&root).unwrap();
     fs::write(root.join("a.md"), "猫。\n").unwrap();
+    fs::write(root.join("b.md"), format!("{}。\n", "猫".repeat(32))).unwrap();
 
     let artifact = directory.path().join("tokenized.lingcorpus");
     let output = lingrep()
-        .args(["--json", "corpus", "build", "--max-tokenized-bytes", "1"])
+        .args(["--json", "corpus", "build", "--max-tokenized-bytes", "2048"])
         .args(["--dict-path"])
         .arg(dictionary.path())
         .args(["--output"])
@@ -1318,6 +1319,21 @@ fn build_enforces_tokenized_residency_before_publication() {
     assert_eq!(
         parse_jsonl(&output.stderr)[0]["data"]["code"],
         "tokenized_sentence_too_large"
+    );
+    let diagnostic = parse_jsonl(&output.stderr);
+    let data = &diagnostic[0]["data"];
+    assert_eq!(data["location"]["source_name"], "b.md");
+    assert_eq!(data["location"]["corpus_sentence_ordinal"], 1);
+    assert!(
+        data["suggestions"][0]
+            .as_str()
+            .unwrap()
+            .contains("--max-tokenized-bytes")
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--max-tokenized-bytes"),
+        "the error must name the limit option: {stderr}"
     );
 }
 

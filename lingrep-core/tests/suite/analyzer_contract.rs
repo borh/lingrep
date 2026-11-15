@@ -110,19 +110,19 @@ fn vibrato_rejects_segment_input_and_non_native_scalar_projection() {
     )
     .unwrap();
     let mut session = plan.create_session();
-    assert_eq!(
+    assert!(matches!(
         session.analyze_bounded_batch(vec![segment], &native),
         Err(AnalysisError::WrongInputKind)
-    );
+    ));
 
     let dynamic_schema = TokenSchema::from_keys(["provider.scalar9"]).unwrap();
     let dynamic = dynamic_schema
         .bind_projection([AttributeKey::new("provider.scalar9").unwrap()])
         .unwrap();
-    assert_eq!(
+    assert!(matches!(
         session.analyze_bounded_batch(vec![sentence(31, "猫")], &dynamic),
         Err(AnalysisError::UnsupportedProjection)
-    );
+    ));
 }
 
 #[test]

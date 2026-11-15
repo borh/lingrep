@@ -57,8 +57,6 @@ impl AnalyzerSession for ExternalAnalyzerSession {
         inputs: Vec<TextUnit>,
         projection: &BoundProjection,
     ) -> Result<ValidatedAnalysisBatch, AnalysisError> {
-        let fail =
-            |error: &dyn std::fmt::Display| AnalysisError::ProviderFailure(error.to_string());
         if self.finished {
             return Err(AnalysisError::ProviderFailure(
                 "external analyzer session has finished".into(),
@@ -80,7 +78,7 @@ impl AnalyzerSession for ExternalAnalyzerSession {
                 self.manifest.components().to_vec(),
                 ExternalProtocolLimits::default(),
             )
-            .map_err(|error| fail(&error))?;
+            .map_err(AnalysisError::provider)?;
             let process = ExternalAdapterProcess::launch_with_cancellation(
                 self.command.clone(),
                 self.manifest.clone(),
@@ -88,7 +86,7 @@ impl AnalyzerSession for ExternalAnalyzerSession {
                 self.diagnostic.clone(),
                 self.cancellation.clone(),
             )
-            .map_err(|error| fail(&error))?;
+            .map_err(AnalysisError::provider)?;
             self.process = Some(process);
             self.projection = Some(projection.clone());
         }
@@ -102,23 +100,21 @@ impl AnalyzerSession for ExternalAnalyzerSession {
                 let (analysis, warnings, _) = batch.into_parts();
                 for warning in warnings {
                     (self.diagnostic)(format!("{warning:?}").as_bytes())
-                        .map_err(|error| fail(&error))?;
+                        .map_err(AnalysisError::ProviderFailure)?;
                 }
                 Ok(analysis)
             }
             Err(error) => {
                 self.finished = true;
                 self.process.take();
-                Err(fail(&error))
+                Err(AnalysisError::provider(error))
             }
         }
     }
     fn finish(&mut self) -> Result<(), AnalysisError> {
         self.finished = true;
         if let Some(process) = self.process.take() {
-            process
-                .finish()
-                .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
+            process.finish().map_err(AnalysisError::provider)?;
         }
         Ok(())
     }

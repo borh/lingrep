@@ -36,10 +36,7 @@ const RESIDENT_ROWS: usize = 1 << 20;
 const MERGE_FAN_IN: usize = 16;
 
 pub(super) fn table_error(error: CountTableError) -> CliError {
-    match error {
-        CountTableError::Io(error) => CliError::Aggregation(error),
-        error => CliError::Corpus(error.to_string()),
-    }
+    CliError::from(error)
 }
 
 pub(super) fn open_table(
@@ -53,7 +50,13 @@ pub(super) fn open_table(
         matcher_revision: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
     };
     let table =
-        CountTable::open(path, &key).map_err(|error| CliError::Corpus(error.to_string()))?;
+        CountTable::open(path, &key).map_err(|error| CliError::from(error).at_path(path))?;
+    table
+        .verify()
+        .map_err(|error| CliError::from(error).at_path(path))?;
+    artifact
+        .check_document_ids(table.document_ids())
+        .map_err(|error| CliError::from(error).at_path(path))?;
     Ok((table, key))
 }
 
@@ -478,7 +481,7 @@ fn entry_by_metadata(
         .map(|(index, (id, _, _))| (*id, index))
         .collect::<std::collections::HashMap<_, _>>();
     let slots = ValueSlots::number(documents.into_iter().map(|(_, _, values)| values))
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+        .map_err(CliError::corpus)?;
     let slots = slots.select(
         table
             .document_ids()

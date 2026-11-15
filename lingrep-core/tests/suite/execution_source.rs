@@ -191,8 +191,8 @@ fn an_explicitly_limited_sentence_fails_before_it_can_be_tokenized() {
             ordinal: 0,
             actual,
             limit,
-            ref context,
-        }) if actual == 64 * 1024 + 1 && limit == 64 * 1024 && context.is_empty()
+            source_name: None,
+        }) if actual == 64 * 1024 + 1 && limit == 64 * 1024
     ));
 }
 

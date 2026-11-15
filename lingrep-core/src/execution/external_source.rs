@@ -215,10 +215,7 @@ where
                 }
                 Err(error) => {
                     self.failed = true;
-                    Err(terminal_source_error(
-                        self.next_corpus_sentence,
-                        error.to_string(),
-                    ))
+                    Err(terminal_analysis_error(None, error))
                 }
             };
         };
@@ -230,7 +227,7 @@ where
                 message: "live adapter process is missing".to_owned(),
             })?
             .exchange_batch(inputs, limits)
-            .map_err(|error| terminal_source_error(self.next_corpus_sentence, error.to_string()));
+            .map_err(|error| terminal_analysis_error(Some(self.next_corpus_sentence), error));
         let batch = match batch {
             Ok(batch) => batch,
             Err(error) => {
@@ -333,7 +330,7 @@ fn flatten_external_batch(
                     ordinal: candidate_corpus_sentence,
                     actual: sentence_bytes,
                     limit: limits.max_sentence_bytes,
-                    context: format!(" in {source_name}"),
+                    source_name: Some(source_name.to_string()),
                 });
             }
             let document_sentence_ordinal = u64::from(analyzed.analyzer_sentence_ordinal());
@@ -346,6 +343,7 @@ fn flatten_external_batch(
                     ordinal: candidate_corpus_sentence,
                     actual: charge,
                     limit: limits.max_tokenized_bytes,
+                    source_name: Some(source_name.to_string()),
                 });
             }
             aggregate_charge = aggregate_charge
@@ -356,6 +354,7 @@ fn flatten_external_batch(
                     ordinal: candidate_corpus_sentence,
                     actual: aggregate_charge,
                     limit: limits.max_tokenized_bytes,
+                    source_name: Some(source_name.to_string()),
                 });
             }
             output.push(ExecutionSentence {
@@ -403,7 +402,7 @@ impl<R: BufRead> SentenceBatchSource for OfflineExternalSource<R> {
         let batch = self
             .transcript
             .next_validated_batch_with_bounds(bounds)
-            .map_err(|error| terminal_source_error(self.next_corpus_sentence, error.to_string()));
+            .map_err(|error| terminal_analysis_error(Some(self.next_corpus_sentence), error));
         let result = match batch {
             Ok(Some(batch)) => self.flatten(batch, limits).map(Some),
             Ok(None) => Ok(None),
@@ -434,5 +433,16 @@ fn terminal_source_error(ordinal: u64, message: impl Into<String>) -> ExecutionE
     ExecutionError::Source {
         ordinal,
         message: message.into(),
+    }
+}
+
+fn terminal_analysis_error(
+    ordinal: Option<u64>,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> ExecutionError {
+    ExecutionError::Analysis {
+        ordinal,
+        source_name: None,
+        source: Box::new(crate::analysis::AnalysisError::provider(source)),
     }
 }

@@ -449,10 +449,10 @@ impl AnalyzerSession for SudachiSession {
                     self.tokenizer.reset().push_str(sentence_text);
                     self.tokenizer
                         .do_tokenize()
-                        .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
+                        .map_err(AnalysisError::provider)?;
                     self.results
                         .collect_results(&mut self.tokenizer)
-                        .map_err(|error| AnalysisError::ProviderFailure(error.to_string()))?;
+                        .map_err(AnalysisError::provider)?;
 
                     let token_count = self.results.len();
                     surfaces.reserve(token_count);

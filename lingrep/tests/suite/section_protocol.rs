@@ -513,12 +513,16 @@ fn a_strict_build_names_the_document_whose_div_never_closed() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("unclosed pandoc div"),
-        "the refusal must say what failed: {stderr}"
+        stderr.contains("unclosed ':::' fenced block"),
+        "the error must say what failed: {stderr}"
     );
     assert!(
         stderr.contains("00002.md"),
-        "the refusal must name the document that failed: {stderr}"
+        "the error must name the document that failed: {stderr}"
+    );
+    assert!(
+        stderr.contains("--md-recover-conversion-artifacts"),
+        "the error must explain how to recover: {stderr}"
     );
 }
 

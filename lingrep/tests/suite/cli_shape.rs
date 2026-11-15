@@ -2381,7 +2381,7 @@ fn a_directory_without_an_override_still_resolves_to_markdown() {
     let run = &events[0]["data"];
     assert_eq!(
         run["reader_identity"],
-        "aa0428217967af2014b50a7fd02368094ff677e5cd5f2ffd2a78c276ed4f3acc"
+        "188d99e4405ef32777b4aea91d2d32d02c224d669701bec30dafa40a22650a08"
     );
 }
 #[test]
@@ -2494,5 +2494,36 @@ fn query_serving_rejects_analysis_options_it_cannot_apply() {
             );
             assert!(error.contains("ling corpus build"), "{error}");
         }
+    }
+}
+
+#[test]
+fn raw_and_missing_corpus_paths_report_prepared_input_expectations() {
+    let directory = tempfile::tempdir().unwrap();
+    let raw = directory.path().join("raw's corpus");
+    std::fs::create_dir(&raw).unwrap();
+    std::fs::write(raw.join("paper.md"), "# Heading\n\n本文。\n").unwrap();
+    for path in [&raw, &directory.path().join("absent.lingcorpus")] {
+        let output = crate::support::lingrep_without_dictionary()
+            .args(["--json", "matches", "--corpus"])
+            .arg(path)
+            .args(["--pattern", "か も しれ ない"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let records = parse_jsonl(&output.stderr);
+        let data = &records[0]["data"];
+        let message = data["message"].as_str().unwrap();
+        assert!(message.contains(&*path.to_string_lossy()), "{message}");
+        if path == &raw {
+            assert_eq!(data["code"], "expected_artifact_directory");
+            assert!(message.contains("manifest.json"), "{message}");
+            let suggestions = data["suggestions"].to_string();
+            assert!(suggestions.contains("ling corpus build"), "{suggestions}");
+            assert!(suggestions.contains("raw"), "{suggestions}");
+        } else {
+            assert_eq!(data["code"], "io");
+        }
+        assert!(output.stdout.is_empty());
     }
 }

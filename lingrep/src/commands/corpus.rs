@@ -16,9 +16,9 @@ use lingrep_core::spill::TempBudget;
 use lingrep_core::token_match::BoundProjection;
 use lingrep_corpus::{
     AnalysisInputs, BuildConfig, BuildOutcome, CorpusArtifact, CorpusBuilder,
-    DictionaryFingerprint, ObservedSources, ReaderIdentity, ReadingSidecarError,
-    ReadingSidecarWriter, Realization, RealizationRequest, SiblingScan, SourceObservation,
-    TokenSchemaIdentity, TrustClass, canonical_artifact_path, derive_analysis_identity,
+    DictionaryFingerprint, ObservedSources, ReaderIdentity, ReadingSidecarWriter, Realization,
+    RealizationRequest, SiblingScan, SourceObservation, TokenSchemaIdentity, TrustClass,
+    canonical_artifact_path, derive_analysis_identity,
 };
 
 use super::query_support::{
@@ -96,13 +96,7 @@ pub fn run_render(
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
 ) -> Result<CommandOutcome, CliError> {
-    let sidecar_error = |error: ReadingSidecarError| match error {
-        ReadingSidecarError::Io(error) => CliError::Io(error),
-        error @ ReadingSidecarError::ReaderMismatch { .. } => {
-            CliError::InvalidArgs(error.to_string())
-        }
-        error => CliError::Corpus(error.to_string()),
-    };
+    let sidecar_error = CliError::from;
     let markdown = args
         .markdown
         .resolve()
@@ -152,14 +146,17 @@ pub fn run_render(
     if !terminal.try_claim_completion() {
         return Ok(CommandOutcome::Cancelled);
     }
-    let stats = staged.publish().map_err(sidecar_error)?;
+    let stats = staged
+        .publish()
+        .map_err(|error| CliError::from(error).at_path(&args.output))?;
     let stdout = io::stdout();
     let mut writer = stdout.lock();
     writeln!(
         writer,
         "reading sidecar: {}",
         SafeText::from_untrusted(&args.output.display().to_string())
-    )?;
+    )
+    .map_err(CliError::stdout)?;
     writeln!(
         writer,
         "{} document(s), {} sentence(s), {} rendered in full, {} without rendered text, {} byte(s)",
@@ -168,7 +165,8 @@ pub fn run_render(
         stats.sentences_rendered_in_full,
         stats.sentences_without_rendered_text,
         stats.bytes
-    )?;
+    )
+    .map_err(CliError::stdout)?;
     Ok(CommandOutcome::Success)
 }
 
@@ -256,11 +254,11 @@ pub(crate) async fn ensure_artifact(
         &descriptor,
         TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes()),
     )
-    .map_err(|error| CliError::Corpus(error.to_string()))?;
+    .map_err(CliError::corpus)?;
     let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
     let projection = schema
         .bind_projection(schema.keys().iter().cloned())
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+        .map_err(CliError::corpus)?;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(config.workers)
         .build()
@@ -453,9 +451,7 @@ pub(crate) async fn ensure_artifact(
         .clone()
         .ok_or_else(|| CliError::Corpus("prepared discovery did not reach clean EOF".into()))?;
     if let Some(session) = session.as_mut() {
-        session
-            .finish()
-            .map_err(|error| CliError::Corpus(error.to_string()))?;
+        session.finish().map_err(CliError::from)?;
     }
     let artifact = builder
         .finish_guarded(
@@ -713,10 +709,11 @@ fn analyze_window(
     limit: usize,
 ) -> Result<Vec<AnalyzedInput>, CliError> {
     let mut inputs = Vec::new();
-    let mut source = active.map(|document| document.logical_name.clone());
+    let mut sources = Vec::new();
+    let mut source = active.map(|document| document.logical_name.as_str());
     for (drained, event) in window {
         if let Some(document) = drained.last() {
-            source = Some(document.logical_name.clone());
+            source = Some(document.logical_name.as_str());
         }
         let Some(sentence) = event.as_ref().and_then(AdmittedCorpusEvent::sentence) else {
             continue;
@@ -727,7 +724,7 @@ fn analyze_window(
                 &sentence.text,
                 config.normalization,
             )
-            .map_err(|error| CliError::Corpus(error.to_string()))?
+            .map_err(CliError::corpus)?
         } else {
             TextUnit::annotated(
                 InputUnitId::new(sentence.id.get()),
@@ -736,10 +733,10 @@ fn analyze_window(
                     sentence.text.clone(),
                     sentence.annotations.to_vec(),
                 )
-                .map_err(|error| CliError::Corpus(error.to_string()))?,
+                .map_err(CliError::corpus)?,
                 config.normalization,
             )
-            .map_err(|error| CliError::Corpus(error.to_string()))?
+            .map_err(CliError::corpus)?
         };
         let actual = input.len();
         if actual > limit {
@@ -747,23 +744,22 @@ fn analyze_window(
                 ordinal: sentence.id.get(),
                 actual,
                 limit,
-                context: source
-                    .as_deref()
-                    .map_or_else(String::new, |name| format!(" in {name}")),
+                source_name: source.map(str::to_owned),
             }
             .into());
         }
         inputs.push(input);
+        sources.push(source);
     }
     if inputs.is_empty() {
         return Ok(Vec::new());
     }
     let analyzed = session
         .analyze_bounded_batch(inputs, projection)
-        .map_err(|error| CliError::Corpus(error.to_string()))?
+        .map_err(CliError::from)?
         .into_inputs()
         .into_vec();
-    for analyzed in &analyzed {
+    for (analyzed, source) in analyzed.iter().zip(sources) {
         let sentence = analyzed
             .sentences()
             .first()
@@ -777,6 +773,7 @@ fn analyze_window(
                 ordinal: analyzed.input().id().get(),
                 actual,
                 limit: config.limits.max_tokenized_bytes,
+                source_name: source.map(str::to_owned),
             }
             .into());
         }
@@ -845,14 +842,16 @@ async fn inspect_artifact(
                 writer,
                 "prepared corpus: {}",
                 SafeText::from_untrusted(&args.artifact.display().to_string())
-            )?;
+            )
+            .map_err(CliError::stdout)?;
             writeln!(
                 writer,
                 "{} document(s), {} sentence(s), {} token(s)",
                 artifact.document_count(),
                 artifact.sentence_count(),
                 artifact.token_count()
-            )?;
+            )
+            .map_err(CliError::stdout)?;
         }
         publish_projected(
             &mut writer,
@@ -892,7 +891,7 @@ async fn inspect_artifact(
             return Ok(CommandOutcome::Cancelled);
         }
         if output == OutputMode::Human && verification.is_some() {
-            writeln!(writer, "content verified")?;
+            writeln!(writer, "content verified").map_err(CliError::stdout)?;
         }
         publish_projected(
             &mut writer,
@@ -984,9 +983,7 @@ fn observe_root(
         .map_err(|_| CliError::Corpus("prepared discovery report lock poisoned".into()))?
         .clone()
         .ok_or_else(|| CliError::Corpus("preflight discovery did not reach clean EOF".into()))?;
-    let observed = observation
-        .finish()
-        .map_err(|error| CliError::Corpus(error.to_string()))?;
+    let observed = observation.finish().map_err(CliError::corpus)?;
     if observed.document_count() != discovery.inventory.documents {
         return Err(CliError::Corpus(
             "observed document count disagrees with the discovery inventory".into(),
@@ -1002,7 +999,7 @@ fn build_input_error(error: io::Error) -> CliError {
     {
         return execution_discovery_error(discovery).into();
     }
-    CliError::Corpus(error.to_string())
+    CliError::corpus(error)
 }
 
 fn run_sources_to<W: Write>(
@@ -1268,7 +1265,7 @@ fn publish_projected<W: Write>(
                 )
             }
         }
-        .map_err(CliError::Io),
+        .map_err(CliError::stdout),
     }
 }
 

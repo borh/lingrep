@@ -192,18 +192,20 @@ fn a_compile_or_binding_failure_is_a_keyed_sentence_and_a_verbatim_diagnostic() 
 }
 
 #[test]
-fn a_scan_or_cache_failure_is_a_keyed_sentence_without_a_diagnostic() {
-    for (category, key) in [
-        (ErrorCategory::Execution, "status.failed_scan"),
-        (ErrorCategory::Integrity, "status.failed_scan"),
-        (ErrorCategory::Cache, "status.failed_cache"),
-    ] {
-        let status = failed_status(category, "The English sentence.");
-
-        assert_eq!(status.message, "The English sentence.");
-        assert_eq!(status.message_key, Some(key));
-        assert_eq!(status.diagnostic, None);
+fn failure_status_preserves_scan_guidance_under_a_localized_heading() {
+    for category in [ErrorCategory::Execution, ErrorCategory::Integrity] {
+        let status = failed_status(category, "Safe recovery instructions.");
+        assert_eq!(status.message, "The corpus scan could not be completed.");
+        assert_eq!(status.message_key, Some("status.failed_scan"));
+        assert_eq!(
+            status.diagnostic.as_deref(),
+            Some("Safe recovery instructions.")
+        );
     }
+    let cache = failed_status(ErrorCategory::Cache, "The English sentence.");
+    assert_eq!(cache.message, "The English sentence.");
+    assert_eq!(cache.message_key, Some("status.failed_cache"));
+    assert_eq!(cache.diagnostic, None);
 }
 
 fn matched_pattern(exact_total: u64) -> lingrep_web::snapshot::PatternDescriptor {

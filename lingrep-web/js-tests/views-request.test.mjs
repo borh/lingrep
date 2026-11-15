@@ -23,9 +23,9 @@ test("a failed status rejects with the reply's error", async () => {
   await assert.rejects(api("frequency", {}), { message: "no pattern “x”" });
 });
 
-test("a failed status without a JSON body rejects with the status", async () => {
+test("a server failure without a JSON body includes recovery guidance", async () => {
   answer({ ok: false, status: 500, json: async () => JSON.parse("") });
-  await assert.rejects(api("frequency", {}), { message: "Server response: 500." });
+  await assert.rejects(api("frequency", {}), { message: "Could not complete this request. Try again. If it fails again, ask the server operator to check the logs." });
 });
 
 test("a reply that is not JSON rejects", async () => {

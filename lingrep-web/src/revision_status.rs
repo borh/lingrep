@@ -229,7 +229,8 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                             (failure.message.clone(), Some("status.failed_cache"), None)
                         }
                         ErrorCategory::Execution | ErrorCategory::Integrity => {
-                            (failure.message.clone(), Some("status.failed_scan"), None)
+                            diagnostic = Some(failure.message.clone());
+                            ("The corpus scan could not be completed.".into(), Some("status.failed_scan"), None)
                         }
                     },
                 },

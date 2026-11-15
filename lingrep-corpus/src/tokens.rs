@@ -1265,6 +1265,11 @@ impl PreparedSentenceSource {
                                 ordinal,
                                 actual: resident,
                                 limit: limits.max_tokenized_bytes,
+                                source_name: self
+                                    .locations
+                                    .sentence(ordinal)
+                                    .ok()
+                                    .map(|row| row.source_name.to_string()),
                             });
                         }
                         TokenizedAdmission::Omit(omissions) => {
@@ -1465,6 +1470,11 @@ impl PreparedSentenceSource {
                                 ordinal: ordinals[index],
                                 actual,
                                 limit: limits.max_tokenized_bytes,
+                                source_name: self
+                                    .locations
+                                    .sentence(ordinals[index])
+                                    .ok()
+                                    .map(|row| row.source_name.to_string()),
                             });
                         }
                         TokenizedAdmission::Omit(omissions) => omissions,

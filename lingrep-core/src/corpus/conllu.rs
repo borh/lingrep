@@ -769,7 +769,7 @@ impl<R: BufRead> Iterator for Reader<R> {
                                 return Some(Err(invalid(
                                     &self.source_name,
                                     self.line_number,
-                                    "CoNLL-U sentence exceeds the 64 MiB source safety ceiling",
+                                    "CoNLL-U sentence exceeds the fixed 64 MiB source safety ceiling; check the sentence separators or split the sentence in the source",
                                 )));
                             }
                         };

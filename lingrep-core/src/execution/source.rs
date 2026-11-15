@@ -321,12 +321,13 @@ enum TerminalFailure {
         ordinal: u64,
         actual: usize,
         limit: usize,
-        context: String,
+        source_name: Option<String>,
     },
     TokenizedSentenceTooLarge {
         ordinal: u64,
         actual: usize,
         limit: usize,
+        source_name: Option<String>,
     },
 }
 
@@ -341,21 +342,23 @@ impl TerminalFailure {
                 ordinal,
                 actual,
                 limit,
-                context,
+                source_name,
             } => ExecutionError::SentenceTooLarge {
                 ordinal: *ordinal,
                 actual: *actual,
                 limit: *limit,
-                context: context.clone(),
+                source_name: source_name.clone(),
             },
             Self::TokenizedSentenceTooLarge {
                 ordinal,
                 actual,
                 limit,
+                source_name,
             } => ExecutionError::TokenizedSentenceTooLarge {
                 ordinal: *ordinal,
                 actual: *actual,
                 limit: *limit,
+                source_name: source_name.clone(),
             },
         }
     }
@@ -471,7 +474,7 @@ where
                     ordinal: self.next_ordinal,
                     actual: value_bytes,
                     limit: limits.max_sentence_bytes,
-                    context: String::new(),
+                    source_name: None,
                 });
                 if batch.is_empty() {
                     return Err(self
@@ -574,6 +577,7 @@ where
                 ordinal: self.next_ordinal,
                 actual,
                 limit: limits.max_tokenized_bytes,
+                source_name: None,
             });
             return Err(self
                 .terminal_failure

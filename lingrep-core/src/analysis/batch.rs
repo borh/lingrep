@@ -337,20 +337,20 @@ mod tests {
             SegmentationMode::Analyzer,
         )
         .unwrap();
-        assert_eq!(
+        assert!(matches!(
             ValidatedAnalysisBatch::new(vec![first, second]),
             Err(AnalysisError::InvalidAlignment)
-        );
+        ));
 
         let input = segment(5, "一。");
-        assert_eq!(
+        assert!(matches!(
             AnalyzedInput::new(
                 input.clone(),
                 vec![sentence(&input, 1, 0, 6)],
                 SegmentationMode::Analyzer,
             ),
             Err(AnalysisError::InvalidAlignment)
-        );
+        ));
     }
 
     #[test]
@@ -364,14 +364,14 @@ mod tests {
             words(&[]),
         )
         .unwrap();
-        assert_eq!(
+        assert!(matches!(
             AnalyzedInput::new(
                 input.clone(),
                 vec![outside_input],
                 SegmentationMode::Analyzer,
             ),
             Err(AnalysisError::InvalidSourceRange)
-        );
+        ));
 
         let sentence_range = input.source_range(0, 6).unwrap();
         let later_surface = SurfaceToken::new(input.source_range(6, 12).unwrap(), 0, 1);
@@ -382,9 +382,9 @@ mod tests {
             words(&["二。"]),
         )
         .unwrap();
-        assert_eq!(
+        assert!(matches!(
             AnalyzedInput::new(input, vec![escaped], SegmentationMode::Analyzer),
             Err(AnalysisError::InvalidAlignment)
-        );
+        ));
     }
 }

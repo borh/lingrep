@@ -126,11 +126,9 @@ pub(crate) fn load(input: &CatalogInput) -> Result<CatalogSource, CliError> {
                 name: path.display().to_string(),
                 text,
             })
-            .map_err(|error| {
-                CliError::PatternParse(format!(
-                    "failed to read lingrep patterns catalog {}: {error}",
-                    path.display()
-                ))
+            .map_err(|source| CliError::InputIo {
+                path: path.clone(),
+                source,
             }),
         CatalogInput::Inline(pattern) => {
             let text = normalize_inline_pattern(pattern);

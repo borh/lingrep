@@ -5,7 +5,7 @@ use askama::Template;
 use axum::{
     Router,
     extract::{Query, State},
-    response::{IntoResponse as _, Response},
+    response::Response,
     routing::get,
 };
 use lingrep_core::fsm::SimilarityThreshold;
@@ -87,7 +87,7 @@ async fn page(State(store): State<RequestStore>, Query(params): Query<Params>) -
     .await;
     match page {
         Ok(page) => crate::handlers::render_or_500(page),
-        Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(error) => super::server_error(error),
     }
 }
 

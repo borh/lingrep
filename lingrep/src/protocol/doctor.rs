@@ -85,7 +85,7 @@ pub enum ProbeKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UnavailableBindingAttribute {
     pub attribute: String,
-    /// Empty when only the catalog's publication policy references it.
+    /// Empty for attributes referenced only by catalog configuration.
     pub definitions: Vec<String>,
 }
 

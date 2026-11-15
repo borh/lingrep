@@ -122,7 +122,7 @@ pub(crate) fn inspection_response(error: EndpointInspectionError) -> Response {
         EndpointInspectionError::StaleCorpus => sanitized(
             StatusCode::CONFLICT,
             "inspector.stale_corpus",
-            "These results belong to an older corpus cache.",
+            "These results belong to an older corpus cache. Run the search again to inspect current results.",
         ),
         EndpointInspectionError::InvalidSpan => sanitized(
             StatusCode::CONFLICT,
@@ -159,15 +159,32 @@ pub(crate) async fn corrupt_artifact_response(
     sanitized(StatusCode::INTERNAL_SERVER_ERROR, key, message)
 }
 
-/// Render an Askama template into an HTML 200, or a bare 500 if rendering fails.
-/// Shared by the detail endpoints so a template failure is handled identically
-/// everywhere. Callers that need a *custom* failure body (e.g. the sample
-/// endpoint's status-specific fragments) do not use this.
 pub(crate) fn render_or_500<T: Template>(template: T) -> Response {
     template.render().map(Html).map_or_else(
-        |_| StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        |error| {
+            tracing::error!(%error, "template rendering failed");
+            sanitized(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "status.server_error",
+                SERVER_ERROR_MESSAGE,
+            )
+        },
         IntoResponse::into_response,
     )
+}
+
+const SERVER_ERROR_MESSAGE: &str = "Could not complete this request. Try again. If it fails again, ask the server operator to check the logs.";
+
+pub(super) fn server_error(error: impl std::fmt::Debug) -> Response {
+    tracing::error!(?error, "request failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(serde_json::json!({
+            "error": SERVER_ERROR_MESSAGE,
+            "code": "server_error"
+        })),
+    )
+        .into_response()
 }
 
 pub(crate) fn sanitized(status: StatusCode, key: &'static str, message: &'static str) -> Response {
@@ -301,7 +318,7 @@ pub(crate) async fn decode_refs(
                 }
             }
             Ok(Err(_)) => return Err(corrupt_artifact_response(runtime, ready).await),
-            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            Err(error) => return Err(server_error(error)),
         }
     }
     Ok(map)

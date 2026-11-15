@@ -199,7 +199,8 @@ pub(super) fn write_metadata(
             } else {
                 ""
             }
-        )?;
+        )
+        .map_err(CliError::stdout)?;
         for (key, field) in &grain.fields {
             writeln!(
                 writer,
@@ -217,7 +218,8 @@ pub(super) fn write_metadata(
                 } else {
                     " (truncated)"
                 }
-            )?;
+            )
+            .map_err(CliError::stdout)?;
         }
     }
     for (kind, division) in &report.divisions {
@@ -228,10 +230,11 @@ pub(super) fn write_metadata(
             division.empty_units,
             division.observed_documents,
             division.unavailable_documents
-        )?;
+        )
+        .map_err(CliError::stdout)?;
     }
     if report.division_kinds_truncated {
-        writeln!(writer, "division kind inventory truncated")?;
+        writeln!(writer, "division kind inventory truncated").map_err(CliError::stdout)?;
     }
     Ok(())
 }

@@ -679,6 +679,31 @@ mod tests {
     }
 
     #[test]
+    fn document_membership_accepts_sparse_subsets_and_rejects_absent_ids() {
+        let budget = Arc::new(TempBudget::new(1_000_000));
+        let mut writer = Writer::new(budget).expect("writer");
+        let empty: Metadata = Box::new([]);
+        writer.push(3, 0..1, &empty).expect("write");
+        writer.push(100, 1..2, &empty).expect("write");
+        let store = writer.finish().expect("store");
+        for ids in [&[][..], &[3][..], &[100][..], &[3, 100][..]] {
+            store
+                .reader()
+                .expect("reader")
+                .check_ids(ids)
+                .expect("member");
+        }
+        for id in [0, 1, 4, 99, 101, u64::MAX] {
+            let error = store
+                .reader()
+                .expect("reader")
+                .check_ids(&[id])
+                .expect_err("absent");
+            assert!(error.to_string().contains(&id.to_string()));
+        }
+    }
+
+    #[test]
     fn temporary_metadata_is_removed_and_its_budget_released() {
         let budget = Arc::new(TempBudget::new(1_000_000));
         let empty: Metadata = Box::new([]);

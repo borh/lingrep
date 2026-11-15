@@ -33,9 +33,17 @@ fn run_process() -> i32 {
         Err(error) => {
             let code = error.exit_code();
             if json_diagnostics && error.use_stderr() {
-                render_clap_error(&error);
-            } else {
-                let _ = error.print();
+                if render_clap_error(&error).is_err() {
+                    return 1;
+                }
+            } else if let Err(delivery) = error.print() {
+                return exit_code(
+                    if delivery.kind() == io::ErrorKind::BrokenPipe && !error.use_stderr() {
+                        Termination::Success
+                    } else {
+                        Termination::Failure
+                    },
+                );
             }
             return code;
         }
@@ -47,8 +55,11 @@ fn run_process() -> i32 {
     let config = match cli.execution_config() {
         Ok(config) => config,
         Err(error) => {
-            render_error(cli.diagnostic_format(), &error);
-            return exit_code(error.termination());
+            return if render_error(cli.diagnostic_format(), &error).is_ok() {
+                exit_code(error.termination())
+            } else {
+                1
+            };
         }
     };
     let output_mode = cli.output_mode();
@@ -61,15 +72,18 @@ fn run_process() -> i32 {
                 code: FailureCode::SignalHandler,
                 message: format!("failed to install signal handlers: {error}"),
             };
-            render_error(cli.diagnostic_format(), &error);
-            return exit_code(error.termination());
+            return if render_error(cli.diagnostic_format(), &error).is_ok() {
+                exit_code(error.termination())
+            } else {
+                1
+            };
         }
     };
 
     let command_result = match commands::dispatch(&cli, &config, &terminal) {
         Err(error)
             if output_mode == lingrep::presentation::OutputMode::Human
-                && error.is_broken_pipe() =>
+                && error.is_stdout_broken_pipe() =>
         {
             Ok(CommandOutcome::DisplayClosed)
         }
@@ -81,7 +95,8 @@ fn run_process() -> i32 {
         Ok(CommandOutcome::DisplayClosed) => Termination::Success,
         Ok(CommandOutcome::Cancelled) => signals.termination().unwrap_or(Termination::Failure),
         Err(error)
-            if output_mode == lingrep::presentation::OutputMode::Tsv && error.is_broken_pipe() =>
+            if output_mode == lingrep::presentation::OutputMode::Tsv
+                && error.is_stdout_broken_pipe() =>
         {
             // TSV is intended to compose with bounded Unix consumers such as
             // `head`. It has no completion row, so keep a failure status for
@@ -90,8 +105,11 @@ fn run_process() -> i32 {
             error.termination()
         }
         Err(error) => {
-            render_error(cli.diagnostic_format(), &error);
-            error.termination()
+            if render_error(cli.diagnostic_format(), &error).is_ok() {
+                error.termination()
+            } else {
+                Termination::Failure
+            }
         }
     };
     exit_code(termination)
@@ -104,7 +122,7 @@ fn json_requested_from(args: &[OsString]) -> bool {
         .any(|argument| argument.as_os_str() == "--json")
 }
 
-fn render_clap_error(error: &clap::Error) {
+fn render_clap_error(error: &clap::Error) -> io::Result<()> {
     let suggestions = [
         ContextKind::SuggestedSubcommand,
         ContextKind::SuggestedArg,
@@ -132,7 +150,8 @@ fn render_clap_error(error: &clap::Error) {
     }));
     let stderr = io::stderr();
     let mut writer = stderr.lock();
-    let _ = write_jsonl(&mut writer, &diagnostic);
+    write_jsonl(&mut writer, &diagnostic).map_err(io::Error::from)?;
+    writer.flush()
 }
 
 fn context_strings(value: &ContextValue) -> Vec<String> {
@@ -185,23 +204,26 @@ impl ProcessSignals {
     }
 }
 
-fn render_error(format: DiagnosticFormat, error: &CliError) {
+fn render_error(format: DiagnosticFormat, error: &CliError) -> io::Result<()> {
     let stderr = io::stderr();
     let mut writer = stderr.lock();
     match format {
         DiagnosticFormat::Human => {
-            if let CliError::CatalogCompile { error, source_text } = error {
+            if let CliError::CatalogCompile { error, source_text } = error.root_error() {
                 for line in render_pattern_error(Some(source_text), error).lines() {
-                    let _ = writeln!(writer, "{}", SafeText::from_untrusted(line));
+                    writeln!(writer, "{}", SafeText::from_untrusted(line))?;
                 }
             } else {
                 let message = error.to_string();
-                let _ = writeln!(
+                writeln!(
                     writer,
                     "error[{}]: {}",
                     error.code(),
                     SafeText::from_untrusted(&message)
-                );
+                )?;
+            }
+            for suggestion in error.suggestions() {
+                writeln!(writer, "help: {}", SafeText::from_untrusted(&suggestion))?;
             }
         }
         DiagnosticFormat::Json => {
@@ -224,7 +246,13 @@ fn render_error(format: DiagnosticFormat, error: &CliError) {
                             },
                             code: compiler_diagnostic.code().as_str().into(),
                             message: compiler_diagnostic.message.clone(),
-                            suggestions: Vec::new(),
+                            suggestions: if compiler_diagnostic.code()
+                                == lingrep_core::fsm::DiagnosticCode::LimitExceeded
+                            {
+                                error.suggestions()
+                            } else {
+                                Vec::new()
+                            },
                             usage: None,
                             retry: (compiler_diagnostic.severity() == CompilerSeverity::Error)
                                 .then_some(error.retry_policy()),
@@ -250,27 +278,16 @@ fn render_error(format: DiagnosticFormat, error: &CliError) {
                                 })
                                 .collect(),
                         }));
-                    let _ = write_jsonl(&mut writer, &diagnostic);
+                    write_jsonl(&mut writer, &diagnostic)?;
                 }
             } else {
                 let diagnostic =
-                    DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(DiagnosticData {
-                        observed_input_digest: error.observed_input_digest().map(str::to_owned),
-                        stage: diagnostic_stage(error),
-                        severity: DiagnosticSeverity::Error,
-                        code: error.code().into(),
-                        message: error.to_string(),
-                        suggestions: Vec::new(),
-                        usage: None,
-                        retry: Some(error.retry_policy()),
-                        run_id: error.run_id().map(str::to_owned),
-                        location: diagnostic_location(error),
-                        related_locations: Vec::new(),
-                    }));
-                let _ = write_jsonl(&mut writer, &diagnostic);
+                    DiagnosticEnvelope::new(DiagnosticEvent::Diagnostic(error.diagnostic()));
+                write_jsonl(&mut writer, &diagnostic)?;
             }
         }
     }
+    writer.flush()
 }
 
 fn compiler_location(
@@ -291,124 +308,6 @@ fn compiler_location(
     }
 }
 
-fn diagnostic_stage(error: &CliError) -> DiagnosticStage {
-    match error.root_error() {
-        CliError::InvalidArgs(_) | CliError::UnsupportedOutput { .. } => {
-            DiagnosticStage::Invocation
-        }
-        CliError::PatternParse(_)
-        | CliError::CatalogCompile { .. }
-        | CliError::InlineCatalogShape(_) => DiagnosticStage::Catalog,
-        CliError::Io(_) | CliError::CommandFailure { .. } => DiagnosticStage::Output,
-        CliError::FileNotFound(_)
-        | CliError::Dictionary(_)
-        | CliError::Artifact(_)
-        | CliError::Corpus(_)
-        | CliError::TokenizedRecordTooLarge { .. }
-        | CliError::TokenizedRecordMalformed { .. }
-        | CliError::Parse(_)
-        | CliError::OversizedSentencesSkipped { .. } => DiagnosticStage::Input,
-        CliError::Aggregation(_) => DiagnosticStage::Aggregation,
-        CliError::Execution(lingrep_core::execution::ExecutionError::Output { .. }) => {
-            DiagnosticStage::Output
-        }
-        CliError::Execution(
-            lingrep_core::execution::ExecutionError::InputRecordTooLarge { .. }
-            | lingrep_core::execution::ExecutionError::Discovery { .. }
-            | lingrep_core::execution::ExecutionError::Input { .. }
-            | lingrep_core::execution::ExecutionError::SentenceTooLarge { .. }
-            | lingrep_core::execution::ExecutionError::SentenceTooLargeAtLeast { .. }
-            | lingrep_core::execution::ExecutionError::TokenizedSentenceTooLarge { .. },
-        ) => DiagnosticStage::Input,
-        CliError::Execution(_) => DiagnosticStage::Matching,
-        CliError::Run { .. } => {
-            #[expect(clippy::unreachable, reason = "root_error removes run context")]
-            {
-                unreachable!("root_error removes run context")
-            }
-        }
-    }
-}
-
-fn diagnostic_location(error: &CliError) -> Option<DiagnosticLocation> {
-    use lingrep_core::execution::ExecutionError;
-
-    if let CliError::OversizedSentencesSkipped {
-        first_source_name,
-        first_ordinal,
-        ..
-    } = error.root_error()
-    {
-        return Some(DiagnosticLocation {
-            source_name: Some(first_source_name.clone()),
-            source_span: None,
-            line: None,
-            column: None,
-            corpus_sentence_ordinal: Some(*first_ordinal),
-            token_index: None,
-        });
-    }
-
-    let execution = match error.root_error() {
-        CliError::Execution(error) => error,
-        _ => return None,
-    };
-    let (source_name, corpus_sentence_ordinal, token_index) = match execution {
-        ExecutionError::InputRecordTooLarge {
-            source_name,
-            corpus_sentence_ordinal,
-            ..
-        } => (
-            Some(source_name.clone()),
-            Some(*corpus_sentence_ordinal),
-            None,
-        ),
-        ExecutionError::MissingRequiredAttribute {
-            source_name,
-            corpus_sentence_ordinal,
-            token_index,
-            ..
-        } => (
-            Some(source_name.clone()),
-            Some(*corpus_sentence_ordinal),
-            u64::try_from(*token_index).ok(),
-        ),
-        ExecutionError::Input {
-            source_name,
-            ordinal,
-            ..
-        } => (
-            (!source_name.is_empty()).then(|| source_name.clone()),
-            Some(*ordinal),
-            None,
-        ),
-        ExecutionError::Discovery { logical_path, .. } => (
-            (!logical_path.is_empty()).then(|| logical_path.clone()),
-            None,
-            None,
-        ),
-        ExecutionError::SentenceTooLarge {
-            ordinal, context, ..
-        }
-        | ExecutionError::SentenceTooLargeAtLeast {
-            ordinal, context, ..
-        } => (
-            context.strip_prefix(" in ").map(str::to_owned),
-            Some(*ordinal),
-            None,
-        ),
-        _ => return None,
-    };
-    Some(DiagnosticLocation {
-        source_name,
-        source_span: None,
-        line: None,
-        column: None,
-        corpus_sentence_ordinal,
-        token_index,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,9 +323,9 @@ mod tests {
         }
         .with_run_id("run-gap".into(), None);
 
-        assert_eq!(diagnostic_stage(&error), DiagnosticStage::Input);
+        assert_eq!(error.diagnostic().stage, DiagnosticStage::Input);
         assert_eq!(
-            diagnostic_location(&error),
+            error.diagnostic().location,
             Some(DiagnosticLocation {
                 source_name: Some("00027.md".into()),
                 source_span: None,
@@ -452,9 +351,9 @@ mod tests {
 
         assert_eq!(error.code(), "missing_required_attribute");
         assert_eq!(error.run_id(), Some("run-7"));
-        assert_eq!(diagnostic_stage(&error), DiagnosticStage::Matching);
+        assert_eq!(error.diagnostic().stage, DiagnosticStage::Matching);
         assert_eq!(
-            diagnostic_location(&error),
+            error.diagnostic().location,
             Some(DiagnosticLocation {
                 source_name: Some("a.md".into()),
                 source_span: None,

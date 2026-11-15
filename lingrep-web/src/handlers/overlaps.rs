@@ -1,9 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::response::Response;
 use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionLimits, OversizedSentenceOmissions, SentenceBatchSource,
@@ -46,8 +43,8 @@ pub(super) async fn inspect(
     let permit = store.coordinators.acquire_scan_permit().await;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let mut compiled = crate::patterns::compile_web_pattern(&snapshot.source)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+        let mut compiled =
+            crate::patterns::compile_web_pattern(&snapshot.source).map_err(super::server_error)?;
         compiled.matcher = compiled.matcher.with_overlaps(snapshot.overlaps);
         let windows = if compiled.matcher.lookaround_reach().is_empty() {
             None
@@ -73,7 +70,7 @@ pub(super) async fn inspect(
                         None => compiled
                             .matcher
                             .explain_sentence(tokens)
-                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?,
+                            .map_err(super::server_error)?,
                     };
                     entry.insert(explanation);
                 }
@@ -86,7 +83,7 @@ pub(super) async fn inspect(
             .collect()
     })
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
+    .map_err(super::server_error)?
 }
 
 struct ScanWindows {
@@ -169,7 +166,7 @@ impl ScanWindows {
                 range.start > 0,
                 range.end < count,
             )
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+            .map_err(super::server_error)?;
             if let Some(explanation) = explanation {
                 return Ok(explanation);
             }

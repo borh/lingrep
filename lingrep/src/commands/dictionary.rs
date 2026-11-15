@@ -40,10 +40,9 @@ pub fn run_install(
     let stdout = io::stdout();
     let mut writer = stdout.lock();
     if mode == OutputMode::Jsonl {
-        write_jsonl(&mut writer, &DictionaryEnvelope::new(data))
-            .map_err(|error| CliError::Io(io::Error::other(error)))?;
+        write_jsonl(&mut writer, &DictionaryEnvelope::new(data)).map_err(CliError::from)?;
     } else {
-        write_human(&mut writer, &data)?;
+        write_human(&mut writer, &data).map_err(CliError::stdout)?;
     }
     Ok(CommandOutcome::Success)
 }

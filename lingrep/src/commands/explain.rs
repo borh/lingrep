@@ -68,26 +68,30 @@ pub fn run(cli: &Cli, config: &ExecutionCliConfig) -> Result<CommandOutcome, Cli
     let stdout = io::stdout();
     let mut writer = stdout.lock();
     match cli.output_mode() {
-        OutputMode::Jsonl => write_jsonl(&mut writer, &InvocationEnvelope::new(data))
-            .map_err(|error| CliError::Io(io::Error::other(error)))?,
+        OutputMode::Jsonl => {
+            write_jsonl(&mut writer, &InvocationEnvelope::new(data)).map_err(CliError::from)?
+        }
         OutputMode::Human | OutputMode::Tsv => {
-            writeln!(writer, "command: {}", data.command).map_err(CliError::Io)?;
-            writeln!(writer, "input: {}", data.input_kind).map_err(CliError::Io)?;
+            writeln!(writer, "command: {}", data.command).map_err(CliError::stdout)?;
+            writeln!(writer, "input: {}", data.input_kind).map_err(CliError::stdout)?;
             if let Some(source) = &data.catalog_source {
-                writeln!(writer, "patterns: {}", SafeText::from_untrusted(source))?;
+                writeln!(writer, "patterns: {}", SafeText::from_untrusted(source))
+                    .map_err(CliError::stdout)?;
             }
             if let Some(dictionary) = &data.dictionary_path {
                 writeln!(
                     writer,
                     "dictionary: {}",
                     SafeText::from_untrusted(dictionary)
-                )?;
+                )
+                .map_err(CliError::stdout)?;
             }
-            writeln!(writer, "output: {}", data.output_mode)?;
-            writeln!(writer, "settings:")?;
+            writeln!(writer, "output: {}", data.output_mode).map_err(CliError::stdout)?;
+            writeln!(writer, "settings:").map_err(CliError::stdout)?;
             if let Some(settings) = data.limits.as_object() {
                 for (name, value) in settings.iter().filter(|(_, value)| !value.is_null()) {
-                    writeln!(writer, "  {}: {value}", name.replace('_', " "))?;
+                    writeln!(writer, "  {}: {value}", name.replace('_', " "))
+                        .map_err(CliError::stdout)?;
                 }
             }
         }
@@ -341,17 +345,20 @@ fn schemas(cli: &Cli) -> Vec<String> {
 }
 
 fn stat(path: &Path) -> Result<(), CliError> {
-    std::fs::metadata(path).map(|_| ()).map_err(|error| {
-        CliError::Io(io::Error::new(
-            error.kind(),
-            format!("{}: {error}", path.display()),
-        ))
-    })
+    std::fs::metadata(path)
+        .map(|_| ())
+        .map_err(|source| CliError::InputIo {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 fn read_manifest(artifact: &Path) -> Result<(), CliError> {
     let path = artifact.join("manifest.json");
-    let bytes = std::fs::read(&path).map_err(CliError::Io)?;
+    let bytes = std::fs::read(&path).map_err(|source| CliError::InputIo {
+        path: path.clone(),
+        source,
+    })?;
     serde_json::from_slice::<serde_json::Value>(&bytes)
         .map(|_| ())
         .map_err(|error| CliError::Parse(format!("{}: {error}", path.display())))

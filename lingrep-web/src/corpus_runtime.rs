@@ -883,20 +883,8 @@ fn prepare_artifact(
     if destination.exists() {
         match open_published(&destination, &observed, &analysis_identity, handle) {
             Ok(artifact) => return Ok((identity, artifact, Some(destination))),
-            Err(PublishedArtifactFailure::Unusable) => {
+            Err(PublishedArtifactFailure::Unusable | PublishedArtifactFailure::Corrupt) => {
                 return Err(CacheFailureCategory::Corruption);
-            }
-            Err(PublishedArtifactFailure::Corrupt) => {
-                let mut lifecycle = inner.lifecycle.blocking_lock();
-                if !matches!(*lifecycle, CacheLifecycle::Building { rebuild: false }) {
-                    return Err(CacheFailureCategory::Corruption);
-                }
-                *lifecycle = CacheLifecycle::Building { rebuild: true };
-                drop(lifecycle);
-                fs::remove_dir_all(&destination).map_err(classify(
-                    CacheFailureCategory::Corruption,
-                    "discard corrupt V1 artifact",
-                ))?;
             }
         }
     }
@@ -1392,7 +1380,7 @@ mod tests {
         );
         assert_ne!(
             hex(&build_reader_identity(&markdown)),
-            "aa0428217967af2014b50a7fd02368094ff677e5cd5f2ffd2a78c276ed4f3acc",
+            "188d99e4405ef32777b4aea91d2d32d02c224d669701bec30dafa40a22650a08",
             "the Markdown dialects differ by design and must keep two names"
         );
     }

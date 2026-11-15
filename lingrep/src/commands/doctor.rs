@@ -78,8 +78,9 @@ pub fn run(
     let stdout = io::stdout();
     let mut writer = stdout.lock();
     match output {
-        OutputMode::Jsonl => write_jsonl(&mut writer, &DoctorEnvelope::new(data))
-            .map_err(|error| CliError::Io(io::Error::other(error)))?,
+        OutputMode::Jsonl => {
+            write_jsonl(&mut writer, &DoctorEnvelope::new(data)).map_err(CliError::from)?
+        }
         OutputMode::Human => publish_human(&mut writer, &data)?,
         OutputMode::Tsv => {
             return Err(CliError::UnsupportedOutput {
@@ -280,7 +281,7 @@ fn publish_human(writer: &mut impl Write, data: &DoctorData) -> Result<(), CliEr
     } else {
         writeln!(writer, "ling doctor: {failed} of {total} {checks} failed")
     }
-    .map_err(CliError::Io)?;
+    .map_err(CliError::stdout)?;
     for probe in &data.probes {
         let target = probe
             .target
@@ -300,7 +301,7 @@ fn publish_human(writer: &mut impl Write, data: &DoctorData) -> Result<(), CliEr
             target,
             SafeText::from_untrusted(warning.as_deref().unwrap_or(&probe.message))
         )
-        .map_err(CliError::Io)?;
+        .map_err(CliError::stdout)?;
     }
     Ok(())
 }
@@ -319,7 +320,7 @@ fn human_warning(probe: &ProbeData) -> Option<String> {
                 .take(HUMAN_LIST_LIMIT)
                 .map(|attribute| {
                     let referenced = if attribute.definitions.is_empty() {
-                        "referenced by the publication policy".to_owned()
+                        "referenced by the catalog configuration".to_owned()
                     } else {
                         format!(
                             "referenced by {}",
@@ -391,7 +392,7 @@ mod tests {
             human_warning(&probe).unwrap(),
             "never supplied by this corpus: \
              `a1` (referenced by d1, d2, d3 and 2 more), \
-             `a2` (referenced by the publication policy), \
+             `a2` (referenced by the catalog configuration), \
              `a3` (referenced by d1, d2, d3 and 2 more) and 1 more attribute; see --json"
         );
     }

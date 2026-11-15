@@ -8,7 +8,7 @@
 //! caller's.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -112,6 +112,8 @@ pub enum FieldValue<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CountTableError {
+    #[error(transparent)]
+    Publication(#[from] crate::PublicationError),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("count table header is not valid: {0}")]
@@ -125,7 +127,7 @@ pub enum CountTableError {
         version: u32,
     },
     #[error(
-        "count table {path} was written for {field} {found}, but the current one is {expected}; rebuild it with `ling summarize --write-table`"
+        "Count table '{path}' was built with a different {field}. Rebuild it with 'ling summarize --write-table' (saved: {found}; current: {expected})"
     )]
     KeyMismatch {
         path: PathBuf,
@@ -137,7 +139,9 @@ pub enum CountTableError {
     Corrupt(String),
     #[error("count table writer: {0}")]
     Writer(String),
-    #[error("destination already exists at {0}")]
+    #[error(
+        "destination already exists at {0}; the existing count table was preserved; choose a new --write-table path"
+    )]
     DestinationExists(PathBuf),
     #[error("entry key exceeds the {0} encoded-value limit")]
     GroupLimit(usize),
@@ -384,6 +388,24 @@ pub struct CountTableWriter {
 }
 
 impl CountTableWriter {
+    /// Checks that the destination is absent and its parent permits creating output.
+    /// Publication still checks for a competing destination atomically.
+    pub fn check_destination(destination: &Path) -> Result<(), CountTableError> {
+        match fs::symlink_metadata(destination) {
+            Ok(_) => {
+                return Err(CountTableError::DestinationExists(
+                    destination.to_path_buf(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let staging = StagingDirectory::create_beside(destination)?
+            .ok_or_else(|| writer_error("destination has no file name"))?;
+        File::create(staging.path.join("write-probe"))?;
+        Ok(())
+    }
+
     /// Starts a table at `destination`, which must not exist.
     ///
     /// `values` is the vocabulary that key words index, strictly ascending. `documents` lists each document with an admitted
@@ -883,22 +905,15 @@ impl StagedCountTable {
     /// Renames the staged table to its destination without replacing
     /// anything there.
     pub fn publish(mut self) -> Result<CountTableStats, CountTableError> {
-        crate::rename_noreplace(&self.staging.path, &self.destination).map_err(|error| {
-            if matches!(error.raw_os_error(), Some(libc::EEXIST | libc::ENOTEMPTY)) {
-                CountTableError::DestinationExists(self.destination.clone())
-            } else {
-                CountTableError::Io(error)
-            }
-        })?;
-        self.staging.published = true;
-        if let Some(parent) = self.destination.parent()
-            && let Ok(directory) = File::open(parent)
-        {
-            directory.sync_all()?;
-        }
-        self.stats.bytes = fs::read_dir(&self.destination)?
-            .map(|entry| Ok(entry?.metadata()?.len()))
-            .sum::<std::io::Result<u64>>()?;
+        self.stats.bytes =
+            self.staging
+                .publish(&self.destination)
+                .map_err(|error| match error {
+                    crate::PublicationError::DestinationExists { path } => {
+                        CountTableError::DestinationExists(path)
+                    }
+                    error => CountTableError::Publication(error),
+                })?;
         Ok(self.stats)
     }
 }
@@ -970,9 +985,9 @@ pub struct CountTable {
     document_pattern_offsets: Section,
     document_patterns: Section,
     document_pattern_counts: Section,
-    document_ids: Vec<u64>,
-    document_sentences: Vec<u64>,
-    document_tokens: Vec<u64>,
+    document_ids: crate::mapped_index::U64Index,
+    document_sentences: crate::mapped_index::U64Index,
+    document_tokens: crate::mapped_index::U64Index,
     instance: u64,
 }
 
@@ -1185,23 +1200,16 @@ impl CountTable {
                 name,
             })
         };
-        let small = |name: &'static str| -> Result<Vec<u64>, CountTableError> {
-            let expected = array_bytes(name, header.documents, false, 8)?;
-            let file = File::open(path.join(name))?;
-            if file.metadata()?.len() != expected {
-                return Err(corrupt(format!("{name} is not one u64 per document")));
-            }
-            let mut bytes = Vec::new();
-            file.take(expected + 1).read_to_end(&mut bytes)?;
-            if bytes.len() as u64 != expected {
-                return Err(corrupt(format!("{name} is not one u64 per document")));
-            }
-            Ok(bytes
-                .as_chunks::<8>()
-                .0
-                .iter()
-                .map(|chunk| u64::from_le_bytes(*chunk))
-                .collect())
+        let small = |name: &'static str| {
+            crate::mapped_index::U64Index::open(&path.join(name), header.documents).map_err(
+                |error| {
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        corrupt(error.to_string())
+                    } else {
+                        CountTableError::Io(error)
+                    }
+                },
+            )
         };
         let table = Self {
             value_offsets: section(
@@ -1316,8 +1324,7 @@ impl CountTable {
             .map(|pattern| pattern.name.as_str())
     }
 
-    /// Combined byte length of mapped sections, excluding the header and
-    /// owned document indexes.
+    /// Combined byte length of mapped sections and document indexes, excluding the header.
     pub fn mapped_bytes(&self) -> usize {
         [
             &self.value_offsets,
@@ -1342,6 +1349,9 @@ impl CountTable {
         .into_iter()
         .map(|section| section.map.as_ref().map_or(0, |map| map.len()))
         .fold(0, usize::saturating_add)
+        .saturating_add(self.document_ids.len().saturating_mul(8))
+        .saturating_add(self.document_sentences.len().saturating_mul(8))
+        .saturating_add(self.document_tokens.len().saturating_mul(8))
     }
 
     pub fn entry_count(&self) -> u64 {
@@ -2250,7 +2260,6 @@ impl CountTable {
         let entry_offsets = self.u64s(&self.entry_pair_offsets)?;
         let documents = self.u32s(&self.pair_documents)?;
         let counts = self.u32s(&self.pair_counts)?;
-        let mut totals = Vec::with_capacity(self.header.entries as usize);
         for (entry, range) in entry_offsets.windows(2).enumerate() {
             self.group(entry as u32)?;
             let range = range[0] as usize..range[1] as usize;
@@ -2284,55 +2293,52 @@ impl CountTable {
             {
                 return Err(corrupt(format!("entry {entry} has invalid sentences")));
             }
-            totals.push(total);
         }
         let order = self.u32s(&self.ranked_entries)?;
         let ranked_totals = self.u64s(&self.ranked_totals)?;
         for pattern in 0..self.header.patterns.len() {
             let std::ops::Range { start, end } = self.pattern_range(pattern)?;
-            let mut seen = order[start..end].to_vec();
-            seen.sort_unstable();
-            if seen.iter().copied().ne(start as u32..end as u32) {
-                return Err(corrupt(
-                    "ranked entries are not a permutation of the pattern",
-                ));
-            }
+            let mut previous = None;
             for position in start..end {
                 let entry = order[position] as usize;
-                if ranked_totals[position] != totals[entry]
-                    || (position + 1 < end && {
-                        let next = order[position + 1] as usize;
-                        (totals[next], std::cmp::Reverse(next))
-                            > (totals[entry], std::cmp::Reverse(entry))
-                    })
-                {
-                    return Err(corrupt("ranked entries are out of order"));
+                if !(start..end).contains(&entry) {
+                    return Err(corrupt("ranked entry is outside its pattern"));
                 }
+                let range = entry_offsets[entry] as usize..entry_offsets[entry + 1] as usize;
+                let total = counts[range]
+                    .iter()
+                    .map(|count| u64::from(*count))
+                    .sum::<u64>();
+                let rank = (total, std::cmp::Reverse(entry));
+                if ranked_totals[position] != total
+                    || previous.is_some_and(|previous| previous <= rank)
+                {
+                    return Err(corrupt("ranked entries are out of order or repeated"));
+                }
+                previous = Some(rank);
             }
         }
         let document_offsets = self.u64s(&self.document_pair_offsets)?;
         let document_entries = self.u32s(&self.document_entries)?;
         let document_counts = self.u32s(&self.document_counts)?;
-        let mut cursor = document_offsets.to_vec();
-        for (entry, range) in entry_offsets.windows(2).enumerate() {
-            for pair in range[0] as usize..range[1] as usize {
-                let document = documents[pair] as usize;
-                let at = cursor[document] as usize;
-                cursor[document] += 1;
-                if cursor[document] > document_offsets[document + 1]
-                    || document_entries.get(at) != Some(&(entry as u32))
-                    || document_counts.get(at) != Some(&counts[pair])
-                {
+        for document in 0..self.document_ids.len() {
+            let range =
+                document_offsets[document] as usize..document_offsets[document + 1] as usize;
+            let entries = &document_entries[range.clone()];
+            if entries.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(corrupt("document entries are not strictly ascending"));
+            }
+            for (entry, count) in entries.iter().zip(&document_counts[range]) {
+                let (entry_documents, entry_counts) = self.entry_documents(*entry)?;
+                let pair = entry_documents
+                    .binary_search(&(document as u32))
+                    .map_err(|_| corrupt("document-major pairs differ from entry-major pairs"))?;
+                if entry_counts[pair] != *count {
                     return Err(corrupt(
                         "document-major pairs differ from entry-major pairs",
                     ));
                 }
             }
-        }
-        if cursor[..self.document_ids.len()] != document_offsets[1..] {
-            return Err(corrupt(
-                "document pair offsets differ from each document's pairs",
-            ));
         }
         monotonic(
             self.u64s(&self.document_pattern_offsets)?,

@@ -2194,6 +2194,7 @@ fn oversized_tokenized_singleton_fails_before_any_batch_publication() {
             ordinal: 1,
             actual: observed,
             limit,
+            ..
         } if observed == actual && limit == actual - 1
     ));
     assert!(sink.records.is_empty());
