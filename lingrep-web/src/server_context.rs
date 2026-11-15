@@ -16,6 +16,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rayon::ThreadPool;
@@ -41,6 +42,7 @@ pub struct ServerContext {
     pool: Arc<ThreadPool>,
     fingerprint: Mutex<Option<[u8; 32]>>,
     build_permit: Arc<tokio::sync::Semaphore>,
+    builds_stopping: AtomicBool,
     tokenizer: OnceLock<Arc<Tokenizer>>,
 }
 
@@ -64,6 +66,7 @@ impl ServerContext {
             pool: fixed_pool()?,
             fingerprint: Mutex::new(None),
             build_permit: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BUILDS)),
+            builds_stopping: AtomicBool::new(false),
             tokenizer: OnceLock::new(),
         })
     }
@@ -87,6 +90,22 @@ impl ServerContext {
         Arc::clone(&self.build_permit)
     }
 
+    /// Stops this context's artifact builds and returns once none is running.
+    ///
+    /// Later builds create no staging directory, and builds remain stopped
+    /// for the life of this context.
+    pub async fn stop_builds(&self) {
+        self.builds_stopping.store(true, Ordering::Release);
+        let all = u32::try_from(MAX_CONCURRENT_BUILDS).unwrap_or(u32::MAX);
+        drop(self.build_permit.acquire_many(all).await);
+    }
+
+    /// Whether [`Self::stop_builds`] has been called.
+    #[must_use]
+    pub fn builds_stopping(&self) -> bool {
+        self.builds_stopping.load(Ordering::Acquire)
+    }
+
     /// The dictionary's blake3 fingerprint, computed once for the process.
     ///
     /// The value is [`lingrep_core::dictionary::dictionary_identity`]'s — blake3 over
@@ -94,10 +113,7 @@ impl ServerContext {
     /// `AnalysisInputs` needs and what an artifact's identity carries. That
     /// function keeps its own on-disk memo, so a warm machine answers without
     /// decompressing 1.31 GB; this mutex keeps the answer for the process on
-    /// top of it.
-    ///
-    /// Failures are not memoized: `CorpusRuntime::retry` allows an operator
-    /// to fix an invalid `--dict-path` and retry without restarting the process.
+    /// top of it. A failure is not kept: the next call derives it again.
     pub fn dictionary_fingerprint(&self) -> Result<[u8; 32], PipelineError> {
         let mut guard = self.fingerprint.lock().expect("fingerprint mutex poisoned");
         if let Some(existing) = *guard {
@@ -160,8 +176,6 @@ mod tests {
     fn a_missing_dictionary_reports_an_error_and_is_not_memoized() {
         let context = ServerContext::new("/lingrep-web/no/such/dict.zst").unwrap();
         assert!(context.dictionary_fingerprint().is_err());
-        // Not memoized: a retry must be able to succeed after the operator
-        // fixes the path, which is what CorpusRuntime::retry relies on.
         assert!(context.dictionary_fingerprint().is_err());
     }
 

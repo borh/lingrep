@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use lingrep_core::fsm::policy_program::Overlaps;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -30,6 +31,7 @@ struct Request {
     definition: String,
     corpus: Option<String>,
     search_scope: Option<String>,
+    overlaps: Option<String>,
 }
 
 fn failure(status: StatusCode, code: &'static str) -> Response {
@@ -76,9 +78,9 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
             .into_iter()
             .map(|label| label.label)
             .collect::<Vec<_>>();
-        match scope_clause(&scope, &all) {
+        match scope.where_clause(&all) {
             Ok(clause) => clause,
-            Err(()) => return failure(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_scope"),
+            Err(_) => return failure(StatusCode::UNPROCESSABLE_ENTITY, "unsupported_scope"),
         }
     };
     let Ok(artifact) = std::fs::canonicalize(ready.artifact.directory()) else {
@@ -87,7 +89,7 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
     let identity = lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes());
     let source_identity =
         lingrep_corpus::format_identity(ready.artifact.source_identity().as_bytes());
-    let fingerprint = lingrep_core::fsm::catalog_fingerprint(&request.source);
+    let fingerprint = crate::patterns::web_catalog_fingerprint(&request.source);
     let Ok(program) = std::env::current_exe().and_then(|path| program(&path)) else {
         return failure(StatusCode::BAD_GATEWAY, "summary_failed");
     };
@@ -97,6 +99,7 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
         request.source,
         artifact,
         clause,
+        crate::templates::overlaps_of_form(request.overlaps.as_deref()),
         identity,
         source_identity,
         fingerprint,
@@ -121,6 +124,7 @@ async fn summarize_admitted(
     source: String,
     artifact: PathBuf,
     clause: Option<String>,
+    overlaps: Overlaps,
     identity: String,
     source_identity: String,
     fingerprint: String,
@@ -131,52 +135,12 @@ async fn summarize_admitted(
         source,
         artifact,
         clause,
+        overlaps,
         &identity,
         &source_identity,
         &fingerprint,
     )
     .await
-}
-
-fn scope_clause(scope: &SearchScope, all: &[String]) -> Result<Option<String>, ()> {
-    fn set(labels: &[String]) -> Result<String, ()> {
-        if labels.iter().any(|label| label.contains(['"', '\0']))
-            || labels.iter().map(String::len).sum::<usize>() > 65_536
-        {
-            return Err(());
-        }
-        Ok(labels
-            .iter()
-            .map(|label| format!("\"{label}\""))
-            .collect::<Vec<_>>()
-            .join(", "))
-    }
-    if scope.is_unrestricted() {
-        return Ok(None);
-    }
-    let selected = scope.included_sections.as_deref().unwrap_or(all);
-    if all.is_empty() {
-        if scope.include_unlabelled {
-            return Ok(None);
-        }
-        return Ok(Some(
-            "@document.__lingrep_empty_scope = x & @document.__lingrep_empty_scope != x".into(),
-        ));
-    }
-    let selected = (!selected.is_empty())
-        .then(|| set(selected).map(|values| format!("@section in {{{values}}}")))
-        .transpose()?;
-    let unlabelled = scope
-        .include_unlabelled
-        .then(|| set(all).map(|values| format!("@section not in {{{values}}}")))
-        .transpose()?;
-    Ok(Some(match (selected, unlabelled) {
-        (Some(selected), Some(unlabelled)) => format!("({selected} | {unlabelled})"),
-        (Some(clause), None) | (None, Some(clause)) => clause,
-        (None, None) => {
-            "@document.__lingrep_empty_scope = x & @document.__lingrep_empty_scope != x".into()
-        }
-    }))
 }
 
 fn program(executable: &std::path::Path) -> std::io::Result<PathBuf> {
@@ -208,6 +172,7 @@ async fn run(
     source: String,
     artifact: PathBuf,
     clause: Option<String>,
+    overlaps: Overlaps,
     identity: &str,
     source_identity: &str,
     fingerprint: &str,
@@ -219,6 +184,7 @@ async fn run(
     let mut command = tokio::process::Command::new(program);
     command
         .current_dir(directory.path())
+        .env("TMPDIR", directory.path())
         .args([
             "summarize",
             "--json",
@@ -233,8 +199,15 @@ async fn run(
             "--corpus",
         ])
         .arg(artifact);
+    if let Some(table) = crate::patterns::word_vectors() {
+        command.arg("--vectors").arg(table.path());
+    }
     if let Some(clause) = clause {
         command.args(["--where", &clause]);
+    }
+    let overlaps = crate::templates::overlaps_value(overlaps);
+    if let Some(value) = overlaps {
+        command.args(["--overlaps", value]);
     }
     command
         .stdin(Stdio::null())
@@ -253,7 +226,7 @@ async fn run(
         if !child.wait().await.map_err(|_| ())?.success() {
             return Err(());
         }
-        validate(&stdout, identity, source_identity, fingerprint)?;
+        validate(&stdout, identity, source_identity, fingerprint, overlaps)?;
         Ok(stdout)
     })
     .await;
@@ -271,6 +244,7 @@ fn validate(
     identity: &str,
     source_identity: &str,
     fingerprint: &str,
+    overlaps: Option<&str>,
 ) -> Result<(), ()> {
     if !bytes.ends_with(b"\n") {
         return Err(());
@@ -294,6 +268,7 @@ fn validate(
                     && record["data"]["analysis_identity"] == identity
                     && record["data"]["source_identity"] == source_identity
                     && record["data"]["catalog_fingerprint"] == fingerprint
+                    && record["data"]["overlaps"].as_str() == overlaps
                     && record["data"]["matcher_semantics_identity"]
                         == lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY =>
             {
@@ -354,9 +329,23 @@ mod tests {
         let fingerprint = format!("{:064x}", tc.draw(g::integers::<u64>()));
         let valid = records(&identity, &fingerprint);
         assert_eq!(
-            validate(&wire(&valid), &identity, "source", &fingerprint),
+            validate(&wire(&valid), &identity, "source", &fingerprint, None),
             Ok(())
         );
+        let mut kept = valid.clone();
+        kept[0]["data"]["overlaps"] = json!("keep");
+        for (records, overlaps, expected) in [
+            (&kept, Some("keep"), Ok(())),
+            (&kept, None, Err(())),
+            (&kept, Some("longest"), Err(())),
+            (&valid, Some("keep"), Err(())),
+        ] {
+            assert_eq!(
+                validate(&wire(records), &identity, "source", &fingerprint, overlaps),
+                expected,
+                "{overlaps:?}"
+            );
+        }
         for (index, field) in [
             (0, "mode"),
             (0, "analysis_identity"),
@@ -371,7 +360,7 @@ mod tests {
             let mut invalid = valid.clone();
             invalid[index]["data"][field] = json!("incompatible");
             assert_eq!(
-                validate(&wire(&invalid), &identity, "source", &fingerprint),
+                validate(&wire(&invalid), &identity, "source", &fingerprint, None),
                 Err(()),
                 "{field}"
             );
@@ -383,7 +372,7 @@ mod tests {
             vec![valid[0].clone(), valid[2].clone(), valid[2].clone()],
         ] {
             assert_eq!(
-                validate(&wire(&invalid), &identity, "source", &fingerprint),
+                validate(&wire(&invalid), &identity, "source", &fingerprint, None),
                 Err(())
             );
         }
@@ -410,8 +399,10 @@ mod tests {
         let scope = SearchScope {
             included_sections: tc.draw(g::booleans()).then_some(selected),
             include_unlabelled: tc.draw(g::booleans()),
+            clause: None,
         };
-        let clause = scope_clause(&scope, &all)
+        let clause = scope
+            .where_clause(&all)
             .unwrap()
             .map(|source| ScopeClause::parse(&source).unwrap());
         for mask in 0..(1 << all.len()) {
@@ -462,6 +453,7 @@ mod tests {
                 "p := [].".into(),
                 directory.path().to_path_buf(),
                 None,
+                Overlaps::Catalog,
                 "identity",
                 "source",
                 "fingerprint"
@@ -472,6 +464,34 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(10));
         let pid = std::fs::read_to_string(program.with_extension("pid")).unwrap();
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_killed_summary_child_leaves_no_temporary_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let program = directory.path().join("spiller.py");
+        std::fs::write(&program, "#!/usr/bin/env python3\nimport pathlib,sys,tempfile,time\npathlib.Path(__file__).with_suffix('.spill').write_text(tempfile.mkdtemp())\ntry:\n sys.stdout.write('x' * 20000000)\n sys.stdout.flush()\nexcept BrokenPipeError:\n time.sleep(30)\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            run(
+                program.clone(),
+                "p := [].".into(),
+                directory.path().to_path_buf(),
+                None,
+                Overlaps::Catalog,
+                "identity",
+                "source",
+                "fingerprint"
+            )
+            .await
+            .is_err()
+        );
+        let spill =
+            PathBuf::from(std::fs::read_to_string(program.with_extension("spill")).unwrap());
+        let left = spill.exists();
+        let _ = std::fs::remove_dir_all(&spill);
+        assert!(!left, "{} outlived the request", spill.display());
     }
     #[cfg(target_os = "linux")]
     #[tokio::test]
@@ -490,6 +510,7 @@ mod tests {
             "p := [].".into(),
             directory.path().to_path_buf(),
             None,
+            Overlaps::Catalog,
             "identity".into(),
             "source".into(),
             "fingerprint".into(),

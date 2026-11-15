@@ -560,13 +560,15 @@ impl FrequencyPair {
     ///
     /// # Errors
     ///
-    /// An unknown pattern, or a table that fails to read.
+    /// An unknown pattern, a table that fails to read, or a raised
+    /// `cancellation`.
     pub fn profile(
         &self,
         dimensions: &[Dimension],
         pattern: &str,
         group: &serde_json::Value,
         conditions: &BTreeMap<String, Condition>,
+        cancellation: &CancellationFlag,
     ) -> Result<Result<Profile, Unsupported>, QueryError> {
         let Some((_, entry)) = self.find_entry(pattern, group)? else {
             return Ok(Err(Unsupported::UnknownEntry));
@@ -575,7 +577,7 @@ impl FrequencyPair {
             Ok(found) => found,
             Err(unsupported) => return Ok(Err(unsupported)),
         };
-        let mask = self.mask(&self.admitted(parsed.as_ref())?);
+        let mask = self.mask(&self.admitted(parsed.as_ref(), cancellation)?);
         let (documents, counts) = self.table.entry_documents(entry)?;
         let pairs = || {
             documents
@@ -592,13 +594,14 @@ impl FrequencyPair {
         }
         let mut charts = Vec::with_capacity(dimensions.len());
         for dimension in dimensions {
+            super::check_cancellation(cancellation)?;
             let mut others = conditions.clone();
             others.remove(&dimension.key);
             let (_, parsed) = match self.conditions_clause(dimensions, &others) {
                 Ok(found) => found,
                 Err(unsupported) => return Ok(Err(unsupported)),
             };
-            let mask = self.mask(&self.admitted(parsed.as_ref())?);
+            let mask = self.mask(&self.admitted(parsed.as_ref(), cancellation)?);
             let sums = self.value_sums(&dimension.key, &mask, pairs())?;
             let (none, sums) = sums
                 .split_last()
@@ -733,59 +736,43 @@ impl FrequencyPair {
         conditions: &BTreeMap<String, Condition>,
         offset: usize,
         limit: usize,
-    ) -> Result<Result<Lines, Unsupported>, String> {
-        let Some((_, entry)) = self
-            .find_entry(pattern, group)
-            .map_err(|error| error.to_string())?
-        else {
+    ) -> Result<Result<Lines, Unsupported>, QueryError> {
+        let Some((_, entry)) = self.find_entry(pattern, group)? else {
             return Ok(Err(Unsupported::UnknownEntry));
         };
         let (_, parsed) = match self.conditions_clause(dimensions, conditions) {
             Ok(found) => found,
             Err(unsupported) => return Ok(Err(unsupported)),
         };
-        let mask = self.mask(
-            &self
-                .admitted(parsed.as_ref())
-                .map_err(|error| error.to_string())?,
-        );
+        let mask = self.mask(&self.admitted(parsed.as_ref(), cancel)?);
         let limit = if limit == 0 {
             LINE_PAGE
         } else {
             limit.min(MAX_LINE_PAGE)
         };
-        let (documents, counts) = self
-            .table
-            .entry_documents(entry)
-            .map_err(|error| error.to_string())?;
+        let (documents, counts) = self.table.entry_documents(entry)?;
         let mut admitted = documents
             .iter()
             .zip(counts)
             .filter(|(document, _)| mask.admits(**document as usize))
             .map(|(document, count)| {
                 let document = *document as usize;
-                let sentences = self
-                    .sentences(document)
-                    .map_err(|error| error.to_string())?;
+                let sentences = self.sentences(document)?;
                 Ok((document, u64::from(*count), sentences))
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, QueryError>>()?;
         admitted.sort_by_key(|(_, _, sentences)| sentences.start);
         let total = admitted.iter().map(|(_, count, _)| count).sum::<u64>();
-        let table_group = self.entry_group(entry).map_err(|error| error.to_string())?;
+        let table_group = self.entry_group(entry)?;
         let matcher = self
             .matcher
             .as_ref()
-            .ok_or("the corpus has no bound catalog")?;
-        let catalog = matcher
-            .patterns
-            .get(pattern)
-            .ok_or_else(|| format!("pattern {pattern} is not bound to the corpus"))?;
+            .ok_or_else(|| QueryError::Lines("the corpus has no bound catalog".into()))?;
+        let catalog = matcher.patterns.get(pattern).ok_or_else(|| {
+            QueryError::Lines(format!("pattern {pattern} is not bound to the corpus"))
+        })?;
         let policy = catalog.bound.catalog_policy();
-        let (sentences, sentence_counts) = self
-            .table
-            .entry_sentences(entry)
-            .map_err(|error| error.to_string())?;
+        let (sentences, sentence_counts) = self.table.entry_sentences(entry)?;
         let ids = self.table.document_ids();
         let (listed, skip) = page_sentences(
             admitted
@@ -794,7 +781,8 @@ impl FrequencyPair {
             sentences,
             sentence_counts,
             offset as u64..offset.saturating_add(limit) as u64,
-        )?;
+        )
+        .map_err(QueryError::Lines)?;
         let mut sink = EntrySink {
             pattern,
             entry: &table_group,
@@ -809,7 +797,7 @@ impl FrequencyPair {
                 listed.iter().map(|(sentence, _)| *sentence).collect(),
                 &mut sink,
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| QueryError::Lines(error.to_string()))?;
         let mut found = sink.lines.into_iter().peekable();
         let mut lines = Vec::new();
         for (sentence, count) in listed {
@@ -819,9 +807,9 @@ impl FrequencyPair {
                 lines.push(line);
             }
             if held != count {
-                return Err(format!(
+                return Err(QueryError::Lines(format!(
                     "sentence {sentence} holds {held} occurrences of the entry, but the table counts {count}"
-                ));
+                )));
             }
         }
         let lines = lines

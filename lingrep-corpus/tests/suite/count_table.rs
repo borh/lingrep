@@ -575,7 +575,11 @@ fn a_raised_cancellation_or_an_unpublished_table_leaves_no_directory() {
     let staged = writer_for(&path, &documents, &pairs)
         .finish(&CancellationFlag::new())
         .expect("finish");
-    assert_eq!(left(), 1, "a staged table is beside its destination");
+    assert_eq!(
+        left(),
+        2,
+        "a staged table and its lock file are beside its destination"
+    );
     assert!(!path.exists());
     drop(staged);
     assert_eq!(left(), 0, "an unpublished staged table is removed");

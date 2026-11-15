@@ -9,12 +9,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `install.sh` and `ling dictionary install` download from a mirror when
-  `LING_DOWNLOAD_BASE` names a URL laid out like
-  `https://github.com/borh/lingrep/releases/download`; `ling dictionary
-  install --download-base URL` does the same. The installer accepts only an
-  `https://` URL. A mirrored dictionary must still match the digest built into
-  `ling`.
+- `ling serve` and `lingrep-web` accept `--vectors FILE`. With a word-vector
+  file, the Workbench reports a file that the catalog's `vectors:` lines do not
+  name, its Definition tab lists the values each `near` test selects, and a
+  Similar Words page ranks the values near one word. `--vectors` on `ling matches`
+  and `ling summarize` applies to `--serve` and `--link` too.
+- The Workbench accepts a `--where` clause in its search scope and shows
+  equivalent `ling summarize` and `ling matches` commands.
+- `ling matches --link NAME=URL` and `ling summarize --link NAME=URL` print
+  a Workbench link without reading the corpus. The link includes the catalog,
+  scope clause and overlap setting; `NAME` identifies the server's corpus.
+- `ling matches --serve` and `ling summarize --serve` start the Workbench on
+  a free loopback port and open the query in `BROWSER` or the default browser.
+  `--serve=HOST:PORT` sets the address. `ling serve --port 0` prints its bound port.
+- `matches`, `summarize` and the Workbench accept overlap modes `catalog`,
+  `keep` and `longest`. `keep` skips `resolve` statements; other policy statements
+  still apply. `longest` adds longest-match resolution when the catalog declares
+  no `resolve`. Workbench links, exports, inspection and live summaries retain
+  the setting. Frequencies and Compare use the catalog's policy.
+- The Frequencies and Compare pages identify their corpus. The Sample Debugger
+  states that it reads only the sample text.
+- Cluster analysis accepts a minimum occurrence count for patterns in both
+  trees. Section distributions and rate contrasts retain every pattern.
+- `ling analyzer prepare` accepts `--download-base` and `LING_DOWNLOAD_BASE`
+  for adapter wheels, alongside the installer and dictionary mirror support.
+  CLI archives and wheels use `v<version>/`; dictionaries use `unidic-202512/`.
+  The installer and adapter downloads require HTTPS; dictionary digests remain
+  checked against the values built into `ling`.
+
+### Changed
+
+- Prepared artifacts use generation 3 and provenance schema 5. Rebuild
+  generation 2 artifacts with `ling corpus build`.
+
+### Fixed
+
+- The Workbench reports unavailable token attributes and catalog-binding
+  failures with their reasons.
+- Searches cancel after 30 seconds without an open progress stream. A
+  replacement scan waits for the superseded scan to stop and displays only
+  its own progress. Failed searches no longer also report a lost connection.
+- On SIGTERM or SIGINT, the server stops during count-table binding, waits
+  up to 3 seconds for scans, and allows corpus builds up to 10 seconds to
+  remove staging directories and lock files. Interrupted live summaries
+  remove their child process's temporary files.
+- Corpus, count-table and reading-sidecar builds reclaim staging directories
+  from terminated builds of the same artifact on the same host. Directories
+  without lock files require manual cleanup; see the deployment guide.
+- The server rebuilds corrupt artifacts beside declared sources once per
+  corpus per process, including corruption detected at startup. Reports from
+  a replaced artifact do not invalidate its replacement. Declared artifacts
+  and artifacts with non-corruption errors remain on disk.
+- Unsupported manifest, graph and normalization versions and SQLite
+  environment failures are distinguished from corruption.
+- Corpus opening checks finish and cache their results after client disconnection.
+- Results downloads are disabled during a newer query and restored if it fails.
+  Rejected downloads report the reason and recovery step. Exports skip the same
+  oversized sentences as the displayed run and report the count in the About sheet.
+- Frequency and comparison endpoints return query errors as 400 responses;
+  internal errors return 500 without exposing server paths. Document spools
+  remain readable after their paths are removed by temporary-file cleanup.
+- Shared links preserve changed compound and document-reach options. Editor
+  drafts survive reloads without replacing a followed link's pattern.
+- Empty patterns are rejected before submission. Edits made during submission
+  remain reported until resubmission, and draft changes are stored once.
+- Escape closes only the open modal. Condition controls support keyboard use
+  and retain focus, filter text and caret position across redraws.
+- Frequencies and Compare report failed loads, retain rejected clause edits,
+  abort superseded requests and restore paging controls after cancellation.
+  Value searches report both listed and total counts.
+- The Sample Debugger runs once on arrival, reports rejected runs and updates
+  after edits when the pattern editor cannot load.
+- Query-library undo reports a conflicting re-added query and remains available.
+- Japanese translations cover dynamic results, editor diagnostics, accessible
+  labels and server errors, and update when the language changes. Compiler and
+  binder diagnostics remain in English. Counts retain thousands separators in
+  both locales, and scope and clause terminology is consistent within each locale.
 
 ## [0.7.0] - 2026-11-10
 

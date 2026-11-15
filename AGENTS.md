@@ -39,6 +39,8 @@ criterion. Do not add performance numbers to this guide.
 - `lingrep-corpus/`: immutable V1 prepared-corpus artifacts, identity, provenance,
   and bounded sentence sources. N-grams are expressed by `patterns/ngrams.lx`;
   gravity is an external analysis example over `ling` JSONL.
+  `word_vectors` reads the word-vector file that answers `near` tests and
+  `ling neighbors`; both binaries use it, so the two select the same values.
 - `lingrep-cli-common/`: shared clap argument groups reused across the CLI binaries.
 - `lingrep-perf/`: campaign tooling for performance work, not a CI feature. The
   counted-work screen and the orchestration half require `--features screen`; do

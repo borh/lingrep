@@ -1,5 +1,5 @@
 {% macro capture_lane(lanes, id_prefix, token_count) %}{% for lane in lanes %}
-        <div class="capture-lane" role="group" aria-label="Capture lane" style="grid-template-columns: repeat({{ token_count }}, minmax(0, 1fr))">
+        <div class="capture-lane" role="group" aria-label="Capture lane" data-i18n-aria-label="capture.lane" style="grid-template-columns: repeat({{ token_count }}, minmax(0, 1fr))">
             {% for capture in lane.captures %}
             <button type="button"
                     class="capture-selector"
@@ -48,3 +48,12 @@
       </div>
       </div>
 {% endif %}{% endmacro %}
+
+{% macro export_link(workbench_id, revision) %}<a class="export-download" download
+       href="api/export/{{ workbench_id }}/{{ revision }}">
+      <span data-i18n="results.download">Download results in this search scope</span>
+    </a>{% endmacro %}
+
+{% macro corpus_name(name, digest, key) %}<p class="corpus-context-name"><span data-i18n="corpus.label">Corpus:</span> <span{% if !digest.is_empty() %} title="{{ digest }}"{% endif %}{% if !key.is_empty() %} data-i18n="{{ key }}"{% endif %}>{{ name }}</span></p>{% endmacro %}
+
+{% macro corpus_line(name, key, hidden) %}<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label" data-corpus-line{% if hidden %} hidden{% endif %}>{% call corpus_name(name, "", key) %}{% endcall %}</section>{% endmacro %}

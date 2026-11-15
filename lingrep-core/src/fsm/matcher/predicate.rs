@@ -25,11 +25,51 @@ pub(crate) struct CompiledAttribute {
     complement: bool,
 }
 
+/// The operands of `in` and `not in`.
+#[derive(Clone)]
+pub(crate) struct Members {
+    /// In source order, which predicate identity is defined over.
+    declared: Box<[CompactString]>,
+    /// The same values sorted, when there are more than
+    /// [`Members::SCAN_LIMIT`] of them; empty otherwise.
+    sorted: Box<[CompactString]>,
+}
+
+impl Members {
+    /// The largest list that `contains` scans instead of searching. Equality
+    /// rejects on length before reading bytes and ordering cannot, so a scan
+    /// is cheaper for the few-member lists that hand-written tests have.
+    const SCAN_LIMIT: usize = 16;
+
+    pub(super) fn new(declared: &[CompactString]) -> Self {
+        let mut sorted = Vec::new();
+        if declared.len() > Self::SCAN_LIMIT {
+            sorted.extend_from_slice(declared);
+            sorted.sort_unstable();
+        }
+        Self {
+            declared: declared.into(),
+            sorted: sorted.into_boxed_slice(),
+        }
+    }
+
+    #[inline]
+    pub(super) fn contains(&self, value: &str) -> bool {
+        if self.sorted.is_empty() {
+            self.declared.iter().any(|member| member == value)
+        } else {
+            self.sorted
+                .binary_search_by(|member| member.as_str().cmp(value))
+                .is_ok()
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum CompiledValue {
     Single(CompactString),
-    OneOf(Box<[CompactString]>),
-    NotIn(Box<[CompactString]>),
+    OneOf(Members),
+    NotIn(Members),
     SetHas(CompactString),
     SetHasAny(Box<[CompactString]>),
     SetNotHas(CompactString),
@@ -1084,7 +1124,7 @@ impl PredicateCatalog {
             }
             let values = match &attribute.value {
                 CompiledValue::Single(value) => Some(vec![value.clone()]),
-                CompiledValue::OneOf(values) => Some(values.to_vec()),
+                CompiledValue::OneOf(values) => Some(values.declared.to_vec()),
                 CompiledValue::NotIn(_)
                 | CompiledValue::SetHas(_)
                 | CompiledValue::SetHasAny(_)
@@ -1150,12 +1190,8 @@ impl PredicateCatalog {
                     // matcher never paid the M·N the binder did. Holding an
                     // `Arc` here would add atomic refcount traffic to the hot
                     // evaluation path without sharing additional values.
-                    AttrValueType::OneOf(values) => {
-                        CompiledValue::OneOf(values.to_vec().into_boxed_slice())
-                    }
-                    AttrValueType::NotIn(values) => {
-                        CompiledValue::NotIn(values.to_vec().into_boxed_slice())
-                    }
+                    AttrValueType::OneOf(values) => CompiledValue::OneOf(Members::new(values)),
+                    AttrValueType::NotIn(values) => CompiledValue::NotIn(Members::new(values)),
                     AttrValueType::SetHas(value) => CompiledValue::SetHas(value.clone()),
                     AttrValueType::SetHasAny(values) => {
                         CompiledValue::SetHasAny(values.to_vec().into_boxed_slice())
@@ -1323,10 +1359,10 @@ impl PredicateEvaluator<'_> {
                 matches!(actual, crate::token_match::AttributeValueRef::Scalar(actual) if actual == value)
             }
             CompiledValue::OneOf(values) => {
-                matches!(actual, crate::token_match::AttributeValueRef::Scalar(actual) if values.iter().any(|value| value == actual))
+                matches!(actual, crate::token_match::AttributeValueRef::Scalar(actual) if values.contains(actual))
             }
             CompiledValue::NotIn(values) => {
-                matches!(actual, crate::token_match::AttributeValueRef::Scalar(actual) if values.iter().all(|value| value != actual))
+                matches!(actual, crate::token_match::AttributeValueRef::Scalar(actual) if !values.contains(actual))
             }
             // `~` and `!~` read whichever kind the schema declared. Over a
             // string set they are existential, exactly as `has` and `not has`
@@ -1421,11 +1457,9 @@ impl CompiledAttribute {
             && self.complement == raw.complement
             && match (&self.value, &raw.value) {
                 (CompiledValue::Single(left), AttrValueType::Single(right)) => left == right,
-                (CompiledValue::OneOf(left), AttrValueType::OneOf(right)) => {
-                    left.as_ref() == right.as_ref()
-                }
-                (CompiledValue::NotIn(left), AttrValueType::NotIn(right)) => {
-                    left.as_ref() == right.as_ref()
+                (CompiledValue::OneOf(left), AttrValueType::OneOf(right))
+                | (CompiledValue::NotIn(left), AttrValueType::NotIn(right)) => {
+                    left.declared.as_ref() == right.as_ref()
                 }
                 (CompiledValue::SetHas(left), AttrValueType::SetHas(right)) => left == right,
                 (CompiledValue::SetHasAny(left), AttrValueType::SetHasAny(right)) => {
@@ -1788,6 +1822,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn membership_holds_for_exactly_the_listed_values_in_any_source_order() {
+        let members: Vec<CompactString> = (0..97_u32)
+            .map(|step| CompactString::from(format!("m{:02}", (step * 31) % 97)))
+            .collect();
+        let token = |lemma: &str| {
+            let mut token = TokenInfo::default();
+            token.set(TokenAttributeIndex::Lemma, lemma.into());
+            token
+        };
+        let mut catalog = PredicateCatalog::default();
+        let listed = catalog.intern(&[attr(
+            TokenAttributeIndex::Lemma,
+            AttrValueType::OneOf(Arc::from(members.clone())),
+        )]);
+        let unlisted = catalog.intern(&[attr(
+            TokenAttributeIndex::Lemma,
+            AttrValueType::NotIn(Arc::from(members.clone())),
+        )]);
+        for member in &members {
+            assert!(catalog.matches(listed, &token(member)), "{member}");
+            assert!(!catalog.matches(unlisted, &token(member)), "{member}");
+        }
+        for outsider in ["", "m", "m97", "m0", "n00", "l99"] {
+            assert!(!catalog.matches(listed, &token(outsider)), "{outsider}");
+            assert!(catalog.matches(unlisted, &token(outsider)), "{outsider}");
+        }
+
+        let mut reordered = members.clone();
+        reordered.sort();
+        assert_ne!(
+            catalog.intern(&[attr(
+                TokenAttributeIndex::Lemma,
+                AttrValueType::OneOf(Arc::from(reordered)),
+            )]),
+            listed,
+            "predicate identity follows source order",
+        );
     }
 
     #[test]

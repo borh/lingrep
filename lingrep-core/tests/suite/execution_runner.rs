@@ -3197,3 +3197,139 @@ fn analyzed_executor_does_not_finalize_after_cancellation_while_pulling_eof() {
     assert_eq!(sink.finished, 0);
     assert!(progress.is_empty());
 }
+
+const WINDOW_CATALOG: &str = "key: [text]\npattern one := [].\n\n\
+    key: [$a.text, $b.text]\npattern two := (?<a> []) (?<b> []).";
+
+#[test]
+fn token_windows_describe_only_catalogs_of_keyed_unconstrained_runs() {
+    let windows = matcher(WINDOW_CATALOG).token_windows().unwrap();
+    let shape = windows
+        .iter()
+        .map(|window| {
+            (
+                window.name.as_str(),
+                window.width,
+                window
+                    .key
+                    .iter()
+                    .map(|field| (field.position, field.attribute.as_str()))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shape,
+        [
+            ("one", 1, vec![(0, "text")]),
+            ("two", 2, vec![(0, "text"), (1, "text")]),
+        ]
+    );
+
+    for (case, source) in [
+        (
+            "constrained token",
+            "key: [text]\npattern one := [upos=NOUN].",
+        ),
+        ("no key", "pattern one := []."),
+        (
+            "repetition",
+            "key: [$a.text]\npattern two := (?<a> []) []+.",
+        ),
+        (
+            "policy block",
+            "key: [text]\npattern one := [].\n\nkey: [text]\npattern other := [].\n\n\
+             policy\n  resolve patterns rank: [longest, start, end, pattern].\nend",
+        ),
+    ] {
+        assert_eq!(matcher(source).token_windows(), None, "{case}");
+    }
+}
+
+struct WindowSink {
+    counts_windows: bool,
+    records: Vec<usize>,
+}
+
+impl MatchSink for WindowSink {
+    fn counts_token_windows(&self) -> bool {
+        self.counts_windows
+    }
+
+    fn push_windows<V: TokenSequence + Sync>(
+        &mut self,
+        _pool: &rayon::ThreadPool,
+        _locations: &[SentenceLocation],
+        sentences: &[V],
+        _cancel: &CancellationFlag,
+    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+        let controls = sentences
+            .iter()
+            .map(|sentence| {
+                let records_emitted = sentence.len() + sentence.len().saturating_sub(1);
+                self.records.push(records_emitted);
+                SinkControl::Continue { records_emitted }
+            })
+            .collect();
+        Ok((controls, false))
+    }
+
+    fn push(
+        &mut self,
+        _location: &SentenceLocation,
+        _sentence: &dyn TokenSequence,
+        matches: &[Match],
+    ) -> Result<SinkControl, ExecutionError> {
+        assert!(
+            !self.counts_windows,
+            "a window-counting sink receives no matches"
+        );
+        self.records.push(matches.len());
+        Ok(SinkControl::Continue {
+            records_emitted: matches.len(),
+        })
+    }
+}
+
+#[test]
+fn a_window_counting_sink_gets_the_counters_matching_would_report() {
+    let run = |counts_windows| {
+        let (source, _) = StaticSource::new([ExecutionBatch::tokenized(vec![
+            ExecutionSentence {
+                location: location(0, "a.md", 0),
+                value: vec![token("猫")],
+            },
+            ExecutionSentence {
+                location: location(1, "a.md", 1),
+                value: vec![token("猫"), token("と"), token("犬")],
+            },
+        ])]);
+        let mut sink = WindowSink {
+            counts_windows,
+            records: Vec::new(),
+        };
+        let outcome = execute_fixture(
+            source,
+            |_| unreachable!("tokenized source bypasses tokenization"),
+            &matcher(WINDOW_CATALOG),
+            &pool(),
+            &ExecutionLimits::default(),
+            10,
+            &CancellationFlag::new(),
+            &mut sink,
+            &mut NoopProgress,
+            &mut NoopObserver,
+            lingrep_core::execution::PolicySelection::Apply,
+            &SentenceAdmission::All,
+        )
+        .unwrap();
+        (sink.records, outcome)
+    };
+
+    let (matched, matched_outcome) = run(false);
+    let (windowed, windowed_outcome) = run(true);
+
+    assert_eq!(matched, [1, 5]);
+    assert_eq!(windowed, matched);
+    assert_eq!(windowed_outcome, matched_outcome);
+}

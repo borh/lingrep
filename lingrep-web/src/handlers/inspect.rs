@@ -41,10 +41,11 @@ async fn inspect_token(
     .await
     {
         Ok(fragment) => super::render_or_500(fragment),
-        Err(error) => inspection_response(error),
+        Err(response) => response,
     }
 }
 
+#[allow(clippy::result_large_err)]
 async fn inspect(
     store: &RequestStore,
     workbench: WorkbenchId,
@@ -52,10 +53,12 @@ async fn inspect(
     pattern_index: usize,
     reference_ordinal: usize,
     token_index: usize,
-) -> Result<TokenInspectionFragment, EndpointInspectionError> {
-    let (_snapshot, inspector, _ready, runtime) =
-        bound_inspector(store, &workbench, revision).await?;
-    let pattern = PatternKey::new(pattern_index).ok_or(EndpointInspectionError::UnknownPattern)?;
+) -> Result<TokenInspectionFragment, Response> {
+    let (_snapshot, inspector, ready, runtime) = bound_inspector(store, &workbench, revision)
+        .await
+        .map_err(inspection_response)?;
+    let pattern = PatternKey::new(pattern_index)
+        .ok_or_else(|| inspection_response(EndpointInspectionError::UnknownPattern))?;
     let inspection = match inspector
         .token(
             pattern,
@@ -67,11 +70,9 @@ async fn inspect(
     {
         Ok(inspection) => inspection,
         Err(InspectionError::CacheCorruption) => {
-            // The workbench's own corpus, not the store's default.
-            runtime.invalidator().invalidate_corrupt().await;
-            return Err(EndpointInspectionError::CacheCorruption);
+            return Err(super::corrupt_artifact_response(&runtime, &ready).await);
         }
-        Err(other) => return Err(other.into()),
+        Err(other) => return Err(inspection_response(other.into())),
     };
     Ok(TokenInspectionFragment::new(inspection))
 }

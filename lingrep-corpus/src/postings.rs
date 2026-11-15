@@ -1,16 +1,18 @@
 use crate::{AnalysisIdentity, CorpusError, TokenSchemaIdentity, tokens::TokenReader};
 use lingrep_core::{
     fsm::SentenceFilter,
-    spill::{SortedRunCounts, SpillPolicy, TempBudget},
+    spill::{BudgetedWriter, TempBudget},
     token_match::{
         AttributeKey, AttributeKind, AttributeOrdinal, BoundProjection, BoundTokenSentence,
     },
 };
 use memmap2::{Mmap, MmapOptions};
-use serde::{Deserialize, Serialize};
+use rustc_hash::FxHashMap;
 use std::{
+    cmp::Reverse,
+    collections::BinaryHeap,
     fs::{File, OpenOptions},
-    io::{Seek, Write},
+    io::{BufWriter, Seek, Write},
     path::Path,
     sync::{
         Arc,
@@ -58,11 +60,45 @@ pub(crate) struct PostingIndex {
     total_bytes: u64,
     sentences: u64,
 }
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
-struct Key {
-    attribute: u8,
-    value: String,
-    sentence: u64,
+#[derive(Default)]
+struct PendingList {
+    last: u64,
+    deltas: Vec<u8>,
+}
+const RUN_BYTES: usize = 32 * 1024 * 1024;
+const VALIDATION_BLOCKS: usize = 32;
+const PENDING_VALUE_BYTES: usize = 64;
+
+fn corrupt_run() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, "postings run is corrupt")
+}
+fn read_delta(bytes: &[u8], at: &mut usize) -> std::io::Result<u64> {
+    let mut value = 0_u64;
+    let mut shift = 0;
+    loop {
+        let byte = *bytes.get(*at).ok_or_else(corrupt_run)?;
+        *at += 1;
+        if shift > 63 {
+            return Err(corrupt_run());
+        }
+        value |= u64::from(byte & 127) << shift;
+        if byte < 128 {
+            return Ok(value);
+        }
+        shift += 7;
+    }
+}
+fn read_group<'a>(run: &'a [u8], at: &mut usize) -> std::io::Result<(u8, &'a [u8], &'a [u8])> {
+    let attribute = *run.get(*at).ok_or_else(corrupt_run)?;
+    *at += 1;
+    let mut field = || {
+        let len = usize::try_from(read_delta(run, at)?).map_err(|_| corrupt_run())?;
+        let end = at.checked_add(len).ok_or_else(corrupt_run)?;
+        let bytes = run.get(*at..end).ok_or_else(corrupt_run)?;
+        *at = end;
+        Ok::<_, std::io::Error>(bytes)
+    };
+    Ok((attribute, field()?, field()?))
 }
 
 fn invalid(message: impl Into<String>) -> CorpusError {
@@ -110,7 +146,11 @@ fn delta(out: &mut Vec<u8>, mut value: u64) {
 pub(crate) struct PostingsBuilder {
     coverage: Vec<String>,
     attributes: Vec<AttributeOrdinal>,
-    sorted: SortedRunCounts<Key>,
+    pending: Vec<FxHashMap<Box<str>, PendingList>>,
+    pending_bytes: usize,
+    runs: BufWriter<BudgetedWriter<File>>,
+    runs_len: u64,
+    run_ends: Vec<u64>,
     sentences: u64,
 }
 
@@ -133,25 +173,25 @@ impl PostingsBuilder {
         if coverage.is_empty() {
             return Ok(None);
         }
-        let sorted = SortedRunCounts::with_policy(
-            SpillPolicy {
-                max_pending_bytes: 16 * 1024 * 1024,
-                max_pending_keys: 65_536,
-                merge_fan_in: 16,
-            },
-            budget,
-        )?;
+        let runs = BufWriter::new(BudgetedWriter::new(
+            tempfile::tempfile()?,
+            budget.reserve(0)?,
+        ));
         Ok(Some(Self {
+            pending: attributes.iter().map(|_| FxHashMap::default()).collect(),
+            pending_bytes: 0,
+            runs,
+            runs_len: 0,
+            run_ends: Vec::new(),
             coverage,
             attributes,
-            sorted,
             sentences: 0,
         }))
     }
 
     pub(crate) fn push(&mut self, sentence: &BoundTokenSentence) -> Result<(), CorpusError> {
         let mut values = Vec::with_capacity(sentence.len());
-        for (attribute, ordinal) in self.attributes.iter().enumerate() {
+        for (ordinal, pending) in self.attributes.iter().zip(&mut self.pending) {
             values.clear();
             values.extend((0..sentence.len()).filter_map(|token| {
                 sentence
@@ -162,20 +202,46 @@ impl PostingsBuilder {
             values.sort_unstable();
             values.dedup();
             for &value in &values {
-                self.sorted.add(
-                    Key {
-                        attribute: u8::try_from(attribute).expect("two indexed attributes fit u8"),
-                        value: value.into(),
-                        sentence: self.sentences,
-                    },
-                    1,
-                )?;
+                let list = if let Some(list) = pending.get_mut(value) {
+                    list
+                } else {
+                    self.pending_bytes += value.len() + PENDING_VALUE_BYTES;
+                    pending.entry(value.into()).or_default()
+                };
+                let before = list.deltas.len();
+                delta(&mut list.deltas, self.sentences - list.last);
+                list.last = self.sentences;
+                self.pending_bytes += list.deltas.len() - before;
             }
         }
         self.sentences = self
             .sentences
             .checked_add(1)
             .ok_or_else(|| invalid("sentence count overflow"))?;
+        if self.pending_bytes >= RUN_BYTES {
+            self.flush_run()?;
+        }
+        Ok(())
+    }
+
+    fn flush_run(&mut self) -> std::io::Result<()> {
+        let mut scratch = Vec::new();
+        for (attribute, pending) in self.pending.iter_mut().enumerate() {
+            let mut groups = pending.drain().collect::<Vec<_>>();
+            groups.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            for (value, list) in groups {
+                scratch.clear();
+                scratch.push(u8::try_from(attribute).expect("two indexed attributes fit u8"));
+                delta(&mut scratch, value.len() as u64);
+                scratch.extend_from_slice(value.as_bytes());
+                delta(&mut scratch, list.deltas.len() as u64);
+                self.runs.write_all(&scratch)?;
+                self.runs.write_all(&list.deltas)?;
+                self.runs_len += (scratch.len() + list.deltas.len()) as u64;
+            }
+        }
+        self.pending_bytes = 0;
+        self.run_ends.push(self.runs_len);
         Ok(())
     }
 
@@ -188,12 +254,19 @@ impl PostingsBuilder {
         token_hash: &str,
         should_continue: &mut impl FnMut() -> bool,
     ) -> Result<bool, CorpusError> {
+        let mut this = self;
+        this.flush_run()?;
         let Self {
             coverage,
-            mut sorted,
+            runs,
+            run_ends,
             sentences,
             ..
-        } = self;
+        } = this;
+        let (runs, _reservation) = runs
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?
+            .into_parts();
         if sentences != reader.sentence_count() {
             return Err(invalid("captured sentence count differs from token file"));
         }
@@ -207,11 +280,17 @@ impl PostingsBuilder {
             if !should_continue() {
                 return Ok(false);
             }
-            let (_, entry) = reader.block_for_sentence(start)?;
-            total_bytes += entry.stored_len;
-            let ordinals = (start..start + entry.sentence_count).collect::<Vec<_>>();
+            let batch_start = start;
+            for _ in 0..VALIDATION_BLOCKS {
+                if start >= reader.sentence_count() {
+                    break;
+                }
+                let (_, entry) = reader.block_for_sentence(start)?;
+                total_bytes += entry.stored_len;
+                start += entry.sentence_count;
+            }
+            let ordinals = (batch_start..start).collect::<Vec<_>>();
             reader.decode_bound_ordinals(&ordinals, &projection, false)?;
-            start += entry.sentence_count;
         }
         let mut file = OpenOptions::new()
             .write(true)
@@ -225,14 +304,14 @@ impl PostingsBuilder {
         let mut count = 0;
         let mut block_end = None;
         let mut directory_charge = 256;
-        let sorted_result = sorted.visit_sorted(|key, _| {
+        let mut emit = |attribute: u8, value: &str, sentence: u64| {
             if !should_continue() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Interrupted,
                     "postings build cancelled",
                 ));
             }
-            let attribute = coverage.get(usize::from(key.attribute)).ok_or_else(|| {
+            let attribute = coverage.get(usize::from(attribute)).ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "posting attribute is outside coverage",
@@ -240,7 +319,7 @@ impl PostingsBuilder {
             })?;
             if !entries
                 .last()
-                .is_some_and(|(group, _)| group.0 == *attribute && group.1 == key.value)
+                .is_some_and(|(group, _)| group.0 == *attribute && group.1 == value)
             {
                 if count != 0 {
                     entries
@@ -250,7 +329,7 @@ impl PostingsBuilder {
                         .chunks
                         .push(chunk(&mut file, &mut raw, count, first, previous)?);
                 }
-                let group = (attribute.clone(), key.value.clone());
+                let group = (attribute.clone(), value.to_owned());
                 directory_charge += group.0.len() + group.1.len() + 128;
                 if directory_charge > MAX_DIRECTORY {
                     return Err(std::io::Error::new(
@@ -286,21 +365,57 @@ impl PostingsBuilder {
                 count = 0;
             }
             if count == 0 {
-                first = key.sentence;
+                first = sentence;
             }
-            delta(&mut raw, key.sentence - previous);
-            previous = key.sentence;
+            delta(&mut raw, sentence - previous);
+            previous = sentence;
             count += 1;
             entry.frequency += 1;
-            if block_end.is_none_or(|end| key.sentence >= end) {
+            if block_end.is_none_or(|end| sentence >= end) {
                 let (_, block_entry) = reader
-                    .block_for_sentence(key.sentence)
+                    .block_for_sentence(sentence)
                     .map_err(std::io::Error::other)?;
                 block_end = Some(block_entry.first_sentence + block_entry.sentence_count);
                 entry.covered_bytes += block_entry.stored_len;
             }
             Ok(())
-        });
+        };
+        // Runs hold disjoint, ascending sentence ranges in run order, so equal
+        // values merge by run index.
+        let sorted_result = (|| -> std::io::Result<()> {
+            if run_ends.last().is_none_or(|end| *end == 0) {
+                return Ok(());
+            }
+            let map = unsafe { MmapOptions::new().map(&runs)? };
+            let mut ends = Vec::with_capacity(run_ends.len());
+            let mut heap = BinaryHeap::new();
+            let mut start = 0;
+            for (run, end) in run_ends.iter().enumerate() {
+                let end = usize::try_from(*end).map_err(|_| corrupt_run())?;
+                let bytes = map.get(..end).ok_or_else(corrupt_run)?;
+                if start < end {
+                    let mut at = start;
+                    let (attribute, value, deltas) = read_group(bytes, &mut at)?;
+                    heap.push(Reverse((attribute, value, run, deltas, at)));
+                }
+                ends.push(end);
+                start = end;
+            }
+            while let Some(Reverse((attribute, value, run, deltas, mut at))) = heap.pop() {
+                let value = std::str::from_utf8(value).map_err(|_| corrupt_run())?;
+                let mut sentence = 0;
+                let mut cursor = 0;
+                while cursor < deltas.len() {
+                    sentence += read_delta(deltas, &mut cursor)?;
+                    emit(attribute, value, sentence)?;
+                }
+                if at < ends[run] {
+                    let (attribute, value, deltas) = read_group(&map[..ends[run]], &mut at)?;
+                    heap.push(Reverse((attribute, value, run, deltas, at)));
+                }
+            }
+            Ok(())
+        })();
         if let Err(error) = sorted_result {
             if error.kind() == std::io::ErrorKind::FileTooLarge {
                 drop(file);

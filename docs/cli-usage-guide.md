@@ -5,13 +5,19 @@
 ## Command tree
 
 ```text
-ling check
 ling matches
 ling summarize
-ling corpus build|inspect|inventory|variants
+ling table
+ling contrast
 ling tokenize
 ling coverage
 ling explore
+ling serve
+ling corpus build|inspect|inventory|variants|render
+ling check
+ling neighbors
+ling dictionary install
+ling analyzer prepare
 ling doctor
 ling describe [COMMAND]
 ling completions SHELL
@@ -33,10 +39,15 @@ and protocol details; terminal output reports readable summaries.
 | Count matches or authored terms | `ling summarize` | [What `summarize` groups by](#what-summarize-groups-by) |
 | Inspect analyzed tokens | `ling tokenize` | [Tokenization and interactive workflows](#tokenization-and-interactive-workflows) |
 | Check attribute availability | `ling coverage` | [Attribute coverage](#attribute-coverage-ling-coverage) |
+| Read saved per-document counts under a scope | `ling table` | [Count tables](#saving-per-document-counts-count-tables) |
+| Compare two document scopes | `ling contrast` | [Comparing two scopes](#comparing-two-scopes-ling-contrast) |
 | Explore interactively | `ling explore` | [TUI guide](tui-guide.md) |
 | Browse corpora in a web browser | `ling serve` | [Serving several corpora](#serving-several-corpora-from-lingrep-web) |
 | Reuse analyzed input | `--cache` or `ling corpus build` | [Reusing and preparing a corpus](#reusing-and-preparing-a-corpus-from-a-query) |
 | Select an analyzer | `--analyzer` | [Choose an analyzer](#choose-an-analyzer) |
+| Build a set of similar words | `ling neighbors` | [Sets of similar words](#sets-of-similar-words-ling-neighbors) |
+| Install a UniDic dictionary | `ling dictionary install` | [Use Vibrato with UniDic](#use-vibrato-with-unidic) |
+| Set up spaCy or Stanza | `ling analyzer prepare` | [Use an external protocol adapter](#use-an-external-protocol-adapter) |
 | Preflight a long operation | `--plan` | [Discovery and diagnostics](#discovery-explanation-and-completion) |
 | Diagnose inputs | `ling doctor` | [Discovery and diagnostics](#discovery-explanation-and-completion) |
 | Consume machine output | `ling contracts` | [TSV contracts](lingrep-tsv-contracts.md) |
@@ -349,6 +360,15 @@ was left unchanged because no statement selected it.
 - The trace goes to stderr and is printed regardless of `--progress`. JSONL and
   TSV records are unchanged by the flag.
 
+`--overlaps keep` skips the catalog's `resolve` statements; the block's
+`exclude`, `require`, `detach` and `admit` statements still apply. `--overlaps
+longest` publishes the longest of overlapping records for a catalog whose block
+declares no `resolve`. `matches` and `summarize` accept both, and the trace
+lists the statements the run executed. `--overlaps` is rejected with
+`--raw-matches`, and with `summarize --write-table`, whose tables hold the
+catalog's own counts. See
+[Overlaps chosen per run](pattern-language-reference.md#overlaps-chosen-per-run).
+
 `--trace-policy` is rejected with `--raw-matches`, because raw publication
 applies no policy. Unlike `--plan`, which validates the invocation without
 scanning, `--trace-policy` scans and reports per record. Long statement text is
@@ -594,6 +614,42 @@ Query JSONL includes `lexical: {term, matched_by}` and list-valued key fields.
 `matches --tsv` rejects lexicon catalogs because its fixed headerless row has
 no place for variable-length `matched_by`; use JSON or human output.
 
+### Sets of similar words: `ling neighbors`
+
+`ling neighbors` reads a word-vector file and prints the values whose vectors
+are closest to one word, as a `set` definition for a catalog:
+
+```console
+$ ling neighbors --vectors vectors.vec --min-similarity 0.7 重要
+# 7 values near 重要 (cosine >= 0.7)
+set NEIGHBORS := {重要, 大切, 大事, たいせつ, 重大, だいじ, 肝要}.
+```
+
+A pattern then tests an attribute against the set: `[unidic.orthbase in
+@NEIGHBORS]`. The file's values must be spelled the way that attribute is; a
+file keyed by dictionary forms matches `unidic.orthbase`, not `lemma`.
+
+The file is text with one `value x1 ... xn` line per value, with or without a
+leading `count dimensions` line. This is the word2vec text format, which
+fastText `.vec` and chiVe files use. `ling` reads vectors and does not compute
+them.
+
+`--min-similarity` keeps the values at or above a cosine, `--top` keeps a
+number of the most similar, and at least one is required. `--name` names the
+set. `--json` reports each value with its similarity (`lingrep.neighbors/v1`).
+A word without a vector in the file is an error. Read the printed set before
+using it: word vectors can place antonyms and frequent function words close to
+many words.
+
+A catalog can also state the similarity directly, as
+`[unidic.orthbase near 重要 >= 0.7]`, and take the file at run time:
+
+```console
+$ ling summarize --vectors vectors.vec --pattern '[unidic.orthbase near 重要 >= 0.7]' corpus/
+```
+
+See [Similarity tests](pattern-language-reference.md#similarity-tests).
+
 ### Cross-catalog drift
 
 `check --compare-with FILE` reports definitions that share a name across
@@ -776,6 +832,35 @@ are a set, so a `.results` div opened under a `.methods` heading puts a
 sentence in both `@section = methods` and `@section = results`. Counts of two
 such registers add up only by inclusion–exclusion. For a partition, state it
 in the clause: `@section = methods & @section != results`.
+
+The Workbench of `ling serve` takes the same clause in its "Only where" field
+and shows the `ling summarize` and `ling matches` commands for the current
+search. In the other direction, `--link NAME=URL` on either command prints the
+Workbench link for the catalog, the clause and `--overlaps`, without reading
+the corpus:
+
+```bash
+ling matches --patterns query.lx --where '@document.genre contains 化学' \
+  --link science=http://127.0.0.1:3000/
+```
+
+`NAME` is the corpus name the server was started with. When no server is
+running, `--serve` starts one over the command's own corpus, prints the same
+link on the line after the listening address, and runs until interrupted:
+
+```bash
+ling matches --patterns query.lx --corpus science.lingcorpus \
+  --where '@document.genre contains 化学' --serve
+```
+
+It listens on a free loopback port; `--serve=HOST:PORT` sets the address.
+It also opens the link with the program named by the `BROWSER` environment
+variable, or with `xdg-open` (`open` on macOS) when that is unset. When no
+such program can be started, it reports that and keeps serving.
+For direct text input, `--serve` supports Vibrato morphology with input
+segmentation and NFC normalization. To use other analyzer settings, prepare
+the input with `ling corpus build` and pass the artifact with `--corpus`.
+`--context` and `--limit` are not carried in either direction.
 
 `--where '@section …'` selects from sentences that have already been read.
 `--md-include-sections` and `--md-exclude-sections` determine at read time which
@@ -1663,7 +1748,7 @@ directory first. For obsolete formats, see [Discovering realizations](#discoveri
 `--output` is optional. Omitted, `corpus build` publishes to the canonical
 content-addressed path beside ROOT,
 `<root>.g<generation>.a<identity-scheme>.<analysis-identity>.<trust>.lingcorpus`,
-for example `.g2.a1.….locally-executed.lingcorpus`. Artifact generation and
+for example `.g3.a1.….locally-executed.lingcorpus`. Artifact generation and
 identity derivation are separate version axes. The required manifest field
 `format_generation` identifies which artifact reader applies.
 
@@ -1726,7 +1811,7 @@ the artifact or use an explicit `--output` to rebuild the complete corpus.
 ### Discovering realizations
 
 ```bash
-ling corpus variants corpus.md.g2.a1.<identity>.locally-executed.lingcorpus
+ling corpus variants corpus.md.g3.a1.<identity>.locally-executed.lingcorpus
 ling corpus variants --json --limit all corpus/
 ```
 
@@ -1738,7 +1823,7 @@ builds or selects a realization, and it deletes only with `--prune`.
 
 "Beside" means the target's parent directory, for every kind of target. A
 realization is named with the source's own file name plus a suffix, so
-`corpus/` publishes to `corpus.g2.a1.<identity>.<trust>.lingcorpus` next to
+`corpus/` publishes to `corpus.g3.a1.<identity>.<trust>.lingcorpus` next to
 `corpus/`, never inside it. This is why the second example above names a
 directory. Scanning a directory that is not itself a corpus root reports on
 that directory as a root, which usually finds nothing.
@@ -1995,7 +2080,7 @@ artifact records the reader that built it and no source is re-read, so
 # lingrep-web cannot read a BCCWJ distribution. It can serve one that was prepared.
 ling corpus build --dict-path "$DICT" --input-format bccwj /data/bccwj
 lingrep-web --dict-path "$DICT" \
-  --corpus bccwj=/data/bccwj.g2.a1.<analysis-identity>.locally-executed.lingcorpus
+  --corpus bccwj=/data/bccwj.g3.a1.<analysis-identity>.locally-executed.lingcorpus
 ```
 
 `lingrep-web` rejects a BCCWJ root passed to it directly, because the C-XML
@@ -2006,11 +2091,13 @@ owned:
   artifact is an error instead of being ignored, because reader configuration is
   part of artifact identity. The flags for selecting Markdown sections do not
   apply to an artifact; they were applied when it was built.
-- A declared artifact is never deleted. `lingrep-web` discards an artifact it
-  built when that artifact is found corrupt, because the source is beside it
-  and a retry rebuilds it. A declared artifact cannot be rebuilt from anything
-  `lingrep-web` holds. If a declared artifact is corrupt, `lingrep-web` marks the
-  corpus as failed and retains the bytes on disk.
+- A declared artifact is retained if corrupt, and its corpus is marked failed.
+  An artifact beside a declared source is deleted and rebuilt once per corpus
+  per server process when corruption is detected at startup or during a read.
+  If the rebuilt artifact is corrupt, it is deleted and the corpus fails.
+  Other open errors leave the artifact on disk and mark its corpus failed.
+  See [artifact recovery](deployment-guide.md#prepared-artifacts-and-how-bccwj-is-served)
+  for error categories and recovery steps.
 
 Prefer `--corpus NAME=PATH` over `--input` for an artifact: the caption is the
 declared `NAME`, whereas `--input` captions a corpus by its file stem, and an
@@ -2065,6 +2152,10 @@ N decoded dictionaries at once.
 **Declaring more corpora adds no query concurrency.** The server admits one
 in-flight scan at a time, which uses the whole Rayon pool, so scans are
 serialized server-wide across corpora, not per corpus.
+
+The server cancels a queued or running search after 30 seconds without an
+open progress stream (`api/stream/<workbench>`), including searches whose
+clients never open the stream.
 
 A workbench is bound to one corpus when it is admitted and is never rebound, so
 choosing a different corpus in the UI navigates to a new permalink rather than
@@ -2123,7 +2214,9 @@ Absolute server paths are omitted. The command is unavailable when the inputs
 share only the filesystem root, a relative path contains `..`, or a path is not
 UTF-8. A clause with `@section` or `@sentence` is answered with an
 explanation rather than rows, because a table counts per document. The URL
-stores the query state, so a copied link reopens the same view.
+stores the query state, so a copied link reopens the same view. Above the
+sentence, a "Corpus:" line names the selected table's corpus on both the
+Frequencies and Compare pages.
 
 Selecting a row opens that entry. For each condition key, a chart shows the
 entry's occurrences and documents under each value, counted under the other

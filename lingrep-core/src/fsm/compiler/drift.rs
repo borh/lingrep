@@ -109,6 +109,21 @@ pub struct CatalogDriftReport {
 pub fn report_catalog_drift(
     sources: &[PatternSource<'_>],
 ) -> Result<CatalogDriftReport, CompileError> {
+    report_catalog_drift_with_vectors(sources, None)
+}
+
+/// [`report_catalog_drift`] with `vectors` answering the catalogs' `near`
+/// tests, so that two tests are the same body when they resolve to the same
+/// values.
+///
+/// # Errors
+///
+/// Every error of [`report_catalog_drift`], and those
+/// [`compile_catalog_with_vectors`](super::compile_catalog_with_vectors) adds.
+pub fn report_catalog_drift_with_vectors(
+    sources: &[PatternSource<'_>],
+    vectors: Option<&dyn super::WordVectors>,
+) -> Result<CatalogDriftReport, CompileError> {
     let limits = CompileLimits::default();
     let mut grouped: BTreeMap<
         CompactString,
@@ -116,7 +131,9 @@ pub fn report_catalog_drift(
     > = BTreeMap::new();
 
     for source in sources {
-        let program = bind(lower_document(source, &limits)?, &limits)?;
+        let mut lowered = lower_document(source, &limits)?;
+        super::resolve_near(&mut lowered, vectors);
+        let program = bind(lowered, &limits)?;
         // Reference closure inlines, so a chain of doubling references
         // (`a := @b @b. b := @c @c. …`) is exponential in depth. `bind` does
         // not bound expansion — only `materialize`/`nfa` do, and this stops

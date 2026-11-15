@@ -1,42 +1,92 @@
 use crate::coordinator::CoordinatorView;
-use crate::revision::AttemptPhase;
+use crate::revision::{AttemptPhase, CancelReason, ErrorCategory};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionStatusKind {
     Neutral,
     Success,
     Superseded,
+    Abandoned,
     Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusNotice {
+    pub key: &'static str,
+    pub text: String,
+    pub args: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisionStatus {
     pub message: String,
-    /// i18n key for `message` (absent: message is a free-text failure whose
-    /// contract stays English), plus JSON interpolation args as rendered by
+    /// i18n key for `message`, plus JSON interpolation args as rendered by
     /// the template (`data-i18n-args`).
     pub message_key: Option<&'static str>,
     pub message_args: Option<String>,
-    /// Informational notice attached to a completed-but-degraded run
-    /// (oversized sentences omitted). Rendered below the message, never as
-    /// an error: the run published results.
-    pub omission_notice: Option<String>,
-    pub omission_args: Option<String>,
+    /// A compiler or binder diagnostic, shown after `message` in English in
+    /// every locale.
+    pub diagnostic: Option<String>,
+    pub notices: Vec<StatusNotice>,
     pub busy: bool,
     pub stale: bool,
+    /// Revision of stale results available for export; absent when no pattern matched.
+    pub stale_export_revision: Option<u64>,
     pub terminal: bool,
     pub kind: RevisionStatusKind,
 }
 
-fn omission_notice(
+pub(crate) fn omission_notice(
     omissions: Option<&lingrep_core::execution::OversizedSentenceOmissions>,
 ) -> Option<String> {
     omission_parts(omissions).map(|parts| parts.0)
 }
-fn omission_args(
-    omissions: Option<&lingrep_core::execution::OversizedSentenceOmissions>,
-) -> Option<String> {
-    omission_parts(omissions).map(|parts| parts.1)
+fn unavailable_notice(unavailable: &crate::snapshot::UnavailableAttributes) -> StatusNotice {
+    let attributes = unavailable
+        .keys
+        .iter()
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let schema = &unavailable.schema;
+    StatusNotice {
+        key: "status.attribute_unavailable",
+        text: format!(
+            "This corpus's token schema ({schema}) does not carry {attributes}. Comparisons using \
+             these attributes, including !=, !~ and not in, match no tokens; their !(…) \
+             complements match every token."
+        ),
+        args: serde_json::json!({ "attributes": attributes, "schema": schema }).to_string(),
+    }
+}
+fn vectors_notice(binding: &lingrep_corpus::word_vectors::VectorsBinding) -> Option<StatusNotice> {
+    use lingrep_corpus::word_vectors::VectorsBinding;
+    match binding {
+        VectorsBinding::Declared => None,
+        VectorsBinding::Undeclared { declaration } => Some(StatusNotice {
+            key: "status.vectors_undeclared",
+            text: format!(
+                "No word-vector file declared in the catalog. To declare the server’s file, \
+                 add: {declaration}"
+            ),
+            args: serde_json::json!({ "declaration": declaration }).to_string(),
+        }),
+        VectorsBinding::Mismatch { declared } => {
+            let declared = declared
+                .iter()
+                .map(|(resource, _)| format!("`{resource}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(StatusNotice {
+                key: "status.vectors_mismatch",
+                text: format!(
+                    "The server’s word-vector file differs from {declared} declared in the catalog. \
+                     Matches may differ at the same threshold."
+                ),
+                args: serde_json::json!({ "declared": declared }).to_string(),
+            })
+        }
+    }
 }
 fn omission_parts(
     omissions: Option<&lingrep_core::execution::OversizedSentenceOmissions>,
@@ -67,10 +117,11 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
             message: "Ready for a pattern.".into(),
             message_key: Some("status.idle"),
             message_args: None,
-            omission_notice: None,
-            omission_args: None,
+            diagnostic: None,
+            notices: Vec::new(),
             busy: false,
             stale: false,
+            stale_export_revision: None,
             terminal: false,
             kind: RevisionStatusKind::Neutral,
         };
@@ -81,6 +132,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
         .displayed_snapshot()
         .zip(attempt)
         .is_some_and(|(shown, current)| shown.revision != current.revision);
+    let mut diagnostic = None;
     let ((message, message_key, message_args), busy, terminal, kind) =
         match attempt.map(|attempt| attempt.phase) {
             Some(AttemptPhase::WaitingForCorpus) => (
@@ -125,7 +177,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 true,
                 RevisionStatusKind::Success,
             ),
-            Some(AttemptPhase::Cancelled) => (
+            Some(AttemptPhase::Cancelled(CancelReason::Superseded)) => (
                 (
                     "Superseded by a newer edit.".into(),
                     Some("status.superseded"),
@@ -135,20 +187,52 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 true,
                 RevisionStatusKind::Superseded,
             ),
-            Some(AttemptPhase::Failed) => (
+            Some(AttemptPhase::Cancelled(CancelReason::Abandoned)) => (
                 (
-                    attempt
-                        .and_then(|attempt| attempt.failure.as_ref())
-                        .map_or_else(
-                            || "This revision failed.".into(),
-                            |failure| failure.message.clone(),
-                        ),
-                    // Failures fall through to the English message text whose
-                    // contract remains English (per-locale delegating coverage
-                    // lives in the i18n spec's out-of-scope list).
-                    None,
+                    "This search was stopped because the page was closed or disconnected. Run the search again.".into(),
+                    Some("status.abandoned"),
                     None,
                 ),
+                false,
+                true,
+                RevisionStatusKind::Abandoned,
+            ),
+            Some(AttemptPhase::Failed) => (
+                match attempt.and_then(|attempt| attempt.failure.as_ref()) {
+                    None => ("This revision failed.".into(), Some("status.failed"), None),
+                    Some(failure) => match failure.category {
+                        ErrorCategory::Compile => {
+                            diagnostic = Some(failure.message.clone());
+                            (
+                                "The pattern did not compile:".into(),
+                                Some("status.failed_compile"),
+                                None,
+                            )
+                        }
+                        ErrorCategory::Binding => {
+                            diagnostic = Some(failure.message.clone());
+                            (
+                                "This catalog cannot run on this corpus:".into(),
+                                Some("status.failed_binding"),
+                                None,
+                            )
+                        }
+                        ErrorCategory::Scope => {
+                            diagnostic = Some(failure.message.clone());
+                            (
+                                "This search scope cannot be applied to this corpus:".into(),
+                                Some("status.failed_scope"),
+                                None,
+                            )
+                        }
+                        ErrorCategory::Cache => {
+                            (failure.message.clone(), Some("status.failed_cache"), None)
+                        }
+                        ErrorCategory::Execution | ErrorCategory::Integrity => {
+                            (failure.message.clone(), Some("status.failed_scan"), None)
+                        }
+                    },
+                },
                 false,
                 true,
                 RevisionStatusKind::Error,
@@ -164,18 +248,44 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
         attempt.map(|attempt| attempt.phase),
         Some(AttemptPhase::Completed)
     );
-    let omissions = view
+    let notices = view
         .state
         .displayed_snapshot()
-        .and_then(|snapshot| snapshot.oversized_omissions.as_ref());
+        .filter(|_| completed)
+        .map(|snapshot| {
+            let omitted =
+                omission_parts(snapshot.oversized_omissions.as_ref()).map(|(text, args)| {
+                    StatusNotice {
+                        key: "status.omitted",
+                        text,
+                        args,
+                    }
+                });
+            let unavailable = snapshot
+                .unavailable_attributes
+                .as_ref()
+                .map(unavailable_notice);
+            let vectors = snapshot.vectors_binding.as_ref().and_then(vectors_notice);
+            omitted
+                .into_iter()
+                .chain(unavailable)
+                .chain(vectors)
+                .collect()
+        })
+        .unwrap_or_default();
     RevisionStatus {
         message,
         message_key,
         message_args,
-        omission_notice: completed.then(|| omission_notice(omissions)).flatten(),
-        omission_args: completed.then(|| omission_args(omissions)).flatten(),
+        diagnostic,
+        notices,
         busy,
         stale,
+        stale_export_revision: view
+            .state
+            .displayed_snapshot()
+            .filter(|shown| stale && shown.patterns.iter().any(|pattern| pattern.exact_total > 0))
+            .map(|shown| shown.revision.0),
         terminal,
         kind,
     }

@@ -85,44 +85,53 @@ function readArgs(element) {
   }
 }
 
+const SLOT_ATTRIBUTES = ["title", "placeholder", "aria-label"];
+const SLOTS = ["[data-i18n]", ...SLOT_ATTRIBUTES.map((attr) => `[data-i18n-${attr}]`)].join(",");
+
 /**
- * Applies the active locale over `root` (element or document). Every slot is
- * opt-in: `data-i18n` rewrites textContent from the dictionary, restoring the
- * served English on toggle-back. Unknown keys and empty values are ignored —
- * they never mutate the DOM. The function is idempotent.
+ * Applies the active locale over `root` (element or document), `root` itself
+ * included. Every slot is opt-in: `data-i18n` rewrites textContent from the
+ * dictionary and `data-i18n-title`, `-placeholder` and `-aria-label` rewrite
+ * that attribute, each restoring the English on toggle-back. Unknown keys and
+ * empty values are ignored — they never mutate the DOM. The function is
+ * idempotent.
  */
 export function localize(root = document, dict = undefined, locale = current) {
-  const scoped = root.querySelectorAll
-    ? root.querySelectorAll("[data-i18n]")
-    : [];
-  for (const element of scoped) {
+  const table = dict ?? dictionaries[locale];
+  const elements = root.querySelectorAll ? [...root.querySelectorAll(SLOTS)] : [];
+  if (root.matches?.(SLOTS)) elements.unshift(root);
+  for (const element of elements) {
+    const args = readArgs(element);
     const key = element.dataset.i18n;
-    const text =
-      locale === "en"
-        ? null
-        : lookup(locale, key, readArgs(element), dict ?? dictionaries[locale]);
-    if (locale !== "en" && text) {
-      element.dataset.i18nSrc ??= element.textContent;
-      element.textContent = text;
-    } else if (locale === "en" && element.dataset.i18nSrc !== undefined) {
+    if (key && locale !== "en") {
+      const text = lookup(locale, key, args, table);
+      if (text) {
+        element.dataset.i18nSrc ??=
+          element.textContent === text
+            ? (lookup("en", key, args) ?? text)
+            : element.textContent;
+        if (element.textContent !== text) element.textContent = text;
+      }
+    } else if (key && element.dataset.i18nSrc !== undefined) {
       element.textContent = element.dataset.i18nSrc;
     }
-    for (const attr of ["title", "placeholder", "aria-label"]) {
+    for (const attr of SLOT_ATTRIBUTES) {
       // data-i18n-title/-placeholder/-aria-label → camelCase slot name
       const slot = attr.replace(/^(.)|-(\w)/g, (_, first, dash) =>
         (first ?? dash).toUpperCase(),
       );
       const attrKey = element.dataset[`i18n${slot}`];
       if (!attrKey) continue;
-      const english = element.getAttribute(attr);
-      const saved = element.dataset[`i18nSrc${attr}`];
+      const source = `i18nSrc${slot}`;
+      const saved = element.dataset[source];
       if (locale !== "en") {
-        const translated =
-          dict ?? dictionaries[locale]
-            ? lookup(locale, attrKey, readArgs(element), dict ?? dictionaries[locale])
-            : null;
+        const translated = table ? lookup(locale, attrKey, args, table) : null;
         if (translated) {
-          if (saved === undefined) element.dataset[`i18nSrc${attr}`] = english ?? "";
+          if (saved === undefined) {
+            const served = element.getAttribute(attr) ?? "";
+            element.dataset[source] =
+              served === translated ? (lookup("en", attrKey, args) ?? served) : served;
+          }
           element.setAttribute(attr, translated);
         }
       } else if (saved !== undefined) {
@@ -130,9 +139,6 @@ export function localize(root = document, dict = undefined, locale = current) {
       }
     }
   }
-  // Dual-label spans (token inspection fields + groups) are CSS-gated by
-  // `data-locale`; nothing to do here beyond stamping the attribute on the
-  // element if it opted in explicitly.
 }
 
 async function apply(locale, { persist = true } = {}) {
@@ -156,17 +162,23 @@ function updateToggle() {
   button.setAttribute("aria-label", current === "ja" ? "Switch to English" : "日本語に切り替え");
 }
 
-/** Boots the machinery: restore, localize, route swaps, wire the toggle. */
 export async function initI18n() {
   await apply(read(), { persist: false });
-  document.addEventListener("htmx:afterSwap", (event) => {
-    const target = event.detail?.target;
-    if (target instanceof Element) localize(target);
-    else if (target instanceof Document) localize(target);
-  });
-  document.addEventListener("htmx:oobAfterSwap", (event) => {
-    const target = event.detail?.target;
-    if (target instanceof Element) localize(target);
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "attributes") {
+        delete record.target.dataset.i18nSrc;
+        localize(record.target);
+        continue;
+      }
+      for (const node of record.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) localize(node);
+      }
+    }
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributeFilter: ["data-i18n"],
   });
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-locale-toggle]");

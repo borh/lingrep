@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% import "macros.html" as macros %}
 {% block title %}Frequencies{% endblock %}
 {% block head %}
     <link rel="stylesheet" href="assets/frequency.css">
@@ -6,6 +7,8 @@
 {% endblock %}
 {% block content %}
 <section class="fq" data-frequency>
+  {% call macros::corpus_line("", "", true) %}{% endcall %}
+  <p class="comparison-note" data-overlaps-note hidden data-i18n="views.overlaps_catalog">Overlapping matches are counted using the catalog's policy. The Workbench's “Overlapping matches” option does not apply to this page.</p>
   <div class="fq-head">
     <p class="fq-sentence" data-fq-sentence></p>
     <p class="fq-under"><span class="fq-figures" data-fq-figures></span></p>

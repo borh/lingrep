@@ -155,3 +155,25 @@ test("switching corpora discards the previous vocabulary and asks for the destin
 test("copying before a cold corpus supplies its vocabulary retains the destination default", () => {
   assert.equal(new URLSearchParams(permalinkRequestBody("p := [].", "hssrpc", "50", "null")).has("search_scope"), false);
 });
+
+test("a link request carries only the run options changed from the page defaults", () => {
+  const withOptions = (derive, category, reach) => form({
+    "#corpus-pattern": { value: "p := []." },
+    "input[name=corpus]": { value: "sci" },
+    "input[name=derive_compounds]": { checked: derive },
+    "select[name=compound_category]": { value: category },
+    "input[name=document_reach]": { checked: reach },
+  });
+  assert.equal(
+    permalinkRequestForForm(withOptions(true, "compound", true)).body,
+    "pattern=p+%3A%3D+%5B%5D.&corpus=sci",
+  );
+  assert.equal(
+    permalinkRequestForForm(withOptions(false, "source", false)).body,
+    "pattern=p+%3A%3D+%5B%5D.&corpus=sci&derive_compounds=false&compound_category=source&document_reach=false",
+  );
+  assert.equal(
+    corpusSwitchRequestBody(withOptions(false, "source", false), "bccwj"),
+    "pattern=p+%3A%3D+%5B%5D.&corpus=bccwj&derive_compounds=false&compound_category=source&document_reach=false",
+  );
+});

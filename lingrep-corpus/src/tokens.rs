@@ -1,5 +1,6 @@
 //! Typed, block-compressed V1 prepared morphology storage.
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use std::{
@@ -127,6 +128,16 @@ const BLOCK_QUEUE_DEPTH: usize = 4;
 /// is already well under the caller's own 3.96 s.
 const BLOCK_ENCODERS: usize = 4;
 
+const BLOCK_DECODERS: usize = 8;
+
+fn block_decoder_pool() -> Option<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(BLOCK_DECODERS)
+        .thread_name(|index| format!("lingrep-block-decode-{index}"))
+        .build()
+        .ok()
+}
+
 /// One block, encoded, compressed and checksummed, awaiting its turn.
 struct EncodedBlock {
     residency: Vec<u64>,
@@ -221,21 +232,23 @@ impl BlockRecorder {
         self.directory.sync_all()?;
         self.directory.rewind()?;
         let mut metadata_hash = blake3::Hasher::new();
-        let mut entry = [0_u8; DIRECTORY_ENTRY_LEN as usize];
-        for _ in 0..self.directory_count {
-            self.directory.read_exact(&mut entry)?;
-            self.file.write_all(&entry)?;
-            metadata_hash.update(&entry);
-        }
+        copy_table(
+            &mut self.directory,
+            &mut self.file,
+            &mut metadata_hash,
+            self.directory_count,
+            DIRECTORY_ENTRY_LEN,
+        )?;
         let residency_offset = self.file.stream_position()?;
         self.residency.sync_all()?;
         self.residency.rewind()?;
-        let mut resident = [0_u8; RESIDENT_ENTRY_LEN as usize];
-        for _ in 0..self.sentence_count {
-            self.residency.read_exact(&mut resident)?;
-            self.file.write_all(&resident)?;
-            metadata_hash.update(&resident);
-        }
+        copy_table(
+            &mut self.residency,
+            &mut self.file,
+            &mut metadata_hash,
+            self.sentence_count,
+            RESIDENT_ENTRY_LEN,
+        )?;
         let metadata_len = self
             .directory_count
             .checked_mul(DIRECTORY_ENTRY_LEN)
@@ -259,6 +272,27 @@ impl BlockRecorder {
         self.file.sync_all()?;
         Ok(())
     }
+}
+
+fn copy_table(
+    scratch: &mut BudgetedScratch,
+    file: &mut File,
+    hash: &mut blake3::Hasher,
+    entries: u64,
+    entry_len: u64,
+) -> Result<(), CorpusError> {
+    let mut remaining = entries
+        .checked_mul(entry_len)
+        .ok_or_else(|| invalid("metadata length overflow"))?;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    while remaining > 0 {
+        let take = usize::try_from(remaining).map_or(buffer.len(), |left| left.min(buffer.len()));
+        scratch.read_exact(&mut buffer[..take])?;
+        file.write_all(&buffer[..take])?;
+        hash.update(&buffer[..take]);
+        remaining -= take as u64;
+    }
+    Ok(())
 }
 
 /// The caller's end of the recorder thread.
@@ -491,6 +525,7 @@ pub(crate) struct TokenReader {
     decoded_blocks: AtomicUsize,
     decoded_sentences: AtomicUsize,
     verified_blocks: AtomicUsize,
+    decoders: std::sync::OnceLock<Option<rayon::ThreadPool>>,
 }
 
 impl TokenReader {
@@ -579,6 +614,7 @@ impl TokenReader {
             decoded_blocks: AtomicUsize::new(0),
             decoded_sentences: AtomicUsize::new(0),
             verified_blocks: AtomicUsize::new(0),
+            decoders: std::sync::OnceLock::new(),
         })
     }
 
@@ -691,7 +727,7 @@ impl TokenReader {
         if projection.schema_digest() != self.schema.digest() {
             return Err(invalid("requested projection belongs to another schema"));
         }
-        let mut output = Vec::with_capacity(ordinals.len());
+        let mut blocks = Vec::new();
         let mut cursor = 0;
         while cursor < ordinals.len() {
             let (_, entry) = self.block_for_sentence(ordinals[cursor])?;
@@ -710,15 +746,22 @@ impl TokenReader {
                         .map_err(|_| invalid("block-local sentence ordinal exceeds usize"))
                 })
                 .collect::<Result<Vec<_>, CorpusError>>()?;
-            let raw = self.load_block(entry)?;
-            output.extend(decode_block(
-                &raw,
-                entry,
-                &self.schema,
-                projection,
-                &locals,
-                char_offsets,
-            )?);
+            blocks.push((entry, locals));
+        }
+        let decode = |(entry, locals): &(DirectoryEntry, Vec<usize>)| {
+            let raw = self.load_block(*entry)?;
+            decode_block(&raw, *entry, &self.schema, projection, locals, char_offsets)
+        };
+        let decoders = (blocks.len() > 1)
+            .then(|| self.decoders.get_or_init(block_decoder_pool).as_ref())
+            .flatten();
+        let decoded = match decoders {
+            Some(pool) => pool.install(|| blocks.par_iter().map(decode).collect::<Vec<_>>()),
+            None => blocks.iter().map(decode).collect(),
+        };
+        let mut output = Vec::with_capacity(ordinals.len());
+        for block in decoded {
+            output.extend(block?);
         }
         self.decoded_sentences
             .fetch_add(output.len(), Ordering::Relaxed);
@@ -782,16 +825,6 @@ enum SourceProjection {
     },
 }
 
-#[derive(Clone, Default)]
-pub struct PreparedScopeStats(Arc<AtomicU64>);
-
-impl PreparedScopeStats {
-    /// Counts decoded, non-oversized sentences excluded by section selection.
-    pub fn excluded_sentences(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
 /// Counts the documents with at least one admitted sentence: a sentence this
 /// source returned, or one it skipped as proven absent.
 #[derive(Clone, Default)]
@@ -802,13 +835,6 @@ impl PreparedDocumentStats {
     pub fn admitted_documents(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
-}
-
-struct SectionAdmission {
-    included: Option<Vec<String>>,
-    include_unlabelled: bool,
-    provenance: Arc<crate::ProvenanceView>,
-    runtime: tokio::runtime::Handle,
 }
 
 pub struct PreparedSentenceSource {
@@ -823,8 +849,6 @@ pub struct PreparedSentenceSource {
     listed: Option<(Vec<u64>, usize)>,
     terminal_failure: Option<String>,
     admission: SentenceAdmission,
-    sections: Option<SectionAdmission>,
-    scope_stats: PreparedScopeStats,
     cancel: Option<CancellationFlag>,
     tokenized_admission: TokenizedAdmission,
     source_metadata: Option<lingrep_core::corpus::SourceMetadataProjection>,
@@ -927,8 +951,6 @@ impl PreparedSentenceSource {
             listed: None,
             terminal_failure: None,
             admission: SentenceAdmission::All,
-            sections: None,
-            scope_stats: PreparedScopeStats::default(),
             cancel: None,
             tokenized_admission: TokenizedAdmission::Fail,
             source_metadata: None,
@@ -942,28 +964,6 @@ impl PreparedSentenceSource {
             last_admitted_document: None,
             proven_absent_documents: Vec::new(),
         })
-    }
-    /// The returned counter tracks exclusions after the source is moved into execution.
-    pub fn scope_stats(&self) -> PreparedScopeStats {
-        self.scope_stats.clone()
-    }
-
-    pub(crate) fn with_sections(
-        mut self,
-        provenance: Arc<crate::ProvenanceView>,
-        runtime: tokio::runtime::Handle,
-        included: Option<Vec<String>>,
-        include_unlabelled: bool,
-    ) -> Self {
-        if included.is_some() || !include_unlabelled {
-            self.sections = Some(SectionAdmission {
-                included,
-                include_unlabelled,
-                provenance,
-                runtime,
-            });
-        }
-        self
     }
 
     /// Returns a live counter shared with this source, including after it reaches EOF.
@@ -1564,69 +1564,20 @@ impl PreparedSentenceSource {
 
 impl SentenceBatchSource for PreparedSentenceSource {
     fn wants_lookahead(&self) -> bool {
-        self.sections.is_none()
+        true
     }
 
     fn next_batch(
         &mut self,
         limits: &ExecutionLimits,
     ) -> Result<Option<ExecutionBatch>, ExecutionError> {
-        loop {
-            let Some(batch) = self.next_decoded_batch(limits)? else {
-                let documents = std::mem::take(&mut self.proven_absent_documents);
-                self.count_admitted_documents(documents);
-                return Ok(None);
-            };
-            let Some(sections) = &self.sections else {
-                self.count_batch_documents(&batch);
-                return Ok(Some(batch));
-            };
-            let ExecutionBatch::BoundTokenized { sentences, charges } = batch else {
-                return Err(ExecutionError::Source {
-                    ordinal: self.next_ordinal,
-                    message: "Search scope requires bound prepared sentences.".into(),
-                });
-            };
-            let mut admitted = Vec::with_capacity(sentences.len());
-            for chunk in sentences.chunks(crate::MAX_PROVENANCE_PAGE_SIZE) {
-                let ids = chunk
-                    .iter()
-                    .map(|sentence| {
-                        crate::SentenceId::new(sentence.location.corpus_sentence_ordinal)
-                    })
-                    .collect::<Vec<_>>();
-                let page = sections
-                    .runtime
-                    .block_on(sections.provenance.section_admissions(
-                        &ids,
-                        sections.included.as_deref(),
-                        sections.include_unlabelled,
-                    ))
-                    .map_err(|error| ExecutionError::Source {
-                        ordinal: ids.first().map_or(0, |id| id.get()),
-                        message: error.to_string(),
-                    })?;
-                admitted.extend(page);
-            }
-            let mut kept = Vec::with_capacity(sentences.len());
-            let mut kept_charges = Vec::with_capacity(charges.len());
-            for ((sentence, charge), admitted) in sentences.into_iter().zip(charges).zip(admitted) {
-                if admitted {
-                    kept.push(sentence);
-                    kept_charges.push(charge);
-                } else {
-                    self.scope_stats.0.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            if !kept.is_empty() {
-                let batch = ExecutionBatch::BoundTokenized {
-                    sentences: kept,
-                    charges: kept_charges,
-                };
-                self.count_batch_documents(&batch);
-                return Ok(Some(batch));
-            }
-        }
+        let Some(batch) = self.next_decoded_batch(limits)? else {
+            let documents = std::mem::take(&mut self.proven_absent_documents);
+            self.count_admitted_documents(documents);
+            return Ok(None);
+        };
+        self.count_batch_documents(&batch);
+        Ok(Some(batch))
     }
 }
 
@@ -2387,6 +2338,48 @@ mod tests {
             assert!(!root.path().join(crate::postings::NAME).exists());
             assert_eq!(budget.used_bytes(), 0);
         }
+    }
+
+    #[test]
+    fn postings_finish_without_temp_headroom_is_storage_full_and_releases_the_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tokens");
+        let schema = TokenSchema::from_keys(["lemma", "text"]).unwrap();
+        let schema_id = TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes());
+        let budget = Arc::new(TempBudget::new(1024 * 1024));
+        let mut writer = TokenWriter::create_indexed(&path, schema, Arc::clone(&budget)).unwrap();
+        let words = BoundTokenSentence::from_projected_values(
+            &writer.full_projection,
+            1,
+            vec![Some("語".into()); 2],
+        )
+        .unwrap();
+        writer.push_bound_sentence(words).unwrap();
+        let postings = writer.postings.take().unwrap();
+        let analysis = AnalysisIdentity::from_bytes([9; 32]);
+        writer.finish(analysis).unwrap();
+        let reader = TokenReader::open(&path, &analysis, &schema_id).unwrap();
+        let hash = blake3::hash(&std::fs::read(&path).unwrap())
+            .to_hex()
+            .to_string();
+        let held = budget.reserve(budget.snapshot().headroom_bytes()).unwrap();
+        let CorpusError::Io(error) = postings
+            .finish(
+                root.path(),
+                &reader,
+                &analysis,
+                &schema_id,
+                &hash,
+                &mut || true,
+            )
+            .unwrap_err()
+        else {
+            panic!("temp capacity must retain the I/O error chain");
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+        assert!(!root.path().join(crate::postings::NAME).exists());
+        drop(held);
+        assert_eq!(budget.used_bytes(), 0);
     }
 
     #[test]

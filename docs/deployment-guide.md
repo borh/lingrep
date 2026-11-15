@@ -57,9 +57,11 @@ the dictionary are mounted with `ReadOnlyPaths=`, and an activation script
 symlinks corpora and pattern catalogs under `/var/lib/lingrep-web/`.
 
 On SIGTERM, which `systemctl stop` sends, lingrep-web stops accepting
-connections, lets in-flight requests and open progress streams run for up to
-10 seconds, and exits 0; a second signal ends that wait at once. `ling serve` stops
-the same way on SIGTERM or SIGINT.
+connections and lets in-flight requests and open progress streams run for up
+to 10 seconds. It then cancels running scans and waits up to 3 seconds for
+them, stops a running corpus build and waits up to 10 seconds for it to remove
+its staging directory, and exits 0. A second signal ends these waits at once.
+`ling serve` stops the same way on SIGTERM or SIGINT.
 
 ## Serving under a subpath
 
@@ -267,10 +269,19 @@ A `corpora.<name>.path` is either a corpus source or a prepared V1 artifact,
 a directory containing a `manifest.json`. lingrep-web distinguishes them by
 that file; the module has no option for it.
 
-lingrep-web reads a declared artifact in place and never writes beside it or
-deletes it. If a declared artifact is corrupt, the corpus is marked failed and
-its files are left unchanged. An artifact that lingrep-web built itself from a
-source is discarded and rebuilt when corrupt.
+lingrep-web reads declared artifacts in place, never writes beside them,
+and retains them on failure with their corpora marked failed.
+When corruption is detected in an artifact
+beside a declared source, at startup or during a read, the server deletes
+and rebuilds it regardless of which program created it. Each corpus is
+rebuilt once per server process. If the replacement is corrupt, it is
+deleted and the corpus fails until restart.
+
+Other open errors leave the artifact unchanged and mark its corpus failed:
+permission or I/O errors, missing components, symbolic-link components,
+SQLite `-wal`, `-shm` or `-journal` files beside `provenance.sqlite`, or
+unsupported manifest or component versions. Correct the cause, or delete
+the artifact directory, and restart.
 
 Use a prepared artifact to serve a format that lingrep-web cannot read directly.
 BCCWJ is read only by `ling`, and lingrep-web rejects a BCCWJ distribution
@@ -282,7 +293,7 @@ ling corpus build \
   --input-format bccwj \
   --dict-path "$LINGREP_DICTIONARY_PATH" \
   /data/bccwj
-# publishes /data/bccwj.g2.a1.<analysis-identity>.locally-executed.lingcorpus
+# publishes /data/bccwj.g3.a1.<analysis-identity>.locally-executed.lingcorpus
 ```
 
 ```nix
@@ -290,7 +301,7 @@ services.lingrep-web.corpora.bccwj = {
   # The artifact directory, not the distribution root. Leave `format`
   # unset: lingrep-web rejects `--input-format` for an artifact, and the
   # module rejects it at evaluation time for a path ending in `.lingcorpus`.
-  path = "/data/lingrep-web/corpora/bccwj.g2.a1.<identity>.locally-executed.lingcorpus";
+  path = "/data/lingrep-web/corpora/bccwj.g3.a1.<identity>.locally-executed.lingcorpus";
 };
 ```
 
@@ -305,20 +316,36 @@ complete check.
 ## Interrupted corpus builds
 
 A build writes a sibling directory named `.NAME.staging-PID-N` before publishing
-its artifact. Process termination during a build can leave that directory behind;
-later starts ignore it rather than remove it. These leftovers can accumulate in
-`/var/lib/lingrep-web/corpora`.
+its artifact, and holds an exclusive lock on a sibling file named
+`.NAME.stagelock-PID-N` until that directory is published or removed.
+
+A server stopped by SIGTERM or SIGINT stops its builds and waits up to 10
+seconds for them to remove their staging directories and lock files before it
+exits. A build that is killed, or that has not stopped when that wait ends or
+a second signal arrives, leaves its staging directory and lock file behind.
+The next build of the same artifact on the same host removes them. It removes
+a staging directory only when its lock file records the current host name
+and the build can acquire its exclusive lock.
+
+A later build leaves a staging directory in place in three cases: the
+directory's lock file is missing, which is true of every staging directory
+written by lingrep 0.7.0 or earlier; the lock file records another host name;
+or the artifact name has since changed with the dictionary or analyzer. Remove
+those directories by hand.
+Two hosts that report the same host name must not build into one shared
+directory on a filesystem that does not propagate `flock` locks between hosts.
 
 Stop the service and every other corpus builder using the directory before
 cleanup. Inspect the candidates; the name alone does not establish that a build
-has stopped. Replace the example removal path with an inspected staging directory
-from a stopped build. Remove neither published `.lingcorpus` artifacts nor
-unrelated directories.
+has stopped. Replace the example removal paths with an inspected staging
+directory from a stopped build and its lock file. Remove neither published
+`.lingcorpus` artifacts nor unrelated directories.
 
 ```sh
 sudo systemctl stop lingrep-web
-sudo find /var/lib/lingrep-web/corpora -maxdepth 1 -type d -name '.*.staging-*' -print
+sudo find /var/lib/lingrep-web/corpora -maxdepth 1 \( -name '.*.staging-*' -o -name '.*.stagelock-*' \) -print
 sudo rm -r -- /var/lib/lingrep-web/corpora/.news.lingcorpus.staging-12345-0
+sudo rm -f -- /var/lib/lingrep-web/corpora/.news.lingcorpus.stagelock-12345-0
 sudo systemctl start lingrep-web
 ```
 
@@ -408,3 +435,13 @@ preparation:
 ```nix
 services.lingrep-web.environment.RUST_LOG = "info,lingrep_web=debug";
 ```
+
+A catalog with a `near` test needs a word-vector file. Name it for the server
+and the `ling` processes it starts:
+
+```nix
+services.lingrep-web.environment.LINGREP_VECTORS_PATH = "/var/lib/lingrep/vectors.vec";
+```
+
+The server stops at startup when the file cannot be opened. With a file, the
+navigation gains a Similar Words page.

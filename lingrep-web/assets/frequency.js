@@ -1,152 +1,20 @@
-import { currentLocale, onLocaleChange } from "./i18n.js";
+import { currentLocale, onLocaleChange, t } from "./i18n.js";
 import { createConditionPicker } from "./condition-picker.js";
+import { count as num, fixed, places } from "./numbers.js";
+import { api, conditionText, esc, fieldName, fullStop, isAny, latestRequest, loadMeta, pager, phrase, reasonText, redrawKeepingFocus, scopeDocuments, showCorpus } from "./views.js";
 
 const PAGE = 100;
 const LINES = 50;
 const REST = 120;
 const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "entry", "read", "scope"];
 
-const NUM = { en: new Intl.NumberFormat("en-US"), ja: new Intl.NumberFormat("ja-JP") };
-const esc = (text) =>
-  String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-
 export const pctOf = (x, y) =>
   !y ? "0" : x && x / y < 0.01 ? "<1" : x < y && Math.round((x / y) * 100) === 100 ? (Math.floor((x / y) * 1000) / 10).toFixed(1) : String(Math.round((x / y) * 100));
 
-const orList = (xs, word) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} ${word} ${xs.at(-1)}`);
-const jaJoin = (xs) => xs.join(xs.some((x) => x.includes("・")) ? "、" : "・");
+const SORTS = [["count", "frequency.sort_count"], ["works", "frequency.sort_works"], ["key", "frequency.sort_key"]];
+const HEADS = ["views.head_rank", "views.head_entry", "views.head_occurrences", "views.head_documents", "frequency.head_share", "frequency.head_per_million"];
+const TABLE_HEADS = ["frequency.head_value", "views.head_occurrences", "views.head_documents"];
 
-const S = {
-  en: {
-    role: { pattern: "pattern", catalog: "catalog", order: "order", filter: "filter" },
-    sorts: [["count", "most frequent first"], ["works", "most widespread first"], ["key", "in character-code order"]],
-    name: (key) => key.replace(/_/g, " "),
-    any: (name) => `any ${name}`,
-    values: (w) => (w.m === "out" ? `other than ${orList(w.v, "and")}` : w.v.length <= 3 ? orList(w.v, "or") : `${w.v.length} values`),
-    range: (w) => (w.lo != null && w.hi != null ? `${w.lo}–${w.hi}` : w.lo != null ? `${w.lo} or more` : `${w.hi} or less`),
-    scope: (items) => (items.length ? `from documents ${items.map((x) => (x.any ? `with ${x.html}` : `with ${esc(x.name)} ${x.html}`)).join(", ")}` : ""),
-    sentence: (b) => `Frequencies of ${b.P} in ${b.C}${b.scope ? `, ${b.scope}` : ""}; ${b.O}, containing ${b.Q}<span class="tail">.</span>`,
-    rawScope: "where the clause below holds",
-    add: "+ condition",
-    addLabel: "Add a condition",
-    figures: (e, o, d) => `${e} entries, ${o} occurrences, ${d} documents`,
-    keeps: (x, y, p) => `${x} of ${y} (${p}%)`,
-    missingField: (n, key) => `Among documents meeting the other conditions, ${n} ${n === "1" ? "document lacks" : "documents lack"} ${key} and ${n === "1" ? "is" : "are"} excluded.`,
-    keepsEntries: (x, y, p) => `${x} of ${y} entries (${p}%)`,
-    heads: ["Rank", "Entry", "Occurrences", "Documents", "Share of documents", "Per million tokens"],
-    more: (n) => `Show the next ${n}`,
-    empty: "No occurrence meets these conditions.",
-    nomatch: (q) => `No entry contains “${q}”.`,
-    placeholder: "anything",
-    commandUnavailable: "A CLI command cannot be shown because the table, corpus and catalog paths have no usable common parent directory.",
-    commandContext: "Run from the common parent directory of the table, corpus and catalog files.",
-    copy: "Copy",
-    copied: "Copied",
-    edit: "Edit as a clause",
-    apply: "Apply",
-    cancel: "Cancel",
-    blanks: "Use condition controls",
-    workbench: "Open in workbench",
-    reasons: {
-      section: () => "@section cannot be answered here: a count table counts per document.",
-      sentence: () => "@sentence keys and divisions cannot be answered here: a count table counts per document.",
-      syntax: (r) => `The clause does not parse: ${r.message}`,
-      unknown_key: (r) => `This corpus has no condition named “${r.key}”.`,
-      unwritable: (r) => `“${r.value}” contains a double quote, which cannot be escaped in a scope clause.`,
-      shape: (r) => `The condition on “${r.key}” does not fit its values.`,
-      address: () => "The conditions in this URL cannot be read.",
-      unknown_entry: () => "This entry does not occur in the table.",
-    },
-    back: (p, c) => `Frequencies of <b>${p}</b> in ${c}`,
-    readerTitle: "Occurrence in its document",
-    readerReturn: "Back to the lines",
-    readerLoading: "Loading the document…",
-    entryFigures: (o, d) => `${o} ${o === "1" ? "occurrence" : "occurrences"} in ${d} ${d === "1" ? "document" : "documents"}`,
-    readout: (name, o, d) => `${name}: ${S.en.entryFigures(o, d)}`,
-    noValue: "no value",
-    moreValues: (n) => `${n} more values`,
-    asTable: "Table",
-    tableHeads: ["Value", "Occurrences", "Documents"],
-    lines: "Lines",
-    linesShown: (n, of) => `${n} of ${of}`,
-    document: (id) => `document ${id}`,
-    entryNeedsBlanks: "Use condition controls to open an entry",
-    unavailable: (catalog, corpus) => `No count table is registered for ${catalog} over ${corpus}.`,
-    unknownPattern: (pattern, catalog) => `${catalog} has no pattern “${pattern}”.`,
-    noTables: "No count table is registered. Ask the server administrator to add one with ling serve --count-table.",
-    failed: (status) => `Server response: ${status}.`,
-  },
-  ja: {
-    role: { pattern: "パターン", catalog: "カタログ", order: "並び順", filter: "絞り込み" },
-    sorts: [["count", "頻度の高い順"], ["works", "出現文書数の多い順"], ["key", "文字コード順"]],
-    name: (key) => key,
-    any: (name) => name,
-    values: (w) => (w.m === "out" ? `${jaJoin(w.v)}以外` : w.v.length <= 3 ? jaJoin(w.v) : `${w.v.length}件`),
-    range: (w) => (w.lo != null && w.hi != null ? `${w.lo}–${w.hi}` : w.lo != null ? `${w.lo}以上` : `${w.hi}以下`),
-    scope: (items) => {
-      const parts = [];
-      for (const x of items) {
-        const last = parts.at(-1);
-        if (x.any && last?.any) last.html.push(x.html);
-        else parts.push({ any: x.any, html: [x.html], name: x.name });
-      }
-      return parts.length ? `${parts.map((p) => (p.any ? `${p.html.join("・")}を問わない` : `${esc(p.name)}が${p.html[0]}`)).join("、")}${parts.at(-1).any ? "" : "の"}文書` : "";
-    },
-    sentence: (b) => `${b.C}${b.scope ? `のうち、${b.scope}における` : "における"}${b.P}の頻度。${b.O}、${b.Q}を含む項目<span class="tail">。</span>`,
-    rawScope: "下の条件式に合う文書",
-    add: "＋ 条件",
-    addLabel: "条件を追加",
-    figures: (e, o, d) => `${e}項目、${o}件、文書${d}件`,
-    keeps: (x, y, p) => `${y}件中${x}件（${p}%）`,
-    missingField: (n, key) => `他の条件を満たす文書のうち、${key}がない${n}件を除外しています。`,
-    keepsEntries: (x, y, p) => `${y}項目中${x}項目（${p}%）`,
-    heads: ["順位", "項目", "出現数", "文書数", "文書に占める割合", "100万語あたり"],
-    more: (n) => `次の${n}件を表示`,
-    empty: "条件に合う用例はありません。",
-    nomatch: (q) => `「${q}」を含む項目はありません。`,
-    placeholder: "任意の文字列",
-    commandUnavailable: "入力パスを共通ディレクトリからの相対パスで表せないため、コピー用コマンドは表示できません。",
-    commandContext: "テーブル・コーパス・カタログの各ファイルに共通する親ディレクトリで実行してください。",
-    copy: "コピー",
-    copied: "コピーしました",
-    edit: "条件式として編集",
-    apply: "適用",
-    cancel: "取り消す",
-    blanks: "条件の選択に戻す",
-    workbench: "ワークベンチで開く",
-    reasons: {
-      section: () => "@section はここでは扱えません。件数表は文書ごとの件数です。",
-      sentence: () => "@sentence のキーと区分はここでは扱えません。件数表は文書ごとの件数です。",
-      syntax: (r) => `条件式を解析できません：${r.message}`,
-      unknown_key: (r) => `このコーパスに「${r.key}」という条件はありません。`,
-      unwritable: (r) => `「${r.value}」は二重引用符を含むため条件式にできません。`,
-      shape: (r) => `「${r.key}」の条件が値の種類に合いません。`,
-      address: () => "このアドレスの条件を読み取れません。",
-      unknown_entry: () => "この項目は件数表にありません。",
-    },
-    back: (p, c) => `${c}における<b>${p}</b>の頻度`,
-    readerTitle: "文書中の用例",
-    readerReturn: "用例一覧に戻る",
-    readerLoading: "文書を読み込んでいます…",
-    entryFigures: (o, d) => `文書${d}件に${o}件`,
-    readout: (name, o, d) => `${name}：文書${d}件に${o}件`,
-    noValue: "値なし",
-    moreValues: (n) => `ほか${n}種`,
-    asTable: "表",
-    tableHeads: ["値", "出現数", "文書数"],
-    lines: "用例",
-    linesShown: (n, of) => `${of}件中${n}件`,
-    document: (id) => `文書${id}`,
-    entryNeedsBlanks: "項目を開くには条件の選択に戻してください",
-    unavailable: (catalog, corpus) => `${corpus}の${catalog}には件数表が登録されていません。`,
-    unknownPattern: (pattern, catalog) => `${catalog}にパターン「${pattern}」はありません。`,
-    noTables: "件数表が登録されていません。サーバーの管理者に ling serve --count-table での登録を依頼してください。",
-    failed: (status) => `サーバーの応答：${status}`,
-  },
-};
-
-const L = () => S[currentLocale()] ?? S.en;
-const num = (n) => (NUM[currentLocale()] ?? NUM.en).format(Number(n));
 
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
@@ -252,54 +120,44 @@ export function labelForms(names) {
   });
 }
 
-async function api(path, params, signal) {
-  const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""));
-  const response = await fetch(`api/${path}?${query}`, { signal });
-  if (!response.ok) {
-    const reply = await response.json().catch(() => null);
-    throw new Error(reply?.error ?? L().failed(response.status));
-  }
-  return response.json();
-}
-
 export function mountFrequency(root) {
   const $ = (sel) => root.querySelector(sel);
   const sentenceEl = $("[data-fq-sentence]"), figuresEl = $("[data-fq-figures]"), clauseEl = $("[data-fq-clause]");
   const sourceEl = $("[data-fq-source]"), stateEl = $("[data-fq-state]"), tableEl = $("[data-fq-table]"), entryEl = $("[data-fq-entry]");
   let meta = null, s = readState(location.hash), answer = null, gen = 0, shown = 0;
   let editing = false;
-  let profile = null, lined = null, plan = {}, preview = null, previewed = null, anchor = null, lastEntry = null;
+  const inflight = latestRequest(), paging = pager((message) => (stateEl.textContent = message));
+  let profile = null, lined = null, plan = {}, preview = null, previewed = null, anchor = null, lastEntry = null, depth = 0;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
   const dims = () => (pair() ? meta.dimensions[pair().corpus] ?? [] : []);
   const dim = (key) => dims().find((d) => d.key === key);
-  const keyName = (key) => meta.labels?.[key]?.[currentLocale()] ?? L().name(key);
+  const keyName = (key) => meta.labels?.[key]?.[currentLocale()] ?? fieldName(key);
   const shownKeys = () => picker.shownKeys();
   const conditions = () => (Object.keys(s.w).length ? JSON.stringify(s.w) : undefined);
   const picker = createConditionPicker({
     sentence: sentenceEl,
     view: () => ({ dimensions: dims(), conditions: s.w, params: { corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, w: conditions() }, revision: gen }),
     keyName,
-    label: (_scope, key) => key == null ? L().addLabel : keyName(key),
+    label: (_scope, key) => key == null ? t("frequency.add_label") : keyName(key),
     anchor: (_scope, key) => sentenceEl.querySelector(`[data-b="${CSS.escape(key ?? "add")}"]`),
     commit: (_scope, key, w) => set({ w: { ...s.w, [key]: w } }),
     render: renderSentence,
-    api,
   });
 
   function resolve() {
-    if (!meta.pairs.length) return { state: L().noTables };
-    if (s.bad) return { state: L().reasons.address() };
+    if (!meta.pairs.length) return { state: t("views.no_tables") };
+    if (s.bad) return { state: t("views.reason_address") };
     const first = meta.pairs[0];
     s.corpus ??= first.corpus;
     s.catalog ??= (meta.pairs.find((p) => p.corpus === s.corpus) ?? first).catalog;
     const p = pair();
     if (!p) {
       const name = meta.pairs.find((x) => x.corpus === s.corpus)?.corpus_name ?? s.corpus;
-      return { state: L().unavailable(s.catalog, name) };
+      return { state: t("views.unavailable", { catalog: s.catalog, corpus: name }) };
     }
     s.pattern ??= p.patterns[0]?.name ?? null;
-    if (!p.patterns.some((x) => x.name === s.pattern)) return { state: L().unknownPattern(s.pattern, s.catalog), sentence: true };
+    if (!p.patterns.some((x) => x.name === s.pattern)) return { state: t("views.unknown_pattern", { pattern: s.pattern, catalog: s.catalog }), sentence: true };
     return { sentence: true, query: true };
   }
 
@@ -319,56 +177,54 @@ export function mountFrequency(root) {
   const select = (b, label, options, value) =>
     `<select data-b="${b}" aria-label="${esc(label)}">${options.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(value ?? "") ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
 
-  function conditionText(d, w) {
-    const t = L();
-    if (!w || (d.kind === "range" ? w.lo == null && w.hi == null : !w.v?.length)) return t.any(keyName(d.key));
-    return d.kind === "range" ? t.range(w) : t.values(w);
-  }
-  const isAny = (d, w) => !w || (d.kind === "range" ? w.lo == null && w.hi == null : !w.v?.length);
-
   function sentenceHtml() {
-    const t = L(), p = pair();
+    const p = pair();
     const catalogs = meta.pairs.map((x) => [`${x.corpus}\n${x.catalog}`, meta.pairs.some((y) => y.corpus !== x.corpus) ? `${x.catalog} (${x.corpus_name})` : x.catalog]);
     const items = shownKeys().map((key) => {
       const d = dim(key), w = s.w[key];
       return {
         name: keyName(key),
         any: isAny(d, w),
-        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${picker.isOpen(key)}">${esc(conditionText(d, w))}</button>`),
+        html: blank(role(keyName(key), key), `<button class="pick" data-b="${esc(key)}" aria-haspopup="dialog" aria-expanded="${picker.isOpen(key)}">${esc(conditionText(d, w, keyName(key)))}</button>`),
       };
     });
-    const b = {
-      P: blank(role(t.role.pattern), select("pattern", t.role.pattern, p.patterns.map((x) => [x.name, x.name]), s.pattern), "lead"),
-      C: blank(role(t.role.catalog), select("catalog", t.role.catalog, catalogs, `${s.corpus}\n${s.catalog}`)),
-      scope: s.where != null ? t.rawScope : t.scope(items),
-      O: blank(role(t.role.order), select("sort", t.role.order, t.sorts, s.sort)),
-      Q: blank(role(t.role.filter, "filter"), `<input data-b="q" type="search" placeholder="${esc(t.placeholder)}" aria-label="${esc(t.role.filter)}" value="${esc(s.q)}">`),
-    };
+    const roles = { pattern: t("views.role_pattern"), catalog: t("views.role_catalog"), order: t("frequency.role_order"), filter: t("frequency.role_filter") };
+    const documents = scopeDocuments(items);
+    const scope = s.where != null ? esc(t("frequency.raw_scope")) : documents && phrase("frequency.scope_from", { documents });
     const free = s.where == null && shownKeys().length < dims().length;
-    return t.sentence(b) + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t.addLabel)}">${esc(t.add)}</button>` : "");
+    return (
+      phrase(scope ? "frequency.sentence_scoped" : "frequency.sentence", {
+        pattern: blank(role(roles.pattern), select("pattern", roles.pattern, p.patterns.map((x) => [x.name, x.name]), s.pattern), "lead"),
+        catalog: blank(role(roles.catalog), select("catalog", roles.catalog, catalogs, `${s.corpus}\n${s.catalog}`)),
+        scope,
+        order: blank(role(roles.order), select("sort", roles.order, SORTS.map(([value, key]) => [value, t(key)]), s.sort)),
+        filter: blank(role(roles.filter, "filter"), `<input data-b="q" type="search" placeholder="${esc(t("frequency.placeholder"))}" aria-label="${esc(roles.filter)}" value="${esc(s.q)}">`),
+        stop: fullStop(),
+      }) + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t("frequency.add_label"))}">${esc(t("views.add"))}</button>` : "")
+    );
   }
 
   function renderSentence() {
-    sentenceEl.innerHTML = sentenceHtml();
+    redrawKeepingFocus(sentenceEl, (held) => (held.dataset.b ? `[data-b="${CSS.escape(held.dataset.b)}"]` : null), () => (sentenceEl.innerHTML = sentenceHtml()));
     annotate();
   }
 
   function annotate() {
-    const t = L();
     for (const n of sentenceEl.querySelectorAll(".role .n")) {
       const key = n.dataset.share, roleEl = n.parentElement, pick = roleEl.parentElement.querySelector(".pick, input");
       let kept = null, title = null;
       if (answer && key === "filter" && s.q) {
         const p = pctOf(answer.matching, answer.entries);
         kept = p;
-        title = t.keepsEntries(num(answer.matching), num(answer.entries), p);
+        title = t("frequency.keeps_entries", { kept: num(answer.matching), of: num(answer.entries), pct: p });
         pick?.style.setProperty("--kept", `${answer.entries ? (answer.matching / answer.entries) * 100 : 0}%`);
       } else if (answer && key && answer.kept[key]) {
         const k = answer.kept[key], p = pctOf(k.kept, k.of);
         kept = p;
-        title = t.keeps(num(k.kept), num(k.of), p);
+        title = t("frequency.keeps", { kept: num(k.kept), of: num(k.of), pct: p });
         if (s.w[key]?.m === "out" && k.excluded_missing_field_documents) {
-          title += ` ${t.missingField(num(k.excluded_missing_field_documents), keyName(key))}`;
+          const n = num(k.excluded_missing_field_documents);
+          title += ` ${t(n === "1" ? "frequency.missing_field_one" : "frequency.missing_field_other", { n, key: keyName(key) })}`;
         }
         pick?.style.setProperty("--kept", `${k.of ? (k.kept / k.of) * 100 : 0}%`);
       } else pick?.style.removeProperty("--kept");
@@ -406,13 +262,12 @@ export function mountFrequency(root) {
   }
 
   function renderFigures() {
-    figuresEl.textContent = answer && !entering() ? L().figures(num(answer.entries), num(answer.occurrences), num(answer.documents_admitted)) : "";
+    figuresEl.textContent = answer && !entering() ? t("frequency.figures", { entries: num(answer.entries), occurrences: num(answer.occurrences), documents: num(answer.documents_admitted) }) : "";
   }
 
   function renderClause() {
-    const t = L();
     if (editing) {
-      clauseEl.innerHTML = `<div class="edit"><textarea data-c="text" aria-label="--where" spellcheck="false">${esc(s.where ?? answer?.clause ?? "")}</textarea><div class="actions"><button data-c="apply">${esc(t.apply)}</button><button data-c="cancel">${esc(t.cancel)}</button></div></div>`;
+      clauseEl.innerHTML = `<div class="edit"><textarea data-c="text" aria-label="--where" spellcheck="false">${esc(s.where ?? answer?.clause ?? "")}</textarea><div class="actions"><button data-c="apply">${esc(t("views.apply"))}</button><button data-c="cancel">${esc(t("views.cancel"))}</button></div></div>`;
       return;
     }
     const source = entering() ? profile : answer;
@@ -430,7 +285,7 @@ export function mountFrequency(root) {
           return `${esc(command.slice(0, at))}<span class="where">${esc(command.slice(at, end))}</span>${esc(command.slice(end))}`;
         })()
       : esc(where);
-    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t.copy)}</button>` : ""}<button data-c="edit">${esc(t.edit)}</button>${s.where != null ? `<button data-c="blanks">${esc(t.blanks)}</button>` : ""}</div>${source ? `<p>${esc(command ? t.commandContext : t.commandUnavailable)}</p>` : ""}`;
+    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t("views.copy"))}</button>` : ""}<button data-c="edit">${esc(t("frequency.edit"))}</button>${s.where != null ? `<button data-c="blanks">${esc(t("views.use_controls"))}</button>` : ""}</div>${source ? `<p>${esc(command ? t("views.command_context") : t("views.command_unavailable"))}</p>` : ""}`;
   }
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
@@ -441,7 +296,7 @@ export function mountFrequency(root) {
       } catch {
         getSelection().selectAllChildren(code);
       }
-      e.target.textContent = L().copied;
+      e.target.textContent = t("views.copied");
     } else if (c === "edit") {
       editing = true;
       renderClause();
@@ -462,7 +317,7 @@ export function mountFrequency(root) {
       sourceEl.innerHTML = "";
       return;
     }
-    sourceEl.innerHTML = `${pattern.source ? `<pre>${esc(pattern.source)}</pre>` : ""}${p.workbench ? `<a href="${esc(p.workbench)}">${esc(L().workbench)}</a>` : ""}`;
+    sourceEl.innerHTML = `${pattern.source ? `<pre>${esc(pattern.source)}</pre>` : ""}${p.workbench ? `<a href="${esc(p.workbench)}">${esc(t("frequency.workbench"))}</a>` : ""}`;
   }
 
   const keyNames = (group) => (group.kind === "key" && group.fields.length > 1 ? group.fields.map((f) => f.name).join(" ") : "");
@@ -474,23 +329,20 @@ export function mountFrequency(root) {
     return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${names ? `<small>${esc(names)}</small>` : ""}</td><td class="fig r"><b>${num(r.count)}</b></td><td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
-    const xs = cells.map((c) => +c.dataset.v), min = Math.min(...xs.filter((x) => x > 0));
-    const places = Number.isFinite(min) ? Math.max(0, Math.min(2, Math.ceil(-Math.log10(min)) + 1)) : 0;
-    const format = new Intl.NumberFormat(currentLocale() === "ja" ? "ja-JP" : "en-US", { minimumFractionDigits: places, maximumFractionDigits: places });
-    cells.forEach((c, i) => (c.textContent = format.format(xs[i])));
+    const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
+    cells.forEach((c, i) => (c.textContent = fixed(xs[i], digits)));
   }
   function renderTable() {
-    const t = L();
     tableEl.hidden = entering();
     if (!answer || entering()) {
       tableEl.innerHTML = "";
       return;
     }
     if (!answer.rows.length) {
-      tableEl.innerHTML = `<p class="fq-empty">${esc(s.q && answer.occurrences ? t.nomatch(s.q) : t.empty)}</p>`;
+      tableEl.innerHTML = `<p class="fq-empty">${esc(s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
       return;
     }
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${t.heads.map((h, i) => `<th class="${[0, 2, 3, 5].includes(i) ? "r" : ""}">${esc(h)}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}>${esc(t.more(PAGE))}</button>`;
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${HEADS.map((h, i) => `<th class="${[0, 2, 3, 5].includes(i) ? "r" : ""}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);
@@ -501,21 +353,23 @@ export function mountFrequency(root) {
   tableEl.addEventListener("click", async (e) => {
     const row = e.target.closest("tr[data-i]");
     if (row && answer) {
+      depth = shown;
       set({ entry: JSON.stringify(answer.rows[+row.dataset.i].group) });
       return;
     }
     const button = e.target.closest(".more");
     if (!button) return;
     button.disabled = true;
-    try {
-      const mine = gen, more = await api("frequency", { ...params(), offset: shown });
-      if (mine !== gen || more.status !== "ok") return;
-      answer.rows.push(...more.rows);
-      shown = answer.rows.length;
-      renderTable();
-    } finally {
-      button.disabled = false;
-    }
+    const into = answer;
+    await paging.next(
+      (signal) => api("frequency", { ...params(), offset: shown }, signal),
+      () => into === answer,
+      (more) => {
+        into.rows.push(...more.rows);
+        shown = into.rows.length;
+      },
+      renderTable,
+    );
   });
 
   sentenceEl.addEventListener("change", (e) => {
@@ -529,9 +383,9 @@ export function mountFrequency(root) {
   let typing;
   sentenceEl.addEventListener("input", (e) => {
     if (e.target.dataset.b !== "q") return;
+    s.q = e.target.value;
     clearTimeout(typing);
     typing = setTimeout(() => {
-      s.q = e.target.value;
       persist();
       load({ keepSentence: true });
     }, 220);
@@ -544,7 +398,7 @@ export function mountFrequency(root) {
     picker.open(b === "add" ? null : b);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || root.querySelector("[data-fq-reader]").open) return;
+    if (e.key !== "Escape" || document.querySelector("dialog:modal")) return;
     if (picker.opened) picker.close();
     else if (entering() && !editing && !e.target.closest?.("input, textarea, select")) leaveEntry();
   });
@@ -555,7 +409,7 @@ export function mountFrequency(root) {
 
   const entering = () => s.entry != null && s.where == null;
   const groupText = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)).join(" ") : g.value);
-  const valueName = (v) => v ?? L().noValue;
+  const valueName = (v) => v ?? t("frequency.no_value");
   const ems = (text) => [...text].reduce((w, c) => w + (c.charCodeAt(0) > 0x2e7f ? 1 : 0.6), 0);
   const barsOf = (c) => [...c.bars, ...(c.none ? [{ ...c.none, value: null }] : [])];
   const span = (x) => (String(x.lo) === String(x.hi) ? String(x.lo) : `${x.lo}–${x.hi}`);
@@ -574,47 +428,52 @@ export function mountFrequency(root) {
     return w.m === "out" ? (v) => v != null && !w.v.includes(v) : (v) => w.v.includes(v);
   }
   function barsHtml(c) {
-    const t = L(), rows = plan[c.key] ?? { rows: 0, more: false, lw: 2 }, admitted = admits(c.key);
+    const rows = plan[c.key] ?? { rows: 0, more: false, lw: 2 }, admitted = admits(c.key);
     const all = barsOf(c).slice(0, rows.rows), max = Math.max(1, ...all.map((b) => b.count));
     const forms = labelForms(all.map((b) => valueName(b.value)));
     const bar = (b, i) => {
       const name = valueName(b.value), none = b.value == null;
-      return `<li><button data-bar data-v="${none ? "" : esc(b.value)}"${none ? " data-none" : ""} aria-pressed="${admitted(b.value)}" aria-label="${esc(t.readout(name, num(b.count), num(b.works)))}"><span class="name${none ? " none" : ""}" data-full="${esc(name)}" data-forms="${esc(JSON.stringify(forms[i]))}" aria-hidden="true"><span>${esc(name)}</span></span><span class="b"><i style="width:${((b.count / max) * 100).toFixed(1)}%"></i></span><span class="v" aria-hidden="true">${num(b.count)}</span></button></li>`;
+      return `<li><button data-bar data-v="${none ? "" : esc(b.value)}"${none ? " data-none" : ""} aria-pressed="${admitted(b.value)}" aria-label="${esc(readoutText(name, b))}"><span class="name${none ? " none" : ""}" data-full="${esc(name)}" data-forms="${esc(JSON.stringify(forms[i]))}" aria-hidden="true"><span>${esc(name)}</span></span><span class="b"><i style="width:${((b.count / max) * 100).toFixed(1)}%"></i></span><span class="v" aria-hidden="true">${num(b.count)}</span></button></li>`;
     };
     const pad = '<li class="pad" aria-hidden="true"><span>&nbsp;</span></li>'.repeat(Math.max(0, rows.rows - all.length));
-    const more = rows.more ? `<p class="fq-more-values">${c.distinct > c.bars.length ? esc(t.moreValues(num(c.distinct - c.bars.length))) : "&nbsp;"}</p>` : "";
+    const more = rows.more ? `<p class="fq-more-values">${c.distinct > c.bars.length ? esc(t("frequency.more_values", { n: num(c.distinct - c.bars.length) })) : "&nbsp;"}</p>` : "";
     return `<ol class="fq-bars" style="--lw:${Math.min(rows.lw, 14).toFixed(1)}em">${all.map(bar).join("")}${pad}</ol>${more}`;
   }
   function columnsHtml(c) {
-    const t = L(), d = dim(c.key), w = s.w[c.key], max = Math.max(1, ...c.columns.map((x) => x.count));
+    const d = dim(c.key), w = s.w[c.key], max = Math.max(1, ...c.columns.map((x) => x.count));
     const ranged = w?.m === "range" && (w.lo != null || w.hi != null);
     const inside = (x) => ranged && (w.lo == null || +x.lo >= w.lo) && (w.hi == null || +x.hi <= w.hi);
     const columns = c.columns
-      .map((x) => (x.lo == null ? '<span class="gap"></span>' : `<button data-col data-lo="${esc(x.lo)}" data-hi="${esc(x.hi)}" aria-pressed="${inside(x)}" aria-label="${esc(t.readout(span(x), num(x.count), num(x.works)))}"><i style="height:${((x.count / max) * 100).toFixed(1)}%"></i></button>`))
+      .map((x) => (x.lo == null ? '<span class="gap"></span>' : `<button data-col data-lo="${esc(x.lo)}" data-hi="${esc(x.hi)}" aria-pressed="${inside(x)}" aria-label="${esc(readoutText(span(x), x))}"><i style="height:${((x.count / max) * 100).toFixed(1)}%"></i></button>`))
       .join("");
-    const none = c.none ? t.readout(t.noValue, num(c.none.count), num(c.none.works)) : "";
+    const none = c.none ? readoutText(t("frequency.no_value"), c.none) : "";
     return `<div class="fq-columns${c.columns.length > 60 ? " dense" : ""}">${columns}</div><div class="fq-axis" aria-hidden="true"><span>${d ? tick(d.min) : ""}</span><span>${d ? tick(d.max) : ""}</span></div><p class="fq-none">${none ? esc(none) : "&nbsp;"}</p>`;
   }
   const tick = (n) => (Number.isInteger(n) && Math.abs(n) < 10000 ? String(n) : num(n));
   const bodyHtml = (c) => (c.kind === "categorical" ? barsHtml(c) : columnsHtml(c));
   function chartTable(c) {
-    const t = L();
     const rows =
       c.kind === "categorical"
         ? barsOf(c).map((b) => [valueName(b.value), b.count, b.works])
-        : [...c.columns.filter((x) => x.lo != null && x.count).map((x) => [span(x), x.count, x.works]), ...(c.none ? [[t.noValue, c.none.count, c.none.works]] : [])];
-    return `<table><thead><tr>${t.tableHeads.map((h, i) => `<th${i ? ' class="r"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(([v, n, d]) => `<tr><td>${esc(v)}</td><td class="r">${num(n)}</td><td class="r">${num(d)}</td></tr>`).join("")}</tbody></table>`;
+        : [...c.columns.filter((x) => x.lo != null && x.count).map((x) => [span(x), x.count, x.works]), ...(c.none ? [[t("frequency.no_value"), c.none.count, c.none.works]] : [])];
+    return `<table><thead><tr>${TABLE_HEADS.map((h, i) => `<th${i ? ' class="r"' : ""}>${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${rows.map(([v, n, d]) => `<tr><td>${esc(v)}</td><td class="r">${num(n)}</td><td class="r">${num(d)}</td></tr>`).join("")}</tbody></table>`;
   }
   const chartHtml = (c) =>
-    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption><p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(L().asTable)}</summary>${chartTable(c)}</details></figure>`;
+    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption><p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
 
   const lineHtml = (l, i) =>
-    `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src">${esc(L().document(l.document))}</span></li>`;
+    `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src">${esc(t("frequency.document", { id: l.document }))}</span></li>`;
   function linesHtml(st, previewing) {
-    const t = L();
-    return `<h3>${esc(t.lines)} <span class="count">${esc(t.linesShown(num(st.lines.length), num(st.total)))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t.empty)}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}>${esc(t.more(LINES))}</button>`;
+    return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;
   }
-  const figuresText = (p) => L().entryFigures(num(p.count), num(p.works));
+  function figuresText(p) {
+    const o = num(p.count), d = num(p.works);
+    return t("frequency.entry_figures", {
+      occurrences: t(o === "1" ? "frequency.occurrences_one" : "frequency.occurrences_other", { n: o }),
+      documents: t(d === "1" ? "frequency.documents_one" : "frequency.documents_other", { n: d }),
+    });
+  }
+  const readoutText = (name, p) => t("frequency.readout", { name, figures: figuresText(p) });
 
   function fitLabels(scope = entryEl) {
     const names = [...scope.querySelectorAll(".fq-bars .name")];
@@ -656,12 +515,12 @@ export function mountFrequency(root) {
       entryEl.innerHTML = failure ? `<p class="fq-state">${esc(failure)}</p>` : "";
       return;
     }
-    const t = L(), back = new URLSearchParams(stateEntries({ ...s, entry: null }));
+    const back = new URLSearchParams(stateEntries({ ...s, entry: null }));
     const focused = document.activeElement?.closest?.("[data-bar], [data-col]");
     const at = focused && entryEl.contains(focused) ? [focused.closest(".fq-chart").dataset.key, focused.dataset.v ?? null, focused.dataset.lo ?? null] : null;
     plan = planOf(profile);
     const names = keyNames(profile.group);
-    entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${t.back(esc(s.pattern), esc(s.catalog))}</a>
+    entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
       <h2 class="fq-entry-name">${esc(groupText(profile.group))}${names ? `<small>${esc(names)}</small>` : ""}</h2>
       <p class="fq-entry-figures" data-e="figures">${esc(figuresText(profile))}</p>
       <div class="fq-profile" data-e="profile">${profile.charts.map(chartHtml).join("")}</div>
@@ -675,7 +534,7 @@ export function mountFrequency(root) {
     }
   }
 
-  async function loadEntry(mine) {
+  async function loadEntry(mine, signal) {
     entryEl.setAttribute("aria-busy", "true");
     if (profile?.entry !== s.entry) {
       profile = null;
@@ -686,7 +545,7 @@ export function mountFrequency(root) {
     }
     let p, l;
     try {
-      [p, l] = await Promise.all([api("frequency/profile", entryParams(s.w)), api("frequency/lines", { ...entryParams(s.w), limit: LINES })]);
+      [p, l] = await Promise.all([api("frequency/profile", entryParams(s.w), signal), api("frequency/lines", { ...entryParams(s.w), limit: LINES }, signal)]);
     } catch (error) {
       if (mine === gen) {
         renderEntry(error.message);
@@ -702,7 +561,7 @@ export function mountFrequency(root) {
     if (bad) {
       profile = null;
       lined = null;
-      renderEntry(bad.status === "unsupported" ? L().reasons[bad.reason]?.(bad) ?? bad.reason : L().unavailable(s.catalog, s.corpus));
+      renderEntry(bad.status === "unsupported" ? reasonText(bad) : t("views.unavailable", { catalog: s.catalog, corpus: s.corpus }));
     } else {
       profile = { ...p, entry: s.entry };
       lined = { total: l.total, lines: l.lines };
@@ -826,10 +685,9 @@ export function mountFrequency(root) {
     const found = /^(\d+)\.(\d+)\.(\d+)$/.exec(s.read ?? "");
     if (!found || !s.corpus) return;
     shownLine = found;
-    const t = L();
-    readerEl.querySelector("[data-fq-reader-title]").textContent = t.readerTitle;
-    readerEl.querySelector("[data-fq-return]").textContent = `← ${t.readerReturn}`;
-    readerBody.innerHTML = `<p>${esc(t.readerLoading)}</p>`;
+    readerEl.querySelector("[data-fq-reader-title]").textContent = t("frequency.reader_title");
+    readerEl.querySelector("[data-fq-return]").textContent = `← ${t("frequency.reader_return")}`;
+    readerBody.innerHTML = `<p>${esc(t("frequency.reader_loading"))}</p>`;
     if (!readerEl.open) readerEl.showModal();
     const [, sentence, start, end] = found, scope = s.scope === "paragraph" ? "paragraph" : "document";
     htmx.trigger(readerBody, "htmx:abort");
@@ -887,14 +745,16 @@ export function mountFrequency(root) {
     const more = e.target.closest("[data-e=more]");
     if (more) {
       more.disabled = true;
-      try {
-        const mine = gen, l = await api("frequency/lines", { ...entryParams(s.w), offset: lined.lines.length, limit: LINES });
-        if (mine !== gen || l.status !== "ok") return;
-        lined.lines.push(...l.lines);
-        entryEl.querySelector("[data-e=lines]").innerHTML = linesHtml(lined, false);
-      } finally {
-        more.disabled = false;
-      }
+      const into = lined;
+      await paging.next(
+        (signal) => api("frequency/lines", { ...entryParams(s.w), offset: into.lines.length, limit: LINES }, signal),
+        () => into === lined,
+        (l) => into.lines.push(...l.lines),
+        () => {
+          const linesEl = entryEl.querySelector("[data-e=lines]");
+          if (lined && linesEl) linesEl.innerHTML = linesHtml(lined, false);
+        },
+      );
       return;
     }
     const line = e.target.closest(".fq-kwic li[data-sentence]");
@@ -935,29 +795,32 @@ export function mountFrequency(root) {
     renderSource();
     renderTable();
     if (!entering() || profile?.entry !== s.entry) renderEntry();
-    if (s.entry != null && s.where != null) stateEl.textContent = L().entryNeedsBlanks;
+    if (s.entry != null && s.where != null) stateEl.textContent = t("frequency.entry_needs_controls");
     return r;
   }
   function sentenceFallback() {
-    const t = L();
+    const catalog = t("views.role_catalog");
     const catalogs = [[`${s.corpus}\n${s.catalog}`, s.catalog], ...meta.pairs.map((x) => [`${x.corpus}\n${x.catalog}`, `${x.catalog} (${x.corpus_name})`])];
-    return blank(role(t.role.catalog), select("catalog", t.role.catalog, catalogs, `${s.corpus}\n${s.catalog}`));
+    return blank(role(catalog), select("catalog", catalog, catalogs, `${s.corpus}\n${s.catalog}`));
   }
 
   async function load({ keepSentence = false } = {}) {
     const mine = ++gen;
+    const signal = inflight.next();
+    paging.cancel();
     if (!keepSentence) answer = null;
     const r = keepSentence ? resolve() : renderAll();
+    showCorpus(root, meta, s.corpus);
     picker.reloadValues();
     if (!r.query) return;
-    const entryLoad = entering() && !keepSentence ? loadEntry(mine) : null;
+    const entryLoad = entering() && (!keepSentence || entryEl.hasAttribute("aria-busy")) ? loadEntry(mine, signal) : null;
     if (!entering()) {
       profile = null;
       lined = null;
     }
     let reply;
     try {
-      reply = await api("frequency", params());
+      reply = await api("frequency", { ...params(), limit: lastEntry ? Math.max(PAGE, depth) : PAGE }, signal);
     } catch (error) {
       if (mine === gen) stateEl.textContent = error.message;
       return;
@@ -966,18 +829,17 @@ export function mountFrequency(root) {
     if (reply.status === "ok") {
       answer = reply;
       shown = reply.rows.length;
-      stateEl.textContent = "";
+      stateEl.textContent = s.entry != null && s.where != null ? t("frequency.entry_needs_controls") : "";
     } else {
       answer = null;
-      stateEl.textContent = reply.status === "unsupported" ? L().reasons[reply.reason]?.(reply) ?? reply.reason : L().unavailable(s.catalog, s.corpus);
+      stateEl.textContent = reply.status === "unsupported" ? reasonText(reply) : t("views.unavailable", { catalog: s.catalog, corpus: s.corpus });
     }
-    if (s.entry != null && s.where != null) stateEl.textContent = L().entryNeedsBlanks;
     if (keepSentence) annotate();
     else renderSentence();
     renderFigures();
     renderClause();
     renderTable();
-    picker.refresh({ keepSearchFocus: true });
+    picker.refresh();
     await entryLoad;
   }
 
@@ -993,6 +855,7 @@ export function mountFrequency(root) {
     const next = readState(location.hash);
     const view = (state) => JSON.stringify(stateEntries({ ...state, read: null, scope: null }));
     const reread = view(next) === view(s);
+    if (entering() && next.entry == null) lastEntry = s.entry;
     s = next;
     if (readerEl.open && s.read == null) readerEl.close();
     if (reread) {
@@ -1004,7 +867,7 @@ export function mountFrequency(root) {
     await load();
     if (s.read != null) showReader();
   });
-  onLocaleChange(() => {
+  const relocalize = () => {
     renderAll();
     renderEntry();
     if (answer) {
@@ -1013,10 +876,12 @@ export function mountFrequency(root) {
       renderClause();
       renderTable();
     }
-  });
+  };
 
   return (async () => {
-    meta = await api("frequency/meta", {});
+    meta = await loadMeta(stateEl);
+    if (!meta) return;
+    onLocaleChange(relocalize);
     await load();
     if (s.read != null) showReader();
   })();

@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::frequency::{bad_request, conditions, run_frequency_task};
+use super::frequency::{conditions, failure, reply_without_scan, run_frequency_task};
 use crate::frequency::{ContrastAnswer, ContrastQuery, Scope, ScopeUnsupported};
 use crate::state::RequestStore;
 
@@ -103,16 +103,16 @@ async fn contrast(
     };
     let views = Arc::clone(&store.frequency);
     let (corpus, catalog) = (params.corpus, params.catalog);
+    if let Some(reply) = reply_without_scan(&views, &corpus, &catalog, &query.pattern) {
+        return reply;
+    }
     let started = Instant::now();
     let result = run_frequency_task(Arc::clone(&store.coordinators), move |cancellation| {
         let Some(pair) = views.find(&corpus, &catalog) else {
             return Ok(Reply::Unavailable);
         };
         Ok(
-            match pair
-                .contrast(views.dimensions(&pair.corpus), &query, cancellation)
-                .map_err(|error| error.to_string())?
-            {
+            match pair.contrast(views.dimensions(&pair.corpus), &query, cancellation)? {
                 Ok(body) => Reply::Ok {
                     body,
                     ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -124,7 +124,7 @@ async fn contrast(
     .await;
     match result {
         Ok(Ok(reply)) => Json(reply).into_response(),
-        Ok(Err(message)) => bad_request(message),
+        Ok(Err(error)) => failure(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

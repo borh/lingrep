@@ -388,10 +388,13 @@ mod tests {
         CompletedSnapshot {
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             revision: crate::revision::RevisionId(1),
             corpus_identity: crate::corpus_runtime::CorpusIdentity::new(""),
             source: "".into(),
             derive_compounds: false,
+            overlaps: Default::default(),
             compound_category: crate::snapshot::CompoundCategory::Compound,
             patterns: Box::default(),
             match_refs: Box::default(),
@@ -403,6 +406,8 @@ mod tests {
             matched_sentences: matched,
             documents: None,
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         }
     }
 

@@ -48,3 +48,16 @@ pub fn catalog_fingerprint(source: &str) -> String {
     digest.update(normalized.as_bytes());
     digest.finalize().to_hex().to_string()
 }
+
+/// Fingerprints a catalog that has `near` tests: [`catalog_fingerprint`] of
+/// `source` together with the BLAKE3 digest of the word-vector file that
+/// answered them. The source alone does not determine what a `near` test
+/// matches.
+#[must_use]
+pub fn catalog_fingerprint_with_vectors(source: &str, table: &blake3::Hash) -> String {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"lingrep/catalog-with-vectors/v1");
+    digest.update(catalog_fingerprint(source).as_bytes());
+    digest.update(table.as_bytes());
+    digest.finalize().to_hex().to_string()
+}

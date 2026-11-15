@@ -245,6 +245,7 @@ tr:hover { background: var(--row-hover-bg); }
 .ranked-tools input,
 .ranked-tools select,
 .section-distance select,
+.section-distance input,
 .corpus-select-label select {
   padding: 0.2rem 0.45rem;
   border: 1px solid var(--border-light);
@@ -269,6 +270,23 @@ tr:hover { background: var(--row-hover-bg); }
   text-decoration: none;
 }
 .export-download:hover { text-decoration: underline; }
+button.export-download {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+}
+button.export-download:disabled {
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+.export-waiting-reason {
+  display: block;
+  margin: 0 0 var(--space-2);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
 .document-share { margin: 0; font-size: 0.9em; color: var(--text-muted); }
 .catalog-coverage {
   margin: var(--space-2) 0 0;
@@ -839,6 +857,7 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
+  .definition-panes > .definition-near-pane,
   .definition-panes > .definition-diagram-pane,
   .definition-panes > .surface-distribution,
   .definition-panes > .definition-standalone {
@@ -874,6 +893,84 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
   min-width: 0;
   max-width: 100%;
 }
+.definition-near-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.definition-near-test {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-1);
+  font-size: 0.9rem;
+}
+.definition-near-test code { background: var(--code-bg); border-radius: 3px; padding: 0.05rem 0.35rem; }
+.definition-near-test a { color: var(--link-color); text-underline-offset: 0.18em; }
+.definition-near-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+/* ── The neighbors page ─────────────────────────────────────────────────── */
+.neighbors { max-inline-size: 52rem; }
+.neighbors h1 { margin: 0 0 var(--space-2); font-size: 1.4rem; }
+.neighbors-blurb { margin: 0 0 var(--space-4); max-inline-size: 70ch; }
+.neighbors-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+  margin-block-end: var(--space-5);
+}
+.neighbors-form .btn { margin-top: 0; }
+.neighbors-field { display: grid; gap: var(--space-1); flex: 1 1 14rem; }
+.neighbors-field-threshold { flex: 0 1 11rem; }
+.neighbors-field label { font-weight: 600; font-size: 0.9rem; }
+.neighbors-field input {
+  font: inherit;
+  color: var(--text);
+  background: var(--token-bg);
+  border: 1px solid var(--token-border);
+  border-radius: 4px;
+  padding: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+  inline-size: 100%;
+  caret-color: var(--focus-ring);
+}
+.neighbors-field input:hover { border-color: var(--text-muted); }
+.neighbors-field input:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 1px; }
+.neighbors-field input[aria-invalid="true"] { border-color: var(--alert-error-border); }
+.neighbors ::selection { background: var(--highlight-bg); color: var(--match-text); }
+.neighbors-summary { margin-block-end: var(--space-3); }
+.neighbors-count { margin: 0 0 var(--space-1); font-weight: 600; }
+.neighbors-count .muted { font-weight: 400; }
+.neighbors-test { margin: 0; font-size: 0.9rem; }
+.neighbors-snippet {
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: var(--font-mono);
+  user-select: all;
+}
+.neighbors-table { table-layout: auto; }
+.neighbors-table th { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; background: var(--surface-muted); }
+.neighbors-table th, .neighbors-table td { padding: var(--space-1) var(--space-3); border-inline: 0; }
+.neighbors-rank { inline-size: 4.5rem; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.neighbors-value { font-size: 1.02rem; overflow-wrap: anywhere; }
+td.neighbors-similarity { display: flex; align-items: center; gap: var(--space-3); border-block-end: 0; }
+.neighbors-table th.neighbors-similarity { inline-size: 16rem; }
+.neighbors-bar { flex: 1 1 auto; block-size: 0.5rem; background: var(--bar-track); border-radius: 2px; overflow: hidden; }
+.neighbors-bar > span { display: block; block-size: 100%; background: var(--bar-fill); }
+.neighbors-number { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.85rem; }
+.neighbors-file { margin-block-start: var(--space-6); padding-block-start: var(--space-3); border-block-start: 1px solid var(--border-light); font-size: 0.9rem; }
+.neighbors-file p { margin: 0 0 var(--space-1); }
+@media (max-width: 40rem) {
+  .neighbors-bar { display: none; }
+  .neighbors-table th.neighbors-similarity { inline-size: auto; }
+}
+
 .definition-references {
   margin: var(--space-2) 0 var(--space-1);
   font-size: 0.85rem;
@@ -1212,11 +1309,12 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
 .section-scope-option input { flex: none; }
 .section-scope-option small { margin-inline-start: auto; color: var(--text-muted); }
 .scope-actions { justify-content: flex-end; }
-.cluster-controls { margin-block: 0 var(--space-2); }
+.cluster-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: 0 var(--space-2); }
 .section-contrast-band { margin-block-start: var(--space-3); }
-.contrast-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .section-distance { display: inline-flex; align-items: center; gap: var(--space-1); }
-.section-distance select { min-height: 1.8rem; padding-block: 0.1rem; }
+.section-distance select,
+.section-distance input { min-height: 1.8rem; padding-block: 0.1rem; }
+.section-distance input { width: 6rem; }
 
 /* Shares the comparison band's treatment: the two answer one question
    at the same level and reading as one pair is the point. */

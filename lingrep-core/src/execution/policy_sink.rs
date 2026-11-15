@@ -250,6 +250,20 @@ impl<'a, S: MatchSink> PolicySink<'a, S> {
 }
 
 impl<S: MatchSink> MatchSink for PolicySink<'_, S> {
+    fn counts_token_windows(&self) -> bool {
+        self.mode == PolicyMode::Apply && self.trace.is_none() && self.inner.counts_token_windows()
+    }
+
+    fn push_windows<V: TokenSequence + Sync>(
+        &mut self,
+        pool: &rayon::ThreadPool,
+        locations: &[SentenceLocation],
+        sentences: &[V],
+        cancel: &CancellationFlag,
+    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+        self.inner.push_windows(pool, locations, sentences, cancel)
+    }
+
     /// Publishes one sentence's records after policy.
     ///
     /// `sentence.len()` is the sentence's true token count — a projected source

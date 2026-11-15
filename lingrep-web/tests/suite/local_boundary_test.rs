@@ -171,6 +171,7 @@ fn search_ignores_client_path_fields() {
 #[test]
 fn error_fragment_escapes_dynamic_message() {
     let html = ErrorFragment {
+        key: "sample.failed",
         message: "<script>alert(1)</script>",
     }
     .render()
@@ -178,4 +179,5 @@ fn error_fragment_escapes_dynamic_message() {
 
     assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
     assert!(!html.contains("<script>"));
+    assert!(html.contains("data-i18n=\"sample.failed\""));
 }

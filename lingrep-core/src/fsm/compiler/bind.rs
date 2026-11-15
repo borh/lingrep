@@ -11,9 +11,9 @@ use super::diagnostic::{
 use super::limits::CompileLimits;
 use super::model::{
     BoundDefinition, BoundDefinitionBody, BoundExpr, BoundProgram, DefinitionId,
-    DefinitionVisibility, LookaroundExpr, ParsedAttr, ParsedAttrValue, ParsedDefinition,
-    ParsedDefinitionBody, ParsedExpr, ParsedProgram, ParsedTest, SourceId, SourceRegistry,
-    SourceSpan,
+    DefinitionVisibility, LookaroundExpr, NearQuery, NearResolution, ParsedAttr, ParsedAttrValue,
+    ParsedDefinition, ParsedDefinitionBody, ParsedExpr, ParsedProgram, ParsedTest, SourceId,
+    SourceRegistry, SourceSpan,
 };
 use super::token_test::{ResolvedTest, to_dnf};
 use crate::fsm::{AttrValue, AttrValueType};
@@ -111,6 +111,8 @@ pub(super) fn bind(
         // shares nothing with the `@` names this function adjudicates.
         groups: _,
         analyzers: _,
+        vectors: _,
+        near,
         // Taken by `compile_program` before binding.
         labels: _,
     } = program;
@@ -283,6 +285,7 @@ pub(super) fn bind(
                     &enhanced_relations,
                     &symbols,
                     &set_members,
+                    &near,
                     &test_bodies,
                     &test_spans,
                     &visibilities,
@@ -622,6 +625,7 @@ fn bind_definition(
     enhanced_relations: &[super::model::ParsedEnhancedRelation],
     symbols: &IndexMap<CompactString, DefinitionId>,
     set_members: &IndexMap<CompactString, Arc<[CompactString]>>,
+    near: &IndexMap<NearQuery, NearResolution>,
     test_bodies: &IndexMap<CompactString, ParsedTest>,
     test_spans: &IndexMap<CompactString, SourceSpan>,
     visibilities: &[Option<DefinitionVisibility>],
@@ -643,6 +647,7 @@ fn bind_definition(
     let ctx = BindCtx {
         symbols,
         set_members,
+        near,
         test_bodies,
         visibilities,
         declarations: &declarations,
@@ -769,6 +774,7 @@ fn collect_capture_declarations(
 struct BindCtx<'a> {
     symbols: &'a IndexMap<CompactString, DefinitionId>,
     set_members: &'a IndexMap<CompactString, Arc<[CompactString]>>,
+    near: &'a IndexMap<NearQuery, NearResolution>,
     /// The catalog's `test` bodies, still unresolved: a test may reference
     /// another, so resolution is a walk rather than a lookup.
     test_bodies: &'a IndexMap<CompactString, ParsedTest>,
@@ -1042,6 +1048,54 @@ fn resolve_attr(
                 attr: parsed.attr.clone(),
                 // The negation belongs to the reference, not the declaration:
                 // one list serves both polarities.
+                value: if *negated {
+                    AttrValueType::NotIn(members)
+                } else {
+                    AttrValueType::OneOf(members)
+                },
+                complement: false,
+            }
+        }
+        ParsedAttrValue::Near {
+            word,
+            threshold,
+            negated,
+            span,
+        } => {
+            let query = NearQuery {
+                word: word.clone(),
+                threshold: *threshold,
+            };
+            let members = match ctx.near.get(&query) {
+                Some(NearResolution::Values(members)) => Arc::clone(members),
+                unavailable => {
+                    let (code, message) = match unavailable {
+                        Some(NearResolution::NoVector) => (
+                            DiagnosticCode::WordVectorUnavailable,
+                            format!("the word-vector table has no vector for `{word}`"),
+                        ),
+                        Some(NearResolution::Unreadable(message)) => (
+                            DiagnosticCode::WordVectorTableUnreadable,
+                            message.to_string(),
+                        ),
+                        _ => (
+                            DiagnosticCode::WordVectorUnavailable,
+                            "`near` needs a word-vector table, and none was supplied".to_owned(),
+                        ),
+                    };
+                    diagnostics.push(pending_diagnostic(
+                        ctx.sources,
+                        *span,
+                        code,
+                        word.clone(),
+                        message,
+                        None,
+                    ));
+                    Arc::from(Vec::<CompactString>::new())
+                }
+            };
+            AttrValue {
+                attr: parsed.attr.clone(),
                 value: if *negated {
                     AttrValueType::NotIn(members)
                 } else {
@@ -1941,6 +1995,8 @@ mod tests {
             sources,
             policy: None,
             analyzers: Vec::new(),
+            vectors: Vec::new(),
+            near: indexmap::IndexMap::new(),
             labels: Vec::new(),
             sets: Vec::new(),
             tests: Vec::new(),
@@ -2322,6 +2378,8 @@ mod set_sharing_tests {
                 sources,
                 policy: None,
                 analyzers: Vec::new(),
+                vectors: Vec::new(),
+                near: indexmap::IndexMap::new(),
                 labels: Vec::new(),
                 tests: Vec::new(),
                 sets: vec![ParsedSet {

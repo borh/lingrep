@@ -380,12 +380,14 @@ requires a tighter bound can lower `MAX_EXPORT_ROWS`.
 
 `GET /api/hit-context/{workbench}/{revision}/{pattern}/{occurrence}/{scope}`
 reads only the bound artifact's recorded document or authored paragraph range.
-Each page contains at most 20 sentences and 256 KiB of displayed text. A sentence's
-compressed analysis payload and decompressed payload are each limited to 128 KiB
-(the compressed envelope also permits its fixed header). Reconstructed-word reads
-check recorded token residency before projection and cap joined written forms at
-128 KiB; token decoding retains its existing 64 MiB raw-block scratch limit. These
-limits do not describe total resident memory. Rendered HTML is capped at 2 MiB.
+Each page contains at most 20 sentences and 256 KiB of displayed text. Sentence
+text bytes plus four bytes per surface are limited to 128 KiB. Shared provenance
+blocks are read through incremental SQLite BLOB access in chunks of at most 64 KiB,
+with at most 8 MiB of Zstandard history, without caching the complete decoded block.
+Reconstructed-word reads check recorded token residency before projection and cap
+joined written forms at 128 KiB; token decoding retains its existing 64 MiB
+raw-block scratch limit. These limits do not describe total resident memory.
+Rendered HTML is capped at 2 MiB.
 
 Requests to read match context share the coordinator's scan permit and retain
 it through blocking decoding, including after request cancellation. No page

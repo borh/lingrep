@@ -1,21 +1,49 @@
-//! Resolving a scope clause against a prepared artifact, once per run.
-//!
-//! Because a document's sentence count falls out of the same scan that yields
-//! its metadata, the whole four-bucket universe is known **before** the run
-//! starts: the prepared path reports a denominator it never had to observe,
-//! and that stays true when the run is cut short by `--limit`.
+//! Resolves scope clauses over the whole prepared artifact, including when a run stops early.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::{BlockOn, CorpusError, DocumentMetadataRow, ProvenanceView, RegionSpanRow};
 use lingrep_core::corpus::{DocumentId, Metadata, metadata_from_json};
 use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::scope::{ActiveLabels, DocumentOutcome, ScopeClause, Verdict};
-use lingrep_corpus::{DocumentMetadataRow, RegionSpanRow};
 use roaring::RoaringTreemap;
 
-use crate::protocol::query::ScopeUniverse;
+use lingrep_core::scope::ExclusionReason;
+use serde::{Deserialize, Serialize};
 
-/// A prepared run's resolved scope: who is admitted, and the whole universe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScopeOverflow;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ScopeUniverse {
+    pub admitted: u64,
+    pub excluded_by_predicate: u64,
+    pub excluded_missing_field: u64,
+    pub excluded_shape_mismatch: u64,
+}
+
+impl ScopeUniverse {
+    pub fn record(&mut self, verdict: Verdict, weight: u64) -> Result<(), ScopeOverflow> {
+        let bucket = match verdict {
+            Verdict::Admitted => &mut self.admitted,
+            Verdict::Excluded(ExclusionReason::Predicate) => &mut self.excluded_by_predicate,
+            Verdict::Excluded(ExclusionReason::MissingField) => &mut self.excluded_missing_field,
+            Verdict::Excluded(ExclusionReason::ShapeMismatch) => &mut self.excluded_shape_mismatch,
+        };
+        *bucket = bucket.checked_add(weight).ok_or(ScopeOverflow)?;
+        Ok(())
+    }
+
+    pub fn total(&self) -> Result<u64, ScopeOverflow> {
+        self.admitted
+            .checked_add(self.excluded_by_predicate)
+            .and_then(|sum| sum.checked_add(self.excluded_missing_field))
+            .and_then(|sum| sum.checked_add(self.excluded_shape_mismatch))
+            .ok_or(ScopeOverflow)
+    }
+}
+
+/// Admission and counts for the whole artifact, before any run limit applies.
 #[derive(Debug)]
 pub struct ScopeResolution {
     pub admission: SentenceAdmission,
@@ -29,21 +57,13 @@ pub struct ScopeResolutionError {
     pub message: String,
 }
 
-/// Judges every document once and sums both grains.
-/// Sentence metadata must be supplied in ascending, unique ordinal order.
-///
-/// Fallible because absent metadata and malformed metadata are different
-/// facts. A `NULL` row is a document the writer recorded as having none and
-/// evaluates as a missing field; a row that will not parse, or whose shape the
-/// typing rule rejects, is a violated artifact invariant and stops the run.
-/// The writer serialises this column with `serde_json::to_string` over an
-/// already-validated `Metadata`, so there is no third possibility that is
-/// merely unusual data.
+/// Resolves admission and counts for documents and sentences; sentence metadata
+/// must be supplied in ascending, unique ordinal order.
 ///
 /// # Errors
 ///
-/// Returns the first document whose stored metadata cannot be interpreted, or
-/// an overflow if the accounting would not be exact.
+/// Returns metadata read, parse or shape errors, invalid sentence-structure
+/// errors, or count overflow; absent document metadata is treated as empty.
 pub fn resolve_scope(
     clause: &ScopeClause,
     rows: impl IntoIterator<Item = Result<DocumentMetadataRow, ScopeResolutionError>>,
@@ -60,11 +80,6 @@ pub fn resolve_scope(
     >,
 ) -> Result<ScopeResolution, ScopeResolutionError> {
     let index = LabelIndex::build(spans);
-    // A clause naming no section and no sentence-grain key keeps the
-    // document-grain path: one lookup per document instead of one per
-    // sentence, and no region or sentence-metadata query was issued either.
-    // This is the path every run took before section scope existed, taken by
-    // the same code.
     let mut by_sentence = clause.names_sections() || clause.requires_sentence_values();
     let mut reads_sentence_metadata = clause.requires_sentence_values();
     let mut sentence_metadata = sentence_metadata.into_iter().peekable();
@@ -88,12 +103,6 @@ pub fn resolve_scope(
                 document_id: Some(row.document_id),
                 message: "document sentence range overflowed".to_owned(),
             })?;
-        // Typed once and used by both passes. A `NULL` row types as *empty*
-        // metadata rather than short-circuiting to `MissingField`: for a
-        // metadata predicate the two agree — a lookup into empty metadata is a
-        // missing field — but for `@section = methods`, which names no metadata
-        // key at all, short-circuiting would exclude every sentence of a
-        // document merely because it carried no frontmatter.
         let metadata = document_metadata(&row)?;
         match clause.evaluate_document(&metadata) {
             DocumentOutcome::Decided(verdict) => {
@@ -107,9 +116,6 @@ pub fn resolve_scope(
                 }
             }
             DocumentOutcome::RequiresSentences => {
-                // Admitted at document grain: the document was *in scope*,
-                // whether or not any of its sentences turn out to be. The two
-                // grains can diverge, and the report records each grain separately.
                 documents.record(Verdict::Admitted, 1).map_err(overflow)?;
                 for ordinal in row.first_sentence..end {
                     let mut sentence_values = Metadata::default();
@@ -162,10 +168,6 @@ pub fn resolve_scope(
     })
 }
 
-/// The named labels' spans, as one bitmap per label.
-///
-/// Built once per run from at most a few thousand rows — 16 labels over 8,377
-/// spans on the reference corpus — and then asked one question per sentence.
 #[derive(Debug, Default)]
 struct LabelIndex {
     by_label: BTreeMap<String, RoaringTreemap>,
@@ -191,7 +193,6 @@ impl LabelIndex {
     }
 }
 
-/// One sentence's view of the index — the prepared path's [`ActiveLabels`].
 struct ActiveAt<'a> {
     index: &'a LabelIndex,
     sentence: u64,
@@ -206,15 +207,7 @@ impl ActiveLabels for ActiveAt<'_> {
     }
 }
 
-/// Types one document's stored metadata under the single typing rule.
-///
-/// Fallible because absent metadata and malformed metadata are different facts.
-/// A `NULL` row is a document the writer recorded as having none; a row that
-/// will not parse, or whose shape the typing rule rejects, is a violated
-/// artifact invariant and stops the run. The writer serialises this column with
-/// `serde_json::to_string` over an already-validated `Metadata`, so there is no
-/// third possibility that is merely unusual data.
-pub(crate) fn document_metadata(
+pub fn document_metadata(
     row: &DocumentMetadataRow,
 ) -> Result<lingrep_core::corpus::Metadata, ScopeResolutionError> {
     let Some(raw) = row.metadata_json.as_deref() else {
@@ -236,12 +229,112 @@ pub(crate) fn document_metadata(
     })
 }
 
+#[derive(Debug)]
+pub enum PreparedScopeError {
+    /// The clause names `@section` and the artifact records no section label.
+    NoSectionLabels,
+    Corpus(CorpusError),
+    Resolution(ScopeResolutionError),
+}
+
+impl From<CorpusError> for PreparedScopeError {
+    fn from(error: CorpusError) -> Self {
+        Self::Corpus(error)
+    }
+}
+
+/// Resolves the whole artifact on a blocking thread and returns its section
+/// labels when `clause` references `@section`.
+///
+/// # Errors
+///
+/// See [`PreparedScopeError`].
+pub fn resolve_prepared_scope(
+    view: &ProvenanceView,
+    runtime: &impl BlockOn,
+    clause: &ScopeClause,
+) -> Result<(ScopeResolution, BTreeSet<String>), PreparedScopeError> {
+    let (spans, labels) = runtime.block_on(async {
+        let (spans, labels) = if clause.names_sections() {
+            (
+                view.region_spans_for(&clause.section_labels()).await?,
+                view.section_coverage(crate::MAX_SECTION_LABELS)
+                    .await?
+                    .into_iter()
+                    .map(|coverage| coverage.label)
+                    .collect(),
+            )
+        } else {
+            (Vec::new(), BTreeSet::new())
+        };
+        Ok::<_, CorpusError>((spans, labels))
+    })?;
+    if clause.names_sections() && labels.is_empty() {
+        return Err(PreparedScopeError::NoSectionLabels);
+    }
+    let mut page = Vec::new().into_iter();
+    let mut next = 0;
+    let mut finished = false;
+    let sentence_metadata = std::iter::from_fn(|| {
+        if finished {
+            return None;
+        }
+        if page.len() == 0 {
+            match runtime.block_on(view.scope_metadata_page(next, clause.names_divisions())) {
+                Ok(rows) if rows.is_empty() => {
+                    finished = true;
+                    return None;
+                }
+                Ok(rows) => page = rows.into_iter(),
+                Err(error) => {
+                    finished = true;
+                    return Some(Err(ScopeResolutionError {
+                        document_id: None,
+                        message: error.to_string(),
+                    }));
+                }
+            }
+        }
+        let (ordinal, metadata, structure) = page.next()?;
+        next = ordinal + 1;
+        Some(Ok((ordinal, metadata, structure)))
+    });
+    let mut document_page = Vec::new().into_iter();
+    let mut document_next = 0;
+    let mut documents_finished = false;
+    let documents = std::iter::from_fn(|| {
+        if documents_finished {
+            return None;
+        }
+        if document_page.len() == 0 {
+            match runtime.block_on(view.document_metadata_page(document_next)) {
+                Ok(rows) if rows.is_empty() => {
+                    documents_finished = true;
+                    return None;
+                }
+                Ok(rows) => document_page = rows.into_iter(),
+                Err(error) => {
+                    documents_finished = true;
+                    return Some(Err(ScopeResolutionError {
+                        document_id: None,
+                        message: error.to_string(),
+                    }));
+                }
+            }
+        }
+        let row = document_page.next()?;
+        document_next = row.first_sentence + row.sentence_count;
+        Some(Ok(row))
+    });
+    let resolution = resolve_scope(clause, documents, &spans, sentence_metadata)
+        .map_err(PreparedScopeError::Resolution)?;
+    Ok((resolution, labels))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A location in the named document. Only `document_id` is load-bearing
-    /// for document-grain admission; the rest is filled to make one.
     fn resolve_scope(
         clause: &ScopeClause,
         rows: &[DocumentMetadataRow],
@@ -316,17 +409,12 @@ mod tests {
 
         let resolved = resolve_scope(&clause, &rows, &[], std::iter::empty()).unwrap();
 
-        // Through `admits` rather than the treemap, so the assertion
-        // exercises the same entry point the runner does.
         assert!(resolved.admission.admits(&at_document(0)));
         assert!(!resolved.admission.admits(&at_document(7)));
     }
 
     #[test]
     fn a_document_with_no_stored_metadata_is_a_missing_field_exclusion() {
-        // Absent metadata is data, not corruption: the writer emits NULL for a
-        // document whose metadata is empty. Not a shape mismatch either —
-        // there is no value present whose shape could be wrong.
         let clause = ScopeClause::parse("@document.year >= 2010").unwrap();
 
         let resolved =
@@ -337,10 +425,6 @@ mod tests {
 
     #[test]
     fn unparseable_stored_json_fails_the_run_and_names_the_document() {
-        // Malformed stored JSON is a violated artifact invariant, not an odd
-        // document: the writer serialises it from an already-validated
-        // `Metadata`. Counting it as a missing field would publish a
-        // successful run over a false universe.
         let clause = ScopeClause::parse("@document.year >= 2010").unwrap();
 
         let error = resolve_scope(
@@ -361,8 +445,6 @@ mod tests {
 
     #[test]
     fn stored_json_that_the_typing_rule_rejects_fails_the_run() {
-        // Valid JSON, invalid metadata shape — a bare array is not an object.
-        // Same disposition: the reader could never have written it.
         let clause = ScopeClause::parse("@document.year >= 2010").unwrap();
 
         assert_eq!(
@@ -380,9 +462,6 @@ mod tests {
 
     #[test]
     fn a_value_of_the_wrong_shape_is_still_a_counted_outcome_not_a_failure() {
-        // The spike's rule survives: one malformed *value* must not poison a
-        // 1,534-document corpus. `"47-56"` is well-formed JSON carrying a
-        // value the predicate cannot use.
         let clause = ScopeClause::parse("@document.year >= 2010").unwrap();
 
         let resolved = resolve_scope(
@@ -421,7 +500,6 @@ mod tests {
 
     #[test]
     fn a_section_clause_admits_by_sentence() {
-        // One document, sentences 0..6; `methods` covers 1..3.
         let clause = ScopeClause::parse("@section = methods").unwrap();
         let rows = vec![row(0, 0, 6, Some(r#"{"year":"2013"}"#))];
 
@@ -444,8 +522,6 @@ mod tests {
         assert_eq!(resolved.documents.admitted, 1);
     }
 
-    /// A clause naming no section stays on the document-grain path: one lookup
-    /// per document instead of one per sentence.
     #[test]
     fn a_metadata_only_clause_still_admits_by_document() {
         let clause = ScopeClause::parse("@document.year >= 2010").unwrap();
@@ -459,8 +535,6 @@ mod tests {
         ));
     }
 
-    /// The metadata half still excludes whole documents under a section clause,
-    /// and those sentences keep the metadata reason rather than `Predicate`.
     #[test]
     fn a_metadata_excluded_document_contributes_no_sentences_and_keeps_its_reason() {
         let clause = ScopeClause::parse("@document.year >= 2010 & @section = methods").unwrap();
@@ -482,9 +556,6 @@ mod tests {
         assert_eq!(resolved.documents.excluded_missing_field, 1);
     }
 
-    /// A `NULL` metadata row must not exclude a document from a clause that
-    /// names no metadata key. Short-circuiting `None` to `MissingField` — which
-    /// is right for a metadata predicate — would silently empty this run.
     #[test]
     fn a_document_with_no_metadata_still_answers_a_pure_section_clause() {
         let clause = ScopeClause::parse("@section = methods").unwrap();
@@ -502,7 +573,6 @@ mod tests {
         assert_eq!(resolved.sentences.excluded_missing_field, 0);
     }
 
-    /// The four buckets sum to the corpus, section clause or not.
     #[test]
     fn the_four_sentence_buckets_sum_to_the_corpus_under_a_section_clause() {
         let clause = ScopeClause::parse("@section in {methods, results}").unwrap();
@@ -532,9 +602,6 @@ mod tests {
             .collect()
     }
 
-    /// A clause over a declared sentence-grain key admits by sentence,
-    /// selecting exactly the cited one; sentences without the key are
-    /// missing-field exclusions.
     #[test]
     fn a_declared_sentence_key_admits_exactly_the_cited_sentence() {
         let clause = ScopeClause::parse("@sentence.sent_id = s2").unwrap();
@@ -555,7 +622,6 @@ mod tests {
         assert_eq!(resolved.documents.admitted, 1);
         assert_eq!(resolved.sentences.admitted, 1);
         assert_eq!(resolved.sentences.excluded_by_predicate, 1);
-        // Sentence 2 carries no sent_id row: a missing field, per sentence.
         assert_eq!(resolved.sentences.excluded_missing_field, 1);
     }
 

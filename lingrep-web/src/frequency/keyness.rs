@@ -151,8 +151,8 @@ impl FrequencyPair {
         }
         self.admit_query()?;
         let masks = [
-            self.mask(&self.admitted(resolved[0].as_ref())?),
-            self.mask(&self.admitted(resolved[1].as_ref())?),
+            self.mask(&self.admitted(resolved[0].as_ref(), cancellation)?),
+            self.mask(&self.admitted(resolved[1].as_ref(), cancellation)?),
         ];
         let scopes = self.table.scopes([&masks[0], &masks[1]])?;
         let limit = if query.limit == 0 {

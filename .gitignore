@@ -65,14 +65,10 @@ __pycache__/
 *.provenance.sqlite.building
 *.provenance.manifest.json
 
-# Immutable lingrep V1 corpus artifacts (rebuildable; never committed). The published
-# form is a directory beside the input it was built from,
-# `<input>.g<generation>.<identity>.lingcorpus`, so it lands wherever a corpus
-# lives rather than under a single artifact root. An interrupted build leaves a
-# `.<name>.staging-<pid>-<sequence>` sibling. Both are large — a 162 MB JSONL
-# corpus publishes ~1 GB — and both regenerate from source on demand.
+# Prepared corpora and interrupted builds.
 *.lingcorpus/
 *.lingcorpus.staging-*/
+*.lingcorpus.stagelock-*
 
 # Raw research corpora are kept on the filesystem beside their prepared
 # artifacts, too large for git; fetched or rebuilt per environment.

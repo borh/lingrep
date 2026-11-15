@@ -13,6 +13,7 @@ struct SectionSelection {
     submitted: Option<String>,
     section: Vec<String>,
     distance: Option<String>,
+    cluster_minimum: Option<String>,
     selection_action: Option<String>,
     contrast_reference: Option<String>,
     contrast_comparison: Option<String>,
@@ -31,6 +32,7 @@ impl SectionSelection {
                 "submitted" => selection.submitted = Some(value),
                 "section" => selection.section.push(value),
                 "distance" => selection.distance = Some(value),
+                "cluster_minimum" => selection.cluster_minimum = Some(value),
                 "selection_action" => selection.selection_action = Some(value),
                 "contrast_reference" => selection.contrast_reference = Some(value),
                 "contrast_comparison" => selection.contrast_comparison = Some(value),
@@ -77,9 +79,14 @@ async fn section_analysis(
     } else {
         None
     };
-    let distance = submitted.then(|| {
-        crate::section_dendrogram::DistanceMetric::from_form_value(selection.distance.as_deref())
-    });
+    let cluster = if submitted {
+        crate::section_dendrogram::ClusterOptions::from_form(
+            selection.distance.as_deref(),
+            selection.cluster_minimum.as_deref(),
+        )
+    } else {
+        crate::section_dendrogram::ClusterOptions::default()
+    };
     let contrast = crate::section_contrast::ContrastSelection::from_form(
         selection.contrast_reference,
         selection.contrast_comparison,
@@ -89,7 +96,7 @@ async fn section_analysis(
         &snapshot,
         &workbench_id,
         selected.as_deref(),
-        distance,
+        cluster,
         &contrast,
     )
     .map_or_else(
@@ -115,12 +122,24 @@ mod tests {
                 submitted: Some("1".into()),
                 section: vec!["methods".into(), "results".into()],
                 distance: Some("cosine".into()),
+                cluster_minimum: None,
                 selection_action: None,
                 contrast_reference: Some("methods".into()),
                 contrast_comparison: Some("results".into()),
                 contrast_order: Some("name-asc".into()),
             }
         );
+    }
+
+    #[test]
+    fn the_clustering_minimum_is_at_least_one_and_defaults_to_one() {
+        use crate::section_dendrogram::ClusterOptions;
+        let minimum = |value| ClusterOptions::from_form(None, value).minimum_occurrences;
+        assert_eq!(minimum(Some("25")), 25);
+        assert_eq!(minimum(Some("0")), 1);
+        assert_eq!(minimum(Some("")), 1);
+        assert_eq!(minimum(Some("many")), 1);
+        assert_eq!(minimum(None), 1);
     }
 
     #[test]

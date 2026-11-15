@@ -404,7 +404,7 @@ async fn a_record_above_the_stage_batch_budget_still_builds() {
 }
 
 #[tokio::test]
-async fn corruption_retry_discards_the_published_artifact_and_rebuilds() {
+async fn a_self_built_artifact_found_corrupt_is_discarded_and_rebuilt() {
     let directory = tempdir().unwrap();
     let corpus = directory.path().join("corpus.jsonl");
     fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
@@ -426,9 +426,8 @@ async fn corruption_retry_discards_the_published_artifact_and_rebuilds() {
             .is_err()
     );
 
-    runtime.invalidator().invalidate_corrupt().await;
+    runtime.invalidator().invalidate_corrupt(&ready).await;
     drop(ready);
-    runtime.retry().await;
     let rebuilt = wait_ready(&runtime).await;
 
     assert_eq!(rebuilt.identity, identity);
@@ -443,6 +442,240 @@ async fn corruption_retry_discards_the_published_artifact_and_rebuilds() {
             .unwrap()
             .is_some()
     );
+}
+
+#[tokio::test]
+async fn a_report_about_the_discarded_artifact_leaves_the_rebuilt_one_ready() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.jsonl");
+    fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let runtime = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
+    runtime.start_or_observe().await;
+    let discarded = wait_ready(&runtime).await;
+    assert!(runtime.invalidator().invalidate_corrupt(&discarded).await);
+    let rebuilt = wait_ready(&runtime).await;
+
+    assert!(!runtime.invalidator().invalidate_corrupt(&discarded).await);
+
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Ready {
+            identity: rebuilt.identity.clone()
+        }
+    );
+    assert_eq!(artifact_directories(directory.path()).len(), 1);
+}
+
+#[tokio::test]
+async fn a_second_report_during_the_rebuild_is_ignored() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.jsonl");
+    fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let context = test_context(dictionary.path());
+    let runtime = CorpusRuntime::new(context.clone(), &corpus).unwrap();
+    runtime.start_or_observe().await;
+    let ready = wait_ready(&runtime).await;
+    let permit = context.build_permit().acquire_owned().await.unwrap();
+
+    assert!(runtime.invalidator().invalidate_corrupt(&ready).await);
+    assert!(!runtime.invalidator().invalidate_corrupt(&ready).await);
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Building { lines_processed: 0 }
+    );
+
+    drop(permit);
+    assert_eq!(wait_ready(&runtime).await.identity, ready.identity);
+}
+
+#[tokio::test]
+async fn a_rebuilt_artifact_reported_corrupt_again_stays_failed() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.jsonl");
+    fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let runtime = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
+    runtime.start_or_observe().await;
+    let first = wait_ready(&runtime).await;
+    runtime.invalidator().invalidate_corrupt(&first).await;
+    let rebuilt = wait_ready(&runtime).await;
+
+    assert!(runtime.invalidator().invalidate_corrupt(&rebuilt).await);
+
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Failed {
+            category: CacheFailureCategory::Corruption
+        }
+    );
+    assert_eq!(
+        artifact_directories(directory.path()),
+        Vec::<PathBuf>::new()
+    );
+    runtime.start_or_observe().await;
+    assert!(runtime.ready().await.is_none());
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Failed {
+            category: CacheFailureCategory::Corruption
+        }
+    );
+}
+
+struct BuiltBesideSource {
+    directory: tempfile::TempDir,
+    dictionary: MiniDictionary,
+    corpus: PathBuf,
+    artifact: PathBuf,
+}
+
+impl BuiltBesideSource {
+    async fn new() -> Self {
+        let directory = tempdir().unwrap();
+        let corpus = directory.path().join("corpus.jsonl");
+        fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+        let dictionary = MiniDictionary::new();
+        let earlier = CorpusRuntime::new(test_context(dictionary.path()), &corpus).unwrap();
+        earlier.start_or_observe().await;
+        drop(wait_ready(&earlier).await);
+        let artifact = artifact_directories(directory.path()).pop().unwrap();
+        Self {
+            directory,
+            dictionary,
+            corpus,
+            artifact,
+        }
+    }
+
+    fn restarted(&self) -> CorpusRuntime {
+        CorpusRuntime::new(test_context(self.dictionary.path()), &self.corpus).unwrap()
+    }
+
+    fn truncate_tokens(&self) {
+        let tokens = self.artifact.join("tokens.v1.zst");
+        let length = fs::metadata(&tokens).unwrap().len();
+        File::options()
+            .write(true)
+            .open(tokens)
+            .unwrap()
+            .set_len(length - 1)
+            .unwrap();
+    }
+}
+
+fn file_bytes(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .map(|path| (path.clone(), fs::read(path).unwrap()))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+const FAILED_CORRUPTION: CacheReadiness = CacheReadiness::Failed {
+    category: CacheFailureCategory::Corruption,
+};
+
+#[tokio::test]
+async fn a_corrupt_artifact_beside_its_source_is_rebuilt_once_at_startup() {
+    let fixture = BuiltBesideSource::new().await;
+    fixture.truncate_tokens();
+    let runtime = fixture.restarted();
+
+    runtime.start_or_observe().await;
+    let rebuilt = wait_ready(&runtime).await;
+
+    assert_eq!(
+        artifact_directories(fixture.directory.path()),
+        vec![fixture.artifact.clone()]
+    );
+    assert!(
+        rebuilt
+            .reader()
+            .unwrap()
+            .bind(&rebuilt.identity)
+            .unwrap()
+            .sentence(0)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    assert!(runtime.invalidator().invalidate_corrupt(&rebuilt).await);
+    assert_eq!(*runtime.readiness().borrow(), FAILED_CORRUPTION);
+    assert_eq!(
+        artifact_directories(fixture.directory.path()),
+        Vec::<PathBuf>::new()
+    );
+}
+
+#[tokio::test]
+async fn an_artifact_the_process_may_not_read_is_left_in_place_at_startup() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = BuiltBesideSource::new().await;
+    let tokens = fixture.artifact.join("tokens.v1.zst");
+    let before = file_bytes(&fixture.artifact);
+    fs::set_permissions(&tokens, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let readiness = terminal_readiness(&fixture.restarted()).await;
+
+    fs::set_permissions(&tokens, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(readiness, FAILED_CORRUPTION);
+    assert_eq!(file_bytes(&fixture.artifact), before);
+}
+
+#[tokio::test]
+async fn an_artifact_missing_a_component_file_is_left_in_place_at_startup() {
+    let fixture = BuiltBesideSource::new().await;
+    fs::remove_file(fixture.artifact.join("locations.v1")).unwrap();
+    let before = file_bytes(&fixture.artifact);
+
+    let readiness = terminal_readiness(&fixture.restarted()).await;
+
+    assert_eq!(readiness, FAILED_CORRUPTION);
+    assert_eq!(file_bytes(&fixture.artifact), before);
+}
+
+#[tokio::test]
+async fn an_artifact_of_an_unsupported_manifest_version_is_left_in_place_at_startup() {
+    let fixture = BuiltBesideSource::new().await;
+    let manifest = fixture.artifact.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    json["schema_version"] = serde_json::json!(2);
+    fs::write(&manifest, serde_json::to_vec(&json).unwrap()).unwrap();
+    let before = file_bytes(&fixture.artifact);
+
+    let readiness = terminal_readiness(&fixture.restarted()).await;
+
+    assert_eq!(readiness, FAILED_CORRUPTION);
+    assert_eq!(file_bytes(&fixture.artifact), before);
+}
+
+#[tokio::test]
+async fn a_corrupt_declared_artifact_is_left_in_place_at_startup() {
+    let fixture =
+        crate::v6_support::build_artifact(vec![("fixture.md", 0, false, vec![vec![token("猫")]])]);
+    let tokens = fixture.path.join("tokens.v1.zst");
+    let length = fs::metadata(&tokens).unwrap().len();
+    File::options()
+        .write(true)
+        .open(tokens)
+        .unwrap()
+        .set_len(length - 1)
+        .unwrap();
+    let before = file_bytes(&fixture.path);
+    let dictionary = MiniDictionary::new();
+    let runtime = CorpusRuntime::new(test_context(dictionary.path()), &fixture.path).unwrap();
+
+    let readiness = terminal_readiness(&runtime).await;
+
+    assert_eq!(readiness, FAILED_CORRUPTION);
+    assert_eq!(file_bytes(&fixture.path), before);
 }
 
 #[tokio::test]
@@ -549,15 +782,12 @@ async fn concurrent_starts_publish_one_failure() {
 
 #[tokio::test]
 async fn corruption_invalidation_is_published() {
-    let directory = tempdir().unwrap();
-    let runtime = CorpusRuntime::new(
-        test_context(directory.path().join("dict.dic")),
-        directory.path().join("corpus.jsonl"),
-    )
-    .unwrap();
+    let (_fixture, runtime) =
+        crate::v6_support::runtime_fixture("current", vec![vec![token("猫")]]);
+    let ready = runtime.ready().await.unwrap();
     let mut readiness = runtime.readiness();
 
-    runtime.invalidator().invalidate_corrupt().await;
+    runtime.invalidator().invalidate_corrupt(&ready).await;
     readiness.changed().await.unwrap();
     assert_eq!(
         readiness.borrow().clone(),
@@ -569,12 +799,9 @@ async fn corruption_invalidation_is_published() {
 
 #[tokio::test]
 async fn repeated_invalidation_broadcasts_failed_once() {
-    let directory = tempdir().unwrap();
-    let runtime = CorpusRuntime::new(
-        test_context(directory.path().join("dict.dic")),
-        directory.path().join("corpus.jsonl"),
-    )
-    .unwrap();
+    let (_fixture, runtime) =
+        crate::v6_support::runtime_fixture("current", vec![vec![token("猫")]]);
+    let ready = runtime.ready().await.unwrap();
     let mut readiness = runtime.readiness();
     let invalidator = runtime.invalidator();
 
@@ -582,9 +809,9 @@ async fn repeated_invalidation_broadcasts_failed_once() {
     // returns whether *it* performed the teardown; the guard must let
     // exactly one of the three claim it.
     let (a, b, c) = tokio::join!(
-        invalidator.invalidate_corrupt(),
-        invalidator.invalidate_corrupt(),
-        invalidator.invalidate_corrupt(),
+        invalidator.invalidate_corrupt(&ready),
+        invalidator.invalidate_corrupt(&ready),
+        invalidator.invalidate_corrupt(&ready),
     );
 
     readiness.changed().await.unwrap();
@@ -689,14 +916,6 @@ async fn the_provenance_view_is_opened_once_and_shared_by_every_reader() {
     assert_eq!(view_a.sentence_count(), 2);
 }
 
-/// Corruption invalidation drops the cached view.
-///
-/// This is not hygiene. `corruption_retry_discards_the_published_artifact_and_
-/// rebuilds` above asserts that the rebuild carries the **same** analysis
-/// identity, because it reads the same source under the same analyzer — so the
-/// cache's identity key alone would happily hand back a view onto the artifact
-/// that was just deleted. Clearing on invalidation is the only thing that
-/// prevents it.
 #[tokio::test]
 async fn corruption_invalidation_drops_the_cached_provenance_view() {
     let directory = tempdir().unwrap();
@@ -711,12 +930,10 @@ async fn corruption_invalidation_drops_the_cached_provenance_view() {
 
     let artifact_path = artifact_directories(directory.path()).pop().unwrap();
     crate::v6_support::corrupt_first_token_block(&artifact_path.join("tokens.v1.zst"));
-    runtime.invalidator().invalidate_corrupt().await;
+    runtime.invalidator().invalidate_corrupt(&ready).await;
     drop(ready);
-    runtime.retry().await;
     let rebuilt = wait_ready(&runtime).await;
 
-    // Same identity — which is precisely why the key cannot be trusted here.
     assert_eq!(rebuilt.identity, identity);
     let fresh_view = rebuilt.provenance().await.unwrap();
     assert!(
@@ -768,15 +985,6 @@ async fn a_declared_artifact_is_served_without_building_anything() {
     );
 }
 
-/// A declared artifact is never discarded as though it were this runtime's own
-/// cache.
-///
-/// `invalidate_corrupt` deletes the artifact it owns, because a self-built one
-/// is reproducible: the source is right there and `retry` rebuilds it. A
-/// declared artifact is **not** reproducible from anything lingrep-web holds, so the
-/// same deletion would destroy the operator's data with no way back. The
-/// runtime transitions to `Failed` upon encountering corrupt bytes, but the
-/// bytes remain on disk.
 #[tokio::test]
 async fn a_declared_artifact_survives_corruption_invalidation() {
     let fixture =
@@ -784,9 +992,9 @@ async fn a_declared_artifact_survives_corruption_invalidation() {
     let dictionary = MiniDictionary::new();
     let runtime = CorpusRuntime::new(test_context(dictionary.path()), &fixture.path).unwrap();
     runtime.start_or_observe().await;
-    wait_ready(&runtime).await;
+    let ready = wait_ready(&runtime).await;
 
-    runtime.invalidator().invalidate_corrupt().await;
+    runtime.invalidator().invalidate_corrupt(&ready).await;
 
     assert!(
         fixture.path.is_dir(),

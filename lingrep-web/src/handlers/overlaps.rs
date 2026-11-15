@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionLimits, OversizedSentenceOmissions, SentenceBatchSource,
     TokenizedAdmission, explain_in_windows,
@@ -14,7 +15,7 @@ use lingrep_core::token_match::TokenInfo;
 use crate::{
     corpus_runtime::ReadyCorpus,
     inspection::OverlapCandidate,
-    search_scope::{BoundScope, SearchScope},
+    search_scope::BoundScope,
     snapshot::{CompletedSnapshot, MatchRef, PatternKey},
     state::RequestStore,
 };
@@ -45,15 +46,16 @@ pub(super) async fn inspect(
     let permit = store.coordinators.acquire_scan_permit().await;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let compiled = crate::patterns::compile_web_pattern(&snapshot.source)
+        let mut compiled = crate::patterns::compile_web_pattern(&snapshot.source)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+        compiled.matcher = compiled.matcher.with_overlaps(snapshot.overlaps);
         let windows = if compiled.matcher.lookaround_reach().is_empty() {
             None
         } else {
             Some(ScanWindows::new(
                 &compiled.matcher,
                 &ready,
-                &snapshot.search_scope,
+                &snapshot.admission,
             )?)
         };
         let mut explanations = HashMap::new();
@@ -90,7 +92,7 @@ pub(super) async fn inspect(
 struct ScanWindows {
     bound: BoundCatalog,
     ready: ReadyCorpus,
-    scope: SearchScope,
+    admission: SentenceAdmission,
     provenance: Arc<lingrep_corpus::ProvenanceView>,
     division_kinds: Vec<compact_str::CompactString>,
 }
@@ -100,7 +102,7 @@ impl ScanWindows {
     fn new(
         catalog: &CompiledCatalog,
         ready: &ReadyCorpus,
-        scope: &SearchScope,
+        admission: &SentenceAdmission,
     ) -> Result<Self, Response> {
         let corrupt =
             || super::inspection_response(super::EndpointInspectionError::CacheCorruption);
@@ -114,7 +116,7 @@ impl ScanWindows {
         Ok(Self {
             bound,
             ready: ready.clone(),
-            scope: scope.clone(),
+            admission: admission.clone(),
             provenance,
             division_kinds: catalog.lookaround_division_kinds(),
         })
@@ -129,7 +131,7 @@ impl ScanWindows {
         loop {
             let range =
                 ordinal.saturating_sub(margin)..ordinal.saturating_add(margin + 1).min(count);
-            let mut source = BoundScope::new(self.scope.clone(), Arc::clone(&self.provenance))
+            let mut source = BoundScope::new(self.admission.clone(), Arc::clone(&self.provenance))
                 .open_source(
                     &self.ready.artifact,
                     self.bound.projection(),

@@ -168,8 +168,11 @@ mod tests {
 
     fn snapshot(derive_compounds: bool, patterns: Vec<PatternDescriptor>) -> CompletedSnapshot {
         CompletedSnapshot {
+            overlaps: Default::default(),
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             revision: RevisionId(1),
             corpus_identity: CorpusIdentity::new(""),
             source: "".into(),
@@ -186,6 +189,8 @@ mod tests {
             matched_sentences: 0,
             documents: None,
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         }
     }
 

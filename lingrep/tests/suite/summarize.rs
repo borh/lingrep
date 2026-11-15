@@ -335,6 +335,77 @@ fn shipped_ngram_catalog_counts_overlapping_windows_without_crossing_sentences()
 }
 
 #[test]
+fn token_window_counts_equal_the_matcher_rows_ranks_and_unkeyed_count() {
+    let directory = tempfile::tempdir().unwrap();
+    let corpus = directory.path().join("windows.conllu");
+    let sentence = |tokens: &[(&str, &str)]| {
+        let mut rows = String::new();
+        for (index, (form, lemma)) in tokens.iter().enumerate() {
+            rows.push_str(&format!(
+                "{}\t{form}\t{lemma}\tX\t_\t_\t0\troot\t_\t_\n",
+                index + 1
+            ));
+        }
+        rows.push('\n');
+        rows
+    };
+    fs::write(
+        &corpus,
+        [
+            sentence(&[("b", "b"), ("a", "a"), ("b", "b"), ("a", "a"), ("c", "c")]),
+            sentence(&[("a", "a")]),
+            sentence(&[("c", "c"), ("a", "_"), ("b", "b")]),
+            sentence(&[("ab", "ab"), ("a", "a"), ("b", "b"), ("a", "b")]),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let patterns = directory.path().join("windows.lx");
+    fs::write(
+        &patterns,
+        "key: [text, lemma]\npattern one := [].\n\n\
+         key: [$a.text, $a.lemma, $b.text, $b.lemma]\npattern two := (?<a> []) (?<b> []).\n\n\
+         key: [$a.text, $a.lemma, $b.text, $b.lemma, $c.text, $c.lemma]\n\
+         pattern three := (?<a> []) (?<b> []) (?<c> []).\n",
+    )
+    .unwrap();
+    let run = |extra: &[&str]| {
+        let output = lingrep()
+            .args([
+                "--json",
+                "summarize",
+                "--input-format",
+                "conllu",
+                "--patterns",
+            ])
+            .arg(&patterns)
+            .args(extra)
+            .arg(&corpus)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let events = parse_jsonl(&output.stdout);
+        let rows = summary_events(&events)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        (rows, event(&events, "complete")["data"]["counters"].clone())
+    };
+
+    for top in [&[][..], &["--top", "2"][..]] {
+        let (rows, counters) = run(top);
+        let (matched_rows, matched_counters) = run(&[top, &["--trace-policy", "1"]].concat());
+        assert!(!rows.is_empty());
+        assert_eq!(rows, matched_rows, "top={top:?}");
+        assert_eq!(counters, matched_counters, "top={top:?}");
+        assert_eq!(
+            counters["records_unkeyed"], 4,
+            "windows over the token without a lemma"
+        );
+    }
+}
+
+#[test]
 fn cross_variant_groups_merge_into_one_row_across_shards() {
     use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue};
     // An ordinary key and an all-scalar lexical key with the same field names

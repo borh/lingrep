@@ -310,9 +310,14 @@ impl Manifest {
             _ => return Err(invalid("manifest normalization policy is invalid")),
         };
         if manifest.analyzer.normalization_unicode_version != normalization.unicode_version() {
-            return Err(invalid(
-                "manifest normalization Unicode version differs from this build; rebuild the corpus",
-            ));
+            let tables = |version: Option<[u8; 3]>| match version {
+                Some([major, minor, patch]) => format!("{major}.{minor}.{patch}"),
+                None => "of no recorded version".to_owned(),
+            };
+            return Err(CorpusError::NormalizationTablesStale {
+                recorded: tables(manifest.analyzer.normalization_unicode_version),
+                expected: tables(normalization.unicode_version()),
+            });
         }
         if manifest.provenance_schema_version != PROVENANCE_SCHEMA_VERSION {
             return Err(CorpusError::UnsupportedSchema {
@@ -473,9 +478,13 @@ impl Manifest {
                 &record.normalization_identity,
                 "enhanced normalization identity",
             )?;
-            if record.format_version != crate::enhanced::FORMAT_VERSION
-                || normalization != crate::enhanced::normalization_identity()
-            {
+            if record.format_version != crate::enhanced::FORMAT_VERSION {
+                return Err(CorpusError::UnsupportedSchema {
+                    component: crate::enhanced::ENHANCED_NAME,
+                    version: record.format_version,
+                });
+            }
+            if normalization != crate::enhanced::normalization_identity() {
                 return Err(invalid("manifest enhanced graph contract is invalid"));
             }
         }

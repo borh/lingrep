@@ -10,23 +10,25 @@ use lingrep_core::execution::{
     OversizedSentenceOmissions, PolicySelection, ProgressSink, RunOutcome, SentenceAdmission,
     TokenizedAdmission, execute_analyzed,
 };
-use tokio::sync::{Mutex, Semaphore, watch};
+use tokio::sync::{Mutex, Notify, Semaphore, watch};
 
 use crate::corpus_runtime::{CacheReadiness, CorpusIdentity, CorpusRuntime, ReadyCorpus};
 use crate::corpus_set::{CorpusName, CorpusSlot};
 use crate::patterns::{compile_web_pattern, format_pattern_compile_error};
 use crate::revision::{
-    AttemptFailure, CacheReadinessView, CoordinatorEvent, ErrorCategory, RevisionCoordinatorState,
-    RevisionId, WorkbenchId,
+    AttemptFailure, CacheReadinessView, CancelReason, CoordinatorEvent, ErrorCategory,
+    RevisionCoordinatorState, RevisionId, WorkbenchId,
 };
 use crate::section_tally::{self, SectionAvailability, SectionRefusal, spawn_span_producer};
 use crate::snapshot::{CompletedSnapshot, CompoundCategory};
 use crate::snapshot_sink::{SectionScanState, SnapshotSink};
-use lingrep_core::fsm::CompileOutput;
+use lingrep_core::fsm::policy_program::Overlaps;
+use lingrep_core::fsm::{CompileOutput, SchemaBindError};
 use lingrep_core::token_match::AttributeKey;
 
 const DEFAULT_BATCH_SIZE: usize = 1_024;
 const LIVE_SUMMARY_INTERVAL: Duration = Duration::from_millis(100);
+const ABANDONED_SCAN_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct RevisionRequest {
@@ -36,6 +38,7 @@ pub struct RevisionRequest {
     pub derive_compounds: bool,
     pub compound_category: CompoundCategory,
     pub document_reach: bool,
+    pub overlaps: Overlaps,
     pub search_scope: crate::search_scope::SearchScope,
 }
 
@@ -47,6 +50,7 @@ impl Default for RevisionRequest {
             derive_compounds: false,
             compound_category: CompoundCategory::Compound,
             document_reach: false,
+            overlaps: Overlaps::default(),
             search_scope: Default::default(),
         }
     }
@@ -59,6 +63,7 @@ pub(crate) struct ScanOptions {
     pub(crate) derive_compounds: bool,
     pub(crate) compound_category: CompoundCategory,
     pub(crate) document_reach: bool,
+    pub(crate) overlaps: Overlaps,
 }
 
 fn execution_failure() -> AttemptFailure {
@@ -74,6 +79,51 @@ fn integrity_failure() -> AttemptFailure {
         // Same user-facing text as execution_failure per the shared error
         // contract; only the category (telemetry/state) distinguishes it.
         message: "The corpus scan could not be completed.".into(),
+    }
+}
+
+fn binding_failure(
+    error: &SchemaBindError,
+    analyzer: &lingrep_corpus::AnalyzerRecord,
+) -> AttemptFailure {
+    AttemptFailure {
+        category: ErrorCategory::Binding,
+        message: format!(
+            "The catalog cannot bind to this corpus's token schema ({} {}): {error}.",
+            analyzer.family, analyzer.profile
+        ),
+    }
+}
+
+fn cli_arguments(ready: &ReadyCorpus, clause: Option<&str>, overlaps: Overlaps) -> String {
+    use crate::frequency::shell_word;
+    let artifact = ready.artifact.directory().file_name().map_or_else(
+        || "CORPUS".into(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let mut command = format!(
+        "--patterns query.lx --corpus {}",
+        shell_word(&format!("./{artifact}"))
+    );
+    if let Some(clause) = clause {
+        command.push_str(&format!(" --where {}", shell_word(clause)));
+    }
+    if let Some(value) = crate::templates::overlaps_value(overlaps) {
+        command.push_str(&format!(" --overlaps {value}"));
+    }
+    command
+}
+
+fn scope_failure(error: crate::search_scope::ResolveError) -> AttemptFailure {
+    match error {
+        crate::search_scope::ResolveError::Unanswerable(message) => AttemptFailure {
+            category: ErrorCategory::Scope,
+            message,
+        },
+        crate::search_scope::ResolveError::Corpus(error) => {
+            tracing::warn!(%error, "scope resolution failed");
+            integrity_failure()
+        }
     }
 }
 
@@ -113,10 +163,6 @@ struct ScanResolution {
     progress: ExecutionProgress,
 }
 
-/// Pure mapping of a finished (or panicked) scan to its terminal coordinator
-/// event. The corrupt-cache invalidation is returned as a flag rather than
-/// performed here so this stays side-effect-free and unit-testable; the caller
-/// runs `invalidate_corrupt().await` when the flag is set.
 fn resolve_scan(
     result: ScanTaskResult,
     workbench: WorkbenchId,
@@ -124,6 +170,7 @@ fn resolve_scan(
     identity: CorpusIdentity,
     expected_sentence_count: Option<u64>,
     source: std::sync::Arc<str>,
+    cancel_reason: CancelReason,
 ) -> ScanResolution {
     match result {
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), ref sink, ref omissions)))
@@ -194,12 +241,15 @@ fn resolve_scan(
                     revision,
                     snapshot: Arc::new(CompletedSnapshot {
                         search_scope: sink.search_scope.clone(),
+                        admission: std::mem::take(&mut sink.admission),
+                        cli_arguments: std::mem::take(&mut sink.cli_arguments),
                         excluded_sentences: sink.excluded_sentences,
                         revision,
                         corpus_identity: identity,
                         source: std::sync::Arc::clone(&source),
                         documents: sink.document_summary(),
                         derive_compounds: sink.derive_compounds,
+                        overlaps: sink.overlaps,
                         compound_category: sink.compound_category,
                         patterns: sink.patterns.into_boxed_slice(),
                         match_refs: sink.refs.into_boxed_slice(),
@@ -208,6 +258,8 @@ fn resolve_scan(
                         observed_sentences: sink.observed_sentences,
                         matched_sentences: sink.matched_sentences,
                         oversized_omissions,
+                        unavailable_attributes: sink.unavailable_attributes,
+                        vectors_binding: sink.vectors_binding,
                     }),
                 },
                 invalidate_corrupt: false,
@@ -218,6 +270,7 @@ fn resolve_scan(
             event: CoordinatorEvent::Cancelled {
                 workbench,
                 revision,
+                reason: cancel_reason,
             },
             invalidate_corrupt: false,
             progress: ExecutionProgress {
@@ -361,6 +414,8 @@ fn run_scan_blocking(
         CompoundCategory::Compound,
         false,
         Default::default(),
+        Default::default(),
+        None,
     )
 }
 
@@ -374,8 +429,26 @@ fn run_scan_blocking_with_options(
     derive_compounds: bool,
     compound_category: CompoundCategory,
     document_reach: bool,
-    scope: crate::search_scope::BoundScope,
+    overlaps: Overlaps,
+    search_scope: crate::search_scope::SearchScope,
+    provenance: Option<Arc<lingrep_corpus::ProvenanceView>>,
 ) -> Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure> {
+    let (resolved, scope) = match provenance {
+        Some(provenance) => {
+            let resolved = crate::search_scope::resolve(
+                &search_scope,
+                &provenance,
+                &tokio::runtime::Handle::current(),
+            )
+            .map_err(scope_failure)?;
+            let scope =
+                crate::search_scope::BoundScope::new(resolved.admission.clone(), provenance);
+            (resolved, scope)
+        }
+        None => Default::default(),
+    };
+    let mut output = output;
+    output.matcher = output.matcher.with_overlaps(overlaps);
     let patterns = crate::pattern_catalog::pattern_metadata_pairs(&output.matcher);
     let snapshot = SnapshotSink::new_with_compounds(
         max_refs,
@@ -388,7 +461,10 @@ fn run_scan_blocking_with_options(
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
     let mut sink = snapshot;
-    sink.search_scope = scope.specification();
+    sink.search_scope = search_scope;
+    sink.admission = resolved.admission;
+    sink.cli_arguments = cli_arguments(ready, resolved.clause.as_deref(), overlaps);
+    sink.overlaps = overlaps;
     let mut attributes = output.matcher.execution_attributes();
     // Snapshot/KWIC projection needs surface forms even when recognition does
     // not. Keep that output requirement explicit at the execution boundary.
@@ -406,10 +482,15 @@ fn run_scan_blocking_with_options(
     let bound = output
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())
-        .map_err(|error| {
-            tracing::warn!(%error, "catalog binding failed");
-            integrity_failure()
-        })?;
+        .map_err(|error| binding_failure(&error, ready.artifact.analyzer()))?;
+    sink.vectors_binding = crate::patterns::unmatched_vectors_binding(&output.matcher);
+    if !bound.unavailable_attributes().is_empty() {
+        let analyzer = ready.artifact.analyzer();
+        sink.unavailable_attributes = Some(crate::snapshot::UnavailableAttributes {
+            keys: bound.unavailable_attributes().into(),
+            schema: format!("{} {}", analyzer.family, analyzer.profile).into(),
+        });
+    }
     // Prepared artifacts may contain oversized sentences. Omit and count them
     // so the result banner can disclose a degraded run.
     let omissions = Arc::new(StdMutex::new(OversizedSentenceOmissions::default()));
@@ -425,7 +506,6 @@ fn run_scan_blocking_with_options(
         })?
         .with_tokenized_admission(TokenizedAdmission::Omit(Arc::clone(&omissions)))
         .with_cancellation(cancel.clone());
-    let scope_stats = execution_source.scope_stats();
     let mut observer = |_: lingrep_core::execution::TokenizedBatchObservation| Ok(());
     let outcome = execute_analyzed::<_, VibratoSession, _, _, _>(
         execution_source,
@@ -454,7 +534,7 @@ fn run_scan_blocking_with_options(
     } else {
         sink.discard_sections();
     }
-    sink.excluded_sentences = scope_stats.excluded_sentences();
+    sink.excluded_sentences = resolved.excluded_sentences;
     let oversized_omissions = omissions.lock().map_err(|_| execution_failure())?.summary();
     Ok((outcome, sink, oversized_omissions))
 }
@@ -507,6 +587,7 @@ struct Entry {
     state: Mutex<RevisionCoordinatorState>,
     cancellation: StdMutex<Option<CancellationFlag>>,
     view_tx: watch::Sender<CoordinatorView>,
+    subscribed: Notify,
     handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     last_touch: AtomicU64,
 }
@@ -524,6 +605,7 @@ fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
         state: Mutex::new(state),
         cancellation: StdMutex::new(None),
         view_tx,
+        subscribed: Notify::new(),
         handle: StdMutex::new(None),
         last_touch: AtomicU64::new(touch),
     }
@@ -693,6 +775,7 @@ impl CoordinatorRegistry {
             derive_compounds,
             compound_category,
             document_reach,
+            overlaps,
             search_scope,
         } = request;
         let options = ScanOptions {
@@ -703,6 +786,7 @@ impl CoordinatorRegistry {
             derive_compounds,
             compound_category,
             document_reach,
+            overlaps,
         };
         let entry = self.admit(&workbench, slot).await?;
         let readiness = entry.runtime.readiness().borrow().clone();
@@ -853,7 +937,9 @@ impl CoordinatorRegistry {
         let touch = self.next_touch();
         self.inner.entries.lock().await.get(workbench).map(|entry| {
             entry.last_touch.store(touch, Ordering::Relaxed);
-            entry.view_tx.subscribe()
+            let receiver = entry.view_tx.subscribe();
+            entry.subscribed.notify_waiters();
+            receiver
         })
     }
 
@@ -866,20 +952,39 @@ impl CoordinatorRegistry {
         options: ScanOptions,
         cancel: CancellationFlag,
     ) {
-        let Some(ready) = self
-            .wait_for_ready(&entry, &entry.runtime, &workbench, revision)
-            .await
-        else {
-            return;
+        let abandoned = entry.abandoned();
+        tokio::pin!(abandoned);
+        let admitted = async {
+            let ready = self
+                .wait_for_ready(&entry, &entry.runtime, &workbench, revision)
+                .await?;
+            {
+                let mut state = entry.state.lock().await;
+                if !state.mark_queued(revision) {
+                    return None;
+                }
+                entry.publish(&state, ExecutionProgress::default());
+            }
+            let permit = Arc::clone(&self.inner.permit).acquire_owned().await.ok()?;
+            Some((ready, permit))
         };
-        {
-            let mut state = entry.state.lock().await;
-            if !state.mark_queued(revision) {
+        let admitted = tokio::select! {
+            biased;
+            () = &mut abandoned => {
+                let mut state = entry.state.lock().await;
+                let event = CoordinatorEvent::Cancelled {
+                    workbench,
+                    revision,
+                    reason: CancelReason::Abandoned,
+                };
+                if state.apply_terminal(event) {
+                    entry.publish(&state, ExecutionProgress::default());
+                }
                 return;
             }
-            entry.publish(&state, ExecutionProgress::default());
-        }
-        let Ok(_permit) = Arc::clone(&self.inner.permit).acquire_owned().await else {
+            admitted = admitted => admitted,
+        };
+        let Some((ready, permit)) = admitted else {
             return;
         };
         {
@@ -893,80 +998,73 @@ impl CoordinatorRegistry {
             return;
         }
         let (progress_tx, _) = watch::channel(None::<ScanProgress>);
-        let forward_entry = Arc::clone(&entry);
-        let mut progress_rx = progress_tx.subscribe();
-        let forward = tokio::spawn(async move {
-            while progress_rx.changed().await.is_ok() {
-                let Some(update) = progress_rx.borrow_and_update().clone() else {
-                    continue;
-                };
-                let state = forward_entry.state.lock().await;
-                forward_entry.publish_live(
-                    &state,
-                    update.progress,
-                    LiveSummary {
-                        revision,
-                        rows: update.rows,
-                    },
-                );
-            }
-        });
+        let forward = AbortOnDrop(tokio::spawn(forward_progress(
+            Arc::clone(&entry),
+            revision,
+            progress_tx.subscribe(),
+        )));
         // What this revision was accepted with, not the registry's ceiling:
         // the reader chose it and the clamp already happened at admission.
         let max_refs = options.retained;
+        let scanned = ready.clone();
         let identity = ready.identity.clone();
         let expected_sentence_count = ready.sentence_count().ok();
         let source: std::sync::Arc<str> = source.into();
 
-        // Everything that can fail before the scan starts, with one exit.
-        // Nothing here may degrade to an empty vocabulary: publishing an
-        // exact-looking all-`None` distribution because a read failed is the
-        // one outcome this feature must not have.
-        let prepared = prepare_scan(&ready, &source, &options.search_scope).await;
+        let scan_cancel = cancel.clone();
+        let scan_source = Arc::clone(&source);
+        let scan = async {
+            let prepared = prepare_scan(&ready, &scan_source, &options.search_scope).await;
 
-        let scan = match prepared {
-            // No producer was started on this path, so there is nothing to join.
-            Prepared::Failed(failure) => {
-                forward.abort();
-                ScanTaskResult::Finished(Err(failure))
-            }
-            Prepared::Ready {
-                compiled,
-                producer,
-                sections,
-                provenance,
-            } => {
-                let scope = crate::search_scope::BoundScope::new(options.search_scope, provenance);
-                let result = tokio::task::spawn_blocking(move || {
-                    run_scan_blocking_with_options(
-                        &ready,
-                        *compiled,
-                        max_refs,
-                        sections,
-                        &cancel,
-                        progress_tx,
-                        options.derive_compounds,
-                        options.compound_category,
-                        options.document_reach,
-                        scope,
-                    )
-                })
-                .await;
-                forward.abort();
-
-                // `run_scan_blocking` owns the sink on every path, so the
-                // channel receiver is gone by the time it returns or unwinds —
-                // a producer parked on a full channel is already released.
-                // Dropping a `JoinHandle` detaches rather than joins, so the
-                // await is not optional.
-                if let Some(handle) = producer {
-                    let _ = handle.await;
+            match prepared {
+                Prepared::Failed(failure) => {
+                    drop(forward);
+                    ScanTaskResult::Finished(Err(failure))
                 }
-                match result {
-                    Ok(inner) => ScanTaskResult::Finished(inner),
-                    Err(_) => ScanTaskResult::Panicked,
+                Prepared::Ready {
+                    compiled,
+                    producer,
+                    sections,
+                    provenance,
+                } => {
+                    let result = tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        run_scan_blocking_with_options(
+                            &ready,
+                            *compiled,
+                            max_refs,
+                            sections,
+                            &cancel,
+                            progress_tx,
+                            options.derive_compounds,
+                            options.compound_category,
+                            options.document_reach,
+                            options.overlaps,
+                            options.search_scope,
+                            Some(provenance),
+                        )
+                    })
+                    .await;
+                    drop(forward);
+
+                    if let Some(handle) = producer {
+                        let _ = handle.await;
+                    }
+                    match result {
+                        Ok(inner) => ScanTaskResult::Finished(inner),
+                        Err(_) => ScanTaskResult::Panicked,
+                    }
                 }
             }
+        };
+        tokio::pin!(scan);
+        let (scan, cancel_reason) = tokio::select! {
+            biased;
+            () = &mut abandoned => {
+                scan_cancel.cancel();
+                (scan.await, CancelReason::Abandoned)
+            }
+            scan = &mut scan => (scan, CancelReason::Superseded),
         };
         let resolution = resolve_scan(
             scan,
@@ -975,9 +1073,14 @@ impl CoordinatorRegistry {
             identity,
             expected_sentence_count,
             source,
+            cancel_reason,
         );
         if resolution.invalidate_corrupt {
-            entry.runtime.invalidator().invalidate_corrupt().await;
+            entry
+                .runtime
+                .invalidator()
+                .invalidate_corrupt(&scanned)
+                .await;
         }
         let terminal_progress = resolution.progress;
         let mut state = entry.state.lock().await;
@@ -1052,6 +1155,41 @@ impl CoordinatorRegistry {
     }
 }
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn forward_progress(
+    entry: Arc<Entry>,
+    revision: RevisionId,
+    mut progress: watch::Receiver<Option<ScanProgress>>,
+) {
+    while progress.changed().await.is_ok() {
+        let Some(update) = progress.borrow_and_update().clone() else {
+            continue;
+        };
+        let state = entry.state.lock().await;
+        if state
+            .current_attempt()
+            .is_none_or(|attempt| attempt.revision != revision)
+        {
+            continue;
+        }
+        entry.publish_live(
+            &state,
+            update.progress,
+            LiveSummary {
+                revision,
+                rows: update.rows,
+            },
+        );
+    }
+}
+
 fn readiness_view(readiness: &CacheReadiness) -> CacheReadinessView {
     match readiness {
         CacheReadiness::Ready { .. } => CacheReadinessView::Ready,
@@ -1061,14 +1199,24 @@ fn readiness_view(readiness: &CacheReadiness) -> CacheReadinessView {
 }
 
 impl Entry {
-    /// Publish the current view to the watch channel.
-    ///
-    /// F6 invariant: every caller invokes this **while holding `self.state`'s
-    /// lock**. The `state` mutex serializes all senders, so a terminal publish
-    /// (issued after `forward.abort()` under the lock) is guaranteed to land
-    /// after any in-flight progress publish — "stale progress overwrites
-    /// Completed" cannot occur. Do not make this async and do not call it
-    /// outside the `state` lock, or that ordering guarantee is lost.
+    async fn abandoned(&self) {
+        loop {
+            let subscribed = self.subscribed.notified();
+            tokio::pin!(subscribed);
+            subscribed.as_mut().enable();
+            self.view_tx.closed().await;
+            tokio::select! {
+                biased;
+                () = &mut subscribed => {}
+                () = tokio::time::sleep(ABANDONED_SCAN_GRACE) => {
+                    if self.view_tx.receiver_count() == 0 {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     fn publish(&self, state: &RevisionCoordinatorState, progress: ExecutionProgress) {
         self.view_tx.send_replace(CoordinatorView {
             state: state.clone(),
@@ -1232,6 +1380,57 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_over_an_attribute_the_corpus_lacks_states_it_with_the_results() {
+        let (_dir, ready) = tiny_ready_corpus(1);
+        let (progress_tx, _progress_rx) = watch::channel(None::<ScanProgress>);
+        let (_, sink, _) = run_scan_blocking(
+            &ready,
+            crate::patterns::compile_web_pattern("p := [dep.rel=nsubj].").unwrap(),
+            5,
+            no_sections(),
+            &CancellationFlag::new(),
+            progress_tx,
+        )
+        .unwrap();
+        let unavailable = sink.unavailable_attributes.expect("recorded by the scan");
+        assert_eq!(
+            unavailable
+                .keys
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["dep.rel"]
+        );
+
+        let workbench = WorkbenchId::new("wb");
+        let mut state = RevisionCoordinatorState::new(workbench.clone());
+        assert!(state.accept(
+            RevisionId(1),
+            "p := [dep.rel=nsubj].".into(),
+            CacheReadinessView::Ready
+        ));
+        let mut snapshot = (*snapshot(&workbench, RevisionId(1))).clone();
+        snapshot.unavailable_attributes = Some(unavailable);
+        assert!(state.apply_terminal(CoordinatorEvent::Completed {
+            workbench,
+            revision: RevisionId(1),
+            snapshot: Arc::new(snapshot),
+        }));
+        let status = project_revision_status(Some(&CoordinatorView {
+            state,
+            progress: ExecutionProgress::default(),
+            live_summary: None,
+        }));
+        assert_eq!(status.notices.len(), 1);
+        assert_eq!(status.notices[0].key, "status.attribute_unavailable");
+        assert!(
+            status.notices[0].text.contains("does not carry `dep.rel`"),
+            "{:?}",
+            status.notices
+        );
+    }
+
+    #[test]
     fn run_scan_blocking_completes_and_counts_every_match() {
         let (_dir, ready) = tiny_ready_corpus(3);
         let (progress_tx, mut progress_rx) = watch::channel(None::<ScanProgress>);
@@ -1280,6 +1479,8 @@ mod tests {
             CompoundCategory::SourceCategories,
             false,
             Default::default(),
+            Default::default(),
+            None,
         )
         .unwrap();
         assert!(omissions.is_none());
@@ -1290,6 +1491,7 @@ mod tests {
             ready.identity.clone(),
             None,
             std::sync::Arc::from("category: \"S1A\"\na := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         let CoordinatorEvent::Completed { snapshot, .. } = resolution.event else {
             panic!("completed options should publish");
@@ -1320,6 +1522,8 @@ mod tests {
             CompoundCategory::Compound,
             false,
             Default::default(),
+            Default::default(),
+            None,
         )
         .expect("a derived chain is published output, not an over-count");
         assert!(matches!(outcome, RunOutcome::Completed(_)));
@@ -1496,7 +1700,7 @@ mod tests {
             progress: ExecutionProgress::default(),
             live_summary: None,
         }));
-        let notice = status.omission_notice.expect("banner text present");
+        let notice = status.notices.first().expect("banner present").text.clone();
         assert!(notice.contains("1 oversized sentence"), "{notice}");
         assert!(
             notice.contains("338066") || notice.contains("338,066"),
@@ -1527,6 +1731,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(7),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(
             matches!(resolution.event, CoordinatorEvent::Completed { .. }),
@@ -1550,6 +1755,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(7),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
         assert!(resolution.invalidate_corrupt);
@@ -1634,6 +1840,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(
             resolution.event,
@@ -1661,6 +1868,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(
             matches!(resolution.event, CoordinatorEvent::Failed { .. }),
@@ -1684,6 +1892,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
     }
@@ -1703,6 +1912,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
     }
@@ -1724,6 +1934,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         let CoordinatorEvent::Completed { snapshot, .. } = resolution.event else {
             panic!("expected Completed");
@@ -1898,6 +2109,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(3),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(!resolution.invalidate_corrupt);
         match resolution.event {
@@ -1927,6 +2139,7 @@ mod tests {
             identity,
             None,
             std::sync::Arc::clone(&source),
+            CancelReason::Superseded,
         );
         match resolution.event {
             CoordinatorEvent::Completed { snapshot, .. } => {
@@ -1949,6 +2162,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(99),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(resolution.invalidate_corrupt);
         assert_eq!(
@@ -1974,12 +2188,14 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from(""),
+            CancelReason::Abandoned,
         );
         assert_eq!(
             cancelled.event,
             CoordinatorEvent::Cancelled {
                 workbench: WorkbenchId::new("wb"),
-                revision: RevisionId(1)
+                revision: RevisionId(1),
+                reason: CancelReason::Abandoned,
             }
         );
         assert!(!cancelled.invalidate_corrupt);
@@ -2004,6 +2220,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert_eq!(
             panicked.event,
@@ -2019,8 +2236,11 @@ mod tests {
     fn snapshot(workbench: &WorkbenchId, revision: RevisionId) -> Arc<CompletedSnapshot> {
         let pattern_key = PatternKey::new(0).unwrap();
         Arc::new(CompletedSnapshot {
+            overlaps: Default::default(),
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
             ),
@@ -2066,6 +2286,8 @@ mod tests {
             .into_boxed_slice(),
             capture_catalog: Box::default(),
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         })
     }
 
@@ -2119,6 +2341,44 @@ mod tests {
         );
         assert_eq!(entries.len(), tab_count);
         assert_eq!(retained_refs, tab_count * 2);
+    }
+
+    #[tokio::test]
+    async fn progress_of_a_superseded_scan_is_not_published() {
+        let registry = CoordinatorRegistry::new(4);
+        let workbench = WorkbenchId::new("superseded-progress");
+        let entry = registry.entry(&workbench, &test_slot()).await;
+        {
+            let mut state = entry.state.lock().await;
+            for revision in [1, 2] {
+                assert!(state.accept(
+                    RevisionId(revision),
+                    "p := [].".into(),
+                    CacheReadinessView::Ready
+                ));
+            }
+            entry.publish(&state, ExecutionProgress::default());
+        }
+        let (progress_tx, progress_rx) = watch::channel(None::<ScanProgress>);
+        let forward = tokio::spawn(forward_progress(
+            Arc::clone(&entry),
+            RevisionId(1),
+            progress_rx,
+        ));
+
+        progress_tx.send_replace(Some(ScanProgress {
+            progress: ExecutionProgress {
+                sentences_admitted: 7,
+                ..ExecutionProgress::default()
+            },
+            rows: Arc::from([]),
+        }));
+        drop(progress_tx);
+        forward.await.unwrap();
+
+        let view = entry.view_tx.borrow().clone();
+        assert_eq!(view.live_summary, None);
+        assert_eq!(view.progress, ExecutionProgress::default());
     }
 
     #[test]

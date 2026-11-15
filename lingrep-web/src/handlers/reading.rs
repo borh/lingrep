@@ -1,3 +1,4 @@
+use lingrep_core::execution::SentenceAdmission;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -68,6 +69,7 @@ async fn context(
     let Some(provenance) = provenance else {
         return super::sanitized(
             StatusCode::SERVICE_UNAVAILABLE,
+            "reading.unavailable",
             "Reading context is unavailable for this corpus.",
         );
     };
@@ -87,7 +89,7 @@ async fn context(
             ),
             target_id: format!("reading-body-{pattern_key}-{reference_ordinal}"),
             document: scope == "document",
-            search_scope: snapshot.search_scope.clone(),
+            admission: snapshot.admission.clone(),
         },
     )
     .await
@@ -107,12 +109,20 @@ async fn read(
         return invalid_request();
     }
     let Some(slot) = store.corpora.resolve(Some(&corpus)) else {
-        return super::sanitized(StatusCode::NOT_FOUND, "Unknown corpus.");
+        return super::sanitized(
+            StatusCode::NOT_FOUND,
+            "reading.unknown_corpus",
+            "Unknown corpus.",
+        );
     };
     let runtime = Arc::clone(&slot.runtime);
     runtime.start_or_observe().await;
     let Some(ready) = runtime.ready().await else {
-        return super::sanitized(StatusCode::SERVICE_UNAVAILABLE, "The corpus is not ready.");
+        return super::sanitized(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "reading.corpus_not_ready",
+            "The corpus is not ready.",
+        );
     };
     let permit = store.coordinators.acquire_reading_permit().await;
     let reader = ready
@@ -125,6 +135,7 @@ async fn read(
     ) else {
         return super::sanitized(
             StatusCode::SERVICE_UNAVAILABLE,
+            "reading.unavailable",
             "Reading context is unavailable for this corpus.",
         );
     };
@@ -136,8 +147,7 @@ async fn read(
         Ok(_) => return invalid_request(),
         Err(error) => {
             tracing::warn!(%error, "reading context failed");
-            runtime.invalidator().invalidate_corrupt().await;
-            return super::inspection_response(super::EndpointInspectionError::CacheCorruption);
+            return super::corrupt_artifact_response(&runtime, &ready).await;
         }
     }
     respond(
@@ -154,7 +164,7 @@ async fn read(
             root_url: format!("api/read/{corpus}/{sentence}/{start}/{end}"),
             target_id: READER_TARGET.into(),
             document: scope == "document",
-            search_scope: crate::search_scope::SearchScope::default(),
+            admission: SentenceAdmission::All,
         },
     )
     .await
@@ -168,7 +178,8 @@ struct Opening {
     root_url: String,
     target_id: String,
     document: bool,
-    search_scope: crate::search_scope::SearchScope,
+    /// The sentences the displayed run admitted.
+    admission: SentenceAdmission,
 }
 
 /// The rendered document when `opening` asks for the document and a sidecar
@@ -191,7 +202,7 @@ async fn respond(
         if blocks.is_some() {
             return invalid_request();
         }
-        return sentences(permit, runtime, reader, opening).await;
+        return sentences(permit, runtime, ready, reader, opening).await;
     };
     if opening.query.moves_sentences() {
         return invalid_request();
@@ -205,6 +216,7 @@ async fn respond(
         Ok(html) if html.len() <= reading::MAX_READING_HTML_BYTES => Html(html).into_response(),
         Ok(_) => super::sanitized(
             StatusCode::SERVICE_UNAVAILABLE,
+            "reading.display_limit",
             "Reading context exceeds the display limits.",
         ),
         Err(Failure::Sidecar(ReadingSidecarError::OutOfRange(_))) => invalid_request(),
@@ -212,16 +224,17 @@ async fn respond(
             tracing::warn!(%error, "reading sidecar failed");
             super::sanitized(
                 StatusCode::INTERNAL_SERVER_ERROR,
+                "reading.document_unreadable",
                 "The rendered document could not be read.",
             )
         }
         Err(Failure::Corpus(error)) => {
             tracing::warn!(%error, "reading context failed");
-            runtime.invalidator().invalidate_corrupt().await;
-            super::inspection_response(super::EndpointInspectionError::CacheCorruption)
+            super::corrupt_artifact_response(runtime, ready).await
         }
         Err(Failure::Task) => super::sanitized(
             StatusCode::INTERNAL_SERVER_ERROR,
+            "reading.load_failed",
             "Reading context could not be loaded.",
         ),
     }
@@ -230,6 +243,7 @@ async fn respond(
 async fn sentences(
     permit: OwnedSemaphorePermit,
     runtime: &CorpusRuntime,
+    ready: &ReadyCorpus,
     reader: BoundCorpusReader,
     opening: Opening,
 ) -> Response {
@@ -241,17 +255,18 @@ async fn sentences(
             Ok(html) if html.len() <= reading::MAX_READING_HTML_BYTES => Html(html).into_response(),
             _ => super::sanitized(
                 StatusCode::SERVICE_UNAVAILABLE,
+                "reading.display_limit",
                 "Reading context exceeds the display limits.",
             ),
         },
         Ok(Ok(None)) => invalid_request(),
         Ok(Err(error)) => {
             tracing::warn!(%error, "reading context failed");
-            runtime.invalidator().invalidate_corrupt().await;
-            super::inspection_response(super::EndpointInspectionError::CacheCorruption)
+            super::corrupt_artifact_response(runtime, ready).await
         }
         Err(_) => super::sanitized(
             StatusCode::INTERNAL_SERVER_ERROR,
+            "reading.load_failed",
             "Reading context could not be loaded.",
         ),
     }
@@ -288,22 +303,25 @@ async fn rendered(
     sidecar: Arc<ReadingSidecar>,
 ) -> Result<String, Failure> {
     let (mut page, _) = header(opening).await?;
-    let analysis = opening
-        .provenance
-        .view
-        .sentence_analysis_bounded(
-            SentenceId::new(opening.sentence),
-            reading::MAX_READING_SENTENCE_BYTES,
-        )
-        .await?;
-    let chars = analysis
-        .as_ref()
-        .and_then(|analysis| document_reader::char_range(analysis, opening.span.clone()));
+    let provenance = Arc::clone(&opening.provenance.view);
     let sentence = opening.sentence;
-    let (permit, read) = blocking(permit, move || {
-        document_reader::open(&sidecar, sentence, chars)
+    let span = opening.span.clone();
+    let handle = tokio::runtime::Handle::current();
+    let (permit, result) = blocking(permit, move || {
+        let analysis = handle.block_on(provenance.sentence_analysis_bounded(
+            SentenceId::new(sentence),
+            reading::MAX_READING_SENTENCE_BYTES,
+        ))?;
+        let chars = analysis
+            .as_ref()
+            .and_then(|analysis| document_reader::char_range(analysis, span));
+        Ok::<_, lingrep_corpus::CorpusError>((
+            analysis,
+            document_reader::open(&sidecar, sentence, chars),
+        ))
     })
     .await?;
+    let (analysis, read) = result?;
     let (blocks, highlight, anchoring) = read?;
     let admitted = admissions(opening, &blocks).await?;
     drop(permit);
@@ -314,7 +332,7 @@ async fn rendered(
         } else {
             anchoring
         },
-        scoped: !opening.search_scope.is_unrestricted(),
+        scoped: !opening.admission.is_unrestricted(),
         pages: document_reader::DocumentPages::of(
             format!("{}/document", opening.root_url),
             blocks,
@@ -365,20 +383,33 @@ async fn admissions(
     opening: &Opening,
     page: &lingrep_corpus::ReadingPage,
 ) -> Result<Vec<bool>, lingrep_corpus::CorpusError> {
-    let sentences = document_reader::sentences(page);
-    let scope = &opening.search_scope;
-    if scope.is_unrestricted() {
-        return Ok(vec![true; sentences.len()]);
-    }
-    opening
-        .provenance
-        .view
-        .section_admissions(
-            &sentences,
-            scope.included_sections.as_deref(),
-            scope.include_unlabelled,
-        )
-        .await
+    let ordinals = document_reader::sentences(page)
+        .into_iter()
+        .map(SentenceId::get)
+        .collect::<Vec<_>>();
+    ordinal_admissions(opening, &ordinals).await
+}
+
+async fn ordinal_admissions(
+    opening: &Opening,
+    ordinals: &[u64],
+) -> Result<Vec<bool>, lingrep_corpus::CorpusError> {
+    Ok(match &opening.admission {
+        SentenceAdmission::All => vec![true; ordinals.len()],
+        SentenceAdmission::Sentences(admitted) => ordinals
+            .iter()
+            .map(|ordinal| admitted.contains(*ordinal))
+            .collect(),
+        SentenceAdmission::Documents(admitted) => {
+            let document = opening
+                .provenance
+                .view
+                .reading_ranges(SentenceId::new(opening.sentence))
+                .await?
+                .document_id;
+            vec![admitted.contains(document.get()); ordinals.len()]
+        }
+    })
 }
 
 fn file_name(source_name: &str) -> String {
@@ -416,7 +447,8 @@ async fn blocking<T: Send + 'static>(
 fn invalid_request() -> Response {
     super::sanitized(
         StatusCode::BAD_REQUEST,
-        "Invalid reading scope or page. Open context again from the retained hit.",
+        "reading.invalid_request",
+        "Invalid context range or page. Reopen context from a hit.",
     )
 }
 
@@ -473,7 +505,6 @@ async fn load_page(
         &opening.query,
         opening.document,
     );
-    let search_scope = &opening.search_scope;
     let (mut page, ranges) = header(opening).await?;
     let range = if document {
         if query.paragraph.is_some() {
@@ -513,22 +544,7 @@ async fn load_page(
     let Some(ordinals) = reading::page_ordinals(range.clone(), sentence, query) else {
         return Ok(None);
     };
-    let admissions = if search_scope.is_unrestricted() {
-        vec![true; ordinals.len()]
-    } else {
-        provenance
-            .view
-            .section_admissions(
-                &ordinals
-                    .iter()
-                    .copied()
-                    .map(SentenceId::new)
-                    .collect::<Vec<_>>(),
-                search_scope.included_sections.as_deref(),
-                search_scope.include_unlabelled,
-            )
-            .await?
-    };
+    let admissions = ordinal_admissions(opening, &ordinals).await?;
     for (ordinal, admitted) in ordinals.into_iter().zip(admissions) {
         let analysis = if !admitted && !query.show_excluded {
             None
@@ -687,6 +703,7 @@ mod tests {
                 .min_value(1)
                 .max_value(Semaphore::MAX_PERMITS),
         );
+        let return_permit = tc.draw(hegel::generators::booleans());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -696,10 +713,17 @@ mod tests {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let (started, running) = tokio::sync::oneshot::channel();
             let (release, wait) = std::sync::mpsc::channel();
-            let request = tokio::spawn(super::run_reading_task(permit, move || {
-                started.send(()).unwrap();
-                wait.recv().unwrap();
-            }));
+            let request = tokio::spawn(async move {
+                let work = move || {
+                    started.send(()).unwrap();
+                    wait.recv().unwrap();
+                };
+                if return_permit {
+                    super::blocking(permit, work).await.map(|_| ())
+                } else {
+                    super::run_reading_task(permit, work).await
+                }
+            });
             running.await.unwrap();
             request.abort();
             assert!(request.await.unwrap_err().is_cancelled());

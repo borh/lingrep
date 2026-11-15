@@ -12,7 +12,7 @@
 //! is the compiler's, and every subject and operand here is a name only a
 //! compilation can resolve.
 
-use lingrep_core::fsm::policy_program::DefId;
+use lingrep_core::fsm::policy_program::{DefId, Overlaps};
 use lingrep_core::fsm::{
     AnchorError, AnchorResolutionError, Match, PolicyStats, ProgramStats, apply_policy_records,
     strip_hidden,
@@ -1037,4 +1037,113 @@ fn a_policy_block_changes_nothing_about_matching() {
         "an evidence emitter is not a pattern this catalog declares: {:?}",
         programmed.patterns().keys().collect::<Vec<_>>()
     );
+}
+
+fn published_with(
+    source: &str,
+    words: &[&str],
+    overlaps: Overlaps,
+) -> (Vec<(String, usize, usize)>, Vec<String>) {
+    let matcher = matcher_for(source).with_overlaps(overlaps);
+    let tokens = tokens_with_orth(words);
+    let policy = matcher.catalog_policy();
+    let mut program = ProgramStats::for_program(policy.program());
+    let records = apply_policy_records(
+        policy,
+        &matcher.find_matches(&tokens),
+        &tokens,
+        &no_anchors(),
+        &mut PolicyStats::default(),
+        &mut program,
+        None,
+    )
+    .expect("the fixture declares no anchor");
+    assert_eq!(program.per_operation().len(), policy.program().ops.len());
+    let mut published: Vec<_> = records
+        .into_iter()
+        .map(lingrep_core::fsm::PublishedRecord::into_match)
+        .map(|record| (record.pattern.to_string(), record.start, record.end))
+        .collect();
+    published.sort();
+    let labels = policy
+        .program()
+        .labels()
+        .iter()
+        .map(|label| label.text().to_owned())
+        .collect();
+    (published, labels)
+}
+
+fn records(expected: &[(&str, usize, usize)]) -> Vec<(String, usize, usize)> {
+    expected
+        .iter()
+        .map(|&(pattern, start, end)| (pattern.to_owned(), start, end))
+        .collect()
+}
+
+const RESOLVING: &str = "long := [text=a] [text=b].\n\
+     short := [text=a].\n\
+     tail := [text=b].\n\
+     other := [text=c].\n\
+     policy\n  \
+       resolve all rank: [longest, start, end, pattern].\n  \
+       require @other with: @short, relation: in_sentence, evidence: current.\n\
+     end\n";
+
+#[test]
+fn keeping_overlaps_runs_the_block_without_its_resolve_statements() {
+    let words = ["a", "b", "c"];
+    let require = "require @other with: @short, relation: in_sentence, evidence: current.";
+
+    let (catalog, labels) = published_with(RESOLVING, &words, Overlaps::Catalog);
+    assert_eq!(catalog, records(&[("long", 0, 2)]));
+    assert_eq!(labels.len(), 2);
+
+    let (kept, labels) = published_with(RESOLVING, &words, Overlaps::Keep);
+    assert_eq!(
+        kept,
+        records(&[
+            ("long", 0, 2),
+            ("other", 2, 3),
+            ("short", 0, 1),
+            ("tail", 1, 2)
+        ])
+    );
+    assert_eq!(labels, [require]);
+
+    assert_eq!(
+        published_with(RESOLVING, &words, Overlaps::Longest),
+        published_with(RESOLVING, &words, Overlaps::Catalog)
+    );
+}
+
+#[test]
+fn longest_adds_a_resolve_only_to_a_block_that_declares_none() {
+    let resolve = "resolve patterns rank: [longest, start, end, pattern].";
+    let unresolved = "long := [text=a] [text=b].\nshort := [text=a].\nother := [text=c].\n";
+    let words = ["a", "b", "c"];
+    let all = records(&[("long", 0, 2), ("other", 2, 3), ("short", 0, 1)]);
+
+    assert_eq!(
+        published_with(unresolved, &words, Overlaps::Catalog),
+        (all.clone(), vec![])
+    );
+    assert_eq!(
+        published_with(unresolved, &words, Overlaps::Keep),
+        (all, vec![])
+    );
+    assert_eq!(
+        published_with(unresolved, &words, Overlaps::Longest),
+        (
+            records(&[("long", 0, 2), ("other", 2, 3)]),
+            vec![resolve.to_owned()]
+        )
+    );
+
+    let excluding = format!(
+        "{unresolved}policy\n  exclude @long with: @other, relation: in_sentence, evidence: raw.\nend\n"
+    );
+    let (published, labels) = published_with(&excluding, &words, Overlaps::Longest);
+    assert_eq!(published, records(&[("other", 2, 3), ("short", 0, 1)]));
+    assert_eq!(labels.last().map(String::as_str), Some(resolve));
 }

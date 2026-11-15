@@ -440,6 +440,18 @@ async fn enhanced_graph_component_round_trips_and_stays_lazy_for_morphology() {
         Some(parsed.enhanced_graph().clone())
     );
     artifact.verify_integrity().await.unwrap();
+
+    let mut manifest = read_manifest(&destination);
+    manifest["enhanced_graph"]["format_version"] = serde_json::json!(2);
+    write_manifest(&destination, &manifest);
+    let error = CorpusArtifact::open(&destination)
+        .err()
+        .expect("an enhanced graph format this build does not read");
+    assert!(
+        matches!(error, CorpusError::UnsupportedSchema { version: 2, .. }),
+        "{error}"
+    );
+    assert!(!error.is_artifact_corruption());
 }
 
 #[tokio::test]
@@ -523,6 +535,7 @@ async fn expected_analysis_identity_is_checked_before_publication() {
         .finish_expected_analysis(
             discovery_for(&[document]),
             AnalysisIdentity::from_bytes([0xff; 32]),
+            || true,
         )
         .await
     {
@@ -537,6 +550,29 @@ async fn expected_analysis_identity_is_checked_before_publication() {
         }
     ));
     assert!(!destination.exists());
+}
+
+#[tokio::test]
+async fn expected_analysis_finish_stopped_by_its_guard_publishes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("stopped.lingcorpus");
+    let document = source_document(0, "a.md", 0, false);
+    let mut builder = CorpusBuilder::begin(build_config(), &destination)
+        .await
+        .unwrap();
+    add_document(&mut builder, &document, b"alpha", 0).await;
+
+    let result = builder
+        .finish_expected_analysis(
+            discovery_for(&[document]),
+            AnalysisIdentity::from_bytes([0xff; 32]),
+            || false,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_none());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
 #[tokio::test]
@@ -686,7 +722,6 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
         "cancel",
         "cancel_emission",
         "postings_io",
-        "capture_budget",
         "recorder_budget",
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -721,30 +756,12 @@ async fn postings_spill_failures_and_cancellation_release_budget_and_staging() {
             .await
             .unwrap()
             .unwrap();
-        let before_capture = budget.used_bytes();
         let mut reservation = None;
-        if mode == "capture_budget" {
-            reservation = Some(budget.reserve(budget.snapshot().headroom_bytes()).unwrap());
-        }
-        let pushed = builder.push_tokenized_sentence(&location, &tokens).await;
-        if mode == "capture_budget" {
-            let CorpusError::Io(error) = pushed.unwrap_err() else {
-                panic!("spill capacity must retain the I/O error chain");
-            };
-            assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
-            let operation = error
-                .get_ref()
-                .unwrap()
-                .downcast_ref::<lingrep_core::spill::SpillOperationError>()
-                .unwrap();
-            assert_eq!(operation.budget().headroom_bytes(), 0);
-            drop(builder);
-        } else {
-            pushed.unwrap();
-            assert!(
-                budget.used_bytes() > before_capture,
-                "{mode}: capture must spill before finish"
-            );
+        builder
+            .push_tokenized_sentence(&location, &tokens)
+            .await
+            .unwrap();
+        {
             builder.push_corpus_event(&document_end(0)).await.unwrap();
             match mode {
                 "drop" => drop(builder),
@@ -1494,9 +1511,9 @@ async fn verify_rejects_a_rehashed_corrupt_stored_analysis_that_open_accepts() {
         .create_if_missing(false);
     let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
     sqlx::query(
-        "UPDATE sentence_provenance
-         SET analysis_blob = substr(analysis_blob, 1, length(analysis_blob) - 1)
-         WHERE sentence_id = 1",
+        "UPDATE sentence_text
+         SET block = substr(block, 1, length(block) - 1)
+         WHERE first_sentence = 0",
     )
     .execute(&mut connection)
     .await
@@ -1721,52 +1738,92 @@ impl Mutation {
 #[tokio::test]
 async fn open_and_verify_reject_each_adversarial_artifact_state() {
     let cases = [
-        (Mutation::SymlinkComponent, "symlink_component"),
-        (Mutation::WrongComponentLength, "component_length_mismatch"),
+        (Mutation::SymlinkComponent, "symlink_component", false),
+        (
+            Mutation::WrongComponentLength,
+            "component_length_mismatch",
+            true,
+        ),
         (
             Mutation::WrongAnalysisIdentity,
             "analysis_identity_mismatch",
+            true,
         ),
         (
             Mutation::WrongAnalyzerSemanticIdentity,
             "analysis_identity_mismatch",
+            true,
         ),
         (
             Mutation::WrongManifestInventory,
             "discovery_report_mismatch",
+            true,
         ),
         (
             Mutation::InfeasibleManifestMultiplicity,
             "discovery_report_mismatch",
+            true,
         ),
-        (Mutation::ZeroConfiguredLimit, "discovery_report_mismatch"),
-        (Mutation::ObservedLimitExceeded, "discovery_report_mismatch"),
+        (
+            Mutation::ZeroConfiguredLimit,
+            "discovery_report_mismatch",
+            true,
+        ),
+        (
+            Mutation::ObservedLimitExceeded,
+            "discovery_report_mismatch",
+            true,
+        ),
         (
             Mutation::RehashedDenseTargetGroup,
             "discovery_report_mismatch",
+            true,
         ),
         (
             Mutation::RehashedNonCanonicalTargetGroups,
             "discovery_report_mismatch",
+            true,
         ),
-        (Mutation::WrongSentenceCount, "sentence_count_mismatch"),
-        (Mutation::UnsupportedTokenSchema, "unsupported_schema"),
-        (Mutation::RetiredTokenSchema, "unsupported_schema"),
-        (Mutation::UnsupportedProvenanceSchema, "unsupported_schema"),
+        (
+            Mutation::WrongSentenceCount,
+            "sentence_count_mismatch",
+            true,
+        ),
+        (
+            Mutation::UnsupportedTokenSchema,
+            "unsupported_schema",
+            false,
+        ),
+        (Mutation::RetiredTokenSchema, "unsupported_schema", false),
+        (
+            Mutation::UnsupportedProvenanceSchema,
+            "unsupported_schema",
+            false,
+        ),
         (
             Mutation::WrongProvenanceIdentity,
             "analysis_identity_mismatch",
+            true,
         ),
-        (Mutation::WrongProvenanceCount, "sentence_count_mismatch"),
-        (Mutation::MissingProvenanceColumn, "invalid_format"),
+        (
+            Mutation::WrongProvenanceCount,
+            "sentence_count_mismatch",
+            true,
+        ),
+        (Mutation::MissingProvenanceColumn, "invalid_format", true),
         (
             Mutation::CorruptLazyTokenBlock,
             "component_checksum_mismatch",
+            true,
         ),
-        (Mutation::CreateSqliteSidecar, "sqlite_sidecar"),
-        (Mutation::TruncateLocationDirectory, "truncated_component"),
+        (Mutation::CreateSqliteSidecar, "sqlite_sidecar", false),
+        (
+            Mutation::TruncateLocationDirectory,
+            "truncated_component",
+            true,
+        ),
     ];
-    for (mutation, expected_code) in cases {
+    for (mutation, expected_code, corruption) in cases {
         let fixture = ArtifactFixture::new().await;
         mutation.apply(&fixture.root).await;
         let error = match open_or_verify(&fixture.root).await {
@@ -1774,7 +1831,46 @@ async fn open_and_verify_reject_each_adversarial_artifact_state() {
             Ok(()) => panic!("{mutation:?} was accepted"),
         };
         assert_eq!(error.code(), expected_code, "{mutation:?}");
+        assert_eq!(error.is_artifact_corruption(), corruption, "{mutation:?}");
     }
+}
+
+#[tokio::test]
+async fn an_unreadable_component_is_an_io_error_and_not_artifact_corruption() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for component in ["tokens.v1.zst", "provenance.sqlite"] {
+        let fixture = ArtifactFixture::new().await;
+        let path = fixture.root.join(component);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let error = match CorpusArtifact::open(&fixture.root) {
+            Ok(artifact) => artifact.provenance_view().await.map(drop).unwrap_err(),
+            Err(error) => error,
+        };
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(error.code(), "io", "{component}: {error}");
+        assert!(!error.is_artifact_corruption(), "{component}");
+    }
+}
+
+#[tokio::test]
+async fn a_provenance_file_that_is_not_a_database_is_artifact_corruption() {
+    let fixture = ArtifactFixture::new().await;
+    let path = fixture.root.join("provenance.sqlite");
+    let length = fs::metadata(&path).unwrap().len() as usize;
+    fs::write(&path, vec![0x5a; length]).unwrap();
+
+    let error = CorpusArtifact::open(&fixture.root)
+        .unwrap()
+        .provenance_view()
+        .await
+        .map(drop)
+        .unwrap_err();
+
+    assert_eq!(error.code(), "invalid_format", "{error}");
+    assert!(error.is_artifact_corruption());
 }
 
 #[tokio::test]
@@ -1845,11 +1941,11 @@ async fn prepared_artifact_publishes_the_lingrep_v1_contract() {
     let fixture = ArtifactFixture::new().await;
     let manifest = read_manifest(&fixture.root);
 
-    assert_eq!(lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION, 2);
+    assert_eq!(lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION, 3);
     assert_eq!(manifest["schema_version"], serde_json::json!(1));
-    assert_eq!(manifest["format_generation"], serde_json::json!(2));
+    assert_eq!(manifest["format_generation"], serde_json::json!(3));
     assert_eq!(manifest["identity_scheme"], serde_json::json!("a1"));
-    assert_eq!(manifest["provenance_schema_version"], serde_json::json!(4));
+    assert_eq!(manifest["provenance_schema_version"], serde_json::json!(5));
     assert_eq!(
         manifest["trust_class"],
         serde_json::json!("locally-executed")
@@ -2488,6 +2584,10 @@ async fn nfc_artifact_requires_the_current_unicode_table_version() {
         let error = CorpusArtifact::open(&root)
             .err()
             .expect("different normalization tables");
-        assert!(error.to_string().contains("normalization"), "{error}");
+        assert!(
+            matches!(error, CorpusError::NormalizationTablesStale { .. }),
+            "{error}"
+        );
+        assert!(!error.is_artifact_corruption());
     }
 }

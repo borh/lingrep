@@ -1,0 +1,66 @@
+{% extends "layout.html" %}
+{% block title %}Similar words{% endblock %}
+{% block content %}
+<section class="neighbors">
+  <h1><span data-i18n="neighbors.title">Similar words</span></h1>
+  {% match file %}{% when Some with (file) %}
+  <p class="muted neighbors-blurb" data-i18n="neighbors.blurb">Find values whose cosine similarity to the input word meets the minimum.</p>
+  <form class="neighbors-form" method="get" action="neighbors">
+    <div class="neighbors-field">
+      <label for="neighbors-word"><span data-i18n="neighbors.word">Word</span></label>
+      <input id="neighbors-word" name="word" type="text" value="{{ word }}" required
+             spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off">
+    </div>
+    <div class="neighbors-field neighbors-field-threshold">
+      <label for="neighbors-min"><span data-i18n="neighbors.threshold">Minimum similarity</span></label>
+      <input id="neighbors-min" name="min" type="number" min="0" max="1" step="any" value="{{ threshold }}" required
+             inputmode="decimal"{% if let Outcome::InvalidThreshold = outcome %} aria-invalid="true" aria-describedby="neighbors-problem"{% endif %}>
+    </div>
+    <button type="submit" class="btn btn-primary"><span data-i18n="neighbors.list">Find similar words</span></button>
+  </form>
+
+  {% match outcome %}
+  {% when Outcome::Idle %}
+  {% when Outcome::InvalidThreshold %}
+  <p id="neighbors-problem" class="error" role="alert" data-i18n="neighbors.invalid_threshold">Enter a number from 0 to 1 with at most six decimal places.</p>
+  {% when Outcome::NoVector %}
+  <p class="error" role="alert"><span data-i18n="neighbors.no_vector">No vector found for this word.</span> <span data-i18n="neighbors.no_vector_hint">Try another form, such as the dictionary form.</span></p>
+  {% when Outcome::Unreadable with (message) %}
+  <p class="error" role="alert"><span data-i18n="neighbors.unreadable">The word-vector file could not be read.</span> <span lang="en">{{ message }}</span></p>
+  {% when Outcome::Listed with { test, total, truncated, rows } %}
+  <div class="neighbors-summary">
+    <p class="neighbors-count" role="status"><span data-i18n="neighbors.count" data-i18n-args='{"n": "{{ total }}"}'>Matching values: {{ total }}</span>{% if *truncated %} <span class="muted" data-i18n="neighbors.truncated" data-i18n-args='{"n": {{ max_rows }}}'>The {{ max_rows }} most similar are listed.</span>{% endif %}</p>
+    {% if let Some(test) = test %}
+    <p class="neighbors-test"><span class="muted" data-i18n="neighbors.as_test">After an attribute:</span> <code class="neighbors-snippet">{{ test }}</code></p>
+    {% endif %}
+  </div>
+  <table class="neighbors-table">
+    <thead>
+      <tr>
+        <th scope="col" class="neighbors-rank"><span data-i18n="neighbors.col_rank">Rank</span></th>
+        <th scope="col"><span data-i18n="neighbors.col_value">Value</span></th>
+        <th scope="col" class="neighbors-similarity"><span data-i18n="neighbors.col_similarity">Similarity</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="neighbors-rank">{{ row.rank }}</td>
+        <td class="neighbors-value">{{ row.value }}</td>
+        <td class="neighbors-similarity"><span class="neighbors-bar" aria-hidden="true"><span style="inline-size: {{ row.percent }}%"></span></span><span class="neighbors-number">{{ row.similarity }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endmatch %}
+
+  <footer class="neighbors-file">
+    <p><span class="muted" data-i18n="neighbors.file">Word-vector file:</span> <code>{{ file.name }}</code></p>
+    <p><span class="muted" data-i18n="neighbors.declare">Add this line to the catalog to declare this file:</span></p>
+    <pre class="definition-source"><code>{{ file.declaration }}</code></pre>
+  </footer>
+  {% when None %}
+  <p class="muted" data-i18n="neighbors.unconfigured">No word-vector file configured. Start the server with <code>--vectors FILE</code> or set <code>LINGREP_VECTORS_PATH</code>.</p>
+  {% endmatch %}
+</section>
+{% endblock %}

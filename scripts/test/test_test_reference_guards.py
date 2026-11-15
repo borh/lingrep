@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-# Git exports GIT_DIR to hooks (githooks(5)), which would point fixture commands at the pushing repository.
+# Push hooks inherit the repository's Git environment (githooks(5), DESCRIPTION).
 for name in subprocess.run(["git", "rev-parse", "--local-env-vars"], check=True,
                            capture_output=True, text=True).stdout.split():
     os.environ.pop(name, None)

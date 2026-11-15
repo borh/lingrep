@@ -100,11 +100,11 @@ impl ExecutionReport {
     fn observe_match(
         &mut self,
         sentence: &dyn TokenSequence,
-        matches: &[Match],
+        matches: usize,
     ) -> Result<(), ExecutionError> {
         self.sentences_matched = self
             .sentences_matched
-            .checked_add(u64::from(!matches.is_empty()))
+            .checked_add(u64::from(matches != 0))
             .ok_or(ExecutionError::ResourceAccounting)?;
         self.tokens_scanned = self
             .tokens_scanned
@@ -114,9 +114,7 @@ impl ExecutionReport {
             .ok_or(ExecutionError::ResourceAccounting)?;
         self.matches_found = self
             .matches_found
-            .checked_add(
-                u64::try_from(matches.len()).map_err(|_| ExecutionError::ResourceAccounting)?,
-            )
+            .checked_add(u64::try_from(matches).map_err(|_| ExecutionError::ResourceAccounting)?)
             .ok_or(ExecutionError::ResourceAccounting)?;
         Ok(())
     }
@@ -239,6 +237,31 @@ pub trait MatchSink {
         false
     }
 
+    /// Whether this sink derives its result from the sentences alone when the
+    /// catalog is [`crate::fsm::CompiledCatalog::token_windows`].
+    ///
+    /// When true for such a catalog, the run skips matching and calls
+    /// [`Self::push_windows`] in place of [`Self::push_partition`].
+    fn counts_token_windows(&self) -> bool {
+        false
+    }
+
+    /// Publishes one partition of a token-window catalog.
+    ///
+    /// Each control's `records_emitted` is the sentence's window count over
+    /// every definition, the number of records matching would have published.
+    fn push_windows<V: TokenSequence + Sync>(
+        &mut self,
+        _pool: &rayon::ThreadPool,
+        _locations: &[SentenceLocation],
+        _sentences: &[V],
+        _cancel: &CancellationFlag,
+    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+        Err(ExecutionError::Sink(
+            "sink does not count token windows".into(),
+        ))
+    }
+
     /// Publishes one sentence and all of its canonical matches.
     fn push(
         &mut self,
@@ -345,6 +368,20 @@ pub trait MatchSink {
 impl<T: MatchSink + ?Sized> MatchSink for &mut T {
     fn wants_parallel_records_partition(&self) -> bool {
         (**self).wants_parallel_records_partition()
+    }
+
+    fn counts_token_windows(&self) -> bool {
+        (**self).counts_token_windows()
+    }
+
+    fn push_windows<V: TokenSequence + Sync>(
+        &mut self,
+        pool: &rayon::ThreadPool,
+        locations: &[SentenceLocation],
+        sentences: &[V],
+        cancel: &CancellationFlag,
+    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+        (**self).push_windows(pool, locations, sentences, cancel)
     }
 
     fn push(
@@ -502,6 +539,16 @@ where
     if let Some(capacity) = publication.trace_capacity() {
         sealed = sealed.with_trace(capacity);
     }
+    let window_widths = sealed
+        .counts_token_windows()
+        .then(|| fsm.compiled.token_windows())
+        .flatten()
+        .map(|windows| {
+            windows
+                .iter()
+                .map(|window| window.width)
+                .collect::<Vec<_>>()
+        });
     let mut adapted = SealedProgress { inner: progress };
     let mut analyzer = SessionAnalyzer {
         session: binding.session_mut(),
@@ -521,6 +568,7 @@ where
         scope,
         fsm.compiled.label_declarations(),
         fsm.compiled.lookaround_reach(),
+        window_widths.as_deref(),
         |sentences, links, targets| {
             BoundSentenceMatcher::new(fsm)
                 .match_in_windows(pool, sentences, links, targets)
@@ -659,6 +707,7 @@ fn execute_bound_with_matcher<S, A, K, P, O, M>(
     scope: &SentenceAdmission,
     labels: &[crate::fsm::LabelDeclaration],
     reach: BTreeMap<LookaroundScope, LookaroundReach>,
+    window_widths: Option<&[usize]>,
     mut match_batch: M,
 ) -> Result<RunOutcome, ExecutionError>
 where
@@ -700,6 +749,7 @@ where
                         sink,
                         progress,
                         observer,
+                        window_widths,
                         &mut match_batch,
                         state,
                     )
@@ -925,7 +975,7 @@ impl PublicationState {
     fn observe_match(
         &mut self,
         sentence: &dyn TokenSequence,
-        matches: &[Match],
+        matches: usize,
     ) -> Result<(), ExecutionError> {
         crate::fsm::labels::observe_out_of_set(
             &self.labels,
@@ -1151,11 +1201,18 @@ fn validate_tokenized_sentences(
         .collect()
 }
 
+#[derive(Clone, Copy)]
+enum Found<'a> {
+    Matches(&'a [Vec<Match>]),
+    /// Window counts of a token-window catalog that was not matched.
+    Windows(&'a [usize]),
+}
+
 #[allow(clippy::too_many_arguments)]
 fn publish_partition<V: TokenSequence + Sync, K, P>(
     locations: &[SentenceLocation],
     sentences: &[V],
-    found: &[Vec<Match>],
+    found: Found<'_>,
     logical_batch_sentences: usize,
     pool: &rayon::ThreadPool,
     cancel: &CancellationFlag,
@@ -1170,11 +1227,17 @@ where
     if cancel.is_cancelled() {
         return Ok(BatchControl::Cancelled);
     }
-    let (controls, cancelled) = sink.push_partition(pool, locations, sentences, found, cancel)?;
+    let (controls, cancelled) = match found {
+        Found::Matches(found) => sink.push_partition(pool, locations, sentences, found, cancel)?,
+        Found::Windows(_) => sink.push_windows(pool, locations, sentences, cancel)?,
+    };
     let controls_len = controls.len();
     for (index, control) in controls.into_iter().enumerate() {
-        let matches = &found[index];
-        let (records_emitted, stop) = control.emitted_records(matches.len())?;
+        let supplied = match found {
+            Found::Matches(found) => found[index].len(),
+            Found::Windows(windows) => windows[index],
+        };
+        let (records_emitted, stop) = control.emitted_records(supplied)?;
         state.observe_emission(records_emitted)?;
         if stop {
             if state.logical_pending == logical_batch_sentences {
@@ -1189,7 +1252,7 @@ where
     if cancelled {
         Ok(BatchControl::Cancelled)
     } else {
-        if controls_len != found.len() {
+        if controls_len != sentences.len() {
             return Err(ExecutionError::Sink(
                 "partition sink returned fewer controls without stopping or cancellation".into(),
             ));
@@ -1462,6 +1525,7 @@ fn run_partition<V: TokenSequence + Sync, K, P, O, M>(
     sink: &mut K,
     progress: &mut P,
     observer: &mut O,
+    window_widths: Option<&[usize]>,
     match_batch: &mut M,
     state: &mut PublicationState,
 ) -> Result<BatchControl, ExecutionError>
@@ -1484,15 +1548,34 @@ where
         return Ok(BatchControl::Cancelled);
     }
 
-    let found = match_batch(held, links, targets);
-    debug_assert_eq!(found.len(), sentences.len());
-    for (sentence, matches) in sentences.iter().zip(&found) {
-        state.observe_match(sentence, matches)?;
-    }
+    let found;
+    let windows;
+    let published = if let Some(widths) = window_widths {
+        windows = sentences
+            .iter()
+            .map(|sentence| {
+                widths
+                    .iter()
+                    .map(|width| (sentence.len() + 1).saturating_sub(*width))
+                    .sum::<usize>()
+            })
+            .collect::<Vec<_>>();
+        for (sentence, windows) in sentences.iter().zip(&windows) {
+            state.observe_match(sentence, *windows)?;
+        }
+        Found::Windows(&windows)
+    } else {
+        found = match_batch(held, links, targets);
+        debug_assert_eq!(found.len(), sentences.len());
+        for (sentence, matches) in sentences.iter().zip(&found) {
+            state.observe_match(sentence, matches.len())?;
+        }
+        Found::Matches(&found)
+    };
     publish_partition(
         locations,
         sentences,
-        &found,
+        published,
         logical_batch_sentences,
         pool,
         cancel,
@@ -1828,6 +1911,7 @@ mod tests {
             scope,
             labels,
             BTreeMap::new(),
+            None,
             |sentences, _, targets| matcher(&sentences[targets]),
         )
     }

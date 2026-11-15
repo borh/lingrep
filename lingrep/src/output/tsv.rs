@@ -220,7 +220,7 @@ pub fn write_match_tsv<W: Write>(writer: &mut W, row: &MatchTsvRow) -> Result<()
 }
 
 /// Write `pattern`, `rank`, `group`, and `count` in the fixed summary TSV
-/// order. It intentionally has no header row.
+/// order, without a header row.
 pub fn write_summary_tsv<W: Write>(writer: &mut W, row: &SummaryTsvRow) -> Result<(), OutputError> {
     let rank = row.rank.to_string();
     let count = row.count.to_string();

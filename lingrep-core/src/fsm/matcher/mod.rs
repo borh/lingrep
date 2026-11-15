@@ -32,7 +32,7 @@ pub use builder::FsmBuilder;
 pub use compiled::ExecutionMetrics;
 pub use compiled::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
-    CompiledLexiconDefinition,
+    CompiledLexiconDefinition, TokenWindow, WindowKeyField,
 };
 pub(crate) use lexicon::CompiledLexicons;
 pub use lookaround_context::{ContextSegment, ContextWindow, LookaroundContext, LookaroundReach};

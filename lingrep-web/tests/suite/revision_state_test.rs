@@ -11,6 +11,8 @@ fn snapshot(revision: u64) -> Arc<CompletedSnapshot> {
     Arc::new(CompletedSnapshot {
         search_scope: Default::default(),
         excluded_sentences: 0,
+        admission: Default::default(),
+        cli_arguments: String::new(),
         sections: lingrep_web::section_tally::SectionAvailability::Available(
             lingrep_web::section_tally::SectionTally::unlabelled(),
         ),
@@ -21,11 +23,14 @@ fn snapshot(revision: u64) -> Arc<CompletedSnapshot> {
         corpus_identity: CorpusIdentity::new("corpus"),
         source: std::sync::Arc::from(""),
         derive_compounds: false,
+        overlaps: Default::default(),
         compound_category: lingrep_web::snapshot::CompoundCategory::Compound,
         patterns: Box::default(),
         match_refs: Box::default(),
         capture_catalog: Box::default(),
         oversized_omissions: None,
+        unavailable_attributes: None,
+        vectors_binding: None,
     })
 }
 

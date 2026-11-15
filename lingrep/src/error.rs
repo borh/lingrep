@@ -335,6 +335,18 @@ impl CliError {
     }
 }
 
+impl From<lingrep_corpus::word_vectors::VectorTableError> for CliError {
+    fn from(error: lingrep_corpus::word_vectors::VectorTableError) -> Self {
+        use lingrep_corpus::word_vectors::VectorTableError;
+        match error {
+            VectorTableError::InvalidQuery(message) => Self::InvalidArgs(message),
+            VectorTableError::NotFound(path) => Self::FileNotFound(path),
+            VectorTableError::Io { source, .. } => Self::Io(source),
+            malformed @ VectorTableError::Malformed { .. } => Self::Parse(malformed.to_string()),
+        }
+    }
+}
+
 impl From<serde_json::Error> for CliError {
     fn from(e: serde_json::Error) -> Self {
         CliError::Corpus(format!("JSON parse error: {e}"))

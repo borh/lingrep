@@ -30,15 +30,8 @@ const NAMED_REFERRERS: usize = 3;
 /// the dictionary supplying the feature columns, so a tokenizer that reads a
 /// different dictionary is a different schema and the same analyzer.
 pub(crate) fn bind_refusal(error: &SchemaBindError, schema: &str) -> CliError {
-    let detail = match error {
-        SchemaBindError::MissingKeys(keys) => format!(
-            "its dependency `where` clauses require {}, which this schema does not carry",
-            keys.join(", ")
-        ),
-        SchemaBindError::KindMismatch { .. } => error.to_string(),
-    };
     CliError::InvalidArgs(format!(
-        "the catalog cannot bind to this corpus's token schema ({schema}): {detail}"
+        "the catalog cannot bind to this corpus's token schema ({schema}): {error}"
     ))
 }
 
@@ -311,8 +304,8 @@ mod tests {
         assert_eq!(
             wrapped.to_string(),
             "Invalid arguments: the catalog cannot bind to this corpus's token schema (vibrato \
-             morphology): its dependency `where` clauses require dep.head, dep.rel, which this \
-             schema does not carry"
+             morphology): dependency `where` clauses require dep.head, dep.rel, which the \
+             token schema does not carry"
         );
     }
 }

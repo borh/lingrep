@@ -12,8 +12,6 @@ pub use lingrep_cli_common::{
     MISSING_DICTIONARY_HINT, fallback_dictionary_path, install_directory,
 };
 
-pub const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/borh/lingrep/releases/download";
-
 const DICTIONARY_RELEASE: &str = "unidic-202512";
 
 /// A dictionary built by the flake's `vibrato-dict-*` package.
@@ -142,9 +140,8 @@ pub fn install(
     let response = reqwest::blocking::Client::builder()
         .timeout(None)
         .build()
-        .and_then(|client| client.get(&url).send())
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| CliError::Dictionary(format!("cannot download {url}: {error}")))?;
+        .and_then(|client| crate::release_download::get(&client, &url))
+        .map_err(|error| CliError::Dictionary(format!("cannot download dictionary: {error}")))?;
     let total = response.content_length();
     let progress = Progress::new(dictionary.file_name, total);
     let bytes = unpack_verified(progress.wrap(response), dictionary.blake3, &path)?;
@@ -347,14 +344,14 @@ mod tests {
     }
 
     #[test]
-    fn download_url_is_the_dictionary_asset_in_the_unidic_release_directory_of_the_base() {
+    fn dictionary_asset_urls_use_the_release_directory_under_the_base() {
         let novel = DICTIONARIES
             .iter()
             .find(|d| d.name == "novel")
             .copied()
             .unwrap();
         assert_eq!(
-            download_url(DEFAULT_DOWNLOAD_BASE, novel),
+            download_url(crate::release_download::DEFAULT_DOWNLOAD_BASE, novel),
             "https://github.com/borh/lingrep/releases/download/unidic-202512/unidic-novel-202512.dic.zst"
         );
         for base in [

@@ -146,25 +146,19 @@ fn kwic_row_variations(html: &str) -> Vec<String> {
         .collect()
 }
 
-/// The variation list is corpus-exact and the concordance is the bounded
-/// retained sample, so a surface can have a positive corpus count and no
-/// retained row. Pressing it empties the table, and the pane must state which
-/// population each figure describes rather than leaving a blank grid.
 #[test]
 fn a_surface_with_no_retained_row_states_why_the_table_is_empty() {
     let sections = surface_corpus_tally();
     let html = render_with(vec![hit(0, "β", &["methods"])], &sections);
-    // The reason ships hidden and is unhidden by the client on that selection.
     assert!(html.contains("data-kwic-filter-empty"), "{html}");
     assert!(
         html.contains("data-kwic-filter-empty hidden"),
         "the note qualifies a selection and must not show unfiltered: {html}"
     );
     assert!(
-        html.contains("No retained hits carry this surface"),
+        html.contains("No retained hits have this surface"),
         "the note states why the table is empty: {html}"
     );
-    // The corpus-exact count survives beside the zero-row surface.
     assert!(
         html.contains("data-search-value=\"α\"") && html.contains("data-count=\"3\""),
         "the unretained surface keeps its exact corpus count: {html}"

@@ -1,7 +1,9 @@
 {% extends "layout.html" %}
+{% import "macros.html" as macros %}
 {% block title %}Sample debugger{% endblock %}
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
+{% call macros::corpus_line("none (this page reads only the sample text)", "corpus.none", false) %}{% endcall %}
 <h1><span data-i18n="sample.title">Sample debugger</span></h1>
 <p class="muted" data-i18n="sample.blurb">
     Run a lingrep patterns pattern over text you paste here, and see how it tokenizes and
@@ -15,7 +17,7 @@
   <div class="query-workspace">
     <form class="sample-form"
           hx-post="api/sample" hx-target="#sample-results" hx-swap="innerHTML"
-          hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid from:#sample-pattern, submit"
+          hx-trigger="load, input changed delay:400ms from:#sample-text, pattern:valid changed from:#sample-pattern, submit"
           hx-sync="this:replace">
       <div class="sample-pattern-field">
         <label for="sample-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>

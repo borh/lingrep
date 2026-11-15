@@ -21,9 +21,9 @@ use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
 use super::query_scope::{document_values, parse_scope};
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
-    random_id, write_warning,
+    random_id, write_vectors_notice, write_warning,
 };
-use crate::catalog_input::load_and_compile;
+use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, SummarizeArgs};
 use crate::direct_source::matched_surface;
 use crate::error::{CliError, FailureCode};
@@ -38,22 +38,50 @@ use crate::protocol::query::{
 };
 use crate::protocol::write_jsonl;
 use crate::summary::{
-    AggregationGroup, AggregationInput, FinalizedSummary, MetadataValueTally,
-    OwnedAggregationInput, SectionTally, SummaryAggregator, SummaryPartition, SummaryRow,
-    shard_hash,
+    AggregationGroup, AggregationInput, MetadataValueTally, OwnedAggregationInput, SectionTally,
+    SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows, shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
+use crate::window_summary::WindowTally;
+
+fn summary_pattern<'a>(
+    pattern_names: &[&'a str],
+    row: &SummaryRow,
+) -> Result<&'a str, ExecutionError> {
+    pattern_names
+        .get(row.partition.pattern_ordinal as usize)
+        .copied()
+        .ok_or_else(|| ExecutionError::Output {
+            kind: io::ErrorKind::InvalidData,
+            message: "summary pattern ordinal is out of range".to_owned(),
+        })
+}
 
 trait SummaryEventWriter {
     fn write_summary(&mut self, pattern: &str, row: &SummaryRow) -> Result<(), ExecutionError>;
+    /// Writes `rows` in order and stops at the first row that fails.
+    fn write_summaries(
+        &mut self,
+        pattern_names: &[&str],
+        rows: &[SummaryRow],
+    ) -> Result<(), ExecutionError> {
+        for row in rows {
+            self.write_summary(summary_pattern(pattern_names, row)?, row)?;
+        }
+        Ok(())
+    }
     fn write_complete(&mut self, complete: &QueryComplete) -> Result<(), ExecutionError>;
 }
 
 struct MachineSummaryEventWriter<'a, W> {
     writer: &'a mut W,
     output: OutputMode,
+    pool: &'a rayon::ThreadPool,
 }
+
+const SUMMARY_PUBLISH_ROWS: usize = 16 * 1024;
+const SUMMARY_SERIALIZE_ROWS: usize = 256;
 
 impl<W: Write> SummaryEventWriter for MachineSummaryEventWriter<'_, W> {
     fn write_summary(&mut self, pattern: &str, row: &SummaryRow) -> Result<(), ExecutionError> {
@@ -87,6 +115,42 @@ impl<W: Write> SummaryEventWriter for MachineSummaryEventWriter<'_, W> {
         }
     }
 
+    fn write_summaries(
+        &mut self,
+        pattern_names: &[&str],
+        rows: &[SummaryRow],
+    ) -> Result<(), ExecutionError> {
+        if self.output != OutputMode::Jsonl {
+            for row in rows {
+                self.write_summary(summary_pattern(pattern_names, row)?, row)?;
+            }
+            return Ok(());
+        }
+        let serialized = self.pool.install(|| {
+            rows.par_chunks(SUMMARY_SERIALIZE_ROWS)
+                .map(|rows| {
+                    let mut lines = Vec::new();
+                    for row in rows {
+                        let pattern = summary_pattern(pattern_names, row)?;
+                        serde_json::to_writer(
+                            &mut lines,
+                            &QueryEnvelope::new(QueryEvent::Summary(summary_data(pattern, row))),
+                        )
+                        .map_err(|error| execution_output_error(error.into()))?;
+                        lines.push(b'\n');
+                    }
+                    Ok(lines)
+                })
+                .collect::<Vec<Result<Vec<u8>, ExecutionError>>>()
+        });
+        for lines in serialized {
+            self.writer
+                .write_all(&lines?)
+                .map_err(execution_output_io)?;
+        }
+        self.writer.flush().map_err(execution_output_io)
+    }
+
     fn write_complete(&mut self, complete: &QueryComplete) -> Result<(), ExecutionError> {
         match self.output {
             OutputMode::Jsonl => write_jsonl(
@@ -106,26 +170,33 @@ impl<W: Write> SummaryEventWriter for MachineSummaryEventWriter<'_, W> {
 }
 
 fn publish_summary_rows_and_complete(
-    finalized: &mut FinalizedSummary,
+    finalized: &mut impl SummaryRows,
     top: Option<u64>,
     pattern_names: &[&str],
     mut complete: QueryComplete,
     writer: &mut impl SummaryEventWriter,
 ) -> Result<u64, CliError> {
     let mut publication_error = None;
-    let visit_result = finalized.visit(top, |row| {
-        let pattern = pattern_names
-            .get(row.partition.pattern_ordinal as usize)
-            .ok_or_else(|| io::Error::other("summary pattern ordinal is out of range"))?;
-        match writer.write_summary(pattern, row) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let message = error.to_string();
-                publication_error = Some(error);
-                Err(io::Error::other(message))
+    let mut batch = Vec::with_capacity(SUMMARY_PUBLISH_ROWS);
+    let mut publish = |batch: &mut Vec<SummaryRow>| {
+        let written = writer.write_summaries(pattern_names, batch);
+        batch.clear();
+        written.map_err(|error| {
+            let message = error.to_string();
+            publication_error = Some(error);
+            io::Error::other(message)
+        })
+    };
+    let visit_result = finalized
+        .visit(top, |row| {
+            batch.push(row);
+            if batch.len() == SUMMARY_PUBLISH_ROWS {
+                publish(&mut batch)
+            } else {
+                Ok(())
             }
-        }
-    });
+        })
+        .and_then(|emitted| publish(&mut batch).map(|()| emitted));
     let emitted = match visit_result {
         Ok(emitted) => emitted,
         Err(_) if publication_error.is_some() => {
@@ -148,11 +219,15 @@ pub fn run(
 ) -> Result<CommandOutcome, CliError> {
     let top = resolve_summary_top(output, args.top);
     let started = Instant::now();
-    let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
+    let catalog =
+        load_and_compile_with_vectors(&args.catalog.catalog_input()?, args.vectors.as_deref())?;
+    write_vectors_notice(&catalog, config)?;
+    let word_vectors = super::query_support::word_vectors_report(&catalog);
     let descriptors = catalog.authored_definitions()?;
     let catalog_fingerprint = catalog.fingerprint.clone();
     let table_fingerprint = catalog.fingerprint.clone();
-    let compiled = catalog.output;
+    let mut compiled = catalog.output;
+    compiled.matcher = compiled.matcher.with_overlaps(args.overlaps.into());
     let projected_attributes = cached_run_attributes(&compiled.matcher);
     let catalog_policy = compiled.matcher.catalog_policy();
     let pattern_ordinals = catalog_policy
@@ -323,6 +398,8 @@ pub fn run(
         sample: run_facts
             .block_sample_report
             .or_else(|| sample.map(crate::protocol::query::SampleReport::of)),
+        overlaps: crate::protocol::query::OverlapsReport::of(args.overlaps),
+        word_vectors,
         ordering: MatchOrder::CorpusSentenceStartEndPatternCapturesGraphBindingsTerm,
         span_convention: SpanConvention::HalfOpenToken,
         // Grouped output carries no span, so there is nowhere to put an offset
@@ -402,7 +479,21 @@ pub fn run(
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
+        let windows = if args.by_document
+            || args.write_table.is_some()
+            || args.trace_policy.is_some()
+            || sections.is_some()
+            || metadata_values.is_some()
+        {
+            None
+        } else if let Some(windows) = compiled.matcher.token_windows() {
+            WindowTally::new(&windows, &pattern_ordinals, aggregation.temp_budget())
+                .map_err(CliError::Aggregation)?
+        } else {
+            None
+        };
         let mut sink = SummarySink {
+            windows,
             aggregation: Some(aggregation),
             aggregation_error: None,
             pattern_ordinals: &pattern_ordinals,
@@ -505,7 +596,8 @@ pub fn run(
             .aggregation
             .take()
             .expect("summary aggregation remains available after successful execution");
-        let records_unkeyed = sink.records_unkeyed;
+        let windows = sink.windows.take();
+        let mut records_unkeyed = sink.records_unkeyed;
         let documents = sink.documents.take();
         let sections = sink.sections.take();
         let metadata_values = sink.metadata_values.take();
@@ -516,8 +608,17 @@ pub fn run(
             .iter()
             .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
             .collect::<Vec<_>>();
+        let mut finalized_windows = windows
+            .map(|windows| windows.finalize(&pool))
+            .transpose()
+            .map_err(CliError::Aggregation)?;
+        if let Some(windows) = &finalized_windows {
+            records_unkeyed = windows.records_unkeyed();
+        }
         let (mut finalized, mut aggregation) = if args.write_table.is_some() {
             (None, Some(aggregation))
+        } else if finalized_windows.is_some() {
+            (None, None)
         } else {
             (
                 Some(aggregation.finalize().map_err(CliError::Aggregation)?),
@@ -533,9 +634,11 @@ pub fn run(
             .map(|values| values.into_records(&published, &pattern_names))
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let mut temp_high_water = finalized
-            .as_ref()
-            .map_or(0, FinalizedSummary::peak_temp_bytes);
+        let mut temp_high_water = match (&finalized, &finalized_windows) {
+            (Some(finalized), _) => finalized.peak_temp_bytes(),
+            (None, Some(windows)) => windows.peak_temp_bytes(),
+            (None, None) => 0,
+        };
 
         let mut documents = documents;
         let mut staged_table = None;
@@ -685,10 +788,19 @@ pub fn run(
         let mut event_writer = MachineSummaryEventWriter {
             writer: &mut writer,
             output,
+            pool: &pool,
         };
         if let Some(finalized) = finalized.as_mut() {
             publish_summary_rows_and_complete(
                 finalized,
+                top,
+                &pattern_names,
+                complete,
+                &mut event_writer,
+            )?;
+        } else if let Some(windows) = finalized_windows.as_mut() {
+            publish_summary_rows_and_complete(
+                windows,
                 top,
                 &pattern_names,
                 complete,
@@ -717,6 +829,7 @@ pub fn run(
 }
 
 struct SummarySink<'a> {
+    windows: Option<WindowTally>,
     aggregation: Option<SummaryAggregator>,
     aggregation_error: Option<io::Error>,
     pattern_ordinals: &'a BTreeMap<String, u64>,
@@ -1221,6 +1334,38 @@ impl SummarySink<'_> {
 impl MatchSink for SummarySink<'_> {
     fn wants_parallel_records_partition(&self) -> bool {
         true
+    }
+
+    fn counts_token_windows(&self) -> bool {
+        self.windows.is_some()
+    }
+
+    fn push_windows<V: lingrep_core::token_match::TokenSequence + Sync>(
+        &mut self,
+        pool: &rayon::ThreadPool,
+        _locations: &[lingrep_core::execution::SentenceLocation],
+        sentences: &[V],
+        cancel: &CancellationFlag,
+    ) -> Result<(Vec<SinkControl>, bool), ExecutionError> {
+        let windows = self
+            .windows
+            .as_mut()
+            .ok_or_else(|| ExecutionError::Sink("summary does not count token windows".into()))?;
+        let mut controls = Vec::with_capacity(sentences.len());
+        for sentence in sentences {
+            if cancel.is_cancelled() {
+                return Ok((controls, true));
+            }
+            match windows.push(pool, sentence) {
+                Ok(records_emitted) => controls.push(SinkControl::Continue { records_emitted }),
+                Err(error) => {
+                    let message = error.to_string();
+                    self.aggregation_error = Some(error);
+                    return Err(ExecutionError::Sink(message));
+                }
+            }
+        }
+        Ok((controls, false))
     }
 
     fn push(

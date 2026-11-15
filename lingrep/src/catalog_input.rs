@@ -1,17 +1,22 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) use lingrep_core::fsm::catalog_fingerprint;
 use lingrep_core::fsm::{
-    CompileLimits, CompileOutput, CompiledCatalog, PatternSource, compile_catalog,
-    normalize_inline_pattern,
+    CompileLimits, CompileOutput, CompiledCatalog, PatternSource, catalog_fingerprint_with_vectors,
+    compile_catalog, compile_catalog_with_vectors, normalize_inline_pattern,
 };
+use lingrep_corpus::word_vectors::VectorTable;
 use tree_sitter::{Node, Parser};
 use tree_sitter_lingrep::LANGUAGE;
 
 use crate::error::CliError;
+use crate::word_vectors::LoadedVectors;
+
+/// Names the word-vector file for `near` tests when `--vectors` is absent.
+pub(crate) const VECTORS_PATH_ENV: &str = "LINGREP_VECTORS_PATH";
 
 pub(crate) enum CatalogInput {
     File(PathBuf),
@@ -27,6 +32,11 @@ pub(crate) struct LoadedCatalog {
     pub(crate) source: CatalogSource,
     pub(crate) output: CompileOutput,
     pub(crate) fingerprint: String,
+    /// The word-vector file that answered the catalog's `near` tests; `None`
+    /// when it has none.
+    pub(crate) vectors: Option<LoadedVectors>,
+    /// Whether the catalog is a `--patterns` file and not an inline pattern.
+    pub(crate) authored_file: bool,
 }
 
 pub(crate) struct AuthoredDefinition {
@@ -44,24 +54,72 @@ pub(crate) enum AuthoredDefinitionBody {
 }
 
 pub(crate) fn load_and_compile(input: &CatalogInput) -> Result<LoadedCatalog, CliError> {
+    load_and_compile_with_vectors(input, None)
+}
+
+/// [`load_and_compile`] with `vectors` answering the catalog's `near` tests.
+/// Without it, the file [`VECTORS_PATH_ENV`] names is used.
+pub(crate) fn load_and_compile_with_vectors(
+    input: &CatalogInput,
+    vectors: Option<&Path>,
+) -> Result<LoadedCatalog, CliError> {
     let source = load(input)?;
-    let output = compile_catalog(
-        PatternSource::named(&source.name, &source.text),
-        CompileLimits::default(),
+    let table = vectors_path(vectors)
+        .map(|path| VectorTable::open(&path))
+        .transpose()?;
+    compile(
+        source,
+        table.as_ref(),
+        matches!(input, CatalogInput::File(_)),
     )
+}
+
+/// The word-vector file to answer `near` tests from: `flag`, or else the
+/// file [`VECTORS_PATH_ENV`] names.
+pub(crate) fn vectors_path(flag: Option<&Path>) -> Option<PathBuf> {
+    flag.map(Path::to_owned).or_else(|| {
+        std::env::var_os(VECTORS_PATH_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+pub(crate) fn compile(
+    source: CatalogSource,
+    table: Option<&VectorTable>,
+    authored_file: bool,
+) -> Result<LoadedCatalog, CliError> {
+    let pattern_source = PatternSource::named(&source.name, &source.text);
+    let output = match table {
+        Some(table) => {
+            compile_catalog_with_vectors(pattern_source, CompileLimits::default(), table)
+        }
+        None => compile_catalog(pattern_source, CompileLimits::default()),
+    }
     .map_err(|error| CliError::CatalogCompile {
         error,
         source_text: source.text.clone(),
     })?;
-    let fingerprint = catalog_fingerprint(&source.text);
+    let (fingerprint, vectors) = match table {
+        Some(table) if !output.matcher.near_tests().is_empty() => (
+            catalog_fingerprint_with_vectors(&source.text, &table.digest()),
+            Some(LoadedVectors {
+                path: table.path().to_owned(),
+                blake3: table.digest().to_hex().to_string(),
+            }),
+        ),
+        _ => (catalog_fingerprint(&source.text), None),
+    };
     Ok(LoadedCatalog {
         source,
         output,
         fingerprint,
+        vectors,
+        authored_file,
     })
 }
 
-fn load(input: &CatalogInput) -> Result<CatalogSource, CliError> {
+pub(crate) fn load(input: &CatalogInput) -> Result<CatalogSource, CliError> {
     match input {
         CatalogInput::File(path) => fs::read_to_string(path)
             .map(|text| CatalogSource {

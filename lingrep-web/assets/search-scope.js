@@ -10,15 +10,20 @@ export function defaultScope(labels, preferred) {
 export function readScope(control) {
     const inputs = [...control.querySelectorAll("[data-scope-include]")];
     const selected = inputs.filter(input => input.checked).map(input => input.value).sort();
-    return {
+    const scope = {
         included_sections: selected.length === inputs.length ? null : selected,
         include_unlabelled: control.querySelector("[data-scope-unlabelled]").checked,
     };
+    const clause = control.querySelector("[data-scope-clause]")?.value.trim();
+    if (clause) scope.clause = clause;
+    return scope;
 }
 
 let useDefault = false;
 
 function seed(control, scope) {
+    const clause = control.querySelector("[data-scope-clause]");
+    if (clause && "clause" in scope) clause.value = scope.clause ?? "";
     control.querySelector("[data-scope-unlabelled]").checked = scope.include_unlabelled;
     for (const input of control.querySelectorAll("[data-scope-include]")) {
         input.checked = scope.included_sections === null || scope.included_sections.includes(input.value);
@@ -37,8 +42,9 @@ function update(control, changed = true) {
         : JSON.stringify(scope.included_sections) === JSON.stringify(imrad.included_sections)
             ? [t("scope.main")] : [...scope.included_sections];
     if (scope.include_unlabelled) labels.push(t("scope.unlabelled_short"));
-    summary.textContent = scope.included_sections === null && scope.include_unlabelled
+    const sections = scope.included_sections === null && scope.include_unlabelled
         ? t("scope.all") : labels.join(", ") || t("scope.none");
+    summary.textContent = scope.clause ? `${sections}; ${t("scope.where")} ${scope.clause}` : sections;
     if (changed) control.querySelector("[data-scope-pending]").hidden = false;
     control.dispatchEvent(new CustomEvent("scope:updated", { bubbles: true }));
 }
@@ -46,7 +52,7 @@ function update(control, changed = true) {
 function refreshVocabulary() {
     const control = document.querySelector("[data-search-scope]");
     if (!control || !document.querySelector(".corpus-context[data-corpus-digest]")) return;
-    for (const input of control.querySelectorAll("button, input[type=checkbox]")) input.disabled = false;
+    for (const input of control.querySelectorAll("button, input")) input.disabled = false;
     const labels = [...document.querySelectorAll("[data-corpus-section-label]")].map(node => node.dataset.corpusSectionLabel).sort();
     const options = control.querySelector("[data-search-scope-options]");
     const known = [...options.querySelectorAll("input")].map(input => input.value).sort();
@@ -74,15 +80,19 @@ if (typeof document !== "undefined") {
     const control = document.querySelector("[data-search-scope]");
     if (control) {
         const ready = Boolean(document.querySelector(".corpus-context[data-corpus-digest]"));
-        for (const input of control.querySelectorAll("button, input[type=checkbox]")) input.disabled = !ready;
+        for (const input of control.querySelectorAll("button, input:not([type=hidden])")) input.disabled = !ready;
         const seeded = JSON.parse(control.querySelector("[data-search-scope-value]").value);
         useDefault = seeded === null;
         if (seeded) seed(control, seeded);
         refreshVocabulary();
     }
-    document.addEventListener("change", event => {
+    const changed = event => {
         const control = event.target.closest("[data-search-scope]");
         if (control) { useDefault = false; update(control); }
+    };
+    document.addEventListener("change", changed);
+    document.addEventListener("input", event => {
+        if (event.target.matches("[data-scope-clause]")) changed(event);
     });
     document.addEventListener("click", event => {
         const preset = event.target.closest("[data-scope-preset]");

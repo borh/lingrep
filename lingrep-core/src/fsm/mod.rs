@@ -33,14 +33,16 @@ pub use binding::{
     BoundCatalog, BoundExecutionError, BoundExplanationError, SchemaBindError, ScopeWindow,
 };
 pub use compiler::{
-    AttributeReferenceSite, CaptureKeyEdit, CatalogAnalysis, CatalogDriftReport, CompileError,
-    CompileLimits, CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic, DiagnosticCode,
-    DiagnosticLocation, DiagnosticSeverity, DiagramCatalog, DiagramError, DriftBody, DriftCarrier,
-    DriftDefinitionKind, DriftEntry, ExclusionSite, ExpandError, ExpandedDefinitionKind,
-    FormatError, FormatOutcome, LexiconProjectionSite, PatternDiagram, PatternSource,
-    RelatedDiagnosticLocation, SentenceFilter, SentenceFilterTerm, compile_catalog,
-    compile_catalog_pattern, expand_pattern_definition, format_pattern_source,
+    AttributeReferenceSite, CaptureKeyEdit, CatalogAnalysis, CatalogDriftReport, CatalogVectors,
+    CompileError, CompileLimits, CompileOutput, CompilerStats, DefinitionExpansion, Diagnostic,
+    DiagnosticCode, DiagnosticLocation, DiagnosticSeverity, DiagramCatalog, DiagramError,
+    DriftBody, DriftCarrier, DriftDefinitionKind, DriftEntry, ExclusionSite, ExpandError,
+    ExpandedDefinitionKind, FormatError, FormatOutcome, LexiconProjectionSite, NearQuery, NearTest,
+    PatternDiagram, PatternSource, RelatedDiagnosticLocation, SentenceFilter, SentenceFilterTerm,
+    SimilarityThreshold, WordVectors, compile_catalog, compile_catalog_pattern,
+    compile_catalog_with_vectors, expand_pattern_definition, format_pattern_source,
     render_definition_diagram, render_diagnostics, render_pattern_error, report_catalog_drift,
+    report_catalog_drift_with_vectors,
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,
@@ -49,14 +51,14 @@ pub use examples::{
 pub use explanation::{ExplainedMatch, SentenceExplanation};
 pub use identity::{
     COMPILER_SCHEMA_IDENTITY, GRAMMAR_SEMANTICS_REVISION, MATCHER_SEMANTICS_IDENTITY,
-    POLICY_SEMANTICS_IDENTITY, catalog_fingerprint,
+    POLICY_SEMANTICS_IDENTITY, catalog_fingerprint, catalog_fingerprint_with_vectors,
 };
 pub use inline::normalize_inline_pattern;
 pub use labels::{LabelDeclaration, OutOfSetValues};
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
     CompiledLexiconDefinition, ContextSegment, ContextWindow, FsmBuilder, LookaroundContext,
-    LookaroundReach, PredicateDigest, clear_pools,
+    LookaroundReach, PredicateDigest, TokenWindow, WindowKeyField, clear_pools,
 };
 #[cfg(feature = "bench-instrumentation")]
 pub use matcher::{

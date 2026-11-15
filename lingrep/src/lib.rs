@@ -20,12 +20,14 @@ pub(crate) mod policy_report;
 mod prepared_source;
 pub mod presentation;
 pub mod protocol;
-pub mod scope_precompute;
+mod release_download;
 mod section_diagnostics;
 mod soranoha_seam;
 pub mod summary;
 pub mod terminal;
 pub mod tui;
+mod window_summary;
+mod word_vectors;
 
 pub use cli::Cli;
 pub use error::CliError;

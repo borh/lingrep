@@ -13,10 +13,14 @@ bytemuck = "1.25"
 compact_str.workspace = true
 futures = "0.3"
 libc = "0.2"
+libsqlite3-sys = "=0.37.0"
 memmap2 = "0.9.5"
 rayon.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
+tempfile.workspace = true
+schemars = "1.2.2"
+roaring = "0.10.6"
 serde_json.workspace = true
 similar = { version = "2.7", default-features = false }
 sqlx.workspace = true
@@ -32,7 +36,6 @@ zstd.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
 hegeltest.workspace = true
 rayon.workspace = true
-tempfile.workspace = true
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 lingrep-core = { workspace = true, features = ["testing"] }
 

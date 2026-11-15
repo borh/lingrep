@@ -14,7 +14,7 @@ use std::{path::PathBuf, time::Duration};
 
 use crate::support::test_context;
 use lingrep_core::testing::MiniDictionary;
-use lingrep_web::corpus_runtime::{CacheReadiness, CorpusRuntime};
+use lingrep_web::corpus_runtime::{CacheFailureCategory, CacheReadiness, CorpusRuntime};
 use tempfile::tempdir;
 
 async fn wait_ready(runtime: &CorpusRuntime) {
@@ -31,6 +31,23 @@ async fn wait_ready(runtime: &CorpusRuntime) {
     })
     .await
     .expect("build timed out");
+}
+
+fn entries(parent: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+async fn wait_for(runtime: &CorpusRuntime, what: &str, done: impl Fn(&CacheReadiness) -> bool) {
+    let mut readiness = runtime.readiness();
+    tokio::time::timeout(Duration::from_mins(3), readiness.wait_for(done))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting until {what}"))
+        .unwrap();
 }
 
 fn artifact_path(parent: &std::path::Path) -> PathBuf {
@@ -66,21 +83,69 @@ async fn successful_build_leaves_no_temp_or_manifest_orphans() {
     runtime.start_or_observe().await;
     wait_ready(&runtime).await;
 
-    let base = directory.path();
-    let orphans: Vec<_> = std::fs::read_dir(base)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| {
-            name.contains(".staging-")
-                || name.ends_with(".building")
-                || name.contains(".building-")
-                || name.ends_with(".provenance.manifest.json")
-        })
-        .collect();
-    assert!(
-        orphans.is_empty(),
-        "unexpected temp/manifest orphans after publish: {orphans:?}"
+    let artifact = artifact_path(directory.path());
+    let artifact = artifact.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(entries(directory.path()), ["corpus.jsonl".into(), artifact]);
+}
+
+#[tokio::test]
+async fn a_build_stopped_while_it_runs_fails_and_leaves_only_the_source() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.txt");
+    std::fs::write(&corpus, "猫が鳥を見る。\n".repeat(200_000)).unwrap();
+    let dictionary = MiniDictionary::new();
+    let context = test_context(dictionary.path());
+    let runtime = CorpusRuntime::new(context.clone(), &corpus).unwrap();
+    runtime.start_or_observe().await;
+    wait_for(&runtime, "the build reports progress", |readiness| {
+        matches!(readiness, CacheReadiness::Building { lines_processed } if *lines_processed > 0)
+    })
+    .await;
+    assert_ne!(entries(directory.path()), ["corpus.txt"]);
+
+    tokio::time::timeout(Duration::from_mins(1), context.stop_builds())
+        .await
+        .expect("the build stops within a minute");
+
+    assert_eq!(entries(directory.path()), ["corpus.txt"]);
+    wait_for(&runtime, "the stopped build is reported", |readiness| {
+        !matches!(readiness, CacheReadiness::Building { .. })
+    })
+    .await;
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Failed {
+            category: CacheFailureCategory::Cache
+        }
     );
+}
+
+#[tokio::test]
+async fn a_build_started_after_a_stop_fails_without_a_staging_directory() {
+    let directory = tempdir().unwrap();
+    let corpus = directory.path().join("corpus.txt");
+    std::fs::write(&corpus, "猫が鳥を見る。\n").unwrap();
+    let dictionary = MiniDictionary::new();
+    let context = test_context(dictionary.path());
+    context.stop_builds().await;
+
+    let runtime = CorpusRuntime::new(context, &corpus).unwrap();
+    runtime.start_or_observe().await;
+    wait_for(&runtime, "the build ends", |readiness| {
+        matches!(
+            readiness,
+            CacheReadiness::Ready { .. } | CacheReadiness::Failed { .. }
+        )
+    })
+    .await;
+
+    assert_eq!(
+        *runtime.readiness().borrow(),
+        CacheReadiness::Failed {
+            category: CacheFailureCategory::Cache
+        }
+    );
+    assert_eq!(entries(directory.path()), ["corpus.txt"]);
 }
 
 #[tokio::test]

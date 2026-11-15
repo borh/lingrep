@@ -1,6 +1,7 @@
 use crate::fsm::{AttrValueType, KeyProjection, PositionAssertion, SymbolicAttrValue};
 use crate::token_match::AttributeKey;
 use compact_str::CompactString;
+use indexmap::IndexMap;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
@@ -44,6 +45,102 @@ pub(crate) enum ParsedAttrValue {
         negated: bool,
         span: SourceSpan,
     },
+    /// `near WORD >= THRESHOLD` or its `not near` negation, awaiting a
+    /// word-vector table.
+    Near {
+        word: CompactString,
+        threshold: SimilarityThreshold,
+        negated: bool,
+        span: SourceSpan,
+    },
+}
+
+/// One `vectors:` entry: a word-vector table the catalog's `near` thresholds
+/// were chosen against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogVectors {
+    /// A label for readers; it identifies nothing.
+    pub resource: CompactString,
+    /// The BLAKE3 digest of the table's file, as 64 lowercase hex digits.
+    pub blake3: CompactString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct NearQuery {
+    pub word: CompactString,
+    pub threshold: SimilarityThreshold,
+}
+
+impl std::fmt::Display for SimilarityThreshold {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fraction = format!("{:06}", self.0 % Self::ONE);
+        let fraction = fraction.trim_end_matches('0');
+        write!(formatter, "{}", self.0 / Self::ONE)?;
+        if fraction.is_empty() {
+            Ok(())
+        } else {
+            write!(formatter, ".{fraction}")
+        }
+    }
+}
+
+/// One distinct `near` test of a compiled catalog and the values a
+/// word-vector table resolved it to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NearTest {
+    pub word: CompactString,
+    pub threshold: SimilarityThreshold,
+    pub values: Arc<[CompactString]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NearResolution {
+    /// The catalog was compiled without a word-vector table.
+    NoTable,
+    /// The table has no vector for the query's word.
+    NoVector,
+    /// The table could not be read; the message says why.
+    Unreadable(Arc<str>),
+    Values(Arc<[CompactString]>),
+}
+
+/// A minimum cosine similarity in `[0, 1]`, in millionths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SimilarityThreshold(u32);
+
+impl SimilarityThreshold {
+    const ONE: u32 = 1_000_000;
+
+    /// Parses a decimal with at most six fractional digits; `None` when the
+    /// text is not such a decimal or lies outside `[0, 1]`.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+        if whole.is_empty()
+            || fraction.len() > 6
+            || !whole
+                .bytes()
+                .chain(fraction.bytes())
+                .all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+        let whole = whole.parse::<u32>().ok()?.checked_mul(Self::ONE)?;
+        let scale = 10_u32.pow(6 - u32::try_from(fraction.len()).ok()?);
+        let fraction = if fraction.is_empty() {
+            0
+        } else {
+            fraction.parse::<u32>().ok()? * scale
+        };
+        let millionths = whole.checked_add(fraction)?;
+        (millionths <= Self::ONE).then_some(Self(millionths))
+    }
+
+    /// The threshold in millionths, from 0 to 1,000,000.
+    #[must_use]
+    pub fn millionths(self) -> u32 {
+        self.0
+    }
 }
 
 /// A token test as parsed, before set and test references resolve.
@@ -308,6 +405,10 @@ pub(crate) struct ParsedProgram {
     pub(crate) policy: Option<crate::fsm::policy_program::Program>,
     /// Structured analyzer declarations, retained as catalog-wide alternatives.
     pub(crate) analyzers: Vec<ParsedAnalyzerConstraint>,
+    /// The `vectors:` entries, as catalog-wide alternatives.
+    pub(crate) vectors: Vec<CatalogVectors>,
+    /// Every distinct `near` test in the document, in first-appearance order.
+    pub(crate) near: IndexMap<NearQuery, NearResolution>,
     /// The fields of the document's `labels:` entry; they apply to the
     /// literals of the definitions in the same document.
     pub(crate) labels: Vec<ParsedLabelDeclaration>,
@@ -1138,7 +1239,9 @@ mod tests {
                     "`not in` is recorded at the reference, not the declaration"
                 );
             }
-            ParsedAttrValue::Resolved(_) | ParsedAttrValue::SetAny { .. } => {
+            ParsedAttrValue::Resolved(_)
+            | ParsedAttrValue::SetAny { .. }
+            | ParsedAttrValue::Near { .. } => {
                 panic!("constructed the wrong variant")
             }
         }

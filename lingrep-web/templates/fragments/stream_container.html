@@ -10,3 +10,11 @@
   <p class="stale-notice" data-i18n="status.stale_running">Showing previous results while the new query runs.</p>
 </div>
 {% endif %}
+{% if !status.terminal && status.stale_export_revision.is_some() %}
+<div id="export-control" hx-swap-oob="innerHTML">
+  <button type="button" class="export-download" disabled aria-describedby="export-waiting-reason">
+    <span data-i18n="results.download">Download results in this search scope</span>
+  </button>
+  <span id="export-waiting-reason" class="export-waiting-reason" data-i18n="results.download_waiting">Available when the running query finishes.</span>
+</div>
+{% endif %}

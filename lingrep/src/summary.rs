@@ -40,7 +40,7 @@ const DEFAULT_MERGE_FAN_IN: usize = 16;
 const AGGREGATION_BATCH_KEYS: usize = 4096;
 
 /// Batches a shard's queue holds before the scan blocks on it.
-const SHARD_QUEUE_BATCHES: usize = 4;
+const SHARD_QUEUE_BATCHES: usize = 16;
 
 /// A projected key value, held as a dense index rather than as its text.
 ///
@@ -1259,6 +1259,28 @@ pub struct FinalizedSummary {
     values: Vec<Box<str>>,
 }
 
+/// A finalized summary's rows in publication order.
+pub trait SummaryRows {
+    /// Calls `visitor` with each row ranked at most `top` within its
+    /// partition and returns the number of rows visited. Consumes the rows: a
+    /// second call visits no rows.
+    fn visit(
+        &mut self,
+        top: Option<u64>,
+        visitor: impl FnMut(SummaryRow) -> io::Result<()>,
+    ) -> io::Result<u64>;
+}
+
+impl SummaryRows for FinalizedSummary {
+    fn visit(
+        &mut self,
+        top: Option<u64>,
+        visitor: impl FnMut(SummaryRow) -> io::Result<()>,
+    ) -> io::Result<u64> {
+        Self::visit(self, top, visitor)
+    }
+}
+
 impl FinalizedSummary {
     pub fn peak_temp_bytes(&self) -> u64 {
         self.budget.peak_used_bytes()
@@ -1269,7 +1291,7 @@ impl FinalizedSummary {
     pub fn visit(
         &mut self,
         top: Option<u64>,
-        mut visitor: impl FnMut(&SummaryRow) -> io::Result<()>,
+        mut visitor: impl FnMut(SummaryRow) -> io::Result<()>,
     ) -> io::Result<u64> {
         let mut drains = Vec::with_capacity(self.shards.len());
         for counts in self.shards.drain(..) {
@@ -1306,7 +1328,7 @@ impl FinalizedSummary {
             }
             let count = u64::try_from(entry.count)
                 .map_err(|_| io::Error::other("summary count exceeds u64"))?;
-            visitor(&SummaryRow {
+            visitor(SummaryRow {
                 partition: entry.partition,
                 rank,
                 group: materialize_group(&entry.group, &self.key_schemas, &self.values)?,

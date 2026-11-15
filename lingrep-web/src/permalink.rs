@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
+use lingrep_core::fsm::policy_program::Overlaps;
 
 /// The lingrep permalink format, with a mandatory corpus selector.
 pub const WIRE_VERSION: &str = "1";
@@ -74,6 +75,58 @@ pub fn encode_query_only(
     // `MAX_REQUEST_TARGET_LEN` budget as the target it resolves back into.
     let target = encode(pattern, corpus, digest, retained)?;
     Ok(target.trim_start_matches('/').to_owned())
+}
+
+/// Appends the overlaps mode (`o`) and the search scope (`s`) to a link.
+pub(crate) fn push_run_options(
+    path: &mut String,
+    overlaps: Overlaps,
+    scope: Option<&crate::search_scope::SearchScope>,
+) {
+    if let Some(value) = crate::templates::overlaps_value(overlaps) {
+        path.push_str("&o=");
+        path.push_str(value);
+    }
+    if let Some(scope) = scope {
+        let encoded =
+            serde_urlencoded::to_string([("s", serde_json::to_string(scope).unwrap_or_default())])
+                .unwrap_or_default();
+        path.push('&');
+        path.push_str(&encoded);
+    }
+}
+
+/// The Workbench link, relative to the server's base URL, that opens `pattern`
+/// over the served corpus named `corpus` under a `--where` clause and an
+/// overlaps mode.
+///
+/// # Errors
+///
+/// [`PermalinkError::Malformed`] when `corpus` is not a corpus name or
+/// `clause` is not a scope clause, and [`PermalinkError::TooLarge`] when the
+/// link exceeds [`MAX_REQUEST_TARGET_LEN`].
+pub fn workbench_link(
+    pattern: &str,
+    corpus: &str,
+    clause: Option<&str>,
+    overlaps: Overlaps,
+) -> Result<String, PermalinkError> {
+    let corpus =
+        crate::corpus_set::CorpusName::parse(corpus).map_err(|_| PermalinkError::Malformed)?;
+    let scope = clause
+        .map(|clause| {
+            crate::search_scope::SearchScope::parse(Some(
+                &serde_json::json!({ "clause": clause }).to_string(),
+            ))
+            .map_err(|_| PermalinkError::Malformed)
+        })
+        .transpose()?;
+    let mut link = encode_query_only(pattern, corpus.as_str(), None, None)?;
+    push_run_options(&mut link, overlaps, scope.as_ref());
+    if link.len().saturating_add(1) > MAX_REQUEST_TARGET_LEN {
+        return Err(PermalinkError::TooLarge);
+    }
+    Ok(link)
 }
 
 pub fn decode(query: &str) -> Result<String, PermalinkError> {

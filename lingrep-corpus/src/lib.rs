@@ -64,6 +64,7 @@ mod scratch;
 mod siblings;
 mod tokens;
 mod verify;
+pub mod word_vectors;
 
 pub use artifact::{
     AnalyzerRecord, BuildConfig, CORPUS_ARTIFACT_FORMAT_GENERATION, CorpusArtifact, CorpusBuilder,
@@ -72,6 +73,7 @@ pub use artifact::{
     parse_artifact_name, vibrato_fixture_descriptor,
 };
 pub use error::CorpusError;
+pub mod scope_resolution;
 pub use identity::{
     AdmissionIdentity, AnalysisIdentity, AnalysisInputs, DictionaryFingerprint, IdentityError,
     ObservedSources, ReaderIdentity, SourceIdentity, SourceObservation, TokenSchemaIdentity,
@@ -80,13 +82,18 @@ pub use identity::{
 pub use lingrep_core::corpus::{DocumentId, SentenceId};
 pub use lingrep_core::execution::SentenceLocation;
 pub use provenance::{
-    ActiveRegion, BlockingProvenance, DivisionMetadataRow, DocumentMetadataRow, MAX_SECTION_LABELS,
-    ParagraphRange, ProvenanceView, RegionSpanRow, RichSentenceMetadata, RichSentenceProvenance,
-    SectionCoverage, SentenceReadingRanges, StoredSentenceAnalysis, StoredSurfaceAlignment,
+    ActiveRegion, BlockOn, BlockingProvenance, DivisionMetadataRow, DocumentMetadataRow,
+    MAX_SECTION_LABELS, ParagraphRange, ProvenanceView, RegionSpanRow, RichSentenceMetadata,
+    RichSentenceProvenance, SectionCoverage, SentenceReadingRanges, StoredSentenceAnalysis,
+    StoredSurfaceAlignment,
+};
+pub use scope_resolution::{
+    PreparedScopeError, ScopeOverflow, ScopeResolution, ScopeResolutionError, ScopeUniverse,
+    resolve_prepared_scope, resolve_scope,
 };
 pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
     artifact_bytes, containing_directory, is_superseded, remove_superseded,
 };
-pub use tokens::{PreparedDocumentStats, PreparedScopeStats, PreparedSentenceSource};
+pub use tokens::{PreparedDocumentStats, PreparedSentenceSource};
 pub use verify::{ComponentVerification, VerificationReport};

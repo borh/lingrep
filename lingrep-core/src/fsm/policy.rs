@@ -819,6 +819,12 @@ impl CatalogPolicy {
         &self.program
     }
 
+    #[must_use]
+    pub(crate) fn with_overlaps(mut self, overlaps: crate::fsm::policy_program::Overlaps) -> Self {
+        self.program = self.program.with_overlaps(overlaps);
+        self
+    }
+
     /// Installs the bound program. Called once, after the group index.
     pub(crate) fn install_program(&mut self, program: crate::fsm::policy_program::BoundProgram) {
         debug_assert!(

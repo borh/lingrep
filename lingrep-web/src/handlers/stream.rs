@@ -41,17 +41,23 @@ pub(crate) fn render_stream_event(view: &CoordinatorView, request_id: &str) -> S
     {
         let explorer = render_completed_results(view.state.displayed_snapshot(), request_id);
         let scope_control = String::new();
-        let announcement = RevisionStatusFragment { status: &status }
-            .render()
-            .unwrap_or_else(|_| "<p role=\"status\">Results are current.</p>".into());
+        let announcement = RevisionStatusFragment {
+            request_id,
+            status: &status,
+        }
+        .render()
+        .unwrap_or_else(|_| "<p role=\"status\">Results are current.</p>".into());
         StreamFrame {
             name: "result",
             body: result_event_body(&explorer, &scope_control, &announcement),
         }
     } else {
-        let status_html = RevisionStatusFragment { status: &status }
-            .render()
-            .unwrap_or_else(|_| "<p>Unable to render search status.</p>".into());
+        let status_html = RevisionStatusFragment {
+            request_id,
+            status: &status,
+        }
+        .render()
+        .unwrap_or_else(|_| "<p>Unable to render search status.</p>".into());
         let name = if status.kind == RevisionStatusKind::Error {
             "error"
         } else {
@@ -89,7 +95,7 @@ pub async fn stream(
 
     Sse::new(Box::pin(futures::stream::iter(vec![Ok(
         Event::default().event("error").data(
-            r#"<div class="alert alert-error">Request not found. Please try your search again.</div>"#,
+            r#"<div class="alert alert-error" data-i18n="status.request_not_found">Request not found. Run the search again.</div>"#,
         ),
     )])))
 }
@@ -175,13 +181,14 @@ fn render_completed_results(snapshot: Option<&CompletedSnapshot>, workbench_id: 
             snapshot,
             workbench_id,
             None,
-            None,
+            crate::section_dendrogram::ClusterOptions::default(),
             &crate::section_contrast::ContrastSelection::default(),
         )
     });
     ResultsExplorer {
         search_scope: snapshot.map(|snapshot| &snapshot.search_scope),
         excluded_sentences: snapshot.map_or(0, |snapshot| snapshot.excluded_sentences),
+        cli_arguments: snapshot.map_or("", |snapshot| snapshot.cli_arguments.as_str()),
         workbench_id,
         revision,
         has_results: results.iter().any(|result| result.count > 0),
@@ -221,6 +228,8 @@ mod tests {
         let snapshot = CompletedSnapshot {
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
             ),
@@ -231,6 +240,7 @@ mod tests {
             corpus_identity: CorpusIdentity::new("fixture"),
             source: std::sync::Arc::from(""),
             derive_compounds: false,
+            overlaps: Default::default(),
             compound_category: crate::snapshot::CompoundCategory::Compound,
             patterns: vec![PatternDescriptor {
                 key: PatternKey::new(0).unwrap(),
@@ -243,11 +253,13 @@ mod tests {
             match_refs: Box::default(),
             capture_catalog: Box::default(),
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         };
         let html = super::render_completed_results(Some(&snapshot), "wb");
         assert!(
             html.contains(
-                r#"data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": 3516, "scanned": 6570, "pct": "53.5"}'"#
+                r#"data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": "3,516", "scanned": "6,570", "pct": "53.5"}'"#
             ),
             "{html}"
         );
@@ -426,6 +438,8 @@ mod tests {
         let snapshot = Arc::new(CompletedSnapshot {
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
             ),
@@ -436,6 +450,7 @@ mod tests {
             corpus_identity: CorpusIdentity::new("fixture"),
             source: std::sync::Arc::from(""),
             derive_compounds: false,
+            overlaps: Default::default(),
             compound_category: crate::snapshot::CompoundCategory::Compound,
             patterns: vec![PatternDescriptor {
                 key: PatternKey::new(0).unwrap(),
@@ -448,6 +463,8 @@ mod tests {
             match_refs: Box::default(),
             capture_catalog: Box::default(),
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         });
         assert!(state.apply_terminal(CoordinatorEvent::Completed {
             workbench,

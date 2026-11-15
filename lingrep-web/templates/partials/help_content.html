@@ -1,18 +1,20 @@
 <h1><span data-i18n="help.title">lingrep patterns syntax help</span></h1>
 <section class="pattern-help">
-  <p data-i18n="help.p1">lingrep patterns documents contain complete pattern declarations. A bare definition or <code>pattern</code> emits matches; a <code>fragment</code> is reusable but does not emit results; a <code>set</code> is a named value, not a definition, and neither emits nor is directly matched.</p>
+  <p data-i18n="help.p1"><code>pattern</code>, or a definition without a keyword, produces matches. <code>fragment</code> defines a reusable pattern; <code>set</code> defines a set of values. Neither produces matches.</p>
 
   <h2><span data-i18n="help.h_predicates">Token predicates</span></h2>
   <p data-i18n="help.p2">Use <code>=</code>, <code>!=</code>, <code>in</code>, <code>not in</code>, and <code>/regular expressions/</code>. Combine constraints inside a token with <code>&amp;</code>.</p>
 
+  <p data-i18n="help.p_near"><code>ATTR near WORD &gt;= 0.6</code> matches tokens whose ATTR value has a cosine similarity to WORD of at least 0.6. <code>not near</code> matches other values. Neither matches tokens without <code>ATTR</code>. A word-vector file is required. Check matching values on the Similar Words page.</p>
+
   <h2><span data-i18n="help.h_composition">Composition</span></h2>
-  <p data-i18n="help.p3">Whitespace sequences expressions, <code>|</code> alternates, parentheses group, and <code>@NAME</code> references a fragment, a pattern, or a set. Quantifiers are <code>?</code>, <code>*</code>, <code>+</code>, and <code>{n,m}</code>.</p>
+  <p data-i18n="help.p3">Separate expressions with whitespace to match them in sequence. Use <code>|</code> for alternatives, parentheses for grouping, and <code>@NAME</code> to reference a declaration. Quantifiers are <code>?</code>, <code>*</code>, <code>+</code>, and <code>{n,m}</code>.</p>
 
   <h2><span data-i18n="help.h_captures">Captures and comparison</span></h2>
-  <p data-i18n="help.p4"><code>(?&lt;name&gt; ...)</code> creates a named capture. <code>same_as($name, by=unidic.kana)</code> consumes a span equal by <code>text</code>, <code>lemma</code>, <code>unidic.kana</code>, or <code>unidic.pron</code>.</p>
+  <p data-i18n="help.p4"><code>(?&lt;name&gt; ...)</code> captures a token span. <code>same_as($name, by=ATTR)</code> matches the same sequence of attribute values as that capture. <code>ATTR</code> can be any token attribute; the default is <code>text</code>.</p>
 
   <h2><span data-i18n="help.h_boundaries">Boundaries and assertions</span></h2>
-  <p data-i18n="help.p5"><code>^</code> and <code>$</code> assert sentence boundaries. <code>preceded_by(E)</code> and <code>followed_by(E)</code> require a regular expression to end or start at the current boundary without consuming it; <code>not_preceded_by(E)</code> and <code>not_followed_by(E)</code> complement those tests. Assertion bodies may be variable-width or nullable, but may not contain captures or <code>same_as</code>.</p>
+  <p data-i18n="help.p5"><code>^</code> and <code>$</code> mark sentence boundaries. <code>preceded_by(E)</code> tests whether E ends at the current position; <code>followed_by(E)</code> tests whether E starts there. Neither advances the position. <code>not_preceded_by(E)</code> and <code>not_followed_by(E)</code> negate these tests. Bodies may match variable-length or empty spans, but cannot contain captures or <code>same_as</code>.</p>
 
   <h2><span data-i18n="help.h_graph">Dependency graphs</span></h2>
   <p data-i18n="help.p_graph">A where clause constrains basic dependency edges between captures. Enhanced edges use -[enhanced labels]-&gt;, may introduce a word or decimal empty node with (?&lt;name&gt; [test]), and may name the exact edge with as $edge. Every graph component requires a surface capture anchor; each complete assignment is one match.</p>

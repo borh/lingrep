@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use lingrep_core::execution::CancellationFlag;
 
-use crate::frequency::{Condition, Dimension, FrequencyViews, Outcome, Sort, Unsupported};
+use crate::frequency::{
+    Condition, Dimension, FrequencyViews, Outcome, QueryError, Sort, Unsupported,
+};
 use crate::state::RequestStore;
 
 #[derive(Template)]
@@ -139,6 +141,28 @@ pub(super) fn bad_request(message: String) -> Response {
         .into_response()
 }
 
+pub(super) fn failure(error: &QueryError) -> Response {
+    if error.is_request_error() {
+        bad_request(error.to_string())
+    } else {
+        tracing::error!(%error, "frequency query failed");
+        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    }
+}
+
+pub(super) fn reply_without_scan(
+    views: &FrequencyViews,
+    corpus: &str,
+    catalog: &str,
+    pattern: &str,
+) -> Option<Response> {
+    let Some(pair) = views.find(corpus, catalog) else {
+        return Some(Json(Reply::<()>::Unavailable).into_response());
+    };
+    let known = pair.patterns().iter().any(|known| known.name == pattern);
+    (!known).then(|| failure(&QueryError::UnknownPattern(pattern.to_owned())))
+}
+
 pub(super) fn conditions(raw: Option<&str>) -> Result<BTreeMap<String, Condition>, Box<Response>> {
     raw.filter(|raw| !raw.is_empty())
         .map(serde_json::from_str)
@@ -177,14 +201,18 @@ async fn on_pair<T: Serialize + Send + 'static>(
     coordinators: Arc<crate::coordinator::CoordinatorRegistry>,
     corpus: String,
     catalog: String,
+    pattern: &str,
     work: impl FnOnce(
         &crate::frequency::FrequencyPair,
         &[Dimension],
         &CancellationFlag,
-    ) -> Result<Result<T, Unsupported>, String>
+    ) -> Result<Result<T, Unsupported>, QueryError>
     + Send
     + 'static,
 ) -> Response {
+    if let Some(reply) = reply_without_scan(&views, &corpus, &catalog, pattern) {
+        return reply;
+    }
     let started = Instant::now();
     let result = run_frequency_task(coordinators, move |cancel| {
         let reply = match views.find(&corpus, &catalog) {
@@ -202,7 +230,7 @@ async fn on_pair<T: Serialize + Send + 'static>(
     .await;
     match result {
         Ok(Ok(response)) => response,
-        Ok(Err(message)) => bad_request(message),
+        Ok(Err(error)) => failure(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -212,6 +240,7 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         Ok(conditions) => conditions,
         Err(response) => return *response,
     };
+    let pattern = params.pattern.clone();
     let query = crate::frequency::Query {
         pattern: params.pattern,
         conditions,
@@ -226,10 +255,11 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
+        &pattern,
         move |pair, dimensions, cancel| match pair.answer(dimensions, &query, cancel) {
             Ok(Outcome::Answer(answer)) => Ok(Ok(answer)),
             Ok(Outcome::Unsupported(unsupported)) => Ok(Err(unsupported)),
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(error),
         },
     )
     .await
@@ -240,12 +270,14 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
         Ok(conditions) => conditions,
         Err(response) => return *response,
     };
+    let pattern = params.pattern.clone();
     on_pair(
         Arc::clone(&store.frequency),
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions, _| {
+        &pattern,
+        move |pair, dimensions, cancel| {
             pair.values(
                 dimensions,
                 &params.pattern,
@@ -256,8 +288,8 @@ async fn values(State(store): State<RequestStore>, Query(params): Query<ValuesPa
                     offset: params.offset,
                     limit: params.limit,
                 },
+                cancel,
             )
-            .map_err(|error| error.to_string())
         },
     )
     .await
@@ -292,14 +324,15 @@ async fn profile(State(store): State<RequestStore>, Query(params): Query<EntryPa
         Ok(group) => group,
         Err(response) => return *response,
     };
+    let pattern = params.pattern.clone();
     on_pair(
         Arc::clone(&store.frequency),
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
-        move |pair, dimensions, _| {
-            pair.profile(dimensions, &params.pattern, &group, &conditions)
-                .map_err(|error| error.to_string())
+        &pattern,
+        move |pair, dimensions, cancel| {
+            pair.profile(dimensions, &params.pattern, &group, &conditions, cancel)
         },
     )
     .await
@@ -314,11 +347,13 @@ async fn lines(State(store): State<RequestStore>, Query(params): Query<EntryPara
         Ok(group) => group,
         Err(response) => return *response,
     };
+    let pattern = params.pattern.clone();
     on_pair(
         Arc::clone(&store.frequency),
         Arc::clone(&store.coordinators),
         params.corpus,
         params.catalog,
+        &pattern,
         move |pair, dimensions, cancel| {
             pair.lines(
                 cancel,
@@ -339,6 +374,123 @@ mod tests {
     use super::*;
     use std::future::{Future, poll_fn};
     use std::task::Poll;
+
+    async fn status_and_body(response: Response) -> (StatusCode, String) {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        (status, String::from_utf8(body.to_vec()).expect("text"))
+    }
+
+    fn over_temp_budget() -> std::io::Error {
+        Arc::new(lingrep_core::spill::TempBudget::new(1))
+            .reserve(2)
+            .expect_err("a reservation above the budget")
+    }
+
+    #[tokio::test]
+    async fn a_query_error_returns_400_with_its_message_only_when_the_request_caused_it() {
+        use crate::frequency::QueryError;
+        let (_directory, views) = crate::frequency::tests::one_pair_views();
+        let views = Arc::new(views);
+        let registry = Arc::new(crate::coordinator::CoordinatorRegistry::new(1));
+        let reply = |error: fn() -> QueryError| {
+            on_pair(
+                Arc::clone(&views),
+                Arc::clone(&registry),
+                "default".into(),
+                "p.lx".into(),
+                "p",
+                move |_, _, _| Err::<Result<(), Unsupported>, _>(error()),
+            )
+        };
+
+        for (error, message) in [
+            (
+                (|| QueryError::UnknownPattern("absent".into())) as fn() -> QueryError,
+                "unknown pattern",
+            ),
+            (
+                || QueryError::ResourceLimit {
+                    resource: "offset",
+                    limit: 7,
+                },
+                "offset limit of 7",
+            ),
+            (
+                || QueryError::Table(lingrep_corpus::CountTableError::GroupLimit(7)),
+                "exceeds the 7 encoded-value limit",
+            ),
+            (|| QueryError::Metadata(over_temp_budget()), "limit-bytes=1"),
+            (
+                || QueryError::Table(lingrep_corpus::CountTableError::Io(over_temp_budget())),
+                "limit-bytes=1",
+            ),
+        ] {
+            let (status, body) = status_and_body(reply(error).await).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert!(body.contains(message), "{body}");
+        }
+        for error in [
+            (|| QueryError::Metadata(std::io::Error::other("/srv/spool/.tmpAbCdEf: gone")))
+                as fn() -> QueryError,
+            || QueryError::Metadata(std::io::ErrorKind::StorageFull.into()),
+            || QueryError::Table(lingrep_corpus::CountTableError::Corrupt("/srv/t".into())),
+            || QueryError::Table(lingrep_corpus::CountTableError::Cancelled),
+            || QueryError::Lines("sentence 3 holds 1 occurrences, /srv/t counts 2".into()),
+        ] {
+            let (status, body) = status_and_body(reply(error).await).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+            assert!(!body.contains("/srv"), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_that_needs_no_scan_is_answered_while_the_scan_permit_is_held() {
+        let (_directory, views) = crate::frequency::tests::one_pair_views();
+        let views = Arc::new(views);
+        let registry = Arc::new(crate::coordinator::CoordinatorRegistry::new(1));
+        let _scanning = registry.try_acquire_scan_permit().expect("permit");
+        for (views, corpus, pattern, status, text) in [
+            (
+                Arc::new(FrequencyViews::default()),
+                "default",
+                "p",
+                StatusCode::OK,
+                r#"{"status":"unavailable"}"#,
+            ),
+            (
+                Arc::clone(&views),
+                "absent",
+                "p",
+                StatusCode::OK,
+                r#"{"status":"unavailable"}"#,
+            ),
+            (
+                Arc::clone(&views),
+                "default",
+                "absent",
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"unknown pattern \"absent\""}"#,
+            ),
+        ] {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                on_pair(
+                    views,
+                    Arc::clone(&registry),
+                    corpus.into(),
+                    "p.lx".into(),
+                    pattern,
+                    |_, _, _| Ok(Ok::<(), Unsupported>(())),
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{corpus}/{pattern} waited for the scan permit"));
+            assert_eq!(status_and_body(response).await, (status, text.to_owned()));
+        }
+    }
 
     #[tokio::test]
     async fn cancelled_queries_retain_shared_admission_until_blocking_work_finishes() {

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use crate::section_comparison::SectionComparison;
 use crate::section_contrast::{ContrastSelection, SectionContrast};
-use crate::section_dendrogram::{DistanceMetric, SectionDendrogram};
+use crate::section_dendrogram::{ClusterOptions, DistanceMetric, SectionDendrogram};
 use crate::section_tally::{SectionAvailability, SectionSlot};
 use crate::snapshot::CompletedSnapshot;
 use crate::templates::{SectionAnalysis, SectionOption, SectionScopeControl, TrustedFragmentHtml};
@@ -115,7 +115,7 @@ pub(crate) fn render_scope_control(
     snapshot: &CompletedSnapshot,
     workbench_id: &str,
     selected_labels: Option<&[String]>,
-    selected_distance: Option<DistanceMetric>,
+    cluster: ClusterOptions,
     contrast: &ContrastSelection,
     oob: bool,
 ) -> Option<TrustedFragmentHtml> {
@@ -143,7 +143,8 @@ pub(crate) fn render_scope_control(
         total_count: options.len(),
         summary,
         summary_empty: selected.is_empty(),
-        distance_value: selected_distance.unwrap_or_default().form_value(),
+        distance_value: cluster.distance.form_value(),
+        cluster_minimum: cluster.minimum_occurrences,
         contrast,
         oob,
     }
@@ -156,7 +157,7 @@ pub fn render(
     snapshot: &CompletedSnapshot,
     workbench_id: &str,
     selected_labels: Option<&[String]>,
-    selected_distance: Option<DistanceMetric>,
+    cluster: ClusterOptions,
     contrast_selection: &ContrastSelection,
 ) -> Option<TrustedFragmentHtml> {
     let labels = available_section_labels(snapshot);
@@ -170,11 +171,19 @@ pub fn render(
             SectionComparison::selected(&snapshot.sections, &snapshot.patterns, Some(&selected))
         })
         .flatten();
-    let distance = selected_distance.unwrap_or_default();
-    let dendrogram = comparison
+    let distance = cluster.distance;
+    let clustered = comparison.as_ref().map(|comparison| {
+        if cluster.minimum_occurrences > 1 {
+            comparison.with_minimum_occurrences(cluster.minimum_occurrences)
+        } else {
+            (comparison.clone(), 0)
+        }
+    });
+    let below_minimum = clustered.as_ref().map_or(0, |(_, omitted)| *omitted);
+    let dendrogram = clustered
         .as_ref()
-        .and_then(|comparison| SectionDendrogram::with_distance(comparison, distance));
-    let section_dendrogram = comparison.as_ref().and_then(|comparison| {
+        .and_then(|(comparison, _)| SectionDendrogram::with_distance(comparison, distance));
+    let section_dendrogram = clustered.as_ref().and_then(|(comparison, _)| {
         SectionDendrogram::by_pattern_profile_with_distance(comparison, distance)
     });
     let contrast = comparison
@@ -185,7 +194,7 @@ pub fn render(
             snapshot,
             workbench_id,
             selected_labels,
-            selected_distance,
+            cluster,
             contrast_selection,
             false,
         ),
@@ -196,6 +205,8 @@ pub fn render(
         has_comparison: comparison.is_some(),
         distance_jensen_shannon: distance == DistanceMetric::JensenShannon,
         distance_cosine: distance == DistanceMetric::Cosine,
+        cluster_minimum: cluster.minimum_occurrences,
+        below_minimum,
         comparison: comparison.as_ref(),
         contrast_selection,
         contrast: contrast.as_ref(),
@@ -213,7 +224,7 @@ mod tests {
     use crate::corpus_runtime::CorpusIdentity;
     use crate::revision::RevisionId;
     use crate::section_contrast::{ContrastOrder, ContrastSelection};
-    use crate::section_dendrogram::DistanceMetric;
+    use crate::section_dendrogram::{ClusterOptions, DistanceMetric};
     use crate::section_tally::{SectionAvailability, SpanEvent, SpanEvents, build};
     use crate::snapshot::{
         CompletedSnapshot, CompoundCategory, PatternDescriptor, PatternKey, PatternOrigin,
@@ -251,10 +262,13 @@ mod tests {
         CompletedSnapshot {
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             revision: RevisionId(1),
             corpus_identity: CorpusIdentity::new("fixture"),
             source: std::sync::Arc::from("fixture := []."),
             derive_compounds: false,
+            overlaps: Default::default(),
             compound_category: CompoundCategory::Compound,
             patterns: (0..3)
                 .map(|index| PatternDescriptor {
@@ -272,6 +286,8 @@ mod tests {
             matched_sentences: 0,
             documents: None,
             oversized_omissions: None,
+            unavailable_attributes: None,
+            vectors_binding: None,
         }
     }
 
@@ -298,9 +314,16 @@ mod tests {
             .observe(0, &[PatternKey::new(295).unwrap()], &[])
             .unwrap();
         snapshot.sections = SectionAvailability::Available(tally.finish().unwrap());
-        let scope = render_scope_control(&snapshot, "wb", None, None, &no_contrast(), true)
-            .expect("section selector is visible")
-            .to_string();
+        let scope = render_scope_control(
+            &snapshot,
+            "wb",
+            None,
+            ClusterOptions::default(),
+            &no_contrast(),
+            true,
+        )
+        .expect("section selector is visible")
+        .to_string();
         assert_eq!(scope.matches("name=\"section\"").count(), 26);
         assert!(scope.contains("26 / 26"));
         assert!(scope.contains("hx-post=\"api/section-analysis/wb/1\""));
@@ -354,9 +377,15 @@ mod tests {
             comparison: Some("results".into()),
             order: ContrastOrder::DifferenceDescending,
         };
-        let html = render(&snapshot, "wb", Some(&selected), None, &contrast)
-            .expect("selected labels produce an analysis")
-            .to_string();
+        let html = render(
+            &snapshot,
+            "wb",
+            Some(&selected),
+            ClusterOptions::default(),
+            &contrast,
+        )
+        .expect("selected labels produce an analysis")
+        .to_string();
 
         assert!(
             html.contains(
@@ -417,12 +446,94 @@ mod tests {
             html.contains("name=\"contrast_comparison\" value=\"results\""),
             "the clustering form carries the contrast: {html}"
         );
-        let scope = render_scope_control(&snapshot, "wb", Some(&selected), None, &contrast, true)
-            .expect("the scope control renders")
-            .to_string();
+        let scope = render_scope_control(
+            &snapshot,
+            "wb",
+            Some(&selected),
+            ClusterOptions::default(),
+            &contrast,
+            true,
+        )
+        .expect("the scope control renders")
+        .to_string();
         assert!(
             scope.contains("name=\"contrast_reference\" value=\"methods\""),
             "the scope form carries the contrast: {scope}"
+        );
+    }
+
+    fn snapshot_with_uneven_patterns() -> CompletedSnapshot {
+        let mut snapshot = snapshot_with_sections();
+        let labels = ["methods", "results", "data"].map(|label| lingrep_corpus::SectionCoverage {
+            label: label.into(),
+            coverage: 1,
+        });
+        let events = SpanEvents::from_events(
+            (0..3)
+                .map(|slot| SpanEvent {
+                    slot,
+                    first: u64::from(slot),
+                    end: u64::from(slot) + 1,
+                })
+                .collect(),
+        );
+        let mut builder = build(&labels, 3, events).expect("fixture vocabulary fits");
+        for (sentence, patterns) in [(0, [0, 1]), (1, [0, 1]), (2, [0, 2])] {
+            builder
+                .observe(
+                    sentence,
+                    &patterns.map(|key| PatternKey::new(key).unwrap()),
+                    &[],
+                )
+                .unwrap();
+        }
+        snapshot.sections = SectionAvailability::Available(builder.finish().unwrap());
+        snapshot
+    }
+
+    #[test]
+    fn a_minimum_leaves_rarer_patterns_out_of_the_trees_and_says_how_many() {
+        let snapshot = snapshot_with_uneven_patterns();
+        let selected = ["methods", "results", "data"].map(str::to_owned);
+        let render_with = |minimum_occurrences| {
+            render(
+                &snapshot,
+                "wb",
+                Some(&selected),
+                ClusterOptions {
+                    minimum_occurrences,
+                    ..ClusterOptions::default()
+                },
+                &no_contrast(),
+            )
+            .expect("selected labels produce an analysis")
+            .to_string()
+        };
+
+        let all = render_with(1);
+        assert!(all.contains("<title>pattern-2</title>"), "{all}");
+        assert!(!all.contains("data-cluster-below-minimum"), "{all}");
+
+        let frequent = render_with(2);
+        assert!(frequent.contains("<title>pattern-1</title>"), "{frequent}");
+        assert!(!frequent.contains("<title>pattern-2</title>"), "{frequent}");
+        assert_eq!(
+            frequent
+                .matches(r#"data-i18n-args='{"n": 1, "min": 2}'"#)
+                .count(),
+            2,
+            "each tree states what the threshold left out: {frequent}"
+        );
+        assert!(
+            frequent.contains(r#"data-select-pattern="2""#),
+            "the distribution table keeps every pattern: {frequent}"
+        );
+        assert_eq!(
+            frequent
+                .matches(r#"name="cluster_minimum" value="2""#)
+                .count(),
+            3,
+            "the scope, contrast and clustering forms carry the threshold: {frequent}"
         );
     }
 
@@ -434,7 +545,10 @@ mod tests {
             &snapshot,
             "wb",
             Some(&selected),
-            Some(DistanceMetric::Cosine),
+            ClusterOptions {
+                distance: DistanceMetric::Cosine,
+                ..ClusterOptions::default()
+            },
             &no_contrast(),
         )
         .expect("selected labels produce an analysis")
@@ -453,7 +567,10 @@ mod tests {
             &snapshot,
             "wb",
             Some(&selected),
-            Some(DistanceMetric::Cosine),
+            ClusterOptions {
+                distance: DistanceMetric::Cosine,
+                ..ClusterOptions::default()
+            },
             &no_contrast(),
             true,
         )

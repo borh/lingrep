@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::ops::Range;
 use std::os::unix::fs::FileExt;
 use std::sync::Arc;
@@ -84,21 +84,39 @@ impl Writer {
 
 const INDEX_RECORD: usize = 40;
 
-pub(super) struct Reader {
-    data: BufReader<File>,
-    index: BufReader<File>,
+struct FromStart<'a> {
+    file: &'a File,
+    offset: u64,
+}
+
+impl Read for FromStart<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.file.read_at(buffer, self.offset)?;
+        self.offset += read as u64;
+        Ok(read)
+    }
+}
+
+/// Reads the documents through the descriptors that [`Documents`] holds, so
+/// reads succeed after the spool files' paths are unlinked.
+pub(super) struct Reader<'a> {
+    data: &'a File,
+    index: BufReader<FromStart<'a>>,
 }
 
 impl Documents {
-    pub(super) fn reader(&self) -> io::Result<Reader> {
+    pub(super) fn reader(&self) -> io::Result<Reader<'_>> {
         Ok(Reader {
-            data: BufReader::new(self.data.reopen()?),
-            index: BufReader::new(self.index.reopen()?),
+            data: self.data.as_file(),
+            index: BufReader::new(FromStart {
+                file: self.index.as_file(),
+                offset: 0,
+            }),
         })
     }
 }
 
-impl Reader {
+impl Reader<'_> {
     fn position(&mut self) -> io::Result<Option<[u64; 5]>> {
         let mut bytes = [0u8; INDEX_RECORD];
         if self.index.read(&mut bytes[..1])? == 0 {
@@ -155,9 +173,8 @@ impl Reader {
                     "counts document {wanted}, which the corpus does not hold"
                 )));
             }
-            self.data.seek(SeekFrom::Start(offset))?;
             let mut bytes = vec![0; usize::try_from(len).map_err(io::Error::other)?];
-            self.data.read_exact(&mut bytes)?;
+            self.data.read_exact_at(&mut bytes, offset)?;
             let metadata =
                 metadata_from_json(serde_json::from_slice(&bytes)?, "stored document metadata")?;
             return Ok((first..end, metadata));
@@ -168,9 +185,8 @@ impl Reader {
         let Some([_, offset, len, ..]) = self.position()? else {
             return Ok(None);
         };
-        self.data.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; usize::try_from(len).map_err(io::Error::other)?];
-        self.data.read_exact(&mut bytes)?;
+        self.data.read_exact_at(&mut bytes, offset)?;
         metadata_from_json(serde_json::from_slice(&bytes)?, "stored document metadata").map(Some)
     }
 }
@@ -294,7 +310,7 @@ impl TableDocuments {
     /// for a document without the key, else whether its value is a list and
     /// the texts.
     pub(super) fn build(
-        reader: &mut Reader,
+        reader: &mut Reader<'_>,
         ids: &[u64],
         keys: &[String],
         value_texts: impl Fn(&Metadata, &str) -> Option<(bool, Vec<String>)>,
@@ -634,6 +650,32 @@ mod tests {
         let held = budget.used_bytes();
         drop(table);
         assert!(budget.used_bytes() < held || documents == 0);
+    }
+
+    #[test]
+    fn a_reader_reads_documents_whose_spool_paths_were_unlinked() {
+        let budget = Arc::new(TempBudget::new(1_000_000));
+        let mut writer = Writer::new(Arc::clone(&budget)).expect("writer");
+        let metadata = |genre: &str| {
+            metadata_from_json(serde_json::json!({ "genre": genre }), "test metadata")
+                .expect("metadata")
+        };
+        writer.push(1, 0..2, &metadata("essay")).expect("write");
+        writer.push(2, 2..5, &metadata("novel")).expect("write");
+        let store = writer.finish().expect("store");
+        for spool in [&store.data, &store.index] {
+            std::fs::remove_file(spool.path()).expect("unlink");
+        }
+
+        let mut located = store.reader().expect("reader");
+        assert_eq!(
+            located.located(2).expect("document"),
+            (2..5, metadata("novel"))
+        );
+        let mut sequential = store.reader().expect("reader");
+        assert_eq!(sequential.next().expect("first"), Some(metadata("essay")));
+        assert_eq!(sequential.next().expect("second"), Some(metadata("novel")));
+        assert_eq!(sequential.next().expect("end"), None);
     }
 
     #[test]

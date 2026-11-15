@@ -127,6 +127,11 @@ fn resolve_guard_attr(parsed: &ParsedAttr) -> Result<crate::fsm::SymbolicAttrVal
              carries it, before the catalog's `set` declarations are accumulated — write the \
              members inline"
         )),
+        ParsedAttrValue::Near { .. } => Err(
+            "uses `near`, but a guard is compiled with the definition that carries it, before \
+             a word-vector table is read — write the values inline"
+                .to_owned(),
+        ),
     }
 }
 

@@ -155,7 +155,9 @@ async fn inspect_handler_drives_failed_corruption_and_returns_500() {
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
-        body.contains("The corpus cache is damaged and will be rebuilt."),
+        body.contains(
+            "The corpus data is damaged. This corpus is unavailable until the server is restarted."
+        ),
         "{body}"
     );
 

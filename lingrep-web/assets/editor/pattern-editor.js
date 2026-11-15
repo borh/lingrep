@@ -1,47 +1,73 @@
 import { t, onLocaleChange } from "../i18n.js";
 
 const MAX_HIGHLIGHT_BYTES = 65_536;
+const SUBMIT_WAIT_MS = 3000;
+const CHECK_DELAY_MS = 400;
 const encoder = new TextEncoder();
 const states = new WeakMap();
 const releasing = new WeakSet();
 const assetUrl = (path) => new URL(path, import.meta.url).href;
 
-// Pattern drafts survive reloads so an editing session is never lost. The
-// draft is only restored into an empty textarea, so server-rendered content
-// always wins, and drafts are kept after a successful search on purpose:
-// pattern work is iterative.
 function draftKey(textarea) {
   return `pattern-draft:${textarea.id || "pattern"}`;
 }
 
-function saveDraft(textarea) {
-  try {
-    localStorage.setItem(draftKey(textarea), textarea.value);
-  } catch (_error) {
-    // Storage unavailable or full; persistence is best-effort.
-  }
+function seedIdentity(seed) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) hash = Math.imul(hash ^ seed.charCodeAt(i), 0x01000193);
+  return `${seed.length}:${(hash >>> 0).toString(16)}`;
 }
 
-function loadDraft(textarea) {
+/** The value stored for `draft`, an edit of the server-rendered `seed`. */
+export function storedDraft(seed, draft) {
+  return JSON.stringify({ seed: seedIdentity(seed), draft });
+}
+
+function loadStored(key) {
   try {
-    return localStorage.getItem(draftKey(textarea));
+    return localStorage.getItem(key);
   } catch (_error) {
-    // Storage unavailable or blocked; persistence is best-effort.
     return null;
   }
 }
 
-// Fallback persistence for when the CodeMirror bundle or grammar fails to
-// load and the plain textarea stays interactive. The enhanced editor saves
-// drafts from its own update listener instead.
+/**
+ * The draft in `stored` (a `storedDraft` value, or null) to show instead of
+ * `seed`, or null to show the seed. `followedLink` is a first navigation to a
+ * URL with a query string: the link's pattern is shown even when the draft was
+ * edited from it.
+ */
+export function draftToRestore({ seed, stored, followedLink }) {
+  if (stored === null || followedLink) return null;
+  let entry;
+  try {
+    entry = JSON.parse(stored);
+  } catch (_error) {
+    return null;
+  }
+  return typeof entry?.draft === "string" && entry.draft && entry.seed === seedIdentity(seed) ? entry.draft : null;
+}
+
+function followedLink() {
+  return location.search !== "" &&
+    performance.getEntriesByType("navigation")[0]?.type === "navigate";
+}
+
 function attachDraftPersistence(textarea) {
   if (textarea.dataset.lxDraft === "attached") return;
   textarea.dataset.lxDraft = "attached";
-  if (!textarea.value.trim()) {
-    const draft = loadDraft(textarea);
-    if (draft) textarea.value = draft;
-  }
-  textarea.addEventListener("input", () => saveDraft(textarea));
+  const draft = draftToRestore({
+    seed: textarea.defaultValue,
+    stored: loadStored(draftKey(textarea)),
+    followedLink: followedLink(),
+  });
+  if (draft !== null) textarea.value = draft;
+  textarea.addEventListener("input", () => {
+    try {
+      localStorage.setItem(draftKey(textarea), storedDraft(textarea.defaultValue, textarea.value));
+    } catch (_error) {
+    }
+  });
 }
 
 export function applyCaptureKeyEdit(source, edit, attribute) {
@@ -60,7 +86,7 @@ export function applyCaptureKeyEdit(source, edit, attribute) {
 }
 
 export function summaryContext(request) {
-  return request ? JSON.stringify([request.source, request.corpus, request.search_scope]) : null;
+  return request ? JSON.stringify([request.source, request.corpus, request.search_scope, request.overlaps]) : null;
 }
 
 function summaryRequest(state) {
@@ -72,6 +98,7 @@ function summaryRequest(state) {
     source: state.source(), definition,
     corpus: form?.querySelector("input[name=corpus]")?.value || null,
     search_scope: form?.querySelector("[data-search-scope-value]")?.value || null,
+    overlaps: form?.querySelector("select[name=overlaps]")?.value || null,
   };
 }
 
@@ -268,13 +295,12 @@ export function jumpToDefinitionByName(textarea, name) {
   const index = navigationIndexFor(state);
   const definition = index?.definitions.get(name);
   if (!definition) {
-    status(state, `\`${name}\` is not defined in this document.`, true);
+    status(state, t("editor.nav_undefined", { name }), true);
     state.view.focus();
     return false;
   }
   const sites = index.references.get(name) ?? [];
-  const count = sites.length === 1 ? "1 reference" : `${sites.length} references`;
-  status(state, `${definition.kind} ${name}, ${count}.`, true);
+  status(state, t("editor.nav_definition", { kind: definition.kind, name, references: countLabel("reference", sites.length) }), true);
   state.view.dispatch({
     selection: { anchor: definition.from, head: definition.to },
     scrollIntoView: true,
@@ -412,28 +438,28 @@ export function symbolAtPosition(index, pos) {
 // `message` into status text. `action` is "definition", "next", or "previous".
 export function navigationTarget(index, pos, action) {
   const symbol = symbolAtPosition(index, pos);
-  if (!symbol) return { message: "No definition or reference here." };
+  if (!symbol) return { message: t("editor.nav_none") };
   const { name } = symbol;
   const sites = index.references.get(name) ?? [];
 
   if (action === "definition") {
     const definition = index.definitions.get(name);
-    if (!definition) return { message: `\`${name}\` is not defined in this document.` };
-    const count = sites.length === 1 ? "1 reference" : `${sites.length} references`;
+    if (!definition) return { message: t("editor.nav_undefined", { name }) };
+    const references = countLabel("reference", sites.length);
     // Say so rather than silently picking one: two declarations is a compile
     // error the author needs to see, and go-to-definition is where they meet
     // it.
     const declarations = index.definitionSites.filter((site) => site.name === name).length;
-    const duplicated =
-      declarations > 1 ? ` — ${declarations} declarations, showing the first` : "";
     return {
       from: definition.from,
       to: definition.to,
-      message: `${definition.kind} ${name}, ${count}${duplicated}.`,
+      message: t(declarations > 1 ? "editor.nav_definition_duplicated" : "editor.nav_definition", {
+        kind: definition.kind, name, references, declarations,
+      }),
     };
   }
 
-  if (!sites.length) return { message: `\`${name}\` has no references.` };
+  if (!sites.length) return { message: t("editor.nav_no_references", { name }) };
   // Where in the cycle are we? On the definition (or anywhere that is not a
   // reference site) the first step lands on reference 1.
   const current = sites.findIndex((site) => pos >= site.hitFrom && pos <= site.to);
@@ -445,7 +471,7 @@ export function navigationTarget(index, pos, action) {
         : sites.length - 1
       : (current + step + sites.length) % sites.length;
   const site = sites[next];
-  return { from: site.from, to: site.to, message: `Reference ${next + 1} of ${sites.length}.` };
+  return { from: site.from, to: site.to, message: t("editor.nav_reference", { n: next + 1, total: sites.length }) };
 }
 
 // Turn tree-sitter highlight captures into ordered, non-overlapping decoration
@@ -1140,13 +1166,12 @@ export function patternSignatureContext(source, pos) {
 // a stubbed `{"status":"valid"}` (browser tests) must not break the editor.
 export function statsSummary(stats) {
   if (!stats) return null;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  return [
-    plural(stats.definitions, "definition"),
-    plural(stats.references, "reference"),
-    `depth ${stats.depth}`,
-    `${stats.nfa_states} NFA states`,
-  ].join(", ");
+  return t("editor.stats", {
+    definitions: countLabel("definition", stats.definitions),
+    references: countLabel("reference", stats.references),
+    depth: stats.depth,
+    states: stats.nfa_states,
+  });
 }
 
 // What the status line says about a completed check. Null for anything that is
@@ -1156,10 +1181,10 @@ export function checkStatusLine(result) {
   if (result?.status !== "valid") return null;
   const warnings = result.diagnostics?.length ?? 0;
   const headline = warnings
-    ? `Pattern is valid, ${warnings} warning${warnings === 1 ? "" : "s"}.`
-    : "Pattern is valid.";
+    ? t("editor.status_valid_warnings", { warnings: countLabel("warning", warnings) })
+    : t("editor.status_valid");
   const summary = statsSummary(result.stats);
-  return summary ? `${headline} ${summary}.` : headline;
+  return summary ? t("editor.status_with_stats", { headline, summary }) : headline;
 }
 
 // A warning is not an invalidity. Kept separate from the status text so the
@@ -1168,9 +1193,34 @@ export function ariaInvalidFor(result) {
   return result?.status === "valid" ? "false" : "true";
 }
 
+const COUNT_KEYS = {
+  definition: ["editor.count_definition", "editor.count_definitions"],
+  reference: ["editor.count_reference", "editor.count_references"],
+  warning: ["editor.count_warning", "editor.count_warnings"],
+};
+function countLabel(noun, n) {
+  return t(COUNT_KEYS[noun][n === 1 ? 0 : 1], { n });
+}
+
+function renderStatus(state) {
+  const message = typeof state.statusMessage === "function" ? state.statusMessage() : state.statusMessage ?? "";
+  state.status.textContent = state.submitNotice ? `${t(state.submitNotice)} ${message}` : message;
+}
+
 function status(state, message, terminal = false) {
-  state.status.textContent = message;
+  state.statusMessage = message;
+  renderStatus(state);
   state.status.setAttribute("aria-live", terminal ? "polite" : "off");
+}
+
+function submitNotice(state, key) {
+  state.submitNotice = key;
+  renderStatus(state);
+  state.status.setAttribute("aria-live", "polite");
+}
+
+function diagnosticMessage(diagnostic) {
+  return diagnostic?.message_key ? t(diagnostic.message_key) : diagnostic?.message || t("editor.diag_invalid");
 }
 
 // The navigation index for the current parse. Rebuilt per request rather than
@@ -1188,8 +1238,8 @@ function navigationIndexFor(state) {
 // wrapper) and a request that arrives before the first parse.
 function navigationUnavailable(state) {
   return state.wrapper.classList.contains("pattern-editor-plain")
-    ? "Navigation is unavailable above the 64 KiB highlighting cap."
-    : "Navigation is unavailable until the first parse completes.";
+    ? t("editor.nav_unavailable_cap")
+    : t("editor.nav_unavailable_parse");
 }
 
 function runNavigation(state, action) {
@@ -1222,7 +1272,7 @@ function patternTreeSitter(state, cm) {
       state.tree?.delete();
       state.tree = null;
       state.wrapper.classList.add("pattern-editor-plain");
-      status(state, "Syntax highlighting paused above 64 KiB; server checking remains available.");
+      status(state, () => t("editor.highlight_paused"));
       return Decoration.none;
     }
     state.wrapper.classList.remove("pattern-editor-plain");
@@ -1273,7 +1323,7 @@ function localSyntaxDiagnostics(state) {
           from: Math.min(start, docLength),
           to: Math.min(end, docLength),
           severity: "error",
-          message: cursor.nodeIsMissing ? `Missing ${node.type}` : "Syntax error",
+          message: cursor.nodeIsMissing ? t("editor.diag_missing", { node: node.type }) : t("editor.diag_syntax_local"),
           source: "pattern (local)",
         });
         continue; // do not descend into error subtrees
@@ -1302,7 +1352,7 @@ export function mapServerDiagnostics(source, diagnostics, positions = createPosi
       // Anything unrecognised stays an error: a severity we do not understand
       // must not be quietly demoted to a warning.
       severity: diagnostic.severity === "warning" ? "warning" : "error",
-      message: diagnostic.message || "Pattern is invalid.",
+      message: diagnosticMessage(diagnostic),
       source: `pattern:${diagnostic.code}`,
     };
   });
@@ -1316,7 +1366,7 @@ async function checkSource(state, source, reason = "input") {
   state.checkController?.abort();
   const controller = new AbortController();
   state.checkController = controller;
-  status(state, "Checking…");
+  status(state, () => t("editor.status_checking"));
   try {
     const response = await fetch("api/pattern/check", {
       method: "POST",
@@ -1337,7 +1387,7 @@ async function checkSource(state, source, reason = "input") {
       // stays cleared: it is for the one diagnostic that blocked a compile,
       // and a warning blocked nothing.
       const diagnostics = serverDiagnosticMapping(state, source, result.diagnostics ?? []);
-      status(state, checkStatusLine(result), true);
+      status(state, () => (source.trim() ? checkStatusLine(result) : t("editor.status_empty")), true);
       state.diagnosticNode.replaceChildren();
       state.lastCheck = { source, diagnostics };
       state.textarea.dispatchEvent(
@@ -1354,10 +1404,9 @@ async function checkSource(state, source, reason = "input") {
       captureKeyPicker(state);
       state.textarea.setAttribute("aria-invalid", "true");
       const diagnostic = result.diagnostics?.[0];
-      const where = diagnostic?.location
-        ? ` at ${diagnostic.location.line}:${diagnostic.location.column}`
-        : "";
-      status(state, `${diagnostic?.message || "Pattern is invalid."}${where}`, true);
+      status(state, () => diagnostic?.location
+        ? t("editor.status_at", { message: diagnosticMessage(diagnostic), line: diagnostic.location.line, column: diagnostic.location.column })
+        : diagnosticMessage(diagnostic), true);
       const excerpt = diagnosticExcerpt(source, diagnostic?.location);
       state.diagnosticNode.replaceChildren();
       if (excerpt) {
@@ -1378,11 +1427,11 @@ async function checkSource(state, source, reason = "input") {
       state.lastCheck = { source, diagnostics };
       return diagnostics;
     }
-    status(state, "Pattern checking is temporarily unavailable.", true);
+    status(state, () => t("editor.status_unavailable"), true);
     return [];
   } catch (error) {
     if (error.name !== "AbortError" && shouldPublish(source, state.source())) {
-      status(state, "Pattern checking is temporarily unavailable.", true);
+      status(state, () => t("editor.status_unavailable"), true);
     }
     return [];
   }
@@ -1396,7 +1445,7 @@ function patternLintSource(state) {
     const local = localSyntaxDiagnostics(state);
     if (local.length > 0) {
       state.textarea.setAttribute("aria-invalid", "true");
-      status(state, "Pattern has a local syntax error.", true);
+      status(state, () => t("editor.status_local_syntax"), true);
       return local;
     }
     if (state.lastCheck?.source === source) return state.lastCheck.diagnostics;
@@ -1560,7 +1609,6 @@ export async function formatCurrent(textarea) {
           changes: { from: 0, to: state.view.state.doc.length, insert: result.source },
           selection: { anchor, head },
         });
-        saveDraft(textarea);
         textarea.dispatchEvent(new CustomEvent("pattern:formatted", { bubbles: true }));
         void checkSource(state, result.source);
       }
@@ -1613,6 +1661,7 @@ async function enhance(textarea, grammar, cm) {
     tree: null,
     positions: null,
     lastCheck: null,
+    relint: false,
     source: () => state.view.state.doc.toString(),
   };
   if (textarea.id === "corpus-pattern") {
@@ -1628,11 +1677,15 @@ async function enhance(textarea, grammar, cm) {
     state.summaryPanel = summaryPanel;
     captureKeyPicker(state);
     onLocaleChange(() => {
+      state.lastCheck = null;
+      state.relint = true;
+      state.view?.dispatch({});
+      renderStatus(state);
       captureKeyPicker(state, state.keyEditSource === state.source() ? state.keyEdits ?? [] : [], state.keyEditSource);
       markDraftResults(state);
       renderLiveSummary(state);
     });
-    textarea.closest("form")?.addEventListener("scope:updated", () => {
+    const rerunSummaryOnChange = () => {
       const previous = state.summaryController ? state.summaryActiveRequest : state.summaryResult?.request;
       const changed = previous && summaryContext(previous) !== summaryContext(summaryRequest(state));
       if (changed) { state.summaryController?.abort(); state.summaryController = null; }
@@ -1641,7 +1694,10 @@ async function enhance(textarea, grammar, cm) {
         clearTimeout(state.summaryTimer);
         state.summaryTimer = setTimeout(() => { void runLiveSummary(state); }, 400);
       }
-    });
+    };
+    const form = textarea.closest("form");
+    form?.addEventListener("scope:updated", rerunSummaryOnChange);
+    form?.querySelector("select[name=overlaps]")?.addEventListener("change", rerunSummaryOnChange);
     document.addEventListener("htmx:beforeRequest", (event) => {
       if (event.detail?.elt === textarea.closest("form")) state.submittedSource = state.source();
     });
@@ -1661,7 +1717,14 @@ async function enhance(textarea, grammar, cm) {
       cm.bracketMatching(),
       cm.highlightSelectionMatches(),
       cm.autocompletion({ override: [patternCompletionSource(state)] }),
-      cm.linter(patternLintSource(state), { delay: 400 }),
+      cm.linter(patternLintSource(state), {
+        delay: CHECK_DELAY_MS,
+        needsRefresh: () => {
+          const due = state.relint;
+          state.relint = false;
+          return due;
+        },
+      }),
       cm.lintGutter(),
       patternHoverTooltip(cm),
       patternSignatureHelp(cm),
@@ -1686,8 +1749,10 @@ async function enhance(textarea, grammar, cm) {
       ]),
       cm.EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
-        textarea.value = update.state.doc.toString();
-        saveDraft(textarea);
+        if (!state.applyingTextareaInput) {
+          textarea.value = update.state.doc.toString();
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        }
         state.keyEdits = [];
         state.keyEditSource = null;
         state.summaryController?.abort();
@@ -1715,7 +1780,12 @@ async function enhance(textarea, grammar, cm) {
   textarea.addEventListener("input", () => {
     const value = textarea.value;
     if (value !== view.state.doc.toString()) {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+      state.applyingTextareaInput = true;
+      try {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+      } finally {
+        state.applyingTextareaInput = false;
+      }
     }
   });
   view.contentDOM.addEventListener("blur", () => {
@@ -1735,33 +1805,57 @@ async function initializeEditors() {
     await Promise.all(editors.map((editor) => enhance(editor, grammar, cm)));
   } catch (error) {
     for (const editor of editors) {
+      if (editor.dataset.lxEnhancement !== "unavailable") reportPlainEdits(editor);
       editor.dataset.lxEnhancement = "unavailable";
       editor.dataset.lxEnhancementError = String(error);
     }
   }
 }
 
+function reportPlainEdits(textarea) {
+  let pause;
+  textarea.addEventListener("input", () => {
+    clearTimeout(pause);
+    pause = setTimeout(() => {
+      textarea.dispatchEvent(
+        new CustomEvent("pattern:valid", {
+          bubbles: true,
+          detail: { source: textarea.value, stats: null },
+        }),
+      );
+    }, CHECK_DELAY_MS);
+  });
+}
+
 if (typeof document !== "undefined") {
+  for (const editor of document.querySelectorAll("textarea[data-pattern-editor]")) attachDraftPersistence(editor);
   document.addEventListener("DOMContentLoaded", initializeEditors);
   document.addEventListener("htmx:load", initializeEditors);
   document.addEventListener("htmx:confirm", async (event) => {
     const action = event.target.closest?.("[data-pattern-submit]");
     if (!action || releasing.has(action)) return;
-    const textarea = document.getElementById(action.dataset.lxSubmit);
+    const textarea = document.getElementById(action.dataset.patternSubmit);
     if (!textarea) return;
     event.preventDefault();
     const state = states.get(textarea);
+    if (state?.submitNotice) submitNotice(state, null);
     if (state && !state.source().trim()) {
-      status(state, "Pattern is empty.", true);
+      status(state, () => t("editor.status_empty"), true);
       return;
     }
-    const captured = textarea.value;
-    const result = await formatCurrent(textarea);
-    if (!shouldPublish(captured, textarea.value) && result.source !== textarea.value) {
-      if (state) status(state, "Pattern changed; submit again.", true);
+    const deadline = new Promise((resolve) => setTimeout(resolve, SUBMIT_WAIT_MS));
+    const submitted = textarea.value;
+    const result = await Promise.race([formatCurrent(textarea), deadline]);
+    const posting = textarea.value;
+    if (posting !== submitted && posting !== result?.source) {
+      if (state) submitNotice(state, "editor.status_changed");
       return;
     }
-    if (state) await checkSource(state, textarea.value, "submit");
+    if (state) await Promise.race([checkSource(state, posting, "submit"), deadline]);
+    if (textarea.value !== posting) {
+      if (state) submitNotice(state, "editor.status_changed");
+      return;
+    }
     releasing.add(action);
     try {
       // Query history observes htmx:beforeRequest as proof that this async

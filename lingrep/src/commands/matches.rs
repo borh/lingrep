@@ -18,9 +18,9 @@ use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
 use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
-    random_id,
+    random_id, write_vectors_notice,
 };
-use crate::catalog_input::load_and_compile;
+use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{ExecutionCliConfig, MatchFormat, MatchesArgs, ProgressMode};
 use crate::direct_source::OversizedSentenceOmissionSummary;
 use crate::direct_source::{matched_orth_tokens, matched_surface};
@@ -189,7 +189,10 @@ pub fn run(
         )
     };
     let started = Instant::now();
-    let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
+    let catalog =
+        load_and_compile_with_vectors(&args.catalog.catalog_input()?, args.vectors.as_deref())?;
+    write_vectors_notice(&catalog, config)?;
+    let word_vectors = super::query_support::word_vectors_report(&catalog);
     if output == OutputMode::Tsv && !catalog.output.matcher.lexicons().is_empty() {
         return Err(CliError::InvalidArgs(
             "matches --tsv does not accept lexicon definitions; use --json or human output".into(),
@@ -197,7 +200,8 @@ pub fn run(
     }
     let descriptors = catalog.authored_definitions()?;
     let catalog_fingerprint = catalog.fingerprint.clone();
-    let compiled = catalog.output;
+    let mut compiled = catalog.output;
+    compiled.matcher = compiled.matcher.with_overlaps(args.overlaps.into());
 
     // Parsed before any input is opened: a clause is authored text, so a bad
     // one is a usage error rather than a run that reads a corpus and then
@@ -319,6 +323,8 @@ pub fn run(
         sample: run_facts
             .block_sample_report
             .or_else(|| sample.map(crate::protocol::query::SampleReport::of)),
+        overlaps: crate::protocol::query::OverlapsReport::of(args.overlaps),
+        word_vectors,
         ordering: MatchOrder::CorpusSentenceStartEndPatternCapturesGraphBindingsTerm,
         span_convention: SpanConvention::HalfOpenToken,
         char_offsets: char_offsets_available,

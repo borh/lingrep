@@ -43,10 +43,14 @@ const SPREADSHEET_MIME: &str = "application/vnd.openxmlformats-officedocument.sp
 /// The identity itself contains the path.
 async fn store_with_verbs(sentence_count: usize, max_kwic: usize) -> (RequestStore, TempDir) {
     let sentence = vec![TokenInfo::default().with_orth("食べる").with_pos("VERB")];
-    let (fixture, runtime) = runtime_fixture(
-        "/private/science-corpus.jsonl",
-        vec![sentence; sentence_count],
-    );
+    store_with_sentences(vec![sentence; sentence_count], max_kwic).await
+}
+
+async fn store_with_sentences(
+    sentences: Vec<Vec<TokenInfo>>,
+    max_kwic: usize,
+) -> (RequestStore, TempDir) {
+    let (fixture, runtime) = runtime_fixture("/private/science-corpus.jsonl", sentences);
     let directory = fixture.directory;
     let corpus_path = directory.path().join("science-corpus.jsonl");
     let dict_path = directory.path().join("unidic-cwj-202512.dic");
@@ -81,6 +85,11 @@ async fn complete(store: &RequestStore, workbench: &WorkbenchId, source: &str) -
         .coordinators
         .accept_next_revision(workbench.clone(), slot, source.into())
         .await;
+    await_displayed(store, workbench, revision).await;
+    revision
+}
+
+async fn await_displayed(store: &RequestStore, workbench: &WorkbenchId, revision: RevisionId) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if store
@@ -101,7 +110,6 @@ async fn complete(store: &RequestStore, workbench: &WorkbenchId, source: &str) -
     })
     .await
     .unwrap();
-    revision
 }
 
 fn app(store: RequestStore) -> Router {
@@ -206,6 +214,78 @@ async fn export_exceeds_display_retention_but_counts_every_match() {
 }
 
 #[tokio::test]
+async fn export_admits_the_sentences_the_displayed_run_admitted() {
+    let small = TokenInfo::default()
+        .with_orth("食べる")
+        .with_pos("VERB")
+        .with_lemma("食べる");
+    let oversized = TokenInfo::default().with_lemma("x".repeat(600_000));
+    let (store, _dir) = store_with_sentences(
+        vec![vec![small.clone(); 2], vec![oversized; 64], vec![small; 2]],
+        1_000,
+    )
+    .await;
+    let workbench = WorkbenchId::new("export-oversized");
+    let revision = complete(&store, &workbench, "p := ^ [lemma~/.+/]+ $.").await;
+    let snapshot = store
+        .coordinators
+        .displayed_snapshot(&workbench, revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            snapshot.patterns[0].exact_total,
+            snapshot.oversized_omissions.as_ref().map(|o| o.count),
+        ),
+        (2, Some(1)),
+        "the displayed run skipped the oversized sentence"
+    );
+
+    let response = get(&store, &export_uri(&workbench, revision)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let mut workbook = open(body_bytes(response).await);
+
+    let rows = workbook
+        .worksheet_range("p")
+        .unwrap()
+        .rows()
+        .skip(1)
+        .map(<[Data]>::to_vec)
+        .collect::<Vec<_>>();
+    let row = |sentence: f64| {
+        vec![
+            Data::Float(sentence),
+            Data::Empty,
+            Data::String("食べる食べる".into()),
+            Data::Empty,
+            Data::Empty,
+        ]
+    };
+    assert_eq!(rows, vec![row(0.0), row(2.0)]);
+    let about = workbook.worksheet_range("About").unwrap();
+    let exact = about
+        .rows()
+        .find(|row| matches!(row.first(), Some(Data::String(k)) if k == "exact_matches"));
+    assert_eq!(exact.and_then(|row| row.get(1)), Some(&Data::Float(2.0)));
+    let value = |key: &str| {
+        about
+            .rows()
+            .find(|row| matches!(row.first(), Some(Data::String(k)) if k == key))
+            .and_then(|row| row.get(1))
+            .map(ToString::to_string)
+    };
+    assert_eq!(
+        value("scan_scope").as_deref(),
+        Some("unfiltered corpus except the skipped sentences")
+    );
+    let skipped = value("skipped_sentences").expect("the About sheet states the omission");
+    assert!(
+        skipped.starts_with("Skipped 1 oversized sentence (first: sentence 1, "),
+        "{skipped}"
+    );
+}
+
+#[tokio::test]
 async fn zero_matches_yield_about_sheet_only() {
     let (store, _dir) = store_with_verbs(3, 1_000).await;
     let workbench = WorkbenchId::new("export-empty");
@@ -225,19 +305,151 @@ async fn zero_matches_yield_about_sheet_only() {
     assert_eq!(exact.and_then(|row| row.get(1)), Some(&Data::Float(0.0)));
 }
 
+async fn body_text(response: axum::response::Response) -> String {
+    String::from_utf8(body_bytes(response).await).unwrap()
+}
+
 #[tokio::test]
-async fn superseded_revision_is_a_conflict() {
+async fn superseded_revision_is_a_conflict_that_points_to_the_newer_results() {
     let (store, _dir) = store_with_verbs(3, 1_000).await;
     let workbench = WorkbenchId::new("export-stale");
     let first = complete(&store, &workbench, "verb := [upos=VERB].").await;
-    // A newer revision supersedes the first.
     complete(&store, &workbench, "verb := [upos=VERB] [upos=VERB].").await;
 
     let response = get(&store, &export_uri(&workbench, first)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    let body = body_text(response).await;
+    assert!(
+        body.contains("A newer search replaced these results."),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn displayed_results_export_after_a_later_query_fails() {
+    let (store, _dir) = store_with_verbs(3, 1_000).await;
+    let workbench = WorkbenchId::new("export-after-failure");
+    let displayed = complete(&store, &workbench, "verb := [upos=VERB].").await;
+    let slot = store.corpora.resolve(None).unwrap();
+    let failed = store
+        .coordinators
+        .accept_next_revision(workbench.clone(), slot, "verb := [".into())
+        .await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let view = store.coordinators.snapshot(&workbench).await.unwrap();
+            if view.state.is_terminal() {
+                assert_eq!(view.state.current_attempt().unwrap().revision, failed);
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let response = get(&store, &export_uri(&workbench, displayed)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
     assert_eq!(
-        response.status(),
+        get(&store, &export_uri(&workbench, failed)).await.status(),
         axum::http::StatusCode::CONFLICT,
-        "an older, superseded revision gets the same stale response as the display path"
+    );
+}
+
+#[tokio::test]
+async fn a_search_over_displayed_results_disables_their_download_while_it_runs() {
+    let (store, _dir) = store_with_verbs(3, 1_000).await;
+    let workbench = WorkbenchId::new("export-waiting");
+    complete(&store, &workbench, "verb := [upos=VERB].").await;
+    let _permit = store.coordinators.acquire_scan_permit().await;
+
+    let response = Router::new()
+        .nest("/api", lingrep_web::handlers::search::routes())
+        .with_state(store.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/search/export-waiting")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("pattern=noun+%3A%3D+%5Bupos%3DNOUN%5D."))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let html = body_text(response).await;
+
+    assert!(
+        html.contains(r#"<div id="export-control" hx-swap-oob="innerHTML">"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            r#"<button type="button" class="export-download" disabled aria-describedby="export-waiting-reason">"#
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            r#"<span id="export-waiting-reason" class="export-waiting-reason" data-i18n="results.download_waiting">Available when the running query finishes.</span>"#
+        ),
+        "{html}"
+    );
+    assert!(!html.contains("api/export/"), "{html}");
+}
+
+#[tokio::test]
+async fn a_workbench_the_server_does_not_hold_is_not_found_with_a_next_step() {
+    let (store, _dir) = store_with_verbs(3, 1_000).await;
+
+    let response = get(&store, "/api/export/evicted-or-restarted/1").await;
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    let body = body_text(response).await;
+    assert!(
+        body.contains("The server no longer holds these results. Run the search again"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn results_of_a_corpus_that_became_unavailable_are_a_conflict_with_a_next_step() {
+    let (fixture, runtime) = runtime_fixture(
+        "export-corrupt",
+        vec![vec![
+            TokenInfo::default().with_orth("食べる").with_pos("VERB"),
+        ]],
+    );
+    let cache_path = fixture.path.join("tokens.v1.zst");
+    let store = RequestStore::with_runtime(
+        Config {
+            dict_path: String::new(),
+            corpora: Vec::new(),
+            input_format: None,
+            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                lingrep_core::corpus::SectionPolicy::default(),
+            ),
+            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+            detail_limits: DetailLimits { max_kwic: 10 },
+        },
+        runtime,
+    );
+    let workbench = WorkbenchId::new("export-corrupt");
+    let revision = complete(&store, &workbench, "verb := [upos=VERB].").await;
+    crate::v6_support::corrupt_first_token_block(&cache_path);
+
+    let damaged = get(&store, &export_uri(&workbench, revision)).await;
+    assert_eq!(
+        damaged.status(),
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let body = body_text(damaged).await;
+    assert!(body.contains("The corpus data is damaged."), "{body}");
+
+    let unavailable = get(&store, &export_uri(&workbench, revision)).await;
+    assert_eq!(unavailable.status(), axum::http::StatusCode::CONFLICT);
+    let body = body_text(unavailable).await;
+    assert!(
+        body.contains("The corpus was rebuilt or became unavailable after these results"),
+        "{body}"
     );
 }
 
@@ -263,5 +475,52 @@ async fn no_workbook_cell_leaks_a_filesystem_path() {
                 }
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn export_applies_and_states_the_overlap_setting_of_the_displayed_run() {
+    use lingrep_core::fsm::policy_program::Overlaps;
+    use lingrep_web::coordinator::RevisionRequest;
+
+    const SOURCE: &str = "long := [upos=VERB] [upos=VERB].\n\
+         short := [upos=VERB].\n\
+         policy\n  resolve all rank: [longest, start, end, pattern].\nend\n";
+    let verb = TokenInfo::default().with_orth("食べる").with_pos("VERB");
+    let (store, _dir) = store_with_sentences(vec![vec![verb; 2]], 1_000).await;
+    let slot = store.corpora.resolve(None).expect("a default corpus");
+
+    for (overlaps, stated, sheets) in [
+        (Overlaps::Catalog, "catalog", vec!["About", "long"]),
+        (Overlaps::Keep, "keep", vec!["About", "long", "short"]),
+    ] {
+        let workbench = WorkbenchId::new(format!("export-overlaps-{stated}"));
+        let revision = store
+            .coordinators
+            .accept_revision(
+                workbench.clone(),
+                slot,
+                RevisionRequest {
+                    source: SOURCE.into(),
+                    overlaps,
+                    ..RevisionRequest::default()
+                },
+            )
+            .await
+            .expect("an accepted revision");
+        await_displayed(&store, &workbench, revision).await;
+
+        let response = get(&store, &export_uri(&workbench, revision)).await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let mut workbook = open(body_bytes(response).await);
+        assert_eq!(workbook.sheet_names().to_vec(), sheets, "{stated}");
+        let about = workbook.worksheet_range("About").unwrap();
+        let row = about
+            .rows()
+            .find(|row| matches!(row.first(), Some(Data::String(key)) if key == "overlaps"));
+        assert_eq!(
+            row.and_then(|row| row.get(1)),
+            Some(&Data::String(stated.into()))
+        );
     }
 }

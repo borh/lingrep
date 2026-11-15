@@ -120,10 +120,16 @@ pub struct LexicalMatchRef {
 pub struct CompletedSnapshot {
     pub search_scope: crate::search_scope::SearchScope,
     pub excluded_sentences: u64,
+    /// The sentences `search_scope` admitted in this run's artifact.
+    pub admission: lingrep_core::execution::SentenceAdmission,
+    /// CLI arguments for the catalog, scope and overlaps; excludes Workbench
+    /// compound rows.
+    pub cli_arguments: String,
     pub revision: RevisionId,
     pub corpus_identity: CorpusIdentity,
     pub source: std::sync::Arc<str>,
     pub derive_compounds: bool,
+    pub overlaps: lingrep_core::fsm::policy_program::Overlaps,
     pub compound_category: CompoundCategory,
     pub patterns: Box<[PatternDescriptor]>,
     pub match_refs: Box<[MatchRef]>,
@@ -144,6 +150,18 @@ pub struct CompletedSnapshot {
     /// banner and the 2026-08-11 robustness plan for the divergence
     /// argument.
     pub oversized_omissions: Option<lingrep_core::execution::OversizedSentenceOmissions>,
+    /// Attributes the catalog references that the corpus's token schema does
+    /// not carry, when any. Positive tests over them matched nothing.
+    pub unavailable_attributes: Option<UnavailableAttributes>,
+    /// Present when the catalog has `near` tests and no `vectors:` entry of
+    /// it carries the digest of the server's word-vector file.
+    pub vectors_binding: Option<lingrep_corpus::word_vectors::VectorsBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnavailableAttributes {
+    pub keys: Box<[lingrep_core::token_match::AttributeKey]>,
+    pub schema: Box<str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

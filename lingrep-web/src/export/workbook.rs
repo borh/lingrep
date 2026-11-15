@@ -10,7 +10,11 @@ const EXCEL_CELL_LIMIT: usize = 32_767;
 
 pub(crate) struct AboutMeta {
     pub scan_scope: String,
+    pub skipped_sentences: Option<String>,
     pub filters: String,
+    /// `catalog`, `keep` or `longest`: the run's treatment of overlapping
+    /// records of different patterns.
+    pub overlaps: &'static str,
     pub corpus: String,
     pub corpus_id: String,
     pub dictionary: String,
@@ -64,8 +68,16 @@ pub(crate) fn build_workbook(
         write_cell(sheet, r, 0, "scan_scope")?;
         write_cell(sheet, r, 1, &about.scan_scope)?;
         r += 1;
+        if let Some(skipped) = &about.skipped_sentences {
+            write_cell(sheet, r, 0, "skipped_sentences")?;
+            write_cell(sheet, r, 1, skipped)?;
+            r += 1;
+        }
         write_cell(sheet, r, 0, "filters")?;
         write_cell(sheet, r, 1, &about.filters)?;
+        r += 1;
+        write_cell(sheet, r, 0, "overlaps")?;
+        write_cell(sheet, r, 1, about.overlaps)?;
         r += 1;
         write_cell(sheet, r, 0, "exact_matches")?;
         sheet.write_number(r, 1, about.exact_matches as f64)?;
@@ -174,7 +186,9 @@ mod tests {
     fn about() -> AboutMeta {
         AboutMeta {
             scan_scope: "complete unfiltered corpus".into(),
+            skipped_sentences: None,
             filters: "none".into(),
+            overlaps: "catalog",
             corpus: "science-corpus".into(),
             corpus_id: "a3f9c2e10b74".into(),
             dictionary: "unidic-cwj-202512".into(),

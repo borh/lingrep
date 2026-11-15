@@ -35,9 +35,9 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use lingrep::scope_precompute::resolve_scope;
 use lingrep_core::corpus::DocumentId;
 use lingrep_core::scope::ScopeClause;
+use lingrep_corpus::resolve_scope;
 use lingrep_corpus::{DocumentMetadataRow, RegionSpanRow};
 
 /// Documents in the acceptance artifact.

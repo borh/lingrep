@@ -133,11 +133,12 @@ mod handlers_test {
             r#"data-sample-workspace"#,
             r#"data-query-library"#,
             r#"hx-post="api/sample""#,
-            r#"pattern:valid from:#sample-pattern"#,
+            r#"pattern:valid changed from:#sample-pattern"#,
             r#"id="sample-results""#,
             r#"name="sample""#,
             r#"<script type="module" src="assets/editor/pattern-editor.js">"#,
             r#"<script type="module" src="assets/query-library.js">"#,
+            r#"<span data-i18n="corpus.none">none (this page reads only the sample text)</span>"#,
         ] {
             assert!(html.contains(hook), "missing sample-page hook: {hook}");
         }

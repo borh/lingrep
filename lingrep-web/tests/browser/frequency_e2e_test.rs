@@ -253,15 +253,15 @@ pub(crate) async fn driver() -> WebDriverResult<Option<WebDriver>> {
     Ok(Some(driver))
 }
 
-struct Served {
-    base: String,
+pub(crate) struct Served {
+    pub(crate) base: String,
     statuses: Arc<Mutex<Vec<String>>>,
-    server: tokio::task::JoinHandle<()>,
+    pub(crate) server: tokio::task::JoinHandle<()>,
     _artifact: support::ArtifactFixture,
     _dictionary: lingrep_core::testing::MiniDictionary,
 }
 
-async fn serve(extra: &[&std::ffi::OsStr]) -> Served {
+pub(crate) async fn serve(extra: &[&std::ffi::OsStr]) -> Served {
     serve_metadata(extra, metadata()).await
 }
 
@@ -1456,5 +1456,919 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     driver.quit().await?;
     served.server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn escape_in_the_help_dialog_keeps_the_entry_open() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+    driver
+        .find(By::Css("table.freq tbody tr:first-child button.open-entry"))
+        .await?
+        .click()
+        .await?;
+    wait_for(&driver, ENTRY_READY, "the entry").await?;
+    driver
+        .find(By::Css("[data-site-help-open]"))
+        .await?
+        .click()
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('[data-site-help]').open",
+        "the help dialog",
+    )
+    .await?;
+    driver
+        .action_chain()
+        .send_keys(Key::Escape)
+        .perform()
+        .await?;
+    wait_for(
+        &driver,
+        "return !document.querySelector('[data-site-help]').open",
+        "the help dialog to close",
+    )
+    .await?;
+    let entry = driver
+        .execute(
+            "return [new URLSearchParams(location.hash.slice(1)).has('entry'), !!document.querySelector('[data-fq-entry] [data-e=profile]')]",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(entry, json!([true, true]));
+    Ok(())
+}
+
+pub(crate) async fn observed(
+    driver: &WebDriver,
+    script: &str,
+    expected: Value,
+    what: &str,
+) -> WebDriverResult<()> {
+    let actual = driver.execute(script, Vec::new()).await?.json().clone();
+    if actual == expected {
+        return Ok(());
+    }
+    Err(WebDriverError::ParseError(format!(
+        "{what}: {actual}, expected {expected}"
+    )))
+}
+
+pub(crate) const PAGE_ERRORS: &str = "return window.__pageErrors || []";
+
+#[tokio::test]
+async fn the_condition_picker_keeps_keyboard_focus_and_typed_bounds() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    let focused =
+        |selector: &str| format!("return !!document.activeElement?.matches('{selector}')");
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver.execute(COUNT_FETCHES, Vec::new()).await?;
+        driver
+            .execute(
+                "window.__held = []; window.__holding = true; const counted = window.fetch; \
+                 window.__release = () => { __holding = false; for (const send of __held.splice(0)) send(); }; \
+                 window.fetch = (input, init) => __holding && String(input).includes('api/frequency?') \
+                   ? new Promise((resolve, reject) => __held.push(() => counted(input, init).then(resolve, reject))) \
+                   : counted(input, init);",
+                Vec::new(),
+            )
+            .await?;
+
+        driver.find(By::Css("button.add")).await?.click().await?;
+        driver
+            .find(By::Css(".fq-pop [data-add=year]"))
+            .await?
+            .click()
+            .await?;
+        observed(
+            &driver,
+            &focused(".fq-pop [data-lo]"),
+            json!(true),
+            "focus on the first bound of a chosen range condition",
+        )
+        .await?;
+        driver
+            .action_chain()
+            .send_keys("1960")
+            .send_keys(Key::Tab)
+            .send_keys("19")
+            .perform()
+            .await?;
+        observed(
+            &driver,
+            "const held = __held.length; __release(); return held;",
+            json!(1),
+            "table requests held while the upper bound is typed",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return __fetches.started > 0 && __fetches.started === __fetches.settled",
+            "the lower bound's reply",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            "const hi = document.querySelector('.fq-pop [data-hi]'); \
+             return [document.querySelector('.fq-pop [data-lo]').value, hi.value, document.activeElement === hi, \
+               new URLSearchParams(location.hash.slice(1)).get('w')]",
+            json!(["1960", "19", true, r#"{"year":{"m":"range","lo":1960}}"#]),
+            "the bounds, focus and conditions after the lower bound's reply",
+        )
+        .await?;
+        driver
+            .action_chain()
+            .send_keys(Key::Escape)
+            .perform()
+            .await?;
+        observed(
+            &driver,
+            "return [document.querySelector('.fq-pop').hidden, document.activeElement?.dataset.b, new URLSearchParams(location.hash.slice(1)).get('w')]",
+            json!([true, "year", r#"{"year":{"m":"range","lo":1960}}"#]),
+            "the popover, focus and conditions after Escape",
+        )
+        .await?;
+
+        driver.find(By::Css("button.add")).await?.click().await?;
+        driver
+            .find(By::Css(".fq-pop [data-add=genre]"))
+            .await?
+            .click()
+            .await?;
+        observed(
+            &driver,
+            &focused(".fq-pop [data-mode=in]"),
+            json!(true),
+            "focus on the first control of a chosen value condition",
+        )
+        .await?;
+        driver
+            .action_chain()
+            .key_down(Key::Shift)
+            .send_keys(Key::Tab)
+            .key_up(Key::Shift)
+            .perform()
+            .await?;
+        observed(
+            &driver,
+            &focused("[data-fq-sentence] *"),
+            json!(true),
+            "focus in the sentence after Shift+Tab from the popover",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.fq-pop [data-v=essay]')",
+            "the genre values",
+        )
+        .await?;
+        driver
+            .find(By::Css(".fq-pop [data-v=essay]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return decodeURIComponent(location.hash).includes('essay') && __fetches.started === __fetches.settled",
+            "the value's reply",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            &focused(".fq-pop [data-v=essay]:checked"),
+            json!(true),
+            "focus on the ticked value after its reply",
+        )
+        .await?;
+        driver
+            .find(By::Css(".fq-pop [data-any]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return !decodeURIComponent(location.hash).includes('essay') && __fetches.started === __fetches.settled",
+            "the cleared condition's reply",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            "return [document.querySelector('.fq-pop').hidden, document.activeElement?.dataset.b]",
+            json!([true, "genre"]),
+            "the popover and focus after clearing the condition",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_table_reply_leaves_focus_outside_the_open_condition_menu() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver.execute(COUNT_FETCHES, Vec::new()).await?;
+        driver
+            .find(By::Css("button.add"))
+            .await?
+            .send_keys(Key::Enter)
+            .await?;
+        observed(
+            &driver,
+            "return !!document.activeElement?.matches('.fq-pop [data-add]')",
+            json!(true),
+            "focus on the first item of the opened menu",
+        )
+        .await?;
+        driver
+            .action_chain()
+            .key_down(Key::Shift)
+            .send_keys(Key::Tab)
+            .send_keys(Key::Tab)
+            .key_up(Key::Shift)
+            .send_keys("x")
+            .perform()
+            .await?;
+        wait_for(
+            &driver,
+            "return __fetches.started > 0 && __fetches.started === __fetches.settled",
+            "the filtered table's reply",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        driver.action_chain().send_keys("y").perform().await?;
+        observed(
+            &driver,
+            "return [document.activeElement?.dataset.b, document.querySelector('[data-b=q]').value, document.querySelector('.fq-pop').hidden]",
+            json!(["q", "xy", false]),
+            "focus, the filter text and the menu after the table's reply",
+        )
+        .await?;
+        driver
+            .action_chain()
+            .send_keys(Key::Tab)
+            .send_keys(Key::Tab)
+            .send_keys(Key::Escape)
+            .perform()
+            .await?;
+        observed(
+            &driver,
+            "return [document.querySelector('.fq-pop').hidden, document.activeElement?.dataset.b]",
+            json!([true, "add"]),
+            "the menu and focus after Escape from a menu item",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_redraw_keeps_the_filter_text_and_caret_being_typed() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; window.__filters = []; \
+                window.__release = () => { __holding = false; for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init) => { \
+                  const url = String(input); \
+                  if (!url.includes('api/frequency?')) return fetched(input, init); \
+                  const q = new URL(url, location.href).searchParams.get('q'); \
+                  if (q) return fetched(input, init).finally(() => __filters.push(q)); \
+                  if (!__holding) return fetched(input, init); \
+                  return new Promise((resolve, reject) => __held.push(() => fetched(input, init).then(resolve, reject))); \
+                };"}),
+        )
+        .await?;
+    let filter = "const q = document.querySelector('[data-b=q]'); \
+        return [q.value, q.selectionStart, q.selectionEnd, document.activeElement === q]";
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute(
+                "__holding = true; \
+                 const sort = document.querySelector('select[data-b=sort]'); \
+                 sort.value = 'key'; sort.dispatchEvent(new Event('change', {bubbles: true})); \
+                 const q = window.__typedInto = document.querySelector('[data-b=q]'); \
+                 q.focus(); q.value = 'ab'; q.setSelectionRange(1, 1); \
+                 q.dispatchEvent(new Event('input', {bubbles: true})); \
+                 __release();",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-b=q]') !== __typedInto && document.querySelectorAll('table.freq tbody tr').length > 0",
+            "the sentence redrawn by the sort's reply",
+        )
+        .await?;
+        observed(
+            &driver,
+            filter,
+            json!(["ab", 1, 1, true]),
+            "the filter's text, caret and focus after the redraw",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return __filters.length > 0",
+            "the typed filter's request",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            &format!("return [__filters, new URLSearchParams(location.hash.slice(1)).get('q'), (() => {{ {filter} }})()]"),
+            json!([["ab"], "ab", ["ab", 1, 1, true]]),
+            "the filter requests, the address and the filter box after the typed filter's reply",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_restyled_button_shows_a_focus_ring_for_keyboard_focus() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    // Focuses each selector's first match, reads its outline, and returns the
+    // first ancestor whose overflow clips the outline's box. The Tab key sent
+    // first makes Chromium treat script focus as keyboard focus.
+    let rings = |selectors: &[&str]| {
+        format!(
+            "return {}.map((selector) => {{ const e = document.querySelector(selector); e?.focus(); \
+               if (!e) return [selector, false, null, null]; \
+               const style = getComputedStyle(e), box = e.getBoundingClientRect(); \
+               const reach = Math.max(0, parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth)); \
+               let clipped = null; \
+               for (let a = e.parentElement; a && !clipped; a = a.parentElement) {{ \
+                 const s = getComputedStyle(a), outer = a.getBoundingClientRect(), px = parseFloat; \
+                 if (s.overflowX !== 'visible' && (box.left - reach < outer.left + px(s.borderLeftWidth) || box.right + reach > outer.right - px(s.borderRightWidth))) clipped = a.className || a.tagName; \
+                 if (s.overflowY !== 'visible' && (box.top - reach < outer.top + px(s.borderTopWidth) || box.bottom + reach > outer.bottom - px(s.borderBottomWidth))) clipped = a.className || a.tagName; \
+               }} \
+               return [selector, e.matches(':focus-visible'), style.outlineStyle, clipped]; }})",
+            json!(selectors)
+        )
+    };
+    let ringed = |selectors: &[&str]| {
+        Value::Array(
+            selectors
+                .iter()
+                .map(|selector| json!([selector, true, "solid", null]))
+                .collect(),
+        )
+    };
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .find(By::Css("body"))
+            .await?
+            .send_keys(Key::Tab)
+            .await?;
+        let table = ["button.add", "[data-c=edit]", "button.open-entry"];
+        observed(&driver, &rings(&table), ringed(&table), "table view").await?;
+        driver
+            .execute("document.querySelector('button.add').click()", Vec::new())
+            .await?;
+        let menu = [".fq-pop [data-add=genre]"];
+        observed(&driver, &rings(&menu), ringed(&menu), "condition menu").await?;
+        driver
+            .execute(
+                "document.querySelector('.fq-pop [data-add=genre]').click()",
+                Vec::new(),
+            )
+            .await?;
+        let values = [
+            ".fq-pop [data-mode=in]",
+            ".fq-pop [data-mode=out]",
+            ".fq-pop [data-any]",
+        ];
+        observed(&driver, &rings(&values), ringed(&values), "value popover").await?;
+        driver
+            .execute(
+                "document.querySelector('button.open-entry').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        let entry = ["[data-bar]", "[data-col]", "[data-e=more]"];
+        observed(&driver, &rings(&entry), ringed(&entry), "entry view").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_filter_reload_during_an_entry_load_still_shows_the_entry() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; window.__tables = 0; \
+                window.__release = () => { __holding = false; for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init = {}) => { \
+                  const url = String(input); \
+                  if (url.includes('api/frequency?')) __tables++; \
+                  if (!__holding || !url.includes('frequency/profile')) return fetched(input, init); \
+                  return new Promise((resolve, reject) => { \
+                    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                    __held.push(() => fetched(input, init).then(resolve, reject)); \
+                  }); \
+                };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute(
+                "__holding = true; __tables = 0; document.querySelector('button.open-entry').click(); \
+                 const q = document.querySelector('[data-b=q]'); q.value = '猫'; q.dispatchEvent(new Event('input', {bubbles: true}));",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, "return __tables === 2", "the filter's table request").await?;
+        driver.execute("__release()", Vec::new()).await?;
+        wait_for(&driver, ENTRY_READY, "the entry after the filter reload").await?;
+        observed(
+            &driver,
+            "return document.querySelector('.fq-entry-name').textContent",
+            json!("猫"),
+            "the entry's name",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unparsable_clause_in_an_entry_address_shows_the_parse_error() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let url = format!(
+        "{}#pattern=noun&entry=%7B%22kind%22%3A%22surface%22%2C%22value%22%3A%22%E7%8C%AB%22%7D&where=%40%40",
+        served.base
+    );
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": COUNT_FETCHES}),
+        )
+        .await?;
+    open(
+        &driver,
+        &url,
+        "return __fetches.started > 1 && __fetches.started === __fetches.settled",
+    )
+    .await?;
+    two_frames(&driver).await?;
+    let state = driver.execute(STATE, Vec::new()).await?.json().clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert!(
+        state
+            .as_str()
+            .unwrap()
+            .starts_with("The clause does not parse: "),
+        "{state}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_next_page_is_reported_in_the_state_line() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__fail = false; const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init) => { const url = String(input); \
+                  if (__fail && url.includes('offset=')) return Promise.resolve(Response.json({error: 'no next page'}, {status: 500})); \
+                  return fetched(url.includes('api/frequency?') ? url.replace('limit=100', 'limit=1') : input, init); };"}),
+        )
+        .await?;
+    let reported = "const more = document.querySelector(arguments[0]); \
+        return document.querySelector('[data-fq-state]').textContent === 'no next page' && !more.disabled && !more.hidden";
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        for (more, ready) in [
+            ("[data-fq-table] > .more", ROWS),
+            ("[data-e=more]", ENTRY_READY),
+        ] {
+            wait_for(&driver, ready, more).await?;
+            driver
+                .execute(
+                    "__fail = true; document.querySelector(arguments[0]).click()",
+                    vec![json!(more)],
+                )
+                .await?;
+            wait_for(
+                &driver,
+                &reported.replace("arguments[0]", &json!(more).to_string()),
+                &format!("the failure of {more} in the state line, with the button enabled"),
+            )
+            .await?;
+            observed(&driver, PAGE_ERRORS, json!([]), "page errors").await?;
+            driver
+                .execute(
+                    "__fail = false; document.querySelector('button.open-entry')?.click()",
+                    Vec::new(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_or_failed_metadata_reply_raises_no_page_error_on_the_frequency_page()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "try { localStorage.setItem('lingrep-web:locale:v1', 'ja'); } catch {} \
+                window.__held = []; window.__release = () => { for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init) => { \
+                  if (!String(input).includes('frequency/meta')) return fetched(input, init); \
+                  if (sessionStorage.getItem('fail-meta')) return Promise.resolve(Response.json({error: 'no metadata'}, {status: 500})); \
+                  return new Promise((resolve, reject) => __held.push(() => fetched(input, init).then(resolve, reject))); \
+                };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        open(
+            &driver,
+            &format!("{}#pattern=noun", served.base),
+            "return document.documentElement.lang === 'ja' && __held.length === 1",
+        )
+        .await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            PAGE_ERRORS,
+            json!([]),
+            "page errors before the metadata reply",
+        )
+        .await?;
+        driver.execute("__release()", Vec::new()).await?;
+        wait_for(&driver, ROWS, "rows after the metadata reply").await?;
+        driver
+            .find(By::Css("[data-locale-toggle]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('button.add')?.textContent === '+ condition'",
+            "the locale toggle to switch the page to English",
+        )
+        .await?;
+
+        driver
+            .execute(
+                "sessionStorage.setItem('fail-meta', '1'); location.reload()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-fq-state]')?.textContent === 'no metadata'",
+            "the metadata failure in the state line",
+        )
+        .await?;
+        observed(
+            &driver,
+            PAGE_ERRORS,
+            json!([]),
+            "page errors after the metadata failure",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn superseded_frequency_requests_are_aborted() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        observed(
+            &driver,
+                "window.__signals = []; window.__held = []; const fetched = window.fetch; \
+                 window.fetch = (url, init = {}) => { \
+                   if (!/api\\/frequency(\\/profile|\\/lines)?\\?/.test(String(url))) return fetched(url, init); \
+                   __signals.push([String(url).match(/frequency(?:\\/(\\w+))?\\?/)[1] ?? 'table', init.signal]); \
+                   return new Promise((resolve, reject) => { \
+                     init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                     __held.push(() => fetched(url, init).then(resolve, reject)); \
+                   }); \
+                 }; \
+                 document.querySelector('button.open-entry').click(); \
+                 document.querySelector('[data-e=back], [data-fq-sentence]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); \
+                 for (const sort of ['works', 'key']) { \
+                   const select = document.querySelector('select[data-b=sort]'); \
+                   select.value = sort; select.dispatchEvent(new Event('change', {bubbles: true})); \
+                 } \
+                 return __signals.map(([kind, signal]) => [kind, signal?.aborted ?? null]);",
+            json!([
+                ["profile", true],
+                ["lines", true],
+                ["table", true],
+                ["table", true],
+                ["table", true],
+                ["table", false]
+            ]),
+            "each request and whether it was aborted",
+        )
+        .await?;
+        driver
+            .execute("for (const send of __held.splice(0)) send();", Vec::new())
+            .await?;
+        wait_for(&driver, ROWS, "rows in key order").await?;
+        observed(&driver, STATE, Value::Null, "the state line").await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_locale_switch_during_a_next_page_request_keeps_its_button_disabled()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; window.__more = 0; \
+                window.__release = () => { __holding = false; for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init = {}) => { \
+                  let url = String(input); \
+                  if (url.includes('api/frequency?')) url = url.replace('limit=100', 'limit=1'); \
+                  if (!url.includes('offset=')) return fetched(url, init); \
+                  __more++; \
+                  if (!__holding) return fetched(url, init); \
+                  return new Promise((resolve, reject) => { \
+                    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                    __held.push(() => fetched(url, init).then(resolve, reject)); \
+                  }); \
+                };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        for (more, redrawn, items, total) in [
+            (
+                "[data-fq-table] > .more",
+                "return document.querySelector('table.freq th').textContent === '順位'",
+                "table.freq tbody tr",
+                2,
+            ),
+            (
+                "[data-e=more]",
+                "return document.querySelector('.fq-lines h3').textContent.startsWith('Lines')",
+                ".fq-kwic li",
+                LINES + 13,
+            ),
+        ] {
+            driver
+                .execute(
+                    "__more = 0; __holding = true; document.querySelector(arguments[0]).click()",
+                    vec![json!(more)],
+                )
+                .await?;
+            driver
+                .find(By::Css("[data-locale-toggle]"))
+                .await?
+                .click()
+                .await?;
+            wait_for(&driver, redrawn, "the page in the other language").await?;
+            driver
+                .execute(
+                    "document.querySelector(arguments[0]).click(); __release()",
+                    vec![json!(more)],
+                )
+                .await?;
+            wait_for(
+                &driver,
+                &format!("return document.querySelectorAll('{items}').length >= {total}"),
+                "the next page",
+            )
+            .await?;
+            two_frames(&driver).await?;
+            observed(
+                &driver,
+                &format!("return [__more, document.querySelectorAll('{items}').length]"),
+                json!([1, total]),
+                &format!("requests and items after two clicks on {more}"),
+            )
+            .await?;
+            driver
+                .execute(
+                    "document.querySelector('button.open-entry')?.click()",
+                    Vec::new(),
+                )
+                .await?;
+            wait_for(&driver, ENTRY_READY, "the entry").await?;
+        }
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_superseded_next_page_request_leaves_its_button_enabled() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; window.__failFilter = false; window.__filtered = 0; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init = {}) => { \
+                  let url = String(input); \
+                  if (url.includes('api/frequency?')) { \
+                    url = url.replace('limit=100', 'limit=1'); \
+                    if (/[?&]q=/.test(url)) { \
+                      if (__failFilter) return Promise.resolve(Response.json({error: 'no filtered table'}, {status: 500})); \
+                      return fetched(url, init).finally(() => __filtered++); \
+                    } \
+                  } \
+                  if (!__holding || !url.includes('offset=')) return fetched(url, init); \
+                  return new Promise((resolve, reject) => { \
+                    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                    __held.push(() => fetched(url, init).then(resolve, reject)); \
+                  }); \
+                };"}),
+        )
+        .await?;
+    let page_then_filter = "__holding = true; document.querySelector(arguments[0]).click(); \
+        const q = document.querySelector('[data-b=q]'); q.value = '猫'; q.dispatchEvent(new Event('input', {bubbles: true}));";
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute(
+                "document.querySelector('button.open-entry').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        driver
+            .execute(page_then_filter, vec![json!("[data-e=more]")])
+            .await?;
+        wait_for(
+            &driver,
+            "return __filtered === 1 && !document.querySelector('[data-e=more]').disabled",
+            "the lines button enabled after the filter superseded its request",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [document.querySelectorAll('.fq-kwic li').length, document.querySelector('[data-fq-state]').textContent]",
+            json!([LINES, ""]),
+            "the lines and the state line after the superseded request",
+        )
+        .await?;
+        driver
+            .execute(
+                "__holding = false; document.querySelector('[data-e=more]').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            &format!(
+                "return document.querySelectorAll('.fq-kwic li').length === {}",
+                LINES + 13
+            ),
+            "the next page of lines",
+        )
+        .await?;
+
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute(
+                &format!("__failFilter = true; {page_then_filter}"),
+                vec![json!("[data-fq-table] > .more")],
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-fq-state]').textContent === 'no filtered table' \
+               && !document.querySelector('[data-fq-table] > .more').disabled",
+            "the table button enabled after the superseding filter request failed",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return document.querySelectorAll('table.freq tbody tr').length",
+            json!(1),
+            "rows after the superseded request",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     Ok(())
 }

@@ -1,4 +1,5 @@
 import { t, onLocaleChange } from "./i18n.js";
+import { count } from "./numbers.js";
 export const KWIC_PAGE_SIZES = Object.freeze([50, 100, 250, 500, 1000]);
 export const DEFAULT_KWIC_PAGE_SIZE = 100;
 const KWIC_PAGE_SIZE_KEY = "lingrep-web:kwic-page-size:v1";
@@ -141,16 +142,6 @@ export function visibleForQuery(rowText, query = "") {
   return trimmed === "" || searchMatches(rowText, trimmed);
 }
 
-/**
- * Shows the stated reason for an emptied concordance, or hides it.
- *
- * The variation list is corpus-exact and the concordance is the bounded
- * retained sample, so a surface with a positive corpus count can have no
- * retained row: pressing it empties the table while the count beside it still
- * says otherwise. The note names that population. A section-only selection
- * keeps the ordinary status line and no note of its own, and a surviving row
- * always clears the note.
- */
 export function applyFilterEmptyNote(
   detail,
   visibleCount,
@@ -420,6 +411,13 @@ export function failCorpusRequest() {
   document.getElementById("results")?.setAttribute("aria-busy", "false");
 }
 
+function isErrorFragment(html) {
+  const probe = document.createElement("template");
+  probe.innerHTML = html;
+  return probe.content.childElementCount === 1 &&
+    probe.content.firstElementChild.matches('div.error[role="status"]');
+}
+
 function beginSampleRequest(form) {
   form.querySelector("[data-sample-status]").textContent = t("sample.running");
   document.getElementById("sample-results")?.setAttribute("aria-busy", "true");
@@ -449,8 +447,7 @@ function renderGroupedCatalog(tbody, field) {
     // is `hidden`, so spanning 3 would push the group count past the
     // right-hand count column.
     cell.colSpan = 2;
-    const formatted = new Intl.NumberFormat().format(group.exactTotal);
-    cell.append(groupLabelNode(document, group.label, formatted));
+    cell.append(groupLabelNode(document, group.label, count(group.exactTotal)));
     header.append(cell);
     fragment.append(header, ...group.rows);
   }
@@ -655,7 +652,8 @@ class InspectorMount {
     close.type = "button";
     close.className = "inspector-dock-close";
     close.dataset.inspectorClose = "";
-    close.setAttribute("aria-label", "Close inspector");
+    close.dataset.i18nAriaLabel = "inspector.close";
+    close.setAttribute("aria-label", t("inspector.close"));
     close.textContent = "×";
     header.append(title, close);
     cell.append(header);
@@ -690,7 +688,7 @@ class InspectorMount {
       if (parts.body.parentElement !== inline.cell) inline.cell.append(parts.body);
     }
     this.title(ordinal);
-    parts.body.setAttribute("aria-label", `${inspectorTitle(ordinal)} details`);
+    parts.body.setAttribute("aria-label", t("inspector.details", { title: inspectorTitle(ordinal) }));
   }
 
   close() {
@@ -1617,6 +1615,11 @@ if (typeof document !== "undefined") {
     if (event.detail.target?.matches?.(".reading-body") && event.detail.xhr?.status >= 400) {
       event.detail.shouldSwap = true;
     }
+    if (event.detail.target?.id === "sample-results" && event.detail.xhr?.status >= 400 &&
+        isErrorFragment(event.detail.xhr.responseText)) {
+      event.detail.shouldSwap = true;
+      event.detail.isError = false;
+    }
   });
 
   document.addEventListener("htmx:sendError", (event) => {
@@ -2086,6 +2089,7 @@ if (typeof document !== "undefined") {
     // through visible patterns, Escape closes the inspector dock when the
     // focus is anywhere else (rows handle their own Escape above).
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (document.querySelector("dialog:modal")) return;
     const editable = event.target.closest?.(
       "input, textarea, select, [contenteditable], .cm-editor",
     );

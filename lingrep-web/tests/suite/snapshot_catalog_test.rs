@@ -100,6 +100,8 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
     let snapshot = CompletedSnapshot {
         search_scope: Default::default(),
         excluded_sentences: 0,
+        admission: Default::default(),
+        cli_arguments: String::new(),
         sections: lingrep_web::section_tally::SectionAvailability::Available(
             lingrep_web::section_tally::SectionTally::unlabelled(),
         ),
@@ -110,6 +112,7 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
         corpus_identity: CorpusIdentity::new("fixture"),
         source: std::sync::Arc::from(""),
         derive_compounds: false,
+        overlaps: Default::default(),
         compound_category: lingrep_web::snapshot::CompoundCategory::Compound,
         patterns: vec![
             PatternDescriptor {
@@ -151,6 +154,8 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
         .into_boxed_slice(),
         capture_catalog: Box::default(),
         oversized_omissions: None,
+        unavailable_attributes: None,
+        vectors_binding: None,
     };
 
     assert_eq!(snapshot.match_ref(second, 0).unwrap().pattern_key, second);

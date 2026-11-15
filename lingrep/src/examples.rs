@@ -306,6 +306,13 @@ static SEMANTICS: &[CommandSemantics] = &[
         },
     },
     CommandSemantics {
+        command: "neighbors",
+        input_modes: &[],
+        examples: ExamplePublication::Omitted {
+            reason: "reads a word-vector file the user supplies",
+        },
+    },
+    CommandSemantics {
         command: "dictionary",
         input_modes: &[],
         examples: ExamplePublication::Omitted {

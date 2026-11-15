@@ -204,6 +204,34 @@ pub enum QueryError {
     Table(#[from] CountTableError),
     #[error(transparent)]
     Metadata(#[from] std::io::Error),
+    /// An entry's lines that could not be matched, or that disagree with
+    /// the table's counts.
+    #[error("{0}")]
+    Lines(String),
+}
+
+impl QueryError {
+    /// Returns true for unknown patterns and exceeded query limits, whose
+    /// messages can be returned to the client without exposing server paths.
+    #[must_use]
+    pub fn is_request_error(&self) -> bool {
+        match self {
+            Self::UnknownPattern(_)
+            | Self::ResourceLimit { .. }
+            | Self::Table(CountTableError::GroupLimit(_)) => true,
+            Self::Metadata(error) | Self::Table(CountTableError::Io(error)) => {
+                exceeds_temp_budget(error)
+            }
+            Self::Table(_) | Self::Lines(_) => false,
+        }
+    }
+}
+
+fn exceeds_temp_budget(error: &std::io::Error) -> bool {
+    matches!(
+        error.get_ref(),
+        Some(inner) if inner.is::<lingrep_core::spill::TempCapacityError>()
+    )
 }
 
 #[derive(Default)]
@@ -382,7 +410,7 @@ impl FrequencyViews {
                 let source = catalogs.get(key).map_or("", |source| source);
                 (
                     key.to_owned(),
-                    lingrep_core::fsm::catalog_fingerprint(source),
+                    crate::patterns::web_catalog_fingerprint(source),
                 )
             })
             .collect::<Vec<_>>();
@@ -444,6 +472,7 @@ impl FrequencyViews {
         let mut views = Self::default();
         let mut loaded: HashMap<CorpusName, Arc<CorpusDocuments>> = HashMap::new();
         for (path, key, corpus, catalog) in bound {
+            tokio::task::yield_now().await;
             let (name, display, corpus_path, _) = &identities[corpus];
             let documents = if let Some(documents) = loaded.get(name) {
                 Arc::clone(documents)
@@ -466,6 +495,7 @@ impl FrequencyViews {
             let named = |message: String| format!("--count-table {}: {message}", path.display());
             let table = CountTable::open(&path, &key).map_err(|error| named(error.to_string()))?;
             table.verify().map_err(|error| named(error.to_string()))?;
+            tokio::task::yield_now().await;
             let mut reader = documents
                 .store
                 .reader()
@@ -489,6 +519,7 @@ impl FrequencyViews {
                 &documents.budget,
             )
             .map_err(|error| named(error.to_string()))?;
+            tokio::task::yield_now().await;
             let source = catalogs.get(&catalog).map_or("", |source| source);
             let matcher = entry::EntryMatcher::new(
                 &catalog,
@@ -617,6 +648,7 @@ async fn load_documents(runtime: &CorpusRuntime) -> Result<CorpusDocuments, Stri
         }
     }
     let store = Arc::new(writer.finish().map_err(|error| error.to_string())?);
+    tokio::task::yield_now().await;
     let mut reader = store.reader().map_err(|error| error.to_string())?;
     let mut keys = BTreeSet::new();
     let mut key_budget = ProjectionBudget::default();
@@ -859,7 +891,7 @@ fn document_clause(source: &str) -> Result<Option<ScopeClause>, Unsupported> {
     Ok(Some(clause))
 }
 
-fn shell_word(text: &str) -> String {
+pub(crate) fn shell_word(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
@@ -928,6 +960,14 @@ fn definition_source(source: &str, name: &str) -> Option<String> {
     (!found.is_empty()).then(|| found.join("\n\n"))
 }
 
+fn check_cancellation(cancellation: &CancellationFlag) -> Result<(), QueryError> {
+    if cancellation.is_cancelled() {
+        Err(CountTableError::Cancelled.into())
+    } else {
+        Ok(())
+    }
+}
+
 impl FrequencyPair {
     fn admit_query(&self) -> Result<(), QueryError> {
         if self.table.document_ids().len() > MAX_MASK_BYTES / 4 {
@@ -962,7 +1002,11 @@ impl FrequencyPair {
             .ok_or_else(|| QueryError::UnknownPattern(name.to_owned()))
     }
 
-    fn admitted(&self, clause: Option<&ScopeClause>) -> Result<Vec<bool>, QueryError> {
+    fn admitted(
+        &self,
+        clause: Option<&ScopeClause>,
+        cancellation: &CancellationFlag,
+    ) -> Result<Vec<bool>, QueryError> {
         let Some(clause) = clause else {
             return Ok(vec![true; self.table.document_ids().len()]);
         };
@@ -975,7 +1019,7 @@ impl FrequencyPair {
             })
             .collect::<Option<Vec<_>>>();
         let Some(numbered) = numbered.filter(|_| !clause.requires_sentence_values()) else {
-            return self.admitted_from_metadata(clause);
+            return self.admitted_from_metadata(clause, cancellation);
         };
         let columns = numbered
             .iter()
@@ -987,6 +1031,7 @@ impl FrequencyPair {
         let mut stored = Vec::new();
         let mut admitted = Vec::with_capacity(self.table.document_ids().len());
         for position in 0..self.table.document_ids().len() {
+            check_cancellation(cancellation)?;
             stored.clear();
             for column in &columns {
                 let slots = column.stored(position);
@@ -1029,12 +1074,17 @@ impl FrequencyPair {
         Ok(admitted)
     }
 
-    fn admitted_from_metadata(&self, clause: &ScopeClause) -> Result<Vec<bool>, QueryError> {
+    fn admitted_from_metadata(
+        &self,
+        clause: &ScopeClause,
+        cancellation: &CancellationFlag,
+    ) -> Result<Vec<bool>, QueryError> {
         let mut reader = self.documents.reader()?;
         self.table
             .document_ids()
             .iter()
             .map(|id| {
+                check_cancellation(cancellation)?;
                 let metadata = reader.document(*id)?;
                 Ok(clause.evaluate_document(&metadata)
                     == DocumentOutcome::Decided(Verdict::Admitted))
@@ -1125,7 +1175,8 @@ impl FrequencyPair {
             Err(unsupported) => return Ok(Outcome::Unsupported(unsupported)),
         };
         self.admit_query()?;
-        let mask = self.mask(&self.admitted(clause.as_ref())?);
+        let mask = self.mask(&self.admitted(clause.as_ref(), cancellation)?);
+        check_cancellation(cancellation)?;
         let totals = self.table.pattern_totals(&mask)?;
         let total = totals[pattern];
         let mut kept = BTreeMap::new();
@@ -1138,13 +1189,14 @@ impl FrequencyPair {
                 .collect::<Vec<_>>()
                 .join(" & ");
             let others = document_clause(&others).unwrap_or(None);
-            let admitted_others = self.admitted(others.as_ref())?;
+            let admitted_others = self.admitted(others.as_ref(), cancellation)?;
             let mut excluded_missing_field_documents = 0;
             if matches!(query.conditions.get(key), Some(Condition::Out { .. })) {
                 let predicate = document_clause(&written[index].1).expect("written predicate");
                 let mut reader = self.documents.reader()?;
                 for (id, admitted) in self.table.document_ids().iter().zip(&admitted_others) {
                     if *admitted {
+                        check_cancellation(cancellation)?;
                         let metadata = reader.document(*id)?;
                         if predicate.as_ref().is_some_and(|predicate| {
                             predicate.evaluate_document(&metadata)
@@ -1158,6 +1210,7 @@ impl FrequencyPair {
                 }
             }
             let others = self.mask(&admitted_others);
+            check_cancellation(cancellation)?;
             let of = self.table.pattern_totals(&others)?[pattern].occurrences;
             kept.insert(
                 key.clone(),
@@ -1282,8 +1335,8 @@ impl FrequencyPair {
     ///
     /// # Errors
     ///
-    /// An unknown pattern, a table that fails to read, or a query above the
-    /// resource limits.
+    /// An unknown pattern, a table that fails to read, a query above the
+    /// resource limits, or a raised `cancellation`.
     pub fn values(
         &self,
         dimensions: &[Dimension],
@@ -1291,6 +1344,7 @@ impl FrequencyPair {
         key: &str,
         conditions: &BTreeMap<String, Condition>,
         query: &ValueQuery,
+        cancellation: &CancellationFlag,
     ) -> Result<Result<ValuePage, Unsupported>, QueryError> {
         let pattern = self.pattern_index(pattern)?;
         if !dimensions.iter().any(|dimension| dimension.key == key) {
@@ -1313,12 +1367,14 @@ impl FrequencyPair {
             Ok(clause) => clause,
             Err(unsupported) => return Ok(Err(unsupported)),
         };
-        let admitted = self.admitted(clause.as_ref())?;
+        let admitted = self.admitted(clause.as_ref(), cancellation)?;
         let counts = self.table.pattern_document_counts_iter(pattern)?;
         let budget = Arc::new(TempBudget::new(MAX_TEMP_BYTES));
         let mut values = SortedRunCounts::<String>::with_policy(SPILL_POLICY, Arc::clone(&budget))?;
+        values.set_cancellation(cancellation.clone());
         let mut reader = self.documents.reader()?;
         for ((id, count), admitted) in self.table.document_ids().iter().zip(counts).zip(&admitted) {
+            check_cancellation(cancellation)?;
             let count = count?;
             let metadata = reader.document(*id)?;
             let scalars = match lookup(&metadata, key) {
@@ -1347,6 +1403,7 @@ impl FrequencyPair {
         };
         let mut values = values.into_sorted_drain()?;
         let mut ordered = SortedRunCounts::<ValueOrder>::with_policy(SPILL_POLICY, budget)?;
+        ordered.set_cancellation(cancellation.clone());
         let mut matching = 0;
         while let Some((value, count)) = values.next_entry()? {
             if let Some(selected_count) = selected.get_mut(&value) {
@@ -1396,8 +1453,17 @@ impl FrequencyPair {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn one_pair_views() -> (tempfile::TempDir, FrequencyViews) {
+        let (directory, pair) = table_pair(vec!["v".into()], surface_schema(), Box::new([]));
+        let views = FrequencyViews {
+            pairs: vec![pair],
+            ..FrequencyViews::default()
+        };
+        (directory, views)
+    }
 
     fn table_pair(
         values: Vec<String>,
@@ -1629,6 +1695,56 @@ mod tests {
     }
 
     #[test]
+    fn a_raised_cancellation_stops_admission_values_and_profile() {
+        let documents = vec![
+            metadata(&[("genre", serde_json::json!("essay"))]),
+            metadata(&[("genre", serde_json::json!("novel"))]),
+        ];
+        let (_directory, pair) =
+            table_pair_documents(vec!["x".into()], surface_schema(), documents);
+        let dimensions = [categorical("genre", false)];
+        let raised = CancellationFlag::new();
+        raised.cancel();
+        let cancelled = |error: QueryError| {
+            matches!(
+                error,
+                QueryError::Table(lingrep_corpus::CountTableError::Cancelled)
+            )
+        };
+
+        for clause in ["@document.genre = essay", "@section = intro"] {
+            let clause = ScopeClause::parse(clause).expect("clause");
+            assert!(cancelled(
+                pair.admitted(Some(&clause), &raised)
+                    .expect_err("admission")
+            ));
+        }
+        assert!(cancelled(
+            pair.values(
+                &dimensions,
+                "p",
+                "genre",
+                &BTreeMap::new(),
+                &ValueQuery::default(),
+                &raised,
+            )
+            .map(|_| ())
+            .expect_err("values")
+        ));
+        assert!(cancelled(
+            pair.profile(
+                &dimensions,
+                "p",
+                &serde_json::json!({"kind": "surface", "value": "x"}),
+                &BTreeMap::new(),
+                &raised,
+            )
+            .map(|_| ())
+            .expect_err("profile")
+        ));
+    }
+
+    #[test]
     fn a_frequency_offset_at_or_past_the_last_entry_is_an_empty_page() {
         let (_directory, pair) = table_pair(
             (0..12).map(|n| format!("v{n:06}")).collect(),
@@ -1796,6 +1912,7 @@ mod tests {
                     limit: 1,
                     ..ValueQuery::default()
                 },
+                &CancellationFlag::new(),
             )
             .expect("query")
             .expect("supported");
@@ -1819,6 +1936,7 @@ mod tests {
                     filter: "v10000".into(),
                     ..ValueQuery::default()
                 },
+                &CancellationFlag::new(),
             )
             .expect("query")
             .expect("supported");
@@ -1837,6 +1955,7 @@ mod tests {
                 "genre",
                 &BTreeMap::new(),
                 &ValueQuery::default(),
+                &CancellationFlag::new(),
             )
             .expect("query")
             .expect("supported");
@@ -2070,8 +2189,10 @@ mod tests {
         let source = drawn_clause(&tc, 2);
         let clause = ScopeClause::parse(&source).expect("clause");
         assert_eq!(
-            pair.admitted(Some(&clause)).expect("numbered"),
-            pair.admitted_from_metadata(&clause).expect("metadata"),
+            pair.admitted(Some(&clause), &CancellationFlag::new())
+                .expect("numbered"),
+            pair.admitted_from_metadata(&clause, &CancellationFlag::new())
+                .expect("metadata"),
             "{source}"
         );
     }

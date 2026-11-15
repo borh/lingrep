@@ -53,8 +53,11 @@ fn compound(index: usize, name: &str, components: &[usize], total: u64) -> Patte
 /// A B C adjacent derives A+B, B+C and A+B+C.
 fn snapshot(derive_compounds: bool) -> CompletedSnapshot {
     CompletedSnapshot {
+        overlaps: Default::default(),
         search_scope: Default::default(),
         excluded_sentences: 0,
+        admission: Default::default(),
+        cli_arguments: String::new(),
         revision: RevisionId(1),
         corpus_identity: CorpusIdentity::new(""),
         source: "".into(),
@@ -91,6 +94,8 @@ fn snapshot(derive_compounds: bool) -> CompletedSnapshot {
                 .collect(),
         }),
         oversized_omissions: None,
+        unavailable_attributes: None,
+        vectors_binding: None,
     }
 }
 
@@ -166,7 +171,7 @@ fn the_middle_pattern_lists_its_neighbours_and_the_longer_chain_with_its_positio
 fn the_summary_states_how_many_occurrences_are_chained() {
     let html = render(&snapshot(true), 1);
     assert!(
-        html.contains("data-i18n=\"detail.chain_share\" data-i18n-args='{\"chained\": 5, \"exact\": 20, \"pct\": \"25.0\"}'"),
+        html.contains("data-i18n=\"detail.chain_share\" data-i18n-args='{\"chained\": \"5\", \"exact\": \"20\", \"pct\": \"25.0\"}'"),
         "{html}"
     );
     assert!(
@@ -232,7 +237,7 @@ fn the_concordance_opens_on_all_occurrences_and_flags_each_row() {
 fn the_summary_states_document_reach_when_the_run_counted_it() {
     let html = render(&snapshot(true), 1);
     assert!(
-        html.contains(r#"data-document-share data-i18n="detail.document_share" data-i18n-args='{"documents": 12, "scanned": 61, "top": "25.0", "top_five": "45.0"}'"#),
+        html.contains(r#"data-document-share data-i18n="detail.document_share" data-i18n-args='{"documents": "12", "scanned": "61", "top": "25.0", "top_five": "45.0"}'"#),
         "{html}"
     );
     assert!(

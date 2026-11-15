@@ -46,7 +46,22 @@ impl FsmBuilder {
 
     /// Atomically binds all definitions and builds the immutable matcher.
     pub fn build(self) -> Result<CompileOutput, CompileError> {
-        self.definitions.build(&self.limits)
+        self.definitions.build(&self.limits, None)
+    }
+
+    /// [`Self::build`] with `vectors` answering the catalog's `near` tests,
+    /// which do not compile without a table.
+    ///
+    /// # Errors
+    ///
+    /// Every error of [`Self::build`], and those
+    /// [`compile_catalog_with_vectors`](crate::fsm::compile_catalog_with_vectors)
+    /// adds.
+    pub fn build_with_vectors(
+        self,
+        vectors: &dyn crate::fsm::WordVectors,
+    ) -> Result<CompileOutput, CompileError> {
+        self.definitions.build(&self.limits, Some(vectors))
     }
 }
 

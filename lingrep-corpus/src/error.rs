@@ -64,6 +64,10 @@ pub enum CorpusError {
         "artifact was written under token schema {recorded}, but this build produces {expected}; rebuild the artifact from source"
     )]
     TokenSchemaIdentityStale { recorded: String, expected: String },
+    #[error(
+        "artifact was normalized with Unicode tables {recorded}, but this build uses {expected}; rebuild the artifact from source"
+    )]
+    NormalizationTablesStale { recorded: String, expected: String },
     #[error("artifact component {component} belongs to a different artifact instance")]
     ArtifactBindingMismatch { component: &'static str },
     #[error("artifact component {component} has a different sentence count")]
@@ -93,6 +97,44 @@ pub enum CorpusError {
 }
 
 impl CorpusError {
+    /// Returns true for damaged or inconsistent stored bytes; OS, resource,
+    /// unsupported-version and directory-layout errors return false.
+    #[must_use]
+    pub fn is_artifact_corruption(&self) -> bool {
+        match self {
+            Self::Truncated { .. }
+            | Self::InvalidFormat { .. }
+            | Self::ComponentLengthMismatch { .. }
+            | Self::AnalysisIdentityMismatch { .. }
+            | Self::ArtifactBindingMismatch { .. }
+            | Self::SentenceCountMismatch { .. }
+            | Self::ComponentChecksumMismatch { .. }
+            | Self::TruncatedComponent { .. }
+            | Self::DiscoveryReportMismatch
+            | Self::VerificationMismatch { .. } => true,
+            Self::Identity(_)
+            | Self::Io(_)
+            | Self::TempCapacity(_)
+            | Self::ProvenancePageCapacity { .. }
+            | Self::SectionLabelCapacity { .. }
+            | Self::TokenBlockCapacity { .. }
+            | Self::UnsortedOrdinals
+            | Self::UnsupportedSchema { .. }
+            | Self::PreparedArtifactRebuildRequired { .. }
+            | Self::UnsupportedArtifactGeneration { .. }
+            | Self::UnknownManifestField { .. }
+            | Self::ExpectedArtifactDirectory { .. }
+            | Self::SymlinkComponent { .. }
+            | Self::TokenSchemaIdentityStale { .. }
+            | Self::NormalizationTablesStale { .. }
+            | Self::SqliteSidecar
+            | Self::SourceInventoryMismatch
+            | Self::DestinationExists { .. }
+            | Self::UnsupportedPublication { .. }
+            | Self::PublicationDurabilityUncertain { .. } => false,
+        }
+    }
+
     /// Stable machine-readable error category.
     pub fn code(&self) -> &'static str {
         match self {
@@ -116,6 +158,7 @@ impl CorpusError {
             Self::ComponentLengthMismatch { .. } => "component_length_mismatch",
             Self::AnalysisIdentityMismatch { .. } => "analysis_identity_mismatch",
             Self::TokenSchemaIdentityStale { .. } => "token_schema_identity_stale",
+            Self::NormalizationTablesStale { .. } => "normalization_tables_stale",
             Self::ArtifactBindingMismatch { .. } => "artifact_binding_mismatch",
             Self::SentenceCountMismatch { .. } => "sentence_count_mismatch",
             Self::ComponentChecksumMismatch { .. } => "component_checksum_mismatch",

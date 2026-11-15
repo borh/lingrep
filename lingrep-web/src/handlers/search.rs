@@ -32,6 +32,10 @@ pub struct SearchForm {
     pub compound_category: Option<String>,
     #[serde(default)]
     pub document_reach: Option<bool>,
+    /// `keep` or `longest`; absent or any other value is the catalog's own
+    /// treatment.
+    #[serde(default)]
+    pub overlaps: Option<String>,
 }
 
 /// Matches `handlers::sample::MAX_PATTERN_BYTES` and the compiler's
@@ -49,10 +53,8 @@ const CORPUS_CONFLICT_ALERT: &str = concat!(
     "opened for. Reload the page to search this corpus.</div>"
 );
 
-/// Capacity exhaustion. Untranslated inline text, like the other pre-existing
-/// alerts in this handler.
 const REGISTRY_FULL_ALERT: &str = concat!(
-    "<div class=\"alert alert-error\" role=\"status\">",
+    "<div class=\"alert alert-error\" role=\"status\" data-i18n=\"status.busy\">",
     "Server busy: too many active sessions. Try again shortly.</div>"
 );
 
@@ -67,14 +69,20 @@ pub async fn search(
 ) -> Html<String> {
     if form.pattern.len() > MAX_PATTERN_BYTES {
         return Html(
-            "<div class=\"alert alert-error\" role=\"status\">Pattern too large to scan.</div>"
+            "<div class=\"alert alert-error\" role=\"status\" data-i18n=\"status.pattern_too_large\">Pattern too large to scan.</div>"
                 .to_string(),
         );
     }
-    let Ok(scope) = crate::search_scope::SearchScope::parse(form.search_scope.as_deref()) else {
-        return Html(
-            "<div class=\"alert alert-error\" role=\"status\">Invalid search scope.</div>".into(),
-        );
+    let scope = match crate::search_scope::SearchScope::parse(form.search_scope.as_deref()) {
+        Ok(scope) => scope,
+        Err(message) => {
+            return Html(format!(
+                "<div class=\"alert alert-error\" role=\"status\"><span data-i18n=\"status.invalid_scope\">Invalid search scope.</span> <span lang=\"en\">{}</span></div>",
+                askama::filters::escape(&message, askama::filters::Html)
+                    .map(|escaped| escaped.to_string())
+                    .unwrap_or_default()
+            ));
+        }
     };
     let workbench = WorkbenchId::new(&workbench_id);
     let Some(slot) = store.corpora.resolve(form.corpus.as_deref()) else {
@@ -100,6 +108,7 @@ pub async fn search(
                 derive_compounds: form.derive_compounds.unwrap_or(false),
                 compound_category,
                 document_reach: form.document_reach.unwrap_or(false),
+                overlaps: crate::templates::overlaps_of_form(form.overlaps.as_deref()),
                 search_scope: scope,
             },
         )

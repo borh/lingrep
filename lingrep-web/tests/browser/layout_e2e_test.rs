@@ -406,6 +406,65 @@ return rect.left>=0&&rect.right<=innerWidth&&rect.height>0&&[rect.top+4,(rect.to
             .await?
             .is_empty()
     );
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-clause]"))
+        .await?
+        .send_keys("@section = introduction")
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] button[type='submit']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-scope-clause-applied]").await?;
+    let applied: Vec<String> = driver
+        .execute(
+            "return ['[data-scope-clause-applied]','[data-cli-summarize]','[data-cli-matches]'].map(selector=>document.querySelector(selector).textContent)",
+            vec![],
+        )
+        .await?
+        .convert()?;
+    let scope = " --where '@section = introduction'";
+    assert_eq!(applied[0], "@section = introduction");
+    assert!(
+        applied[1].starts_with("ling summarize --patterns query.lx ")
+            && applied[1].ends_with(scope),
+        "{}",
+        applied[1]
+    );
+    assert!(
+        applied[2].starts_with("ling matches --patterns query.lx ") && applied[2].ends_with(scope),
+        "{}",
+        applied[2]
+    );
+    wait_for_selector(&driver, "[data-exact-total='1']").await?;
+    driver
+        .find(By::Css("[data-search-scope] summary"))
+        .await?
+        .click()
+        .await?;
+    driver
+        .find(By::Css("[data-scope-clause]"))
+        .await?
+        .clear()
+        .await?;
+    driver
+        .find(By::Css("[data-search-scope] button[type='submit']"))
+        .await?
+        .click()
+        .await?;
+    wait_for_selector(&driver, "[data-exact-total='3']").await?;
+    assert!(
+        driver
+            .find_all(By::Css("[data-search-scope-applied]"))
+            .await?
+            .is_empty()
+    );
     driver.execute("const sort=document.querySelector('[data-kwic-sort]');sort.value='section';sort.dispatchEvent(new Event('change',{bubbles:true}));const direction=document.querySelector('[data-kwic-sort-direction]');direction.value='descending';direction.dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
     let order: Vec<String> = driver
         .execute(
@@ -456,16 +515,12 @@ return rect.left>=0&&rect.right<=innerWidth&&rect.height>0&&[rect.top+4,(rect.to
     Ok(())
 }
 
-#[tokio::test]
-async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> WebDriverResult<()> {
+async fn reader_fixture() -> (reading_support::ArtifactFixture, FixtureServer) {
     use askama::Template;
     use lingrep_web::{
         revision::WorkbenchId,
         state::{Config, DetailLimits, RequestStore},
         templates::HitDetailFragment,
-    };
-    let Some(driver_url) = crate::chromedriver_url().await else {
-        return Ok(());
     };
     let words = (0..30)
         .map(|i| {
@@ -478,7 +533,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
             ]
         })
         .collect();
-    let (_artifact, runtime) = reading_support::runtime_fixture("reading-browser", words);
+    let (artifact, runtime) = reading_support::runtime_fixture("reading-browser", words);
     let store = RequestStore::with_runtime(
         Config {
             dict_path: String::new(),
@@ -551,6 +606,15 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
             axum::serve(listener, app).await.unwrap();
         }),
     };
+    (artifact, fixture)
+}
+
+#[tokio::test]
+async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let (_artifact, fixture) = reader_fixture().await;
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
@@ -650,7 +714,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
             .await?
             .text()
             .await?
-            .contains("Invalid reading scope or page")
+            .contains("Invalid context range or page")
     );
     driver
         .find(By::Css(
@@ -766,6 +830,53 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
     )
     .await?;
     driver.quit().await
+}
+
+#[tokio::test]
+async fn escape_closes_the_reader_while_a_hit_is_selected() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let (_artifact, fixture) = reader_fixture().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    capabilities.add_arg("--disable-dev-shm-usage")?;
+    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(format!("{}/reader-fixture", fixture.address))
+            .await?;
+        wait_for_selector(&driver, "[data-reading-open]").await?;
+        driver
+            .execute(
+                r#"document.querySelector("main").insertAdjacentHTML("beforeend",
+                     '<section class="pattern-detail"><table><tbody><tr class="kwic-row" aria-selected="true" tabindex="0"><td>row</td></tr></tbody></table></section>');"#,
+                vec![],
+            )
+            .await?;
+        driver
+            .find(By::Css("[data-reading-open][hx-get$='/document']"))
+            .await?
+            .click()
+            .await?;
+        wait_for_selector(&driver, "dialog[open] [data-reading-page] mark").await?;
+        driver
+            .action_chain()
+            .send_keys(Key::Escape)
+            .perform()
+            .await?;
+        crate::frequency_e2e_test::wait_for(
+            &driver,
+            "return !document.querySelector('.reading-dialog').open && location.hash === ''",
+            "Escape to close the reader and take it out of the address",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    result
 }
 
 impl Drop for FixtureServer {
@@ -1267,6 +1378,7 @@ fn header_help_fixture_html() -> String {
         catalog_keys: vec![],
         retained_options: vec![100],
         retained_default: 100,
+        run_options: Default::default(),
         frequency_view: false,
     }
     .render()
@@ -1401,6 +1513,15 @@ pattern p := (?&lt;word&gt; [text=猫]).
                 (
                     [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
                     include_str!("../../assets/results-explorer.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/numbers.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../../assets/numbers.js"),
                 )
             }),
         )

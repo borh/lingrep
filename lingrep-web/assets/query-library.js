@@ -30,7 +30,7 @@ export function normalizeName(value) {
   if ([...trimmed].length > NAME_LIMIT) {
     return {
       ok: false,
-      message: "Names must be 120 characters or fewer.",
+      message: t("library.name_too_long"),
     };
   }
   return { ok: true, value: trimmed || null };
@@ -41,7 +41,7 @@ export function firstDefinition(source) {
 }
 
 export function entryLabel(entry) {
-  return entry.name || entry.firstDefinition || "Untitled pattern";
+  return entry.name || entry.firstDefinition || t("library.untitled");
 }
 
 export function sourcePreview(source) {
@@ -242,11 +242,11 @@ export async function loadCatalog(key, fetchImpl = fetch) {
   try {
     const response = await fetchImpl(`api/catalogs/${path}`);
     if (!response.ok) {
-      return { ok: false, message: `Catalog unavailable (${response.status}).` };
+      return { ok: false, message: t("library.catalog_unavailable", { reason: response.status }) };
     }
     return { ok: true, source: await response.text() };
   } catch (error) {
-    return { ok: false, message: `Catalog unavailable (${error}).` };
+    return { ok: false, message: t("library.catalog_unavailable", { reason: error }) };
   }
 }
 
@@ -345,7 +345,7 @@ export function createQueryStore(
         value: valid,
         ...(valid.length === values.length
           ? {}
-          : { warning: "Some saved queries could not be read." }),
+          : { warning: t("library.unreadable") }),
       };
     } catch (_error) {
       return unavailable();
@@ -568,7 +568,7 @@ function timeNode(timestamp) {
 
 function namedButton(label, action, entry) {
   const control = button(label, action, entry.id);
-  control.setAttribute("aria-label", `${label} “${entryLabel(entry)}”`);
+  control.setAttribute("aria-label", t("library.action_for", { action: label, name: entryLabel(entry) }));
   return control;
 }
 
@@ -968,7 +968,12 @@ export async function initializeQueryLibrary(root = document) {
       );
     }
     if (action === "undo" && undoRecords?.length) {
-      await store.restore(undoRecords);
+      const result = await store.restore(undoRecords);
+      if (!result.ok) {
+        status(t("library.undo_failed"), true);
+        restorePanelFocus({ selector: '[data-query-action="undo"]' });
+        return;
+      }
       undoRecords = null;
       status(t("library.undone"));
       await render(true, { selector: "[data-query-status]" });

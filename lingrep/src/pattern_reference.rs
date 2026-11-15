@@ -210,6 +210,9 @@ TOKEN TESTS
   ATTR in {value, ...}            membership in an inline set
   ATTR in @set                    membership in a named set
   ATTR not in SET                 non-membership
+  ATTR near value >= 0.6          value's word vector is at least this similar
+  ATTR not near value >= 0.6      present value that is less similar, or has
+                                  no vector
   ATTR ~ value                    literal substring search
   ATTR ~ /regex/                  regular-expression substring search
   ATTR !~ value                   negated substring search
@@ -227,6 +230,11 @@ TOKEN TESTS
 `=`, `!=`, `in`, and `not in` require a scalar one. `~` and `!~` read either:
 over a set they are existential over its entries, so `[conllu.misc ~ Inf=]`
 holds when some entry starts that way.
+
+`near` needs a word-vector file (`--vectors FILE` or LINGREP_VECTORS_PATH) and
+compiles to the set of the file's values whose cosine similarity to `value` is
+at least the number, which lies between 0 and 1. White space must separate the
+value from `>=`. A value with no vector in the file is an error.
 
 Inside `[...]`, `!` binds before `&`, and `&` before `|`. A missing attribute
 satisfies neither `=` nor `!=`, and neither `~` nor `!~`. Boolean `!` is a true
@@ -283,7 +291,13 @@ ANALYZER REQUIREMENTS AND RESULT KEYS
   analyzer: {family: "sudachi", resource: "core", split: "C",
              segmentation: ["input", "analyzer"]}
 
-Repeat `analyzer:` to declare alternatives. A result key is an ordered list:
+Repeat `analyzer:` to declare alternatives.
+
+  vectors: {resource: "name", blake3: "64 hex digits"}
+
+names the word-vector file a catalog's `near` thresholds were chosen for by
+the BLAKE3 digest of the file; `resource` is a label. Reading a file with
+another digest is reported as a warning. A result key is an ordered list:
 
   key: [lemma, $head.norm, $span.first.text, $span.last.lemma,
         $span.span.norm]

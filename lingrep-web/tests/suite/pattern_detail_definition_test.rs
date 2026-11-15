@@ -10,10 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! The definition band: what the selected pattern *is*, beside what it matched.
-//!
-//! The Definition tab groups the authored pattern, its resolved references,
-//! and its searchable surface variations.
+//! Definition rendering, reference expansion, and surface variations.
 
 use askama::Template;
 use lingrep_web::{
@@ -101,6 +98,7 @@ fn view(name: &str) -> PatternDefinitionView {
         diagram: expansion
             .diagram
             .map(lingrep_web::templates::TrustedFragmentHtml::from_rendered),
+        near: Vec::new(),
     }
 }
 
@@ -134,10 +132,8 @@ fn the_band_shows_the_definition_as_written_and_fully_expanded() {
     );
 }
 
-/// A pattern standing on no fragment says so, rather than showing the same
-/// text twice under two headings.
 #[test]
-fn a_definition_with_nothing_to_resolve_says_so_instead_of_repeating_itself() {
+fn a_definition_without_references_has_no_expanded_copy() {
     let html = render(Some(view("単独")));
 
     assert!(html.contains("data-definition-declaration"), "{html}");
@@ -176,6 +172,7 @@ fn compound_pattern_concatenates_declarations_expansions_and_diagram() {
         diagram: expansion
             .diagram
             .map(lingrep_web::templates::TrustedFragmentHtml::from_rendered),
+        near: Vec::new(),
     }));
 
     assert!(html.contains("data-definition-band"), "{html}");
@@ -204,7 +201,7 @@ fn the_rendered_expansion_is_not_html_escaped_out_of_being_pattern() {
         .expect("the fixture catalog expands")
         .expect("the definition is present")
         .expanded
-        .expect("the definition stands on two fragments");
+        .expect("the definition references two fragments");
 
     // Askama escapes `&`, `<` and `>`; lingrep patterns uses all three (`&` for attribute
     // conjunction and expression intersection, `<`/`>` in a capture header).
@@ -213,5 +210,31 @@ fn the_rendered_expansion_is_not_html_escaped_out_of_being_pattern() {
     assert!(
         !expansion.contains(['&', '<', '>']),
         "fixture drifted into escaped territory: {expansion}"
+    );
+}
+
+#[test]
+fn the_band_lists_each_near_test_with_its_values_and_a_link_to_their_ranking() {
+    let without = render(Some(view("単独")));
+    assert!(!without.contains("definition-near-heading"), "{without}");
+
+    let mut definition = view("単独");
+    definition.near = vec![lingrep_web::templates::NearTestView {
+        word: "研究".into(),
+        threshold: "0.6".into(),
+        count: "1,234".into(),
+        values: vec!["研究".into(), "調査".into()],
+        more: 1232,
+        href: "neighbors?word=%E7%A0%94%E7%A9%B6&min=0.6".into(),
+    }];
+    let html = render(Some(definition));
+    assert!(html.contains("<code>near 研究 &gt;= 0.6</code>"), "{html}");
+    assert!(html.contains("1,234 values"), "{html}");
+    assert!(html.contains("<span>調査</span>"), "{html}");
+    assert!(html.contains("and 1232 more"), "{html}");
+    assert!(
+        html.contains("href=\"neighbors?word=%E7%A0%94%E7%A9%B6&amp;min=0.6\"")
+            || html.contains("href=\"neighbors?word=%E7%A0%94%E7%A9%B6&#38;min=0.6\""),
+        "{html}"
     );
 }

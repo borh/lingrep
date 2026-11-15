@@ -47,8 +47,15 @@ die() {
 }
 
 fetch() { # url output
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location \
-        --retry 3 --output "$2" "$1" || die "could not download $1"
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --location \
+        --retry 3 --output "$2" "$1" || {
+            status=$?
+            location=${1#https://}
+            authority=${location%%/*}
+            location=${authority##*@}${location#"$authority"}
+            location=${location%%[?#]*}
+            die "could not download https://$location (curl exit $status)"
+        }
 }
 
 sha256_of() {
@@ -210,7 +217,7 @@ main() {
     download_base=${LING_DOWNLOAD_BASE:-$REPOSITORY/releases/download}
     case "$download_base" in
         https://?*) ;;
-        *) die "LING_DOWNLOAD_BASE must be an https:// URL, not '$download_base'" ;;
+        *) die "LING_DOWNLOAD_BASE must be an https:// URL" ;;
     esac
     download_base=${download_base%/}
 

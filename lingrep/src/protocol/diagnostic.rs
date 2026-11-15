@@ -106,8 +106,8 @@ pub struct RelatedDiagnosticLocation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiagnosticData {
     pub run_id: Option<String>,
-    /// Observational input evidence for an interrupted or failed direct scan.
-    /// It is intentionally not a reusable corpus or analysis identity.
+    /// Records input observed before a direct scan failed or was interrupted;
+    /// it does not identify a complete corpus.
     pub observed_input_digest: Option<String>,
     pub stage: DiagnosticStage,
     pub severity: DiagnosticSeverity,

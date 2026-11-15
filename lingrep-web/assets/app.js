@@ -2,7 +2,7 @@
 // keeping it out of the template lets the CSP forbid inline scripts and lets
 // the static-asset handler cache/revalidate it like every other asset.
 
-import { t } from "./i18n.js";
+import { localize, t } from "./i18n.js";
 
 /**
  * Whether a queued rerun should fire now.
@@ -63,12 +63,25 @@ export function corpusSwitchOutcome(status, payload) {
  * default. Sending it is what keeps a copied link — and a corpus switch —
  * pointed at the corpus the page is actually on.
  */
-export function permalinkRequestBody(pattern, corpus, retained, searchScope) {
+export function permalinkRequestBody(pattern, corpus, retained, searchScope, runOptions) {
     const params = new URLSearchParams({ pattern });
     if (corpus) params.set("corpus", corpus);
     if (retained) params.set("retained", retained);
+    if (runOptions?.deriveCompounds === false) params.set("derive_compounds", "false");
+    if (runOptions?.compoundCategory === "source") params.set("compound_category", "source");
+    if (runOptions?.documentReach === false) params.set("document_reach", "false");
+    if (runOptions?.overlaps && runOptions.overlaps !== "catalog") params.set("overlaps", runOptions.overlaps);
     if (searchScope && searchScope !== "null") params.set("search_scope", searchScope);
     return params.toString();
+}
+
+function runOptionsOfForm(form) {
+    return {
+        deriveCompounds: form?.querySelector("input[name=derive_compounds]")?.checked,
+        compoundCategory: form?.querySelector("select[name=compound_category]")?.value,
+        documentReach: form?.querySelector("input[name=document_reach]")?.checked,
+        overlaps: form?.querySelector("select[name=overlaps]")?.value,
+    };
 }
 
 export function corpusSwitchRequestBody(form, corpus) {
@@ -76,6 +89,8 @@ export function corpusSwitchRequestBody(form, corpus) {
         form?.querySelector("#corpus-pattern")?.value ?? "",
         corpus,
         form?.querySelector("select[name=retained]")?.value,
+        undefined,
+        runOptionsOfForm(form),
     );
 }
 
@@ -100,7 +115,7 @@ export function permalinkRequestForForm(form) {
             text: "Choose a corpus before copying a link.",
         };
     }
-    return { action: "request", body: permalinkRequestBody(pattern, corpus, retained, form.querySelector("[data-search-scope-value]")?.value) };
+    return { action: "request", body: permalinkRequestBody(pattern, corpus, retained, form.querySelector("[data-search-scope-value]")?.value, runOptionsOfForm(form)) };
 }
 
 /** The viewport at which the query band is pinned rather than in flow. */
@@ -473,6 +488,7 @@ if (typeof document !== "undefined") {
                 if (sampleAbort !== controller) return;
                 const parsed = new DOMParser().parseFromString(html, "text/html");
                 target.replaceChildren(...parsed.body.childNodes);
+                localize(target);
                 if (status) status.textContent = "";
             } catch (error) {
                 if (error?.name === "AbortError") return;
@@ -678,6 +694,12 @@ if (typeof document !== "undefined") {
         document.body.addEventListener("htmx:sseError", (event) => {
             const stream = streamElement(event.target);
             if (!stream || stream.dataset.streamFinished === "true") return;
+            // EventSource delivers the server's terminal `error` event (stream.rs)
+            // to the same handler as a connection error; only the former has data.
+            if (event.detail?.error?.data !== undefined) {
+                stream.dataset.streamFinished = "true";
+                return;
+            }
             clearTimeout(stream.streamLostTimer);
             stream.streamLostTimer = setTimeout(() => showNotice(stream), SHOW_DELAY_MS);
         });

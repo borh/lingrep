@@ -14,8 +14,11 @@ pub mod doctor;
 mod ending_report;
 pub mod explain;
 pub mod explore;
+#[cfg(feature = "web")]
+mod link;
 pub mod manpages;
 pub mod matches;
+pub mod neighbors;
 pub(crate) mod query_completion;
 pub(crate) mod query_projection;
 pub(crate) mod query_resolution;
@@ -54,6 +57,10 @@ pub fn dispatch(
     if explain::requested(cli) {
         return explain::run(cli, config);
     }
+    #[cfg(feature = "web")]
+    if link::requested(cli) {
+        return link::run(cli, terminal);
+    }
     match &cli.command {
         Command::Analyzer(args) => match &args.command {
             AnalyzerCommand::Prepare(args) => analyzer::run(args, config, output),
@@ -62,6 +69,7 @@ pub fn dispatch(
         Command::Dictionary(args) => match &args.command {
             DictionaryCommand::Install(args) => dictionary::run_install(args, output),
         },
+        Command::Neighbors(args) => neighbors::run(args, output),
         Command::Check(args)
             if args.diagram && output == crate::presentation::OutputMode::Jsonl =>
         {

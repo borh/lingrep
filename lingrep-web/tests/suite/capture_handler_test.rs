@@ -407,7 +407,9 @@ proptest! {
                         format!("<span>{expected}</span><span lang=\"ja\">")
                     }
                     OuterCaptureSite::Text => {
-                        format!("<span lang=\"ja\">{expected}</span><span>tokens")
+                        format!(
+                            "<span lang=\"ja\">{expected}</span><span data-i18n=\"hit.tokens_range\""
+                        )
                     }
                 };
                 prop_assert!(

@@ -1,9 +1,9 @@
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
 use lingrep_web::corpus_runtime::{
-    CacheFailureCategory, CacheReadiness, CorpusIdentity, CorpusReadError, CorpusRuntime,
+    CacheFailureCategory, CacheReadiness, CorpusIdentity, CorpusReadError,
 };
 
-use crate::v6_support::{corrupt_first_token_block, ready_fixture};
+use crate::v6_support::{corrupt_first_token_block, ready_fixture, runtime_fixture};
 
 fn token(orth: &str) -> TokenInfo {
     TokenInfo::default().with_orth(orth).with_pos("NOUN")
@@ -34,12 +34,9 @@ async fn valid_bound_reader_decodes_a_sentence() {
 
 #[tokio::test]
 async fn corruption_is_a_pure_value_and_does_not_flip_readiness() {
-    let (fixture, ready) = ready_fixture("current", vec![vec![token("食べる")]]);
+    let (fixture, runtime) = runtime_fixture("current", vec![vec![token("食べる")]]);
+    let ready = runtime.ready().await.unwrap();
     let reader = ready.reader().unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let context =
-        std::sync::Arc::new(lingrep_web::server_context::ServerContext::new("/tmp/dict").unwrap());
-    let runtime = CorpusRuntime::new(context, directory.path().join("corpus")).unwrap();
     let mut readiness = runtime.readiness();
     corrupt_first_token_block(&fixture.path.join("tokens.v1.zst"));
 
@@ -51,7 +48,7 @@ async fn corruption_is_a_pure_value_and_does_not_flip_readiness() {
 
     assert!(matches!(result, Err(CorpusReadError::Corruption(_))));
     assert!(!readiness.has_changed().unwrap());
-    runtime.invalidator().invalidate_corrupt().await;
+    runtime.invalidator().invalidate_corrupt(&ready).await;
     readiness.changed().await.unwrap();
     assert_eq!(
         readiness.borrow_and_update().clone(),

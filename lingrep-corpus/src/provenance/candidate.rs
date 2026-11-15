@@ -2,6 +2,7 @@ use crate::CorpusError;
 #[cfg(test)]
 use lingrep_core::analysis::ValidatedAnalysisBatch;
 use lingrep_core::analysis::{AnalyzedInput, AnalyzedSentence};
+use std::io::{self, BufReader, Read};
 
 const COMPONENT: &str = "candidate V1 provenance";
 const MAGIC: &[u8; 8] = b"LINGPRV1";
@@ -205,22 +206,10 @@ pub(super) fn decode_bounded(
     artifact: &[u8],
     limit: usize,
 ) -> Result<Option<Vec<CandidateSentence>>, CorpusError> {
-    if artifact.len() < HEADER_LEN || &artifact[..8] != MAGIC || artifact[8] != LAYOUT_TAG {
-        return Err(invalid("invalid magic, version, or layout"));
-    }
-    let raw_len = usize_from_u64(u64::from_le_bytes(
-        artifact[9..17]
-            .try_into()
-            .map_err(|_| invalid("invalid raw length"))?,
-    ))?;
-    let stored_len = usize_from_u64(u64::from_le_bytes(
-        artifact[17..25]
-            .try_into()
-            .map_err(|_| invalid("invalid stored length"))?,
-    ))?;
-    if raw_len > MAX_RAW_BYTES || HEADER_LEN.checked_add(stored_len) != Some(artifact.len()) {
-        return Err(invalid("payload length is invalid"));
-    }
+    let (raw_len, _) = header_lengths(
+        artifact.get(..HEADER_LEN).unwrap_or(artifact),
+        artifact.len(),
+    )?;
     if raw_len > limit {
         return Ok(None);
     }
@@ -393,4 +382,191 @@ fn invalid(message: impl Into<String>) -> CorpusError {
         component: COMPONENT,
         message: message.into(),
     }
+}
+
+fn header_lengths(header: &[u8], artifact_len: usize) -> Result<(usize, usize), CorpusError> {
+    if header.len() < HEADER_LEN || &header[..8] != MAGIC || header[8] != LAYOUT_TAG {
+        return Err(invalid("invalid magic, version, or layout"));
+    }
+    let raw_len = usize_from_u64(u64::from_le_bytes(
+        header[9..17]
+            .try_into()
+            .map_err(|_| invalid("invalid raw length"))?,
+    ))?;
+    let stored_len = usize_from_u64(u64::from_le_bytes(
+        header[17..25]
+            .try_into()
+            .map_err(|_| invalid("invalid stored length"))?,
+    ))?;
+    if raw_len > MAX_RAW_BYTES || HEADER_LEN.checked_add(stored_len) != Some(artifact_len) {
+        return Err(invalid("payload length is invalid"));
+    }
+    Ok((raw_len, stored_len))
+}
+
+pub(super) fn decode_sentence_bounded(
+    mut source: impl Read,
+    artifact_len: usize,
+    selected: usize,
+    limit: usize,
+) -> Result<Option<CandidateSentence>, CorpusError> {
+    let mut header = [0_u8; HEADER_LEN];
+    source.read_exact(&mut header).map_err(stream_error)?;
+    let (raw_len, stored_len) = header_lengths(&header, artifact_len)?;
+    let mut decoder = zstd::stream::read::Decoder::with_buffer(BufReader::with_capacity(
+        64 * 1024,
+        source.take(stored_len as u64),
+    ))
+    .map_err(stream_error)?;
+    decoder.window_log_max(23).map_err(stream_error)?;
+    let mut reader = StreamReader {
+        input: BufReader::with_capacity(16 * 1024, decoder),
+        remaining: raw_len,
+    };
+    let count = reader.count("sentence count")?;
+    if selected >= count || count > reader.remaining / 2 {
+        return Err(invalid("sentence index exceeds block"));
+    }
+    let mut result = None;
+    for index in 0..count {
+        let text_len = usize_from_u64(reader.varint("sentence text length")?)?;
+        if text_len > reader.remaining {
+            return Err(invalid("truncated sentence text"));
+        }
+        let text = if index == selected {
+            if text_len > limit {
+                return Ok(None);
+            }
+            let mut bytes = vec![0; text_len];
+            reader.read_exact(&mut bytes)?;
+            Some(String::from_utf8(bytes).map_err(|_| invalid("sentence text is not UTF-8"))?)
+        } else {
+            reader.skip(text_len)?;
+            None
+        };
+        let surface_count = reader.count("surface count")?;
+        if surface_count > reader.remaining / 4 {
+            return Err(invalid("surface count exceeds payload"));
+        }
+        if index == selected && surface_count > limit.saturating_sub(text_len) / 4 {
+            return Ok(None);
+        }
+        let mut surfaces = Vec::with_capacity(if index == selected { surface_count } else { 0 });
+        let mut prior_source_end = 0_u32;
+        let mut prior_word_end = 0_u32;
+        for _ in 0..surface_count {
+            let source_start = prior_source_end
+                .checked_add(reader.u32("source gap")?)
+                .ok_or_else(|| invalid("source start overflow"))?;
+            let source_end = source_start
+                .checked_add(reader.u32("source length")?)
+                .ok_or_else(|| invalid("source end overflow"))?;
+            let word_start = prior_word_end
+                .checked_add(reader.u32("word gap")?)
+                .ok_or_else(|| invalid("word start overflow"))?;
+            let word_end = word_start
+                .checked_add(reader.u32("word length")?)
+                .ok_or_else(|| invalid("word end overflow"))?;
+            if source_start >= source_end
+                || source_end as usize > text_len
+                || word_start >= word_end
+            {
+                return Err(invalid("invalid source range or word alignment"));
+            }
+            if index == selected {
+                surfaces.push(CandidateSurface {
+                    source_start,
+                    source_end,
+                    word_start,
+                    word_end,
+                });
+            }
+            prior_source_end = source_end;
+            prior_word_end = word_end;
+        }
+        if let Some(text) = text {
+            let sentence = CandidateSentence { text, surfaces };
+            validate(std::slice::from_ref(&sentence))?;
+            result = Some(sentence);
+        }
+    }
+    if reader.remaining != 0 {
+        return Err(invalid("trailing raw payload bytes"));
+    }
+    let mut extra = [0_u8; 1];
+    if reader.input.read(&mut extra).map_err(stream_error)? != 0 {
+        return Err(invalid("decompressed length differs from its header"));
+    }
+    let buffered = reader.input.into_inner().finish();
+    if buffered.get_ref().limit() != 0 || !buffered.buffer().is_empty() {
+        return Err(invalid("truncated compressed payload"));
+    }
+    Ok(result)
+}
+
+struct StreamReader<R> {
+    input: R,
+    remaining: usize,
+}
+
+impl<R: Read> StreamReader<R> {
+    fn read_exact(&mut self, bytes: &mut [u8]) -> Result<(), CorpusError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(bytes.len())
+            .ok_or_else(|| invalid("truncated raw payload"))?;
+        self.input.read_exact(bytes).map_err(stream_error)
+    }
+
+    fn skip(&mut self, len: usize) -> Result<(), CorpusError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(len)
+            .ok_or_else(|| invalid("truncated raw payload"))?;
+        let copied = io::copy(&mut self.input.by_ref().take(len as u64), &mut io::sink())
+            .map_err(stream_error)?;
+        if copied != len as u64 {
+            return Err(invalid("truncated raw payload"));
+        }
+        Ok(())
+    }
+
+    fn varint(&mut self, label: &str) -> Result<u64, CorpusError> {
+        let mut bytes = [0_u8; 10];
+        for end in 1..=bytes.len() {
+            self.read_exact(&mut bytes[end - 1..end])?;
+            if bytes[end - 1] < 128 {
+                return Reader::new(&bytes[..end]).varint(label);
+            }
+        }
+        Err(invalid(format!("overflowing {label}")))
+    }
+
+    fn count(&mut self, label: &str) -> Result<usize, CorpusError> {
+        let count = usize_from_u64(self.varint(label)?)?;
+        if count > MAX_ITEMS {
+            return Err(invalid(format!("{label} exceeds limit")));
+        }
+        Ok(count)
+    }
+
+    fn u32(&mut self, label: &str) -> Result<u32, CorpusError> {
+        u32::try_from(self.varint(label)?).map_err(|_| invalid(format!("{label} exceeds u32")))
+    }
+}
+
+fn stream_error(error: io::Error) -> CorpusError {
+    if error
+        .get_ref()
+        .is_some_and(<dyn std::error::Error + Send + Sync>::is::<CorpusError>)
+    {
+        if let Some(inner) = error
+            .into_inner()
+            .and_then(|inner| inner.downcast::<CorpusError>().ok())
+        {
+            return *inner;
+        }
+        return invalid("provenance stream failed");
+    }
+    invalid(format!("decompression failed: {error}"))
 }

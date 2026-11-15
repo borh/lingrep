@@ -1,6 +1,7 @@
 use crate::fsm::{AttrValue, AttrValueType, KeyComponent, KeyProjection, PositionAssertion};
 use crate::token_match::{AttributeKey, TokenAttributeIndex};
 use compact_str::CompactString;
+use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -13,12 +14,13 @@ use super::PatternSource;
 use super::diagnostic::{CompileError, Diagnostic, DiagnosticCode};
 use super::limits::CompileLimits;
 use super::model::{
-    CaptureProjection, DefinitionVisibility, GroupOperator, LookDirection, LookPolarity,
-    LookaroundExpr, Metadata, MetadataEntry, ParsedAnalyzerConstraint, ParsedAttr, ParsedAttrValue,
-    ParsedDefinition, ParsedDefinitionBody, ParsedExpr, ParsedGroupDecl, ParsedKey,
-    ParsedLabelDeclaration, ParsedLabelTerm, ParsedProgram, ParsedRelation, ParsedRelationTarget,
-    ParsedSet, ParsedSkip, ParsedTest, ParsedTestDecl, RelationLabel, RelationLabels,
-    RelationPolarity, SourceId, SourceRegistry, SourceSpan,
+    CaptureProjection, CatalogVectors, DefinitionVisibility, GroupOperator, LookDirection,
+    LookPolarity, LookaroundExpr, Metadata, MetadataEntry, NearQuery, NearResolution,
+    ParsedAnalyzerConstraint, ParsedAttr, ParsedAttrValue, ParsedDefinition, ParsedDefinitionBody,
+    ParsedExpr, ParsedGroupDecl, ParsedKey, ParsedLabelDeclaration, ParsedLabelTerm, ParsedProgram,
+    ParsedRelation, ParsedRelationTarget, ParsedSet, ParsedSkip, ParsedTest, ParsedTestDecl,
+    RelationLabel, RelationLabels, RelationPolarity, SimilarityThreshold, SourceId, SourceRegistry,
+    SourceSpan,
 };
 use super::policy_program;
 use super::schema::{self, CatalogSchema, MetadataType, SchemaEntry};
@@ -53,6 +55,7 @@ pub(super) struct LoweredDefinition {
     pub(super) source_bytes: usize,
     pub(super) metadata_bytes: usize,
     pub(super) warnings: Vec<Diagnostic>,
+    pub(super) near: IndexMap<NearQuery, NearResolution>,
 }
 
 /// Lowers one complete lingrep patterns document as written: a pattern with
@@ -144,6 +147,8 @@ pub(super) fn lower_definition_with_stats(
         // Catalog-level declarations are admitted only by `add_document`.
         policy: _,
         analyzers: _,
+        vectors: _,
+        near,
         labels: _,
         sets: _,
         tests: _,
@@ -168,6 +173,7 @@ pub(super) fn lower_definition_with_stats(
         source_bytes: lowered.source_bytes,
         metadata_bytes: lowered.metadata_bytes,
         warnings: lowered.warnings,
+        near,
     })
 }
 
@@ -206,6 +212,7 @@ struct Lowerer<'a, 'src> {
     regex_bytes: usize,
     warnings: Vec<Diagnostic>,
     rewrite_skip: bool,
+    near: IndexMap<NearQuery, NearResolution>,
 }
 
 #[derive(Clone)]
@@ -239,6 +246,7 @@ struct DocumentDraft {
     schema: Option<CatalogSchema>,
     policy: Option<crate::fsm::policy_program::Program>,
     analyzers: Vec<ParsedAnalyzerConstraint>,
+    vectors: Vec<CatalogVectors>,
     labels: Vec<ParsedLabelDeclaration>,
     sets: Vec<ParsedSet>,
     tests: Vec<ParsedTestDecl>,
@@ -364,6 +372,8 @@ impl DocumentDraft {
             sources,
             policy: self.policy,
             analyzers: self.analyzers,
+            vectors: self.vectors,
+            near: IndexMap::new(),
             labels: self.labels,
             sets: self.sets,
             tests: self.tests,
@@ -393,6 +403,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             regex_bytes: 0,
             warnings: Vec::new(),
             rewrite_skip: true,
+            near: IndexMap::new(),
         }
     }
 
@@ -480,6 +491,16 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     }
                     draft.analyzers.push(self.lower_analyzer_entry(child)?);
                 }
+                "vectors_entry" => {
+                    if !draft.headers_allowed() {
+                        return Err(self.error(
+                            child,
+                            DiagnosticCode::Syntax,
+                            "vectors declarations must precede annotations and definitions",
+                        ));
+                    }
+                    draft.vectors.push(self.lower_vectors_entry(child)?);
+                }
                 "labels_entry" => {
                     if !draft.labels.is_empty() {
                         return Err(self.error(
@@ -556,8 +577,10 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             ]));
         }
 
+        let mut program = draft.into_program(self.sources);
+        program.near = self.near;
         Ok(LoweredProgram {
-            program: draft.into_program(self.sources),
+            program,
             source_bytes: self.source_bytes,
             metadata_bytes: self.metadata_bytes,
             warnings: self.warnings,
@@ -644,6 +667,58 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             });
         }
         Ok(declarations)
+    }
+
+    fn lower_vectors_entry(&mut self, node: Node<'_>) -> Result<CatalogVectors, CompileError> {
+        self.check_recovery_subtree(node)?;
+        let map = required_field(
+            self.source,
+            &self.source_label,
+            node,
+            "value",
+            "vectors_map",
+        )?;
+        let (mut resource, mut blake3) = (None, None);
+        let mut cursor = map.walk();
+        for wrapper in map.named_children(&mut cursor) {
+            let field = wrapper.named_child(0).ok_or_else(|| {
+                self.error(
+                    wrapper,
+                    DiagnosticCode::Syntax,
+                    "vectors field is missing its value",
+                )
+            })?;
+            let value = field.child_by_field_name("value").ok_or_else(|| {
+                self.error(
+                    field,
+                    DiagnosticCode::Syntax,
+                    "vectors field is missing its value",
+                )
+            })?;
+            let slot = match field.kind() {
+                "vectors_resource_field" => &mut resource,
+                "vectors_digest_field" => &mut blake3,
+                _ => {
+                    return Err(self.error(
+                        field,
+                        DiagnosticCode::UnknownNode,
+                        "unknown vectors field",
+                    ));
+                }
+            };
+            if slot.is_some() {
+                return Err(self.error(field, DiagnosticCode::Syntax, "duplicate vectors field"));
+            }
+            *slot = Some(CompactString::from(self.metadata_string_text(value)?));
+        }
+        match (resource, blake3) {
+            (Some(resource), Some(blake3)) => Ok(CatalogVectors { resource, blake3 }),
+            _ => Err(self.error(
+                node,
+                DiagnosticCode::Syntax,
+                "a vectors declaration needs both `resource` and `blake3`",
+            )),
+        }
     }
 
     fn lower_analyzer_entry(
@@ -2603,6 +2678,44 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                         ));
                     }
                 }
+            }
+            "near" | "not near" => {
+                let value_node =
+                    required_field(self.source, &self.source_label, node, "value", "value")?;
+                let word = self.lower_literal_value(value_node, operator == "not near")?;
+                let threshold_node = required_field(
+                    self.source,
+                    &self.source_label,
+                    node,
+                    "threshold",
+                    "similarity_threshold",
+                )?;
+                self.check_recovery_node(threshold_node)?;
+                let threshold =
+                    SimilarityThreshold::parse(self.text(threshold_node)?).ok_or_else(|| {
+                        self.error(
+                            threshold_node,
+                            DiagnosticCode::Syntax,
+                            "a `near` threshold is a cosine similarity between 0 and 1 with at \
+                             most six decimal places",
+                        )
+                    })?;
+                self.near.insert(
+                    NearQuery {
+                        word: word.clone(),
+                        threshold,
+                    },
+                    NearResolution::NoTable,
+                );
+                return Ok(ParsedAttr {
+                    attr,
+                    value: ParsedAttrValue::Near {
+                        word,
+                        threshold,
+                        negated: operator == "not near",
+                        span: self.span_of(node)?,
+                    },
+                });
             }
             "has" | "not has" => {
                 let value_node =

@@ -80,6 +80,33 @@ impl SectionComparison {
         Self::selected(sections, patterns, None)
     }
 
+    /// The rows with at least `minimum` occurrences in the displayed sections,
+    /// and how many rows that leaves out.
+    #[must_use]
+    pub fn with_minimum_occurrences(&self, minimum: u64) -> (Self, usize) {
+        let rows = self
+            .rows
+            .iter()
+            .filter(|row| row.displayed_total >= minimum)
+            .cloned()
+            .collect::<Vec<_>>();
+        let omitted = self.rows.len() - rows.len();
+        let max_count = rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.count))
+            .max()
+            .unwrap_or(0);
+        (
+            Self {
+                columns: self.columns.clone(),
+                rows,
+                hidden_sections: self.hidden_sections,
+                max_count,
+            },
+            omitted,
+        )
+    }
+
     #[must_use]
     pub fn selected(
         sections: &SectionAvailability,

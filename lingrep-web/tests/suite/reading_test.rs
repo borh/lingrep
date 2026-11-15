@@ -384,7 +384,7 @@ async fn missing_paragraphs_fall_back_to_document_and_nested_paragraphs_require_
     )
     .await;
     let html = get(&multiple, "paragraph").await.1;
-    assert!(html.contains("several authored paragraphs"));
+    assert!(html.contains("several source paragraphs"));
     assert!(ordinals(&html).is_empty());
     assert_eq!(
         ordinals(&get(&multiple, "paragraph?paragraph=2").await.1),
@@ -450,7 +450,8 @@ async fn a_context_request_queued_behind_a_scan_rechecks_the_bound_artifact() {
         .bound_corpus(&WorkbenchId::new("reading"))
         .await
         .unwrap();
-    runtime.invalidator().invalidate_corrupt().await;
+    let ready = runtime.ready().await.unwrap();
+    runtime.invalidator().invalidate_corrupt(&ready).await;
     drop(permit);
     assert_eq!(request.await.0, StatusCode::CONFLICT);
 }
@@ -520,6 +521,20 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
             3,
             1,
         ),
+        (
+            5,
+            serde_json::json!({"included_sections":null, "include_unlabelled":true, "clause":"@section = abstract"}),
+            1,
+            1,
+            3,
+        ),
+        (
+            6,
+            serde_json::json!({"included_sections":["introduction"], "include_unlabelled":false, "clause":"@section != abstract"}),
+            2,
+            2,
+            2,
+        ),
     ] {
         let body = serde_urlencoded::to_string([
             ("pattern", "hit := HIT.".to_owned()),
@@ -559,6 +574,21 @@ async fn search_scope_includes_before_matching_and_keeps_revision_totals_consist
         assert_eq!(snapshot.observed_sentences, scanned);
         assert_eq!(snapshot.patterns[0].exact_total, hits);
         assert_eq!(snapshot.excluded_sentences, excluded);
+        assert_eq!(
+            snapshot.cli_arguments.contains(" --where "),
+            excluded > 0,
+            "{}",
+            snapshot.cli_arguments
+        );
+        if offset == 6 {
+            assert!(
+                snapshot.cli_arguments.ends_with(
+                    r#"--where '(@section in {"introduction"}) & (@section != abstract)'"#
+                ),
+                "{}",
+                snapshot.cli_arguments
+            );
+        }
         assert_eq!(
             snapshot.search_scope.included_sections,
             serde_json::from_value::<Option<Vec<String>>>(scope["included_sections"].clone())

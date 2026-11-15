@@ -59,7 +59,7 @@ async fn hit_detail(
         return super::inspection_response(EndpointInspectionError::UnknownReference);
     };
     let refs = vec![reference];
-    let sentences = match super::decode_refs(&runtime, &inspector, &refs).await {
+    let sentences = match super::decode_refs(&runtime, &ready, &inspector, &refs).await {
         Ok(values) => values,
         Err(response) => return response,
     };
@@ -70,9 +70,7 @@ async fn hit_detail(
         Ok(view) => view,
         Err(InspectionError::InvalidSpan) => return super::invalid_provenance_response(),
         Err(_) => {
-            // The workbench's own corpus, not the store's default.
-            runtime.invalidator().invalidate_corrupt().await;
-            return super::inspection_response(EndpointInspectionError::CacheCorruption);
+            return super::corrupt_artifact_response(&runtime, &ready).await;
         }
     };
     let provenance_view = super::read_provenance(
@@ -256,7 +254,7 @@ async fn pattern_detail(
         .iter()
         .filter(|reference| reference.pattern_key == key)
         .collect::<Vec<_>>();
-    let sentences = match super::decode_refs(&runtime, &inspector, &refs).await {
+    let sentences = match super::decode_refs(&runtime, &ready, &inspector, &refs).await {
         Ok(values) => values,
         Err(response) => return response,
     };
@@ -283,9 +281,7 @@ async fn pattern_detail(
             Ok(view) => view,
             Err(InspectionError::InvalidSpan) => return super::invalid_provenance_response(),
             Err(_) => {
-                // The workbench's own corpus, not the store's default.
-                runtime.invalidator().invalidate_corrupt().await;
-                return super::inspection_response(EndpointInspectionError::CacheCorruption);
+                return super::corrupt_artifact_response(&runtime, &ready).await;
             }
         };
         hits.push(retained_hit_text(
@@ -359,7 +355,17 @@ fn definition_view(
         }
     }
     .ok()??;
+    let near = crate::patterns::near_tests_of(
+        expansion
+            .expanded
+            .as_deref()
+            .unwrap_or(&expansion.declaration),
+    )
+    .iter()
+    .map(near_test_view)
+    .collect();
     Some(PatternDefinitionView {
+        near,
         declaration: expansion.declaration,
         expanded: expansion.expanded,
         references: expansion.references.into_vec(),
@@ -367,6 +373,30 @@ fn definition_view(
             .diagram
             .map(crate::templates::TrustedFragmentHtml::from_rendered),
     })
+}
+
+/// How many of a `near` test's values the Definition tab prints.
+const NEAR_VALUES_SHOWN: usize = 40;
+
+fn near_test_view(test: &lingrep_core::fsm::NearTest) -> crate::templates::NearTestView {
+    let threshold = test.threshold.to_string();
+    crate::templates::NearTestView {
+        href: format!(
+            "neighbors?{}",
+            serde_urlencoded::to_string([("word", test.word.as_str()), ("min", &threshold)])
+                .unwrap_or_default()
+        ),
+        word: test.word.to_string(),
+        threshold,
+        count: format_count(test.values.len() as u64),
+        values: test
+            .values
+            .iter()
+            .take(NEAR_VALUES_SHOWN)
+            .map(ToString::to_string)
+            .collect(),
+        more: test.values.len().saturating_sub(NEAR_VALUES_SHOWN),
+    }
 }
 
 fn retained_hit_text(

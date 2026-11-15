@@ -8,8 +8,8 @@ use lingrep_corpus::BlockingProvenance;
 
 use crate::error::CliError;
 use crate::protocol::query::{ScopeBasis, ScopeReport, ScopeUniverse};
-use crate::scope_precompute::{ScopeResolution, ScopeResolutionError, resolve_scope};
 use crate::section_diagnostics::refuse_unanswerable;
+use lingrep_corpus::{PreparedScopeError, ScopeResolution};
 
 /// Parses a `--where` clause, reporting the offending byte.
 pub(crate) fn parse_scope(clause: Option<&str>) -> Result<Option<ScopeClause>, CliError> {
@@ -38,89 +38,18 @@ pub(crate) fn resolve_prepared_scope(
     reader: &BlockingProvenance,
     clause: &ScopeClause,
 ) -> Result<(ScopeResolution, BTreeSet<String>), CliError> {
-    let runtime = reader;
-    let (view, spans, labels) = runtime.block_on(async {
-        let view = reader.view();
-        // Both are skipped entirely for a metadata-only clause: `section_labels`
-        // is empty, so no region query is issued and the prepared path costs
-        // what it did before section scope existed.
-        let (spans, labels) = if clause.names_sections() {
-            (
-                view.region_spans_for(&clause.section_labels()).await?,
-                view.section_coverage(lingrep_corpus::MAX_SECTION_LABELS)
-                    .await?
-                    .into_iter()
-                    .map(|coverage| coverage.label)
-                    .collect(),
-            )
-        } else {
-            (Vec::new(), BTreeSet::new())
-        };
-        Ok::<_, lingrep_corpus::CorpusError>((view, spans, labels))
-    })?;
-    refuse_unanswerable(clause, !labels.is_empty(), "this artifact")?;
-    let mut page = Vec::new().into_iter();
-    let mut next = 0;
-    let mut finished = false;
-    let sentence_metadata = std::iter::from_fn(|| {
-        if finished {
-            return None;
-        }
-        if page.len() == 0 {
-            match runtime.block_on(view.scope_metadata_page(next, clause.names_divisions())) {
-                Ok(rows) if rows.is_empty() => {
-                    finished = true;
-                    return None;
-                }
-                Ok(rows) => page = rows.into_iter(),
-                Err(error) => {
-                    finished = true;
-                    return Some(Err(ScopeResolutionError {
-                        document_id: None,
-                        message: error.to_string(),
-                    }));
-                }
+    lingrep_corpus::resolve_prepared_scope(reader.view(), reader, clause).map_err(|error| {
+        match error {
+            PreparedScopeError::NoSectionLabels => {
+                refuse_unanswerable(clause, false, "this artifact").expect_err("names sections")
             }
-        }
-        let (ordinal, metadata, structure) = page.next()?;
-        next = ordinal + 1;
-        Some(Ok((ordinal, metadata, structure)))
-    });
-    let mut document_page = Vec::new().into_iter();
-    let mut document_next = 0;
-    let mut documents_finished = false;
-    let documents = std::iter::from_fn(|| {
-        if documents_finished {
-            return None;
-        }
-        if document_page.len() == 0 {
-            match runtime.block_on(view.document_metadata_page(document_next)) {
-                Ok(rows) if rows.is_empty() => {
-                    documents_finished = true;
-                    return None;
-                }
-                Ok(rows) => document_page = rows.into_iter(),
-                Err(error) => {
-                    documents_finished = true;
-                    return Some(Err(ScopeResolutionError {
-                        document_id: None,
-                        message: error.to_string(),
-                    }));
-                }
-            }
-        }
-        let row = document_page.next()?;
-        document_next = row.first_sentence + row.sentence_count;
-        Some(Ok(row))
-    });
-    let resolution =
-        resolve_scope(clause, documents, &spans, sentence_metadata).map_err(|error| {
-            CliError::Corpus(match error.document_id {
+            PreparedScopeError::Corpus(error) => error.into(),
+            PreparedScopeError::Resolution(error) => CliError::Corpus(match error.document_id {
                 Some(id) => format!("document {}: {}", id.get(), error.message),
                 None => error.message,
-            })
-        })?;
-    Ok((resolution, labels))
+            }),
+        }
+    })
 }
 
 /// Builds the scope report a completion record carries.
@@ -192,7 +121,7 @@ pub(crate) fn document_values(
         for row in page {
             let end = row.first_sentence + row.sentence_count;
             cursor = end;
-            let metadata = crate::scope_precompute::document_metadata(&row)
+            let metadata = lingrep_corpus::scope_resolution::document_metadata(&row)
                 .map_err(|error| CliError::Corpus(error.message))?;
             let values = match metadata.iter().find(|(candidate, _)| candidate == name) {
                 None => Vec::new(),

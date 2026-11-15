@@ -57,6 +57,8 @@ cat >"$stubs/curl" <<'EOF'
 set -euo pipefail
 [[ " $* " == *" --proto =https "* && " $* " == *" --proto-redir =https "* && " $* " == *" --tlsv1.2 "* ]] || { echo "curl stub: missing HTTPS-only flags" >&2; exit 90; }
 output= url=
+show_error=0
+[[ " $* " == *" --show-error "* ]] && show_error=1
 while [[ $# -gt 0 ]]; do
     case $1 in
         --output) output=$2; shift 2 ;;
@@ -66,7 +68,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 printf '%s\n' "$url" >>"$TEST_CURL_LOG"
-[[ $url == https://github.com/borh/lingrep/releases/download/v* || $url == https://mirror.example/lingrep/releases/download/v* ]] || exit 22
+if [[ ${TEST_CURL_FAIL:-0} == 1 ]]; then
+    if [[ $show_error == 1 ]]; then printf 'curl: failed URL: %s\n' "$url" >&2; fi
+    exit 22
+fi
+[[ $url == https://github.com/borh/lingrep/releases/download/v* || $url == https://mirror.example/lingrep/releases/download/v* || $url == https://review-user:review-password@mirror.example/lingrep/releases/download/v* ]] || exit 22
 cp "$TEST_RELEASE/${url##*/}" "$output" 2>/dev/null || exit 22
 EOF
 cat >"$stubs/uname" <<'EOF'
@@ -181,6 +187,14 @@ for shell in "${shells[@]}"; do
     run 1 LING_DOWNLOAD_BASE=http://mirror.example/lingrep/releases/download \
         && [[ $out == *"must be an https:// URL"* && ! -e "$temporary/curl.log" ]] || fail "plain-HTTP download base"
     [[ ! -e "$home/.local/bin/ling" ]] || fail "a refusal left a binary behind"
+    run 0 LING_DOWNLOAD_BASE=https://review-user:review-password@mirror.example/lingrep/releases/download/ \
+        && [[ $(grep -c '^https://review-user:review-password@mirror.example/' "$temporary/curl.log") == 2 ]] || fail "authenticated mirror"
+    run 1 TEST_CURL_FAIL=1 LING_DOWNLOAD_BASE=https://review-user:review-password@mirror.example/lingrep/releases/download/ \
+        && [[ $out != *review-password* && $out != *review-user* \
+            && $out == *"https://mirror.example/lingrep/releases/download/v$version/ling-"* \
+            && $out == *"curl exit 22"* ]] || fail "credentials in download error"
+    run 1 LING_DOWNLOAD_BASE=http://review-user:review-password@mirror.example/ \
+        && [[ $out != *review-password* && ! -e "$temporary/curl.log" ]] || fail "credentials in validation error"
 
     # LING_NO_MODIFY_PATH leaves startup files alone; a directory on PATH requires no line.
     run 0 LING_NO_MODIFY_PATH=1 && [[ ! -e "$home/.bashrc" && $out == *"not on PATH"* ]] || fail "LING_NO_MODIFY_PATH"

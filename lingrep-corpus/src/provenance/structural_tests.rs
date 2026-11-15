@@ -701,7 +701,7 @@ async fn private_rows_keep_distinct_document_ids_and_their_metadata_attribution(
 
     let mut database = connection(&path).await;
     let rows = sqlx::query(
-        "SELECT sentence_id, document_id, source_name, document_ordinal, document_sentence_ordinal, dm.metadata_json FROM sentence_provenance sp JOIN document_metadata dm USING(document_id) ORDER BY sentence_id",
+        "SELECT sentence_id, document_id, dm.metadata_json FROM sentence_provenance sp JOIN document_metadata dm USING(document_id) ORDER BY sentence_id",
     )
     .fetch_all(&mut database)
     .await
@@ -709,32 +709,10 @@ async fn private_rows_keep_distinct_document_ids_and_their_metadata_attribution(
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].try_get::<i64, _>("document_id").unwrap(), 41);
     assert_eq!(
-        rows[0].try_get::<String, _>("source_name").unwrap(),
-        "first.md"
-    );
-    assert_eq!(rows[0].try_get::<i64, _>("document_ordinal").unwrap(), 0);
-    assert_eq!(
-        rows[0]
-            .try_get::<i64, _>("document_sentence_ordinal")
-            .unwrap(),
-        0
-    );
-    assert_eq!(
         rows[0].try_get::<String, _>("metadata_json").unwrap(),
         r#"{"owner":"first"}"#
     );
     assert_eq!(rows[1].try_get::<i64, _>("document_id").unwrap(), 9_007);
-    assert_eq!(
-        rows[1].try_get::<String, _>("source_name").unwrap(),
-        "second.md"
-    );
-    assert_eq!(rows[1].try_get::<i64, _>("document_ordinal").unwrap(), 1);
-    assert_eq!(
-        rows[1]
-            .try_get::<i64, _>("document_sentence_ordinal")
-            .unwrap(),
-        0
-    );
     assert_eq!(
         rows[1].try_get::<String, _>("metadata_json").unwrap(),
         r#"{"owner":"second"}"#
@@ -968,7 +946,7 @@ async fn an_analyzed_and_two_unanalyzed_sentences_all_reach_storage() {
 
     let mut connection = connection(&path).await;
     let rows = sqlx::query(
-        "SELECT sp.sentence_id, json_extract(sm.metadata_json,'$.label') AS label, input_unit_id, normalization, analyzer_sentence_ordinal FROM sentence_provenance sp LEFT JOIN sentence_metadata sm ON sm.sentence_id=sp.sentence_id ORDER BY sp.sentence_id",
+        "SELECT sp.sentence_id, json_extract(sm.metadata_json,'$.label') AS label, input_unit_id, o.normalization, analyzer_sentence_ordinal FROM sentence_provenance sp LEFT JOIN sentence_metadata sm ON sm.sentence_id=sp.sentence_id LEFT JOIN input_origins o ON o.origin_id=sp.input_origin_id ORDER BY sp.sentence_id",
     )
     .fetch_all(&mut connection)
     .await
@@ -1246,14 +1224,14 @@ async fn span_stream_releases_the_connection_before_the_consumer_reads_sentence_
         .unwrap();
     let mut spans = view.region_spans_in_span_order();
     assert_eq!(spans.next().await.unwrap().unwrap().first_sentence, 0);
-    let admitted = tokio::time::timeout(
+    let selected = tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        view.section_admissions(&[SentenceId::new(0)], Some(&["section-1".into()]), true),
+        view.region_spans_for(&std::collections::BTreeSet::from(["section-1"])),
     )
     .await
     .expect("a paused span consumer must release the connection for scope reads")
     .unwrap();
-    assert_eq!(admitted, [false]);
+    assert_eq!(selected.len(), 128);
     for ordinal in 1..257 {
         let span = spans.next().await.unwrap().unwrap();
         assert_eq!(span.first_sentence, ordinal);
@@ -1275,36 +1253,43 @@ async fn a_corrupt_stored_analysis_is_rejected_when_read_and_by_verification() {
         blob
     };
     let unchanged: Mutation = |blob| blob;
-    for (name, blob_mutation, input_kind) in [
-        ("flipped magic byte", flip_magic, None),
-        ("truncated payload", truncate, None),
-        ("partial input identity", unchanged, Some("sentence")),
+    for (name, block_mutation, row_mutation, first_readable) in [
+        ("flipped magic byte", flip_magic, "", false),
+        ("truncated payload", truncate, "", false),
+        (
+            "partial input identity",
+            unchanged,
+            "UPDATE sentence_provenance SET source_start=CASE WHEN source_start IS NULL THEN 0 END WHERE sentence_id=1",
+            true,
+        ),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("provenance.sqlite");
         drop(finished_two_sentence_view(&path).await);
         let mut database = connection(&path).await;
-        let blob: Vec<u8> =
-            sqlx::query_scalar("SELECT analysis_blob FROM sentence_provenance WHERE sentence_id=1")
+        let block: Vec<u8> =
+            sqlx::query_scalar("SELECT block FROM sentence_text WHERE first_sentence=0")
                 .fetch_one(&mut database)
                 .await
                 .unwrap();
-        sqlx::query(
-            "UPDATE sentence_provenance SET analysis_blob=?, input_kind=? WHERE sentence_id=1",
-        )
-        .bind(blob_mutation(blob))
-        .bind(input_kind)
-        .execute(&mut database)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE sentence_text SET block=? WHERE first_sentence=0")
+            .bind(block_mutation(block))
+            .execute(&mut database)
+            .await
+            .unwrap();
+        sqlx::raw_sql(row_mutation)
+            .execute(&mut database)
+            .await
+            .unwrap();
         database.close().await.unwrap();
 
         let view = ProvenanceView::open(&path, &analysis_identity())
             .await
             .unwrap();
-        assert!(
+        assert_eq!(
             view.sentence_analysis(SentenceId::new(0)).await.is_ok(),
-            "{name}: an intact row stays readable"
+            first_readable,
+            "{name}: the other sentence"
         );
         assert!(
             matches!(
@@ -1523,6 +1508,224 @@ async fn immutable_view_rejects_interior_gaps_with_intact_endpoints() {
                 Err(CorpusError::VerificationMismatch { .. })
             ),
             "missing sentence {sentence}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn sentence_text_is_read_across_blocks_and_verified_to_tile_the_sentences() {
+    const SENTENCES: u64 = 2 * super::TEXT_BLOCK_SENTENCES as u64 + 7;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    for ordinal in 0..SENTENCES {
+        writer
+            .push_sentence_with_text(
+                &location(ordinal, "paper.md", 0, ordinal),
+                &rich(),
+                &format!("文{ordinal}"),
+            )
+            .await
+            .unwrap();
+    }
+    writer.finish(analysis_identity()).await.unwrap();
+
+    let view = ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+    for ordinal in (0..SENTENCES).rev().chain(0..SENTENCES).step_by(37) {
+        assert_eq!(
+            view.sentence_analysis(SentenceId::new(ordinal))
+                .await
+                .unwrap()
+                .text,
+            format!("文{ordinal}")
+        );
+    }
+    view.validate_stored_analyses().await.unwrap();
+    drop(view);
+
+    let mut database = connection(&path).await;
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sentence_text")
+        .fetch_one(&mut database)
+        .await
+        .unwrap();
+    assert_eq!(blocks, 3);
+    sqlx::query("DELETE FROM sentence_text WHERE first_sentence=?")
+        .bind(super::TEXT_BLOCK_SENTENCES as i64)
+        .execute(&mut database)
+        .await
+        .unwrap();
+    database.close().await.unwrap();
+    let view = ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+    assert!(view.validate_stored_analyses().await.is_err());
+    assert!(
+        view.sentence_analysis(SentenceId::new(SENTENCES / 2))
+            .await
+            .is_err(),
+        "a sentence of the removed block is not answered from its neighbour"
+    );
+}
+
+#[tokio::test]
+async fn overlapping_sentence_text_blocks_fail_verification() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    for ordinal in 0..2 {
+        writer
+            .push_sentence_with_text(
+                &location(ordinal, "paper.md", 0, ordinal),
+                &rich(),
+                &format!("sentence-{ordinal}"),
+            )
+            .await
+            .unwrap();
+    }
+    writer.finish(analysis_identity()).await.unwrap();
+    let mut db = connection(&path).await;
+    let shadow = super::candidate::encode(&[super::candidate::CandidateSentence {
+        text: "WRONG TEXT".into(),
+        surfaces: Vec::new(),
+    }])
+    .unwrap();
+    sqlx::query("INSERT INTO sentence_text(first_sentence, block) VALUES(1, ?)")
+        .bind(shadow)
+        .execute(&mut db)
+        .await
+        .unwrap();
+    db.close().await.unwrap();
+    let view = ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+    let validation = view.validate_stored_analyses().await;
+    assert!(
+        validation.is_err(),
+        "overlapping blocks must fail verification"
+    );
+}
+
+#[tokio::test]
+async fn origin_deduplication_keeps_one_cached_entry() {
+    use lingrep_core::analysis::{
+        AnalyzerPlan, AnalyzerSession, InputUnitId, NormalizationPolicy, TextUnit, TextUnitKind,
+        TextUnitProvenance,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let plan =
+        lingrep_core::analysis::VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let projection = plan
+        .schema()
+        .bind_projection(plan.schema().keys().iter().cloned())
+        .unwrap();
+    let mut session = plan.create_session();
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    for ordinal in 0..1001 {
+        writer
+            .push_sentence_with_text(&location(ordinal, "paper.md", ordinal, 0), &rich(), "研究")
+            .await
+            .unwrap();
+        let input = TextUnit::admit_with_provenance(
+            InputUnitId::new(ordinal),
+            TextUnitKind::Sentence,
+            "研究",
+            NormalizationPolicy::Nfc,
+            TextUnitProvenance::new([1; 32], ordinal % 1000, None, [2; 32]),
+        )
+        .unwrap();
+        let analyzed = session
+            .analyze_bounded_batch(vec![input], &projection)
+            .unwrap()
+            .into_inputs()
+            .into_vec()
+            .pop()
+            .unwrap();
+        writer
+            .attach_analyzed_sentence(ordinal, &analyzed)
+            .await
+            .unwrap();
+        if ordinal == 99 || ordinal == 999 {
+            writer.write_batch().await.unwrap();
+            assert!(
+                writer.origins.iter().count() <= 1,
+                "origin cache grows with completed documents"
+            );
+        }
+    }
+    assert!(writer.origins.iter().count() <= 1);
+    writer.finish(analysis_identity()).await.unwrap();
+    let mut database = connection(&path).await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM input_origins")
+        .fetch_one(&mut database)
+        .await
+        .unwrap();
+    assert_eq!(count, 1000, "a nonadjacent repeated origin is reused");
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT input_origin_id FROM sentence_provenance WHERE sentence_id IN (0, 1000) ORDER BY sentence_id")
+        .fetch_all(&mut database).await.unwrap();
+    assert_eq!(ids, [0, 0]);
+}
+
+#[tokio::test]
+async fn bounded_analysis_skips_large_neighbors_without_caching_the_block() {
+    for large_first in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provenance.sqlite");
+        let mut state = 7_u64;
+        let large = (0..2 * 1024 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                char::from(32 + (state % 95) as u8)
+            })
+            .collect::<String>();
+        let texts = if large_first {
+            [&*large, "猫。"]
+        } else {
+            ["猫。", &*large]
+        };
+        let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+        for (ordinal, text) in texts.iter().enumerate() {
+            writer
+                .push_sentence_with_text(
+                    &location(ordinal as u64, "paper.md", 0, ordinal as u64),
+                    &rich(),
+                    text,
+                )
+                .await
+                .unwrap();
+        }
+        writer.finish(analysis_identity()).await.unwrap();
+        let view = ProvenanceView::open(&path, &analysis_identity())
+            .await
+            .unwrap();
+        let big = u64::from(!large_first);
+        assert!(
+            view.sentence_analysis_bounded(SentenceId::new(big), 128 * 1024)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            view.last_text_block.lock().unwrap().is_none(),
+            "a bounded read retained the decoded block"
+        );
+        let small = view
+            .sentence_analysis_bounded(SentenceId::new(1 - big), 128 * 1024)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(small.text, "猫。");
+        assert!(view.last_text_block.lock().unwrap().is_none());
+        assert_eq!(
+            view.sentence_analysis(SentenceId::new(big))
+                .await
+                .unwrap()
+                .text,
+            large
         );
     }
 }

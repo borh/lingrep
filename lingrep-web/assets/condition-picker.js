@@ -1,35 +1,19 @@
-import { currentLocale } from "./i18n.js";
+import { t } from "./i18n.js";
+import { count as num } from "./numbers.js";
+import { api, esc } from "./views.js";
 
 const MANY = 30;
-const NUM = { en: new Intl.NumberFormat("en-US"), ja: new Intl.NumberFormat("ja-JP") };
-const num = (n) => (NUM[currentLocale()] ?? NUM.en).format(Number(n));
-const esc = (text) =>
-  String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const S = {
-  en: {
-    mode: ["Only these", "All except these"],
-    anyButton: (name) => `Any ${name}`,
-    findValue: "Find a value",
-    topValues: (n, of) => `Top ${n} of ${of}`,
-    foundValues: (n, of) => (n < of ? `Top ${n} of ${of} matches` : `${of} matches`),
-    from: "From",
-    to: "To",
-  },
-  ja: {
-    mode: ["これらのみ", "これら以外"],
-    anyButton: (name) => `すべての${name}`,
-    findValue: "値を検索",
-    topValues: (n, of) => `${of}種中、上位${n}種`,
-    foundValues: (n, of) => (n < of ? `一致${of}種中、上位${n}種` : `一致${of}種`),
-    from: "下限",
-    to: "上限",
-  },
-};
-const L = () => S[currentLocale()] ?? S.en;
+const CONTROLS = ["data-v", "data-mode", "data-lo", "data-hi", "data-find", "data-any", "data-add"];
+/** The line under a value list that holds `shown` of `matching` values; "" when it holds them all. */
+export function valuesHint(q, shown, matching) {
+  if (matching <= shown) return "";
+  return t(q ? "picker.found_values" : "picker.top_values", { n: num(shown), of: num(matching) });
+}
 
-export function createConditionPicker({ sentence, view, keyName, label, anchor, commit, render, api }) {
-  const pop = document.body.appendChild(Object.assign(document.createElement("div"), { className: "fq-pop", hidden: true }));
-  let openPop = null, pending = null, find = "", values = null, valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
+export function createConditionPicker({ sentence, view, keyName, label, anchor, commit, render }) {
+  const pop = Object.assign(document.createElement("div"), { className: "fq-pop", hidden: true });
+  sentence.after(pop);
+  let openPop = null, drawn = null, pending = null, find = "", values = null, valueMatches = 0, selectedValues = [], valueRequest = 0, valueTimer;
   const dims = (scope) => view(scope).dimensions;
   const conds = (scope) => view(scope).conditions;
   const dim = (key) => dims(openPop?.scope).find((d) => d.key === key);
@@ -42,7 +26,10 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
   }
   const anchorOf = (o) => anchor(o.scope, o.key);
   function closePop() {
+    const o = openPop, active = document.activeElement;
+    const refocus = o && (pop.contains(active) || active === document.body);
     openPop = null;
+    drawn = null;
     values = null;
     find = "";
     pop.hidden = true;
@@ -50,6 +37,21 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
       pending = null;
       render();
     } else sentence.querySelectorAll("[aria-expanded]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+    if (refocus) (anchorOf(o) ?? anchor(o.scope, null))?.focus({ preventScroll: true });
+  }
+  function controls() {
+    const f = document.activeElement, attr = pop.contains(f) ? CONTROLS.find((a) => f.hasAttribute(a)) : null;
+    return {
+      focus: attr && `[${attr}="${CSS.escape(f.getAttribute(attr))}"]`,
+      caret: attr === "data-find" ? [f.selectionStart, f.selectionEnd] : null,
+      top: pop.scrollTop,
+    };
+  }
+  function restore(c) {
+    const f = c.focus && pop.querySelector(c.focus);
+    f?.focus({ preventScroll: true });
+    if (c.caret) f?.setSelectionRange(...c.caret);
+    pop.scrollTop = c.top;
   }
   function options(w, list) {
     const chosen = new Set(w?.v ?? []), max = Math.max(1, ...list.map(([, n]) => n));
@@ -57,38 +59,42 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
   }
   function valueList() {
     if (!values) return "";
-    const t = L(), q = find.trim(), seen = new Set(values.map(([v]) => v));
+    const q = find.trim(), seen = new Set(values.map(([v]) => v));
     const list = q ? values : [...values, ...selectedValues.filter(([v]) => !seen.has(v))];
-    const hint = valueMatches > values.length ? (q ? t.foundValues(num(values.length), num(valueMatches)) : t.topValues(num(values.length), num(valueMatches))) : "";
+    const hint = valuesHint(q, values.length, valueMatches);
     return options(conds(openPop.scope)[openPop.key], list) + (hint ? `<p class="hint">${esc(hint)}</p>` : "");
   }
   function popover() {
-    const t = L();
     if (!openPop) return;
     const anchor = anchorOf(openPop);
     if (!anchor) {
       pop.hidden = true;
       return;
     }
+    const kept = drawn === openPop ? controls() : null;
     if (openPop.key == null) {
       const free = dims(openPop.scope).filter((d) => !shownKeys(openPop.scope).includes(d.key));
       pop.innerHTML = `<ul class="addlist" role="menu">${free.map((d) => `<li><button role="menuitem" data-add="${esc(d.key)}">${esc(keyName(d.key))}</button></li>`).join("")}</ul>`;
       pop.setAttribute("aria-label", label(openPop.scope, null));
       pop.hidden = false;
       placePop(anchor);
-      pop.querySelector("button")?.focus();
+      drawn = openPop;
+      if (kept) restore(kept);
+      else pop.querySelector("button")?.focus();
       return;
     }
     const d = dim(openPop.key), w = conds(openPop.scope)[d.key];
     pop.setAttribute("aria-label", label(openPop.scope, d.key));
     if (d.kind === "range") {
-      pop.innerHTML = `<div class="head"><span></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div><div class="range"><label>${esc(t.from)} <input type="number" data-lo step="any" placeholder="${esc(d.min)}" value="${esc(w?.lo ?? "")}"></label><label>${esc(t.to)} <input type="number" data-hi step="any" placeholder="${esc(d.max)}" value="${esc(w?.hi ?? "")}"></label></div>`;
+      if (drawn !== openPop) pop.innerHTML = `<div class="head"><span></span><button class="any" data-any>${esc(t("picker.any", { name: keyName(d.key) }))}</button></div><div class="range"><label>${esc(t("picker.from"))} <input type="number" data-lo step="any" placeholder="${esc(d.min)}" value="${esc(w?.lo ?? "")}"></label><label>${esc(t("picker.to"))} <input type="number" data-hi step="any" placeholder="${esc(d.max)}" value="${esc(w?.hi ?? "")}"></label></div>`;
     } else {
       const out = w?.m === "out";
-      pop.innerHTML = `<div class="head"><span class="mode" role="group"><button data-mode="in" aria-pressed="${!out}">${esc(t.mode[0])}</button><button data-mode="out" aria-pressed="${out}">${esc(t.mode[1])}</button></span><button class="any" data-any>${esc(t.anyButton(keyName(d.key)))}</button></div>${d.values > MANY ? `<input class="find" type="search" data-find placeholder="${esc(t.findValue)}" aria-label="${esc(t.findValue)}" value="${esc(find)}">` : ""}<div class="opts">${valueList()}</div>`;
+      pop.innerHTML = `<div class="head"><span class="mode" role="group"><button data-mode="in" aria-pressed="${!out}">${esc(t("picker.mode_in"))}</button><button data-mode="out" aria-pressed="${out}">${esc(t("picker.mode_out"))}</button></span><button class="any" data-any>${esc(t("picker.any", { name: keyName(d.key) }))}</button></div>${d.values > MANY ? `<input class="find" type="search" data-find placeholder="${esc(t("picker.find_value"))}" aria-label="${esc(t("picker.find_value"))}" value="${esc(find)}">` : ""}<div class="opts">${valueList()}</div>`;
     }
     pop.hidden = false;
     placePop(anchor);
+    drawn = openPop;
+    if (kept) restore(kept);
   }
   async function openCondition(o) {
     openPop = o;
@@ -97,6 +103,7 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     sentence.querySelectorAll("[aria-expanded]").forEach((b) => b.setAttribute("aria-expanded", "false"));
     anchorOf(o)?.setAttribute("aria-expanded", "true");
     popover();
+    if (o.key != null) (pop.querySelector("[data-find], [data-lo]") ?? pop.querySelector("button"))?.focus();
     if (o.key != null && dim(o.key)?.kind === "categorical") await loadValues(o);
   }
   async function loadValues(o) {
@@ -108,11 +115,12 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
       if (mine === view(o.scope).revision && openPop === o && request === valueRequest && needle === find.trim()) pop.querySelector(".opts").textContent = error.message;
       return;
     }
-    if (mine !== view(o.scope).revision || openPop !== o || request !== valueRequest || needle !== find.trim() || r.status !== "ok") return;
-    values = r.values;
-    valueMatches = r.matching;
-    selectedValues = r.selected;
+    if (mine !== view(o.scope).revision || openPop !== o || request !== valueRequest || needle !== find.trim()) return;
+    const kept = controls();
+    if (r.status === "ok") [values, valueMatches, selectedValues] = [r.values, r.matching, r.selected];
+    else values = null;
     pop.querySelector(".opts").innerHTML = valueList();
+    restore(kept);
   }
   const setCondition = (scope, key, w) => {
     pending = null;
@@ -130,7 +138,8 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     }, 150);
   });
   pop.addEventListener("change", (e) => {
-    const { scope, key } = openPop ?? {};
+    if (!openPop) return;
+    const { scope, key } = openPop;
     if (e.target.matches("input[data-v]")) {
       const w = conds(scope)[key], chosen = new Set(w?.v ?? []);
       e.target.checked ? chosen.add(e.target.dataset.v) : chosen.delete(e.target.dataset.v);
@@ -180,24 +189,12 @@ export function createConditionPicker({ sentence, view, keyName, label, anchor, 
     get opened() { return openPop !== null; },
     open: (key, scope = null) => openCondition({ scope, key }),
     close: closePop,
-    refresh({ keepSearchFocus = false } = {}) {
-      if (!openPop) return;
-      const search = pop.querySelector("[data-find]"), focused = keepSearchFocus && document.activeElement === search;
-      const start = search?.selectionStart, end = search?.selectionEnd;
-      popover();
-      if (focused) {
-        const next = pop.querySelector("[data-find]");
-        next?.focus();
-        next?.setSelectionRange(start, end);
-      }
+    refresh() {
+      if (openPop) popover();
     },
     reloadValues() {
       clearTimeout(valueTimer);
-      if (openPop && dim(openPop.key)?.kind === "categorical") {
-        values = null;
-        pop.querySelector(".opts")?.replaceChildren();
-        loadValues(openPop);
-      }
+      if (openPop && dim(openPop.key)?.kind === "categorical") loadValues(openPop);
     },
   };
 }

@@ -1,5 +1,7 @@
+{% import "macros.html" as macros -%}
 <section class="results-explorer" aria-label="Corpus search results" data-i18n-aria-label="results.section_label">
-{% match search_scope %}{% when Some with (scope) %}{% if !scope.is_unrestricted() %}<p class="applied-search-scope" data-search-scope-applied><span data-i18n="scope.including">Including</span> {% match scope.included_sections %}{% when None %}<span data-i18n="scope.all_sections">All sections</span>{% when Some with (labels) %}{% if labels.is_empty() && !scope.include_unlabelled %}<span data-i18n="scope.none">No text selected</span>{% endif %}{% endmatch %}{% for label in scope.labels() %}<span class="provenance-chip">{{ label }}</span>{% endfor %}{% if scope.include_unlabelled %}<span class="provenance-chip" data-i18n="scope.unlabelled_short">Unlabelled text</span>{% endif %} · <span data-i18n="scope.excluded_sentences">Excluded sentences</span>: <span>{{ excluded_sentences }}</span></p>{% endif %}{% when None %}{% endmatch %}
+{% match search_scope %}{% when Some with (scope) %}{% if !scope.is_unrestricted() %}<p class="applied-search-scope" data-search-scope-applied><span data-i18n="scope.including">Including</span> {% match scope.included_sections %}{% when None %}<span data-i18n="scope.all_sections">All sections</span>{% when Some with (labels) %}{% if labels.is_empty() && !scope.include_unlabelled %}<span data-i18n="scope.none">No text selected</span>{% endif %}{% endmatch %}{% for label in scope.labels() %}<span class="provenance-chip">{{ label }}</span>{% endfor %}{% if scope.include_unlabelled %}<span class="provenance-chip" data-i18n="scope.unlabelled_short">Unlabelled text</span>{% endif %}{% if let Some(clause) = scope.clause %} <span data-i18n="scope.where">where</span> <code class="provenance-chip" data-scope-clause-applied>{{ clause }}</code>{% endif %} · <span data-i18n="scope.excluded_sentences">Excluded sentences</span>: <span>{{ excluded_sentences }}</span></p>{% endif %}{% when None %}{% endmatch %}
+{% if !cli_arguments.is_empty() %}<details class="cli-command" data-cli-command><summary data-i18n="results.cli_arguments">Equivalent commands</summary><p><code data-cli-summarize>ling summarize {{ cli_arguments }}</code></p><p><code data-cli-matches>ling matches {{ cli_arguments }}</code></p><p data-i18n="results.cli_arguments_context">Save the query as query.lx beside the corpus and run these commands there. summarize prints counts; matches lists matches. Workbench compound rows are omitted.</p></details>{% endif %}
 
   <div class="pattern-rail">
   <h2 class="pattern-catalog-heading"><span data-selected-pattern data-i18n="results.patterns">Patterns</span></h2>
@@ -18,10 +20,7 @@
     <input type="search" id="pattern-rail-filter" class="pattern-rail-filter"
            data-pattern-rail-filter placeholder="Filter patterns…" data-i18n-placeholder="results.filter_placeholder"
            autocomplete="off" spellcheck="false">
-    <a class="export-download" download
-       href="api/export/{{ workbench_id }}/{{ revision }}">
-      <span data-i18n="results.download">Download results in this search scope</span>
-    </a>
+    <div id="export-control">{% call macros::export_link(workbench_id, revision) %}{% endcall %}</div>
     <table id="pattern-table"><thead><tr><th data-i18n="results.col_pattern">Pattern</th><th class="numeric-heading" data-i18n="results.col_matches">Corpus matches</th></tr></thead><tbody id="pattern-rows">
     {% for result in results %}
       <tr data-authored-index="{{ result.authored_index }}" data-exact-total="{{ result.count }}">
@@ -34,7 +33,7 @@
     {% endfor %}
     </tbody></table>
     {% else %}<p class="empty-results" data-i18n="results.empty">No matches for the authored patterns.</p>{% endif %}
-    {% match coverage %}{% when Some with (coverage) %}<p class="catalog-coverage" data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": {{ coverage.matched }}, "scanned": {{ coverage.scanned }}, "pct": "{{ coverage.percent_label }}"}'>{{ coverage.matched_label }} of {{ coverage.scanned_label }} scanned sentences carry a match ({{ coverage.percent_label }}%)</p>{% when None %}{% endmatch %}
+    {% match coverage %}{% when Some with (coverage) %}<p class="catalog-coverage" data-catalog-coverage data-i18n="results.coverage" data-i18n-args='{"matched": "{{ coverage.matched_label }}", "scanned": "{{ coverage.scanned_label }}", "pct": "{{ coverage.percent_label }}"}'>{{ coverage.matched_label }} of {{ coverage.scanned_label }} scanned sentences carry a match ({{ coverage.percent_label }}%)</p>{% when None %}{% endmatch %}
   </details>
   </div>
   <div class="detail-panel" aria-label="Selected pattern details" data-i18n-aria-label="results.detail_panel">

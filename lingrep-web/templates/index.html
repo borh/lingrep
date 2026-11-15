@@ -2,22 +2,12 @@
 {% block title %}lingrep-web{% endblock %}
 {% block head %}{% include "partials/pattern_editor_assets.html" %}{% endblock %}
 {% block content %}
-{# The query band is sticky above 64rem, so everything a running edit needs —
-   what corpus, the pattern, run, and the run's own status — is inside it and
-   the results scroll underneath. Below 64rem it is an ordinary block and the
-   fold-to-a-bar behaviour is unchanged; a band pinned to a phone viewport
-   would cost more of it than it saves. #}
 <div class="query-band" data-query-band>
 <div class="band-head">
 {% include "partials/corpus_context.html" %}
-{# The corpus switch's live region sits OUTSIDE the polled section above: that
-   section is swapped wholesale every few seconds while a corpus prepares, and a
-   region inside it would lose the message it just reported. #}
 {% if corpora.len() > 1 %}
 <p class="corpus-select-status muted" role="status" data-corpus-select-status></p>
 {% endif %}
-{# Run state, beside what it is a run over. Reading it used to mean scrolling
-   away from the editor it is about. #}
 <div id="search-status"></div>
 <div id="results-stale" role="status" aria-live="polite"></div>
 </div>
@@ -32,9 +22,6 @@
       hx-target="#search-status"
       hx-swap="innerHTML"
       data-pattern-submit="corpus-pattern" data-corpus-search{% if auto_run %} data-autorun{% endif %}{% if run_when_ready %} data-run-when-ready{% endif %}>
-    {# The corpus the page is pointed at. Carried on every submit so the request
-       answers from the SELECTED corpus rather than the server's default; an
-       unresolvable value is refused rather than falling back. #}
     <input type="hidden" name="corpus" value="{{ corpus_context.corpus_key }}">
     <div>
         <label class="visually-hidden" for="corpus-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>
@@ -57,6 +44,8 @@
         </div>
       </fieldset>
       <label class="section-scope-option"><input type="checkbox" data-scope-unlabelled checked><span data-i18n="scope.unlabelled">Include unlabelled text</span></label>
+      <label class="scope-clause"><span data-i18n="scope.clause">Only where</span> <input type="text" data-scope-clause spellcheck="false" autocomplete="off" placeholder="@document.year >= 2010"></label>
+      <small class="compound-help" data-i18n="scope.clause_help">Filter document or sentence metadata with a --where clause.</small>
       <p class="scope-pending" data-scope-pending hidden data-i18n="scope.pending">Changes not applied</p>
       <button type="submit" class="btn btn-primary" data-i18n="scope.apply">Apply &amp; rerun</button>
     </details>
@@ -65,31 +54,38 @@
         <button type="button" class="btn btn-secondary sample-drawer-toggle"
                 data-sample-drawer-toggle aria-expanded="false"
                 aria-controls="inline-sample-drawer"><span data-i18n="editor.test_sample">Test on sample</span></button>
-        {# How many hits per pattern this run keeps. A run parameter, so it sits
-           with the run button and posts with the query; the server's configured
-           ceiling is both the largest offer and the default. #}
         <label class="retained-control"><span data-i18n="editor.retained">Hits kept</span>
             <select name="retained" data-retained-select>
             {% for option in retained_options %}<option value="{{ option }}"{% if self.is_default_retention(option) %} selected{% endif %}>{{ option }}</option>{% endfor %}
             </select>
         </label>
         <span class="compound-control-group" title="Creates an independent derived pattern for every chain of adjacent matches." data-i18n-title="editor.derive_compounds_help">
-            <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true" checked>
+            <label class="retained-control"><input type="checkbox" name="derive_compounds" value="true"{% if run_options.derive_compounds %} checked{% endif %}>
                 <span data-i18n="editor.derive_compounds">Derive compounds</span>
             </label>
             <small class="compound-help" data-i18n="editor.derive_compounds_help">Creates an independent derived pattern for every chain of adjacent matches.</small>
             <label class="retained-control compound-category-control"><span data-i18n="editor.compound_category">Category</span>
                 <select name="compound_category">
                     <option value="compound" data-i18n="editor.compound_category_item">Compound item</option>
-                    <option value="source" data-i18n="editor.compound_category_source">Source categories</option>
+                    <option value="source"{% if run_options.compound_category == CompoundCategory::SourceCategories %} selected{% endif %} data-i18n="editor.compound_category_source">Source categories</option>
                 </select>
             </label>
         </span>
         <span class="compound-control-group" title="Counts, per pattern, how many documents it occurs in and how much its largest documents contribute." data-i18n-title="editor.document_reach_help">
-            <label class="retained-control"><input type="checkbox" name="document_reach" value="true" checked>
+            <label class="retained-control"><input type="checkbox" name="document_reach" value="true"{% if run_options.document_reach %} checked{% endif %}>
                 <span data-i18n="editor.document_reach">Count documents reached</span>
             </label>
             <small class="compound-help" data-i18n="editor.document_reach_help">Counts, per pattern, how many documents it occurs in and how much its largest documents contribute.</small>
+        </span>
+        <span class="compound-control-group" title="“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements." data-i18n-title="editor.overlaps_help">
+            <label class="retained-control"><span data-i18n="editor.overlaps">Overlapping matches</span>
+                <select name="overlaps">
+                    <option value="catalog" data-i18n="editor.overlaps_catalog">Catalog policy</option>
+                    <option value="keep"{% if run_options.overlaps == Overlaps::Keep %} selected{% endif %} data-i18n="editor.overlaps_keep">Keep overlaps</option>
+                    <option value="longest"{% if run_options.overlaps == Overlaps::Longest %} selected{% endif %} data-i18n="editor.overlaps_longest">Longest only</option>
+                </select>
+            </label>
+            <small class="compound-help" data-i18n="editor.overlaps_help">“Keep overlaps” skips resolve statements; other policy statements still apply. “Longest only” adds longest-match resolution only when the catalog has no resolve statements.</small>
         </span>
         <button type="button" class="btn btn-secondary copy-permalink" data-copy-permalink><span data-i18n="editor.copy_link">Copy link</span></button>
         <button type="button" class="btn btn-secondary editor-size-toggle"
@@ -134,10 +130,6 @@
 <script type="module" src="assets/search-scope.js"></script>
 <script type="module" src="assets/editor-sizing.js"></script>
 </div>
-
-{# Reference text for the editor above, as an overlay. Outside the band so the
-   band's own scrollport cannot clip it, and a `dialog` so Escape, the backdrop
-   and focus containment are the platform's rather than ours. #}
 <dialog class="editor-help-dialog" data-editor-help aria-labelledby="editor-help-title">
     <h2 id="editor-help-title" data-i18n="editor.help_summary">Syntax and shortcuts</h2>
     <p class="help">
@@ -161,7 +153,7 @@
     server is serving</span> <code>{{ banner.live_digest }}</code>. <span data-i18n="banner.suffix">The pattern was seeded but
     not run automatically; results may differ if you run it.</span>
     <button type="button" class="permalink-dismiss" data-dismiss-permalink
-            aria-label="Dismiss corpus mismatch warning"
+            aria-label="Dismiss corpus mismatch warning" title="Dismiss corpus mismatch warning"
             data-i18n-aria-label="banner.dismiss" data-i18n-title="banner.dismiss">×</button>
 </div>
 {% when None %}

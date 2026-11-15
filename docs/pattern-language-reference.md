@@ -45,6 +45,64 @@ definition: it carries no metadata and emits nothing. It is scoped to the
 accumulated catalog and resolves where a fragment reference does, so `@X` has
 exactly one referent whichever kind `X` is.
 
+## Similarity tests
+
+`[unidic.orthbase near 研究 >= 0.6]` holds for a token whose `unidic.orthbase`
+value has a word vector with a cosine similarity to the vector of `研究` of at
+least 0.6. `not near` is its negation over present values, as `not in` is: it
+holds for a value that is less similar or has no vector, and not for a token
+that lacks the attribute.
+
+The test is resolved when the catalog is compiled. The compiler reads a
+word-vector file, collects the file's values that reach the threshold, and
+compiles the test as `in` over that set; `not near` compiles as `not in`.
+Matching is therefore exact and repeatable for one file, and nothing about
+vectors is stored in a prepared corpus. Three consequences follow:
+
+- A catalog with a `near` test compiles only with a word-vector file.
+  `ling matches`, `ling summarize` and `ling check` take `--vectors FILE`; every
+  command that compiles a catalog reads `LINGREP_VECTORS_PATH` otherwise. Without a file, or when the
+  file has no vector for the word, the test is `WordVectorUnavailable`.
+- The file's values must be spelled the way the tested attribute is. A file
+  keyed by dictionary forms fits `unidic.orthbase`, not `lemma`.
+- The same threshold can select different sets from different files.
+  Declare the file used to choose the thresholds with a header line, `vectors: {resource: "NAME", blake3: "DIGEST"}`. DIGEST
+  is the BLAKE3 digest of the file as 64 lowercase hex digits and is what
+  identifies it; NAME is a label for readers. Repeat the line to admit
+  alternatives. Reading a file with another digest is reported as
+  `warning[vectors_binding_mismatch]`, and a catalog file that has a `near`
+  test and no `vectors:` line as `warning[vectors_undeclared]`, which prints
+  the line to add. The run continues in both cases.
+
+`ling serve` and `lingrep-web` take the same `--vectors FILE`, read
+`LINGREP_VECTORS_PATH` otherwise, pass the file to the `ling` processes they
+start, and stop at startup when it cannot be opened. `--vectors` on `ling
+matches` or `ling summarize` also applies to the server that `--serve` starts
+and to the catalog that `--link` checks. With a file, the Workbench reports the
+two `vectors:` warnings in its status line, its Definition tab lists the values
+each `near` test selects, and the Similar Words page ranks the values near one
+word.
+A file that cannot be read or parsed is `WordVectorTableUnreadable`, reported
+at each `near` test with the file's line number.
+
+The threshold is a number from 0 to 1 with at most six decimal places, and
+white space must separate the word from `>=`, because `>` and `=` are legal in
+an unquoted value. A similarity is rounded to six decimal places before it is
+compared, so a word with a nonzero vector is near itself at threshold 1.
+`ling neighbors --min-similarity T` lists exactly the values that
+`near WORD >= T` selects, with their similarities.
+
+The file is word2vec text: a value, one space, and the numbers of its vector
+on each line, after an optional `count dimensions` first line. Components must
+be finite; components whose squares overflow or underflow, and squared norms
+that overflow, are rejected. A row whose numbers are all zero is near nothing. When a value has several rows, the first
+gives its vector as the word of a test, and the value is near a word when any
+of its rows is.
+
+A run's `run` record carries `word_vectors` when the catalog has a `near`
+test: the file's path and digest, and for each distinct test its word,
+threshold and the number of values it selected.
+
 ## Token tests
 
 A `test` names a token predicate so `[…]` can reference it: `test boundary :=
@@ -689,6 +747,23 @@ always`, including a statement that did nothing; `matches --trace-policy N`
 explains at most `N` individual records, where `not selected` is a distinct
 outcome from `kept` and a dropped record's account ends at the statement that
 dropped it.
+
+### Overlaps chosen per run
+
+A run can override the catalog's `resolve` statements for overlaps between
+different definitions. `matches` and `summarize`
+take `--overlaps`, and the Workbench offers the same values as "Overlapping
+matches":
+
+| Value | The run executes |
+|---|---|
+| `catalog` (default) | the block as written |
+| `keep` | the block without its `resolve` statements; a later statement with `evidence: current` then sees the records a `resolve` would have dropped |
+| `longest` | the block, followed by `resolve patterns rank: [longest, start, end, pattern].` when the block declares no `resolve`; a block with a `resolve` runs as written |
+
+All three retain per-start longest-candidate selection within each definition.
+The `run` record
+carries `overlaps` when the value is not `catalog`.
 
 ### Tracked catalogs with a policy block
 

@@ -100,7 +100,7 @@ fn staging_entries(parent: &Path) -> Vec<PathBuf> {
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains(".staging-"))
+                .is_some_and(|name| name.contains(".staging-") || name.contains(".stagelock-"))
         })
         .collect()
 }

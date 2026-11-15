@@ -10,12 +10,12 @@ use lingrep_core::fsm::{
 };
 use lingrep_core::fsm::{
     DiagnosticSeverity as CompilerSeverity, DriftDefinitionKind, PatternSource,
-    report_catalog_drift,
+    report_catalog_drift_with_vectors,
 };
 
 #[cfg(test)]
 use crate::catalog_input::catalog_fingerprint;
-use crate::catalog_input::{CatalogSource, load_and_compile};
+use crate::catalog_input::{CatalogInput, CatalogSource, compile, load, vectors_path};
 use crate::cli::{CheckArgs, CheckFormat};
 use crate::error::CliError;
 use crate::presentation::OutputMode;
@@ -42,7 +42,16 @@ pub fn run(
                 .into(),
         ));
     }
-    let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
+    let input = args.catalog.catalog_input()?;
+    let table = vectors_path(args.vectors.as_deref())
+        .map(|path| lingrep_corpus::word_vectors::VectorTable::open(&path))
+        .transpose()?;
+    let catalog = compile(
+        load(&input)?,
+        table.as_ref(),
+        matches!(input, CatalogInput::File(_)),
+    )?;
+    super::query_support::write_vectors_notice(&catalog, config)?;
     if args.diagram {
         return super::check_diagram::run(args, &catalog, terminal);
     }
@@ -96,7 +105,8 @@ pub fn run(
             }
         })
         .collect();
-    let (drift, comparison) = compare_catalogs(&catalog.source, &args.compare_with)?;
+    let (drift, comparison) =
+        compare_catalogs(&catalog.source, &args.compare_with, table.as_ref())?;
     let drift_found = !drift.is_empty();
     let binding = args
         .schema
@@ -262,7 +272,7 @@ fn publish_check<W: Write>(
                 if let Some(refusal) = &binding.refusal {
                     writeln!(
                         writer,
-                        "binding {}: refused — {}",
+                        "binding {}: rejected — {}",
                         SafeText::from_untrusted(&binding.schema),
                         SafeText::from_untrusted(refusal)
                     )
@@ -338,6 +348,7 @@ fn publish_check<W: Write>(
 fn compare_catalogs(
     primary: &CatalogSource,
     compare_with: &[std::path::PathBuf],
+    table: Option<&lingrep_corpus::word_vectors::VectorTable>,
 ) -> Result<
     (
         Vec<DriftData>,
@@ -370,7 +381,11 @@ fn compare_catalogs(
         .iter()
         .map(|catalog| PatternSource::named(&catalog.name, &catalog.text))
         .collect();
-    let report = report_catalog_drift(&sources).map_err(|error| {
+    let report = report_catalog_drift_with_vectors(
+        &sources,
+        table.map(|table| table as &dyn lingrep_core::fsm::WordVectors),
+    )
+    .map_err(|error| {
         // Pair the failure with the text of the catalog it came from, so the
         // rendered diagnostic carries the right source context rather than the
         // primary's.

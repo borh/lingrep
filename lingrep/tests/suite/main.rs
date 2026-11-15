@@ -25,6 +25,8 @@ mod frequency_view;
 mod introspection;
 mod kwic_characterization;
 mod manpages;
+mod near;
+mod neighbors;
 mod policy_publication;
 mod prepared_protocol;
 mod protocol;

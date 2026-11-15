@@ -720,3 +720,135 @@ end
 fn sentence_final_command_is_not_part_of_the_cli() {
     assert!(lingrep::cli::Cli::try_parse_from(["ling", "sentence-final"]).is_err());
 }
+
+const RESOLVING_CATALOG: &str = r#"
+long := [text=研究] [lemma=だ].
+
+short := [text=研究].
+
+final := [lemma=だ].
+
+policy
+  resolve all rank: [longest, start, end, pattern].
+  admit @final terminal: {exact: true, anchor: sentence_end}.
+end
+"#;
+
+fn run_overlaps(output: &Output) -> serde_json::Value {
+    parse_jsonl(&output.stdout)
+        .into_iter()
+        .find(|record| record["type"] == "run")
+        .expect("a run record")["data"]["overlaps"]
+        .clone()
+}
+
+fn sorted<T: Ord>(mut values: Vec<T>) -> Vec<T> {
+    values.sort();
+    values
+}
+
+#[test]
+fn overlaps_keep_skips_resolve_and_applies_the_other_statements() {
+    let fixture = PreparedPolicyFixture::new();
+    std::fs::write(&fixture.patterns, RESOLVING_CATALOG).expect("write resolving catalog");
+
+    let catalog = fixture.run(&["matches"]);
+    assert_success(&catalog, "matches");
+    assert_eq!(match_records(&catalog), [("long".to_owned(), 0, 2)]);
+    assert_eq!(run_overlaps(&catalog), serde_json::Value::Null);
+
+    let kept = fixture.run(&["matches", "--overlaps", "keep"]);
+    assert_success(&kept, "matches --overlaps keep");
+    assert_eq!(
+        sorted(match_records(&kept)),
+        [("long".to_owned(), 0, 2), ("short".to_owned(), 0, 1)]
+    );
+    assert_eq!(run_overlaps(&kept), "keep");
+
+    let summary = fixture.run(&["summarize", "--overlaps", "keep"]);
+    assert_success(&summary, "summarize --overlaps keep");
+    assert_eq!(sorted(summary_names(&summary)), ["long", "short"]);
+    assert_eq!(run_overlaps(&summary), "keep");
+
+    let longest = fixture.run(&["matches", "--overlaps", "longest"]);
+    assert_success(&longest, "matches --overlaps longest");
+    assert_eq!(match_records(&longest), match_records(&catalog));
+}
+
+#[test]
+fn overlaps_longest_resolves_a_catalog_that_declares_no_resolve() {
+    let fixture = PreparedPolicyFixture::new();
+
+    let longest = fixture.run(&["matches", "--overlaps", "longest"]);
+    assert_success(&longest, "matches --overlaps longest");
+    assert_eq!(match_records(&longest), [("published".to_owned(), 0, 1)]);
+    assert_eq!(run_overlaps(&longest), "longest");
+
+    let summary = fixture.run(&["summarize", "--overlaps", "longest"]);
+    assert_success(&summary, "summarize --overlaps longest");
+    assert_eq!(summary_names(&summary), ["published"]);
+}
+
+#[cfg(feature = "web")]
+#[test]
+fn link_prints_the_browser_link_for_the_query_and_reads_no_corpus() {
+    let fixture = PreparedPolicyFixture::new();
+    let source = std::fs::read_to_string(&fixture.patterns).expect("fixture catalog");
+    let expected = lingrep_web::permalink::workbench_link(
+        &source,
+        "science",
+        Some("@document.year >= 2010"),
+        lingrep_core::fsm::policy_program::Overlaps::Keep,
+    )
+    .expect("a link");
+    for subcommand in ["matches", "summarize"] {
+        let mut command = lingrep_without_dictionary();
+        let output = command
+            .args([
+                subcommand,
+                "--overlaps",
+                "keep",
+                "--where",
+                "@document.year >= 2010",
+            ])
+            .args(["--link", "science=http://host.example/ling"])
+            .arg("--patterns")
+            .arg(&fixture.patterns)
+            .args(["--corpus", "/nonexistent.lingcorpus"])
+            .output()
+            .expect("ling runs");
+        assert_success(&output, subcommand);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("http://host.example/ling/{expected}\n")
+        );
+    }
+
+    let mut command = lingrep_without_dictionary();
+    let output = command
+        .args(["matches", "--link", "science", "--patterns"])
+        .arg(&fixture.patterns)
+        .args(["--corpus", "/nonexistent.lingcorpus"])
+        .output()
+        .expect("ling runs");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--link takes NAME=URL"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn overlaps_is_rejected_with_raw_matches_and_with_a_written_table() {
+    let fixture = PreparedPolicyFixture::new();
+    let table = fixture.artifact.with_extension("table");
+    let table = table.to_str().expect("a UTF-8 path");
+    for arguments in [
+        &["matches", "--raw-matches", "--overlaps", "keep"][..],
+        &["summarize", "--overlaps", "keep", "--write-table", table],
+    ] {
+        let output = fixture.run(arguments);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+    }
+}

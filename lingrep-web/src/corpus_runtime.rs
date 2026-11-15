@@ -3,10 +3,7 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex as StdMutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex as StdMutex},
 };
 
 use lingrep_core::{
@@ -95,6 +92,11 @@ fn classify<E: std::fmt::Display>(
     }
 }
 
+fn stopped(context: &'static str) -> CacheFailureCategory {
+    tracing::info!(context, "corpus artifact build stopped on request");
+    CacheFailureCategory::Cache
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CorpusIdentity(String);
 
@@ -128,61 +130,40 @@ pub enum CacheReadiness {
 
 enum CacheLifecycle {
     Idle,
-    Building,
+    Building {
+        rebuild: bool,
+    },
     Ready {
         identity: CorpusIdentity,
         artifact: Arc<CorpusArtifact>,
-        artifact_path: Option<PathBuf>,
+        on_corruption: OnCorruption,
         random_source: Arc<PreparedSentenceSource>,
     },
     Failed,
 }
 
-/// One corpus's opened [`ProvenanceView`], held for as long as the artifact
-/// that produced it is the ready one.
-///
-/// [`CorpusArtifact::provenance_view`] does not merely open the database: it
-/// validates every sentence row, decoding each stored analysis blob. That is
-/// O(corpus) work — around 3.3 µs per sentence, so roughly 1.5 s on a
-/// 523 883-sentence corpus — which every request that reads provenance would
-/// otherwise pay in full. The result is a pure function of the artifact, so one open
-/// per ready corpus is enough.
-///
-/// The identity key is what makes that safe. `invalidate_corrupt` discards the
-/// corrupt artifact and the corpus is then rebuilt from the same source under
-/// the same analyzer, which yields the *same* analysis identity — so the key
-/// alone would not notice the rebuild. Clearing the cache on invalidation is
-/// what closes that; the key covers every other way one runtime can come to
-/// serve a different artifact.
+enum OnCorruption {
+    Keep,
+    Rebuild(PathBuf),
+    Discard(PathBuf),
+}
+
+/// Caches provenance by artifact instance; rebuilding preserves analysis identity.
 #[derive(Default)]
 pub struct ProvenanceCache {
-    view: Mutex<Option<(CorpusIdentity, Arc<ProvenanceView>)>>,
+    view: crate::corpus_context::Memo<Arc<CorpusArtifact>, Arc<ProvenanceView>>,
 }
 
 impl ProvenanceCache {
-    /// The view for `identity`, opening and caching it on first use.
-    ///
-    /// The lock is held across the open operation. That makes the cache
-    /// single-flight: N requests arriving together against a cold corpus run
-    /// one validating scan between them rather than N concurrent ones.
     async fn get_or_open(
         &self,
-        identity: &CorpusIdentity,
-        artifact: &CorpusArtifact,
+        artifact: &Arc<CorpusArtifact>,
     ) -> Result<Arc<ProvenanceView>, CorpusError> {
-        let mut guard = self.view.lock().await;
-        if let Some((cached, view)) = guard.as_ref()
-            && cached == identity
-        {
-            return Ok(Arc::clone(view));
-        }
-        let view = Arc::new(artifact.provenance_view().await?);
-        *guard = Some((identity.clone(), Arc::clone(&view)));
-        Ok(view)
-    }
-
-    async fn clear(&self) {
-        *self.view.lock().await = None;
+        let opened = Arc::clone(artifact);
+        crate::corpus_context::detached_memo(&self.view, Arc::clone(artifact), Arc::ptr_eq, {
+            move || async move { opened.provenance_view().await.map(Arc::new) }
+        })
+        .await
     }
 }
 
@@ -231,9 +212,7 @@ impl ReadyCorpus {
     /// path: the uncached call revalidates the whole artifact, which is the
     /// cost [`ProvenanceCache`] exists to pay only once.
     pub async fn provenance(&self) -> Result<Arc<ProvenanceView>, CorpusError> {
-        self.provenance
-            .get_or_open(&self.identity, &self.artifact)
-            .await
+        self.provenance.get_or_open(&self.artifact).await
     }
 
     pub fn reader(&self) -> Result<CorpusReader, CorpusReadError> {
@@ -332,7 +311,6 @@ struct RuntimeInner {
     max_record_bytes: usize,
     lifecycle: Mutex<CacheLifecycle>,
     readiness_tx: watch::Sender<CacheReadiness>,
-    corruption_reported: AtomicBool,
     /// Shared with every [`ReadyCorpus`] this runtime hands out, so one open
     /// serves every request against the same artifact.
     provenance: Arc<ProvenanceCache>,
@@ -380,11 +358,10 @@ impl CorpusRuntime {
                 lifecycle: Mutex::new(CacheLifecycle::Ready {
                     identity,
                     artifact,
-                    artifact_path: Some(artifact_path),
+                    on_corruption: OnCorruption::Keep,
                     random_source,
                 }),
                 readiness_tx,
-                corruption_reported: AtomicBool::new(false),
                 provenance: Arc::new(ProvenanceCache::default()),
             }),
         })
@@ -413,11 +390,10 @@ impl CorpusRuntime {
                 lifecycle: Mutex::new(CacheLifecycle::Ready {
                     identity,
                     artifact: Arc::new(artifact),
-                    artifact_path: None,
+                    on_corruption: OnCorruption::Keep,
                     random_source,
                 }),
                 readiness_tx,
-                corruption_reported: AtomicBool::new(false),
                 provenance: Arc::new(ProvenanceCache::default()),
             }),
         }
@@ -466,7 +442,6 @@ impl CorpusRuntime {
                 max_record_bytes,
                 lifecycle: Mutex::new(CacheLifecycle::Idle),
                 readiness_tx,
-                corruption_reported: AtomicBool::new(false),
                 provenance: Arc::new(ProvenanceCache::default()),
             }),
         })
@@ -494,7 +469,7 @@ impl CorpusRuntime {
             CacheLifecycle::Ready {
                 identity,
                 artifact,
-                artifact_path: _,
+                on_corruption: _,
                 random_source,
             } => Some(ReadyCorpus {
                 identity: identity.clone(),
@@ -512,25 +487,12 @@ impl CorpusRuntime {
         if !matches!(*lifecycle, CacheLifecycle::Idle) {
             return;
         }
-        *lifecycle = CacheLifecycle::Building;
+        *lifecycle = CacheLifecycle::Building { rebuild: false };
         self.inner
             .readiness_tx
             .send_replace(CacheReadiness::Building { lines_processed: 0 });
         drop(lifecycle);
         self.spawn_builder();
-    }
-
-    pub async fn retry(&self) {
-        let mut lifecycle = self.inner.lifecycle.lock().await;
-        if !matches!(*lifecycle, CacheLifecycle::Failed) {
-            return;
-        }
-        *lifecycle = CacheLifecycle::Idle;
-        self.inner
-            .corruption_reported
-            .store(false, Ordering::SeqCst);
-        drop(lifecycle);
-        self.start_or_observe().await;
     }
 
     fn spawn_builder(&self) {
@@ -552,10 +514,15 @@ impl CorpusRuntime {
                         });
                         return;
                     };
+                    let rebuild = matches!(*lifecycle, CacheLifecycle::Building { rebuild: true });
                     *lifecycle = CacheLifecycle::Ready {
                         identity: identity.clone(),
                         artifact: Arc::new(artifact),
-                        artifact_path,
+                        on_corruption: match artifact_path {
+                            None => OnCorruption::Keep,
+                            Some(path) if rebuild => OnCorruption::Discard(path),
+                            Some(path) => OnCorruption::Rebuild(path),
+                        },
                         random_source,
                     };
                     inner
@@ -574,37 +541,53 @@ impl CorpusRuntime {
 }
 
 impl CorpusRuntimeInvalidator {
-    pub async fn invalidate_corrupt(&self) -> bool {
-        if self.inner.corruption_reported.swap(true, Ordering::SeqCst) {
+    /// Reports corruption only if `read` still holds the ready artifact;
+    /// stale or repeated reports return `false` without changes.
+    /// Artifacts beside declared sources are deleted and rebuilt once;
+    /// further corruption deletes the replacement and fails the runtime until restart.
+    /// Declared artifacts remain on disk, with the runtime failed until restart.
+    /// Dropping the future leaves the state unchanged or the transition complete.
+    pub async fn invalidate_corrupt(&self, read: &ReadyCorpus) -> bool {
+        let mut lifecycle = self.inner.lifecycle.lock().await;
+        let CacheLifecycle::Ready {
+            artifact,
+            on_corruption,
+            ..
+        } = &*lifecycle
+        else {
+            return false;
+        };
+        if !Arc::ptr_eq(artifact, &read.artifact) {
             return false;
         }
-        tracing::error!("corpus artifact reported corrupt; flipping runtime to Failed");
-        let mut lifecycle = self.inner.lifecycle.lock().await;
-        let artifact_path = match &*lifecycle {
-            CacheLifecycle::Ready { artifact_path, .. }
-                if !self.inner.corpus_path.as_os_str().is_empty() =>
-            {
-                artifact_path.clone()
-            }
-            _ => None,
+        let (discard, rebuild) = match on_corruption {
+            OnCorruption::Keep => (None, false),
+            OnCorruption::Rebuild(path) => (Some(path.clone()), true),
+            OnCorruption::Discard(path) => (Some(path.clone()), false),
         };
-        *lifecycle = CacheLifecycle::Failed;
-        drop(lifecycle);
-        // Required, not hygiene: the corrupt artifact is discarded and rebuilt
-        // from the same source under the same analyzer, so the rebuild carries
-        // the *same* analysis identity. The cache's identity key would hand
-        // back the dead artifact's view; only clearing it here does not.
-        self.inner.provenance.clear().await;
-        if let Some(path) = artifact_path
+        tracing::error!(rebuild, "corpus artifact reported corrupt");
+        if let Some(path) = discard
             && let Err(error) = fs::remove_dir_all(&path)
         {
             tracing::error!(path = %path.display(), cause = %error, "failed to discard corrupt artifact");
         }
-        self.inner
-            .readiness_tx
-            .send_replace(CacheReadiness::Failed {
-                category: CacheFailureCategory::Corruption,
-            });
+        if rebuild {
+            *lifecycle = CacheLifecycle::Building { rebuild: true };
+            self.inner
+                .readiness_tx
+                .send_replace(CacheReadiness::Building { lines_processed: 0 });
+            CorpusRuntime {
+                inner: Arc::clone(&self.inner),
+            }
+            .spawn_builder();
+        } else {
+            *lifecycle = CacheLifecycle::Failed;
+            self.inner
+                .readiness_tx
+                .send_replace(CacheReadiness::Failed {
+                    category: CacheFailureCategory::Corruption,
+                });
+        }
         true
     }
 }
@@ -898,22 +881,24 @@ fn prepare_artifact(
     );
 
     if destination.exists() {
-        let artifact = CorpusArtifact::open(&destination).map_err(classify(
-            CacheFailureCategory::Corruption,
-            "open content-addressed V1 artifact",
-        ))?;
-        if artifact.source_identity() != observed.source_identity()
-            || artifact.analysis_identity() != &analysis_identity
-        {
-            return Err(CacheFailureCategory::Corruption);
+        match open_published(&destination, &observed, &analysis_identity, handle) {
+            Ok(artifact) => return Ok((identity, artifact, Some(destination))),
+            Err(PublishedArtifactFailure::Unusable) => {
+                return Err(CacheFailureCategory::Corruption);
+            }
+            Err(PublishedArtifactFailure::Corrupt) => {
+                let mut lifecycle = inner.lifecycle.blocking_lock();
+                if !matches!(*lifecycle, CacheLifecycle::Building { rebuild: false }) {
+                    return Err(CacheFailureCategory::Corruption);
+                }
+                *lifecycle = CacheLifecycle::Building { rebuild: true };
+                drop(lifecycle);
+                fs::remove_dir_all(&destination).map_err(classify(
+                    CacheFailureCategory::Corruption,
+                    "discard corrupt V1 artifact",
+                ))?;
+            }
         }
-        handle
-            .block_on(artifact.provenance_view())
-            .map_err(classify(
-                CacheFailureCategory::Corruption,
-                "open V1 provenance view",
-            ))?;
-        return Ok((identity, artifact, Some(destination)));
     }
     // The permit still bounds concurrent builds, and it is still acquired
     // before the dictionary is opened. It does not bound a ~1.31 GB decoded
@@ -943,6 +928,45 @@ fn prepare_artifact(
             "open V1 provenance view",
         ))?;
     Ok((identity, artifact, Some(destination)))
+}
+
+enum PublishedArtifactFailure {
+    /// The stored bytes are damaged, or are not the realization of the source
+    /// and analysis that the artifact's path names.
+    Corrupt,
+    /// Any other failure, which is no evidence about the stored bytes.
+    Unusable,
+}
+
+fn open_published(
+    destination: &Path,
+    observed: &ObservedSources,
+    analysis_identity: &AnalysisIdentity,
+    handle: &tokio::runtime::Handle,
+) -> Result<CorpusArtifact, PublishedArtifactFailure> {
+    let failure = |context: &'static str| {
+        move |error: CorpusError| {
+            let corrupt = error.is_artifact_corruption();
+            tracing::warn!(context, cause = %error, corrupt, "published corpus artifact did not open");
+            if corrupt {
+                PublishedArtifactFailure::Corrupt
+            } else {
+                PublishedArtifactFailure::Unusable
+            }
+        }
+    };
+    let artifact =
+        CorpusArtifact::open(destination).map_err(failure("open content-addressed V1 artifact"))?;
+    if artifact.source_identity() != observed.source_identity()
+        || artifact.analysis_identity() != analysis_identity
+    {
+        tracing::warn!("published corpus artifact records another identity than its path");
+        return Err(PublishedArtifactFailure::Corrupt);
+    }
+    handle
+        .block_on(artifact.provenance_view())
+        .map_err(failure("open V1 provenance view"))?;
+    Ok(artifact)
 }
 
 /// Adopt an artifact the operator named directly, instead of building one.
@@ -1010,6 +1034,9 @@ fn build_artifact(
     // are declared, and this build already holds the single build permit.
     let pool = inner.context.pool();
     let mut session = AnalyzerLanes::new(&plan, pool.current_num_threads(), &pool);
+    if inner.context.builds_stopping() {
+        return Err(stopped("begin V1 artifact"));
+    }
     let mut builder = handle
         .block_on(CorpusBuilder::begin_with_schema(
             BuildConfig {
@@ -1101,6 +1128,9 @@ fn build_artifact(
             let Some(event) = event else {
                 break;
             };
+            if inner.context.builds_stopping() {
+                return Err(stopped("push V1 corpus event"));
+            }
             if let AdmittedCorpusEvent::DocumentStart {
                 id, source_name, ..
             } = &event
@@ -1143,21 +1173,27 @@ fn build_artifact(
         }
     }
     let report = finish_discovery(&documents, &report)?;
-    let artifact =
-        match handle.block_on(builder.finish_expected_analysis(report, expected_analysis)) {
-            Ok(artifact) => artifact,
-            Err(CorpusError::DestinationExists { .. }) => CorpusArtifact::open(destination)
-                .map_err(classify(
-                    CacheFailureCategory::Cache,
-                    "open concurrently published V1 artifact",
-                ))?,
-            Err(error) => {
-                return Err(classify(
-                    CacheFailureCategory::Cache,
-                    "publish immutable V1 artifact",
-                )(error));
-            }
-        };
+    let finished = handle.block_on(builder.finish_expected_analysis(
+        report,
+        expected_analysis,
+        || !inner.context.builds_stopping(),
+    ));
+    let artifact = match finished {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => return Err(stopped("publish immutable V1 artifact")),
+        Err(CorpusError::DestinationExists { .. }) => {
+            CorpusArtifact::open(destination).map_err(classify(
+                CacheFailureCategory::Cache,
+                "open concurrently published V1 artifact",
+            ))?
+        }
+        Err(error) => {
+            return Err(classify(
+                CacheFailureCategory::Cache,
+                "publish immutable V1 artifact",
+            )(error));
+        }
+    };
     Ok(artifact)
 }
 
@@ -1381,6 +1417,45 @@ mod tests {
             .normalization(),
             BUILD_NORMALIZATION
         );
+    }
+
+    #[tokio::test]
+    async fn a_corruption_report_dropped_while_provenance_is_being_opened_still_rebuilds() {
+        let directory = tempfile::tempdir().unwrap();
+        let corpus = directory.path().join("corpus.jsonl");
+        std::fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+        let dictionary = lingrep_core::testing::MiniDictionary::new();
+        let context = Arc::new(ServerContext::new(dictionary.path()).unwrap());
+        let runtime = CorpusRuntime::new(context, &corpus).unwrap();
+        runtime.start_or_observe().await;
+        let mut readiness = runtime.readiness();
+        readiness
+            .wait_for(|readiness| matches!(readiness, CacheReadiness::Ready { .. }))
+            .await
+            .unwrap();
+        let corrupt = runtime.ready().await.unwrap();
+
+        let opening = runtime.inner.provenance.view.lock().await;
+        let invalidator = runtime.invalidator();
+        {
+            let report = std::pin::pin!(invalidator.invalidate_corrupt(&corrupt));
+            let _ = futures::poll!(report);
+        }
+        drop(opening);
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                readiness.borrow_and_update();
+                if let Some(rebuilt) = runtime.ready().await
+                    && !Arc::ptr_eq(&rebuilt.artifact, &corrupt.artifact)
+                {
+                    return;
+                }
+                readiness.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("the corpus is rebuilt after the report was dropped");
     }
 
     #[test]

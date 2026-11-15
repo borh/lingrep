@@ -46,13 +46,12 @@ export function setToggleLabel(toggle, expanded) {
   const label = toggle.querySelector("[data-i18n]") ?? toggle;
   label.setAttribute("data-i18n", expanded ? "editor.collapse" : "editor.expand");
   label.textContent = expanded ? "Collapse editor" : "Expand editor";
+  label.removeAttribute("data-i18n-src");
   return label;
 }
 
-/** Re-runs the translation pass over one relabelled element. */
-function relocalize(element) {
-  if (typeof document === "undefined") return;
-  localize(element);
+export function relocalize(element, apply = localize) {
+  apply(element.parentElement ?? element);
 }
 
 export function initializeEditorSizing(

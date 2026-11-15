@@ -5,14 +5,16 @@ use axum::{
     response::Html,
     routing::get,
 };
+use lingrep_core::fsm::policy_program::Overlaps;
 
 use crate::{
     corpus_context::{CorpusContextView, UNNAMED_CORPUS, slot_context_view},
     corpus_set::CorpusName,
     permalink::{self, MAX_REQUEST_TARGET_LEN, WIRE_VERSION},
     revision::WorkbenchId,
+    snapshot::CompoundCategory,
     state::RequestStore,
-    templates::{CorpusOption, IndexPage, LinkBanner, LinkNotice},
+    templates::{CorpusOption, IndexPage, LinkBanner, LinkNotice, RunOptions},
 };
 
 const NOTICE_UNREADABLE: LinkNotice = LinkNotice {
@@ -61,6 +63,8 @@ pub struct WireParams<'a> {
     /// The per-pattern retention the sender was reading, mapped onto this
     /// server's offers at landing.
     pub retained: Option<usize>,
+    /// Absent `d`, `g` and `n` link keys retain the page's run-option defaults.
+    pub run_options: RunOptions,
 }
 
 /// `r` is at most this many decimal digits, so it parses without overflow and
@@ -77,6 +81,10 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
     let mut corpus = None;
     let mut retained = None;
     let mut search_scope = None;
+    let mut derive_compounds = None;
+    let mut compound_category = None;
+    let mut document_reach = None;
+    let mut overlaps = None;
     for pair in raw.split('&') {
         let (key, value) = pair.split_once('=')?;
         let slot = match key {
@@ -86,6 +94,10 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
             "c" => &mut corpus,
             "r" => &mut retained,
             "s" => &mut search_scope,
+            "d" => &mut derive_compounds,
+            "g" => &mut compound_category,
+            "n" => &mut document_reach,
+            "o" => &mut overlaps,
             _ => return None,
         };
         if value.is_empty() || slot.replace(value).is_some() {
@@ -116,6 +128,29 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
             Some(crate::search_scope::SearchScope::parse(Some(values.first()?.1.as_str())).ok()?)
         }
     };
+    let changed = |value: Option<&str>, emitted: &str| match value {
+        None => Some(false),
+        Some(value) => (value == emitted).then_some(true),
+    };
+    let run_options = RunOptions {
+        derive_compounds: !changed(derive_compounds, "0")?,
+        compound_category: if changed(compound_category, "source")? {
+            CompoundCategory::SourceCategories
+        } else {
+            CompoundCategory::Compound
+        },
+        document_reach: !changed(document_reach, "0")?,
+        overlaps: match overlaps {
+            None => Overlaps::Catalog,
+            Some(value) => {
+                let overlaps = crate::templates::overlaps_of_form(Some(value));
+                if overlaps == Overlaps::Catalog {
+                    return None;
+                }
+                overlaps
+            }
+        },
+    };
     let params = WireParams {
         search_scope,
         version: version?,
@@ -123,6 +158,7 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
         corpus_key: corpus_key?,
         corpus,
         retained,
+        run_options,
     };
     if params.version != WIRE_VERSION {
         return None;
@@ -189,6 +225,7 @@ struct Landing {
     link_notice: Option<LinkNotice>,
     /// The link's retention, when it carried one.
     retained: Option<usize>,
+    run_options: RunOptions,
 }
 
 /// What the selected corpus can currently say about itself.
@@ -231,6 +268,7 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
         link_banner: None,
         link_notice,
         retained: None,
+        run_options: RunOptions::default(),
     };
 
     let params = match target {
@@ -249,6 +287,7 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
         link_banner: None,
         link_notice: None,
         retained: params.retained,
+        run_options: params.run_options,
     };
     match (readiness, params.corpus) {
         // Ready, and the link asserts nothing about which content it saw.
@@ -321,12 +360,16 @@ pub async fn index_page(
 /// guessed key reveals nothing about the server's configuration — least of all a
 /// filesystem path.
 fn unknown_corpus_page(store: &RequestStore, target: &Target<'_>) -> Html<String> {
-    let (decoded, retained) = match target {
-        Target::Link(params) => (permalink::decode(params.query).ok(), params.retained),
+    let (decoded, retained, run_options) = match target {
+        Target::Link(params) => (
+            permalink::decode(params.query).ok(),
+            params.retained,
+            params.run_options,
+        ),
         // Unreachable for a validated configuration — a target naming no corpus
         // resolves to the default slot — but the default pattern is the honest
         // answer if it ever is reached.
-        Target::Bare | Target::Unreadable => (None, None),
+        Target::Bare | Target::Unreadable => (None, None, RunOptions::default()),
     };
     let (seed_pattern, link_notice) = decoded.map_or_else(
         || (store.default_pattern.to_string(), NOTICE_UNREADABLE),
@@ -343,6 +386,7 @@ fn unknown_corpus_page(store: &RequestStore, target: &Target<'_>) -> Html<String
         link_banner: None,
         link_notice: Some(link_notice),
         retained,
+        run_options,
     };
     render_index(
         store,
@@ -374,6 +418,7 @@ fn render_index(
         catalog_keys: store.catalogs.keys().map(str::to_owned).collect(),
         retained_default: crate::state::link_retention(&retained_options, landing.retained),
         retained_options,
+        run_options: landing.run_options,
     }
     .render().map_or_else(|_| {
         Html(
@@ -417,6 +462,45 @@ mod tests {
         assert_eq!(parse_wire(raw).unwrap().retained, Some(50));
         assert_eq!(parse_wire("v=1&q=AAAA&k=sci").unwrap().retained, None);
         for bad in ["r=0", "r=-1", "r=5x", "r=12345678", "r=50&r=50"] {
+            assert!(
+                parse_wire(&format!("v=1&q=AAAA&k=sci&{bad}")).is_none(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn run_option_keys_are_accepted_only_with_their_emitted_values() {
+        use crate::templates::RunOptions;
+        assert_eq!(
+            parse_wire("v=1&q=AAAA&k=sci").unwrap().run_options,
+            RunOptions {
+                derive_compounds: true,
+                compound_category: CompoundCategory::Compound,
+                document_reach: true,
+                overlaps: Overlaps::Catalog,
+            }
+        );
+        assert_eq!(
+            parse_wire("v=1&q=AAAA&k=sci&d=0&g=source&n=0&o=keep")
+                .unwrap()
+                .run_options,
+            RunOptions {
+                derive_compounds: false,
+                compound_category: CompoundCategory::SourceCategories,
+                document_reach: false,
+                overlaps: Overlaps::Keep,
+            }
+        );
+        for bad in [
+            "d=1",
+            "d=false",
+            "g=compound",
+            "n=1",
+            "d=0&d=0",
+            "o=catalog",
+            "o=all",
+        ] {
             assert!(
                 parse_wire(&format!("v=1&q=AAAA&k=sci&{bad}")).is_none(),
                 "{bad}"

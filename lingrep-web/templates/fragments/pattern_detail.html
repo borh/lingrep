@@ -1,9 +1,9 @@
 <section class="pattern-detail" data-retained-count="{{ retained_count }}" data-pattern-id="{{ pattern_key }}" data-has-sections="{% if projection.sections.is_empty() %}false{% else %}true{% endif %}">
     <div class="pattern-detail-summary">
       <h2>{{ pattern_name }}</h2>
-      {% if self.sampled() %}<p data-i18n="detail.counts_sampled" data-i18n-args='{"exact": {{ exact_total }}, "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} shown, sampled at random</p>{% else %}<p data-i18n="detail.counts" data-i18n-args='{"exact": {{ exact_total }}, "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} retained hits</p>{% endif %}
-      {% match chained %}{% when Some with (chained) %}<p class="chain-share" data-chain-share data-i18n="detail.chain_share" data-i18n-args='{"chained": {{ chained.chained_total }}, "exact": {{ exact_total }}, "pct": "{{ chained.percent_label }}"}'>{{ chained.chained_label }} of {{ exact_total_label }} ({{ chained.percent_label }}%) adjacent to another published match</p>{% when None %}{% endmatch %}
-      {% match documents %}{% when Some with (documents) %}<p class="document-share" data-document-share data-i18n="detail.document_share" data-i18n-args='{"documents": {{ documents.documents }}, "scanned": {{ documents.scanned }}, "top": "{{ documents.top_one_label }}", "top_five": "{{ documents.top_five_label }}"}' title="Shares are each document’s contribution to the occurrences, not a length-adjusted preference." data-i18n-title="detail.document_share_note">In {{ documents.documents_label }} of {{ documents.scanned_label }} documents · top document {{ documents.top_one_label }}%, top five {{ documents.top_five_label }}% of occurrences</p>{% when None %}{% endmatch %}
+      {% if self.sampled() %}<p data-i18n="detail.counts_sampled" data-i18n-args='{"exact": "{{ exact_total_label }}", "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} shown, sampled at random</p>{% else %}<p data-i18n="detail.counts" data-i18n-args='{"exact": "{{ exact_total_label }}", "retained": {{ retained_count }}}'>{{ exact_total_label }} corpus matches · {{ retained_count }} retained hits</p>{% endif %}
+      {% match chained %}{% when Some with (chained) %}<p class="chain-share" data-chain-share data-i18n="detail.chain_share" data-i18n-args='{"chained": "{{ chained.chained_label }}", "exact": "{{ exact_total_label }}", "pct": "{{ chained.percent_label }}"}'>{{ chained.chained_label }} of {{ exact_total_label }} ({{ chained.percent_label }}%) adjacent to another published match</p>{% when None %}{% endmatch %}
+      {% match documents %}{% when Some with (documents) %}<p class="document-share" data-document-share data-i18n="detail.document_share" data-i18n-args='{"documents": "{{ documents.documents_label }}", "scanned": "{{ documents.scanned_label }}", "top": "{{ documents.top_one_label }}", "top_five": "{{ documents.top_five_label }}"}' title="Shares are each document’s contribution to the occurrences, not a length-adjusted preference." data-i18n-title="detail.document_share_note">In {{ documents.documents_label }} of {{ documents.scanned_label }} documents · top document {{ documents.top_one_label }}%, top five {{ documents.top_five_label }}% of occurrences</p>{% when None %}{% endmatch %}
     </div>
     {% if projection.overlap_hits > 0 %}<aside class="alert alert-error overlap-warning" data-overlap-warning>
       <h3 data-i18n="detail.overlaps_title">Overlapping pattern candidates</h3>
@@ -35,8 +35,21 @@
         <ul class="definition-reference-list">{% for reference in definition.references %}<li><button type="button" class="definition-reference-chip" data-jump-definition="{{ reference }}"><code>@{{ reference }}</code></button></li>{% endfor %}</ul>
       </section>
       {% when None %}
-      <p class="definition-standalone muted" data-i18n="detail.definition_standalone">This definition stands on no fragments, so there is nothing to expand.</p>
+      <p class="definition-standalone muted" data-i18n="detail.definition_standalone">No references to expand.</p>
       {% endmatch %}
+      {% if !definition.near.is_empty() %}
+      <section class="definition-pane definition-near-pane" aria-labelledby="definition-near-heading">
+        <h3 id="definition-near-heading"><span data-i18n="detail.definition_near">near tests</span></h3>
+        <ul class="definition-near-list">
+          {% for test in definition.near %}
+          <li>
+            <p class="definition-near-test"><code>near {{ test.word }} &gt;= {{ test.threshold }}</code> <span data-i18n="detail.near_count" data-i18n-args='{"n": "{{ test.count }}"}'>{{ test.count }} values</span> <a href="{{ test.href }}" target="_blank" rel="noopener"><span data-i18n="detail.near_ranked">View by similarity</span></a></p>
+            <p class="definition-near-values">{% for value in test.values %}<span>{{ value }}</span>{% endfor %}{% if test.more > 0 %}<span class="muted" data-i18n="detail.near_more" data-i18n-args='{"n": {{ test.more }}}'>and {{ test.more }} more</span>{% endif %}</p>
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
       {% match definition.diagram %}{% when Some with (diagram) %}
       <section class="definition-pane definition-diagram-pane" aria-labelledby="definition-diagram-heading">
         <h3 id="definition-diagram-heading"><span data-i18n="detail.definition_diagram">Expanded state diagram</span></h3>
@@ -50,7 +63,7 @@
           <button type="button" class="btn btn-compact btn-secondary" data-view-filtered-concordance="surface" hidden></button>
         </div>
         {% if projection.hits.is_empty() %}
-        <p class="empty-sampled-distribution" data-i18n="detail.surface_empty">No retained examples are available for this authored pattern, so there is no sampled surface distribution.</p>
+        <p class="empty-sampled-distribution" data-i18n="detail.surface_empty">No retained hits are available for a surface distribution.</p>
         {% else %}
         <div class="ranked-filter" data-ranked-list="surface" data-ranked-limit="{{ projection.overview_len }}" data-ranked-expanded="false">
           {% match projection.tail %}{% when Some with (tail) %}<div class="ranked-tools" data-hidden-count="{{ tail.variation_count }}"><label class="ranked-search-label"><span data-i18n="detail.search_surfaces">Search surfaces</span> <input type="search" data-ranked-search="surface"></label><label class="ranked-order-label"><span data-i18n="detail.order">Order</span> <select data-ranked-order><option value="count-desc" data-i18n="detail.order_freq">Frequency ↓</option><option value="name-asc" data-i18n="detail.order_name">Name ↑</option></select></label></div>{% when None %}{% endmatch %}
@@ -169,13 +182,13 @@
     <div class="kwic-quick-drawer" data-quick-filter-drawer="section" hidden></div>
     {% endif %}
   </header>
-  {% if projection.hits.is_empty() %}<p class="empty-kwic" data-i18n="detail.no_hits">This authored pattern has no retained hits to display.</p>{% else %}
+  {% if projection.hits.is_empty() %}<p class="empty-kwic" data-i18n="detail.no_hits">No retained hits to display.</p>{% else %}
   {# The variation list is corpus-exact while the concordance is the bounded
      retained sample, so a surface with a positive corpus count can have no
      retained row and empty the table on selection. The note states which
      population each figure describes; `applyRowFilters` unhides it for that
      selection and hides it otherwise. #}
-  <p class="empty-kwic" data-kwic-filter-empty hidden data-i18n="detail.no_retained_for_surface">No retained hits carry this surface. The corpus count beside it is exact; the concordance lists only the bounded retained sample.</p>
+  <p class="empty-kwic" data-kwic-filter-empty hidden data-i18n="detail.no_retained_for_surface">No retained hits have this surface. Its corpus count is exact; the concordance shows only retained hits.</p>
   {% match chained %}{% when Some with (chained) %}<p class="empty-kwic" data-kwic-occurrence-empty hidden data-i18n="detail.no_retained_for_occurrence">No retained hits are of this kind. The count on the selector is exact; the concordance lists only the bounded retained sample.</p>
   <p class="occurrence-scope-note" data-occurrence-scope-note data-i18n="detail.occurrence_scope">The occurrence selector narrows the concordance only. Surface and section counts cover every occurrence.</p>{% when None %}{% endmatch %}
   <div class="kwic-container"><table class="kwic-concordance" role="grid" aria-label="Matched sentences in context" data-i18n-aria-label="detail.kwic" data-hit-grid data-kwic-pagination><thead><tr role="row"><th role="columnheader" scope="col" data-i18n="detail.col_index">#</th>{% if projection.has_hit_sections %}<th class="kwic-section" role="columnheader" scope="col" data-i18n="detail.col_section">Section</th>{% endif %}<th role="columnheader" scope="col" data-i18n="detail.col_sentence">Sentence</th></tr></thead><tbody>

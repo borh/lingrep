@@ -13,7 +13,7 @@ use crate::execution::SentenceLocation;
 /// [`RoaringTreemap`], not `RoaringBitmap`: [`DocumentId`](crate::corpus::DocumentId) wraps a `u64` and
 /// `RoaringBitmap` is 32-bit, so the narrower type would silently fold every
 /// document id above `u32::MAX` onto a low one.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum SentenceAdmission {
     /// No scope clause: every sentence is presented to matching.
     #[default]
@@ -32,6 +32,8 @@ pub enum SentenceAdmission {
     /// existed.
     Sentences(RoaringTreemap),
 }
+
+impl Eq for SentenceAdmission {}
 
 impl SentenceAdmission {
     /// Whether a sentence reaches matching.

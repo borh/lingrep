@@ -5,7 +5,11 @@
 //! builder's private staging directory. Every later error leaves the visible
 //! artifact untouched.
 
-use std::{fs::File, io, path::Path};
+use std::{
+    fs::{self, File},
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{ffi::CString, os::unix::ffi::OsStrExt};
@@ -137,11 +141,123 @@ fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
+pub(crate) fn staging_paths(parent: &Path, name: &str, suffix: &str) -> (PathBuf, PathBuf) {
+    (
+        parent.join(format!(".{name}.staging-{suffix}")),
+        parent.join(format!(".{name}.stagelock-{suffix}")),
+    )
+}
+
+#[derive(Debug)]
+pub(crate) struct StagingLock {
+    path: PathBuf,
+    _file: File,
+}
+
+impl StagingLock {
+    /// Returns `None` when `path` already exists.
+    pub(crate) fn acquire(path: PathBuf) -> io::Result<Option<Self>> {
+        let mut file = match File::options().write(true).create_new(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if file.lock().is_ok()
+            && let Some(host) = host_name()
+        {
+            let _ = file.write_all(&host);
+        }
+        Ok(Some(Self { path, _file: file }))
+    }
+}
+
+impl Drop for StagingLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Removes staging directories for `name` only when their lock files record
+/// this host and can be locked exclusively.
+pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
+    let Some(host) = host_name() else {
+        return;
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    let lock_prefix = format!(".{name}.stagelock-");
+    for entry in entries.flatten() {
+        let lock_name = entry.file_name();
+        let Some(suffix) = lock_name
+            .to_str()
+            .and_then(|lock_name| lock_name.strip_prefix(&lock_prefix))
+        else {
+            continue;
+        };
+        let (staging, lock_path) = staging_paths(parent, name, suffix);
+        let Ok(mut file) = File::options().read(true).write(true).open(&lock_path) else {
+            continue;
+        };
+        let mut owner = Vec::new();
+        if file.try_lock().is_err()
+            || !is_file_at(&file, &lock_path)
+            || file.read_to_end(&mut owner).is_err()
+            || owner != host
+        {
+            continue;
+        }
+        match fs::remove_dir_all(&staging) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {}
+            _ => {
+                let _ = fs::remove_file(&lock_path);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn is_file_at(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), fs::symlink_metadata(path)) {
+        (Ok(open), Ok(named)) => open.dev() == named.dev() && open.ino() == named.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn is_file_at(_file: &File, _path: &Path) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn host_name() -> Option<Vec<u8>> {
+    let mut name = vec![0_u8; 256];
+    // SAFETY: the pointer and length describe `name`, which outlives the call.
+    if unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } != 0 {
+        return None;
+    }
+    let length = name.iter().position(|&byte| byte == 0)?;
+    name.truncate(length);
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(not(unix))]
+fn host_name() -> Option<Vec<u8>> {
+    None
+}
+
 /// A directory beside a destination that is removed on drop unless it was
 /// renamed into place.
 pub(crate) struct StagingDirectory {
     pub(crate) path: std::path::PathBuf,
     pub(crate) published: bool,
+    _lock: StagingLock,
 }
 
 impl StagingDirectory {
@@ -158,15 +274,16 @@ impl StagingDirectory {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_nanos());
-        let path = parent.join(format!(
-            ".{}.staging-{}-{nanos}",
-            name.to_string_lossy(),
-            std::process::id()
-        ));
+        let name = name.to_string_lossy();
+        reclaim_orphaned_staging(parent, &name);
+        let (path, lock) = staging_paths(parent, &name, &format!("{}-{nanos}", std::process::id()));
+        let lock = StagingLock::acquire(lock)?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::AlreadyExists))?;
         std::fs::create_dir(&path)?;
         Ok(Some(Self {
             path,
             published: false,
+            _lock: lock,
         }))
     }
 }
@@ -244,7 +361,7 @@ mod tests {
         spill::TempBudget,
     };
 
-    use super::{PublicationOps, publish, publish_with_ops};
+    use super::{PublicationOps, host_name, publish, publish_with_ops, staging_paths};
     use crate::{
         AdmissionIdentity, AnalysisInputs, BuildConfig, CorpusArtifact, CorpusBuilder, CorpusError,
         DictionaryFingerprint, ReaderIdentity, artifact::CompletedStagingArtifact,
@@ -520,6 +637,44 @@ mod tests {
             drop(completed);
             assert!(!staging.exists());
         }
+    }
+
+    fn killed_builder_leftovers(parent: &Path, suffix: &str, host: &[u8]) -> (PathBuf, PathBuf) {
+        let (staging, lock) = staging_paths(parent, "science.lingcorpus", suffix);
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("tokens.v1.zst"), b"partial").unwrap();
+        std::fs::write(&lock, host).unwrap();
+        (staging, lock)
+    }
+
+    #[tokio::test]
+    async fn a_build_reclaims_only_the_staging_of_a_dead_builder_on_this_host() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("science.lingcorpus");
+        let (dead, dead_lock) =
+            killed_builder_leftovers(directory.path(), "1-0", &host_name().unwrap());
+        let (other_host, other_host_lock) =
+            killed_builder_leftovers(directory.path(), "1-1", b"another-host.invalid");
+        let (other_artifact, _) = staging_paths(directory.path(), "history.lingcorpus", "1-0");
+        std::fs::create_dir(&other_artifact).unwrap();
+        let unlocked = directory.path().join(".science.lingcorpus.staging-1-2");
+        std::fs::create_dir(&unlocked).unwrap();
+        let mut live = complete_staging(&destination).await;
+        let live_staging = live.path().to_path_buf();
+
+        drop(complete_staging(&destination).await);
+
+        assert!(!dead.exists() && !dead_lock.exists());
+        assert!(other_host.exists() && other_host_lock.exists());
+        assert!(other_artifact.exists());
+        assert!(unlocked.exists());
+        assert!(live_staging.exists());
+        publish(&mut live).unwrap();
+        CorpusArtifact::open(&destination)
+            .unwrap()
+            .verify_integrity()
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -433,6 +433,101 @@ async fn a_retention_above_the_offers_lands_on_the_ceiling() {
     assert!(!body["path"].as_str().unwrap().contains("&r="));
 }
 
+const DERIVE_CHECKED: &str = r#"name="derive_compounds" value="true" checked>"#;
+const DERIVE_UNCHECKED: &str = r#"name="derive_compounds" value="true">"#;
+const REACH_CHECKED: &str = r#"name="document_reach" value="true" checked>"#;
+const REACH_UNCHECKED: &str = r#"name="document_reach" value="true">"#;
+const SOURCE_SELECTED: &str = r#"<option value="source" selected"#;
+
+#[tokio::test]
+async fn a_link_carries_the_run_options_the_sender_changed() {
+    let (store, _directory, digest) = ready_store().await;
+    let (status, body) = post_permalink_fields(
+        &store,
+        &[
+            ("pattern", SEEDED),
+            ("derive_compounds", "false"),
+            ("compound_category", "source"),
+            ("document_reach", "false"),
+            ("overlaps", "keep"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let path = body["path"].as_str().unwrap();
+    let plain =
+        lingrep_web::permalink::encode_query_only(SEEDED, "default", Some(&digest), None).unwrap();
+    assert_eq!(path, format!("{plain}&d=0&g=source&n=0&o=keep"));
+
+    let (status, html) = get_index(store, &format!("/{path}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("data-autorun"));
+    assert!(html.contains(DERIVE_UNCHECKED), "{html}");
+    assert!(html.contains(REACH_UNCHECKED), "{html}");
+    assert!(html.contains(SOURCE_SELECTED), "{html}");
+    assert!(html.contains(r#"<option value="keep" selected"#), "{html}");
+    assert!(!html.contains(DERIVE_CHECKED) && !html.contains(REACH_CHECKED));
+}
+
+#[tokio::test]
+async fn a_link_built_outside_the_browser_lands_with_its_clause_and_overlaps() {
+    let (store, _directory, _digest) = ready_store().await;
+    let link = lingrep_web::permalink::workbench_link(
+        SEEDED,
+        "default",
+        Some("@document.year >= 2010"),
+        lingrep_core::fsm::policy_program::Overlaps::Longest,
+    )
+    .unwrap();
+
+    let (status, html) = get_index(store, &format!("/{link}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains(r#"<option value="longest" selected"#),
+        "{html}"
+    );
+    assert!(
+        html.contains("&#34;clause&#34;:&#34;@document.year &gt;= 2010&#34;")
+            || html.contains("&#34;clause&#34;:&#34;@document.year &#62;= 2010&#34;"),
+        "{html}"
+    );
+
+    assert_eq!(
+        lingrep_web::permalink::workbench_link(
+            SEEDED,
+            "default",
+            Some("@document.year >="),
+            Default::default(),
+        ),
+        Err(lingrep_web::permalink::PermalinkError::Malformed)
+    );
+}
+
+#[tokio::test]
+async fn a_link_without_run_options_lands_on_the_page_defaults() {
+    let (store, _directory, digest) = ready_store().await;
+    let plain =
+        lingrep_web::permalink::encode_query_only(SEEDED, "default", Some(&digest), None).unwrap();
+    for fields in [
+        vec![("pattern", SEEDED)],
+        vec![
+            ("pattern", SEEDED),
+            ("derive_compounds", "true"),
+            ("compound_category", "compound"),
+            ("document_reach", "true"),
+        ],
+    ] {
+        let (_, body) = post_permalink_fields(&store, &fields).await;
+        assert_eq!(body["path"].as_str().unwrap(), plain);
+    }
+
+    let (_, html) = get_index(store, &format!("/{plain}")).await;
+    assert!(html.contains("data-autorun"));
+    assert!(html.contains(DERIVE_CHECKED), "{html}");
+    assert!(html.contains(REACH_CHECKED), "{html}");
+    assert!(!html.contains(SOURCE_SELECTED), "{html}");
+}
+
 /// A retired selector-less target cannot seed or run a query.
 #[tokio::test]
 async fn a_selector_less_target_is_unreadable() {

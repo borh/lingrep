@@ -1,8 +1,8 @@
 use super::assertion::AssertionSession;
 use super::predicate::{
-    CompiledPositionAssertion, PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN, PREDICATE_SITE_CAPTURE_TOKEN,
-    PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN, PREDICATE_SITE_EVALUATED_TOKEN, PredicateCatalog,
-    PredicateId, PredicateSession,
+    CompiledPositionAssertion, Members, PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN,
+    PREDICATE_SITE_CAPTURE_TOKEN, PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN,
+    PREDICATE_SITE_EVALUATED_TOKEN, PredicateCatalog, PredicateId, PredicateSession,
 };
 use crate::corpus::conllu::{EnhancedGraph, EnhancedHead, EnhancedNodeId};
 use crate::fsm::compiler::model::{
@@ -80,6 +80,9 @@ enum RuntimeEnhancedEndpoint {
     Graph {
         name: compact_str::CompactString,
         symbolic: Box<[TokenPredicate]>,
+        /// For each atom of each predicate in `symbolic`, the operands of
+        /// its `in` or `not in` list; `None` for any other test.
+        members: Box<[Box<[Option<Members>]>]>,
     },
 }
 
@@ -860,6 +863,20 @@ fn compile_enhanced_endpoint(endpoint: &ExecutionEnhancedEndpoint) -> RuntimeEnh
         } => RuntimeEnhancedEndpoint::Graph {
             name: name.clone(),
             symbolic: tests.clone(),
+            members: tests
+                .iter()
+                .map(|predicate| {
+                    predicate
+                        .iter()
+                        .map(|atom| match &atom.value {
+                            AttrValueType::OneOf(values) | AttrValueType::NotIn(values) => {
+                                Some(Members::new(values))
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .collect(),
         },
     }
 }
@@ -1102,16 +1119,20 @@ fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
             dependent,
             head_attribute,
         } => derived_basic_head(*dependent, head_attribute, candidate, tokens) == Some(node),
-        RuntimeEnhancedEndpoint::Graph { name, symbolic } => {
+        RuntimeEnhancedEndpoint::Graph {
+            name,
+            symbolic,
+            members,
+        } => {
             if assignments
                 .get(name)
                 .is_some_and(|assigned| *assigned != node)
             {
                 return false;
             }
-            let matches = symbolic
-                .iter()
-                .any(|predicate| graph_node_predicate_matches(node, tokens, graph, predicate));
+            let matches = symbolic.iter().zip(members).any(|(predicate, members)| {
+                graph_node_predicate_matches(node, tokens, graph, predicate, members)
+            });
             if matches {
                 assignments.insert(name.clone(), node);
             }
@@ -1147,6 +1168,7 @@ fn graph_node_predicate_matches<S: TokenSequence + ?Sized>(
     tokens: &S,
     graph: Option<&EnhancedGraph>,
     predicate: &TokenPredicate,
+    members: &[Option<Members>],
 ) -> bool {
     let empty = match node {
         EnhancedNodeId::Word { .. } => None,
@@ -1154,7 +1176,13 @@ fn graph_node_predicate_matches<S: TokenSequence + ?Sized>(
             graph.and_then(|graph| graph.empty_nodes().iter().find(|empty| empty.id() == node))
         }
     };
-    predicate.iter().all(|atom| {
+    predicate.iter().zip(members).all(|(atom, members)| {
+        let scalar_value_matches =
+            |actual: &str, expected: &AttrValueType| match (expected, members) {
+                (AttrValueType::OneOf(_), Some(members)) => members.contains(actual),
+                (AttrValueType::NotIn(_), Some(members)) => !members.contains(actual),
+                _ => scalar_value_matches(actual, expected),
+            };
         let held = match atom.attr.as_str() {
             "node.kind" => {
                 scalar_value_matches(if empty.is_some() { "empty" } else { "word" }, &atom.value)
@@ -1163,7 +1191,14 @@ fn graph_node_predicate_matches<S: TokenSequence + ?Sized>(
             key => match node {
                 EnhancedNodeId::Word { token_index } => tokens
                     .value_key(token_index, &atom.attr)
-                    .is_some_and(|actual| attribute_value_matches(actual, &atom.value)),
+                    .is_some_and(|actual| match actual {
+                        AttributeValueRef::Scalar(actual) => {
+                            scalar_value_matches(actual, &atom.value)
+                        }
+                        AttributeValueRef::StringSet(_) => {
+                            attribute_value_matches(actual, &atom.value)
+                        }
+                    }),
                 EnhancedNodeId::Empty { .. } => empty.is_some_and(|empty| match key {
                     "text" => empty
                         .form()

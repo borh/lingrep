@@ -1,9 +1,11 @@
 use askama::Template;
+use lingrep_core::fsm::policy_program::Overlaps;
 use lingrep_core::token_match::TokenAttributeIndex;
 
 use crate::inspection::{CaptureInspection, CompositionItem, TokenInspection};
 use crate::revision_status::RevisionStatus;
 use crate::sample::SampleAnalysis;
+use crate::snapshot::CompoundCategory;
 
 /// An HTML fragment that has already been rendered by Askama, and therefore
 /// already escaped at its own boundaries. The only constructor takes such a
@@ -24,6 +26,42 @@ impl TrustedFragmentHtml {
 impl std::fmt::Display for TrustedFragmentHtml {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// Defaults apply when a shared link omits run-option keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunOptions {
+    pub derive_compounds: bool,
+    pub compound_category: CompoundCategory,
+    pub document_reach: bool,
+    pub overlaps: Overlaps,
+}
+
+pub fn overlaps_value(overlaps: Overlaps) -> Option<&'static str> {
+    match overlaps {
+        Overlaps::Catalog => None,
+        Overlaps::Keep => Some("keep"),
+        Overlaps::Longest => Some("longest"),
+    }
+}
+
+/// Missing or unrecognized values select [`Overlaps::Catalog`].
+pub fn overlaps_of_form(value: Option<&str>) -> Overlaps {
+    [Overlaps::Keep, Overlaps::Longest]
+        .into_iter()
+        .find(|&overlaps| overlaps_value(overlaps) == value)
+        .unwrap_or_default()
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            derive_compounds: true,
+            compound_category: CompoundCategory::Compound,
+            document_reach: true,
+            overlaps: Overlaps::Catalog,
+        }
     }
 }
 
@@ -54,6 +92,7 @@ pub struct IndexPage {
     /// offer a shared link's retention maps to. See
     /// [`link_retention`](crate::state::link_retention).
     pub retained_default: usize,
+    pub run_options: RunOptions,
 }
 
 impl IndexPage {
@@ -143,6 +182,7 @@ pub struct StreamContainer<'a> {
 #[derive(Template)]
 #[template(path = "fragments/revision_status.html")]
 pub struct RevisionStatusFragment<'a> {
+    pub request_id: &'a str,
     pub status: &'a RevisionStatus,
 }
 
@@ -170,6 +210,8 @@ pub struct PatternResultData {
 pub struct ResultsExplorer<'a> {
     pub search_scope: Option<&'a crate::search_scope::SearchScope>,
     pub excluded_sentences: u64,
+    /// Empty when no run is displayed.
+    pub cli_arguments: &'a str,
     pub workbench_id: &'a str,
     pub revision: u64,
     pub results: &'a [PatternResultData],
@@ -197,6 +239,7 @@ pub struct SectionScopeControl<'a> {
     pub summary: String,
     pub summary_empty: bool,
     pub distance_value: &'a str,
+    pub cluster_minimum: u64,
     pub contrast: &'a crate::section_contrast::ContrastSelection,
     pub oob: bool,
 }
@@ -212,6 +255,9 @@ pub struct SectionAnalysis<'a> {
     pub has_comparison: bool,
     pub distance_jensen_shannon: bool,
     pub distance_cosine: bool,
+    pub cluster_minimum: u64,
+    /// Patterns the occurrence threshold left out of the trees.
+    pub below_minimum: usize,
     pub comparison: Option<&'a crate::section_comparison::SectionComparison>,
     pub contrast_selection: &'a crate::section_contrast::ContrastSelection,
     pub contrast: Option<&'a crate::section_contrast::SectionContrast>,
@@ -231,24 +277,31 @@ pub struct LiveResults<'a> {
     pub results: &'a [LivePatternResultData<'a>],
 }
 
-/// What a pattern *is*, beside what it matched.
-///
-/// The detail pane reported counts, distributions and hits and said nothing
-/// about the definition behind them, which for a fragment-heavy catalog means
-/// the one question a reader has — what does this pattern actually match? —
-/// was answerable only by scrolling the catalog and resolving `@names` by
-/// hand.
 pub struct PatternDefinitionView {
     /// The definition as the catalog spells it.
     pub declaration: String,
-    /// The same definition with every reference resolved, absent when the
-    /// definition stands on none.
+    /// The definition with references expanded, or `None` when it has no references.
     pub expanded: Option<String>,
     /// The names resolved, in first-appearance order.
     pub references: Vec<String>,
     /// Pre-rendered SVG railroad / state-flow diagram of the expanded
     /// definition's expression.
     pub diagram: Option<TrustedFragmentHtml>,
+    /// The definition's `near` tests, with the values each selects from the
+    /// server's word-vector file.
+    pub near: Vec<NearTestView>,
+}
+
+pub struct NearTestView {
+    pub word: String,
+    pub threshold: String,
+    pub count: String,
+    /// The first values in the file's order.
+    pub values: Vec<String>,
+    /// How many selected values `values` leaves out.
+    pub more: usize,
+    /// The neighbors page for this word and threshold.
+    pub href: String,
 }
 
 #[derive(Template)]
@@ -408,11 +461,12 @@ pub struct SampleResults {
 #[derive(Template)]
 #[template(path = "fragments/error.html")]
 pub struct ErrorFragment<'a> {
+    pub key: &'a str,
     pub message: &'a str,
 }
 
-pub fn render_error(message: &str) -> Result<String, askama::Error> {
-    ErrorFragment { message }.render()
+pub fn render_error(key: &str, message: &str) -> Result<String, askama::Error> {
+    ErrorFragment { key, message }.render()
 }
 
 #[cfg(test)]
@@ -433,6 +487,8 @@ mod tests {
             has_comparison: comparison.is_some(),
             distance_jensen_shannon: true,
             distance_cosine: false,
+            cluster_minimum: 1,
+            below_minimum: 0,
             comparison,
             contrast_selection: &crate::section_contrast::ContrastSelection::default(),
             contrast: None,
@@ -582,6 +638,7 @@ mod tests {
             catalog_keys: vec![],
             retained_options: crate::state::retention_offers(1_000),
             retained_default: 1_000,
+            run_options: Default::default(),
         };
         let html = page.render().unwrap();
         // An empty seed leaves the editor blank (placeholder shows), so nothing
@@ -619,6 +676,7 @@ mod tests {
             catalog_keys: vec![],
             retained_options: crate::state::retention_offers(1_000),
             retained_default: 1_000,
+            run_options: Default::default(),
         };
         let html = page.render().unwrap();
         let band = html
@@ -708,6 +766,7 @@ mod tests {
             catalog_keys: vec![],
             retained_options: crate::state::retention_offers(1_000),
             retained_default: 1_000,
+            run_options: Default::default(),
         };
         let html = page.render().unwrap();
         assert!(html.contains("hx-post"));
@@ -763,38 +822,49 @@ mod tests {
         use crate::revision_status::{RevisionStatus, RevisionStatusKind};
 
         let progress = RevisionStatus {
-            omission_notice: None,
-            omission_args: None,
+            notices: Vec::new(),
             message: "Scanning…".into(),
             message_key: None,
             message_args: None,
+            diagnostic: None,
             busy: true,
             stale: false,
+            stale_export_revision: None,
             terminal: false,
             kind: RevisionStatusKind::Neutral,
         };
-        let progress_html = RevisionStatusFragment { status: &progress }
-            .render()
-            .unwrap();
+        let progress_html = RevisionStatusFragment {
+            request_id: "wb",
+            status: &progress,
+        }
+        .render()
+        .unwrap();
         assert!(progress_html.contains("aria-live=\"off\""));
         assert!(!progress_html.contains("role=\"status\""));
 
         let failure = RevisionStatus {
-            omission_notice: None,
-            omission_args: None,
-            message: "Unexpected <script>alert(1)</script>".into(),
-            message_key: None,
+            notices: Vec::new(),
+            message: "The pattern did not compile:".into(),
+            message_key: Some("status.failed_compile"),
             message_args: None,
+            diagnostic: Some("Unexpected <script>alert(1)</script>".into()),
             busy: false,
             stale: true,
+            stale_export_revision: None,
             terminal: true,
             kind: RevisionStatusKind::Error,
         };
-        let failure_html = RevisionStatusFragment { status: &failure }
-            .render()
-            .unwrap();
+        let failure_html = RevisionStatusFragment {
+            request_id: "wb",
+            status: &failure,
+        }
+        .render()
+        .unwrap();
         assert!(failure_html.contains("role=\"status\""));
-        assert!(failure_html.contains("&#60;script&#62;"));
+        assert!(failure_html.contains(
+            "<span data-i18n=\"status.failed_compile\">The pattern did not compile:</span> \
+             <span lang=\"en\">Unexpected &#60;script&#62;"
+        ));
         assert!(!failure_html.contains("<script>"));
         assert!(failure_html.contains("Latest query did not complete"));
     }
@@ -804,37 +874,49 @@ mod tests {
         use crate::revision_status::{RevisionStatus, RevisionStatusKind};
 
         let completed = RevisionStatus {
-            omission_notice: Some(
-                "Skipped 2 oversized sentences (first: sentence 338066, ~35.2 MiB tokenized > ~32.0 MiB limit)."
+            notices: vec![crate::revision_status::StatusNotice {
+                key: "status.omitted",
+                text: "Skipped 2 oversized sentences (first: sentence 338066, ~35.2 MiB tokenized > ~32.0 MiB limit)."
                     .into(),
-            ),
-            omission_args: None,
+                args: "{}".into(),
+            }],
             message: "Results are current.".into(),
  message_key: None,
- message_args: None,
+message_args: None,
+            diagnostic: None,
             busy: false,
             stale: false,
+            stale_export_revision: None,
             terminal: true,
             kind: RevisionStatusKind::Success,
         };
-        let html = RevisionStatusFragment { status: &completed }
-            .render()
-            .unwrap();
+        let html = RevisionStatusFragment {
+            request_id: "wb",
+            status: &completed,
+        }
+        .render()
+        .unwrap();
         assert!(html.contains(r#"class="omission-notice""#), "{html}");
         assert!(html.contains("Skipped 2 oversized sentences"), "{html}");
 
         let clean = RevisionStatus {
-            omission_notice: None,
-            omission_args: None,
+            notices: Vec::new(),
             message: "Results are current.".into(),
             message_key: None,
             message_args: None,
+            diagnostic: None,
             busy: false,
             stale: false,
+            stale_export_revision: None,
             terminal: true,
             kind: RevisionStatusKind::Success,
         };
-        let clean_html = RevisionStatusFragment { status: &clean }.render().unwrap();
+        let clean_html = RevisionStatusFragment {
+            request_id: "wb",
+            status: &clean,
+        }
+        .render()
+        .unwrap();
         assert!(!clean_html.contains("omission-notice"), "{clean_html}");
     }
 
@@ -885,6 +967,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 1,
             results: &[],
@@ -977,6 +1060,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 1,
             results: &[],
@@ -1077,6 +1161,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 1,
             results: &[],
@@ -1117,6 +1202,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 1,
             results: &[],
@@ -1147,6 +1233,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 7,
             results: &results,
@@ -1200,6 +1287,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 8,
             results: &[],
@@ -1246,6 +1334,7 @@ mod tests {
         let html = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb",
             revision: 1,
             results: &results,
@@ -1272,6 +1361,7 @@ mod tests {
         let explorer = ResultsExplorer {
             search_scope: None,
             excluded_sentences: 0,
+            cli_arguments: "",
             workbench_id: "wb1",
             revision: 5,
             results: &[],
@@ -1282,9 +1372,53 @@ mod tests {
             section_analysis: None,
         };
         let html = explorer.render().expect("renders");
+        assert!(
+            html.contains(r#"<div id="export-control"><a class="export-download" download"#),
+            "{html}"
+        );
         assert!(html.contains("href=\"api/export/wb1/5\""));
-        assert!(html.contains("download"));
         assert!(html.contains("Download results in this search scope"));
+    }
+
+    #[test]
+    fn a_failed_query_restores_the_download_of_the_displayed_results() {
+        use crate::revision_status::{RevisionStatus, RevisionStatusKind};
+
+        let status = |stale_export_revision| RevisionStatus {
+            notices: Vec::new(),
+            message: "This revision failed.".into(),
+            message_key: None,
+            message_args: None,
+            diagnostic: None,
+            busy: false,
+            stale: true,
+            stale_export_revision,
+            terminal: true,
+            kind: RevisionStatusKind::Error,
+        };
+        let render = |status: &RevisionStatus| {
+            RevisionStatusFragment {
+                request_id: "wb1",
+                status,
+            }
+            .render()
+            .unwrap()
+        };
+
+        let html = render(&status(Some(5)));
+        assert!(
+            html.contains(
+                r#"<div id="export-control" hx-swap-oob="innerHTML"><a class="export-download" download"#
+            ),
+            "{html}"
+        );
+        assert!(html.contains("href=\"api/export/wb1/5\""), "{html}");
+
+        let without_matches = render(&status(None));
+        assert!(
+            !without_matches.contains("export-control"),
+            "{without_matches}"
+        );
     }
 
     #[test]

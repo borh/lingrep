@@ -53,6 +53,30 @@ fn positive_u64(raw: &str) -> Result<u64, String> {
         })
 }
 
+fn cosine(raw: &str) -> Result<f32, String> {
+    raw.parse::<f32>()
+        .map_err(|error| error.to_string())
+        .and_then(|value| {
+            (-1.0..=1.0)
+                .contains(&value)
+                .then_some(value)
+                .ok_or_else(|| "must be between -1 and 1".into())
+        })
+}
+
+fn set_name(raw: &str) -> Result<String, String> {
+    let japanese = |ch: char| matches!(ch, '\u{3040}'..='\u{30FF}' | '\u{4E00}'..='\u{9FFF}');
+    let mut chars = raw.chars();
+    let first = chars
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || japanese(ch));
+    (first && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || japanese(ch)))
+        .then(|| raw.to_owned())
+        .ok_or_else(|| {
+            "must start with a letter or `_` and continue with letters, digits or `_`".into()
+        })
+}
+
 fn positive_usize(raw: &str) -> Result<usize, String> {
     raw.parse::<usize>()
         .map_err(|error| error.to_string())
@@ -215,6 +239,13 @@ pub enum Command {
         after_long_help = crate::pattern_reference::PATTERN_REFERENCE
     )]
     Check(CheckArgs),
+    /// Print the values nearest a word in a word-vector file as a `set`
+    /// definition.
+    ///
+    /// Similarity is the cosine between two values' vectors. Paste the printed
+    /// definition into a catalog and test an attribute against it, as in
+    /// `[lemma in @NEIGHBORS]`; --json reports each value with its similarity.
+    Neighbors(NeighborsArgs),
     /// Download a UniDic dictionary for Japanese analysis.
     Dictionary(DictionaryArgs),
     /// Prepare a Python analyzer in a directory you choose.
@@ -261,6 +292,38 @@ pub struct CompletionsArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct NeighborsArgs {
+    /// Value whose neighbors are listed; it must have a vector in the file.
+    #[arg(value_name = "WORD")]
+    pub word: String,
+
+    /// Word vectors as text, one `value x1 ... xn` line per value, with or
+    /// without a leading `count dimensions` line (the word2vec text format,
+    /// which fastText `.vec` and chiVe files use).
+    #[arg(long, value_name = "FILE", help_heading = "Input")]
+    pub vectors: PathBuf,
+
+    #[command(flatten)]
+    pub cut: NeighborsCut,
+
+    /// Name of the printed set.
+    #[arg(long, value_name = "NAME", default_value = "NEIGHBORS", value_parser = set_name)]
+    pub name: String,
+}
+
+#[derive(Debug, Args)]
+pub struct NeighborsCut {
+    /// Keep the values whose cosine similarity to WORD is at least this, from
+    /// -1 to 1. At least one of --min-similarity and --top is required.
+    #[arg(long, value_name = "COSINE", value_parser = cosine, help_heading = "Selection")]
+    pub min_similarity: Option<f32>,
+
+    /// Keep at most this many values, the most similar first.
+    #[arg(long, value_name = "COUNT", value_parser = positive_usize, help_heading = "Selection")]
+    pub top: Option<usize>,
+}
+
+#[derive(Debug, Args)]
 pub struct DictionaryArgs {
     #[command(subcommand)]
     pub command: DictionaryCommand,
@@ -282,13 +345,13 @@ pub struct DictionaryInstallArgs {
     /// Dictionary to install.
     #[arg(value_enum, default_value = "cwj")]
     pub name: crate::packaged_dictionaries::DictionaryName,
-    /// Mirror whose `unidic-202512/` directory copies the GitHub release of that
-    /// name; the download must match the digest built into `ling`.
+    /// Base URL containing the `unidic-202512/` dictionary release directory.
     #[arg(
         long,
         env = "LING_DOWNLOAD_BASE",
+        hide_env_values = true,
         value_name = "URL",
-        default_value = crate::packaged_dictionaries::DEFAULT_DOWNLOAD_BASE
+        default_value = crate::release_download::DEFAULT_DOWNLOAD_BASE
     )]
     pub download_base: String,
 }
@@ -306,6 +369,27 @@ pub enum AnalyzerCommand {
         after_help = "Each output contains a separate Python runtime and model. Delete that directory to remove the analyzer. Locate shared downloads with `uv cache dir`; clear them with `uv cache clean`."
     )]
     Prepare(AnalyzerPrepareArgs),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum OverlapsArg {
+    /// Apply the catalog's policy block as written.
+    #[default]
+    Catalog,
+    /// Skip the block's `resolve` statements; its other statements still apply.
+    Keep,
+    /// Keep the longest of overlapping records when the block has no `resolve`.
+    Longest,
+}
+
+impl From<OverlapsArg> for lingrep_core::fsm::policy_program::Overlaps {
+    fn from(overlaps: OverlapsArg) -> Self {
+        match overlaps {
+            OverlapsArg::Catalog => Self::Catalog,
+            OverlapsArg::Keep => Self::Keep,
+            OverlapsArg::Longest => Self::Longest,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -338,6 +422,15 @@ pub struct AnalyzerPrepareArgs {
     /// Read release wheels and SHA256SUMS from this directory.
     #[arg(long, value_name = "DIR", hide_short_help = true)]
     pub wheels: Option<PathBuf>,
+    /// HTTPS base URL containing this release's `v<version>/` adapter wheels.
+    #[arg(
+        long,
+        env = "LING_DOWNLOAD_BASE",
+        hide_env_values = true,
+        value_name = "URL",
+        default_value = crate::release_download::DEFAULT_DOWNLOAD_BASE
+    )]
+    pub download_base: String,
 }
 
 #[derive(Debug, Args)]
@@ -411,6 +504,18 @@ pub struct CheckArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
 
+    /// Word-vector file that answers the catalog's `near` tests.
+    ///
+    /// word2vec text: one value and its numbers per line. Overrides
+    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    #[arg(
+        long,
+        value_name = "FILE",
+        env = "LINGREP_VECTORS_PATH",
+        help_heading = "Catalog"
+    )]
+    pub vectors: Option<PathBuf>,
+
     /// Compare another catalog with the primary catalog. Repeat for more files.
     /// Differences are reported without causing the check to fail.
     #[arg(long = "compare-with", value_name = "FILE", action = clap::ArgAction::Append)]
@@ -456,6 +561,17 @@ pub enum CheckSchemaArg {
 pub struct MatchesArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
+    /// Word-vector file that answers the catalog's `near` tests.
+    ///
+    /// word2vec text: one value and its numbers per line. Overrides
+    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    #[arg(
+        long,
+        value_name = "FILE",
+        env = "LINGREP_VECTORS_PATH",
+        help_heading = "Catalog"
+    )]
+    pub vectors: Option<PathBuf>,
     #[command(flatten)]
     pub input: QueryInputArgs,
     #[command(flatten)]
@@ -562,6 +678,45 @@ pub struct MatchesArgs {
     #[arg(long, help_heading = "Matching", hide_short_help = true)]
     pub raw_matches: bool,
 
+    /// Print a Workbench link and exit without reading the corpus.
+    ///
+    /// NAME is the server's declared corpus name; URL is its address, e.g.
+    /// `--link science=http://127.0.0.1:3000/`. The link includes the catalog,
+    /// --where and --overlaps.
+    #[cfg(feature = "web")]
+    #[arg(long, value_name = "NAME=URL", help_heading = "Output")]
+    pub link: Option<String>,
+
+    /// Start the Workbench for this corpus, print and open the query link,
+    /// and serve until interrupted.
+    ///
+    /// The link includes the catalog, --where and --overlaps. Uses BROWSER
+    /// or the system's default browser. Defaults to a free loopback port;
+    /// `--serve=HOST:PORT` sets the address, with port 0 selecting a free port.
+    #[cfg(feature = "web")]
+    #[arg(
+        long,
+        value_name = "HOST:PORT",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "127.0.0.1:0",
+        conflicts_with = "link",
+        help_heading = "Output"
+    )]
+    pub serve: Option<String>,
+
+    /// Choose which of several overlapping records of different patterns are
+    /// published.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        default_value_t,
+        conflicts_with = "raw_matches",
+        help_heading = "Matching"
+    )]
+    pub overlaps: OverlapsArg,
+
     /// Run the query, report per-statement policy totals, and explain the policy
     /// decisions for at most N published records; 0 reports the totals only.
     /// `--plan` only validates and prints the invocation.
@@ -583,6 +738,17 @@ pub struct MatchesArgs {
 pub struct SummarizeArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
+    /// Word-vector file that answers the catalog's `near` tests.
+    ///
+    /// word2vec text: one value and its numbers per line. Overrides
+    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    #[arg(
+        long,
+        value_name = "FILE",
+        env = "LINGREP_VECTORS_PATH",
+        help_heading = "Catalog"
+    )]
+    pub vectors: Option<PathBuf>,
     #[command(flatten)]
     pub input: QueryInputArgs,
     #[command(flatten)]
@@ -653,6 +819,45 @@ pub struct SummarizeArgs {
     /// All input is counted before selecting the most frequent groups.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
+
+    /// Print a Workbench link and exit without reading the corpus.
+    ///
+    /// NAME is the server's declared corpus name; URL is its address, e.g.
+    /// `--link science=http://127.0.0.1:3000/`. The link includes the catalog,
+    /// --where and --overlaps.
+    #[cfg(feature = "web")]
+    #[arg(long, value_name = "NAME=URL", help_heading = "Output")]
+    pub link: Option<String>,
+
+    /// Start the Workbench for this corpus, print and open the query link,
+    /// and serve until interrupted.
+    ///
+    /// The link includes the catalog, --where and --overlaps. Uses BROWSER
+    /// or the system's default browser. Defaults to a free loopback port;
+    /// `--serve=HOST:PORT` sets the address, with port 0 selecting a free port.
+    #[cfg(feature = "web")]
+    #[arg(
+        long,
+        value_name = "HOST:PORT",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "127.0.0.1:0",
+        conflicts_with = "link",
+        help_heading = "Output"
+    )]
+    pub serve: Option<String>,
+
+    /// Choose which of several overlapping records of different patterns are
+    /// counted.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        default_value_t,
+        conflicts_with = "write_table",
+        help_heading = "Matching"
+    )]
+    pub overlaps: OverlapsArg,
 
     /// Run the query, report per-statement policy totals, and explain the policy
     /// decisions for at most N published records; 0 reports the totals only.
@@ -1183,13 +1388,6 @@ pub struct SampleArgs {
 impl SampleArgs {
     /// The sample these flags describe, or `None` when unsampled.
     ///
-    /// The rate arrives as a decimal because that is how a reader writes one,
-    /// and is converted here to parts per million — once, at the boundary — so
-    /// that nothing downstream does floating-point arithmetic to decide which
-    /// sentences to look at. A rate that rounds to zero is rejected rather than
-    /// silently admitting nothing: the run would read a whole corpus, publish
-    /// no matches, and exit `0`.
-    ///
     /// # Errors
     ///
     /// Returns a message when the rate is not a number in `(0, 1]`, or when it
@@ -1210,12 +1408,13 @@ impl SampleArgs {
             reason = "bounded to (0, RATE_SCALE] by the range check above"
         )]
         let per_million = (rate * scale).round() as u32;
-        let sample = lingrep_core::execution::CorpusSample::new(per_million, self.seed).ok_or_else(|| {
-            format!(
-                "--sample {rate} rounds to no sample units at all; the smallest                  selectable rate is {:.7}",
-                1.0 / scale
-            )
-        })?;
+        let sample = lingrep_core::execution::CorpusSample::new(per_million, self.seed)
+            .ok_or_else(|| {
+                format!(
+                    "--sample {rate} rounds to zero; use a rate of at least {:.7}",
+                    1.0 / scale
+                )
+            })?;
         Ok(Some(sample))
     }
 }
@@ -1856,6 +2055,7 @@ impl Cli {
             Command::Attributes(args) => args.tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Neighbors(_)
             | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Table(_)
@@ -1886,6 +2086,7 @@ impl Cli {
             Command::Attributes(args) if args.tsv => OutputMode::Tsv,
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Neighbors(_)
             | Command::Analyzer(_)
             | Command::Check(_)
             | Command::Matches(_)
@@ -1943,6 +2144,7 @@ impl Cli {
             }) => ResourceArgs::with_traversal(args.traversal.clone(), args.progress),
             Command::Doctor(_)
             | Command::Dictionary(_)
+            | Command::Neighbors(_)
             | Command::Analyzer(_)
             | Command::Table(_)
             | Command::Contrast(_)

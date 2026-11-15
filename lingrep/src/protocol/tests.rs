@@ -1422,6 +1422,8 @@ fn query_run() -> QueryEnvelope {
         inventory: None,
         worker_count: 4,
         sample: None,
+        overlaps: None,
+        word_vectors: None,
     })))
 }
 fn query_run_with_corpus(corpus: RunCorpus) -> QueryEnvelope {

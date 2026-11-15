@@ -79,22 +79,22 @@ fn verify_wheel(path: &Path, expected: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn read_asset(name: &str, directory: Option<&Path>) -> Result<Vec<u8>, CliError> {
+fn read_asset(name: &str, args: &AnalyzerPrepareArgs) -> Result<Vec<u8>, CliError> {
     const LIMIT: u64 = 16 * 1024 * 1024;
-    let mut reader: Box<dyn Read> = if let Some(directory) = directory {
+    let mut reader: Box<dyn Read> = if let Some(directory) = args.wheels.as_deref() {
         Box::new(fs::File::open(directory.join(name))?)
     } else {
         let url = format!(
-            "https://github.com/borh/lingrep/releases/download/v{}/{name}",
+            "{}/v{}/{name}",
+            args.download_base.trim_end_matches('/'),
             env!("CARGO_PKG_VERSION")
         );
         let response = reqwest::blocking::Client::builder()
             .https_only(true)
             .timeout(std::time::Duration::from_mins(2))
             .build()
-            .and_then(|client| client.get(&url).send())
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|error| failed(format!("cannot download {url}: {error}")))?;
+            .and_then(|client| crate::release_download::get(&client, &url))
+            .map_err(|error| failed(format!("cannot download release asset: {error}")))?;
         Box::new(response)
     };
     let mut bytes = Vec::new();
@@ -109,7 +109,7 @@ fn acquire_wheels(
     root: &Path,
     args: &AnalyzerPrepareArgs,
 ) -> Result<BTreeMap<String, String>, CliError> {
-    let sums = String::from_utf8(read_asset("SHA256SUMS", args.wheels.as_deref())?)
+    let sums = String::from_utf8(read_asset("SHA256SUMS", args)?)
         .map_err(|error| failed(format!("invalid SHA256SUMS: {error}")))?;
     let directory = root.join("wheels");
     fs::create_dir(&directory)?;
@@ -136,7 +136,7 @@ fn acquire_wheels(
             )));
         }
         let path = directory.join(&name);
-        fs::write(&path, read_asset(&name, args.wheels.as_deref())?)?;
+        fs::write(&path, read_asset(&name, args)?)?;
         verify_wheel(&path, records[0])?;
         result.insert(name, records[0].to_owned());
     }

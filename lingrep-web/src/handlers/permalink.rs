@@ -18,14 +18,21 @@ struct PermalinkForm {
     #[serde(default)]
     search_scope: Option<String>,
     pattern: String,
-    /// Target corpus key. Absent means the default, which is what a
-    /// single-corpus client (and every pre-existing caller) sends.
+    /// An absent key selects the server's default corpus.
     #[serde(default)]
     corpus: Option<String>,
-    /// The retention the sender's page is set to. Absent from a client
-    /// predating the control; the link then leaves retention to the recipient.
+    /// An absent value retains the recipient's retention default.
     #[serde(default)]
     retained: Option<usize>,
+    /// Absent fields omit link keys and retain recipient defaults.
+    #[serde(default)]
+    derive_compounds: Option<bool>,
+    #[serde(default)]
+    compound_category: Option<String>,
+    #[serde(default)]
+    document_reach: Option<bool>,
+    #[serde(default)]
+    overlaps: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -93,15 +100,20 @@ async fn create_permalink(
         retained,
     ) {
         Ok(mut path) => {
-            if form.search_scope.is_some() {
-                let encoded = serde_urlencoded::to_string([(
-                    "s",
-                    serde_json::to_string(&scope).unwrap_or_default(),
-                )])
-                .unwrap_or_default();
-                path.push('&');
-                path.push_str(&encoded);
+            if form.derive_compounds == Some(false) {
+                path.push_str("&d=0");
             }
+            if form.compound_category.as_deref() == Some("source") {
+                path.push_str("&g=source");
+            }
+            if form.document_reach == Some(false) {
+                path.push_str("&n=0");
+            }
+            permalink::push_run_options(
+                &mut path,
+                crate::templates::overlaps_of_form(form.overlaps.as_deref()),
+                form.search_scope.is_some().then_some(&scope),
+            );
             if path.len().saturating_add(1) > crate::permalink::MAX_REQUEST_TARGET_LEN {
                 return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large");
             }

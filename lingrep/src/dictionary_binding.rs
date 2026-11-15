@@ -1,62 +1,8 @@
-//! Comparing a catalog's declared dictionaries against the one a run loaded.
-//!
-//! A lingrep patterns catalog's predicates are written against a tagset. Nothing else in
-//! the system records which: `token_schema_identity` digests the structural
-//! attribute names and value kinds, which do not distinguish one dictionary's
-//! tagset from another's, and `dictionary_identity` describes the run rather
-//! than the catalog. So a catalog authored for one dictionary and run against
-//! another agrees on every recorded identity while meaning
-//! something different: one catalog over one set of sentences reports 18
-//! matches under both `unidic-cwj-202512` and `unidic-kinsei-edo-202512` while
-//! 37 token analyses differ underneath.
-//!
-//! **This is a notice, never an error.** Running a catalog against a second
-//! dictionary is a deliberate experiment as often as it is a mistake. Report
-//! divergence for the researcher to adjudicate without changing exit status.
-//!
-//! # What is compared, and what is omitted
-//!
-//! Compatibility is a spectrum, not a match on a file name:
-//!
-//! * `unidic-cwj` and `unidic-csj` differ in **weights only** — same
-//!   vocabulary, same tagset. A catalog remains valid for both.
-//! * `unidic-kinsei-edo`, `unidic-kindai-bungo` and the other historical
-//!   variants differ in vocabulary **and** in closed-class grammatical and
-//!   morphological analysis, by varying amounts.
-//! * Sudachi's A/B/C splitting modes change the **unit size** — what counts as
-//!   one token — which is a different axis again.
-//!
-//! Two consequences for this module. The catalog declares a **set**, because
-//! only the researcher can say which dictionaries their predicates survive;
-//! encoding an equivalence table here would be an unmaintainable claim about
-//! dictionaries this workspace does not ship. And the **release version is
-//! dropped before comparing**, because it is the least significant part: a
-//! catalog written for `unidic-cwj-202512` is not thereby wrong under a later
-//! `unidic-cwj`. A version-sensitive check would fire on every dictionary bump
-//! and be muted within a week.
-//!
-//! Sudachi's unit size is **not** yet expressible. It is not derivable from a
-//! dictionary path — it is a runtime mode — so the declaration will need to
-//! carry it explicitly when Sudachi support lands. Recorded here rather than
-//! approximated, because a check that silently ignores unit size would be worse
-//! than none: A-mode and C-mode disagree about what a token is, so every span
-//! in a catalog means something different between them.
+//! Compares catalog declarations with the loaded dictionary name; mismatches produce notices.
 
 use lingrep_core::fsm::CompiledCatalog;
 
-/// The dictionary name a path denotes, by file name.
-///
-/// **Stated plainly: this is the file name, not an authority.** vibrato's
-/// dictionary bytes carry no name the loader exposes, and the only exact
-/// identity available is a BLAKE3 digest of those bytes — which changes on
-/// every rebuild and cannot be authored into a catalog by hand. A file name is
-/// what remains, and the flake's dictionaries are named after their releases
-/// (`unidic-cwj-202512.dic.zst`), so it is right in the case that matters and
-/// wrong only for a renamed or copied file.
-///
-/// A renamed file therefore produces a spurious notice or misses a real one.
-/// That is survivable precisely because the outcome is a notice: nothing is
-/// blocked either way.
+/// Infers the dictionary name from the final path component, removing `.dic` or `.dic.zst`.
 #[must_use]
 pub fn dictionary_name_from_path(path: &str) -> Option<&str> {
     let file_name = path.rsplit('/').next()?;
@@ -85,11 +31,8 @@ pub fn strip_release_version(name: &str) -> &str {
     }
 }
 
-/// The notice to publish, or `None` when there is nothing to say.
-///
-/// Silent when the catalog declares nothing, including every inline
-/// `--pattern`, which has no file to declare in. A notice that always fires is
-/// a notice nobody reads, so absence is not reported.
+/// Returns a mismatch notice after removing the dictionary's release suffix, or `None`
+/// when declarations are absent or compatible.
 #[must_use]
 pub fn binding_mismatch(matcher: &CompiledCatalog, dictionary_path: &str) -> Option<String> {
     let loaded = dictionary_name_from_path(dictionary_path)?;
@@ -101,7 +44,7 @@ pub fn binding_mismatch(matcher: &CompiledCatalog, dictionary_path: &str) -> Opt
     }
     Some(format!(
         "catalog analyzer declarations do not admit Vibrato resource `{loaded_family}` \
-         (loaded as `{loaded}`), so counts may agree while meaning differs"
+         (loaded as `{loaded}`); matching results may differ"
     ))
 }
 
@@ -204,6 +147,6 @@ mod tests {
         let pattern =
             "analyzer: { family: \"vibrato\", resource: \"unidic-cwj\" }\np := [text=猫].\n";
         let notice = binding_mismatch(&matcher(pattern), EDO).expect("a mismatch is reported");
-        assert!(notice.contains("meaning differs"), "{notice}");
+        assert!(notice.contains("matching results may differ"), "{notice}");
     }
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readState, stateEntries } from "../assets/compare.js";
+import { commandHtml, readState, stateEntries } from "../assets/compare.js";
 
 function random(seed) {
   let x = seed >>> 0 || 1;
@@ -41,4 +41,13 @@ test("conditions that are not an object mark the address unreadable", () => {
   for (const raw of ["[]", "1", "{", "null"]) {
     assert.equal(readState(`#v=${encodeURIComponent(raw)}`).bad, true, raw);
   }
+});
+
+test("commandHtml wraps each scope option and its shell-quoted clause in a span", () => {
+  const command = `ling keyness t.lingtable --top 100 --where '@document.genre = "it'\\''s" & <b>' --versus '@document.tags contains "y"' --corpus c --patterns p.lx`;
+  assert.equal(
+    commandHtml(command),
+    `ling keyness t.lingtable --top 100 <span class="where">--where &#39;@document.genre = &quot;it&#39;\\&#39;&#39;s&quot; &amp; &lt;b&gt;&#39;</span> <span class="where">--versus &#39;@document.tags contains &quot;y&quot;&#39;</span> --corpus c --patterns p.lx`,
+  );
+  assert.equal(commandHtml("ling keyness 'a&b' --top 100"), "ling keyness &#39;a&amp;b&#39; --top 100");
 });

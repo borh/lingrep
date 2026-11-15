@@ -48,6 +48,8 @@ fn reservoir_draw(pattern: PatternKey, seen: u64) -> u64 {
 pub(crate) struct SnapshotSink {
     pub(crate) search_scope: crate::search_scope::SearchScope,
     pub(crate) excluded_sentences: u64,
+    pub(crate) admission: lingrep_core::execution::SentenceAdmission,
+    pub(crate) cli_arguments: String,
     pub(crate) refs: Vec<MatchRef>,
     max_refs: usize,
     pattern_ids: HashMap<String, PatternKey>,
@@ -56,6 +58,9 @@ pub(crate) struct SnapshotSink {
     /// the compound descriptors by `finish`.
     coincidences: HashMap<(PatternKey, PatternKey), u64>,
     pub(crate) derive_compounds: bool,
+    pub(crate) overlaps: lingrep_core::fsm::policy_program::Overlaps,
+    pub(crate) unavailable_attributes: Option<crate::snapshot::UnavailableAttributes>,
+    pub(crate) vectors_binding: Option<lingrep_corpus::word_vectors::VectorsBinding>,
     pub(crate) compound_category: CompoundCategory,
     pub(crate) patterns: Vec<PatternDescriptor>,
     /// Per pattern, the positions in `refs` this pattern's reservoir occupies.
@@ -136,12 +141,17 @@ impl SnapshotSink {
         Ok(Self {
             search_scope: Default::default(),
             excluded_sentences: 0,
+            admission: Default::default(),
+            cli_arguments: String::new(),
             refs: Vec::new(),
             max_refs,
             pattern_ids,
             compound_ids: HashMap::new(),
             coincidences: HashMap::new(),
             derive_compounds,
+            overlaps: Default::default(),
+            unavailable_attributes: None,
+            vectors_binding: None,
             compound_category,
             patterns,
             reservoirs: HashMap::new(),

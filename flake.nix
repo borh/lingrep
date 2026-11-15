@@ -475,7 +475,10 @@
               {
                 nativeBuildInputs = [ pkgs.zstd ];
                 archive = pkgs.fetchurl {
-                  url = "https://github.com/borh/lingrep/releases/download/unidic-202512/unidic-${name}-202512.dic.zst";
+                  urls = [
+                    "https://github.com/borh/lingrep/releases/download/unidic-202512/unidic-${name}-202512.dic.zst"
+                    "https://nlp.lang.osaka-u.ac.jp/lingrep/releases/download/unidic-202512/unidic-${name}-202512.dic.zst"
+                  ];
                   inherit hash;
                 };
               }

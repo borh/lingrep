@@ -17,6 +17,7 @@ pub mod discovery;
 pub mod doctor;
 pub mod invocation;
 pub mod manpages;
+pub mod neighbors;
 pub mod query;
 pub mod registry;
 pub mod sources;

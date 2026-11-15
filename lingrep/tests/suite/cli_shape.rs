@@ -119,7 +119,7 @@ fn serve_reports_an_occupied_port_as_an_invocation_error() {
 
 #[cfg(all(unix, feature = "web"))]
 #[test]
-fn serve_stops_for_a_signal_recorded_before_it_started() {
+fn serve_stops_for_a_signal_recorded_before_it_binds_count_tables() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("corpus.txt");
     std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
@@ -135,7 +135,9 @@ fn serve_stops_for_a_signal_recorded_before_it_started() {
         input.as_os_str(),
         "--dict-path".as_ref(),
         dictionary.path().as_os_str(),
-    ] as [&std::ffi::OsStr; 10])
+        "--count-table".as_ref(),
+        directory.path().join("absent.lingtable").as_os_str(),
+    ] as [&std::ffi::OsStr; 12])
     .unwrap();
     let config = cli.execution_config().unwrap();
     let terminal = lingrep::terminal::TerminalArbiter::new();
@@ -194,6 +196,294 @@ fn serve_exits_zero_on_sigterm_and_sigint() {
         };
         assert_eq!(status.code(), Some(0), "signal {signal}");
     }
+}
+
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_flag_gives_the_server_the_commands_vector_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    let vectors = directory.path().join("animals.vec");
+    std::fs::write(&vectors, "猫 1 0\n犬 0.9 0.1\n石 0 1\n").unwrap();
+    let browser = directory.path().join("browser");
+    std::fs::write(&browser, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(
+        &browser,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let mut child = lingrep_std()
+        .env_remove("LINGREP_VECTORS_PATH")
+        .args(["matches", "--serve", "--pattern", "[text near 猫 >= 0.5]"])
+        .arg("--vectors")
+        .arg(&vectors)
+        .arg(&input)
+        .arg("--dict-path")
+        .arg(dictionary.path())
+        .env("BROWSER", &browser)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut listening = String::new();
+    stdout.read_line(&mut listening).unwrap();
+    let address = listening
+        .trim_end()
+        .rsplit_once("//")
+        .map_or(String::new(), |(_, address)| address.to_owned());
+    let mut response = String::new();
+    if let Ok(mut stream) = std::net::TcpStream::connect(&address) {
+        write!(
+            stream,
+            "GET /neighbors?word=%E7%8C%AB&min=0.5 HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        stream.read_to_string(&mut response).unwrap();
+    }
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "{response:.200}\n{stderr}"
+    );
+    assert!(
+        response.contains("<td class=\"neighbors-value\">犬</td>"),
+        "{response}"
+    );
+    assert!(
+        !response.contains("<td class=\"neighbors-value\">石</td>"),
+        "{response}"
+    );
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+}
+
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_flag_serves_the_commands_corpus_and_prints_the_link_for_its_query() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    let patterns = directory.path().join("query.lx");
+    std::fs::write(&patterns, "cat := [text=猫].\n").unwrap();
+    let opened = directory.path().join("opened");
+    let browser = directory.path().join("browser");
+    std::fs::write(
+        &browser,
+        format!(
+            "#!/bin/sh\nprintf %s \"$1\" > '{0}.part' && mv '{0}.part' '{0}'\n",
+            opened.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &browser,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let query = lingrep_web::permalink::workbench_link(
+        "cat := [text=猫].\n",
+        "default",
+        Some("@document.year >= 2010"),
+        lingrep_core::fsm::policy_program::Overlaps::Catalog,
+    )
+    .unwrap();
+    let serve = |arguments: &[&str]| {
+        let mut child = lingrep_std()
+            .args(arguments)
+            .arg("--patterns")
+            .arg(&patterns)
+            .arg(&input)
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .env("BROWSER", &browser)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut lines = [String::new(), String::new()];
+        for line in &mut lines {
+            stdout.read_line(line).unwrap();
+        }
+        let address = lines[0]
+            .trim_end()
+            .rsplit_once("//")
+            .map_or(String::new(), |(_, address)| address.to_owned());
+        let mut response = String::new();
+        if let Ok(mut stream) = std::net::TcpStream::connect(&address) {
+            let path = lines[1]
+                .trim_end()
+                .rsplit_once('/')
+                .map_or("", |(_, path)| path);
+            write!(
+                stream,
+                "GET /{path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            stream.read_to_string(&mut response).unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !opened.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let link = std::fs::read_to_string(&opened).unwrap_or_default();
+        let _ = std::fs::remove_file(&opened);
+        assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+        let code = child.wait().unwrap().code();
+        (lines, address, response, link, code)
+    };
+
+    for subcommand in ["matches", "summarize"] {
+        let (lines, address, response, link, code) =
+            serve(&[subcommand, "--serve", "--where", "@document.year >= 2010"]);
+        assert_eq!(format!("{link}\n"), lines[1], "{subcommand}");
+        assert_eq!(
+            lines,
+            [
+                format!("lingrep-web listening on http://{address}\n"),
+                format!("http://{address}/{query}\n")
+            ],
+            "{subcommand}"
+        );
+        assert!(address.starts_with("127.0.0.1:"), "{address}");
+        assert!(response.starts_with("HTTP/1.1 200"), "{response:.200}");
+        assert!(response.contains("cat := [text=猫]."), "{subcommand}");
+        assert_eq!(code, Some(0), "{subcommand}");
+    }
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let (_, address, _, _, code) = serve(&["matches", &format!("--serve=localhost:{port}")]);
+    assert!(address.ends_with(&format!(":{port}")), "{address}");
+    assert_eq!(code, Some(0));
+
+    let output = lingrep_std()
+        .args(["matches", "--serve=3000", "--patterns"])
+        .arg(&patterns)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--serve takes HOST:PORT"));
+}
+
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_stopped_during_a_corpus_build_leaves_only_the_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n".repeat(400_000)).unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let entries = || {
+        let mut names: Vec<String> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let mut child = lingrep_std()
+        .args(["serve", "--host", "127.0.0.1", "--port", "0"])
+        .arg("--input")
+        .arg(&input)
+        .arg("--dict-path")
+        .arg(dictionary.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let wait_until = |child: &mut std::process::Child, what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !done() {
+            if child.try_wait().unwrap().is_some() || std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "ling serve exited or 60 s passed before {what}: {:?}",
+                    entries()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    wait_until(&mut child, "a staging directory appeared", &|| {
+        entries().iter().any(|name| name.contains(".staging-"))
+    });
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("ling serve still running 30 s after SIGTERM");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(0));
+    assert_eq!(entries(), ["corpus.txt"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_corpus_build_removes_the_staging_directory_of_a_killed_build() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫が鳥を見る。\n".repeat(400_000)).unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let entries = || {
+        let mut names: Vec<String> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let build = || {
+        let mut command = lingrep_std();
+        command
+            .args(["corpus", "build"])
+            .arg(&input)
+            .arg("--output")
+            .arg(directory.path().join("out.lingcorpus"))
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    };
+
+    let mut killed = build().spawn().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !entries().iter().any(|name| name.contains(".staging-")) {
+        assert!(
+            killed.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline,
+            "the build exited or 60 s passed before a staging directory appeared: {:?}",
+            entries()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    killed.kill().unwrap();
+    killed.wait().unwrap();
+    assert!(
+        entries().iter().any(|name| name.contains(".staging-")),
+        "the killed build left no staging directory: {:?}",
+        entries()
+    );
+
+    std::fs::write(&input, "猫が鳥を見る。\n").unwrap();
+    assert!(build().status().unwrap().success());
+    assert_eq!(entries(), ["corpus.txt", "out.lingcorpus"]);
 }
 
 #[test]
@@ -1684,7 +1974,7 @@ fn check_schema_binds_a_dependency_catalog_cleanly_against_conllu() {
 }
 
 #[test]
-fn check_schema_refuses_a_scalar_key_over_a_conllu_feature_set() {
+fn check_schema_rejects_a_scalar_key_over_a_conllu_feature_set() {
     let output = lingrep()
         .args([
             "check",
@@ -1697,7 +1987,7 @@ fn check_schema_refuses_a_scalar_key_over_a_conllu_feature_set() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("binding conllu: refused"), "{stdout}");
+    assert!(stdout.contains("binding conllu: rejected"), "{stdout}");
     assert!(stdout.contains("feat.Tense"), "{stdout}");
     assert!(stdout.contains("requires scalar values"), "{stdout}");
 }
@@ -1717,7 +2007,7 @@ fn check_schema_fails_when_a_where_clause_cannot_bind() {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("binding unidic-morphology: refused"),
+        stdout.contains("binding unidic-morphology: rejected"),
         "{stdout}"
     );
     assert!(stdout.contains("dep.head"), "{stdout}");
@@ -2174,5 +2464,35 @@ fn routine_help_keeps_advanced_options_available_by_explicit_request() {
         }
         assert!(complete.contains("--max-source-index-bytes"));
         assert!(normal.contains("ROOT"));
+    }
+}
+
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn query_serving_rejects_analysis_options_it_cannot_apply() {
+    for subcommand in ["matches", "summarize"] {
+        for option in [
+            ["--analyzer-config", "/missing/analyzer.toml"],
+            ["--profile", "text"],
+            ["--segmentation", "analyzer"],
+            ["--normalization", "none"],
+        ] {
+            let output = lingrep()
+                .timeout(std::time::Duration::from_secs(3))
+                .args([subcommand, "--serve", "--pattern", "p := []."])
+                .args(option)
+                .arg("/missing/corpus.txt")
+                .env("BROWSER", "/bin/true")
+                .assert()
+                .code(2)
+                .get_output()
+                .clone();
+            let error = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                error.contains("--serve supports only"),
+                "{option:?}: {error}"
+            );
+            assert!(error.contains("ling corpus build"), "{error}");
+        }
     }
 }

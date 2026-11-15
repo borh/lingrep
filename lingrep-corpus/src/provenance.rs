@@ -13,12 +13,13 @@ use sqlx::{
 use crate::{AnalysisIdentity, CorpusError, DocumentId, SentenceId, SentenceLocation};
 use lingrep_core::analysis::{AnalyzedInput, NormalizationPolicy, TextUnitKind};
 
+mod blob;
 mod candidate;
 
 const COMPONENT: &str = "provenance.sqlite";
 
 /// Schema of the immutable lingrep provenance component.
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 
 /// Hard application-memory bound for one section-coverage result.
 pub const MAX_SECTION_LABELS: usize = 100_000;
@@ -41,25 +42,35 @@ CREATE TABLE document_metadata (
 
 CREATE TABLE sentence_provenance (
     sentence_id INTEGER PRIMARY KEY,
-    source_name TEXT NOT NULL,
     document_id INTEGER NOT NULL,
-    document_ordinal INTEGER NOT NULL,
-    document_sentence_ordinal INTEGER NOT NULL,
     region_labels_json TEXT NOT NULL,
     region_span_ids_json TEXT NOT NULL,
     division_ids_json TEXT NOT NULL,
-    analysis_blob BLOB NOT NULL,
     input_unit_id INTEGER,
-    input_kind TEXT,
-    normalization TEXT,
+    input_origin_id INTEGER,
     input_identity BLOB,
-    input_source_identity BLOB,
-    input_document_identity INTEGER,
     input_paragraph_identity INTEGER,
-    input_metadata_digest BLOB,
     analyzer_sentence_ordinal INTEGER,
     source_start INTEGER,
     source_end INTEGER
+);
+
+CREATE TABLE input_origins (
+    origin_id INTEGER PRIMARY KEY,
+    input_kind TEXT NOT NULL,
+    normalization TEXT NOT NULL,
+    source_identity BLOB NOT NULL,
+    document_identity INTEGER NOT NULL,
+    metadata_digest BLOB NOT NULL
+);
+
+CREATE UNIQUE INDEX input_origin_values ON input_origins(
+    input_kind, normalization, source_identity, document_identity, metadata_digest
+);
+
+CREATE TABLE sentence_text (
+    first_sentence INTEGER PRIMARY KEY,
+    block BLOB NOT NULL
 );
 
 CREATE TABLE divisions (
@@ -510,6 +521,9 @@ pub(crate) struct ProvenanceWriter {
     pending: Option<PendingSentence>,
     /// Finalized rows not yet sent to SQLite. See [`PROVENANCE_BATCH_ROWS`].
     batch: Vec<StoredSentence>,
+    text_block: Vec<candidate::CandidateSentence>,
+    text_block_bytes: usize,
+    origins: Option<(InputOrigin, i64)>,
 }
 
 struct PendingDivision {
@@ -527,6 +541,9 @@ struct PendingDivision {
 /// The batch fits SQLite's guaranteed parameter minimum. Schema additions
 /// must preserve that bound. Retained rows also obey the admission byte limits.
 const PROVENANCE_BATCH_ROWS: usize = 32;
+
+const TEXT_BLOCK_SENTENCES: usize = 256;
+const TEXT_BLOCK_BYTES: usize = 1024 * 1024;
 
 /// One admitted sentence, as the recorder needs it.
 struct SentenceRecord {
@@ -582,25 +599,27 @@ impl AnalysisRecord {
         let provenance = input.provenance();
         let analyzer = StoredAnalysis {
             input_unit_id: sqlite_integer(input.id().get(), "input unit ID")?,
-            input_kind: match input.kind() {
-                TextUnitKind::Sentence => "sentence",
-                TextUnitKind::Segment => "segment",
-            },
-            normalization: match input.normalization() {
-                NormalizationPolicy::None => "none",
-                NormalizationPolicy::Nfc => "nfc",
+            origin: InputOrigin {
+                input_kind: match input.kind() {
+                    TextUnitKind::Sentence => "sentence",
+                    TextUnitKind::Segment => "segment",
+                },
+                normalization: match input.normalization() {
+                    NormalizationPolicy::None => "none",
+                    NormalizationPolicy::Nfc => "nfc",
+                },
+                source_identity: provenance.source_identity().to_vec(),
+                document_identity: sqlite_integer(
+                    provenance.document_identity(),
+                    "input document identity",
+                )?,
+                metadata_digest: provenance.metadata_digest().to_vec(),
             },
             input_identity: input.identity().as_bytes().to_vec(),
-            input_source_identity: provenance.source_identity().to_vec(),
-            input_document_identity: sqlite_integer(
-                provenance.document_identity(),
-                "input document identity",
-            )?,
             input_paragraph_identity: provenance
                 .paragraph_identity()
                 .map(|value| sqlite_integer(value, "input paragraph identity"))
                 .transpose()?,
-            input_metadata_digest: provenance.metadata_digest().to_vec(),
             analyzer_sentence_ordinal: i64::from(sentence.analyzer_sentence_ordinal()),
             source_start: i64::from(sentence.source_range().start()),
             source_end: i64::from(sentence.source_range().end()),
@@ -621,40 +640,38 @@ impl AnalysisRecord {
 /// batched.
 struct StoredSentence {
     sentence_id: i64,
-    source_name: Arc<str>,
     document_id: i64,
-    document_ordinal: i64,
-    document_sentence_ordinal: i64,
     region_labels_json: String,
     region_span_ids_json: String,
     division_ids_json: String,
     sentence_metadata_json: Option<String>,
-    analysis_blob: Vec<u8>,
     analyzer: Option<StoredAnalysis>,
 }
 
 /// The columns only an analyzed sentence has.
 struct StoredAnalysis {
     input_unit_id: i64,
-    input_kind: &'static str,
-    normalization: &'static str,
+    origin: InputOrigin,
     input_identity: Vec<u8>,
-    input_source_identity: Vec<u8>,
-    input_document_identity: i64,
     input_paragraph_identity: Option<i64>,
-    input_metadata_digest: Vec<u8>,
     analyzer_sentence_ordinal: i64,
     source_start: i64,
     source_end: i64,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct InputOrigin {
+    input_kind: &'static str,
+    normalization: &'static str,
+    source_identity: Vec<u8>,
+    document_identity: i64,
+    metadata_digest: Vec<u8>,
+}
+
 struct PendingSentence {
     ordinal: u64,
     sentence_id: i64,
-    source_name: Arc<str>,
     document_id: i64,
-    document_ordinal: i64,
-    document_sentence_ordinal: i64,
     region_labels_json: String,
     region_span_ids_json: String,
     division_ids_json: String,
@@ -667,22 +684,14 @@ struct PendingSentence {
 }
 
 impl PendingSentence {
-    fn into_stored(
-        self,
-        analysis_blob: Vec<u8>,
-        analyzer: Option<StoredAnalysis>,
-    ) -> StoredSentence {
+    fn into_stored(self, analyzer: Option<StoredAnalysis>) -> StoredSentence {
         StoredSentence {
             sentence_id: self.sentence_id,
-            source_name: self.source_name,
             document_id: self.document_id,
-            document_ordinal: self.document_ordinal,
-            document_sentence_ordinal: self.document_sentence_ordinal,
             region_labels_json: self.region_labels_json,
             region_span_ids_json: self.region_span_ids_json,
             division_ids_json: self.division_ids_json,
             sentence_metadata_json: self.sentence_metadata_json,
-            analysis_blob,
             analyzer,
         }
     }
@@ -731,6 +740,7 @@ pub struct ProvenanceView {
     analysis_identity: AnalysisIdentity,
     sentence_count: u64,
     artifact_binding: Option<[u8; 32]>,
+    last_text_block: std::sync::Mutex<Option<(u64, TextBlock)>>,
 }
 
 /// An immutable provenance view and the runtime that owns its I/O.
@@ -751,6 +761,23 @@ impl BlockingProvenance {
 
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.runtime.block_on(future)
+    }
+}
+
+/// Runs a provenance query to completion from a blocking thread.
+pub trait BlockOn {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output;
+}
+
+impl BlockOn for BlockingProvenance {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+}
+
+impl BlockOn for tokio::runtime::Handle {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        tokio::runtime::Handle::block_on(self, future)
     }
 }
 
@@ -778,23 +805,23 @@ impl ProvenanceWriter {
             .create_if_missing(false);
         let mut connection = SqliteConnection::connect_with(&options)
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         connection
             .execute("PRAGMA foreign_keys=ON")
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         connection
             .execute("PRAGMA journal_mode=WAL")
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         connection
             .execute("BEGIN IMMEDIATE")
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         sqlx::raw_sql(SCHEMA)
             .execute(&mut connection)
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         sqlx::query(
             "INSERT INTO provenance_identity(singleton, schema_version, analysis_identity, state, sentence_count) VALUES(1, ?, ?, 'building', 0)",
         )
@@ -802,13 +829,13 @@ impl ProvenanceWriter {
         .bind([0_u8; 32].as_slice())
         .execute(&mut connection)
         .await
-        .map_err(database)?;
+        .map_err(writer_database)?;
         for key in sentence_metadata_keys {
             sqlx::query("INSERT INTO sentence_metadata_keys(key) VALUES(?)")
                 .bind(key)
                 .execute(&mut connection)
                 .await
-                .map_err(database)?;
+                .map_err(writer_database)?;
         }
         Ok(Self {
             connection,
@@ -821,6 +848,9 @@ impl ProvenanceWriter {
             active_regions: BTreeMap::new(),
             pending: None,
             batch: Vec::with_capacity(PROVENANCE_BATCH_ROWS),
+            text_block: Vec::with_capacity(TEXT_BLOCK_SENTENCES),
+            text_block_bytes: 0,
+            origins: None,
         })
     }
 
@@ -871,13 +901,7 @@ impl ProvenanceWriter {
         self.pending = Some(PendingSentence {
             ordinal: location.corpus_sentence_ordinal,
             sentence_id: sqlite_integer(location.corpus_sentence_ordinal, "sentence ordinal")?,
-            source_name: Arc::clone(&location.source_name),
             document_id: sqlite_integer(location.document_id.get(), "document ID")?,
-            document_ordinal: sqlite_integer(location.document_ordinal, "document ordinal")?,
-            document_sentence_ordinal: sqlite_integer(
-                location.document_sentence_ordinal,
-                "document sentence ordinal",
-            )?,
             region_labels_json,
             region_span_ids_json,
             division_ids_json: serde_json::to_string(&record.division_ids)
@@ -921,8 +945,7 @@ impl ProvenanceWriter {
                 "analyzed text differs from admitted sentence bytes",
             ));
         }
-        let analysis_blob = candidate::encode(&[record.candidate])?;
-        self.enqueue(pending.into_stored(analysis_blob, Some(record.analyzer)))
+        self.enqueue(pending.into_stored(Some(record.analyzer)), record.candidate)
             .await
     }
 
@@ -945,25 +968,35 @@ impl ProvenanceWriter {
     /// columns, a surface-less analysis blob carrying the admitted text, and
     /// NULL in every analyzer column.
     async fn flush_pending_provisional(&mut self) -> Result<(), CorpusError> {
-        let Some(pending) = self.pending.take() else {
+        let Some(mut pending) = self.pending.take() else {
             return Ok(());
         };
-        let analysis_blob = candidate::encode(&[candidate::CandidateSentence {
-            text: pending.text.clone(),
-            surfaces: pending.surfaces.clone(),
-        }])?;
-        self.enqueue(pending.into_stored(analysis_blob, None)).await
+        let text = candidate::CandidateSentence {
+            text: std::mem::take(&mut pending.text),
+            surfaces: std::mem::take(&mut pending.surfaces),
+        };
+        self.enqueue(pending.into_stored(None), text).await
     }
 
     /// Adds one finalized row to the batch, writing the batch when it fills.
-    async fn enqueue(&mut self, row: StoredSentence) -> Result<(), CorpusError> {
+    async fn enqueue(
+        &mut self,
+        row: StoredSentence,
+        text: candidate::CandidateSentence,
+    ) -> Result<(), CorpusError> {
+        self.text_block_bytes += text.text.len() + text.surfaces.len() * 16;
+        self.text_block.push(text);
+        if self.text_block.len() >= TEXT_BLOCK_SENTENCES
+            || self.text_block_bytes >= TEXT_BLOCK_BYTES
+        {
+            self.write_text_block(row.sentence_id).await?;
+        }
         self.batch.push(row);
         let bytes = self
             .batch
             .iter()
             .map(|row| {
-                row.analysis_blob.len()
-                    + row.region_labels_json.len()
+                row.region_labels_json.len()
                     + row.region_span_ids_json.len()
                     + row.division_ids_json.len()
                     + row.sentence_metadata_json.as_ref().map_or(0, String::len)
@@ -975,11 +1008,58 @@ impl ProvenanceWriter {
         Ok(())
     }
 
+    async fn write_text_block(&mut self, last_sentence: i64) -> Result<(), CorpusError> {
+        if self.text_block.is_empty() {
+            return Ok(());
+        }
+        let first_sentence = last_sentence + 1 - self.text_block.len() as i64;
+        let block = candidate::encode(&self.text_block)?;
+        self.text_block.clear();
+        self.text_block_bytes = 0;
+        sqlx::query("INSERT INTO sentence_text(first_sentence, block) VALUES(?, ?)")
+            .bind(first_sentence)
+            .bind(block)
+            .execute(&mut self.connection)
+            .await
+            .map_err(writer_database)?;
+        Ok(())
+    }
+
     /// Writes every queued row in one statement, plus one statement for the
     /// batch's sentence-metadata rows when any sentence carries one.
     async fn write_batch(&mut self) -> Result<(), CorpusError> {
         if self.batch.is_empty() {
             return Ok(());
+        }
+        let mut origin_ids = Vec::with_capacity(self.batch.len());
+        for stored in &self.batch {
+            let Some(analyzer) = &stored.analyzer else {
+                origin_ids.push(None);
+                continue;
+            };
+            if let Some((origin, id)) = &self.origins
+                && origin == &analyzer.origin
+            {
+                origin_ids.push(Some(*id));
+                continue;
+            }
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO input_origins(origin_id, input_kind, normalization,
+                    source_identity, document_identity, metadata_digest)
+                 VALUES((SELECT COALESCE(MAX(origin_id)+1, 0) FROM input_origins), ?, ?, ?, ?, ?)
+                 ON CONFLICT(input_kind, normalization, source_identity, document_identity, metadata_digest)
+                 DO UPDATE SET origin_id=input_origins.origin_id RETURNING origin_id",
+            )
+            .bind(analyzer.origin.input_kind)
+            .bind(analyzer.origin.normalization)
+            .bind(analyzer.origin.source_identity.as_slice())
+            .bind(analyzer.origin.document_identity)
+            .bind(analyzer.origin.metadata_digest.as_slice())
+            .fetch_one(&mut self.connection)
+            .await
+            .map_err(writer_database)?;
+            self.origins = Some((analyzer.origin.clone(), id));
+            origin_ids.push(Some(id));
         }
         let sentence_metadata = self
             .batch
@@ -993,58 +1073,47 @@ impl ProvenanceWriter {
             .collect::<Vec<_>>();
         let mut builder = sqlx::QueryBuilder::new(
             "INSERT INTO sentence_provenance(
-                sentence_id, source_name, document_id, document_ordinal,
-                document_sentence_ordinal, region_labels_json,
-                region_span_ids_json, division_ids_json, analysis_blob,
-                input_unit_id, input_kind, normalization, input_identity,
-                input_source_identity, input_document_identity,
-                input_paragraph_identity, input_metadata_digest,
+                sentence_id, document_id, region_labels_json,
+                region_span_ids_json, division_ids_json,
+                input_unit_id, input_origin_id, input_identity,
+                input_paragraph_identity,
                 analyzer_sentence_ordinal, source_start, source_end)",
         );
-        builder.push_values(self.batch.drain(..), |mut row, stored| {
-            row.push_bind(stored.sentence_id)
-                .push_bind(stored.source_name.as_ref().to_owned())
-                .push_bind(stored.document_id)
-                .push_bind(stored.document_ordinal)
-                .push_bind(stored.document_sentence_ordinal)
-                .push_bind(stored.region_labels_json)
-                .push_bind(stored.region_span_ids_json)
-                .push_bind(stored.division_ids_json)
-                .push_bind(stored.analysis_blob);
-            match stored.analyzer {
-                Some(analyzer) => {
-                    row.push_bind(Some(analyzer.input_unit_id))
-                        .push_bind(Some(analyzer.input_kind))
-                        .push_bind(Some(analyzer.normalization))
-                        .push_bind(Some(analyzer.input_identity))
-                        .push_bind(Some(analyzer.input_source_identity))
-                        .push_bind(Some(analyzer.input_document_identity))
-                        .push_bind(analyzer.input_paragraph_identity)
-                        .push_bind(Some(analyzer.input_metadata_digest))
-                        .push_bind(Some(analyzer.analyzer_sentence_ordinal))
-                        .push_bind(Some(analyzer.source_start))
-                        .push_bind(Some(analyzer.source_end));
+        builder.push_values(
+            self.batch.drain(..).zip(origin_ids),
+            |mut row, (stored, origin)| {
+                row.push_bind(stored.sentence_id)
+                    .push_bind(stored.document_id)
+                    .push_bind(stored.region_labels_json)
+                    .push_bind(stored.region_span_ids_json)
+                    .push_bind(stored.division_ids_json);
+                match stored.analyzer {
+                    Some(analyzer) => {
+                        row.push_bind(Some(analyzer.input_unit_id))
+                            .push_bind(origin)
+                            .push_bind(Some(analyzer.input_identity))
+                            .push_bind(analyzer.input_paragraph_identity)
+                            .push_bind(Some(analyzer.analyzer_sentence_ordinal))
+                            .push_bind(Some(analyzer.source_start))
+                            .push_bind(Some(analyzer.source_end));
+                    }
+                    None => {
+                        row.push_bind(None::<i64>)
+                            .push_bind(None::<i64>)
+                            .push_bind(None::<Vec<u8>>)
+                            .push_bind(None::<i64>)
+                            .push_bind(None::<i64>)
+                            .push_bind(None::<i64>)
+                            .push_bind(None::<i64>);
+                    }
                 }
-                None => {
-                    row.push_bind(None::<i64>)
-                        .push_bind(None::<&str>)
-                        .push_bind(None::<&str>)
-                        .push_bind(None::<Vec<u8>>)
-                        .push_bind(None::<Vec<u8>>)
-                        .push_bind(None::<i64>)
-                        .push_bind(None::<i64>)
-                        .push_bind(None::<Vec<u8>>)
-                        .push_bind(None::<i64>)
-                        .push_bind(None::<i64>)
-                        .push_bind(None::<i64>);
-                }
-            }
-        });
+            },
+        );
         builder
             .build()
             .execute(&mut self.connection)
             .await
-            .map_err(database)?;
+            .map_err(writer_database)?;
         if !sentence_metadata.is_empty() {
             let mut builder = sqlx::QueryBuilder::new(
                 "INSERT INTO sentence_metadata(sentence_id, metadata_json)",
@@ -1056,7 +1125,7 @@ impl ProvenanceWriter {
                 .build()
                 .execute(&mut self.connection)
                 .await
-                .map_err(database)?;
+                .map_err(writer_database)?;
         }
         Ok(())
     }
@@ -1121,7 +1190,7 @@ impl ProvenanceWriter {
                     .bind(sqlite_integer(division.id.0,"division ID")?).bind(sqlite_integer(division.document_id.get(),"document ID")?)
                     .bind(&division.kind).bind(&division.source_id).bind(division.parent_id.map(|id|sqlite_integer(id.0,"parent ID")).transpose()?)
                     .bind(sqlite_integer(row.first_sentence,"division start")?).bind(sqlite_integer(self.next_sentence,"division end")?).bind(json)
-                    .execute(&mut self.connection).await.map_err(database)?;
+                    .execute(&mut self.connection).await.map_err(writer_database)?;
             }
             AdmittedCorpusEvent::DivisionObservation {
                 document_id,
@@ -1132,7 +1201,7 @@ impl ProvenanceWriter {
                     .map_err(|error| invalid(error.to_string()))?;
                 sqlx::query("INSERT INTO division_observations(document_id,kind,observation_json) VALUES(?,?,?) ON CONFLICT(document_id,kind) DO UPDATE SET observation_json=excluded.observation_json")
                     .bind(sqlite_integer(document_id.get(),"document ID")?).bind(kind).bind(json)
-                    .execute(&mut self.connection).await.map_err(database)?;
+                    .execute(&mut self.connection).await.map_err(writer_database)?;
             }
             _ => return Err(invalid("nonstructural event sent to division recorder")),
         }
@@ -1143,6 +1212,8 @@ impl ProvenanceWriter {
             return Err(invalid("provenance finished with open divisions"));
         }
         self.flush_pending_provisional().await?;
+        self.write_text_block(sqlite_integer(self.next_sentence, "sentence count")? - 1)
+            .await?;
         self.write_batch().await?;
         self.close_regions().await?;
         self.flush_document().await?;
@@ -1155,18 +1226,108 @@ impl ProvenanceWriter {
         .bind(sqlite_integer(self.next_sentence, "sentence count")?)
         .execute(&mut self.connection)
         .await
-        .map_err(database)?;
-        self.connection.execute("COMMIT").await.map_err(database)?;
+        .map_err(writer_database)?;
+        self.connection
+            .execute("COMMIT")
+            .await
+            .map_err(writer_database)?;
         self.connection
             .execute("PRAGMA journal_mode=DELETE")
             .await
-            .map_err(database)?;
-        self.connection.close().await.map_err(database)?;
+            .map_err(writer_database)?;
+        self.connection.close().await.map_err(writer_database)?;
         reject_sidecars(&self.path)
     }
 }
 
+macro_rules! input_columns_query {
+    ($filter:literal) => {
+        concat!(
+            "SELECT sp.sentence_id, sp.input_unit_id, sp.input_origin_id, o.input_kind,
+                    o.normalization, sp.input_identity, o.source_identity,
+                    o.document_identity, o.metadata_digest,
+                    sp.analyzer_sentence_ordinal, sp.source_start, sp.source_end
+             FROM sentence_provenance sp
+             LEFT JOIN input_origins o ON o.origin_id=sp.input_origin_id
+             WHERE sp.",
+            $filter
+        )
+    };
+}
+
+type TextBlock = Arc<[candidate::CandidateSentence]>;
+
 impl ProvenanceView {
+    async fn text_block(&self, sentence: u64) -> Result<(u64, TextBlock), CorpusError> {
+        if let Some((first, block)) = self
+            .last_text_block
+            .lock()
+            .map_err(|_| invalid("sentence text cache is poisoned"))?
+            .as_ref()
+            && (*first..*first + block.len() as u64).contains(&sentence)
+        {
+            return Ok((*first, Arc::clone(block)));
+        }
+        let row = sqlx::query(
+            "SELECT first_sentence, block FROM sentence_text
+             WHERE first_sentence<=? ORDER BY first_sentence DESC LIMIT 1",
+        )
+        .bind(sqlite_integer(sentence, "sentence ID")?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database)?
+        .ok_or_else(|| invalid("sentence text is missing"))?;
+        let first = sqlite_u64(
+            row.try_get("first_sentence").map_err(database)?,
+            "sentence ID",
+        )?;
+        let encoded: Vec<u8> = row.try_get("block").map_err(database)?;
+        let block: TextBlock = candidate::decode(&encoded)?.into();
+        *self
+            .last_text_block
+            .lock()
+            .map_err(|_| invalid("sentence text cache is poisoned"))? =
+            Some((first, Arc::clone(&block)));
+        Ok((first, block))
+    }
+
+    async fn bounded_text(
+        &self,
+        sentence: u64,
+        limit: usize,
+    ) -> Result<Option<candidate::CandidateSentence>, CorpusError> {
+        let row = sqlx::query(
+            "SELECT first_sentence, length(block) AS bytes FROM sentence_text
+             WHERE first_sentence<=? ORDER BY first_sentence DESC LIMIT 1",
+        )
+        .bind(sqlite_integer(sentence, "sentence ID")?)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(database)?
+        .ok_or_else(|| invalid("sentence text is missing"))?;
+        let first: i64 = row.try_get("first_sentence").map_err(database)?;
+        let first_u64 = sqlite_u64(first, "sentence ID")?;
+        let index = usize::try_from(sentence - first_u64)
+            .map_err(|_| invalid("block-local sentence index exceeds usize"))?;
+        let bytes = usize::try_from(row.try_get::<i64, _>("bytes").map_err(database)?)
+            .map_err(|_| invalid("sentence text block length exceeds usize"))?;
+        let pool = self.pool.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let mut connection = runtime.block_on(pool.acquire()).map_err(database)?;
+            let mut locked = runtime
+                .block_on(connection.lock_handle())
+                .map_err(database)?;
+            let mut source = blob::SentenceBlob::open(&mut locked, first)?;
+            if source.len() != bytes {
+                return Err(invalid("sentence text block length changed"));
+            }
+            candidate::decode_sentence_bounded(&mut source, bytes, index, limit)
+        })
+        .await
+        .map_err(|error| CorpusError::Io(std::io::Error::other(error)))?
+    }
+
     /// Opens a ready sidecar in SQLite immutable/read-only mode.
     pub async fn open(path: &Path, expected: &AnalysisIdentity) -> Result<Self, CorpusError> {
         reject_sidecars(path)?;
@@ -1247,6 +1408,7 @@ impl ProvenanceView {
             analysis_identity: *expected,
             sentence_count,
             artifact_binding: None,
+            last_text_block: std::sync::Mutex::new(None),
         };
         view.validate_division_membership().await?;
         Ok(view)
@@ -1254,13 +1416,49 @@ impl ProvenanceView {
 
     pub(crate) async fn validate_stored_analyses(&self) -> Result<(), CorpusError> {
         let mut first = 0_u64;
-        while first < self.sentence_count {
-            let rows = sqlx::query(
-                "SELECT sentence_id, analysis_blob, input_unit_id, input_kind, normalization,
-                        input_identity, input_source_identity, input_document_identity,
-                        input_metadata_digest, analyzer_sentence_ordinal, source_start, source_end
-                 FROM sentence_provenance WHERE sentence_id>=? ORDER BY sentence_id LIMIT 1024",
+        let mut cursor = i64::MIN;
+        loop {
+            let row = sqlx::query(
+                "SELECT first_sentence, block FROM sentence_text
+                 WHERE first_sentence>=? ORDER BY first_sentence LIMIT 1",
             )
+            .bind(cursor)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(database)?;
+            let Some(row) = row else { break };
+            let start = sqlite_u64(
+                row.try_get("first_sentence").map_err(database)?,
+                "sentence ID",
+            )?;
+            if start != first {
+                return Err(verification(
+                    "sentence text blocks do not tile the sentences",
+                ));
+            }
+            let block: Vec<u8> = row.try_get("block").map_err(database)?;
+            let decoded = candidate::decode(&block)?;
+            if decoded.is_empty() {
+                return Err(invalid("sentence text block is empty"));
+            }
+            first = first
+                .checked_add(decoded.len() as u64)
+                .filter(|end| *end <= self.sentence_count)
+                .ok_or_else(|| verification("sentence text blocks exceed the sentence count"))?;
+            cursor = sqlite_integer(start, "sentence ID")?
+                .checked_add(1)
+                .ok_or_else(|| invalid("sentence ID overflow"))?;
+        }
+        if first != self.sentence_count {
+            return Err(verification(
+                "sentence text blocks do not tile the sentences",
+            ));
+        }
+        let mut first = 0_u64;
+        while first < self.sentence_count {
+            let rows = sqlx::query(input_columns_query!(
+                "sentence_id>=? ORDER BY sentence_id LIMIT 1024"
+            ))
             .bind(sqlite_integer(first, "sentence ID")?)
             .fetch_all(&self.pool)
             .await
@@ -1269,11 +1467,6 @@ impl ProvenanceView {
                 return Err(verification("sentence analysis rows are incomplete"));
             }
             for row in rows {
-                let blob: Vec<u8> = row.try_get("analysis_blob").map_err(database)?;
-                let decoded = candidate::decode(&blob)?;
-                if decoded.len() != 1 {
-                    return Err(invalid("sentence analysis has wrong cardinality"));
-                }
                 validate_input_identity(&row)?;
                 first += 1;
             }
@@ -1932,35 +2125,42 @@ impl ProvenanceView {
             .ok_or_else(|| invalid("sentence analysis exceeds its fixed bound"))
     }
 
-    /// Returns `None` before decompression when the encoded or decoded analysis
-    /// exceeds `limit` bytes. A missing sentence remains an error.
+    /// Returns `None` when text bytes plus four bytes per surface exceed `limit`;
+    /// oversized payloads are not fully verified, and a missing sentence is an error.
     pub async fn sentence_analysis_bounded(
         &self,
         sentence: SentenceId,
         limit: usize,
     ) -> Result<Option<StoredSentenceAnalysis>, CorpusError> {
-        let row = sqlx::query(
-            "SELECT CASE WHEN length(analysis_blob)<=? THEN analysis_blob END AS analysis_blob, input_unit_id, input_kind, normalization,
-                    input_identity, input_source_identity, input_document_identity,
-                    input_metadata_digest, analyzer_sentence_ordinal, source_start, source_end
-             FROM sentence_provenance WHERE sentence_id=?",
-        )
-        .bind(i64::try_from(limit.saturating_add(25)).unwrap_or(i64::MAX))
-        .bind(sqlite_integer(sentence.get(), "sentence ID")?)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(database)?;
+        let row = sqlx::query(input_columns_query!("sentence_id=?"))
+            .bind(sqlite_integer(sentence.get(), "sentence ID")?)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(database)?;
         validate_input_identity(&row)?;
-        let artifact: Option<Vec<u8>> = row.try_get("analysis_blob").map_err(database)?;
-        let Some(artifact) = artifact else {
+        let (first, block) = if limit == usize::MAX {
+            self.text_block(sentence.get()).await?
+        } else {
+            let Some(stored) = self.bounded_text(sentence.get(), limit).await? else {
+                return Ok(None);
+            };
+            (sentence.get(), Arc::from([stored]))
+        };
+        let Some(stored) = usize::try_from(sentence.get() - first)
+            .ok()
+            .and_then(|index| block.get(index))
+        else {
+            return Err(invalid("sentence text is missing from its block"));
+        };
+        if stored
+            .surfaces
+            .len()
+            .saturating_mul(4)
+            .saturating_add(stored.text.len())
+            > limit
+        {
             return Ok(None);
-        };
-        let Some(decoded) = candidate::decode_bounded(&artifact, limit)? else {
-            return Ok(None);
-        };
-        let [stored] = decoded.as_slice() else {
-            return Err(invalid("sentence analysis has wrong cardinality"));
-        };
+        }
         let input_kind = match row
             .try_get::<Option<String>, _>("input_kind")
             .map_err(database)?
@@ -2245,65 +2445,6 @@ impl ProvenanceView {
                     )
                     .map(Arc::new)
                     .map_err(CorpusError::Io)
-            })
-            .collect()
-    }
-
-    /// Evaluates section inclusion for at most `MAX_PROVENANCE_PAGE_SIZE` sentence IDs.
-    /// Output follows input order; missing sentences and oversized stored label data are errors.
-    pub async fn section_admissions(
-        &self,
-        sentences: &[SentenceId],
-        included: Option<&[String]>,
-        include_unlabelled: bool,
-    ) -> Result<Vec<bool>, CorpusError> {
-        if sentences.len() > crate::MAX_PROVENANCE_PAGE_SIZE {
-            return Err(CorpusError::ProvenancePageCapacity {
-                limit: crate::MAX_PROVENANCE_PAGE_SIZE,
-            });
-        }
-        let ids = sentences
-            .iter()
-            .map(|id| sqlite_integer(id.get(), "sentence ID"))
-            .collect::<Result<Vec<_>, _>>()?;
-        let ids = serde_json::to_string(&ids).map_err(|error| invalid(error.to_string()))?;
-        let all_sections = included.is_none();
-        let included = serde_json::to_string(included.unwrap_or_default())
-            .map_err(|error| invalid(error.to_string()))?;
-        let rows = sqlx::query(
-            r#"
-            WITH requested(position,sentence_id) AS (
-                SELECT CAST(key AS INTEGER), CAST(value AS INTEGER) FROM json_each(?)
-            )
-            SELECT sp.sentence_id,
-                CASE WHEN length(CAST(sp.region_labels_json AS BLOB))<=16777216 THEN
-                    CASE WHEN json_array_length(sp.region_labels_json)=0 THEN ?
-                    ELSE (? OR EXISTS (
-                        SELECT 1 FROM json_each(sp.region_labels_json) label
-                        JOIN json_each(?) included ON included.value=label.value
-                    )) END
-                END AS admitted
-            FROM requested
-            LEFT JOIN sentence_provenance sp ON sp.sentence_id=requested.sentence_id
-            ORDER BY requested.position
-        "#,
-        )
-        .bind(ids)
-        .bind(include_unlabelled)
-        .bind(all_sections)
-        .bind(included)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(database)?;
-        rows.into_iter()
-            .map(|row| {
-                let id: Option<i64> = row.try_get("sentence_id").map_err(database)?;
-                if id.is_none() {
-                    return Err(invalid("scope sentence is missing"));
-                }
-                row.try_get::<Option<bool>, _>("admitted")
-                    .map_err(database)?
-                    .ok_or_else(|| invalid("scope labels exceed their byte limit"))
             })
             .collect()
     }
@@ -2620,7 +2761,7 @@ impl ProvenanceWriter {
             .bind(sqlite_integer(document.first_sentence, "first sentence")?)
             .bind(sqlite_integer(document.sentence_count, "sentence count")?)
             .bind(document.metadata_json)
-            .execute(&mut self.connection).await.map_err(database)?;
+            .execute(&mut self.connection).await.map_err(writer_database)?;
         Ok(())
     }
 
@@ -2692,7 +2833,7 @@ impl ProvenanceWriter {
         .bind(sqlite_integer(self.next_sentence, "region end")?)
         .execute(&mut self.connection)
         .await
-        .map_err(database)?;
+        .map_err(writer_database)?;
         Ok(())
     }
 }
@@ -2764,28 +2905,7 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
             primary_key: 1,
         },
         ExpectedColumn {
-            name: "source_name",
-            declared_type: "TEXT",
-            not_null: 1,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
             name: "document_id",
-            declared_type: "INTEGER",
-            not_null: 1,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
-            name: "document_ordinal",
-            declared_type: "INTEGER",
-            not_null: 1,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
-            name: "document_sentence_ordinal",
             declared_type: "INTEGER",
             not_null: 1,
             default_value: None,
@@ -2813,13 +2933,6 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
             primary_key: 0,
         },
         ExpectedColumn {
-            name: "analysis_blob",
-            declared_type: "BLOB",
-            not_null: 1,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
             name: "input_unit_id",
             declared_type: "INTEGER",
             not_null: 0,
@@ -2827,15 +2940,8 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
             primary_key: 0,
         },
         ExpectedColumn {
-            name: "input_kind",
-            declared_type: "TEXT",
-            not_null: 0,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
-            name: "normalization",
-            declared_type: "TEXT",
+            name: "input_origin_id",
+            declared_type: "INTEGER",
             not_null: 0,
             default_value: None,
             primary_key: 0,
@@ -2848,29 +2954,8 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
             primary_key: 0,
         },
         ExpectedColumn {
-            name: "input_source_identity",
-            declared_type: "BLOB",
-            not_null: 0,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
-            name: "input_document_identity",
-            declared_type: "INTEGER",
-            not_null: 0,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
             name: "input_paragraph_identity",
             declared_type: "INTEGER",
-            not_null: 0,
-            default_value: None,
-            primary_key: 0,
-        },
-        ExpectedColumn {
-            name: "input_metadata_digest",
-            declared_type: "BLOB",
             not_null: 0,
             default_value: None,
             primary_key: 0,
@@ -2893,6 +2978,66 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
             name: "source_end",
             declared_type: "INTEGER",
             not_null: 0,
+            default_value: None,
+            primary_key: 0,
+        },
+    ];
+    const ORIGIN_COLUMNS: &[ExpectedColumn] = &[
+        ExpectedColumn {
+            name: "origin_id",
+            declared_type: "INTEGER",
+            not_null: 0,
+            default_value: None,
+            primary_key: 1,
+        },
+        ExpectedColumn {
+            name: "input_kind",
+            declared_type: "TEXT",
+            not_null: 1,
+            default_value: None,
+            primary_key: 0,
+        },
+        ExpectedColumn {
+            name: "normalization",
+            declared_type: "TEXT",
+            not_null: 1,
+            default_value: None,
+            primary_key: 0,
+        },
+        ExpectedColumn {
+            name: "source_identity",
+            declared_type: "BLOB",
+            not_null: 1,
+            default_value: None,
+            primary_key: 0,
+        },
+        ExpectedColumn {
+            name: "document_identity",
+            declared_type: "INTEGER",
+            not_null: 1,
+            default_value: None,
+            primary_key: 0,
+        },
+        ExpectedColumn {
+            name: "metadata_digest",
+            declared_type: "BLOB",
+            not_null: 1,
+            default_value: None,
+            primary_key: 0,
+        },
+    ];
+    const TEXT_COLUMNS: &[ExpectedColumn] = &[
+        ExpectedColumn {
+            name: "first_sentence",
+            declared_type: "INTEGER",
+            not_null: 0,
+            default_value: None,
+            primary_key: 1,
+        },
+        ExpectedColumn {
+            name: "block",
+            declared_type: "BLOB",
+            not_null: 1,
             default_value: None,
             primary_key: 0,
         },
@@ -3101,6 +3246,20 @@ async fn validate_schema(pool: &SqlitePool) -> Result<(), CorpusError> {
         "sentence_provenance",
         "PRAGMA table_info('sentence_provenance')",
         SENTENCE_COLUMNS,
+    )
+    .await?;
+    validate_table(
+        pool,
+        "input_origins",
+        "PRAGMA table_info('input_origins')",
+        ORIGIN_COLUMNS,
+    )
+    .await?;
+    validate_table(
+        pool,
+        "sentence_text",
+        "PRAGMA table_info('sentence_text')",
+        TEXT_COLUMNS,
     )
     .await?;
     validate_table(
@@ -3337,6 +3496,9 @@ fn validate_document_membership(
 fn validate_input_identity(row: &sqlx::sqlite::SqliteRow) -> Result<(), CorpusError> {
     let input_unit_id: Option<i64> = row.try_get("input_unit_id").map_err(database)?;
     let required = [
+        row.try_get::<Option<i64>, _>("input_origin_id")
+            .map_err(database)?
+            .is_some(),
         row.try_get::<Option<String>, _>("input_kind")
             .map_err(database)?
             .is_some(),
@@ -3349,15 +3511,15 @@ fn validate_input_identity(row: &sqlx::sqlite::SqliteRow) -> Result<(), CorpusEr
         )?
         .is_some(),
         optional_digest(
-            row.try_get("input_source_identity").map_err(database)?,
+            row.try_get("source_identity").map_err(database)?,
             "input source identity",
         )?
         .is_some(),
-        row.try_get::<Option<i64>, _>("input_document_identity")
+        row.try_get::<Option<i64>, _>("document_identity")
             .map_err(database)?
             .is_some(),
         optional_digest(
-            row.try_get("input_metadata_digest").map_err(database)?,
+            row.try_get("metadata_digest").map_err(database)?,
             "input metadata digest",
         )?
         .is_some(),
@@ -3411,8 +3573,34 @@ fn decode_region_labels(encoded: String) -> Result<Box<[String]>, CorpusError> {
         .map_err(|error| invalid(error.to_string()))
 }
 
-fn database(error: sqlx::Error) -> CorpusError {
+fn writer_database(error: sqlx::Error) -> CorpusError {
     invalid(error.to_string())
+}
+
+/// SQLite primary result codes that report the environment, the connection or
+/// the API call, and not the database file's content
+/// (<https://www.sqlite.org/rescode.html>): `SQLITE_INTERNAL`, `PERM`,
+/// `ABORT`, `BUSY`, `LOCKED`, `NOMEM`, `READONLY`, `INTERRUPT`, `IOERR`,
+/// `FULL`, `CANTOPEN`, `PROTOCOL`, `MISUSE`, `NOLFS` and `AUTH`.
+const SQLITE_NON_CONTENT_CODES: [u32; 15] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14, 15, 21, 22, 23];
+
+fn database(error: sqlx::Error) -> CorpusError {
+    let content = match &error {
+        sqlx::Error::Database(database) => database
+            .code()
+            .and_then(|code| code.parse::<u32>().ok())
+            .is_some_and(|code| !SQLITE_NON_CONTENT_CODES.contains(&(code & 0xff))),
+        sqlx::Error::Io(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => false,
+        _ => true,
+    };
+    if content {
+        invalid(error.to_string())
+    } else {
+        CorpusError::Io(std::io::Error::other(error))
+    }
 }
 
 fn reject_sidecars(path: &Path) -> Result<(), CorpusError> {

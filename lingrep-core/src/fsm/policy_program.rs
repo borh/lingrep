@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use compact_str::CompactString;
 use indexmap::IndexMap;
 
-use super::compiler::model::SourceSpan;
+use super::compiler::model::{SourceId, SourceSpan};
 use super::policy::Terminal;
 
 /// Each partitioned definition's class, by authored definition name.
@@ -301,6 +301,61 @@ impl BoundProgram {
     pub fn labels(&self) -> &[StatementLabel] {
         &self.labels
     }
+
+    fn declares_resolve(&self) -> bool {
+        self.ops
+            .iter()
+            .any(|op| matches!(op, BoundOp::Resolve { .. }))
+    }
+
+    #[must_use]
+    pub(crate) fn with_overlaps(mut self, overlaps: Overlaps) -> Self {
+        match overlaps {
+            Overlaps::Catalog => {}
+            Overlaps::Keep => {
+                let (ops, labels) = self
+                    .ops
+                    .into_iter()
+                    .zip(self.labels)
+                    .filter(|(op, _)| !matches!(op, BoundOp::Resolve { .. }))
+                    .unzip();
+                self = Self::new(ops, labels);
+            }
+            Overlaps::Longest if self.declares_resolve() => {}
+            Overlaps::Longest => {
+                self.ops.push(BoundOp::Resolve {
+                    subject: BoundSubject::Patterns,
+                    rank: vec![
+                        Criterion::Longest,
+                        Criterion::Start,
+                        Criterion::End,
+                        Criterion::Pattern,
+                    ],
+                    partition: None,
+                    span: PolicySpan(
+                        SourceSpan::new(SourceId::new(0), 0..0).expect("an empty range"),
+                    ),
+                });
+                self.labels.push(StatementLabel::new(LONGEST_RESOLVE, 0));
+            }
+        }
+        self
+    }
+}
+
+const LONGEST_RESOLVE: &str = "resolve patterns rank: [longest, start, end, pattern].";
+
+/// How one run treats overlapping records of different definitions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Overlaps {
+    /// Run the catalog's policy block as written.
+    #[default]
+    Catalog,
+    /// Run the block without its `resolve` statements.
+    Keep,
+    /// Run the block, followed by `resolve patterns rank: [longest, start,
+    /// end, pattern]` when it declares no `resolve` statement.
+    Longest,
 }
 
 /// A resolved subject.

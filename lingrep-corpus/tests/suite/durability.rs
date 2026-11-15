@@ -46,7 +46,7 @@ fn fixture_root() -> PathBuf {
 }
 
 /// Every generation-and-scheme pair the lingrep reader admits.
-const RETAINED: &[&str] = &["g2-a1"];
+const RETAINED: &[&str] = &["g3-a1"];
 
 /// The descriptor a durability fixture is built with.
 ///
@@ -166,11 +166,17 @@ fn no_retained_fixture_was_built_from_the_storage_fixture_record() {
 }
 
 #[test]
-fn generation_one_requires_a_rebuild() {
-    assert!(matches!(
-        CorpusArtifact::open(&fixture_root().join("g1-a1")),
-        Err(lingrep_corpus::CorpusError::UnsupportedArtifactGeneration { generation: 1 })
-    ));
+fn earlier_generations_require_a_rebuild() {
+    for (name, expected) in [("g1-a1", 1), ("g2-a1", 2)] {
+        assert!(
+            matches!(
+                CorpusArtifact::open(&fixture_root().join(name)),
+                Err(lingrep_corpus::CorpusError::UnsupportedArtifactGeneration { generation })
+                    if generation == expected
+            ),
+            "{name}"
+        );
+    }
 }
 
 fn expected_generation(name: &str) -> u32 {

@@ -49,6 +49,7 @@ tree-sitter-lingrep.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 sha2 = "0.10"
+tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 thirtyfour = { version = "0.38.1", default-features = false, features = ["reqwest", "cdp"] }

@@ -211,6 +211,48 @@ pub(crate) fn write_binding_notice(
     .map_err(CliError::Io)
 }
 
+pub(crate) fn write_vectors_notice(
+    catalog: &crate::catalog_input::LoadedCatalog,
+    config: &ExecutionCliConfig,
+) -> Result<(), CliError> {
+    let Some((code, message)) = catalog.vectors.as_ref().and_then(|loaded| {
+        crate::word_vectors::binding_notice(&catalog.output.matcher, loaded, catalog.authored_file)
+    }) else {
+        return Ok(());
+    };
+    write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Catalog,
+        code,
+        message,
+        None,
+        Vec::new(),
+    )
+    .map_err(CliError::Io)
+}
+
+pub(crate) fn word_vectors_report(
+    catalog: &crate::catalog_input::LoadedCatalog,
+) -> Option<crate::protocol::query::WordVectorsReport> {
+    let loaded = catalog.vectors.as_ref()?;
+    Some(crate::protocol::query::WordVectorsReport {
+        path: loaded.path.display().to_string(),
+        blake3: loaded.blake3.clone(),
+        near: catalog
+            .output
+            .matcher
+            .near_tests()
+            .iter()
+            .map(|test| crate::protocol::query::NearReport {
+                word: test.word.to_string(),
+                threshold: test.threshold.to_string(),
+                value_count: test.values.len() as u64,
+            })
+            .collect(),
+    })
+}
+
 pub(crate) fn random_id() -> String {
     format!("{:032x}", random::<u128>())
 }

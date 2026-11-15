@@ -42,7 +42,7 @@ static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const UNMAPPED_TARGET_GROUP: u64 = u64::MAX;
 
 /// Generation embedded in content-addressed artifact cache paths.
-pub const CORPUS_ARTIFACT_FORMAT_GENERATION: u32 = 2;
+pub const CORPUS_ARTIFACT_FORMAT_GENERATION: u32 = 3;
 
 /// Formats identity bytes as lowercase hex (64 characters for a 32-byte identity).
 ///
@@ -709,16 +709,23 @@ impl CorpusBuilder {
 
     /// Publishes only when the builder-observed analysis still matches a
     /// caller's preflight identity.
+    ///
+    /// `should_continue` is checked between durability operations while the
+    /// staging directory is finalized. Once it returns `false` the staging
+    /// directory is removed and the result is `Ok(None)`; it is not called
+    /// after finalization.
     pub async fn finish_expected_analysis(
         self,
         discovery: DiscoveryReport,
         expected: AnalysisIdentity,
-    ) -> Result<CorpusArtifact, CorpusError> {
-        let mut should_continue = || true;
-        let mut completed = self
+        mut should_continue: impl FnMut() -> bool,
+    ) -> Result<Option<CorpusArtifact>, CorpusError> {
+        let Some(mut completed) = self
             .finalize_staging_guarded(discovery, &mut should_continue)
             .await?
-            .ok_or_else(|| invalid_builder("unconditional staging finalization cancelled"))?;
+        else {
+            return Ok(None);
+        };
         let artifact = CorpusArtifact::open(completed.path())?;
         if artifact.analysis_identity() != &expected {
             return Err(CorpusError::AnalysisIdentityMismatch {
@@ -727,7 +734,7 @@ impl CorpusBuilder {
         }
         let destination = completed.destination().to_path_buf();
         if crate::publication::publish_guarded(&mut completed, || true, || true)? {
-            Ok(artifact.into_published_at(destination))
+            Ok(Some(artifact.into_published_at(destination)))
         } else {
             Err(invalid_builder("unconditional publication guard cancelled"))
         }
@@ -1705,26 +1712,6 @@ impl CorpusArtifact {
         )
     }
 
-    /// A sentence is included if any label is selected, or if it has no labels and `include_unlabelled` is true.
-    /// `None` selects every label; an empty list selects none.
-    /// Pull batches on a blocking thread while `runtime` remains alive.
-    pub fn bound_sentence_source_with_sections(
-        &self,
-        projection: &BoundProjection,
-        provenance: Arc<ProvenanceView>,
-        runtime: tokio::runtime::Handle,
-        included: Option<Vec<String>>,
-        include_unlabelled: bool,
-    ) -> Result<PreparedSentenceSource, CorpusError> {
-        self.validate_provenance_view(&provenance)?;
-        Ok(self.bound_sentence_source(projection)?.with_sections(
-            provenance,
-            runtime,
-            included,
-            include_unlabelled,
-        ))
-    }
-
     /// Prunes sentences using a proof from the catalog the caller will execute.
     ///
     /// Unvisited token blocks remain unchecked; complete integrity requires `verify_integrity`.
@@ -2003,6 +1990,7 @@ fn increment_scratch_count(
 struct StagingOwner {
     path: PathBuf,
     armed: bool,
+    _lock: crate::publication::StagingLock,
 }
 
 impl StagingOwner {
@@ -2032,12 +2020,24 @@ impl Drop for StagingOwner {
 }
 
 fn create_staging(parent: &Path, base: &str) -> Result<StagingOwner, CorpusError> {
+    crate::publication::reclaim_orphaned_staging(parent, base);
     for _ in 0..1024 {
         let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(".{base}.staging-{}-{sequence}", std::process::id()));
+        let (path, lock) = crate::publication::staging_paths(
+            parent,
+            base,
+            &format!("{}-{sequence}", std::process::id()),
+        );
+        let Some(lock) = crate::publication::StagingLock::acquire(lock)? else {
+            continue;
+        };
         match fs::create_dir(&path) {
             Ok(()) => {
-                return Ok(StagingOwner { path, armed: true });
+                return Ok(StagingOwner {
+                    path,
+                    armed: true,
+                    _lock: lock,
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(CorpusError::Io(error)),

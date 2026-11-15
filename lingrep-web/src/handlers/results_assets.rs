@@ -43,6 +43,16 @@ const ASSETS: &[AssetEntry] = &[
         "text/javascript; charset=utf-8",
     ),
     (
+        "/numbers.js",
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/numbers.js")),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "/views.js",
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/views.js")),
+        "text/javascript; charset=utf-8",
+    ),
+    (
         "/compare.js",
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/compare.js")),
         "text/javascript; charset=utf-8",

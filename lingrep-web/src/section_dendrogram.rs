@@ -68,7 +68,36 @@ const TICK_LENGTH: i64 = 5;
 /// Drop from a tick's mark to its label's baseline.
 const TICK_LABEL_GAP: i64 = 12;
 
-/// One pattern, at its drawn position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterOptions {
+    pub distance: DistanceMetric,
+    /// A pattern with fewer occurrences in the displayed sections is left out
+    /// of both trees. `1` leaves every pattern in.
+    pub minimum_occurrences: u64,
+}
+
+impl Default for ClusterOptions {
+    fn default() -> Self {
+        Self {
+            distance: DistanceMetric::default(),
+            minimum_occurrences: 1,
+        }
+    }
+}
+
+impl ClusterOptions {
+    /// Missing or invalid `distance` and `cluster_minimum` fields use their defaults.
+    #[must_use]
+    pub fn from_form(distance: Option<&str>, minimum_occurrences: Option<&str>) -> Self {
+        Self {
+            distance: DistanceMetric::from_form_value(distance),
+            minimum_occurrences: minimum_occurrences
+                .and_then(|value| value.trim().parse().ok())
+                .map_or(1, |minimum: u64| minimum.max(1)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DendrogramLeaf {
     /// The clustered thing's identity: a pattern key in the pattern tree, a

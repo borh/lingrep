@@ -90,7 +90,7 @@ impl Iterator for IntegrityChecked {
             Ok(_) => Some(Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "soranoha archive {} changed during the run; refusing to publish",
+                    "soranoha archive {} changed during the run; results were not published",
                     self.name
                 ),
             ))),

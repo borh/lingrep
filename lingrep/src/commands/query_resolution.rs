@@ -32,9 +32,9 @@ use crate::direct_source::{
 };
 use crate::error::CliError;
 use crate::protocol::query::{AnalyzerRun, QueryMode, TraversalLimits};
-use crate::scope_precompute::ScopeResolution;
 use crate::section_diagnostics::refuse_unanswerable;
 use crate::terminal::TerminalArbiter;
+use lingrep_corpus::ScopeResolution;
 
 pub(crate) enum ResolvedAnalysis {
     Direct(Box<CliAnalyzerPlan>),

@@ -23,6 +23,8 @@ use lingrep_web::{RequestStore, handlers};
 use thirtyfour::prelude::*;
 use tokio::net::TcpListener;
 
+use crate::frequency_e2e_test::{observed, wait_for};
+
 const PAGE: &str = r##"<!doctype html>
 <html lang="en">
 <head>
@@ -511,6 +513,373 @@ async fn query_library_uses_real_indexeddb_and_enhanced_editor() -> WebDriverRes
         "query tabs or semantic hiding lost their visual contract"
     );
     Ok(())
+}
+
+async fn open_fixture(driver_url: &str, address: &str) -> WebDriverResult<WebDriver> {
+    let mut caps = DesiredCapabilities::chrome();
+    caps.add_arg("--headless=new")?;
+    caps.add_arg("--no-sandbox")?;
+    let driver = WebDriver::new(driver_url, caps).await?;
+    driver.goto(address).await?;
+    wait_for_count(&driver, ".pattern-editor .cm-editor", 1).await?;
+    wait_for_count(&driver, "[data-query-list] p", 1).await?;
+    Ok(driver)
+}
+
+#[tokio::test]
+async fn the_submit_gate_rejects_an_empty_pattern() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let address = fixture(Arc::clone(&counter)).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        driver.execute(COUNT_SEARCHES, vec![]).await?;
+        click_selector(&driver, SUBMIT).await?;
+        wait_for(
+            &driver,
+            r##"return document.querySelector("#corpus-pattern-status")?.textContent === "Pattern is empty.";"##,
+            "the gate to report the empty pattern",
+        )
+        .await?;
+        observed(&driver, "return __searches", serde_json::json!(0), "searches").await
+    }
+    .await;
+    driver.quit().await?;
+    result?;
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn typing_in_the_editor_shows_the_edited_marker() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let address = fixture(Arc::new(AtomicUsize::new(0))).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        driver
+            .find(By::Css(".cm-content"))
+            .await?
+            .send_keys("typed := [upos=NOUN].")
+            .await?;
+        wait_for(
+            &driver,
+            r#"return !document.querySelector("[data-query-edited]").hidden;"#,
+            "the Edited marker after typing in the editor",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    result
+}
+
+#[tokio::test]
+async fn the_submit_gate_releases_one_request_for_a_typed_pattern() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let address = fixture(Arc::clone(&counter)).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        driver.execute(COUNT_SEARCHES, vec![]).await?;
+        driver
+            .find(By::Css(".cm-content"))
+            .await?
+            .send_keys("typed := [upos=NOUN].")
+            .await?;
+        click_selector(&driver, SUBMIT).await?;
+        wait_for(
+            &driver,
+            r##"return document.querySelector("#status").textContent.includes("searched");"##,
+            "the search reply",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return __searches",
+            serde_json::json!(1),
+            "searches for one click",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    result?;
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+const SUBMIT: &str = r#"[data-corpus-search] button[type="submit"]"#;
+
+const COUNT_SEARCHES: &str = r#"window.__searches = 0;
+    document.addEventListener("htmx:beforeRequest", (event) => {
+      if (event.detail.elt.matches("[data-corpus-search]")) __searches++;
+    });"#;
+
+fn hold_editor_requests(formats: bool) -> String {
+    format!(
+        r#"window.__held = []; window.__holding = true; window.__posted = [];
+           window.__release = () => {{ __holding = false; for (const send of __held.splice(0)) send(); }};
+           const fetched = window.fetch.bind(window);
+           window.fetch = (input, init = {{}}) => {{
+             const url = String(input);
+             if (!__holding || !(url.includes("api/pattern/check") || ({formats} && url.includes("api/pattern/format")))) return fetched(input, init);
+             return new Promise((resolve, reject) => {{
+               init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+               __held.push(() => fetched(input, init).then(resolve, reject));
+             }});
+           }};
+           document.addEventListener("htmx:configRequest", (event) => __posted.push(event.detail.formData.get("pattern")));"#
+    )
+}
+
+const SET_PATTERN: &str = r##"const t=document.querySelector("#corpus-pattern");
+    t.value=arguments[0];
+    t.dispatchEvent(new Event("input",{bubbles:true}));"##;
+
+const FORMATTED: &str = "typed := [upos=NOUN].\n";
+
+async fn enter_checked_pattern(driver: &WebDriver) -> WebDriverResult<()> {
+    driver
+        .execute(SET_PATTERN, vec![serde_json::json!(FORMATTED)])
+        .await?;
+    wait_for(
+        driver,
+        r##"return document.querySelector("#corpus-pattern").getAttribute("aria-invalid") === "false";"##,
+        "the entered pattern's check",
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_submit_gate_reports_a_pattern_edited_during_its_check() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let address = fixture(Arc::clone(&counter)).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        enter_checked_pattern(&driver).await?;
+        driver.execute(hold_editor_requests(false), vec![]).await?;
+        click_selector(&driver, SUBMIT).await?;
+        wait_for(
+            &driver,
+            "return __held.length === 1",
+            "the gate's pattern check",
+        )
+        .await?;
+        let edited = format!("{FORMATTED}other := [upos=VERB].\n");
+        driver
+            .execute(SET_PATTERN, vec![serde_json::json!(edited)])
+            .await?;
+        wait_for(
+            &driver,
+            r##"return document.querySelector("#corpus-pattern-status").textContent.startsWith("Pattern changed; submit again.");"##,
+            "the gate to report the changed pattern",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return __posted",
+            serde_json::json!([]),
+            "patterns posted after an edit during the check",
+        )
+        .await?;
+        driver.execute("__release()", vec![]).await?;
+        wait_for(
+            &driver,
+            r##"return document.querySelector("#corpus-pattern-status").textContent.includes("Pattern is valid");"##,
+            "the edited pattern's check",
+        )
+        .await?;
+        observed(
+            &driver,
+            r##"return document.querySelector("#corpus-pattern-status").textContent.startsWith("Pattern changed; submit again. Pattern is valid");"##,
+            serde_json::json!(true),
+            "the gate's report beside the later check result",
+        )
+        .await?;
+        click_selector(&driver, SUBMIT).await?;
+        wait_for(
+            &driver,
+            "return __posted.length === 1",
+            "the resubmitted pattern's search request",
+        )
+        .await?;
+        observed(
+            &driver,
+            r##"return document.querySelector("#corpus-pattern-status").textContent.includes("Pattern changed");"##,
+            serde_json::json!(false),
+            "the gate's report after the resubmission",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return __posted",
+            serde_json::json!([edited]),
+            "the pattern posted on resubmission",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    result?;
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_submit_gate_posts_when_its_format_and_check_never_settle() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let address = fixture(Arc::clone(&counter)).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        enter_checked_pattern(&driver).await?;
+        driver.execute(hold_editor_requests(true), vec![]).await?;
+        click_selector(&driver, SUBMIT).await?;
+        wait_for(
+            &driver,
+            "return __posted.length === 1",
+            "a search request without a format or check reply",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return __posted",
+            serde_json::json!([FORMATTED]),
+            "the pattern posted without a format or check reply",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    result?;
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+const RECORD_STORAGE_WRITES: &str = r#"window.__writes = []; const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (this === localStorage) __writes.push(key);
+      return set.call(this, key, value);
+    };"#;
+
+#[tokio::test]
+async fn an_edit_from_outside_the_editor_stores_its_draft_once() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let address = fixture(Arc::new(AtomicUsize::new(0))).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        driver.execute(RECORD_STORAGE_WRITES, vec![]).await?;
+        driver
+            .execute(SET_PATTERN, vec![serde_json::json!(FORMATTED)])
+            .await?;
+        observed(
+            &driver,
+            r#"return [document.querySelector(".cm-content").textContent, __writes]"#,
+            serde_json::json!([FORMATTED.trim_end(), ["pattern-draft:corpus-pattern"]]),
+            "the editor's text and the localStorage writes for one external edit",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    result
+}
+
+#[tokio::test]
+async fn an_edit_stores_its_draft_once_and_a_reload_restores_it() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let address = fixture(Arc::new(AtomicUsize::new(0))).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+    let result: WebDriverResult<()> = async {
+        driver
+            .execute(
+                r#"window.__writes = []; const set = Storage.prototype.setItem;
+                   Storage.prototype.setItem = function (key, value) {
+                     if (this === localStorage) __writes.push(key);
+                     return set.call(this, key, value);
+                   };"#,
+                vec![],
+            )
+            .await?;
+        driver
+            .find(By::Css(".cm-content"))
+            .await?
+            .send_keys("a")
+            .await?;
+        observed(
+            &driver,
+            "return __writes",
+            serde_json::json!(["pattern-draft:corpus-pattern"]),
+            "localStorage writes for one keystroke",
+        )
+        .await?;
+        driver.refresh().await?;
+        wait_for(
+            &driver,
+            r#"return document.querySelector(".cm-content")?.textContent === "a";"#,
+            "the draft in the editor after a reload",
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    result
+}
+
+#[tokio::test]
+async fn undo_that_collides_with_a_resubmitted_query_reports_failure_and_stays_available()
+-> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let address = fixture(Arc::clone(&counter)).await;
+    let driver = open_fixture(&driver_url, &address).await?;
+
+    submit_source(&driver, "a := [upos=NOUN].").await?;
+    wait_for_count(&driver, ".query-row", 1).await?;
+    click_selector(&driver, "[data-clear-recent]").await?;
+    wait_for_count(&driver, ".query-row", 0).await?;
+    submit_source(&driver, "a := [upos=NOUN].").await?;
+    wait_for_count(&driver, ".query-row", 1).await?;
+    click_selector(&driver, r#"[data-query-action="undo"]"#).await?;
+    let result: WebDriverResult<()> = async {
+        wait_for(
+            &driver,
+            r#"return document.querySelector("[data-query-status]").firstChild?.textContent
+                 === "Could not undo: a removed query has been added again.";"#,
+            "the failed undo in the status line",
+        )
+        .await?;
+        observed(
+            &driver,
+            r#"return document.activeElement===document.querySelector('[data-query-action="undo"]');"#,
+            serde_json::json!(true),
+            "focus on Undo after a failed restore",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    result
 }
 
 /// Thin synchronous wrapper around a running fixture server and a real

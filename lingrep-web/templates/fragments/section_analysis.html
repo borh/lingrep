@@ -31,6 +31,7 @@
         <input type="hidden" name="submitted" value="1">
         {% for label in selected_labels %}<input type="hidden" name="section" value="{{ label }}">{% endfor %}
         {% if distance_cosine %}<input type="hidden" name="distance" value="cosine">{% else %}<input type="hidden" name="distance" value="jensen-shannon">{% endif %}
+        <input type="hidden" name="cluster_minimum" value="{{ cluster_minimum }}">
         <label class="section-distance"><span data-i18n="results.contrast_reference">Reference section</span>
           <select name="contrast_reference" data-contrast-reference>
             <option value=""{% if contrast_selection.reference_label().is_empty() %} selected{% endif %} data-i18n="results.contrast_unselected">— choose —</option>
@@ -83,17 +84,20 @@
 <section class="detail-view section-cluster-controls" data-detail-view="clusters" aria-label="Clustering options" data-i18n-aria-label="results.cluster_options_aria">
   <form class="cluster-controls" id="section-cluster-distance"
         hx-post="api/section-analysis/{{ workbench_id }}/{{ revision }}"
-        hx-trigger="change" hx-target="#section-analysis" hx-swap="outerHTML">
+        hx-trigger="change, submit" hx-sync="this:replace" hx-target="#section-analysis" hx-swap="outerHTML">
     <input type="hidden" name="submitted" value="1">
     {% for label in selected_labels %}<input type="hidden" name="section" value="{{ label }}">{% endfor %}
     <input type="hidden" name="contrast_reference" value="{{ contrast_selection.reference_label() }}">
     <input type="hidden" name="contrast_comparison" value="{{ contrast_selection.comparison_label() }}">
     <input type="hidden" name="contrast_order" value="{{ contrast_selection.order.form_value() }}">
     <label class="section-distance"><span data-i18n="results.cluster_distance_label">Clustering distance</span>
-      <select name="distance" data-cluster-distance>
+      <select id="cluster-distance" name="distance" data-cluster-distance>
         <option value="jensen-shannon"{% if distance_jensen_shannon %} selected{% endif %} data-i18n="results.distance_jensen_shannon">Jensen–Shannon</option>
         <option value="cosine"{% if distance_cosine %} selected{% endif %} data-i18n="results.distance_cosine">Cosine</option>
       </select>
+    </label>
+    <label class="section-distance"><span data-i18n="results.cluster_minimum_label">Minimum occurrences</span>
+      <input type="number" id="cluster-minimum" name="cluster_minimum" value="{{ cluster_minimum }}" min="1" step="1" inputmode="numeric" data-cluster-minimum>
     </label>
   </form>
 </section>
@@ -105,6 +109,7 @@
     {% call macros::dendrogram_plot(tree, "dendrogram-patterns-title", "results.cluster_aria", "Dendrogram of patterns clustered by their section profiles (agglomerative, average linkage).") %}{% endcall %}
     {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
     <p class="comparison-note" data-i18n="results.cluster_scale">Each pattern is profiled by its occurrence rate per million sentences in each section, normalized to unit sum, so a pattern distributed in proportion to section size has a uniform profile. Linkage is average (UPGMA).</p>
+    {% if below_minimum > 0 %}<p class="comparison-note" data-cluster-below-minimum data-i18n="results.cluster_below_minimum" data-i18n-args='{"n": {{ below_minimum }}, "min": {{ cluster_minimum }}}'>{{ below_minimum }} patterns with fewer than {{ cluster_minimum }} occurrences in the displayed sections are left out.</p>{% endif %}
     {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_insufficient">Fewer than two patterns have observed occurrences in the displayed sections, so no clustering is reported.</p>{% endif %}
     {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
     {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} patterns with no occurrences in the displayed sections have no profile to cluster and are omitted.</p>{% endif %}
@@ -117,6 +122,7 @@
     {% call macros::dendrogram_plot(tree, "dendrogram-sections-title", "results.cluster_sections_aria", "Dendrogram of sections clustered by their pattern profiles (agglomerative, average linkage).") %}{% endcall %}
     {% if distance_cosine %}<p class="comparison-note" data-i18n="results.cluster_cosine_distance">Merge height is cosine distance (1 − cosine similarity): 0 means profiles point in the same direction; 1 means they are orthogonal.</p>{% else %}<p class="comparison-note" data-i18n="results.cluster_js_distance">Merge height is Jensen–Shannon distance: 0 means identical profiles; 1 means no shared support.</p>{% endif %}
     <p class="comparison-note" data-i18n="results.cluster_sections_scale">Each section is profiled by its composition over patterns: every count is divided by that pattern's total across the displayed sections, so that a frequent pattern does not dominate, and the result is normalized to unit sum. A section whose composition matches the catalog's overall one therefore has a uniform profile.</p>
+    {% if below_minimum > 0 %}<p class="comparison-note" data-cluster-below-minimum data-i18n="results.cluster_below_minimum" data-i18n-args='{"n": {{ below_minimum }}, "min": {{ cluster_minimum }}}'>{{ below_minimum }} patterns with fewer than {{ cluster_minimum }} occurrences in the displayed sections are left out.</p>{% endif %}
     {% if tree.insufficient_evidence %}<p class="comparison-note" data-i18n="results.cluster_sections_insufficient">Fewer than two sections have observed occurrences, so no clustering is reported.</p>{% endif %}
     {% if tree.degenerate %}<p class="comparison-note" data-i18n="results.cluster_sections_flat">All profiles are identical, so no structure is resolved.</p>{% endif %}
     {% if tree.entities_without_observations > 0 %}<p class="comparison-note" data-i18n="results.cluster_sections_no_data" data-i18n-args='{"n": {{ tree.entities_without_observations }}}'>{{ tree.entities_without_observations }} sections with no matching patterns have no profile to cluster and are omitted.</p>{% endif %}

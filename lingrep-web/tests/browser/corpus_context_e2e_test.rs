@@ -507,3 +507,81 @@ async fn status_text(driver: &WebDriver) -> String {
         Err(_) => String::new(),
     }
 }
+
+const CORPUS_LINE: &str = "const line = document.querySelector('.corpus-context-name'); \
+    return line && line.offsetParent !== null && line.lastElementChild.textContent ? line.textContent : null";
+
+#[tokio::test]
+async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> {
+    use crate::frequency_e2e_test::{driver, serve, wait_for};
+
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve(&[]).await;
+    let root = served.base.trim_end_matches("frequencies");
+    let result: WebDriverResult<()> = async {
+        driver.goto(root).await?;
+        let workbench = wait_for(&driver, CORPUS_LINE, "the workbench's corpus line").await?;
+        let name = workbench.as_str().unwrap().strip_prefix("Corpus: ");
+        assert!(
+            name.is_some_and(|name| !name.is_empty()),
+            "the workbench names its corpus: {workbench}"
+        );
+
+        for page in ["frequencies", "compare"] {
+            driver.goto(format!("{root}{page}")).await?;
+            let line = wait_for(&driver, CORPUS_LINE, "the page's corpus line").await?;
+            assert_eq!(line, workbench, "{page}");
+            let note = driver
+                .execute(
+                    "const note = document.querySelector('[data-overlaps-note]'); \
+                     return note.offsetParent !== null && note.textContent",
+                    Vec::new(),
+                )
+                .await?;
+            assert!(
+                note.json().as_str().is_some_and(|text| text
+                    .starts_with("Overlapping matches are counted using the catalog's policy.")),
+                "{page} states how overlaps are counted: {:?}",
+                note.json()
+            );
+        }
+
+        driver.goto(format!("{root}sample")).await?;
+        let sample = wait_for(&driver, CORPUS_LINE, "the sample page's corpus line").await?;
+        assert_eq!(
+            sample,
+            serde_json::json!("Corpus: none (this page reads only the sample text)")
+        );
+
+        driver
+            .find(By::Css("[data-locale-toggle]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.documentElement.lang === 'ja'",
+            "the page to switch to Japanese",
+        )
+        .await?;
+        let japanese = wait_for(&driver, CORPUS_LINE, "the Japanese corpus line").await?;
+        assert_eq!(
+            japanese,
+            serde_json::json!("コーパス： なし（サンプルテキストのみ）")
+        );
+        driver.goto(format!("{root}frequencies")).await?;
+        let japanese = wait_for(&driver, CORPUS_LINE, "the Japanese corpus line").await?;
+        assert_eq!(
+            japanese.as_str().unwrap().strip_prefix("コーパス： "),
+            name,
+            "the label is translated and the name is not"
+        );
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

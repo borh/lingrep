@@ -68,6 +68,7 @@ async fn check_returns_safe_unicode_byte_ranges_for_every_diagnostic() {
         .unwrap() as usize;
     assert_eq!(&source.as_bytes()[start..end], b"@missing");
     assert_eq!(diagnostic["message"], "Pattern references are invalid.");
+    assert_eq!(diagnostic["message_key"], "editor.diag_reference");
 }
 
 #[tokio::test]

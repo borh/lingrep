@@ -14,13 +14,18 @@ test("IMRAD default uses only labels the destination corpus carries", () => {
 
 test("unchecked sections mean no labelled text, rather than all text", () => {
     const inputs = [{ value: "abstract", checked: false }, { value: "methods", checked: false }];
+    const clause = { value: "" };
     const control = {
         querySelectorAll: () => inputs,
-        querySelector: () => ({ checked: false }),
+        querySelector: selector => selector === "[data-scope-clause]" ? clause : { checked: false },
     };
     assert.deepEqual(readScope(control), { included_sections: [], include_unlabelled: false });
     inputs[1].checked = true;
     assert.deepEqual(readScope(control), { included_sections: ["methods"], include_unlabelled: false });
     inputs[0].checked = true;
     assert.deepEqual(readScope(control), { included_sections: null, include_unlabelled: false });
+    clause.value = "  @document.year >= 2010 ";
+    assert.deepEqual(readScope(control), {
+        included_sections: null, include_unlabelled: false, clause: "@document.year >= 2010",
+    });
 });

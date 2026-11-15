@@ -1,16 +1,110 @@
+use std::path::Path;
+use std::sync::OnceLock;
+
 use lingrep_core::fsm::{
     CompileError, CompileLimits, CompileOutput, DefinitionExpansion, ExpandError, FormatError,
-    FormatOutcome, PatternSource, compile_catalog, expand_pattern_definition,
+    FormatOutcome, PatternSource, catalog_fingerprint, catalog_fingerprint_with_vectors,
+    compile_catalog, compile_catalog_with_vectors, expand_pattern_definition,
     format_pattern_source, render_definition_diagram, render_pattern_error,
 };
+use lingrep_corpus::word_vectors::{VectorTable, VectorsBinding, vectors_binding};
 
 pub const WEB_PATTERN_SOURCE_NAME: &str = "lingrep-web.lx";
 
+static WORD_VECTORS: OnceLock<Option<VectorTable>> = OnceLock::new();
+
+/// Opens the word-vector file that answers `near` tests for the rest of the
+/// process. A later call changes nothing.
+///
+/// # Errors
+///
+/// A message naming the file when it cannot be opened.
+pub fn open_word_vectors(path: Option<&Path>) -> Result<(), String> {
+    if WORD_VECTORS.get().is_some() {
+        return Ok(());
+    }
+    let table = path
+        .map(|path| {
+            let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+            VectorTable::open(&path)
+        })
+        .transpose()
+        .map_err(|error| format!("--vectors: {error}"))?;
+    WORD_VECTORS.get_or_init(|| table);
+    Ok(())
+}
+
+#[must_use]
+pub fn has_word_vectors() -> bool {
+    word_vectors().is_some()
+}
+
+/// The table [`open_word_vectors`] opened, if any.
+pub(crate) fn word_vectors() -> Option<&'static VectorTable> {
+    WORD_VECTORS.get().and_then(Option::as_ref)
+}
+
 pub fn compile_web_pattern(source: &str) -> Result<CompileOutput, CompileError> {
-    compile_catalog(
-        PatternSource::named(WEB_PATTERN_SOURCE_NAME, source),
-        CompileLimits::default(),
-    )
+    compile_with(source, word_vectors())
+}
+
+fn compile_with(source: &str, table: Option<&VectorTable>) -> Result<CompileOutput, CompileError> {
+    let source = PatternSource::named(WEB_PATTERN_SOURCE_NAME, source);
+    match table {
+        Some(table) => compile_catalog_with_vectors(source, CompileLimits::default(), table),
+        None => compile_catalog(source, CompileLimits::default()),
+    }
+}
+
+/// The fingerprint `ling` gives `source`, which for a catalog with `near`
+/// tests includes the digest of the word-vector file.
+#[must_use]
+pub fn web_catalog_fingerprint(source: &str) -> String {
+    fingerprint_with(source, word_vectors())
+}
+
+fn fingerprint_with(source: &str, table: Option<&VectorTable>) -> String {
+    match table {
+        Some(table)
+            if compile_with(source, Some(table))
+                .is_ok_and(|compiled| !compiled.matcher.near_tests().is_empty()) =>
+        {
+            catalog_fingerprint_with_vectors(source, &table.digest())
+        }
+        _ => catalog_fingerprint(source),
+    }
+}
+
+/// How `matcher`'s `vectors:` entries relate to the server's word-vector
+/// file, when the catalog has `near` tests and no entry carries the file's
+/// digest.
+pub(crate) fn unmatched_vectors_binding(
+    matcher: &lingrep_core::fsm::CompiledCatalog,
+) -> Option<VectorsBinding> {
+    let table = word_vectors().filter(|_| !matcher.near_tests().is_empty())?;
+    Some(vectors_binding(
+        matcher.vectors(),
+        table.path(),
+        table.digest().to_hex().as_str(),
+    ))
+    .filter(|binding| *binding != VectorsBinding::Declared)
+}
+
+/// The `near` tests of one self-contained definition, each with the values
+/// the server's word-vector file resolves it to. Empty when the definition
+/// has none or does not compile on its own.
+pub(crate) fn near_tests_of(definition: &str) -> Vec<lingrep_core::fsm::NearTest> {
+    near_tests_with(definition, word_vectors())
+}
+
+fn near_tests_with(
+    definition: &str,
+    table: Option<&VectorTable>,
+) -> Vec<lingrep_core::fsm::NearTest> {
+    table
+        .and_then(|table| compile_with(definition, Some(table)).ok())
+        .map(|compiled| compiled.matcher.near_tests().to_vec())
+        .unwrap_or_default()
 }
 
 pub fn format_web_pattern(source: &str) -> Result<FormatOutcome, FormatError> {
@@ -106,6 +200,20 @@ pub(crate) fn format_pattern_compile_error(error: &CompileError) -> String {
 }
 
 #[cfg(test)]
+pub(crate) mod tests_support {
+    pub(crate) fn near_values(
+        table: &lingrep_corpus::word_vectors::VectorTable,
+        pattern: &str,
+    ) -> Vec<String> {
+        super::near_tests_with(&format!("p := {pattern}."), Some(table))[0]
+            .values
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -121,6 +229,36 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.location().source_name() == WEB_PATTERN_SOURCE_NAME)
         );
+    }
+
+    #[test]
+    fn a_near_catalog_compiles_against_the_table_and_is_fingerprinted_with_its_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("walking.vec");
+        let rows = "walk 1 0\nstroll 0.8 0.6\ncook 0 1\n";
+        std::fs::write(&path, rows).unwrap();
+        let table = VectorTable::open(&path).unwrap();
+        let near = "p := [lemma near walk >= 0.7].";
+        let plain = "p := [lemma=walk].";
+
+        let compiled = compile_with(near, Some(&table)).unwrap();
+        let values: Vec<&str> = compiled.matcher.near_tests()[0]
+            .values
+            .iter()
+            .map(AsRef::as_ref)
+            .collect();
+        assert_eq!(values, ["walk", "stroll"]);
+        assert!(compile_with(near, None).is_err());
+
+        assert_eq!(
+            fingerprint_with(near, Some(&table)),
+            catalog_fingerprint_with_vectors(near, &blake3::hash(rows.as_bytes()))
+        );
+        assert_eq!(
+            fingerprint_with(plain, Some(&table)),
+            catalog_fingerprint(plain)
+        );
+        assert_eq!(fingerprint_with(near, None), catalog_fingerprint(near));
     }
 
     fn formatted_compile_error(source_name: &str, source: &str) -> String {

@@ -6,7 +6,16 @@ import { lookup, localize } from "../assets/i18n.js";
 function node({ key = null, src = "Hello", title = null } = {}) {
   const state = {
     textContent: src,
-    dataset: {},
+    dataset: new Proxy(
+      {},
+      {
+        set(target, name, value) {
+          if (name.includes("-")) throw new SyntaxError(`invalid name ${name}`);
+          target[name] = value;
+          return true;
+        },
+      },
+    ),
     attrs: {},
   };
   if (key) state.dataset.i18n = key;
@@ -22,6 +31,7 @@ function node({ key = null, src = "Hello", title = null } = {}) {
       state.textContent = v;
     },
     dataset: state.dataset,
+    matches: (selector) => carries(state.dataset, selector),
     getAttribute: (name) => state.attrs[name] ?? null,
     setAttribute: (name, value) => {
       state.attrs[name] = value;
@@ -29,8 +39,18 @@ function node({ key = null, src = "Hello", title = null } = {}) {
   };
 }
 
+function carries(dataset, selector) {
+  return selector.split(",").some((part) => {
+    const name = part.trim().slice("[data-".length, -1);
+    return name.replace(/-(\w)/g, (_, letter) => letter.toUpperCase()) in dataset;
+  });
+}
+
 function root(...elements) {
-  return { querySelectorAll: () => elements };
+  return {
+    querySelectorAll: (selector) =>
+      elements.filter((element) => element.matches(selector)),
+  };
 }
 
 const ja = {
@@ -85,4 +105,45 @@ test("lookup returns null for absent and empty entries", () => {
   assert.equal(lookup("ja", "missing", null, ja), null);
   assert.equal(lookup("ja", "empty.value", null, ja), null);
   assert.equal(lookup("en", "greeting.hi", null, { "greeting.hi": "hi en" }), "hi en");
+});
+
+test("an element that carries only an attribute slot is localized", () => {
+  const n = node({ title: "Existing title" });
+  n.dataset.i18nTitle = "greeting.hi";
+  localize(root(n), ja, "ja");
+  assert.equal(n.getAttribute("title"), "こんにちは");
+  assert.equal(n.textContent, "Hello");
+});
+
+test("the root element's own slots are localized", () => {
+  const n = node({ key: "greeting.hi" });
+  n.querySelectorAll = () => [];
+  localize(n, ja, "ja");
+  assert.equal(n.textContent, "こんにちは");
+});
+
+test("an aria-label slot rewrites and restores", () => {
+  const n = node();
+  n.setAttribute("aria-label", "Corpus");
+  n.dataset.i18nAriaLabel = "greeting.hi";
+  localize(root(n), ja, "ja");
+  assert.equal(n.getAttribute("aria-label"), "こんにちは");
+  localize(root(n), ja, "en");
+  assert.equal(n.getAttribute("aria-label"), "Corpus");
+});
+
+test("text a script wrote in the active locale restores to the English entry", () => {
+  const n = node({ key: "nav.help", src: "ヘルプ" });
+  localize(root(n), { "nav.help": "ヘルプ" }, "ja");
+  localize(root(n), { "nav.help": "ヘルプ" }, "en");
+  assert.equal(n.textContent, "Help");
+});
+
+test("an attribute a script wrote in the active locale restores to the English entry", () => {
+  const n = node();
+  n.setAttribute("aria-label", "ヘルプ");
+  n.dataset.i18nAriaLabel = "nav.help";
+  localize(root(n), { "nav.help": "ヘルプ" }, "ja");
+  localize(root(n), { "nav.help": "ヘルプ" }, "en");
+  assert.equal(n.getAttribute("aria-label"), "Help");
 });

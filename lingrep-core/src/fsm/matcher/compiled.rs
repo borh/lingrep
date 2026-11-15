@@ -16,10 +16,11 @@ use super::program::Program;
 use super::spawn_candidate_metrics::SpawnCandidateAccumulator;
 use crate::corpus::conllu::{EnhancedGraph, EnhancedGraphObservation};
 use crate::fsm::ProgramStats;
-use crate::fsm::compiler::model::{ExecutionCapability, ExecutionDefinition};
+use crate::fsm::compiler::model::{ExecutionCapability, ExecutionDefinition, ExecutionExpr};
 use crate::fsm::explanation::{ExplainedMatch, SentenceExplanation};
 use crate::fsm::policy::{
-    AnchorPositions, AnchorSetDigest, NestingClaim, PolicyStats, apply_policy_records, is_hidden,
+    AnchorPositions, AnchorSetDigest, KeyTarget, NestingClaim, PatternPolicy, PolicyStats,
+    apply_policy_records, is_hidden,
 };
 use crate::fsm::state_machine::StateMachineData;
 use crate::fsm::types::{Match, Pattern, Patterns, Trace, TraceEvent};
@@ -141,6 +142,9 @@ pub struct CompiledCatalog {
     predicates: PredicateCatalog,
     capture_plans: IndexMap<CompactString, CapturePlan>,
     evaluated_plans: Box<[EvaluatedPlan]>,
+    /// Per definition, the capture name at each token position; `None` unless
+    /// every execution definition is a run of unconstrained tokens.
+    window_captures: Option<IndexMap<CompactString, Box<[Option<CompactString>]>>>,
     assertion_catalog: CompiledAssertionCatalog,
     /// Whether **any** materialized execution definition consults a general
     /// lookaround.
@@ -157,7 +161,55 @@ pub struct CompiledCatalog {
     required_attributes: Box<[AttributeKey]>,
     catalog_policy: crate::fsm::policy::CatalogPolicy,
     analyzer_constraints: Box<[CatalogAnalyzerConstraint]>,
+    vectors: Box<[crate::fsm::CatalogVectors]>,
+    near_tests: Box<[crate::fsm::NearTest]>,
     label_declarations: Box<[crate::fsm::LabelDeclaration]>,
+}
+
+/// One definition of a catalog [`CompiledCatalog::token_windows`] describes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWindow {
+    pub name: CompactString,
+    /// Tokens per match; at least one.
+    pub width: usize,
+    /// The declared key, in authored order.
+    pub key: Vec<WindowKeyField>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowKeyField {
+    pub name: CompactString,
+    /// Offset of the token read, from the window start.
+    pub position: usize,
+    pub attribute: AttributeKey,
+}
+
+fn window_captures(definition: &ExecutionDefinition) -> Option<Box<[Option<CompactString>]>> {
+    if !(definition.relations.is_empty()
+        && definition.enhanced_relations.is_empty()
+        && definition.orders.is_empty()
+        && definition.graph_bindings.is_empty())
+    {
+        return None;
+    }
+    let tokens = match &definition.expr {
+        ExecutionExpr::Sequence(tokens) => &tokens[..],
+        token => std::slice::from_ref(token),
+    };
+    if tokens.is_empty() {
+        return None;
+    }
+    tokens
+        .iter()
+        .map(|token| match token {
+            ExecutionExpr::Token(predicate) if predicate.is_empty() => Some(None),
+            ExecutionExpr::Capture { name, expr, .. } => match &**expr {
+                ExecutionExpr::Token(predicate) if predicate.is_empty() => Some(Some(name.clone())),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -306,12 +358,15 @@ impl CompiledCatalog {
             predicates,
             capture_plans: IndexMap::new(),
             evaluated_plans: Box::default(),
+            window_captures: None,
             assertion_catalog: CompiledAssertionCatalog::empty(),
             execution_queries_lookaround: false,
             anchor_programs: BTreeMap::new(),
             required_attributes: Box::default(),
             catalog_policy: crate::fsm::policy::CatalogPolicy::default(),
             analyzer_constraints: Box::default(),
+            vectors: Box::default(),
+            near_tests: Box::default(),
             label_declarations: Box::default(),
         }
     }
@@ -359,6 +414,29 @@ impl CompiledCatalog {
 
     pub(crate) fn install_catalog_policy(&mut self, policy: crate::fsm::policy::CatalogPolicy) {
         self.catalog_policy = policy;
+    }
+
+    pub(crate) fn install_vectors(
+        &mut self,
+        vectors: Vec<crate::fsm::CatalogVectors>,
+        near_tests: Vec<crate::fsm::NearTest>,
+    ) {
+        self.vectors = vectors.into_boxed_slice();
+        self.near_tests = near_tests.into_boxed_slice();
+    }
+
+    /// The catalog's distinct `near` tests in first-appearance order, each
+    /// with the values it was resolved to. Empty when the catalog has none.
+    #[must_use]
+    pub fn near_tests(&self) -> &[crate::fsm::NearTest] {
+        &self.near_tests
+    }
+
+    /// The catalog's `vectors:` entries, in source order. Empty when the
+    /// catalog declares none.
+    #[must_use]
+    pub fn vectors(&self) -> &[crate::fsm::CatalogVectors] {
+        &self.vectors
     }
 
     pub(crate) fn install_analyzer_constraints(
@@ -420,12 +498,17 @@ impl CompiledCatalog {
             .retain(|name, _| !crate::fsm::policy::is_hidden(name));
     }
 
-    /// The result policy this catalog declares.
-    ///
-    /// Empty for a catalog that declares none, which is what
-    /// [`crate::fsm::policy::CatalogPolicy::declared`] reports. Policy is not
-    /// consulted during matching: it is applied at the publication seam, over
-    /// the canonical matches this matcher produces.
+    /// Adjusts publication and policy explanations for `overlaps` without
+    /// changing the candidates matched by each definition.
+    #[must_use]
+    pub fn with_overlaps(mut self, overlaps: crate::fsm::policy_program::Overlaps) -> Self {
+        self.catalog_policy = self.catalog_policy.with_overlaps(overlaps);
+        self
+    }
+
+    /// The effective publication policy, including any [`Self::with_overlaps`]
+    /// adjustment; [`crate::fsm::policy::CatalogPolicy::declared`] reports
+    /// whether it contains statements.
     pub fn catalog_policy(&self) -> &crate::fsm::policy::CatalogPolicy {
         &self.catalog_policy
     }
@@ -626,6 +709,10 @@ impl CompiledCatalog {
         self.execution_queries_lookaround = definitions
             .iter()
             .any(|definition| definition.expr.queries_lookaround());
+        self.window_captures = definitions
+            .iter()
+            .map(|definition| Some((definition.name.clone(), window_captures(definition)?)))
+            .collect();
         let mut captures = IndexMap::new();
         let mut evaluated = Vec::new();
         for definition in definitions {
@@ -1111,6 +1198,64 @@ impl CompiledCatalog {
 
     pub fn patterns(&self) -> &IndexMap<CompactString, Pattern> {
         &self.patterns.0
+    }
+
+    /// The catalog as token windows, when its published records are exactly
+    /// every `width`-token window of every sentence, once per definition, each
+    /// keyed by attributes of the window's own tokens.
+    ///
+    /// `None` for any catalog that constrains a token, declares policy other
+    /// than `key:`, or publishes a definition without a key.
+    #[must_use]
+    pub fn token_windows(&self) -> Option<Vec<TokenWindow>> {
+        let policy = &self.catalog_policy;
+        if self.lexicons.is_some()
+            || self.sentence_filter.is_some()
+            || !policy.hidden.is_empty()
+            || !policy.program().ops.is_empty()
+            || self.patterns.0.is_empty()
+        {
+            return None;
+        }
+        let captures = self.window_captures.as_ref()?;
+        self.patterns
+            .0
+            .keys()
+            .map(|name| {
+                let positions = captures.get(name)?;
+                let declared = policy.get(name)?;
+                let key_only = PatternPolicy {
+                    key: declared.key.clone(),
+                    ..PatternPolicy::default()
+                };
+                if declared.key.is_empty() || *declared != key_only {
+                    return None;
+                }
+                let key = declared
+                    .key
+                    .iter()
+                    .map(|field| {
+                        let position = match &field.target {
+                            KeyTarget::Match if positions.len() == 1 => 0,
+                            KeyTarget::Capture { name, .. } => positions
+                                .iter()
+                                .position(|capture| capture.as_ref() == Some(name))?,
+                            _ => return None,
+                        };
+                        Some(WindowKeyField {
+                            name: field.name(),
+                            position,
+                            attribute: field.attribute.clone(),
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TokenWindow {
+                    name: name.clone(),
+                    width: positions.len(),
+                    key,
+                })
+            })
+            .collect()
     }
 
     /// Inline lexical definitions in catalog order.

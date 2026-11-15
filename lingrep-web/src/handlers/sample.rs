@@ -84,11 +84,11 @@ async fn sample_page(State(store): State<RequestStore>) -> Html<String> {
     }, Html)
 }
 
-fn fragment(status: StatusCode, message: &str) -> Response {
+fn fragment(status: StatusCode, key: &str, message: &str) -> Response {
     // Shared `ErrorFragment` markup with Askama escaping; the plain-text
     // fallback is unreachable for this static template but keeps the handler
     // panic-free. Messages are fixed literals — never interpolate user input.
-    let html = render_error(message).unwrap_or_else(|_| message.to_owned());
+    let html = render_error(key, message).unwrap_or_else(|_| message.to_owned());
     (status, Html(html)).into_response()
 }
 
@@ -102,12 +102,14 @@ pub async fn run_sample(
     {
         return fragment(
             StatusCode::PAYLOAD_TOO_LARGE,
+            "sample.too_large",
             "Sample too large to test — scan the corpus instead.",
         );
     }
     let Ok(_permit) = SAMPLE_SLOTS.try_acquire() else {
         return fragment(
             StatusCode::TOO_MANY_REQUESTS,
+            "sample.busy",
             "Server busy analyzing samples. Try again in a moment.",
         );
     };
@@ -127,6 +129,7 @@ pub async fn run_sample(
             |_| {
                 fragment(
                     StatusCode::INTERNAL_SERVER_ERROR,
+                    "sample.render_failed",
                     "Could not render sample results.",
                 )
             },
@@ -134,8 +137,13 @@ pub async fn run_sample(
         ),
         Ok(Err(TokenizerUnavailable)) => fragment(
             StatusCode::SERVICE_UNAVAILABLE,
+            "sample.unavailable",
             "Sample analysis is unavailable (dictionary not loaded).",
         ),
-        Err(_) => fragment(StatusCode::INTERNAL_SERVER_ERROR, "Sample analysis failed."),
+        Err(_) => fragment(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "sample.failed",
+            "Sample analysis failed.",
+        ),
     }
 }

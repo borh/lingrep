@@ -9,7 +9,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use tokio::sync::Mutex;
 
-use crate::corpus_context::CorpusContextView;
+use crate::corpus_context::{CorpusContextView, Memo};
 use crate::corpus_runtime::{CorpusIdentity, CorpusRuntime};
 
 /// Longest accepted corpus key.
@@ -116,7 +116,7 @@ pub struct CorpusSlot {
     pub runtime: Arc<CorpusRuntime>,
     /// Shown to a researcher; any UTF-8, never the path.
     pub display_name: String,
-    context: Mutex<Option<(CorpusIdentity, Arc<CorpusContextView>)>>,
+    context: Memo<CorpusIdentity, Arc<CorpusContextView>>,
 }
 
 impl CorpusSlot {
@@ -126,13 +126,13 @@ impl CorpusSlot {
             name,
             runtime,
             display_name,
-            context: Mutex::new(None),
+            context: Arc::new(Mutex::new(None)),
         }
     }
 
     /// The per-corpus context memo slot, in the shape `identity_memo` expects.
     #[must_use]
-    pub fn context_slot(&self) -> &Mutex<Option<(CorpusIdentity, Arc<CorpusContextView>)>> {
+    pub fn context_slot(&self) -> &Memo<CorpusIdentity, Arc<CorpusContextView>> {
         &self.context
     }
 }

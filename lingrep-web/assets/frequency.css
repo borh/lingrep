@@ -241,7 +241,7 @@
 }
 .fq-pop[hidden] { display: none; }
 .fq-pop .head { display: flex; gap: 1rem; align-items: baseline; justify-content: space-between; margin: 0 0 0.45rem; }
-.fq-pop .mode { display: inline-flex; border: 1px solid var(--fq-rule); overflow: hidden; }
+.fq-pop .mode { display: inline-flex; border: 1px solid var(--fq-rule); }
 .fq-pop .mode button { all: unset; cursor: pointer; padding: 0.15rem 0.55rem; font-size: 12px; }
 .fq-pop .mode button[aria-pressed="true"] { background: var(--fq-accent); color: var(--fq-on-accent); }
 .fq-pop .any {
@@ -383,6 +383,11 @@
 .fq-columns:has([aria-pressed="true"]) [aria-pressed="false"] i { background: var(--fq-bar-off); }
 .fq-axis { display: flex; justify-content: space-between; font: 11px/1.5 var(--font-sans); color: var(--fq-soft); font-variant-numeric: tabular-nums; }
 .fq-none { margin: 0.1rem 0 0; height: 1.4em; font: 12px/1.4 var(--font-cjk); color: var(--fq-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.fq button:focus-visible, .fq-pop button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 .fq-chart details { margin: 0.35rem 0 0; font: 12px/1.4 var(--font-sans); }
 .fq-chart summary { cursor: pointer; color: var(--fq-accent); width: max-content; }

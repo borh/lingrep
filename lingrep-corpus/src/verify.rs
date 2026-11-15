@@ -156,30 +156,19 @@ impl CorpusArtifact {
             .await
             .map_err(database)?;
         let mut rows = sqlx::query(
-            "SELECT sentence_id, source_name, document_id, document_ordinal,
-                    document_sentence_ordinal
-             FROM sentence_provenance
-             ORDER BY sentence_id",
+            "SELECT sentence_id, document_id FROM sentence_provenance ORDER BY sentence_id",
         )
         .fetch(&mut connection);
         let mut ordinal = 0_u64;
         while let Some(row) = rows.try_next().await.map_err(database)? {
             let location = locations.sentence(ordinal)?;
             let sqlite_sentence = sqlite_u64(&row, "sentence_id")?;
-            let sqlite_source: String = row.try_get("source_name").map_err(database)?;
             let sqlite_document = sqlite_u64(&row, "document_id")?;
-            let sqlite_document_ordinal = sqlite_u64(&row, "document_ordinal")?;
-            let sqlite_local_ordinal = sqlite_u64(&row, "document_sentence_ordinal")?;
-            if sqlite_sentence != ordinal
-                || sqlite_source != location.source_name.as_ref()
-                || sqlite_document != location.document_id.get()
-                || sqlite_document_ordinal != location.document_ordinal
-                || sqlite_local_ordinal != location.document_sentence_ordinal
-            {
+            if sqlite_sentence != ordinal || sqlite_document != location.document_id.get() {
                 return Err(CorpusError::VerificationMismatch {
                     component: "locations.v1/provenance.sqlite",
                     sentence_ordinal: Some(ordinal),
-                    message: "dense and SQLite sentence-location tuples differ".into(),
+                    message: "dense and SQLite sentence documents differ".into(),
                 });
             }
             ordinal = ordinal

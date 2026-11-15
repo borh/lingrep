@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyCaptureKeyEdit,
+  draftToRestore,
   summaryContext,
   summaryGroupText,
   ariaInvalidFor,
@@ -12,6 +13,7 @@ import {
   mapSelection,
   mapServerDiagnostics,
   shouldPublish,
+  storedDraft,
   patternCaptures,
   patternCompletionContext,
   patternCompletionOptions,
@@ -577,10 +579,10 @@ test("capture key replacement preserves all bytes outside its UTF-8 range", () =
   }
 });
 
-test("summary context follows source, corpus and scope while pattern selection reuses the run", () => {
-  const request = {source:"p := [].",corpus:"main",search_scope:null,definition:"p"};
+test("summary context follows source, corpus, scope and overlaps while pattern selection reuses the run", () => {
+  const request = {source:"p := [].",corpus:"main",search_scope:null,overlaps:"catalog",definition:"p"};
   assert.equal(summaryContext(request), summaryContext({...request, definition:"q"}));
-  for (const field of ["source","corpus","search_scope"]) assert.notEqual(summaryContext(request),summaryContext({...request,[field]:"changed"}));
+  for (const field of ["source","corpus","search_scope","overlaps"]) assert.notEqual(summaryContext(request),summaryContext({...request,[field]:"changed"}));
   assert.notEqual(summaryContext(request),summaryContext(null));
 });
 
@@ -591,4 +593,23 @@ test("summary labels preserve scalar and list key fields", () => {
     {kind:"list",name:"$empty.text",values:[]},
   ]}), '猫 / ["<猫>","犬 / 鳥","\\n"] / []');
   assert.equal(summaryGroupText({kind:"surface",value:"猫"}), '{"kind":"surface","value":"猫"}');
+});
+
+test("a draft is restored only over the seed it was edited from", () => {
+  const stored = storedDraft("seed := [].", "edit := [].");
+  const cases = [
+    ["reload of the page the draft was edited on", { seed: "seed := [].", stored, followedLink: false }, "edit := []."],
+    ["the server renders another pattern", { seed: "linked := [].", stored, followedLink: false }, null],
+    ["the server renders a pattern of the same length", { seed: "sEed := [].", stored, followedLink: false }, null],
+    ["a link to the edited seed is followed", { seed: "seed := [].", stored, followedLink: true }, null],
+    ["an emptied editor", { seed: "seed := [].", stored: storedDraft("seed := [].", ""), followedLink: false }, null],
+    ["a draft edited from an empty editor", { seed: "", stored: storedDraft("", "edit := []."), followedLink: false }, "edit := []."],
+    ["a value that is not a stored draft", { seed: "", stored: "edit := [].", followedLink: false }, null],
+    ["a stored value of another shape", { seed: "", stored: JSON.stringify({ draft: 1 }), followedLink: false }, null],
+    ["a stored JSON null", { seed: "", stored: "null", followedLink: false }, null],
+    ["nothing stored", { seed: "seed := [].", stored: null, followedLink: false }, null],
+  ];
+  for (const [name, input, expected] of cases) {
+    assert.equal(draftToRestore(input), expected, name);
+  }
 });

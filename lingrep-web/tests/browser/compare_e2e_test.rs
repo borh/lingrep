@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 use thirtyfour::prelude::*;
 use tokio::net::TcpListener;
 
+use crate::frequency_e2e_test::{PAGE_ERRORS, observed};
+
 #[allow(dead_code, clippy::duplicate_mod)]
 #[path = "../suite/v6_support.rs"]
 mod support;
@@ -290,6 +292,7 @@ async fn the_compare_page_loads_an_address_as_written_and_round_trips_its_state(
         ),
         "{command}"
     );
+    assert_eq!(driver.execute("return [...document.querySelectorAll('[data-cmp-clause] .where')].map(span => span.textContent.split(' ')[0])", vec![]).await?.json(), &json!(["--where", "--versus"]));
     let rows = loaded["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 3);
     let entries = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
@@ -693,5 +696,310 @@ async fn value_search_ignores_errors_for_an_earlier_query() -> WebDriverResult<(
     driver.quit().await?;
     served.server.abort();
     assert_eq!(text, "", "the error belongs to the previous search");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rejected_clause_keeps_the_edit_and_blanks_buttons_and_the_typed_clause()
+-> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .goto(address(&served.base, &[("pattern", "noun")]))
+        .await?;
+    wait_for(&driver, SETTLED, "rows").await?;
+    driver
+        .execute(
+            "document.querySelector('[data-c=edit]').click(); \
+             document.querySelector('textarea[data-c=where]').value = '@@'; \
+             document.querySelector('[data-c=apply]').click();",
+            Vec::new(),
+        )
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('[data-cmp-state]').textContent.includes('does not parse') && !document.querySelector('[data-compare]').hasAttribute('aria-busy')",
+        "the rejected clause",
+    )
+    .await?;
+    let rejected = driver
+        .execute(
+            "const shown = [...document.querySelectorAll('[data-cmp-clause] button')].map((b) => b.dataset.c); \
+             document.querySelector('[data-c=edit]')?.click(); \
+             return [shown, document.querySelector('textarea[data-c=where]')?.value ?? null];",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver
+        .execute(
+            "document.querySelector('[data-c=cancel]')?.click(); document.querySelector('[data-c=blanks]')?.click();",
+            Vec::new(),
+        )
+        .await?;
+    let recovered = wait_for(&driver, SETTLED, "rows from the condition controls").await;
+    let errors = page(&driver).await?["errors"].clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(rejected, json!([["edit", "blanks"], "@@"]));
+    recovered?;
+    assert_eq!(errors, json!([]));
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_reload_removes_the_previous_answer() -> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .goto(address(&served.base, &[("pattern", "noun")]))
+        .await?;
+    wait_for(&driver, SETTLED, "rows").await?;
+    driver
+        .execute(
+            "const fetched = window.fetch; \
+             window.fetch = (url, init) => String(url).includes('api/contrast') \
+               ? Promise.resolve(Response.json({error: 'no ranking'}, {status: 500})) : fetched(url, init); \
+             const select = document.querySelector('select[data-b=pattern]'); \
+             select.value = 'verb'; select.dispatchEvent(new Event('change', {bubbles: true}));",
+            Vec::new(),
+        )
+        .await?;
+    wait_for(
+        &driver,
+        "return document.querySelector('[data-cmp-state]').textContent === 'no ranking'",
+        "the failure in the state line",
+    )
+    .await?;
+    let shown = driver
+        .execute(
+            "return {busy: document.querySelector('[data-compare]').hasAttribute('aria-busy'), \
+               scopes: document.querySelector('[data-cmp-scopes]').textContent, \
+               table: document.querySelector('[data-cmp-table]').textContent}",
+            Vec::new(),
+        )
+        .await?
+        .json()
+        .clone();
+    driver.quit().await?;
+    served.server.abort();
+    assert_eq!(shown, json!({"busy": false, "scopes": "", "table": ""}));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_redraw_keeps_focus_on_the_same_control() -> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(address(
+                &served.base,
+                &[
+                    ("pattern", "noun"),
+                    ("w", r#"{"genre":{"m":"in","v":["novel"]}}"#),
+                ],
+            ))
+            .await?;
+        wait_for(&driver, SETTLED, "rows").await?;
+        for control in [
+            "select[data-b=pattern]",
+            ".pick[data-scope=where][data-key=genre]",
+            "[data-add][data-scope=versus]",
+        ] {
+            observed(
+                &driver,
+                &format!(
+                    "const held = document.querySelector('{control}'); held.focus(); \
+                     const select = document.querySelector('select[data-b=pattern]'); \
+                     select.value = select.value === 'noun' ? 'verb' : 'noun'; \
+                     select.dispatchEvent(new Event('change', {{bubbles: true}})); \
+                     const now = document.activeElement; \
+                     return [held.isConnected, now.matches('{control}')];"
+                ),
+                json!([false, true]),
+                &format!("{control} replaced and focused after the redraw"),
+            )
+            .await?;
+            wait_for(&driver, SETTLED, "rows for the other pattern").await?;
+        }
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_or_failed_metadata_reply_raises_no_page_error_on_the_compare_page()
+-> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "try { localStorage.setItem('lingrep-web:locale:v1', 'ja'); } catch {} \
+                window.__held = []; window.__release = () => { for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init) => { \
+                  if (!String(input).includes('frequency/meta')) return fetched(input, init); \
+                  if (sessionStorage.getItem('fail-meta')) return Promise.resolve(Response.json({error: 'no metadata'}, {status: 500})); \
+                  return new Promise((resolve, reject) => __held.push(() => fetched(input, init).then(resolve, reject))); \
+                };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(address(&served.base, &[("pattern", "noun")]))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.documentElement.lang === 'ja' && __held.length === 1",
+            "Japanese before the metadata reply",
+        )
+        .await?;
+        observed(
+            &driver,
+            PAGE_ERRORS,
+            json!([]),
+            "page errors before the metadata reply",
+        )
+        .await?;
+        driver.execute("__release()", Vec::new()).await?;
+        wait_for(&driver, SETTLED, "rows after the metadata reply").await?;
+        driver
+            .find(By::Css("[data-locale-toggle]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('button.add')?.textContent === '+ condition'",
+            "the locale toggle to switch the page to English",
+        )
+        .await?;
+
+        driver
+            .execute(
+                "sessionStorage.setItem('fail-meta', '1'); location.reload()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-cmp-state]')?.textContent === 'no metadata'",
+            "the metadata failure in the state line",
+        )
+        .await?;
+        observed(
+            &driver,
+            PAGE_ERRORS,
+            json!([]),
+            "page errors after the metadata failure",
+        )
+        .await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_locale_switch_during_a_request_keeps_the_more_button_disabled() -> WebDriverResult<()> {
+    let Some(driver) = driver(1280).await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__holding = false; \
+                window.__release = () => { __holding = false; for (const send of __held.splice(0)) send(); }; \
+                const fetched = window.fetch.bind(window); \
+                window.fetch = (input, init = {}) => { \
+                  const url = String(input); \
+                  if (!url.includes('api/contrast')) return fetched(input, init); \
+                  const paged = url.replace('limit=100', 'limit=1'); \
+                  if (!__holding) return fetched(paged, init); \
+                  return new Promise((resolve, reject) => { \
+                    init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); \
+                    __held.push(() => fetched(paged, init).then(resolve, reject)); \
+                  }); \
+                };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(address(&served.base, &[("pattern", "noun")]))
+            .await?;
+        wait_for(&driver, SETTLED, "the first noun page").await?;
+        let entries = "[...document.querySelectorAll('table.cmp-table tbody tr')].map((row) => row.cells[1].textContent)";
+        for (start, language, expected) in [
+            ("document.querySelector('[data-cmp-table] .more').click()", "ja", 2),
+            (
+                "const select = document.querySelector('select[data-b=pattern]'); \
+                 select.value = 'verb'; select.dispatchEvent(new Event('change', {bubbles: true}))",
+                "en",
+                1,
+            ),
+        ] {
+            driver
+                .execute(&format!("__holding = true; {start}"), Vec::new())
+                .await?;
+            driver
+                .find(By::Css("[data-locale-toggle]"))
+                .await?
+                .click()
+                .await?;
+            wait_for(
+                &driver,
+                &format!("return document.documentElement.lang === '{language}' && document.querySelector('.cmp-ratio-head').textContent.includes('{}')", if language == "ja" { "頻度比" } else { "Rate ratio" }),
+                "the table in the other language",
+            )
+            .await?;
+            observed(
+                &driver,
+                "document.querySelector('[data-cmp-table] .more').click(); const held = __held.length; __release(); return held;",
+                json!(1),
+                "requests held after a click on the redrawn button",
+            )
+            .await?;
+            wait_for(
+                &driver,
+                &format!("return document.querySelector('[data-compare]:not([aria-busy])') && {entries}.length === {expected}"),
+                "the requested rows",
+            )
+            .await?;
+        }
+        observed(
+            &driver,
+            &format!("return {entries}"),
+            json!(["見る"]),
+            "the verb entries",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     Ok(())
 }

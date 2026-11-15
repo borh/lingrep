@@ -33,6 +33,13 @@ Options:
           
           [default: /]
 
+      --vectors <FILE>
+          Word-vector file that answers the `near` tests of every catalog the server compiles.
+          
+          word2vec text: one value and its numbers per line.
+          
+          [env: LINGREP_VECTORS_PATH=]
+
       --max-kwic-lines-per-pattern <MAX_KWIC_LINES_PER_PATTERN>
           Maximum KWIC lines retained for each pattern
           

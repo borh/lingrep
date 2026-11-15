@@ -13,6 +13,11 @@ pub enum DiagnosticCode {
     UnknownNode,
     DuplicateDefinition,
     UndefinedReference,
+    /// A `near` test that cannot be resolved: no word-vector table was
+    /// supplied, or the table has no vector for the test's word.
+    WordVectorUnavailable,
+    /// A `near` test whose word-vector table could not be read.
+    WordVectorTableUnreadable,
     ReferenceCycle,
     InvalidRegex,
     InvalidQuantifier,
@@ -308,6 +313,8 @@ impl DiagnosticCode {
             Self::EnhancedGraphComponentUnanchored => "EnhancedGraphComponentUnanchored",
             Self::DuplicateDefinition => "DuplicateDefinition",
             Self::UndefinedReference => "UndefinedReference",
+            Self::WordVectorUnavailable => "WordVectorUnavailable",
+            Self::WordVectorTableUnreadable => "WordVectorTableUnreadable",
             Self::ReferenceCycle => "ReferenceCycle",
             Self::InvalidRegex => "InvalidRegex",
             Self::InvalidQuantifier => "InvalidQuantifier",

@@ -45,6 +45,7 @@ struct EditorDiagnostic {
     category: &'static str,
     severity: &'static str,
     message: &'static str,
+    message_key: &'static str,
     location: Option<EditorLocation>,
 }
 
@@ -143,6 +144,7 @@ async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response
                     category: "syntax",
                     severity: "error",
                     message: "Pattern syntax is invalid.",
+                    message_key: "editor.diag_syntax",
                     location: Some(EditorLocation {
                         source_name: WEB_PATTERN_SOURCE_NAME.into(),
                         line,
@@ -161,6 +163,7 @@ async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response
                     category: "limit",
                     severity: "error",
                     message: "Pattern is too large.",
+                    message_key: "editor.diag_too_large",
                     location: None,
                 }],
             }),
@@ -178,7 +181,7 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            let (category, message) = diagnostic_message(diagnostic.code());
+            let (category, message, message_key) = diagnostic_message(diagnostic.code());
             let location = diagnostic.location();
             EditorDiagnostic {
                 code: diagnostic.code().as_str().into(),
@@ -188,6 +191,7 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
                     DiagnosticSeverity::Warning => "warning",
                 },
                 message,
+                message_key,
                 location: Some(EditorLocation {
                     source_name: location.source_name().into(),
                     line: location.line(),
@@ -202,22 +206,43 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
         .collect()
 }
 
-fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str) {
+fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'static str) {
     match code {
         DiagnosticCode::Syntax | DiagnosticCode::UnknownNode => {
-            ("syntax", "Pattern syntax is invalid.")
+            ("syntax", "Pattern syntax is invalid.", "editor.diag_syntax")
         }
         DiagnosticCode::UndefinedReference
         | DiagnosticCode::ReferenceCycle
-        | DiagnosticCode::DuplicateDefinition => ("reference", "Pattern references are invalid."),
-        DiagnosticCode::InvalidRegex => ("regex", "A regular expression is invalid."),
-        DiagnosticCode::UnusedFragment => ("lint", "A fragment is never referenced."),
-        DiagnosticCode::UnusedSet => ("lint", "A set is never referenced."),
-        DiagnosticCode::UnusedTest => ("lint", "A test is never referenced."),
+        | DiagnosticCode::DuplicateDefinition => (
+            "reference",
+            "Pattern references are invalid.",
+            "editor.diag_reference",
+        ),
+        DiagnosticCode::InvalidRegex => (
+            "regex",
+            "A regular expression is invalid.",
+            "editor.diag_regex",
+        ),
+        DiagnosticCode::UnusedFragment => (
+            "lint",
+            "A fragment is never referenced.",
+            "editor.diag_unused_fragment",
+        ),
+        DiagnosticCode::UnusedSet => (
+            "lint",
+            "A set is never referenced.",
+            "editor.diag_unused_set",
+        ),
+        DiagnosticCode::UnusedTest => (
+            "lint",
+            "A test is never referenced.",
+            "editor.diag_unused_test",
+        ),
         DiagnosticCode::PipeInBareValue => (
             "syntax",
             "An unquoted value contains `|`, which does not \
              separate operands.",
+            "editor.diag_pipe",
         ),
         // Same reason as the arm above: the generic syntax text would name no
         // recovery, and the unquoted spelling is the whole content of this
@@ -226,16 +251,21 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str) {
             "syntax",
             "A token-test value is wrapped in quotes, which are part of the \
              literal.",
+            "editor.diag_quoted",
         ),
-        DiagnosticCode::UnverifiableExamples => {
-            ("lint", "A documented example cannot be verified.")
-        }
+        DiagnosticCode::UnverifiableExamples => (
+            "lint",
+            "A documented example cannot be verified.",
+            "editor.diag_examples",
+        ),
         DiagnosticCode::LimitExceeded
         | DiagnosticCode::TokenTestTooComplex
-        | DiagnosticCode::TokenTestExpansionTooLarge => {
-            ("limit", "Pattern exceeds a compiler limit.")
-        }
-        _ => ("compile", "Pattern is invalid."),
+        | DiagnosticCode::TokenTestExpansionTooLarge => (
+            "limit",
+            "Pattern exceeds a compiler limit.",
+            "editor.diag_limit",
+        ),
+        _ => ("compile", "Pattern is invalid.", "editor.diag_invalid"),
     }
 }
 
@@ -247,7 +277,7 @@ mod tests {
     fn unknown_diagnostic_categories_have_a_safe_fallback() {
         assert_eq!(
             diagnostic_message(DiagnosticCode::NullablePattern),
-            ("compile", "Pattern is invalid.")
+            ("compile", "Pattern is invalid.", "editor.diag_invalid")
         );
     }
 
@@ -255,7 +285,11 @@ mod tests {
     fn unused_set_is_a_lint_not_an_invalid_pattern() {
         assert_eq!(
             diagnostic_message(DiagnosticCode::UnusedSet),
-            ("lint", "A set is never referenced.")
+            (
+                "lint",
+                "A set is never referenced.",
+                "editor.diag_unused_set"
+            )
         );
     }
 
@@ -263,7 +297,11 @@ mod tests {
     fn unused_test_is_a_lint_not_an_invalid_pattern() {
         assert_eq!(
             diagnostic_message(DiagnosticCode::UnusedTest),
-            ("lint", "A test is never referenced.")
+            (
+                "lint",
+                "A test is never referenced.",
+                "editor.diag_unused_test"
+            )
         );
     }
 
@@ -271,7 +309,7 @@ mod tests {
     /// names no recovery, and naming both is why this code exists at all.
     #[test]
     fn an_unspaced_pipe_is_a_syntax_error_that_keeps_its_own_message() {
-        let (category, message) = diagnostic_message(DiagnosticCode::PipeInBareValue);
+        let (category, message, _) = diagnostic_message(DiagnosticCode::PipeInBareValue);
         assert_eq!(category, "syntax");
         assert_ne!(message, diagnostic_message(DiagnosticCode::Syntax).1);
     }
@@ -279,7 +317,7 @@ mod tests {
     /// For the same reason: the recovery is the message.
     #[test]
     fn a_quoted_value_is_a_syntax_error_that_keeps_its_own_message() {
-        let (category, message) = diagnostic_message(DiagnosticCode::QuotedAttributeValue);
+        let (category, message, _) = diagnostic_message(DiagnosticCode::QuotedAttributeValue);
         assert_eq!(category, "syntax");
         assert_ne!(message, diagnostic_message(DiagnosticCode::Syntax).1);
         assert_ne!(
@@ -292,11 +330,19 @@ mod tests {
     fn both_token_test_budgets_are_a_limit_not_an_invalid_pattern() {
         assert_eq!(
             diagnostic_message(DiagnosticCode::TokenTestTooComplex),
-            ("limit", "Pattern exceeds a compiler limit.")
+            (
+                "limit",
+                "Pattern exceeds a compiler limit.",
+                "editor.diag_limit"
+            )
         );
         assert_eq!(
             diagnostic_message(DiagnosticCode::TokenTestExpansionTooLarge),
-            ("limit", "Pattern exceeds a compiler limit.")
+            (
+                "limit",
+                "Pattern exceeds a compiler limit.",
+                "editor.diag_limit"
+            )
         );
     }
 }

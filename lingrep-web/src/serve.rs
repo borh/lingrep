@@ -9,6 +9,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use tokio::sync::watch;
 
+use crate::coordinator::CoordinatorRegistry;
 use crate::corpus_runtime::CorpusRuntime;
 use crate::corpus_set::{CorpusSet, CorpusSlot};
 use crate::server_context::ServerContext;
@@ -17,10 +18,11 @@ use crate::{Args, app_router_at};
 
 /// Returns `Err` with a message when the configuration is invalid or the
 /// listener cannot bind its address; otherwise serves until SIGINT or SIGTERM
-/// and returns `Ok` once in-flight requests finish or a bounded grace period
-/// ends. A serving failure panics. Must not be called from inside a Tokio runtime.
+/// and returns `Ok` once in-flight requests, scans and corpus builds have
+/// ended or the bounded wait for each has. A serving failure panics. Must not
+/// be called from inside a Tokio runtime.
 pub fn run(args: &Args) -> Result<(), String> {
-    run_with(args, os_signal_count)
+    run_with(args, os_signal_count, None)
 }
 
 /// As [`run`], but stops when `signals`, a count of termination signals the
@@ -31,12 +33,29 @@ pub fn run(args: &Args) -> Result<(), String> {
 ///
 /// As [`run`].
 pub fn run_until(args: &Args, signals: watch::Receiver<u32>) -> Result<(), String> {
-    run_with(args, move || signals)
+    run_with(args, move || signals, None)
+}
+
+/// As [`run_until`], and prints the address of `query`, a
+/// [`crate::permalink::workbench_link`], on the line after the listening
+/// address, then opens it with the program named by `BROWSER` or the
+/// platform's opener.
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn run_until_opening(
+    args: &Args,
+    signals: watch::Receiver<u32>,
+    query: &str,
+) -> Result<(), String> {
+    run_with(args, move || signals, Some(query))
 }
 
 fn run_with(
     args: &Args,
     signals: impl FnOnce() -> watch::Receiver<u32> + Send,
+    query: Option<&str>,
 ) -> Result<(), String> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -46,7 +65,31 @@ fn run_with(
         .with_writer(std::io::stderr)
         .init();
     let config = config(args)?;
-    block_on(async move { serve(args, config, signals()).await })
+    crate::patterns::open_word_vectors(args.vectors.as_deref())?;
+    let context = Arc::new(
+        ServerContext::new(&config.dict_path).expect("the shared scan pool must be constructible"),
+    );
+    block_on(async move {
+        let signals = signals();
+        let result = serve(args, config, Arc::clone(&context), signals.clone(), query).await;
+        stop_corpus_builds(&context, signals).await;
+        result
+    })
+}
+
+async fn stop_corpus_builds(context: &ServerContext, mut signals: watch::Receiver<u32>) {
+    let seen = *signals.borrow();
+    if seen >= 2 {
+        return;
+    }
+    tokio::select! {
+        stopped = tokio::time::timeout(SHUTDOWN_GRACE, context.stop_builds()) => {
+            if stopped.is_err() {
+                tracing::warn!("stopping with a corpus build still running");
+            }
+        }
+        () = signal_number(&mut signals, seen.saturating_add(1)) => {}
+    }
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -89,25 +132,84 @@ pub fn config(args: &Args) -> Result<Config, String> {
     Ok(config)
 }
 
-async fn serve(args: &Args, config: Config, signals: watch::Receiver<u32>) -> Result<(), String> {
+async fn serve(
+    args: &Args,
+    config: Config,
+    context: Arc<ServerContext>,
+    signals: watch::Receiver<u32>,
+    query: Option<&str>,
+) -> Result<(), String> {
     let addr = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|error| format!("cannot listen on {addr}: {error}"))?;
-    let store = store(args, config).await?;
+    let addr = listener
+        .local_addr()
+        .map_err(|error| format!("cannot listen on {addr}: {error}"))?;
+    let Some(store) = unless_signalled(&signals, store_in(args, config, context)).await else {
+        tracing::info!("termination signal received during startup");
+        return Ok(());
+    };
+    let store = store?;
+    let coordinators = Arc::clone(&store.coordinators);
     let app = app_router_at(store, &args.base_path);
 
     println!("lingrep-web listening on http://{addr}");
+    if let Some(query) = query {
+        let base = args.base_path.as_str().trim_end_matches('/');
+        let link = format!("http://{addr}{base}/{query}");
+        println!("{link}");
+        open_in_browser(&link);
+    }
     #[expect(
         clippy::unwrap_used,
         reason = "startup serve failure is a hard error for the lingrep-web entry point"
     )]
     {
-        serve_until(listener, app, signals, SHUTDOWN_GRACE)
+        serve_until(listener, app, signals.clone(), SHUTDOWN_GRACE)
             .await
             .unwrap();
     }
+    stop_scans(&coordinators, signals).await;
     Ok(())
+}
+
+fn open_in_browser(link: &str) {
+    let program = std::env::var_os("BROWSER")
+        .filter(|program| !program.is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "macos") {
+                "open".into()
+            } else {
+                "xdg-open".into()
+            }
+        });
+    match std::process::Command::new(&program)
+        .arg(link)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => eprintln!(
+            "cannot start `{}` to open the link: {error}",
+            program.to_string_lossy()
+        ),
+    }
+}
+
+async fn stop_scans(coordinators: &CoordinatorRegistry, mut signals: watch::Receiver<u32>) {
+    let seen = *signals.borrow();
+    if seen >= 2 {
+        return;
+    }
+    tokio::select! {
+        () = coordinators.shutdown() => {}
+        () = signal_number(&mut signals, seen.saturating_add(1)) => {}
+    }
 }
 
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -139,6 +241,18 @@ async fn serve_until(
             tracing::warn!("second termination signal received; stopping with requests still in flight");
             Ok(())
         }
+    }
+}
+
+async fn unless_signalled<T>(
+    signals: &watch::Receiver<u32>,
+    work: impl Future<Output = T>,
+) -> Option<T> {
+    let mut signals = signals.clone();
+    tokio::select! {
+        biased;
+        () = signal_number(&mut signals, 1) => None,
+        output = work => Some(output),
     }
 }
 
@@ -184,12 +298,20 @@ fn os_signal_count() -> watch::Receiver<u32> {
 /// A message naming the label file, count table, reading sidecar or corpus
 /// that stops startup.
 pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
-    let labels = crate::metadata_labels::KeyLabels::read(&args.metadata_labels)?;
-    let max_active_sessions =
-        NonZeroUsize::new(args.max_active_sessions).unwrap_or(NonZeroUsize::MIN);
     let context = Arc::new(
         ServerContext::new(&config.dict_path).expect("the shared scan pool must be constructible"),
     );
+    store_in(args, config, context).await
+}
+
+async fn store_in(
+    args: &Args,
+    config: Config,
+    context: Arc<ServerContext>,
+) -> Result<RequestStore, String> {
+    let labels = crate::metadata_labels::KeyLabels::read(&args.metadata_labels)?;
+    let max_active_sessions =
+        NonZeroUsize::new(args.max_active_sessions).unwrap_or(NonZeroUsize::MIN);
     let mut slots = IndexMap::new();
     for (name, path, display_name) in &config.corpora {
         let runtime = Arc::new(
@@ -251,7 +373,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::{oneshot, watch};
 
-    use super::{block_on, serve_until};
+    use super::{block_on, serve_until, unless_signalled};
 
     async fn request(address: std::net::SocketAddr) -> tokio::task::JoinHandle<String> {
         let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -300,6 +422,30 @@ mod tests {
         returned_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("block_on returns within 5 s");
+    }
+
+    #[tokio::test]
+    async fn a_signal_during_startup_work_drops_the_work_and_its_temporary_files() {
+        let (signals_tx, signals_rx) = watch::channel(0);
+        let (created_tx, created_rx) = oneshot::channel();
+        let startup = tokio::spawn(async move {
+            unless_signalled(&signals_rx, async move {
+                let spool = tempfile::NamedTempFile::new().unwrap();
+                created_tx.send(spool.path().to_path_buf()).unwrap();
+                std::future::pending::<()>().await;
+            })
+            .await
+        });
+
+        let spool = created_rx.await.unwrap();
+        assert!(spool.exists());
+        signals_tx.send(1).unwrap();
+        let output = tokio::time::timeout(Duration::from_secs(10), startup)
+            .await
+            .expect("startup returns once the signal arrives")
+            .unwrap();
+        assert!(output.is_none());
+        assert!(!spool.exists());
     }
 
     #[tokio::test]

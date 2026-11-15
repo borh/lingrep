@@ -44,7 +44,7 @@ pub use diagnostic::{
 pub use diagram::{DiagramCatalog, DiagramError, PatternDiagram};
 pub use drift::{
     CatalogDriftReport, DriftBody, DriftCarrier, DriftDefinitionKind, DriftEntry,
-    report_catalog_drift,
+    report_catalog_drift, report_catalog_drift_with_vectors,
 };
 pub use expand::{
     DefinitionExpansion, ExpandError, ExpandedDefinitionKind, expand_pattern_definition,
@@ -52,10 +52,12 @@ pub use expand::{
 };
 pub use format::{FormatError, FormatOutcome, format_pattern_source};
 pub use limits::{CompileLimitError, CompileLimits, CompilerStats, TightenedCompileLimits};
+pub use model::{CatalogVectors, NearQuery, NearTest, SimilarityThreshold};
 pub use render::{render_diagnostics, render_pattern_error};
 
 use crate::fsm::AttrValueType;
 use compact_str::CompactString;
+use indexmap::IndexMap;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -121,7 +123,51 @@ pub fn compile_catalog(
     let source_bytes = lowered.source_bytes;
     let program = lowered.program;
     let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
-    compile_program(program, &limits, &mut stats, lowered.warnings)
+    compile_program(program, &limits, &mut stats, lowered.warnings, None)
+}
+
+/// A word-vector table that answers `near` tests.
+pub trait WordVectors {
+    /// For each query, in order: the distinct values whose vector has a
+    /// cosine similarity to the query word's vector of at least the query's
+    /// threshold, or `None` when the table has no vector for the word. The
+    /// order of the values is part of the compiled catalog's identity, so it
+    /// must be the same on every call.
+    ///
+    /// # Errors
+    ///
+    /// A message describing why the table could not be read.
+    fn similar_values(
+        &self,
+        queries: &[NearQuery],
+    ) -> Result<Vec<Option<Arc<[CompactString]>>>, String>;
+}
+
+/// [`compile_catalog`] with `vectors` answering the catalog's `near` tests.
+/// Without a table, a catalog that contains a `near` test does not compile.
+///
+/// # Errors
+///
+/// Every error of [`compile_catalog`]; a
+/// `near` test whose word has no vector, as `WordVectorUnavailable`; and a
+/// table that cannot be read, as `WordVectorTableUnreadable` at each `near`
+/// test.
+pub fn compile_catalog_with_vectors(
+    source: PatternSource<'_>,
+    limits: CompileLimits,
+    vectors: &dyn WordVectors,
+) -> Result<CompileOutput, CompileError> {
+    let lowered = lower_document_with_stats(&source, &limits)?;
+    let source_bytes = lowered.source_bytes;
+    let program = lowered.program;
+    let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
+    compile_program(
+        program,
+        &limits,
+        &mut stats,
+        lowered.warnings,
+        Some(vectors),
+    )
 }
 
 /// Compiles `source` publishing the definitions whose published name, their
@@ -174,7 +220,7 @@ pub fn compile_catalog_pattern(
         }
     }
     let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
-    compile_program(program, &limits, &mut stats, lowered.warnings)
+    compile_program(program, &limits, &mut stats, lowered.warnings, None)
 }
 
 /// Parsed typed definitions accumulated by [`crate::fsm::FsmBuilder`].
@@ -199,6 +245,8 @@ pub(crate) struct DefinitionAccumulator {
     /// so a declaration in one document selects patterns from another.
     groups: Vec<ParsedGroupDecl>,
     analyzers: Vec<model::ParsedAnalyzerConstraint>,
+    vectors: Vec<model::CatalogVectors>,
+    near: IndexMap<NearQuery, model::NearResolution>,
     labels: Vec<model::ParsedLabelDeclaration>,
     sources: SourceRegistry,
     stats: CompilerStats,
@@ -231,6 +279,8 @@ impl DefinitionAccumulator {
             tests: Vec::new(),
             groups: Vec::new(),
             analyzers: Vec::new(),
+            vectors: Vec::new(),
+            near: IndexMap::new(),
             labels: Vec::new(),
             sources: SourceRegistry::default(),
             stats: CompilerStats::default(),
@@ -254,6 +304,8 @@ impl DefinitionAccumulator {
             // through `add_document`.
             policy: None,
             analyzers: Vec::new(),
+            vectors: Vec::new(),
+            near: lowered.near.clone(),
             labels: Vec::new(),
             sets: Vec::new(),
             tests: Vec::new(),
@@ -272,6 +324,7 @@ impl DefinitionAccumulator {
         remap_definition_source(&mut definition, source_id);
 
         self.definitions.push(definition);
+        self.near.extend(lowered.near);
         self.lowering_warnings.extend(lowered.warnings);
         self.stats = next_stats;
         Ok(())
@@ -319,6 +372,8 @@ impl DefinitionAccumulator {
         self.tests.extend(program.tests);
         self.groups.extend(program.groups);
         self.analyzers.extend(program.analyzers);
+        self.vectors.extend(program.vectors);
+        self.near.extend(program.near);
         self.labels
             .extend(program.labels.into_iter().map(|mut declaration| {
                 declaration.span = declaration.span.with_source(source_id);
@@ -329,7 +384,11 @@ impl DefinitionAccumulator {
         Ok(())
     }
 
-    pub(crate) fn build(self, limits: &CompileLimits) -> Result<CompileOutput, CompileError> {
+    pub(crate) fn build(
+        self,
+        limits: &CompileLimits,
+        vectors: Option<&dyn WordVectors>,
+    ) -> Result<CompileOutput, CompileError> {
         let mut stats = self.stats;
         let policy = match self.policies.as_slice() {
             [] => None,
@@ -347,6 +406,8 @@ impl DefinitionAccumulator {
                 sources: self.sources,
                 policy,
                 analyzers: self.analyzers,
+                vectors: self.vectors,
+                near: self.near,
                 labels: self.labels,
                 sets: self.sets,
                 tests: self.tests,
@@ -355,7 +416,34 @@ impl DefinitionAccumulator {
             limits,
             &mut stats,
             self.lowering_warnings,
+            vectors,
         )
+    }
+}
+
+pub(super) fn resolve_near(program: &mut ParsedProgram, vectors: Option<&dyn WordVectors>) {
+    let Some(vectors) = vectors else {
+        return;
+    };
+    if program.near.is_empty() {
+        return;
+    }
+    let queries: Vec<NearQuery> = program.near.keys().cloned().collect();
+    match vectors.similar_values(&queries) {
+        Ok(answers) => {
+            for (resolution, answer) in program.near.values_mut().zip(answers) {
+                *resolution = answer.map_or(
+                    model::NearResolution::NoVector,
+                    model::NearResolution::Values,
+                );
+            }
+        }
+        Err(message) => {
+            let message: Arc<str> = Arc::from(message);
+            for resolution in program.near.values_mut() {
+                *resolution = model::NearResolution::Unreadable(Arc::clone(&message));
+            }
+        }
     }
 }
 
@@ -364,7 +452,22 @@ fn compile_program(
     limits: &CompileLimits,
     stats: &mut CompilerStats,
     lowering_warnings: Vec<Diagnostic>,
+    vectors: Option<&dyn WordVectors>,
 ) -> Result<CompileOutput, CompileError> {
+    resolve_near(&mut program, vectors);
+    let near_tests: Vec<model::NearTest> = program
+        .near
+        .iter()
+        .filter_map(|(query, resolution)| match resolution {
+            model::NearResolution::Values(values) => Some(model::NearTest {
+                word: query.word.clone(),
+                threshold: query.threshold,
+                values: Arc::clone(values),
+            }),
+            _ => None,
+        })
+        .collect();
+    let catalog_vectors = std::mem::take(&mut program.vectors);
     let parsed_labels = std::mem::take(&mut program.labels);
     let analyzer_constraints = program
         .analyzers
@@ -538,6 +641,7 @@ fn compile_program(
     lowered
         .matcher
         .install_analyzer_constraints(analyzer_constraints);
+    lowered.matcher.install_vectors(catalog_vectors, near_tests);
     lowered
         .matcher
         .install_label_declarations(label_declarations);
@@ -967,7 +1071,10 @@ fn remap_test_source(test: &mut ParsedTestDecl, source: SourceId) {
 fn remap_test_body_source(test: &mut ParsedTest, source: SourceId) {
     match test {
         ParsedTest::Attr(parsed) => {
-            if let ParsedAttrValue::Set { span, .. } = &mut parsed.value {
+            if let ParsedAttrValue::Set { span, .. }
+            | ParsedAttrValue::SetAny { span, .. }
+            | ParsedAttrValue::Near { span, .. } = &mut parsed.value
+            {
                 *span = span.with_source(source);
             }
         }

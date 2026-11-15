@@ -69,6 +69,7 @@ fn routes(store: RequestStore) -> Router {
         .merge(handlers::sample::page_routes())
         .merge(handlers::frequency::page_routes())
         .merge(handlers::compare::page_routes())
+        .merge(handlers::neighbors::page_routes())
         .nest(
             "/assets/editor",
             handlers::editor_assets::routes().layer(CompressionLayer::new()),

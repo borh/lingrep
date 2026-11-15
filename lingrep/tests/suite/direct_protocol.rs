@@ -1561,67 +1561,134 @@ fn serve_dictionary_falls_back_to_the_environment_then_the_installed_default() {
 }
 
 #[test]
-fn dictionary_install_requests_the_asset_under_ling_download_base() {
+fn dictionary_install_help_omits_the_mirror_environment_value() {
+    for help in ["--help", "--help-all"] {
+        let output = lingrep()
+            .env(
+                "LING_DOWNLOAD_BASE",
+                "https://review-user:review-password@mirror.example/releases/download",
+            )
+            .args(["dictionary", "install", help])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("LING_DOWNLOAD_BASE"));
+        assert!(!stdout.contains("review-password"));
+        assert!(!stdout.contains("review-user"));
+    }
+}
+
+#[test]
+fn dictionary_mirror_authentication_is_sent_without_credentials_in_diagnostics() {
     use std::io::{BufRead, BufReader, Write};
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let server = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        let (stream, _) = loop {
-            match listener.accept() {
-                Ok(connection) => break connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(std::time::Instant::now() < deadline, "no request arrived");
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+    for use_flag in [false, true] {
+        for json in [false, true] {
+            for status in [404, 200] {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = listener.local_addr().unwrap().port();
+                listener.set_nonblocking(true).unwrap();
+                let server = std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    let (stream, _) = loop {
+                        match listener.accept() {
+                            Ok(connection) => break connection,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(std::time::Instant::now() < deadline, "no request arrived");
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                            }
+                            Err(error) => panic!("{error}"),
+                        }
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut reader = BufReader::new(&stream);
+                    let mut headers = Vec::new();
+                    loop {
+                        let mut line = String::new();
+                        assert!(reader.read_line(&mut line).unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        headers.push(line.trim_end().to_owned());
+                    }
+                    let body = if status == 200 {
+                        zstd::stream::encode_all(&b"untrusted dictionary"[..], 1).unwrap()
+                    } else {
+                        Vec::new()
+                    };
+                    write!(
+                        &stream,
+                        "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    (&stream).write_all(&body).unwrap();
+                    headers
+                });
+                let data_home = tempfile::tempdir().unwrap();
+
+                let mut command = lingrep();
+                command
+                    .env("XDG_DATA_HOME", data_home.path())
+                    .env_remove("HTTP_PROXY")
+                    .env_remove("http_proxy")
+                    .env_remove("ALL_PROXY")
+                    .env_remove("all_proxy")
+                    .env("NO_PROXY", "127.0.0.1")
+                    .args(["dictionary", "install", "novel"]);
+                let base = format!("http://review-user:review-password@127.0.0.1:{port}/mirror/");
+                if use_flag {
+                    command.env("LING_DOWNLOAD_BASE", "https://unreachable.invalid");
+                    command.args(["--download-base", &base]);
+                } else {
+                    command.env("LING_DOWNLOAD_BASE", &base);
                 }
-                Err(error) => panic!("{error}"),
+                if json {
+                    command.arg("--json");
+                }
+                let output = command.output().unwrap();
+
+                let headers = server.join().unwrap();
+                assert_eq!(
+                    headers[0],
+                    "GET /mirror/unidic-202512/unidic-novel-202512.dic.zst HTTP/1.1"
+                );
+                assert!(headers.iter().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("authorization")
+                            && value.trim() == "Basic cmV2aWV3LXVzZXI6cmV2aWV3LXBhc3N3b3Jk"
+                    })
+                }));
+                assert!(!output.status.success());
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert!(!stderr.contains("review-password"));
+                assert!(!stderr.contains("review-user"));
+                assert!(!stdout.contains("review-password"));
+                if status == 404 {
+                    assert!(
+                        stderr.contains(&format!("http://127.0.0.1:{port}/mirror/unidic-202512/")),
+                        "{stderr}"
+                    );
+                } else {
+                    assert!(
+                        stderr.contains("downloaded dictionary has BLAKE3"),
+                        "{stderr}"
+                    );
+                }
+                assert!(
+                    !data_home
+                        .path()
+                        .join("lingrep/dictionaries/unidic-novel-202512.dic")
+                        .exists()
+                );
             }
-        };
-        stream.set_nonblocking(false).unwrap();
-        let mut request_line = String::new();
-        BufReader::new(&stream)
-            .read_line(&mut request_line)
-            .unwrap();
-        (&stream)
-            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .unwrap();
-        request_line.trim_end().to_owned()
-    });
-    let data_home = tempfile::tempdir().unwrap();
-
-    let output = lingrep()
-        .env("XDG_DATA_HOME", data_home.path())
-        .env(
-            "LING_DOWNLOAD_BASE",
-            format!("http://127.0.0.1:{port}/mirror/"),
-        )
-        .env_remove("HTTP_PROXY")
-        .env_remove("http_proxy")
-        .env_remove("ALL_PROXY")
-        .env_remove("all_proxy")
-        .env("NO_PROXY", "127.0.0.1")
-        .args(["dictionary", "install", "novel"])
-        .output()
-        .unwrap();
-
-    assert_eq!(
-        server.join().unwrap(),
-        "GET /mirror/unidic-202512/unidic-novel-202512.dic.zst HTTP/1.1"
-    );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!("http://127.0.0.1:{port}/mirror/unidic-202512/")),
-        "{stderr}"
-    );
-    assert!(
-        !data_home
-            .path()
-            .join("lingrep/dictionaries/unidic-novel-202512.dic")
-            .exists()
-    );
+        }
+    }
 }
 
 #[test]

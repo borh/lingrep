@@ -1,6 +1,187 @@
 use crate::support::lingrep_without_dictionary;
 
 #[test]
+fn preparation_help_hides_the_download_base_environment_value() {
+    let output = lingrep_without_dictionary()
+        .env(
+            "LING_DOWNLOAD_BASE",
+            "https://review-user:review-password@mirror.example/releases/download",
+        )
+        .args(["analyzer", "prepare", "ginza", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("LING_DOWNLOAD_BASE"));
+    assert!(!help.contains("review-password"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn preparation_downloads_verified_wheels_from_the_selected_https_mirror() {
+    use sha2::{Digest, Sha256};
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Child, Command, Stdio};
+
+    struct Server(Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    for (use_flag, corrupt, missing, trusted, https) in [
+        (false, false, false, true, true),
+        (true, false, false, true, true),
+        (true, true, false, true, true),
+        (false, false, true, true, true),
+        (false, false, false, false, true),
+        (true, false, false, true, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let certificate = root.join("certificate.pem");
+        let key = root.join("key.pem");
+        let status = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost,IP:127.0.0.1",
+                "-addext",
+                "basicConstraints=critical,CA:FALSE",
+                "-out",
+            ])
+            .arg(&certificate)
+            .arg("-keyout")
+            .arg(&key)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "create the local mirror certificate");
+        let release = format!("v{}", env!("CARGO_PKG_VERSION"));
+        let assets = root.join("mirror").join(&release);
+        std::fs::create_dir_all(&assets).unwrap();
+        let packages = ["lingrep_adapter_protocol", "lingrep_spacy_adapter"];
+        let mut sums = String::new();
+        for package in packages {
+            let name = format!("{package}-{}-py3-none-any.whl", env!("CARGO_PKG_VERSION"));
+            let content = b"fixture wheel";
+            std::fs::write(assets.join(&name), content).unwrap();
+            let digest = if corrupt {
+                "0".repeat(64)
+            } else {
+                Sha256::digest(content)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            };
+            sums.push_str(&format!("{digest}  ./{name}\n"));
+        }
+        if !missing {
+            std::fs::write(assets.join("SHA256SUMS"), sums).unwrap();
+        }
+        let requests = root.join("requests");
+        let mut server = Server(
+            Command::new("python3")
+                .arg(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/https_wheel_mirror.py"
+                ))
+                .arg(root)
+                .arg(&certificate)
+                .arg(&key)
+                .arg(&requests)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let mut port = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut port)
+            .unwrap();
+        let port: u16 = port.trim().parse().expect("HTTPS mirror port");
+        let bin = root.join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let uv = bin.join("uv");
+        std::fs::write(&uv, "#!/bin/sh\nexit 42\n").unwrap();
+        std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let scheme = if https { "https" } else { "http" };
+        let base = format!("{scheme}://review-user:review-password@127.0.0.1:{port}/mirror/");
+        let output = root.join("analyzer");
+        let mut command = lingrep_without_dictionary();
+        command
+            .args(["analyzer", "prepare", "ginza", "--output"])
+            .arg(&output)
+            .env("PATH", bin)
+            .env_remove("HTTP_PROXY")
+            .env_remove("http_proxy")
+            .env_remove("HTTPS_PROXY")
+            .env_remove("https_proxy")
+            .env_remove("ALL_PROXY")
+            .env_remove("all_proxy")
+            .env("NO_PROXY", "127.0.0.1");
+        if trusted {
+            command
+                .env("SSL_CERT_FILE", &certificate)
+                .env("SSL_CERT_DIR", root.join("empty-ca-dir"));
+        } else {
+            command
+                .env_remove("SSL_CERT_FILE")
+                .env_remove("SSL_CERT_DIR");
+        }
+        if use_flag {
+            command
+                .env("LING_DOWNLOAD_BASE", "https://unreachable.invalid")
+                .args(["--download-base", &base]);
+        } else {
+            command.env("LING_DOWNLOAD_BASE", &base);
+        }
+        let result = command.output().unwrap();
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(!stderr.contains("review-password"));
+        assert!(!stderr.contains("review-user"));
+        assert!(!output.exists(), "{stderr}");
+        let requested = std::fs::read_to_string(&requests).unwrap_or_default();
+        if !trusted || !https {
+            assert!(requested.is_empty(), "{requested}");
+            assert!(stderr.contains("cannot download release asset"), "{stderr}");
+        } else {
+            let expected = format!("/mirror/{release}/SHA256SUMS\n");
+            assert!(requested.starts_with(&expected), "{requested}: {stderr}");
+            if missing {
+                assert_eq!(requested, expected);
+                assert!(stderr.contains("404"), "{stderr}");
+            } else if corrupt {
+                assert_eq!(requested.lines().count(), 2, "{requested}");
+                assert!(stderr.contains("checksum mismatch"), "{stderr}");
+            } else {
+                assert_eq!(requested.lines().count(), 3, "{requested}");
+                for package in packages {
+                    assert!(requested.contains(&format!(
+                        "/{package}-{}-py3-none-any.whl",
+                        env!("CARGO_PKG_VERSION")
+                    )));
+                }
+                assert!(stderr.contains("uv failed"), "{stderr}");
+            }
+        }
+    }
+}
+
+#[test]
 fn cpu_preparation_requires_an_output_and_stanza_selection() {
     for args in [
         vec![

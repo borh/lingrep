@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use compact_str::CompactString;
-use lingrep_core::scope::{ExclusionReason, Verdict};
 use lingrep_core::token_match::{
     AttributeKey, AttributeKind, AttributeValueRef, TokenAttributeIndex, TokenInfo, TokenSchema,
     TokenSequence,
@@ -291,6 +290,24 @@ impl AnalyzerRun {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WordVectorsReport {
+    pub path: String,
+    /// The BLAKE3 digest of the file, as lowercase hex.
+    pub blake3: String,
+    /// The catalog's distinct `near` tests, in first-appearance order.
+    pub near: Vec<NearReport>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NearReport {
+    pub word: String,
+    /// The minimum cosine similarity, as a decimal.
+    pub threshold: String,
+    /// How many values the test was resolved to; `ling neighbors` lists them.
+    pub value_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueryRun {
     /// Result reuse requires this revision as well as the catalog and analysis identities.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -340,6 +357,34 @@ pub struct QueryRun {
     /// than in whatever invoked them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleReport>,
+    /// Present for `--overlaps keep` or `--overlaps longest`, even when the
+    /// selected setting leaves the catalog's policy unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlaps: Option<OverlapsReport>,
+    /// Present only when the catalog has `near` tests; reproducing the run
+    /// requires a word-vector file with this digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub word_vectors: Option<WordVectorsReport>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlapsReport {
+    /// The policy block ran without its `resolve` statements.
+    Keep,
+    /// Append `resolve patterns rank: [longest, start, end, pattern]` only
+    /// when the block declares no `resolve`; otherwise run it unchanged.
+    Longest,
+}
+
+impl OverlapsReport {
+    pub(crate) fn of(overlaps: crate::cli::OverlapsArg) -> Option<Self> {
+        match overlaps {
+            crate::cli::OverlapsArg::Catalog => None,
+            crate::cli::OverlapsArg::Keep => Some(Self::Keep),
+            crate::cli::OverlapsArg::Longest => Some(Self::Longest),
+        }
+    }
 }
 
 /// Counts describe the selected sample; token-block draws also identify their physical layout.
@@ -919,65 +964,7 @@ pub enum ScopeBasis {
     ObservedPrefix,
 }
 
-/// Accounting that would not be exact.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScopeOverflow;
-
-/// A scoped run's observation universe at one grain.
-///
-/// Four buckets, not three. A predicate over a value whose *shape* does not
-/// fit it — `year >= 2010` against `pages: "47-56"` — is false in both
-/// polarities like a missing field, but it is a different fact: the field is
-/// present and the query could not use it. Folding the two would report a data
-/// problem as an absence.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ScopeUniverse {
-    pub admitted: u64,
-    pub excluded_by_predicate: u64,
-    pub excluded_missing_field: u64,
-    pub excluded_shape_mismatch: u64,
-}
-
-impl ScopeUniverse {
-    /// Adds `weight` to the bucket a verdict names.
-    ///
-    /// Checked, not saturating. The published claim about these fields is that
-    /// they sum *exactly* to the universe; a saturating add would keep
-    /// publishing that claim while making it false, and a false denominator is
-    /// the failure this whole report exists to prevent. Overflow is
-    /// unreachable for any corpus whose sentence count fits the `u64` the
-    /// artifact already stores, so the overflow error never rejects such a corpus.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScopeOverflow`] if the bucket would not fit.
-    pub fn record(&mut self, verdict: Verdict, weight: u64) -> Result<(), ScopeOverflow> {
-        let bucket = match verdict {
-            Verdict::Admitted => &mut self.admitted,
-            Verdict::Excluded(ExclusionReason::Predicate) => &mut self.excluded_by_predicate,
-            Verdict::Excluded(ExclusionReason::MissingField) => &mut self.excluded_missing_field,
-            Verdict::Excluded(ExclusionReason::ShapeMismatch) => &mut self.excluded_shape_mismatch,
-        };
-        *bucket = bucket.checked_add(weight).ok_or(ScopeOverflow)?;
-        Ok(())
-    }
-
-    /// The whole universe.
-    ///
-    /// A scope and its apparent complement do not sum to this, which is the
-    /// point of reporting it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScopeOverflow`] if the four buckets would not sum.
-    pub fn total(&self) -> Result<u64, ScopeOverflow> {
-        self.admitted
-            .checked_add(self.excluded_by_predicate)
-            .and_then(|sum| sum.checked_add(self.excluded_missing_field))
-            .and_then(|sum| sum.checked_add(self.excluded_shape_mismatch))
-            .ok_or(ScopeOverflow)
-    }
-}
+pub use lingrep_corpus::{ScopeOverflow, ScopeUniverse};
 
 /// The scope clause a run applied, and the universe it observed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

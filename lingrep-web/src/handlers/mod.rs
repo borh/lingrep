@@ -9,6 +9,7 @@ pub mod help;
 pub mod index;
 pub mod inspect;
 mod live_summary;
+pub mod neighbors;
 mod overlaps;
 pub mod pattern_detail;
 pub mod pattern_editor;
@@ -35,7 +36,7 @@ use lingrep_core::corpus::SentenceId;
 use lingrep_corpus::{CorpusArtifact, CorpusError, ProvenanceView, SentenceProvenance};
 
 use crate::coordinator::SnapshotLookupError;
-use crate::corpus_runtime::{CorpusRuntime, ReadyCorpus};
+use crate::corpus_runtime::{CacheReadiness, CorpusRuntime, ReadyCorpus};
 use crate::inspection::{InspectionError, SnapshotInspector};
 use crate::revision::{RevisionId, WorkbenchId};
 use crate::snapshot::{CompletedSnapshot, MatchRef};
@@ -108,26 +109,54 @@ pub(crate) fn inspection_response(error: EndpointInspectionError) -> Response {
         EndpointInspectionError::UnknownWorkbench
         | EndpointInspectionError::UnknownPattern
         | EndpointInspectionError::UnknownReference
-        | EndpointInspectionError::UnknownToken => {
-            sanitized(StatusCode::NOT_FOUND, "Inspection target not found.")
-        }
+        | EndpointInspectionError::UnknownToken => sanitized(
+            StatusCode::NOT_FOUND,
+            "inspector.not_found",
+            "Inspection target not found.",
+        ),
         EndpointInspectionError::StaleSnapshot => sanitized(
             StatusCode::CONFLICT,
+            "inspector.stale_results",
             "Newer results are available. Refresh this result to inspect it.",
         ),
         EndpointInspectionError::StaleCorpus => sanitized(
             StatusCode::CONFLICT,
+            "inspector.stale_corpus",
             "These results belong to an older corpus cache.",
         ),
         EndpointInspectionError::InvalidSpan => sanitized(
             StatusCode::CONFLICT,
+            "inspector.invalid_span",
             "Stored inspection coordinates are invalid.",
         ),
         EndpointInspectionError::CacheCorruption => sanitized(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "The corpus cache is damaged and will be rebuilt.",
+            "inspector.unreadable",
+            "The corpus data could not be read.",
         ),
     }
+}
+
+pub(crate) async fn corrupt_artifact_response(
+    runtime: &CorpusRuntime,
+    read: &ReadyCorpus,
+) -> Response {
+    runtime.invalidator().invalidate_corrupt(read).await;
+    let (key, message) = match *runtime.readiness().borrow() {
+        CacheReadiness::Checking | CacheReadiness::Building { .. } => (
+            "corpus.rebuilding",
+            "The corpus cache is damaged and is being rebuilt. Search again when the corpus is ready.",
+        ),
+        CacheReadiness::Ready { .. } => (
+            "corpus.rebuilt",
+            "The corpus cache was damaged and has been rebuilt. Search again.",
+        ),
+        CacheReadiness::Failed { .. } => (
+            "corpus.damaged",
+            "The corpus data is damaged. This corpus is unavailable until the server is restarted.",
+        ),
+    };
+    sanitized(StatusCode::INTERNAL_SERVER_ERROR, key, message)
 }
 
 /// Render an Askama template into an HTML 200, or a bare 500 if rendering fails.
@@ -141,10 +170,12 @@ pub(crate) fn render_or_500<T: Template>(template: T) -> Response {
     )
 }
 
-pub(crate) fn sanitized(status: StatusCode, message: &'static str) -> Response {
+pub(crate) fn sanitized(status: StatusCode, key: &'static str, message: &'static str) -> Response {
     (
         status,
-        Html(format!("<div class=\"alert alert-error\">{message}</div>")),
+        Html(format!(
+            "<div class=\"alert alert-error\" data-i18n=\"{key}\">{message}</div>"
+        )),
     )
         .into_response()
 }
@@ -239,12 +270,8 @@ fn provenance_or_degrade(
     }
 }
 
-/// Decode every sentence referenced by `refs`, off the executor, in chunks so
-/// no single blocking job runs the whole request. Invalidates once on corruption.
-///
-/// `runtime` must be the one [`bound_inspector`] returned for this request:
-/// the corruption teardown has to reach the corpus whose bytes failed to
-/// decode, and no other corpus the process happens to serve.
+/// `runtime` and `ready` must be the pair returned by [`bound_inspector`]
+/// for this request so corruption is attributed to the artifact read.
 // `Err = Response` is the axum idiom: the error path already owns a fully formed
 // HTTP response, and every caller returns it directly. Boxing it to satisfy
 // `result_large_err` would add an allocation to each error path and force the
@@ -252,6 +279,7 @@ fn provenance_or_degrade(
 #[allow(clippy::result_large_err)]
 pub(crate) async fn decode_refs(
     runtime: &CorpusRuntime,
+    ready: &ReadyCorpus,
     inspector: &SnapshotInspector,
     refs: &[&MatchRef],
 ) -> Result<HashMap<u64, Option<Vec<lingrep_core::token_match::TokenInfo>>>, Response> {
@@ -272,15 +300,7 @@ pub(crate) async fn decode_refs(
                     map.insert(*index, value);
                 }
             }
-            Ok(Err(_)) => {
-                // The workbench's own corpus — the one whose bytes just failed
-                // to decode. Invalidating a process-wide runtime here would
-                // tear down an unrelated corpus.
-                runtime.invalidator().invalidate_corrupt().await; // exactly once
-                return Err(inspection_response(
-                    EndpointInspectionError::CacheCorruption,
-                ));
-            }
+            Ok(Err(_)) => return Err(corrupt_artifact_response(runtime, ready).await),
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         }
     }
@@ -288,13 +308,11 @@ pub(crate) async fn decode_refs(
 }
 
 pub(crate) fn invalid_provenance_response() -> Response {
-    (
+    sanitized(
         StatusCode::CONFLICT,
-        Html(
-            "<div class=\"alert alert-error\">Stored result provenance is invalid; rerun the query.</div>",
-        ),
+        "inspector.invalid_provenance",
+        "Stored result provenance is invalid; rerun the query.",
     )
-        .into_response()
 }
 
 #[cfg(test)]
@@ -305,6 +323,68 @@ mod tests {
             super::invalid_provenance_response().status(),
             axum::http::StatusCode::CONFLICT
         );
+    }
+}
+
+#[cfg(test)]
+mod corrupt_artifact_response_tests {
+    use std::sync::Arc;
+
+    use http_body_util::BodyExt;
+
+    use super::corrupt_artifact_response;
+    use crate::corpus_runtime::{CacheReadiness, CorpusRuntime, ReadyCorpus};
+    use crate::server_context::ServerContext;
+
+    async fn wait_ready(runtime: &CorpusRuntime) -> ReadyCorpus {
+        runtime
+            .readiness()
+            .wait_for(|readiness| matches!(readiness, CacheReadiness::Ready { .. }))
+            .await
+            .unwrap();
+        runtime.ready().await.unwrap()
+    }
+
+    async fn body(response: axum::response::Response) -> String {
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_message_states_what_the_runtime_does_about_the_report() {
+        let directory = tempfile::tempdir().unwrap();
+        let corpus = directory.path().join("corpus.jsonl");
+        std::fs::write(&corpus, "{\"sentences\":[\"猫。\"]}\n").unwrap();
+        let dictionary = lingrep_core::testing::MiniDictionary::new();
+        let context = Arc::new(ServerContext::new(dictionary.path()).unwrap());
+        let runtime = CorpusRuntime::new(Arc::clone(&context), &corpus).unwrap();
+        runtime.start_or_observe().await;
+        let first = wait_ready(&runtime).await;
+
+        let permit = context.build_permit().acquire_owned().await.unwrap();
+        let rebuilding = body(corrupt_artifact_response(&runtime, &first).await).await;
+        assert!(rebuilding.contains("is being rebuilt"), "{rebuilding}");
+        assert!(
+            rebuilding.contains("data-i18n=\"corpus.rebuilding\""),
+            "{rebuilding}"
+        );
+        drop(permit);
+        let rebuilt = wait_ready(&runtime).await;
+
+        let stale = body(corrupt_artifact_response(&runtime, &first).await).await;
+        assert!(stale.contains("has been rebuilt"), "{stale}");
+        assert!(stale.contains("data-i18n=\"corpus.rebuilt\""), "{stale}");
+
+        let failed = body(corrupt_artifact_response(&runtime, &rebuilt).await).await;
+        assert!(
+            failed.contains("unavailable until the server is restarted"),
+            "{failed}"
+        );
+        assert!(failed.contains("data-i18n=\"corpus.damaged\""), "{failed}");
     }
 }
 

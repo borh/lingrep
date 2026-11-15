@@ -56,7 +56,7 @@ impl fmt::Display for SchemaBindError {
         match self {
             Self::MissingKeys(keys) => write!(
                 formatter,
-                "token schema is missing required lingrep patterns keys: {}",
+                "dependency `where` clauses require {}, which the token schema does not carry",
                 keys.join(", ")
             ),
             Self::KindMismatch {

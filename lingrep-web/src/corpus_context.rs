@@ -214,29 +214,70 @@ impl CorpusContextView {
     }
 }
 
-/// Single-flight, identity-keyed memo. The async mutex is held ACROSS `compute`,
-/// so concurrent first callers for one identity run it exactly once; a changed
-/// identity evicts the prior entry. Errors are NOT cached (the guard drops with
-/// the cache unchanged), so a later call retries. Releasing the guard before the
-/// await would break single-flight and is incorrect here.
+pub(crate) type Memo<K, V> = Arc<tokio::sync::Mutex<Option<(K, V)>>>;
+
+/// Caches successful computations by keys compared with `same`; a different key
+/// replaces the entry, and concurrent callers share one computation.
+/// Once started, a computation finishes even if its caller is dropped;
+/// dropping the caller before it starts skips the computation.
+pub(crate) async fn detached_memo<K, V, F, Fut>(
+    cache: &Memo<K, V>,
+    key: K,
+    same: fn(&K, &K) -> bool,
+    compute: F,
+) -> Result<V, CorpusError>
+where
+    K: Send + 'static,
+    V: Clone + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<V, CorpusError>> + Send,
+{
+    if let Some((cached, value)) = cache.lock().await.as_ref()
+        && same(cached, &key)
+    {
+        return Ok(value.clone());
+    }
+    let cache = Arc::clone(cache);
+    let waiting = Arc::new(());
+    let caller = Arc::downgrade(&waiting);
+    let computation = tokio::spawn(async move {
+        let mut guard = cache.lock().await;
+        if let Some((cached, value)) = guard.as_ref()
+            && same(cached, &key)
+        {
+            return Ok(value.clone());
+        }
+        if caller.strong_count() == 0 {
+            return Err(CorpusError::Io(std::io::Error::other(
+                "the caller left before the computation started",
+            )));
+        }
+        let value = compute().await?;
+        *guard = Some((key, value.clone()));
+        Ok(value)
+    });
+    let joined = computation.await;
+    drop(waiting);
+    match joined {
+        Ok(result) => result,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(_) => Err(CorpusError::Io(std::io::Error::other(
+            "the server stopped before the computation finished",
+        ))),
+    }
+}
+
+/// Caches successful results by corpus identity, including after caller cancellation.
 pub async fn identity_memo<F, Fut>(
-    cache: &tokio::sync::Mutex<Option<(CorpusIdentity, Arc<CorpusContextView>)>>,
+    cache: &Memo<CorpusIdentity, Arc<CorpusContextView>>,
     identity: CorpusIdentity,
     compute: F,
 ) -> Result<Arc<CorpusContextView>, CorpusError>
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<Arc<CorpusContextView>, CorpusError>>,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Arc<CorpusContextView>, CorpusError>> + Send,
 {
-    let mut guard = cache.lock().await;
-    if let Some((cached_id, value)) = guard.as_ref()
-        && *cached_id == identity
-    {
-        return Ok(Arc::clone(value));
-    }
-    let value = compute().await?;
-    *guard = Some((identity, Arc::clone(&value)));
-    Ok(value)
+    detached_memo(cache, identity, |cached, wanted| cached == wanted, compute).await
 }
 
 /// Human-facing corpus name: the file stem of the configured corpus path. Never
@@ -353,11 +394,11 @@ async fn slot_readiness_view(slot: &CorpusSlot) -> CorpusContextView {
     };
     let sentence_count = provenance.sentence_count();
 
-    let built = identity_memo(slot.context_slot(), ready.identity.clone(), || {
+    let built = identity_memo(slot.context_slot(), ready.identity.clone(), {
         let artifact = Arc::clone(&ready.artifact);
         let name = name.clone();
         let digest = digest.clone();
-        async move {
+        move || async move {
             build_ready_view(name, digest, &artifact, &provenance)
                 .await
                 .map(Arc::new)
@@ -482,7 +523,7 @@ mod tests {
                 let calls = Arc::clone(&calls);
                 let id = id.clone();
                 tokio::spawn(async move {
-                    identity_memo(&cache, id, || {
+                    identity_memo(&cache, id, move || {
                         let calls = Arc::clone(&calls);
                         async move {
                             calls.fetch_add(1, Ordering::SeqCst);
@@ -506,21 +547,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_computation_whose_caller_is_dropped_finishes_and_is_cached() {
+        let cache = Arc::new(Mutex::new(None));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started, running) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let caller = tokio::spawn({
+            let cache = Arc::clone(&cache);
+            let calls = Arc::clone(&calls);
+            async move {
+                identity_memo(&cache, CorpusIdentity::new("x"), move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let _ = started.send(());
+                    let _ = released.await;
+                    Ok(Arc::new(view_fixture()))
+                })
+                .await
+                .map(|_| ())
+            }
+        });
+        running.await.expect("the computation started");
+        caller.abort();
+        assert!(caller.await.expect_err("aborted caller").is_cancelled());
+        let _ = release.send(());
+
+        let again = Arc::clone(&calls);
+        identity_memo(&cache, CorpusIdentity::new("x"), move || async move {
+            again.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::new(view_fixture()))
+        })
+        .await
+        .expect("the cached view");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn computations_queued_by_callers_that_left_do_not_run_after_a_failure() {
+        let cache = Arc::new(Mutex::new(None));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (release, released) = tokio::sync::watch::channel(false);
+        let held = cache.lock().await;
+        let mut callers: Vec<_> = (0..5)
+            .map(|_| {
+                let cache = Arc::clone(&cache);
+                let calls = Arc::clone(&calls);
+                let mut released = released.clone();
+                tokio::spawn(async move {
+                    identity_memo(&cache, CorpusIdentity::new("x"), move || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        let _ = released.wait_for(|released| *released).await;
+                        Err(CorpusError::SqliteSidecar)
+                    })
+                    .await
+                    .map(|_| ())
+                })
+            })
+            .collect();
+        tokio::task::yield_now().await;
+        drop(held);
+        while calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let first = callers.remove(0);
+        for caller in callers {
+            caller.abort();
+            assert!(caller.await.expect_err("aborted caller").is_cancelled());
+        }
+
+        release.send(true).expect("a waiting computation");
+        assert!(first.await.expect("the first caller").is_err());
+        drop(cache.lock().await);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn memo_rebuilds_on_identity_change_but_reuses_same_identity() {
-        let cache = Mutex::new(None);
-        let calls = AtomicUsize::new(0);
+        let cache = Arc::new(Mutex::new(None));
+        let calls = Arc::new(AtomicUsize::new(0));
         let compute = || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { Ok(Arc::new(view_fixture())) }
+            let calls = Arc::clone(&calls);
+            move || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Arc::new(view_fixture()))
+            }
         };
-        identity_memo(&cache, CorpusIdentity::new("a"), compute)
+        identity_memo(&cache, CorpusIdentity::new("a"), compute())
             .await
             .unwrap();
-        identity_memo(&cache, CorpusIdentity::new("a"), compute)
+        identity_memo(&cache, CorpusIdentity::new("a"), compute())
             .await
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1); // cache hit
-        identity_memo(&cache, CorpusIdentity::new("b"), compute)
+        identity_memo(&cache, CorpusIdentity::new("b"), compute())
             .await
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2); // rebuilt on change
@@ -528,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn memo_does_not_cache_failures() {
-        let cache = Mutex::new(None);
+        let cache = Arc::new(Mutex::new(None));
         let id = CorpusIdentity::new("x");
         let err = identity_memo(&cache, id.clone(), || async {
             Err(CorpusError::InvalidFormat {

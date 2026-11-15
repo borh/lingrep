@@ -23,6 +23,10 @@ JS = [
     # Relabels the editor size toggle, so it owns two keys of its own.
     WEB / "assets" / "editor-sizing.js",
     WEB / "assets" / "editor" / "pattern-editor.js",
+    WEB / "assets" / "views.js",
+    WEB / "assets" / "frequency.js",
+    WEB / "assets" / "compare.js",
+    WEB / "assets" / "condition-picker.js",
 ]
 
 KEY_ATTR = re.compile(r'data-i18n(?:-title|-placeholder|-aria-label)?="([a-z][\w.]*\w)"')
@@ -31,7 +35,7 @@ PLACEHOLDER = re.compile(r"\{(\w+)\}")
 # Namespaced keys quoted anywhere in source (covers conditional t() calls and
 # the i18n-key fields populated server-side in Rust).
 NAMESPACED = re.compile(
-    r'"((?:banner|capture|corpus|detail|editor|group|hero|help|hit|inspector|library|nav|notice|results|sample|status|token_inspection)\.[\w]+)"'
+    r'"((?:banner|capture|corpus|detail|editor|group|hero|help|hit|inspector|library|nav|notice|reading|results|sample|status|token_inspection|views|frequency|compare|picker)\.[\w]+)"'
 )
 # Rust sources that name an i18n key directly: a key the server chooses (a
 # landing notice, a refusal banner) is emitted through `data-i18n="{{ … }}"`,
@@ -41,6 +45,11 @@ RUST = [
     WEB / "src" / "corpus_context.rs",
     WEB / "src" / "handlers" / "index.rs",
     WEB / "src" / "handlers" / "search.rs",
+    WEB / "src" / "handlers" / "mod.rs",
+    WEB / "src" / "handlers" / "pattern_editor.rs",
+    WEB / "src" / "handlers" / "reading.rs",
+    WEB / "src" / "handlers" / "sample.rs",
+    WEB / "src" / "handlers" / "stream.rs",
 ]
 
 
@@ -61,7 +70,10 @@ def template_keys():
         # same attribute scan the templates get see an inline `data-i18n="…"`.
         source = path.read_text().replace('\\"', '"')
         keys.update(KEY_ATTR.findall(source))
-        keys.update(NAMESPACED.findall(source))
+        # A quoted file name such as "sample.html" has the shape of a key.
+        keys.update(
+            key for key in NAMESPACED.findall(source) if not key.endswith((".html", ".jsonl"))
+        )
     return keys
 
 

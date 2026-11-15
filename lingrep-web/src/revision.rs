@@ -35,8 +35,15 @@ pub enum AttemptPhase {
     Queued,
     Running,
     Completed,
-    Cancelled,
+    Cancelled(CancelReason),
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelReason {
+    Superseded,
+    /// The workbench had no open event stream for the grace period.
+    Abandoned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +59,9 @@ pub struct QueryAttempt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCategory {
     Compile,
+    /// The corpus remains usable with catalogs compatible with its token schema.
+    Binding,
+    Scope,
     Cache,
     Execution,
     /// A completed scan whose result contradicts the corpus's own provenance
@@ -82,6 +92,7 @@ pub enum CoordinatorEvent {
     Cancelled {
         workbench: WorkbenchId,
         revision: RevisionId,
+        reason: CancelReason,
     },
     Failed {
         workbench: WorkbenchId,
@@ -126,7 +137,7 @@ impl RevisionCoordinatorState {
         self.current_attempt.as_ref().is_some_and(|attempt| {
             matches!(
                 attempt.phase,
-                AttemptPhase::Completed | AttemptPhase::Cancelled | AttemptPhase::Failed
+                AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
             )
         })
     }
@@ -253,7 +264,8 @@ impl RevisionCoordinatorState {
             CoordinatorEvent::Cancelled {
                 workbench,
                 revision,
-            } => (workbench, *revision, AttemptPhase::Cancelled, None),
+                reason,
+            } => (workbench, *revision, AttemptPhase::Cancelled(*reason), None),
             CoordinatorEvent::Failed {
                 workbench,
                 revision,
@@ -275,7 +287,7 @@ impl RevisionCoordinatorState {
         if attempt.revision != revision
             || matches!(
                 attempt.phase,
-                AttemptPhase::Completed | AttemptPhase::Cancelled | AttemptPhase::Failed
+                AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
             )
         {
             return false;

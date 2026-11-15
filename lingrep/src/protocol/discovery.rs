@@ -52,6 +52,7 @@ contract_ids! {
     Invocation => "lingrep.invocation/v1",
     Manpages => "lingrep.manpages/v1",
     MatchesTsv => "lingrep.matches-tsv/v1",
+    Neighbors => "lingrep.neighbors/v1",
     ProtocolContract => "lingrep.protocol-contract/v1",
     Query => "lingrep.query/v2",
     Sources => "lingrep.sources/v1",

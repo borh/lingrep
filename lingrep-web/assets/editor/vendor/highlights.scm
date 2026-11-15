@@ -124,6 +124,12 @@
    (set_not_has_any_operator)] @operator
   [(value) (value_set)] @string)
 
+(attribute ">=" @operator)
+(similarity_threshold) @number
+(vectors_entry "vectors" @keyword)
+(vectors_resource_field "resource" @property (analyzer_identifier) @string)
+(vectors_digest_field "blake3" @property (vectors_digest) @string)
+
 (sentence_start) @punctuation.special
 (sentence_end) @punctuation.special
 (preceded_by "preceded_by" @keyword)
