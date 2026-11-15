@@ -54,7 +54,8 @@ such a label prints a warning identifying the admitting flag.
   display-math block; a subsequent line ending in `$$` closes it. Delimiter
   lines may contain math source. All block lines are skipped for analysis,
   and `:::` inside the block does not open or close a region. An unclosed
-  block is an error in strict and recovery modes. Escaped dollar signs
+  block is an error in strict mode; recovery treats an unmatched bare `$$`
+  line and its following text as ordinary Markdown. Escaped dollar signs
   remain text. Document rendering preserves the math source.
 - **`<!-- ... -->` is skipped. Every other raw HTML form is an error**:
   elements, declarations, processing instructions and CDATA alike. Autolinks
@@ -83,6 +84,10 @@ Markdown converters emit and that the strict reader rejects:
   would leave the closing delimiter unpaired with earlier openers. For example,
   `**p < 0.05**` and `*p<.05*` lose their asterisks in both modes.
   Strict mode uses the Markdown interpretation;
+- an unmatched bare `$$` line: it remains literal text and following lines
+  retain their Markdown structure. Complete math blocks remain excluded.
+  Recovery spools candidate blocks to temporary files instead of retaining
+  their text in memory;
 - div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 

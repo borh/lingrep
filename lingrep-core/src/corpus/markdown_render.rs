@@ -13,7 +13,7 @@ use super::markdown_dialect::{
 };
 
 /// Change this revision whenever rendered HTML, text runs or block boundaries change, including after dependency upgrades.
-pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/2";
+pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDocument {
@@ -70,7 +70,8 @@ fn prepare(source: &str) -> Prepared {
     let mut fences = Vec::new();
     let mut heading_classes = BTreeMap::new();
     let mut block = Block::Body;
-    for (index, raw) in source_lines(source).enumerate() {
+    let mut remaining = source_lines(source).enumerate();
+    while let Some((index, raw)) = remaining.next() {
         let number = index + 1;
         if index == 0 && raw.trim_end() == "---" {
             block = Block::Frontmatter;
@@ -128,7 +129,11 @@ fn prepare(source: &str) -> Prepared {
             lines.push(String::new());
             continue;
         }
-        if opens_display_math(trimmed) {
+        if opens_display_math(trimmed)
+            && remaining
+                .clone()
+                .any(|(_, line)| closes_display_math(line.trim_start()))
+        {
             block = Block::DisplayMath;
             lines.push(content.to_owned());
             continue;
@@ -159,7 +164,7 @@ fn prepare(source: &str) -> Prepared {
     }
 }
 
-fn source_lines(source: &str) -> impl Iterator<Item = &str> {
+fn source_lines(source: &str) -> impl Iterator<Item = &str> + Clone {
     source
         .split_inclusive('\n')
         .map(|line| line.strip_suffix('\n').unwrap_or(line))
@@ -694,6 +699,14 @@ mod tests {
             .iter()
             .map(|block| block.html.as_str())
             .collect()
+    }
+
+    #[test]
+    fn unmatched_display_math_preserves_following_region_boundaries() {
+        let document = render_markdown("$$\n::: {.note}\n注。\n:::\n本文。\n");
+        assert_eq!(document.regions.len(), 1);
+        assert_eq!(line_text(&document, 3), "注。");
+        assert_eq!(line_text(&document, 5), "本文。");
     }
 
     #[test]

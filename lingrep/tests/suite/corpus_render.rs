@@ -342,7 +342,7 @@ fn render_rejects_source_bytes_changed_after_observation() {
 }
 
 #[test]
-fn math_and_unprefixed_tables_preserve_prose_and_reading_anchors() {
+fn math_recovery_and_unprefixed_tables_preserve_prose_and_reading_anchors() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("papers");
     fs::create_dir(&root).unwrap();
@@ -356,11 +356,21 @@ fn math_and_unprefixed_tables_preserve_prose_and_reading_anchors() {
         "a | b\n--- | ---\n1 | 2\n表の後。\n後文。\n",
     )
     .unwrap();
+    fs::write(
+        root.join("unmatched.md"),
+        "$$\n::: {.note}\n注。\n:::\n後文。\n",
+    )
+    .unwrap();
     let dictionary = MiniDictionary::new();
     let artifact = directory.path().join("papers.lingcorpus");
     assert_success(
         &lingrep()
-            .args(["corpus", "build", "--dict-path"])
+            .args([
+                "corpus",
+                "build",
+                "--md-recover-conversion-artifacts",
+                "--dict-path",
+            ])
             .arg(dictionary.path())
             .arg("--output")
             .arg(&artifact)
@@ -376,9 +386,16 @@ fn math_and_unprefixed_tables_preserve_prose_and_reading_anchors() {
         artifact,
     };
     let output = fixture.scratch.join("reading");
-    assert_success(&render(&fixture, &output, &[]));
+    assert_success(&render(
+        &fixture,
+        &output,
+        &["--md-recover-conversion-artifacts"],
+    ));
     let artifact = CorpusArtifact::open(&fixture.artifact).unwrap();
-    assert_eq!(stored_texts(&artifact), ["本文。", "表の後。", "後文。"]);
+    assert_eq!(
+        stored_texts(&artifact),
+        ["本文。", "表の後。", "後文。", "$$", "注。", "後文。"]
+    );
     let sidecar =
         ReadingSidecar::open(&output, &ReadingSidecarKey::for_artifact(&artifact)).unwrap();
     sidecar.verify().unwrap();

@@ -2381,7 +2381,7 @@ fn a_directory_without_an_override_still_resolves_to_markdown() {
     let run = &events[0]["data"];
     assert_eq!(
         run["reader_identity"],
-        "188d99e4405ef32777b4aea91d2d32d02c224d669701bec30dafa40a22650a08"
+        "46a19a1b725796633f7ead3edbd095e717caaed27f09d9fa2335b1a408aad381"
     );
 }
 #[test]

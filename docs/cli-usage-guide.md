@@ -879,7 +879,9 @@ and names the flag. See [the dialect contract](markdown-corpus-dialect.md).
 
 `--md-recover-conversion-artifacts` is also a read-time flag. It admits the
 artifacts a corpus converter emits (presentational HTML, `<si …>` notation, and
-div imbalance at the document boundary), which the strict default rejects. Use
+div imbalance at the document boundary), which the strict default rejects.
+An unmatched bare `$$` line becomes literal text in recovery mode; following
+lines remain prose or Markdown structure. Complete math blocks remain excluded. Use
 it when a tree fails to build on a few documents out of many; a malformed fence
 or an unterminated code block remains an error either way. The flag is part of
 `reader_tag`, so a recovered read names a different prepared artifact than a

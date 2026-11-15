@@ -17,7 +17,7 @@ use super::section_policy::SectionPolicy;
 use super::structured::{AdmittedCorpus, CorpusEvent, metadata_from_json, sentence_texts};
 use regex::Regex;
 use std::collections::{BTreeSet, VecDeque};
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufReader, BufWriter, Seek, Write};
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use xxhash_rust::xxh3::xxh3_64;
@@ -511,7 +511,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 11;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 12;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -595,9 +595,8 @@ impl MarkdownReaderConfig {
         }
     }
 
-    /// Recover a narrow set of artifacts emitted by the Markdown corpus
-    /// converter: presentational HTML, `<si ...>` linguistic notation, and
-    /// div imbalance at the physical document boundary.
+    /// Recovers converter HTML, `<si ...>` notation, significance marks, boundary
+    /// div imbalance, and unmatched bare `$$` lines.
     #[must_use]
     pub fn recover_conversion_artifacts(mut self) -> Self {
         self.recover_conversion_artifacts = true;
@@ -746,6 +745,7 @@ impl PipeTable {
 
 struct DialectIterator<R: BufRead> {
     lines: std::iter::Peekable<std::io::Lines<R>>,
+    replay: Option<std::iter::Peekable<std::io::Lines<BufReader<std::fs::File>>>>,
     table: Option<PipeTable>,
     block: Block,
     stacks: LabelStacks,
@@ -795,6 +795,7 @@ fn dialect_iterator<R: BufRead>(
 ) -> DialectIterator<R> {
     DialectIterator {
         lines: reader.lines().peekable(),
+        replay: None,
         table: None,
         block: Block::Body,
         stacks: LabelStacks::default(),
@@ -889,7 +890,11 @@ impl<R: BufRead> Iterator for DialectIterator<R> {
             if let Some(event) = self.queued_event() {
                 return Some(Ok(event));
             }
-            let Some(line) = self.lines.next() else {
+            let line = match &mut self.replay {
+                Some(lines) => lines.next(),
+                None => self.lines.next(),
+            };
+            let Some(line) = line else {
                 return self.finish();
             };
             let line = match line {
@@ -910,6 +915,24 @@ impl<R: BufRead> Iterator for DialectIterator<R> {
 }
 
 impl<R: BufRead> DialectIterator<R> {
+    fn complete_math_block(&mut self) -> io::Result<bool> {
+        let mut spool = BufWriter::new(tempfile::tempfile()?);
+        let mut skipped = 0;
+        for line in self.lines.by_ref() {
+            let line = line?;
+            skipped += 1;
+            if closes_display_math(line.trim_start()) {
+                self.line_number += skipped;
+                return Ok(true);
+            }
+            writeln!(spool, "{line}")?;
+        }
+        let mut file = spool.into_inner().map_err(|error| error.into_error())?;
+        file.rewind()?;
+        self.replay = Some(BufReader::new(file).lines().peekable());
+        Ok(false)
+    }
+
     /// Report structure left open when the input ends. Emitted once.
     ///
     /// `Block::Body` is the only legitimate terminal state: every other block
@@ -930,11 +953,18 @@ impl<R: BufRead> DialectIterator<R> {
         }
         self.drained = true;
         if let Some((construct, opened_at)) = self.block.unterminated() {
+            let hint = if !self.config.recover_conversion_artifacts
+                && matches!(self.block, Block::DisplayMath { .. })
+            {
+                "; for an unmatched bare '$$' line, rerun with --md-recover-conversion-artifacts"
+            } else {
+                ""
+            };
             return Some(Err(self.at(
                 opened_at,
                 format!(
                     "unclosed {construct} at end of input; \
-                     the rest of the document was not read"
+                     the rest of the document was not read{hint}"
                 ),
             )));
         }
@@ -1171,10 +1201,16 @@ impl<R: BufRead> DialectIterator<R> {
 
         if opens_display_math(trimmed) {
             self.table = None;
-            self.block = Block::DisplayMath {
-                opened_at: self.line_number,
-            };
-            return Ok(None);
+            if self.config.recover_conversion_artifacts && trimmed.trim_end() == "$$" {
+                if self.complete_math_block()? {
+                    return Ok(None);
+                }
+            } else {
+                self.block = Block::DisplayMath {
+                    opened_at: self.line_number,
+                };
+                return Ok(None);
+            }
         }
 
         if let Some((marker, minimum_length)) = opens_fence(trimmed) {
@@ -1271,9 +1307,11 @@ impl<R: BufRead> DialectIterator<R> {
 
         let mut table_header = false;
         if self.table.is_none() && content.contains('|') {
-            self.table = self
-                .lines
-                .peek()
+            let next = match &mut self.replay {
+                Some(lines) => lines.peek(),
+                None => self.lines.peek(),
+            };
+            self.table = next
                 .and_then(|line| line.as_ref().ok())
                 .and_then(|delimiter| {
                     let mut delimiter = delimiter.trim_start();
@@ -1398,7 +1436,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&11u32.to_le_bytes());
+        encoded.extend_from_slice(&12u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
@@ -2150,6 +2188,41 @@ mod reader_tests {
                 .to_string()
                 .contains("unclosed display math")
         );
+    }
+
+    #[test]
+    fn unmatched_display_math_recovers_literal_text_and_source_lines() {
+        for (input, expected) in [
+            ("$$\n本文。\n", vec![(1, "$$"), (2, "本文。")]),
+            ("前文。\n$$\n", vec![(1, "前文。"), (2, "$$")]),
+            (
+                "$$\n::: {.note}\n注。\n:::\n本文。\n",
+                vec![(1, "$$"), (3, "注。"), (5, "本文。")],
+            ),
+            (
+                "$$\na | b\n--- | ---\n1 | 2\n本文。\n",
+                vec![(1, "$$"), (2, "a b"), (4, "1 2"), (5, "本文。")],
+            ),
+            (
+                "$$\nx=1\n$$\n前文。\n$$\n後文。\n",
+                vec![(4, "前文。"), (5, "$$"), (6, "後文。")],
+            ),
+        ] {
+            assert!(read(input, permissive()).is_err(), "strict: {input}");
+            let found = read_markdown_sentence_lines(
+                Cursor::new(input),
+                MarkdownReaderConfig::new(permissive()).recover_conversion_artifacts(),
+            )
+            .unwrap();
+            assert_eq!(
+                found
+                    .iter()
+                    .map(|line| (line.line, line.text.as_str()))
+                    .collect::<Vec<_>>(),
+                expected,
+                "{input}"
+            );
+        }
     }
 
     #[test]
