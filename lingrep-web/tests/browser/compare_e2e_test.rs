@@ -720,7 +720,7 @@ async fn a_rejected_clause_keeps_the_edit_and_blanks_buttons_and_the_typed_claus
         .await?;
     wait_for(
         &driver,
-        "return document.querySelector('[data-cmp-state]').textContent.includes('does not parse') && !document.querySelector('[data-compare]').hasAttribute('aria-busy')",
+        "return document.querySelector('[data-cmp-state]').textContent.includes('Invalid condition:') && !document.querySelector('[data-compare]').hasAttribute('aria-busy')",
         "the rejected clause",
     )
     .await?;

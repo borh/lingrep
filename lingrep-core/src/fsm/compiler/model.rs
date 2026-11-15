@@ -59,7 +59,7 @@ pub(crate) enum ParsedAttrValue {
 /// were chosen against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogVectors {
-    /// A label for readers; it identifies nothing.
+    /// A display label; the file is identified by its BLAKE3 digest.
     pub resource: CompactString,
     /// The BLAKE3 digest of the table's file, as 64 lowercase hex digits.
     pub blake3: CompactString,
@@ -99,7 +99,7 @@ pub(crate) enum NearResolution {
     NoTable,
     /// The table has no vector for the query's word.
     NoVector,
-    /// The table could not be read; the message says why.
+    /// The table could not be read; the message contains the cause.
     Unreadable(Arc<str>),
     Values(Arc<[CompactString]>),
 }

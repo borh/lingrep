@@ -63,7 +63,7 @@ vectors is stored in a prepared corpus. Three consequences follow:
   `ling matches`, `ling summarize` and `ling check` take `--vectors FILE`; every
   command that compiles a catalog reads `LINGREP_VECTORS_PATH` otherwise. Without a file, or when the
   file has no vector for the word, the test is `WordVectorUnavailable`.
-- The file's values must be spelled the way the tested attribute is. A file
+- Spell the file's values exactly as they appear in the tested attribute. A file
   keyed by dictionary forms fits `unidic.orthbase`, not `lemma`.
 - The same threshold can select different sets from different files.
   Declare the file used to choose the thresholds with a header line, `vectors: {resource: "NAME", blake3: "DIGEST"}`. DIGEST

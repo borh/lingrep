@@ -695,8 +695,8 @@ if (typeof document !== "undefined") {
         document.body.addEventListener("htmx:sseError", (event) => {
             const stream = streamElement(event.target);
             if (!stream || stream.dataset.streamFinished === "true") return;
-            // EventSource delivers the server's terminal `error` event (stream.rs)
-            // to the same handler as a connection error; only the former has data.
+            // Server-sent `error` events carry data; connection errors do not
+            // (https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation).
             if (event.detail?.error?.data !== undefined) {
                 stream.dataset.streamFinished = "true";
                 return;

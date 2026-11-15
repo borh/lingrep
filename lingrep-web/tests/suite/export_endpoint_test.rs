@@ -265,7 +265,7 @@ async fn export_admits_the_sentences_the_displayed_run_admitted() {
     let about = workbook.worksheet_range("About").unwrap();
     let exact = about
         .rows()
-        .find(|row| matches!(row.first(), Some(Data::String(k)) if k == "exact_matches"));
+        .find(|row| matches!(row.first(), Some(Data::String(k)) if k == "Total matches"));
     assert_eq!(exact.and_then(|row| row.get(1)), Some(&Data::Float(2.0)));
     let value = |key: &str| {
         about
@@ -275,10 +275,10 @@ async fn export_admits_the_sentences_the_displayed_run_admitted() {
             .map(ToString::to_string)
     };
     assert_eq!(
-        value("scan_scope").as_deref(),
-        Some("unfiltered corpus except the skipped sentences")
+        value("Search scope").as_deref(),
+        Some("Whole corpus without filters, excluding skipped sentences")
     );
-    let skipped = value("skipped_sentences").expect("the About sheet states the omission");
+    let skipped = value("Skipped sentences").expect("the About sheet states the omission");
     assert!(
         skipped.starts_with("Skipped 1 oversized sentence (first: sentence 1, "),
         "{skipped}"
@@ -298,10 +298,9 @@ async fn zero_matches_yield_about_sheet_only() {
 
     assert_eq!(workbook.sheet_names().to_vec(), vec!["About".to_string()]);
     let about = workbook.worksheet_range("About").unwrap();
-    // exact_matches row is present and zero.
     let exact = about
         .rows()
-        .find(|row| matches!(row.first(), Some(Data::String(k)) if k == "exact_matches"));
+        .find(|row| matches!(row.first(), Some(Data::String(k)) if k == "Total matches"));
     assert_eq!(exact.and_then(|row| row.get(1)), Some(&Data::Float(0.0)));
 }
 
@@ -517,7 +516,7 @@ async fn export_applies_and_states_the_overlap_setting_of_the_displayed_run() {
         let about = workbook.worksheet_range("About").unwrap();
         let row = about
             .rows()
-            .find(|row| matches!(row.first(), Some(Data::String(key)) if key == "overlaps"));
+            .find(|row| matches!(row.first(), Some(Data::String(key)) if key == "Overlap policy"));
         assert_eq!(
             row.and_then(|row| row.get(1)),
             Some(&Data::String(stated.into()))
@@ -531,8 +530,8 @@ async fn export_about_labels_follow_the_requested_locale_and_default_to_english(
     let workbench = WorkbenchId::new("export-locale");
     let revision = complete(&store, &workbench, "verb := [upos=VERB].").await;
     for (query, expected) in [
-        ("", "corpus"),
-        ("?locale=en", "corpus"),
+        ("", "Corpus"),
+        ("?locale=en", "Corpus"),
         ("?locale=ja", "コーパス"),
     ] {
         let response = get(

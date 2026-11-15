@@ -1,10 +1,8 @@
-//! A word2vec text file as a table of word vectors.
+//! Reads word2vec text files, with optional count/dimension headers and blank lines.
 //!
-//! Each row is a value, one space, and the value's vector as decimals. A
-//! first line of two integers (`count dimensions`) is skipped, as are blank
-//! lines. A row whose vector is all zeros has no direction and is near
-//! nothing. A value on several rows takes its vector from the first of them
-//! as a query word, and is near a word when any of its rows is.
+//! Each row contains a value, one space, and decimal vector components.
+//! Zero vectors never match a similarity query. For duplicate values, queries use
+//! the first row; candidate matching accepts any row for that value.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -71,8 +69,6 @@ struct Chunk {
 }
 
 impl VectorTable {
-    /// Maps the file at `path`.
-    ///
     /// # Errors
     ///
     /// [`VectorTableError::NotFound`] or [`VectorTableError::Io`].
@@ -412,8 +408,7 @@ fn parse_numbers(
     Ok(())
 }
 
-/// How a catalog's `vectors:` entries relate to the file that answered its
-/// `near` tests.
+/// Whether a catalog declares the digest of the loaded word-vector file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorsBinding {
     /// An entry carries the file's digest.

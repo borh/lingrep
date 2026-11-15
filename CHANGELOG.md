@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from terminated builds of the same artifact on the same host. Directories
   without lock files require manual cleanup; see the deployment guide.
 - The server rebuilds corrupt artifacts beside declared sources once per
-  corpus per process, including corruption detected at startup. Reports from
+  corpus per process after opening them successfully. Reports from
   a replaced artifact do not invalidate its replacement. Declared artifacts
   and artifacts with non-corruption errors remain on disk.
 - Unsupported manifest, graph and normalization versions and SQLite

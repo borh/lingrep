@@ -1080,7 +1080,7 @@ fn resolve_attr(
                         ),
                         _ => (
                             DiagnosticCode::WordVectorUnavailable,
-                            "`near` needs a word-vector table, and none was supplied".to_owned(),
+                            "`near` requires a word-vector table, but none was supplied".to_owned(),
                         ),
                     };
                     diagnostics.push(pending_diagnostic(

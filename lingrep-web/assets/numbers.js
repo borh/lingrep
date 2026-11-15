@@ -11,10 +11,10 @@ function format(options) {
 
 export const count = (n) => format({}).format(Number(n));
 
-/** `n` with exactly `digits` fraction digits. */
+/** Formats `n` with exactly `digits` decimal places. */
 export const fixed = (n, digits) => format({ minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
 
-/** `n` rounded to at most three significant digits. */
+/** Formats `n` with at most three significant digits. */
 export const significant = (n) => format({ maximumSignificantDigits: 3 }).format(n);
 
 /** Returns 0–2 decimal places based on the smallest positive value in `xs`, or 0 if none exists. */

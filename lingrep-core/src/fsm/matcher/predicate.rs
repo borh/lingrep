@@ -36,9 +36,6 @@ pub(crate) struct Members {
 }
 
 impl Members {
-    /// The largest list that `contains` scans instead of searching. Equality
-    /// rejects on length before reading bytes and ordering cannot, so a scan
-    /// is cheaper for the few-member lists that hand-written tests have.
     const SCAN_LIMIT: usize = 16;
 
     pub(super) fn new(declared: &[CompactString]) -> Self {

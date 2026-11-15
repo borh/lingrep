@@ -20,13 +20,38 @@ pub(crate) enum WorkbookLocale {
 impl WorkbookLocale {
     fn text(self, key: &str) -> &str {
         if matches!(self, Self::English) {
-            return key;
+            return match key {
+                "corpus" => "Corpus",
+                "corpus_id" => "Corpus identifier",
+                "dictionary" => "Dictionary",
+                "revision" => "Search number",
+                "exported" => "Exported at",
+                "scan_scope" => "Search scope",
+                "skipped_sentences" => "Skipped sentences",
+                "filters" => "Filters",
+                "overlaps" => "Overlap policy",
+                "exact_matches" => "Total matches",
+                "exported_rows" => "Exported rows",
+                "rows_truncated" => "Rows omitted",
+                "pattern" => "Pattern",
+                "pattern (cont.)" => "Pattern (continued)",
+                "sheet" => "Sheet",
+                "complete unfiltered corpus" => "Whole corpus, without filters",
+                "unfiltered corpus except the skipped sentences" => {
+                    "Whole corpus without filters, excluding skipped sentences"
+                }
+                "accepted search scope" => "Selected search scope",
+                "accepted search scope except the skipped sentences" => {
+                    "Selected search scope, excluding skipped sentences"
+                }
+                _ => key,
+            };
         }
         match key {
             "corpus" => "コーパス",
             "corpus_id" => "コーパス識別子",
             "dictionary" => "辞書",
-            "revision" => "検索の版",
+            "revision" => "検索番号",
             "exported" => "出力日時",
             "scan_scope" => "検索範囲",
             "skipped_sentences" => "省略した文",
@@ -42,9 +67,9 @@ impl WorkbookLocale {
             "unfiltered corpus except the skipped sentences" => {
                 "省略した文を除くコーパス全体（絞り込みなし）"
             }
-            "accepted search scope" => "検索時に確定した範囲",
+            "accepted search scope" => "この検索で選んだ範囲",
             "accepted search scope except the skipped sentences" => {
-                "省略した文を除く、検索時に確定した範囲"
+                "省略した文を除く、この検索で選んだ範囲"
             }
             _ => key,
         }
@@ -313,7 +338,7 @@ mod tests {
         assert!(
             about_sheet
                 .rows()
-                .any(|r| r.contains(&Data::String("complete unfiltered corpus".into())))
+                .any(|r| r.contains(&Data::String("Whole corpus, without filters".into())))
         );
     }
 
@@ -356,7 +381,7 @@ mod tests {
         let about_sheet = wb.worksheet_range("About").unwrap();
         let recovered: usize = about_sheet
             .rows()
-            .filter(|r| matches!(r.first(), Some(Data::String(k)) if k.starts_with("pattern")))
+            .filter(|r| matches!(r.first(), Some(Data::String(k)) if k.starts_with("Pattern")))
             .map(|r| {
                 if let Some(Data::String(v)) = r.get(1) {
                     v.chars().count()

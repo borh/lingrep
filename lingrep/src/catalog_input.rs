@@ -32,8 +32,7 @@ pub(crate) struct LoadedCatalog {
     pub(crate) source: CatalogSource,
     pub(crate) output: CompileOutput,
     pub(crate) fingerprint: String,
-    /// The word-vector file that answered the catalog's `near` tests; `None`
-    /// when it has none.
+    /// The word-vector file used for `near` tests; absent when the catalog has no such tests.
     pub(crate) vectors: Option<LoadedVectors>,
     /// Whether the catalog is a `--patterns` file and not an inline pattern.
     pub(crate) authored_file: bool,
@@ -57,7 +56,7 @@ pub(crate) fn load_and_compile(input: &CatalogInput) -> Result<LoadedCatalog, Cl
     load_and_compile_with_vectors(input, None)
 }
 
-/// [`load_and_compile`] with `vectors` answering the catalog's `near` tests.
+/// [`load_and_compile`] with `vectors` resolving the catalog's `near` tests.
 /// Without it, the file [`VECTORS_PATH_ENV`] names is used.
 pub(crate) fn load_and_compile_with_vectors(
     input: &CatalogInput,
@@ -74,8 +73,7 @@ pub(crate) fn load_and_compile_with_vectors(
     )
 }
 
-/// The word-vector file to answer `near` tests from: `flag`, or else the
-/// file [`VECTORS_PATH_ENV`] names.
+/// Selects `flag` when supplied, otherwise the file named by [`VECTORS_PATH_ENV`].
 pub(crate) fn vectors_path(flag: Option<&Path>) -> Option<PathBuf> {
     flag.map(Path::to_owned).or_else(|| {
         std::env::var_os(VECTORS_PATH_ENV)

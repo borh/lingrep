@@ -103,7 +103,7 @@ pub async fn run_sample(
         return fragment(
             StatusCode::PAYLOAD_TOO_LARGE,
             "sample.too_large",
-            "Sample too large to test — scan the corpus instead.",
+            "The sample exceeds the test limits. Shorten it or search a corpus with this pattern.",
         );
     }
     let Ok(_permit) = SAMPLE_SLOTS.try_acquire() else {
@@ -138,7 +138,7 @@ pub async fn run_sample(
         Ok(Err(TokenizerUnavailable)) => fragment(
             StatusCode::SERVICE_UNAVAILABLE,
             "sample.unavailable",
-            "Sample analysis is unavailable (dictionary not loaded).",
+            "Sample analysis is unavailable because the tokenizer dictionary could not be loaded.",
         ),
         Err(_) => fragment(
             StatusCode::INTERNAL_SERVER_ERROR,

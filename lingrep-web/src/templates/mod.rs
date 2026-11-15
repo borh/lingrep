@@ -1387,7 +1387,7 @@ message_args: None,
 
         let status = |stale_export_revision| RevisionStatus {
             notices: Vec::new(),
-            message: "This revision failed.".into(),
+            message: "This search failed.".into(),
             message_key: None,
             message_args: None,
             diagnostic: None,

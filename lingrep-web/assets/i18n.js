@@ -89,12 +89,10 @@ const SLOT_ATTRIBUTES = ["title", "placeholder", "aria-label"];
 const SLOTS = ["[data-export-link]", "[data-i18n]", ...SLOT_ATTRIBUTES.map((attr) => `[data-i18n-${attr}]`)].join(",");
 
 /**
- * Applies the active locale over `root` (element or document), `root` itself
- * included. Every slot is opt-in: `data-i18n` rewrites textContent from the
- * dictionary and `data-i18n-title`, `-placeholder` and `-aria-label` rewrite
- * that attribute, each restoring the English on toggle-back. Unknown keys and
- * empty values are ignored — they never mutate the DOM. The function is
- * idempotent.
+ * Localizes opt-in text and attributes in `root`, including `root` itself.
+ * English values are restored when switching back; unknown or empty translations
+ * leave their target unchanged. Export links receive a locale query parameter.
+ * The function is idempotent.
  */
 export function localize(root = document, dict = undefined, locale = current) {
   const table = dict ?? dictionaries[locale];

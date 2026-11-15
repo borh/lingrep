@@ -112,7 +112,7 @@ pub struct Args {
     #[arg(long = "base-path", default_value = "/")]
     pub base_path: BasePath,
 
-    /// Word-vector file that answers the `near` tests of every catalog the
+    /// Word-vector file used to resolve the `near` tests of every catalog the
     /// server compiles.
     ///
     /// word2vec text: one value and its numbers per line.

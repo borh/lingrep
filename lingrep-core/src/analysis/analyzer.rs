@@ -38,7 +38,7 @@ pub trait AnalyzerSession: sealed::Session {
     ) -> Result<ValidatedAnalysisBatch, AnalysisError>;
 }
 
-/// Why an analyzer could not return one complete canonical batch.
+/// An analyzer failure while producing a complete canonical batch.
 #[derive(Debug)]
 pub enum AnalysisError {
     UnsupportedProjection,

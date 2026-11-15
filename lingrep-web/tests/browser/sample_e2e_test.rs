@@ -247,7 +247,7 @@ async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -
         wait_for(
             &driver,
             "return document.querySelector('#sample-results > .error[role=status]')?.textContent \
-               === 'Sample too large to test — scan the corpus instead.'",
+               === 'The sample exceeds the test limits. Shorten it or search a corpus with this pattern.'",
             "the server's reason for rejecting the sample",
         )
         .await?;
@@ -271,7 +271,7 @@ async fn a_failed_sample_run_shows_the_servers_reason_but_not_a_gateway_page() -
         observed(
             &driver,
             "return document.querySelector('#sample-results').textContent.trim()",
-            json!("Sample too large to test — scan the corpus instead."),
+            json!("The sample exceeds the test limits. Shorten it or search a corpus with this pattern."),
             "the results after a gateway's error page",
         )
         .await

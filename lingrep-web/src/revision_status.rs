@@ -20,8 +20,7 @@ pub struct StatusNotice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisionStatus {
     pub message: String,
-    /// i18n key for `message`, plus JSON interpolation args as rendered by
-    /// the template (`data-i18n-args`).
+    /// Translation key for `message`; `message_args` supplies JSON interpolation values.
     pub message_key: Option<&'static str>,
     pub message_args: Option<String>,
     /// A compiler or binder diagnostic, shown after `message` in English in
@@ -205,7 +204,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
             ),
             Some(AttemptPhase::Failed) => (
                 match attempt.and_then(|attempt| attempt.failure.as_ref()) {
-                    None => ("This revision failed.".into(), Some("status.failed"), None),
+                    None => ("This search failed.".into(), Some("status.failed"), None),
                     Some(failure) => match failure.category {
                         ErrorCategory::Compile => {
                             diagnostic = Some(failure.message.clone());

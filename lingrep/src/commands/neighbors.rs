@@ -24,7 +24,7 @@ pub fn run(args: &NeighborsArgs, mode: OutputMode) -> Result<CommandOutcome, Cli
     }
     if args.cut.min_similarity.is_none() && args.cut.top.is_none() {
         return Err(CliError::InvalidArgs(
-            "neighbors requires --min-similarity, --top, or both".into(),
+            "choose --min-similarity, --top, or both".into(),
         ));
     }
     let table = VectorTable::open(&args.vectors)?;
@@ -114,7 +114,7 @@ fn write_set<W: Write>(
     if omitted > 0 {
         writeln!(
             io::stderr().lock(),
-            "note: {omitted} values contain a character that a set member cannot spell and were left out"
+            "note: omitted {omitted} values with characters that pattern set members cannot represent; use --json to inspect all selected values"
         )?;
     }
     Ok(())

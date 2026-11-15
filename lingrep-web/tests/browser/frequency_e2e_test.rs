@@ -508,7 +508,7 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
         state
             .as_str()
             .unwrap()
-            .starts_with("@section cannot be answered here"),
+            .starts_with("Section filters are unavailable here"),
         "{state}"
     );
 
@@ -1851,9 +1851,8 @@ async fn every_restyled_button_shows_a_focus_ring_for_keyboard_focus() -> WebDri
         return Ok(());
     };
     let served = serve_entries().await;
-    // Focuses each selector's first match, reads its outline, and returns the
-    // first ancestor whose overflow clips the outline's box. The Tab key sent
-    // first makes Chromium treat script focus as keyboard focus.
+    // Keyboard focus indication persists across script focus changes
+    // (https://drafts.csswg.org/selectors-4/#the-focus-visible-pseudo).
     let rings = |selectors: &[&str]| {
         format!(
             "return {}.map((selector) => {{ const e = document.querySelector(selector); e?.focus(); \
@@ -2001,10 +2000,7 @@ async fn an_unparsable_clause_in_an_entry_address_shows_the_parse_error() -> Web
     driver.quit().await?;
     served.server.abort();
     assert!(
-        state
-            .as_str()
-            .unwrap()
-            .starts_with("The clause does not parse: "),
+        state.as_str().unwrap().starts_with("Invalid condition: "),
         "{state}"
     );
     Ok(())
@@ -2545,7 +2541,8 @@ async fn unsupported_frequency_conditions_keep_their_explanation_after_a_locale_
         .await?;
         let text = driver.execute(STATE, Vec::new()).await?.json().clone();
         assert!(
-            text.as_str().is_some_and(|text| text.contains("@section")),
+            text.as_str()
+                .is_some_and(|text| text.contains("セクション")),
             "{text}"
         );
         Ok::<(), thirtyfour::error::WebDriverError>(())

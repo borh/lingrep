@@ -128,8 +128,7 @@ fn resolve_guard_attr(parsed: &ParsedAttr) -> Result<crate::fsm::SymbolicAttrVal
              members inline"
         )),
         ParsedAttrValue::Near { .. } => Err(
-            "uses `near`, but a guard is compiled with the definition that carries it, before \
-             a word-vector table is read — write the values inline"
+            "uses `near`, but word vectors are unavailable while guards compile; write the values inline"
                 .to_owned(),
         ),
     }

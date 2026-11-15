@@ -13,7 +13,7 @@ pub const WEB_PATTERN_SOURCE_NAME: &str = "lingrep-web.lx";
 
 static WORD_VECTORS: OnceLock<Option<VectorTable>> = OnceLock::new();
 
-/// Opens the word-vector file that answers `near` tests for the rest of the
+/// Opens the word-vector file used to resolve `near` tests for the rest of the
 /// process. A later call changes nothing.
 ///
 /// # Errors

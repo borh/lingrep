@@ -127,7 +127,7 @@ pub(crate) fn inspection_response(error: EndpointInspectionError) -> Response {
         EndpointInspectionError::InvalidSpan => sanitized(
             StatusCode::CONFLICT,
             "inspector.invalid_span",
-            "Stored inspection coordinates are invalid.",
+            "The saved token range is invalid. Run the search again.",
         ),
         EndpointInspectionError::CacheCorruption => sanitized(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -328,7 +328,7 @@ pub(crate) fn invalid_provenance_response() -> Response {
     sanitized(
         StatusCode::CONFLICT,
         "inspector.invalid_provenance",
-        "Stored result provenance is invalid; rerun the query.",
+        "The saved hit location is invalid. Run the search again.",
     )
 }
 

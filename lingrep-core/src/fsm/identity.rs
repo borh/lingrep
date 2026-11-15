@@ -51,7 +51,7 @@ pub fn catalog_fingerprint(source: &str) -> String {
 
 /// Fingerprints a catalog that has `near` tests: [`catalog_fingerprint`] of
 /// `source` together with the BLAKE3 digest of the word-vector file that
-/// answered them. The source alone does not determine what a `near` test
+/// resolved them. The source alone does not determine what a `near` test
 /// matches.
 #[must_use]
 pub fn catalog_fingerprint_with_vectors(source: &str, table: &blake3::Hash) -> String {

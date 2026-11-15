@@ -69,7 +69,7 @@ pub async fn search(
 ) -> Html<String> {
     if form.pattern.len() > MAX_PATTERN_BYTES {
         return Html(
-            "<div class=\"alert alert-error\" role=\"status\" data-i18n=\"status.pattern_too_large\">Pattern too large to scan.</div>"
+            "<div class=\"alert alert-error\" role=\"status\" data-i18n=\"status.pattern_too_large\">The pattern is too large to search. Remove unused definitions and try again.</div>"
                 .to_string(),
         );
     }

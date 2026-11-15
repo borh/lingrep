@@ -716,7 +716,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             _ => Err(self.error(
                 node,
                 DiagnosticCode::Syntax,
-                "a vectors declaration needs both `resource` and `blake3`",
+                "a vectors declaration requires both `resource` and `blake3`",
             )),
         }
     }

@@ -637,8 +637,8 @@ set NEIGHBORS := {重要, 大切, 大事, たいせつ, 重大, だいじ, 肝�
 ```
 
 A pattern then tests an attribute against the set: `[unidic.orthbase in
-@NEIGHBORS]`. The file's values must be spelled the way that attribute is; a
-file keyed by dictionary forms matches `unidic.orthbase`, not `lemma`.
+@NEIGHBORS]`. Spell the file's values exactly as they appear in the tested
+attribute. A file keyed by dictionary forms matches `unidic.orthbase`, not `lemma`.
 
 The file is text with one `value x1 ... xn` line per value, with or without a
 leading `count dimensions` line. This is the word2vec text format, which
@@ -2235,7 +2235,7 @@ Absolute server paths are omitted. When the inputs share only the filesystem
 root, the command uses `TABLE.lingtable`, `CORPUS.lingcorpus` and `CATALOG.lx`;
 replace these with your local paths. A relative path containing `..` or a path
 that is not UTF-8 cannot be shown. A clause with `@section` or `@sentence` is
-answered with an explanation rather than rows, because a table counts per document. The URL
+rejected with an explanation because count tables store counts per document. The URL
 stores the query state, so a copied link reopens the same view. Above the
 sentence, a "Corpus:" line names the selected table's corpus on both the
 Frequencies and Compare pages.

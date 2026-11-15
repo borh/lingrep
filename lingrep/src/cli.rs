@@ -504,7 +504,7 @@ pub struct CheckArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
 
-    /// Word-vector file that answers the catalog's `near` tests.
+    /// Word-vector file used to resolve the catalog's `near` tests.
     ///
     /// word2vec text: one value and its numbers per line. Overrides
     /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
@@ -561,7 +561,7 @@ pub enum CheckSchemaArg {
 pub struct MatchesArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
-    /// Word-vector file that answers the catalog's `near` tests.
+    /// Word-vector file used to resolve the catalog's `near` tests.
     ///
     /// word2vec text: one value and its numbers per line. Overrides
     /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
@@ -738,7 +738,7 @@ pub struct MatchesArgs {
 pub struct SummarizeArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
-    /// Word-vector file that answers the catalog's `near` tests.
+    /// Word-vector file used to resolve the catalog's `near` tests.
     ///
     /// word2vec text: one value and its numbers per line. Overrides
     /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.

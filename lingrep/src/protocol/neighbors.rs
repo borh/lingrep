@@ -38,7 +38,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
         },
         Channel::Stdout,
         "Descending similarity, then bytewise value order.",
-        "The values that pass --min-similarity, cut to --top; the word itself is rank 1.",
+        "Values meeting --min-similarity, limited by --top.",
         "A closed pipe is a machine-output failure.",
         "0 complete, 1 unreadable or malformed file or output failure, 2 invocation failure or a word without a vector.",
         &[],

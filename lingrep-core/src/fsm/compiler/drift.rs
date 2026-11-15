@@ -112,7 +112,7 @@ pub fn report_catalog_drift(
     report_catalog_drift_with_vectors(sources, None)
 }
 
-/// [`report_catalog_drift`] with `vectors` answering the catalogs' `near`
+/// [`report_catalog_drift`] with `vectors` resolving the catalogs' `near`
 /// tests, so that two tests are the same body when they resolve to the same
 /// values.
 ///

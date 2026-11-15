@@ -134,7 +134,7 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
         | ExecutionError::LookaroundWindowTooLarge { actual, limit } => AttemptFailure {
             category: ErrorCategory::Execution,
             message: format!(
-                "This search requires at least {actual} bytes of token memory; the server limit is {limit}. Use a smaller search scope or ask the server operator to review the limit."
+                "The analyzed input exceeds the server's token-memory limit: estimated {actual} bytes; limit {limit}. Narrow the search scope or ask the server operator to review the limit."
             ),
         },
         ExecutionError::SentenceTooLarge { actual, limit, .. } => AttemptFailure {

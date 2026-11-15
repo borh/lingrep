@@ -1,23 +1,21 @@
-//! The notices about the word-vector file a catalog's `near` tests were
-//! answered from.
+//! Reports undeclared or mismatched word-vector files for catalog `near` tests.
 
 use std::path::PathBuf;
 
 use lingrep_core::fsm::CompiledCatalog;
 use lingrep_corpus::word_vectors::{VectorsBinding, vectors_binding};
 
-/// The word-vector file that answered a catalog's `near` tests.
+/// The word-vector file used to resolve a catalog's `near` tests.
 pub(crate) struct LoadedVectors {
     pub(crate) path: PathBuf,
     /// The BLAKE3 digest of the file, as lowercase hex.
     pub(crate) blake3: String,
 }
 
-/// The notice to publish about the table a catalog's `near` tests were
-/// answered from, or `None` when a `vectors:` entry carries its digest.
+/// Returns a notice unless a `vectors:` entry declares the loaded file's digest.
 ///
 /// `authored_file` is false for an inline `--pattern`, which has no file to
-/// declare a table in and so gets no notice for declaring none.
+/// declare a table in, so undeclared-vector notices are omitted.
 pub(crate) fn binding_notice(
     matcher: &CompiledCatalog,
     loaded: &LoadedVectors,

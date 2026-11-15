@@ -185,7 +185,6 @@ fn a_catalog_file_is_checked_against_the_digest_of_the_file_that_was_read() {
         format!("vectors: {{resource: \"{resource}\", blake3: \"{blake3}\"}}\n")
     };
 
-    // The label is free; the digest decides.
     let stderr = run(&declared("any-label", &digest));
     assert!(!stderr.contains("vectors_"), "{stderr}");
 
@@ -204,7 +203,6 @@ fn a_catalog_file_is_checked_against_the_digest_of_the_file_that_was_read() {
     ));
     assert!(!stderr.contains("vectors_"), "{stderr}");
 
-    // The notice for a catalog that declares nothing carries the line to add.
     let stderr = run("");
     assert!(stderr.contains("vectors_undeclared"), "{stderr}");
     assert!(
@@ -268,7 +266,6 @@ fn every_value_is_near_itself_and_near_selects_the_values_neighbors_lists() {
     for (word, numbers) in &rows {
         table.push_str(&format!("{word} {}\n", numbers.join(" ")));
     }
-    // A second row for `w1`, a row without direction, and a blank line.
     table.push_str(&format!("w1 {}\n", rows[2].1.join(" ")));
     table.push_str(&format!("zero {}\n\n", vec!["0"; 96].join(" ")));
     let vectors = directory.path().join("generated.vec");
@@ -447,7 +444,6 @@ fn an_enhanced_graph_node_test_holds_for_exactly_the_listed_values_of_a_long_lis
     }
     let corpus = directory.path().join("heads.conllu");
     fs::write(&corpus, conllu).unwrap();
-    // Longer than the list a membership test scans, and not in sorted order.
     let mut listed: Vec<String> = (0..40).map(|filler| format!("z{}", 97 - filler)).collect();
     listed.insert(7, "run".into());
     listed.insert(31, "walk".into());

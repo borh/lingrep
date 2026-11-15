@@ -333,8 +333,7 @@ a staging directory only when its lock file records the current host name
 and the build can acquire its exclusive lock.
 
 A later build leaves a staging directory in place in three cases: the
-directory's lock file is missing, which is true of every staging directory
-written by lingrep 0.7.0 or earlier; the lock file records another host name;
+directory's lock file is missing; the lock file records another host name;
 or the artifact name has since changed with the dictionary or analyzer. Remove
 those directories by hand.
 Two hosts that report the same host name must not build into one shared

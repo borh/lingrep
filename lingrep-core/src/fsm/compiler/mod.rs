@@ -126,7 +126,7 @@ pub fn compile_catalog(
     compile_program(program, &limits, &mut stats, lowered.warnings, None)
 }
 
-/// A word-vector table that answers `near` tests.
+/// A word-vector table used to resolve `near` tests.
 pub trait WordVectors {
     /// For each query, in order: the distinct values whose vector has a
     /// cosine similarity to the query word's vector of at least the query's
@@ -143,7 +143,7 @@ pub trait WordVectors {
     ) -> Result<Vec<Option<Arc<[CompactString]>>>, String>;
 }
 
-/// [`compile_catalog`] with `vectors` answering the catalog's `near` tests.
+/// [`compile_catalog`] with `vectors` resolving the catalog's `near` tests.
 /// Without a table, a catalog that contains a `near` test does not compile.
 ///
 /// # Errors

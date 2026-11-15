@@ -240,7 +240,7 @@ fn vectors_entries_are_kept_in_source_order() {
 }
 
 #[test]
-fn a_vectors_entry_needs_one_resource_and_one_digest_before_the_definitions() {
+fn a_vectors_entry_requires_one_resource_and_one_digest_before_the_definitions() {
     let entries = [
         "pattern p := [lemma=x].\nvectors: {resource: \"a\", blake3: \"DIGEST\"}\n".to_owned(),
         "vectors: {resource: \"a\"}\npattern p := [lemma=x].\n".to_owned(),

@@ -49,7 +49,7 @@ impl FsmBuilder {
         self.definitions.build(&self.limits, None)
     }
 
-    /// [`Self::build`] with `vectors` answering the catalog's `near` tests,
+    /// [`Self::build`] with `vectors` resolving the catalog's `near` tests,
     /// which do not compile without a table.
     ///
     /// # Errors

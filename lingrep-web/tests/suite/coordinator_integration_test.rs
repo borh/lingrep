@@ -510,9 +510,8 @@ async fn advance(duration: std::time::Duration) {
 const GRACE_ELAPSED: std::time::Duration = std::time::Duration::from_millis(30_001);
 const WITHIN_GRACE: std::time::Duration = std::time::Duration::from_millis(29_999);
 
-// The tests below pause tokio time only while the scan that holds the permit
-// is on its blocking thread. Scan preparation reads the corpus database
-// through an sqlx pool, whose acquire timeout paused time ends early.
+// Pause Tokio time only after the blocking scan starts; SQLx pool acquisition
+// uses Tokio timeouts (sqlx::pool::PoolOptions::acquire_timeout).
 
 #[tokio::test]
 async fn a_running_scan_without_a_subscriber_for_30_seconds_is_cancelled_and_frees_the_permit() {

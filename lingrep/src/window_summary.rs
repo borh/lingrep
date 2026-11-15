@@ -1,5 +1,4 @@
-//! Exact summary counts for a catalog of token windows, by sorting windows of
-//! token identities in place of matching.
+//! Aggregates exact counts for token-window catalogs.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};

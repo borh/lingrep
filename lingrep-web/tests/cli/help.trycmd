@@ -34,7 +34,7 @@ Options:
           [default: /]
 
       --vectors <FILE>
-          Word-vector file that answers the `near` tests of every catalog the server compiles.
+          Word-vector file used to resolve the `near` tests of every catalog the server compiles.
           
           word2vec text: one value and its numbers per line.
           

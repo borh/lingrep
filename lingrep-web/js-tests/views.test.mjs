@@ -56,7 +56,7 @@ test("condition and scope text in each locale", async () => {
     documents: "documents with <button>genre</button>, with <button>ndc</button>, with year <button>year</button>",
     anyLast: "documents with year <button>year</button>, with <button>genre</button>",
     none: "",
-    reason: "This corpus has no condition named “genre”.",
+    reason: "“genre” is not available as a filter on this page.",
   });
   await useJapanese();
   assert.deepEqual(texts(), {
@@ -75,7 +75,7 @@ test("condition and scope text in each locale", async () => {
     documents: "<button>genre</button>・<button>ndc</button>を問わない、yearが<button>year</button>の文書",
     anyLast: "yearが<button>year</button>、<button>genre</button>を問わない文書",
     none: "",
-    reason: "このコーパスに「genre」という条件はありません。",
+    reason: "このページでは「genre」で絞り込めません。",
   });
 });
 

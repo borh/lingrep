@@ -3,7 +3,7 @@ import { t } from "./i18n.js";
 export const esc = (text) =>
   String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-/** HTML for a dictionary string: the string is escaped, each `{name}` slot receives `parts[name]` as HTML. */
+/** Escapes translated text, then fills `{name}` slots with escaped or trusted HTML from `parts`. */
 export const phrase = (key, parts) => esc(t(key)).replace(/\{(\w+)\}/g, (slot, name) => parts[name] ?? slot);
 
 export const fullStop = () => `<span class="tail">${esc(t("views.full_stop"))}</span>`;
@@ -64,7 +64,7 @@ const REASONS = {
   unknown_entry: "frequency.reason_unknown_entry",
 };
 
-/** Why the server answered `unsupported`; a reason without a string is shown as received. */
+/** Localizes an unsupported-query reason; unknown reason codes remain visible. */
 export const reasonText = (reply) => (Object.hasOwn(REASONS, reply.reason) ? t(REASONS[reply.reason], reply) : reply.reason);
 
 /**
@@ -106,7 +106,7 @@ export async function loadMeta(stateEl) {
   }
 }
 
-/** "Show more" requests. `pending` holds from `next` until its request settles; `cancel` aborts it. */
+/** Keeps one paging request pending until it settles; `cancel` aborts it. */
 export function pager(report) {
   let request = null;
   return {

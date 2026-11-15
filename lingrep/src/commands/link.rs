@@ -166,7 +166,11 @@ fn server_args(
         .as_ref()
         .or(input.root.as_ref())
         .filter(|path| path.as_os_str() != "-")
-        .ok_or_else(|| CliError::InvalidArgs("--serve cannot read the corpus from stdin".into()))?;
+        .ok_or_else(|| {
+            CliError::InvalidArgs(
+                "--serve requires a corpus file or directory; stdin is not supported".into(),
+            )
+        })?;
     let arguments: [OsString; 7] = [
         "ling serve".into(),
         "--host".into(),
