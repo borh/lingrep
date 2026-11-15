@@ -223,6 +223,7 @@ kbd {
 tr:hover { background: var(--row-hover-bg); }
 .kwic-row:hover { cursor: pointer; }
 .results-explorer { display: block; margin-top: 1rem; }
+.results-explorer > .cli-command { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
 .pattern-catalog { margin-bottom: 1rem; }
 .pattern-group-controls {
   display: flex;

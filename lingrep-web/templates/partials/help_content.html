@@ -1,4 +1,15 @@
-<h1><span data-i18n="help.title">lingrep patterns syntax help</span></h1>
+<h1><span data-i18n="help.title">Help with analysis and patterns</span></h1>
+<section class="pattern-help" data-analysis-help>
+  <h2 data-i18n="help.h_frequencies">Frequencies</h2>
+  <p data-i18n="help.p_frequencies">When count tables are configured, use Frequencies to count entries under document conditions. Occurrences count matches; documents count the documents containing them. Open an entry to inspect its charts and concordance lines. Documents with several metadata values can contribute to several bars.</p>
+  <h2 data-i18n="help.h_compare">Compare</h2>
+  <p data-i18n="help.p_compare">Choose two document selections from the same corpus and catalog. Compare shows counts, rates and log-likelihood scores for their entries. The selections can overlap; the page reports their shared documents and tokens. Check the scope descriptions before interpreting a difference.</p>
+  <h2 data-i18n="help.h_download">Download results</h2>
+  <p data-i18n="help.p_download">After a corpus search completes, Download results in this search scope writes an Excel workbook for the accepted search scope. Filtering or paging the displayed concordance does not narrow this export. The About sheet records the scope, overlap policy and any row truncation. If the search fails, previous completed results remain available for download.</p>
+  <h2 data-i18n="help.h_cli">CLI commands</h2>
+  <p data-i18n="help.p_cli">Frequencies and Compare show commands for the same query over your local count table, corpus and catalog. The view’s display sorting and text filter are separate. Run relative paths from their common parent directory; replace TABLE.lingtable, CORPUS.lingcorpus and CATALOG.lx with your local paths when shown. Copy a page link to preserve its browser controls and selections.</p>
+</section>
+
 <section class="pattern-help">
   <p data-i18n="help.p1"><code>pattern</code>, or a definition without a keyword, produces matches. <code>fragment</code> defines a reusable pattern; <code>set</code> defines a set of values. Neither produces matches.</p>
 

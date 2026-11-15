@@ -1,7 +1,7 @@
 import { currentLocale, onLocaleChange, t } from "./i18n.js";
 import { createConditionPicker } from "./condition-picker.js";
 import { count as num, fixed, places, significant } from "./numbers.js";
-import { hashHolds, shortForms } from "./frequency.js";
+import { hashHolds, shortForms, validConditions } from "./frequency.js";
 import { api, conditionText, esc, fieldName, fullStop, isAny, latestRequest, loadMeta, pager, phrase, reasonText, redrawKeepingFocus, scopeDocuments, showCorpus } from "./views.js";
 
 const PAGE = 100;
@@ -20,7 +20,7 @@ export function readState(hash) {
     if (!h.get(k)) continue;
     try {
       const w = JSON.parse(h.get(k));
-      if (w && typeof w === "object" && !Array.isArray(w)) s[k] = w;
+      if (validConditions(w)) s[k] = w;
       else s.bad = true;
     } catch {
       s.bad = true;

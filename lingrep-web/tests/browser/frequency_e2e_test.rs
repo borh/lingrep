@@ -943,6 +943,10 @@ fn write_entry_table(artifact: &std::path::Path, destination: &std::path::Path) 
 }
 
 async fn serve_entries() -> Served {
+    serve_entries_with_tags(false).await
+}
+
+async fn serve_entries_with_tags(tags: bool) -> Served {
     let metadata = WORKS
         .iter()
         .map(|(title, genre, year)| {
@@ -952,6 +956,18 @@ async fn serve_entries() -> Served {
             ];
             if let Some(genre) = genre {
                 fields.push(("genre".to_owned(), scalar(genre)));
+            }
+            if tags {
+                fields.push((
+                    "tags".to_owned(),
+                    MetadataValue::Scalars(
+                        vec![
+                            MetadataScalar::String("x".into()),
+                            MetadataScalar::String("y".into()),
+                        ]
+                        .into(),
+                    ),
+                ));
             }
             fields.sort_by(|left, right| left.0.cmp(&right.0));
             fields.into_boxed_slice()
@@ -2371,4 +2387,172 @@ async fn a_superseded_next_page_request_leaves_its_button_enabled() -> WebDriver
     result?;
     assert_eq!(*served.statuses.lock().unwrap(), Vec::<String>::new());
     Ok(())
+}
+
+#[tokio::test]
+async fn malformed_url_conditions_show_an_error_and_allow_reopening_the_view() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    driver.set_window_rect(0, 0, 390, 844).await?;
+    let served = serve(&[]).await;
+    for condition in [
+        json!({"genre": {"m": "in", "v": "ab"}}),
+        json!({"year": {"m": "range", "lo": {"value": 1900}}}),
+    ] {
+        let params = serde_urlencoded::to_string([("w", condition.to_string())]).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            open(&driver, &format!("{}#{params}", served.base), STATE),
+        )
+        .await
+        .expect("malformed address produces an error state within 8 seconds")?;
+        assert_no_page_errors(&driver).await?;
+        let message = driver.execute(STATE, vec![]).await?.json().clone();
+        assert!(
+            message.as_str().is_some_and(|text| !text.is_empty()),
+            "{message}"
+        );
+        open(&driver, &served.base, ROWS).await?;
+        assert_no_page_errors(&driver).await?;
+    }
+    driver.quit().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn frequency_profiles_explain_overlapping_values_and_help_covers_analysis_pages()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries_with_tags(true).await;
+    let result: WebDriverResult<()> = async {
+        driver.set_window_rect(0, 0, 390, 900).await?;
+        driver.goto(format!("{}#pattern=noun", served.base)).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('button.open-entry')",
+            "frequency entries",
+        )
+        .await?;
+        driver
+            .find(By::Css("button.open-entry"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('.fq-chart[data-key=tags] .fq-multivalue-note')",
+            "the explanation of overlapping values",
+        )
+        .await?;
+        let note = driver
+            .find(By::Css(".fq-chart[data-key=tags] .fq-multivalue-note"))
+            .await?
+            .text()
+            .await?;
+        assert!(note.contains("sum can exceed"), "{note}");
+        assert!(
+            driver
+                .find_all(By::Css(".fq-chart[data-key=genre] .fq-multivalue-note"))
+                .await?
+                .is_empty()
+        );
+        driver
+            .find(By::Css("[data-site-help-open]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-site-help]').open",
+            "the help dialog",
+        )
+        .await?;
+        let help = driver
+            .find(By::Css("[data-site-help] [data-analysis-help]"))
+            .await?
+            .text()
+            .await?;
+        for term in ["Frequencies", "Compare", "Download", "CLI"] {
+            assert!(help.contains(term), "{term}: {help}");
+        }
+        driver
+            .find(By::Css("[data-site-help-close]"))
+            .await?
+            .click()
+            .await?;
+        driver
+            .find(By::Css("[data-locale-toggle]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.documentElement.lang === 'ja'",
+            "Japanese",
+        )
+        .await?;
+        let note = driver
+            .find(By::Css(".fq-chart[data-key=tags] .fq-multivalue-note"))
+            .await?
+            .text()
+            .await?;
+        assert!(note.contains("合計"), "{note}");
+        assert_eq!(
+            driver
+                .execute(
+                    "return document.documentElement.scrollWidth > innerWidth",
+                    vec![]
+                )
+                .await?
+                .json(),
+            &json!(false)
+        );
+        Ok(())
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn unsupported_frequency_conditions_keep_their_explanation_after_a_locale_switch()
+-> WebDriverResult<()> {
+    use futures::FutureExt as _;
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result = std::panic::AssertUnwindSafe(async {
+        driver
+            .goto(format!("{}#where=%40section%20%3D%20abstract", served.base))
+            .await?;
+        wait_for(&driver, STATE, "the unsupported-condition explanation").await?;
+        driver
+            .find(By::Css("[data-locale-toggle]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.documentElement.lang === 'ja'",
+            "Japanese",
+        )
+        .await?;
+        let text = driver.execute(STATE, Vec::new()).await?.json().clone();
+        assert!(
+            text.as_str().is_some_and(|text| text.contains("@section")),
+            "{text}"
+        );
+        Ok::<(), thirtyfour::error::WebDriverError>(())
+    })
+    .catch_unwind()
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }

@@ -110,4 +110,17 @@ mod tests {
             "example source blocks should be tagged lang=\"ja\" (they contain Japanese)"
         );
     }
+    #[tokio::test]
+    async fn help_covers_the_analysis_workflow() {
+        let Html(html) = help_page(State(RequestStore::default())).await;
+        for term in [
+            "data-analysis-help",
+            "Frequencies",
+            "Compare",
+            "Download",
+            "CLI",
+        ] {
+            assert!(html.contains(term), "missing {term}");
+        }
+    }
 }

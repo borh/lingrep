@@ -505,6 +505,9 @@ ling --json table soranoha.collexeme.lingtable --top 100 \
   --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx
 ```
 
+`ling table --table TABLE` is equivalent to `ling table TABLE`; use exactly one form.
+The `--table` option is shared with `ling contrast`.
+
 Before the rows, `ling table` gives each pattern's `occurrences`, the sum of
 the counts of all its groups under the clause regardless of `--top`, and
 `works`, the number of admitted documents with at least one of them; a clause
@@ -2228,10 +2231,11 @@ satisfy the other conditions. The page shows the corresponding `ling table …
 --where …` command. The view applies its selected sort order and substring
 filter separately. Command paths are relative to the common parent directory of
 the table, corpus and catalog files; run the copied command from that directory.
-Absolute server paths are omitted. The command is unavailable when the inputs
-share only the filesystem root, a relative path contains `..`, or a path is not
-UTF-8. A clause with `@section` or `@sentence` is answered with an
-explanation rather than rows, because a table counts per document. The URL
+Absolute server paths are omitted. When the inputs share only the filesystem
+root, the command uses `TABLE.lingtable`, `CORPUS.lingcorpus` and `CATALOG.lx`;
+replace these with your local paths. A relative path containing `..` or a path
+that is not UTF-8 cannot be shown. A clause with `@section` or `@sentence` is
+answered with an explanation rather than rows, because a table counts per document. The URL
 stores the query state, so a copied link reopens the same view. Above the
 sentence, a "Corpus:" line names the selected table's corpus on both the
 Frequencies and Compare pages.

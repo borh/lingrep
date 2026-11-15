@@ -442,8 +442,6 @@ impl FrequencyPair {
         Ok(self.table_documents.sentences(position)?)
     }
 
-    /// The corpus and catalog paths a copied command names, if every input
-    /// shares a directory.
     fn command_inputs(&self) -> Option<(&str, &str)> {
         self.command_inputs
             .as_ref()

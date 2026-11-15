@@ -16,13 +16,22 @@ const HEADS = ["views.head_rank", "views.head_entry", "views.head_occurrences", 
 const TABLE_HEADS = ["frequency.head_value", "views.head_occurrences", "views.head_documents"];
 
 
+export function validConditions(value) {
+  const record = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+  const bound = (x) => x == null || (typeof x === "number" && Number.isFinite(x));
+  return record(value) && Object.values(value).every((condition) =>
+    record(condition) && ["in", "out", "range"].includes(condition.m)
+    && (!Object.hasOwn(condition, "v") || (Array.isArray(condition.v) && condition.v.every((x) => typeof x === "string")))
+    && bound(condition.lo) && bound(condition.hi));
+}
+
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
   const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", entry: h.get("entry"), read: h.get("read"), scope: h.get("scope"), bad: false };
   if (h.get("w")) {
     try {
       const w = JSON.parse(h.get("w"));
-      if (w && typeof w === "object" && !Array.isArray(w)) s.w = w;
+      if (validConditions(w)) s.w = w;
       else s.bad = true;
     } catch {
       s.bad = true;
@@ -126,7 +135,11 @@ export function mountFrequency(root) {
   const sourceEl = $("[data-fq-source]"), stateEl = $("[data-fq-state]"), tableEl = $("[data-fq-table]"), entryEl = $("[data-fq-entry]");
   let meta = null, s = readState(location.hash), answer = null, gen = 0, shown = 0;
   let editing = false;
-  const inflight = latestRequest(), paging = pager((message) => (stateEl.textContent = message));
+  let queryMessage = null;
+  const inflight = latestRequest(), paging = pager((message) => {
+    queryMessage = () => message;
+    stateEl.textContent = message;
+  });
   let profile = null, lined = null, plan = {}, preview = null, previewed = null, anchor = null, lastEntry = null, depth = 0;
 
   const pair = () => meta.pairs.find((p) => p.corpus === s.corpus && p.catalog === s.catalog);
@@ -459,7 +472,7 @@ export function mountFrequency(root) {
     return `<table><thead><tr>${TABLE_HEADS.map((h, i) => `<th${i ? ' class="r"' : ""}>${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${rows.map(([v, n, d]) => `<tr><td>${esc(v)}</td><td class="r">${num(n)}</td><td class="r">${num(d)}</td></tr>`).join("")}</tbody></table>`;
   }
   const chartHtml = (c) =>
-    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption><p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
+    `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption>${dim(c.key)?.list ? `<p class="fq-multivalue-note">${esc(t("frequency.multivalue_note"))}</p>` : ""}<p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
 
   const lineHtml = (l, i) =>
     `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src">${esc(t("frequency.document", { id: l.document }))}</span></li>`;
@@ -787,7 +800,7 @@ export function mountFrequency(root) {
 
   function renderAll() {
     const r = resolve();
-    stateEl.textContent = r.state ?? "";
+    stateEl.textContent = r.state ?? queryMessage?.() ?? "";
     if (r.sentence) renderSentence();
     else sentenceEl.innerHTML = r.state && meta.pairs.length && !s.bad ? sentenceFallback() : "";
     renderFigures();
@@ -807,6 +820,7 @@ export function mountFrequency(root) {
   async function load({ keepSentence = false } = {}) {
     const mine = ++gen;
     const signal = inflight.next();
+    queryMessage = null;
     paging.cancel();
     if (!keepSentence) answer = null;
     const r = keepSentence ? resolve() : renderAll();
@@ -822,7 +836,10 @@ export function mountFrequency(root) {
     try {
       reply = await api("frequency", { ...params(), limit: lastEntry ? Math.max(PAGE, depth) : PAGE }, signal);
     } catch (error) {
-      if (mine === gen) stateEl.textContent = error.message;
+      if (mine === gen) {
+        queryMessage = () => error.message;
+        stateEl.textContent = queryMessage();
+      }
       return;
     }
     if (mine !== gen) return;
@@ -832,7 +849,8 @@ export function mountFrequency(root) {
       stateEl.textContent = s.entry != null && s.where != null ? t("frequency.entry_needs_controls") : "";
     } else {
       answer = null;
-      stateEl.textContent = reply.status === "unsupported" ? reasonText(reply) : t("views.unavailable", { catalog: s.catalog, corpus: s.corpus });
+      queryMessage = () => reply.status === "unsupported" ? reasonText(reply) : t("views.unavailable", { catalog: s.catalog, corpus: s.corpus });
+      stateEl.textContent = queryMessage();
     }
     if (keepSentence) annotate();
     else renderSentence();

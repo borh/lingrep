@@ -10,6 +10,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use clap::Parser;
+use futures::FutureExt as _;
 use lingrep_core::token_match::TokenInfo;
 use serde_json::json;
 use thirtyfour::prelude::*;
@@ -43,14 +44,45 @@ async fn answer_as_gateway(down: Arc<AtomicBool>, request: Request, next: Next) 
 }
 
 async fn serve() -> Served {
-    let artifact = support::build_artifact(vec![(
-        "doc.md",
-        0,
-        false,
-        vec![vec![TokenInfo::default().with_orth("x")]],
-    )]);
+    serve_sectioned(false).await
+}
+
+async fn serve_sectioned(sectioned: bool) -> Served {
+    let artifact = if sectioned {
+        let words = ["HIT", "HIT", "OTHER", "rare", "OTHER", "HIT", "HIT"];
+        support::build_artifact_with_sections(
+            vec![(
+                "doc.md",
+                0,
+                false,
+                words
+                    .iter()
+                    .map(|word| vec![TokenInfo::default().with_orth(*word)])
+                    .collect(),
+            )],
+            (0..words.len())
+                .map(|i| {
+                    vec![
+                        if i % 2 == 0 {
+                            "introduction"
+                        } else {
+                            "methods"
+                        }
+                        .into(),
+                    ]
+                })
+                .collect(),
+        )
+    } else {
+        support::build_artifact(vec![(
+            "doc.md",
+            0,
+            false,
+            vec![vec![TokenInfo::default().with_orth("x")]],
+        )])
+    };
     let seed = artifact.directory.path().join("seed.lx");
-    std::fs::write(&seed, SEED).unwrap();
+    std::fs::write(&seed, if sectioned { "fragment unused := [text=NOT].\nhigh := [text=HIT].\nmedium := [text=OTHER].\nlow := [text=rare]." } else { SEED }).unwrap();
     let dictionary = lingrep_core::testing::MiniDictionary::new();
     let argv: Vec<&std::ffi::OsStr> = vec![
         "lingrep-web".as_ref(),
@@ -554,4 +586,65 @@ async fn missing_and_abandoned_search_streams_close_without_retries_or_lost_noti
     driver.quit().await?;
     served.server.abort();
     result
+}
+
+#[tokio::test]
+async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_sectioned(true).await;
+    let result = std::panic::AssertUnwindSafe(async {
+        driver.set_window_rect(0, 0, 1440, 1000).await?;
+        driver.goto(served.base.trim_end_matches("sample")).await?;
+        wait_for(&driver, "return !!document.querySelector('.cm-lint-marker-warning')", "the unused-fragment warning").await?;
+        driver.execute("document.querySelector('input[name=derive_compounds]').checked = false; document.querySelector('[data-corpus-search]').requestSubmit()", vec![]).await?;
+        wait_for(&driver, "return !!document.querySelector('.kwic-row') && !!document.querySelector('[data-cli-command]')", "the concordance and its command summary").await?;
+        let layout = driver.execute("const r = document.querySelector('.pattern-rail').getBoundingClientRect(); const d = document.querySelector('.detail-panel').getBoundingClientRect(); return {rail:r.toJSON(), detail:d.toJSON(), overflow:document.documentElement.scrollWidth-innerWidth};", vec![]).await?.json().clone();
+        assert!(layout["detail"]["x"].as_f64().unwrap() >= layout["rail"]["right"].as_f64().unwrap(), "{layout}");
+        assert!(layout["detail"]["width"].as_f64().unwrap() > 800.0, "{layout}");
+        assert!(layout["overflow"].as_f64().unwrap() <= 1.0, "{layout}");
+        driver.find(By::Css(".kwic-row")).await?.click().await?;
+        wait_for(&driver, "return !!document.querySelector('#inspector-dock:not([hidden]) .hit-detail')", "the docked inspector").await?;
+        let inspector = driver.execute("const d = document.querySelector('.detail-panel').getBoundingClientRect(); const i = document.querySelector('#inspector-dock').getBoundingClientRect(); return [d.width, i.left >= d.right - 1];", vec![]).await?.json().clone();
+        assert!(inspector[0].as_f64().unwrap() > 400.0, "{inspector}");
+        assert_eq!(inspector[1], true);
+        driver.find(By::Css("#inspector-dock [data-inspector-close]")).await?.click().await?;
+        driver.set_window_rect(0, 0, 390, 900).await?;
+        let mobile = driver.execute("return [document.querySelector('.detail-panel').getBoundingClientRect().width, document.documentElement.scrollWidth - innerWidth]", vec![]).await?.json().clone();
+        assert!(mobile[0].as_f64().unwrap() > 300.0, "{mobile}");
+        assert!(mobile[1].as_f64().unwrap() <= 1.0, "{mobile}");
+        driver.set_window_rect(0, 0, 1440, 1000).await?;
+        driver.find(By::Css("[data-detail-tab=clusters]")).await?.click().await?;
+        let url = driver.current_url().await?;
+        driver.execute("window.__clusterPending = 0; document.body.addEventListener('htmx:beforeRequest', e => { if (e.detail.elt.id === 'section-cluster-distance') { __clusterPending++; e.detail.xhr.addEventListener('loadend', () => __clusterPending--, {once:true}); } });", vec![]).await?;
+        driver.execute("window.__oldCluster = document.querySelector('[data-section-analysis]')", vec![]).await?;
+        driver.execute("const minimum = document.querySelector('#cluster-minimum'); minimum.value = '2'; minimum.focus();", vec![]).await?;
+        driver.find(By::Id("cluster-minimum")).await?.send_keys(Key::Enter).await?;
+        wait_for(&driver, "return !__oldCluster.isConnected && document.querySelector('#cluster-minimum')?.value === '2' && __clusterPending === 0 && !document.querySelector('.htmx-settling')", "the minimum-two cluster response").await?;
+        let leaves = driver.execute("return [...document.querySelectorAll('[data-section-dendrogram] .dendrogram-label title')].map(e=>e.textContent).sort()", vec![]).await?.json().clone();
+        assert_eq!(leaves, json!(["high", "medium"]));
+        assert_eq!(driver.current_url().await?, url);
+        assert_eq!(driver.execute("return document.activeElement.id", vec![]).await?.json(), &json!("cluster-minimum"));
+        driver.execute("window.__oldCluster = document.querySelector('[data-section-analysis]')", vec![]).await?;
+        driver.find(By::Id("cluster-minimum")).await?.send_keys(Key::Up).await?;
+        wait_for(&driver, "return !__oldCluster.isConnected && document.querySelector('#cluster-minimum')?.value === '3' && __clusterPending === 0 && !document.querySelector('.htmx-settling')", "the ArrowUp cluster response").await?;
+        assert_eq!(driver.current_url().await?, url);
+        assert_eq!(driver.execute("return document.activeElement.id", vec![]).await?.json(), &json!("cluster-minimum"));
+        let note = driver.find(By::Css("[data-cluster-below-minimum]")).await?.text().await?;
+        assert!(note.starts_with("2 patterns"), "{note}");
+        let marker = driver.find(By::Css(".cm-lint-marker-warning")).await?;
+        driver.action_chain().move_to_element_center(&marker).perform().await?;
+        wait_for(&driver, "return document.querySelector('.cm-tooltip-lint')?.textContent.includes('A fragment is never referenced.')", "the English lint diagnostic").await?;
+        driver.find(By::Css("[data-locale-toggle]")).await?.click().await?;
+        wait_for(&driver, "return document.documentElement.lang === 'ja' && !!document.querySelector('.cm-lint-marker-warning')", "the Japanese lint marker").await?;
+        let marker = driver.find(By::Css(".cm-lint-marker-warning")).await?;
+        driver.action_chain().move_to_element_center(&marker).perform().await?;
+        wait_for(&driver, "return document.querySelector('.cm-tooltip-lint')?.textContent.includes('参照されていない fragment')", "the Japanese lint diagnostic").await?;
+        Ok::<(), thirtyfour::error::WebDriverError>(())
+    }).catch_unwind().await;
+    driver.quit().await?;
+    served.server.abort();
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }

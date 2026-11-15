@@ -567,7 +567,13 @@ fn command_paths(paths: [&Path; 3]) -> Option<[String; 3]> {
     while !paths.iter().all(|path| path.starts_with(parent)) {
         parent = parent.parent()?;
     }
-    parent.parent()?;
+    if parent.parent().is_none() {
+        return Some([
+            "TABLE.lingtable".into(),
+            "CORPUS.lingcorpus".into(),
+            "CATALOG.lx".into(),
+        ]);
+    }
     let relative = paths
         .iter()
         .map(|path| {
@@ -2270,20 +2276,26 @@ pub(crate) mod tests {
     #[test]
     #[cfg(unix)]
     fn command_paths_hide_inputs_outside_the_shared_directory() {
-        for paths in [
-            [
-                "/srv/table",
-                "/home/alice/private/corpus",
-                "/nix/store/catalog",
-            ],
-            [
-                "/srv/results/../../home/alice/private/table",
-                "/srv/results/corpus",
-                "/srv/results/catalog",
-            ],
-        ] {
-            assert!(command_paths(paths.map(Path::new)).is_none());
-        }
+        assert_eq!(
+            command_paths([
+                Path::new("/srv/table"),
+                Path::new("/home/alice/private/corpus"),
+                Path::new("/nix/store/catalog"),
+            ]),
+            Some([
+                "TABLE.lingtable".into(),
+                "CORPUS.lingcorpus".into(),
+                "CATALOG.lx".into()
+            ])
+        );
+        assert!(
+            command_paths([
+                Path::new("/srv/results/../../home/alice/private/table"),
+                Path::new("/srv/results/corpus"),
+                Path::new("/srv/results/catalog"),
+            ])
+            .is_none()
+        );
         use std::os::unix::ffi::OsStrExt;
         let invalid = Path::new(std::ffi::OsStr::from_bytes(b"/srv/\xff"));
         assert!(
