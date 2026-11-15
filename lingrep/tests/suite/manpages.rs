@@ -134,6 +134,15 @@ fn manpages_cover_root_and_every_public_nested_command() {
     expected.sort();
     assert_eq!(actual, expected);
 
+    for name in &actual {
+        let page = std::fs::read_to_string(output_dir.join(name)).unwrap();
+        let header = page.lines().find(|line| line.starts_with(".TH ")).unwrap();
+        assert!(
+            header.contains(&format!("ling {}", env!("CARGO_PKG_VERSION"))),
+            "{name}: {header}"
+        );
+    }
+
     for name in [
         "ling.1",
         "ling-check.1",

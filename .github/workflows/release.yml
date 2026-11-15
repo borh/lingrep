@@ -79,7 +79,7 @@ jobs:
           binary="target/${{ matrix.target }}/release/ling"
           "$binary" --version
           "$binary" check --patterns patterns/sfe.lx
-          "$binary" serve --help > /dev/null
+          python3 scripts/smoke-release-server.py "$binary"
 
       - name: Check the binary loads only system libraries
         run: scripts/check-release-linkage.sh "target/${{ matrix.target }}/release/ling"

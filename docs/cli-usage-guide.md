@@ -2314,8 +2314,10 @@ labels. If no corpus with a count table contains a labelled key, the server
 reports the key at startup and continues.
 [`lingrep-web/labels/soranoha-catalog.json`](../lingrep-web/labels/soranoha-catalog.json)
 provides labels for every Soranoha catalog column in English and Japanese. The
-`lingrep` and `lingrep-web` Nix packages install it as
-`share/lingrep-web/labels/soranoha-catalog.json`:
+`lingrep` and `lingrep-web` Nix packages and the release archives install it as
+`share/lingrep-web/labels/soranoha-catalog.json`. In an extracted release archive,
+use `--metadata-labels ./share/lingrep-web/labels/soranoha-catalog.json` from the
+archive's root directory. With Nix:
 
 ```bash
 lingrep=$(nix build --no-link --print-out-paths .#lingrep)

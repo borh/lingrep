@@ -51,6 +51,7 @@ fn render_page(path: &str) -> Result<RenderedPage, CliError> {
     let mut bytes = Vec::new();
     clap_mangen::Man::new(command.clone())
         .section("1")
+        .source(format!("ling {}", env!("CARGO_PKG_VERSION")))
         .date("")
         .render(&mut bytes)
         .map_err(CliError::Io)?;
