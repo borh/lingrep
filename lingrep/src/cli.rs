@@ -878,8 +878,22 @@ pub struct SummarizeArgs {
 #[derive(Debug, Args)]
 pub struct TableArgs {
     /// Count table written by `ling summarize --write-table`.
-    #[arg(value_name = "TABLE")]
-    pub table: PathBuf,
+    #[arg(
+        value_name = "TABLE",
+        required_unless_present = "table_option",
+        conflicts_with = "table_option"
+    )]
+    pub table: Option<PathBuf>,
+
+    /// Count table, as an alternative to the positional TABLE.
+    #[arg(
+        long = "table",
+        value_name = "TABLE",
+        help_heading = "Input",
+        required_unless_present = "table",
+        conflicts_with = "table"
+    )]
+    pub table_option: Option<PathBuf>,
 
     #[command(flatten)]
     pub catalog: CatalogArgs,

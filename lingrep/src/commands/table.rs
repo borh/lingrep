@@ -99,6 +99,11 @@ pub fn run(
     terminal: &TerminalArbiter,
     output: OutputMode,
 ) -> Result<CommandOutcome, CliError> {
+    let table_path = args
+        .table
+        .as_deref()
+        .or(args.table_option.as_deref())
+        .ok_or_else(|| CliError::InvalidArgs("table requires TABLE or --table TABLE".into()))?;
     let started = Instant::now();
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let clause = document_clause("table --where", args.clause.as_deref())?;
@@ -127,7 +132,7 @@ pub fn run(
         .transpose()?;
     let top = resolve_summary_top(output, args.top);
     let artifact = CorpusArtifact::open(&args.corpus)?;
-    let (table, key) = open_table(&args.table, &artifact, &catalog.fingerprint)?;
+    let (table, key) = open_table(table_path, &artifact, &catalog.fingerprint)?;
     let lookup = Instant::now();
     let entry = entry
         .map(|(pattern, entry_key)| find_entry(&table, pattern, entry_key))
@@ -166,7 +171,7 @@ pub fn run(
                 .map_err(|error| CliError::Execution(execution_output_error(error)))
         };
         emit(TableEvent::Run(TableRun {
-            table: args.table.display().to_string(),
+            table: table_path.display().to_string(),
             analysis_identity: key.analysis_identity.clone(),
             catalog_fingerprint: key.catalog_fingerprint.clone(),
             matcher_revision: key.matcher_revision.clone(),
@@ -240,7 +245,7 @@ pub fn run(
         emit(
             &mut writer,
             TableEvent::Run(TableRun {
-                table: args.table.display().to_string(),
+                table: table_path.display().to_string(),
                 analysis_identity: key.analysis_identity.clone(),
                 catalog_fingerprint: key.catalog_fingerprint.clone(),
                 matcher_revision: key.matcher_revision.clone(),

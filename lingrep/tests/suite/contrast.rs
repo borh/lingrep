@@ -813,3 +813,25 @@ fn table_and_contrast_reject_document_ids_absent_from_the_corpus() {
         );
     }
 }
+
+#[test]
+fn table_accepts_the_same_table_option_as_contrast() {
+    let fixture = fixture();
+    let output = lingrep_without_dictionary()
+        .args(["--json", "table", "--table"])
+        .arg(&fixture.table)
+        .arg("--patterns")
+        .arg(&fixture.catalog)
+        .arg("--corpus")
+        .arg(&fixture.artifact)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let rows = |output: &std::process::Output| {
+        parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|record| record["type"] == "row")
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows(&output), rows(&run(&fixture, "table", &[])));
+}
