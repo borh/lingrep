@@ -18,6 +18,8 @@ pub mod corpus;
 pub mod execution;
 pub mod helpers;
 mod mini_dictionary;
+#[cfg(unix)]
+pub mod permissions;
 
 pub use mini_dictionary::MiniDictionary;
 

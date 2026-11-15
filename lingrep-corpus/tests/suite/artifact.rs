@@ -1837,19 +1837,22 @@ async fn open_and_verify_reject_each_adversarial_artifact_state() {
 
 #[tokio::test]
 async fn an_unreadable_component_is_an_io_error_and_not_artifact_corruption() {
-    use std::os::unix::fs::PermissionsExt;
-
     for component in ["tokens.v1.zst", "provenance.sqlite"] {
         let fixture = ArtifactFixture::new().await;
         let path = fixture.root.join(component);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        let Some(permissions) =
+            lingrep_core::testing::permissions::UnreadableFile::new(&path).unwrap()
+        else {
+            eprintln!("SKIP: this process can read mode-000 files");
+            return;
+        };
 
         let error = match CorpusArtifact::open(&fixture.root) {
             Ok(artifact) => artifact.provenance_view().await.map(drop).unwrap_err(),
             Err(error) => error,
         };
 
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        drop(permissions);
         assert_eq!(error.code(), "io", "{component}: {error}");
         assert!(!error.is_artifact_corruption(), "{component}");
     }

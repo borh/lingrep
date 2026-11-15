@@ -615,16 +615,19 @@ async fn an_incomplete_artifact_is_preserved_at_startup_and_a_copy_can_finish() 
 
 #[tokio::test]
 async fn an_artifact_the_process_may_not_read_is_left_in_place_at_startup() {
-    use std::os::unix::fs::PermissionsExt;
-
     let fixture = BuiltBesideSource::new().await;
     let tokens = fixture.artifact.join("tokens.v1.zst");
     let before = file_bytes(&fixture.artifact);
-    fs::set_permissions(&tokens, fs::Permissions::from_mode(0o000)).unwrap();
+    let Some(permissions) =
+        lingrep_core::testing::permissions::UnreadableFile::new(&tokens).unwrap()
+    else {
+        eprintln!("SKIP: this process can read mode-000 files");
+        return;
+    };
 
     let readiness = terminal_readiness(&fixture.restarted()).await;
 
-    fs::set_permissions(&tokens, fs::Permissions::from_mode(0o644)).unwrap();
+    drop(permissions);
     assert_eq!(readiness, FAILED_CORRUPTION);
     assert_eq!(file_bytes(&fixture.artifact), before);
 }
