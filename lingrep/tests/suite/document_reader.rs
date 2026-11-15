@@ -320,7 +320,7 @@ fn a_sidecar_that_matches_no_served_corpus_stops_startup() {
         let (code, stderr) = serve_with(&fixture, &extra)
             .err()
             .unwrap_or_else(|| panic!("{sidecars:?} started"));
-        assert_eq!(code, Some(2), "{stderr}");
+        assert_eq!(code, Some(1), "{stderr}");
         assert!(stderr.contains("--reading-sidecar"), "{stderr}");
         for expected in expected {
             assert!(stderr.contains(&expected), "{expected}: {stderr}");
@@ -341,7 +341,7 @@ fn a_sidecar_that_matches_no_served_corpus_stops_startup() {
     )
     .err()
     .unwrap_or_else(|| panic!("a source tree with a sidecar started"));
-    assert_eq!(code, Some(2), "{stderr}");
+    assert_eq!(code, Some(1), "{stderr}");
     assert!(
         stderr.contains("no served corpus is a prepared .lingcorpus artifact"),
         "{stderr}"

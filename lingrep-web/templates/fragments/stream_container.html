@@ -1,6 +1,7 @@
 <div id="search-stream"
      sse-connect="api/stream/{{ request_id }}"
-     sse-swap="progress,result,error"
+     sse-swap="progress,result,error,cancelled"
+     sse-close="close"
      hx-swap="innerHTML">
     {% include "fragments/revision_status.html" %}
 </div>

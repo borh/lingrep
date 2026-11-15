@@ -85,6 +85,10 @@ pub enum CliError {
     #[error("Invalid arguments: {0}")]
     InvalidArgs(String),
 
+    #[cfg(feature = "web")]
+    #[error("{0}")]
+    Serve(#[from] lingrep_web::serve::ServeError),
+
     #[error("{command} does not support {output} output")]
     UnsupportedOutput {
         command: &'static str,
@@ -237,6 +241,14 @@ impl CliError {
         match self {
             Self::InvalidArgs(_) => {
                 ErrorClassification::usage("invalid_invocation", DiagnosticStage::Invocation)
+            }
+            #[cfg(feature = "web")]
+            Self::Serve(lingrep_web::serve::ServeError::InvalidArguments(_)) => {
+                ErrorClassification::usage("invalid_invocation", DiagnosticStage::Invocation)
+            }
+            #[cfg(feature = "web")]
+            Self::Serve(lingrep_web::serve::ServeError::Runtime(_)) => {
+                ErrorClassification::failure("serve", DiagnosticStage::Unknown, AfterChange)
             }
             Self::UnsupportedOutput { .. } => {
                 ErrorClassification::usage("unsupported_output", DiagnosticStage::Invocation)

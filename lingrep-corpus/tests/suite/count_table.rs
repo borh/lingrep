@@ -1712,3 +1712,58 @@ fn verification_rejects_repeated_ranks_and_inconsistent_document_major_cells() {
         .verify()
         .expect("valid table");
 }
+
+#[test]
+fn cancellation_during_value_aggregation_stops_before_the_remaining_documents() {
+    use lingrep_corpus::DocumentSlots;
+    use std::cell::Cell;
+
+    struct CancellingSlots {
+        visits: Cell<usize>,
+        cancellation: CancellationFlag,
+        cancel_after: usize,
+    }
+    impl DocumentSlots for CancellingSlots {
+        fn document_count(&self) -> usize {
+            3
+        }
+        fn slot_count(&self) -> usize {
+            1
+        }
+        fn slots(&self, _: usize) -> &[u32] {
+            let visits = self.visits.get() + 1;
+            self.visits.set(visits);
+            if visits == self.cancel_after {
+                self.cancellation.cancel();
+            }
+            &[0]
+        }
+    }
+    let documents = (0..3)
+        .map(|document_id| DocumentTotals {
+            document_id,
+            sentences: 1,
+            tokens: 1,
+        })
+        .collect::<Vec<_>>();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = write_table(
+        &directory.path().join("t.lingtable"),
+        &documents,
+        &vec![vec![vec![(0, 1), (1, 1), (2, 1)]]],
+    );
+    let mask = table.mask(|_| true);
+    for cancel_after in [1, 3, 4, 6] {
+        let cancellation = CancellationFlag::new();
+        let slots = CancellingSlots {
+            visits: Cell::new(0),
+            cancellation: cancellation.clone(),
+            cancel_after,
+        };
+        assert!(matches!(
+            table.value_counts_cancellable(&slots, &mask, [(0, 1), (1, 1), (2, 1)], &cancellation),
+            Err(CountTableError::Cancelled)
+        ));
+        assert_eq!(slots.visits.get(), cancel_after);
+    }
+}

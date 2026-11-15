@@ -28,6 +28,7 @@ const GATEWAY_PAGE: &str =
 
 struct Served {
     base: String,
+    store: lingrep_web::state::RequestStore,
     gateway_down: Arc<AtomicBool>,
     server: tokio::task::JoinHandle<()>,
     _artifact: support::ArtifactFixture,
@@ -67,14 +68,17 @@ async fn serve() -> Served {
     let store = lingrep_web::serve::store(&args, config).await.unwrap();
     let gateway_down = Arc::new(AtomicBool::new(false));
     let down = Arc::clone(&gateway_down);
-    let app = lingrep_web::app_router_at(store, &args.base_path).layer(axum::middleware::from_fn(
-        move |request, next| answer_as_gateway(Arc::clone(&down), request, next),
-    ));
+    let app = lingrep_web::app_router_at(store.clone(), &args.base_path).layer(
+        axum::middleware::from_fn(move |request, next| {
+            answer_as_gateway(Arc::clone(&down), request, next)
+        }),
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/sub/sample", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Served {
         base,
+        store,
         gateway_down,
         server,
         _artifact: artifact,
@@ -478,6 +482,75 @@ async fn japanese_is_applied_to_stream_swaps_replaced_elements_and_attribute_slo
         .await
     }
     .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn missing_and_abandoned_search_streams_close_without_retries_or_lost_notices()
+-> WebDriverResult<()> {
+    use askama::Template as _;
+    use lingrep_web::revision::{AttemptPhase, CancelReason, WorkbenchId};
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve().await;
+    let registry = &served.store.coordinators;
+    let permit = registry.acquire_scan_permit().await;
+    let workbench = WorkbenchId::new("abandoned-stream");
+    registry
+        .accept_revision(
+            workbench.clone(),
+            served.store.corpora.resolve(None).unwrap(),
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::timeout(std::time::Duration::from_secs(40), async {
+        loop {
+            if registry
+                .snapshot(&workbench)
+                .await
+                .unwrap()
+                .state
+                .is_terminal()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::resume();
+    drop(permit);
+    let cancelled = registry.snapshot(&workbench).await.unwrap();
+    assert_eq!(
+        cancelled.state.current_attempt().unwrap().phase,
+        AttemptPhase::Cancelled(CancelReason::Abandoned)
+    );
+    let result: WebDriverResult<()> = async {
+        driver.goto(served.base.trim_end_matches("sample")).await?;
+        wait_for(&driver, "return !!window.htmx && !!document.querySelector('#search-status')", "the corpus search page").await?;
+        driver.execute("window.__streams = []; const create = htmx.createEventSource; htmx.createEventSource = (url) => { const source = create(url); __streams.push(source); return source; };", vec![]).await?;
+        for (id, view, message) in [("missing-stream", None, "Request not found"), ("abandoned-stream", Some(&cancelled), "This search was stopped")] {
+            let status = lingrep_web::revision_status::project_revision_status(view);
+            let html = lingrep_web::templates::StreamContainer { request_id: id, status: &status }.render().unwrap();
+            driver.execute("const target = document.querySelector('#search-status'); htmx.trigger(target, 'htmx:beforeCleanupElement', {elt: target}); target.innerHTML = arguments[0]; htmx.process(target);", vec![json!(html)]).await?;
+            wait_for(&driver, "return __streams.at(-1)?.readyState === EventSource.CLOSED", "the terminal event stream to close").await?;
+            let text = driver.find(By::Id("search-stream")).await?.text().await?;
+            assert!(text.contains(message), "{text}");
+            assert_eq!(driver.execute("return document.querySelector('#search-stream').dataset.streamFinished", vec![]).await?.json(), &json!("true"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+        assert_eq!(driver.execute("return [__streams.length, document.querySelectorAll('.stream-lost').length]", vec![]).await?.json(), &json!([2, 0]));
+        Ok(())
+    }.await;
     driver.quit().await?;
     served.server.abort();
     result

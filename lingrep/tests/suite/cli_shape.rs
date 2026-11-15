@@ -94,7 +94,7 @@ fn serve_takes_the_lingrep_web_arguments_and_rejects_json_output() {
 
 #[cfg(feature = "web")]
 #[test]
-fn serve_reports_an_occupied_port_as_an_invocation_error() {
+fn serve_reports_an_occupied_port_as_a_runtime_failure() {
     let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = occupied.local_addr().unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -112,7 +112,7 @@ fn serve_reports_an_occupied_port_as_an_invocation_error() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert!(stderr.contains(&address.to_string()), "{stderr}");
 }
@@ -2495,6 +2495,61 @@ fn query_serving_rejects_analysis_options_it_cannot_apply() {
             assert!(error.contains("ling corpus build"), "{error}");
         }
     }
+}
+
+#[cfg(feature = "web")]
+#[test]
+fn serve_distinguishes_loading_failures_from_invalid_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    for (arguments, expected) in [
+        (vec!["--input", "missing-source.txt"], 1),
+        (vec!["--corpus", "invalid-declaration"], 2),
+    ] {
+        let output = lingrep()
+            .current_dir(directory.path())
+            .args(["serve", "--host", "127.0.0.1", "--port", "0", "--dict-path"])
+            .arg(dictionary.path())
+            .args(arguments)
+            .timeout(Duration::from_secs(60))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(expected), "{stderr}");
+        assert!(!stderr.contains("panicked"), "{stderr}");
+    }
+}
+
+#[cfg(all(unix, feature = "web"))]
+#[test]
+fn serve_redirected_logs_have_no_ansi_escapes() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("corpus.txt");
+    std::fs::write(&input, "猫。\n").unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let mut child = lingrep_std()
+        .args(["serve", "--host", "127.0.0.1", "--port", "0"])
+        .arg("--input")
+        .arg(&input)
+        .arg("--dict-path")
+        .arg(dictionary.path())
+        .env_remove("NO_COLOR")
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert!(line.contains("listening on"), "{line}");
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("termination signal received"), "{stderr}");
+    assert!(!stderr.contains('\u{1b}'), "{stderr}");
 }
 
 #[test]

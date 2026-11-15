@@ -471,6 +471,7 @@ impl FrequencyPair {
         key: &str,
         mask: &DocumentMask,
         counts: impl IntoIterator<Item = (usize, u64)>,
+        cancellation: &CancellationFlag,
     ) -> Result<Vec<ValueCount>, QueryError> {
         let index = self.key_index(key)?;
         let values = self.table_documents.value_count(index) as usize;
@@ -481,7 +482,9 @@ impl FrequencyPair {
             });
         }
         let column = self.table_documents.numbered_column(index)?;
-        Ok(self.table.value_counts(&column, mask, counts)?)
+        Ok(self
+            .table
+            .value_counts_cancellable(&column, mask, counts, cancellation)?)
     }
 
     fn slot_of(&self, key: &str, value: &str) -> Result<Option<usize>, QueryError> {
@@ -587,6 +590,7 @@ impl FrequencyPair {
         };
         let mut total = (0, 0);
         for (document, count) in pairs() {
+            super::check_cancellation(cancellation)?;
             if mask.admits(document) {
                 total.0 += count;
                 total.1 += 1;
@@ -602,7 +606,7 @@ impl FrequencyPair {
                 Err(unsupported) => return Ok(Err(unsupported)),
             };
             let mask = self.mask(&self.admitted(parsed.as_ref(), cancellation)?);
-            let sums = self.value_sums(&dimension.key, &mask, pairs())?;
+            let sums = self.value_sums(&dimension.key, &mask, pairs(), cancellation)?;
             let (none, sums) = sums
                 .split_last()
                 .expect("value counts include the slot of documents without a value");
@@ -656,6 +660,7 @@ impl FrequencyPair {
                 },
             });
         }
+        super::check_cancellation(cancellation)?;
         Ok(Ok(Profile {
             group: group.clone(),
             count: total.0,

@@ -509,7 +509,7 @@ const WIDE_QUERY = "(min-width: 64rem)";
 // *name* (htmx:sseMessage's detail is the raw MessageEvent) rather than on
 // markup, so every emitter of a terminal frame is covered — the revision-
 // status error frame and the "Request not found" frame alike.
-const FINISHED_SSE_EVENTS = new Set(["result", "error"]);
+const FINISHED_SSE_EVENTS = new Set(["result", "error", "cancelled"]);
 
 export function isFinishedSseEvent(eventName) {
   return FINISHED_SSE_EVENTS.has(eventName);

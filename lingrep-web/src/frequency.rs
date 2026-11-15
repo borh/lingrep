@@ -1007,6 +1007,7 @@ impl FrequencyPair {
         clause: Option<&ScopeClause>,
         cancellation: &CancellationFlag,
     ) -> Result<Vec<bool>, QueryError> {
+        check_cancellation(cancellation)?;
         let Some(clause) = clause else {
             return Ok(vec![true; self.table.document_ids().len()]);
         };
@@ -1731,17 +1732,19 @@ pub(crate) mod tests {
             .map(|_| ())
             .expect_err("values")
         ));
-        assert!(cancelled(
-            pair.profile(
-                &dimensions,
-                "p",
-                &serde_json::json!({"kind": "surface", "value": "x"}),
-                &BTreeMap::new(),
-                &raised,
-            )
-            .map(|_| ())
-            .expect_err("profile")
-        ));
+        for dimensions in [&dimensions[..], &[][..]] {
+            assert!(cancelled(
+                pair.profile(
+                    dimensions,
+                    "p",
+                    &serde_json::json!({"kind": "surface", "value": "x"}),
+                    &BTreeMap::new(),
+                    &raised,
+                )
+                .map(|_| ())
+                .expect_err("profile")
+            ));
+        }
     }
 
     #[test]

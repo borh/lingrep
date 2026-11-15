@@ -2007,6 +2007,22 @@ impl CountTable {
         mask: &DocumentMask,
         counts: impl IntoIterator<Item = (usize, u64)>,
     ) -> Result<Vec<ValueCount>, CountTableError> {
+        self.value_counts_cancellable(slots, mask, counts, &CancellationFlag::new())
+    }
+
+    /// As [`Self::value_counts`], with cancellation checked during document aggregation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::value_counts`], or [`CountTableError::Cancelled`] if cancellation is raised.
+    pub fn value_counts_cancellable(
+        &self,
+        slots: &impl DocumentSlots,
+        mask: &DocumentMask,
+        counts: impl IntoIterator<Item = (usize, u64)>,
+        cancellation: &CancellationFlag,
+    ) -> Result<Vec<ValueCount>, CountTableError> {
+        check_cancellation(cancellation)?;
         if mask.table != self.instance || slots.document_count() != self.document_ids.len() {
             return Err(corrupt("mask or slots were built for a different table"));
         }
@@ -2023,6 +2039,7 @@ impl CountTable {
             slots.slot_count()
         ];
         for document in 0..slots.document_count() {
+            check_cancellation(cancellation)?;
             if !mask.admitted[document] {
                 continue;
             }
@@ -2042,6 +2059,7 @@ impl CountTable {
             }
         }
         for (document, count) in counts {
+            check_cancellation(cancellation)?;
             let admitted = *mask
                 .admitted
                 .get(document)
@@ -2055,6 +2073,7 @@ impl CountTable {
                 sum.works += u64::from(count > 0);
             }
         }
+        check_cancellation(cancellation)?;
         Ok(sums)
     }
 

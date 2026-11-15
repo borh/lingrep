@@ -139,9 +139,10 @@ async fn test_search_returns_sse_container() {
         "should connect to stream"
     );
     assert!(
-        html.contains("sse-swap=\"progress,result,error\""),
+        html.contains("sse-swap=\"progress,result,error,cancelled\""),
         "should subscribe to the event names emitted by the server"
     );
+    assert!(html.contains("sse-close=\"close\""));
     assert!(
         html.contains("hx-swap=\"innerHTML\""),
         "each progress or terminal event should replace the prior status"

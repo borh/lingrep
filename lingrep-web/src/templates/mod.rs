@@ -811,7 +811,8 @@ mod tests {
         };
         let html = container.render().unwrap();
         assert!(html.contains("sse-connect=\"api/stream/abc123\""));
-        assert!(html.contains("sse-swap=\"progress,result,error\""));
+        assert!(html.contains("sse-swap=\"progress,result,error,cancelled\""));
+        assert!(html.contains("sse-close=\"close\""));
         assert!(html.contains("id=\"live-results\" hx-swap-oob=\"innerHTML\""));
         assert!(html.contains("hx-swap=\"innerHTML\""));
         assert!(!html.contains("result:beforeend"));

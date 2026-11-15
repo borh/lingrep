@@ -7,6 +7,7 @@ import { isFinishedSseEvent } from "../assets/results-explorer.js";
 test("terminal SSE event names finish the stream guard", () => {
   assert.equal(isFinishedSseEvent("result"), true);
   assert.equal(isFinishedSseEvent("error"), true);
+  assert.equal(isFinishedSseEvent("cancelled"), true);
   assert.equal(isFinishedSseEvent("progress"), false);
   assert.equal(isFinishedSseEvent(undefined), false);
   assert.equal(isFinishedSseEvent(""), false);

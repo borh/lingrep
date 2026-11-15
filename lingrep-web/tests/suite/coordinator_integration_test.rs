@@ -700,7 +700,13 @@ async fn shutdown_cancels_a_running_scan() {
 
     assert_eq!(
         phase_of(&registry, &workbench).await,
-        AttemptPhase::Cancelled(CancelReason::Superseded)
+        AttemptPhase::Cancelled(CancelReason::Shutdown)
+    );
+    let view = registry.snapshot(&workbench).await.unwrap();
+    assert!(
+        lingrep_web::revision_status::project_revision_status(Some(&view))
+            .message
+            .contains("server")
     );
     assert!(
         registry

@@ -667,5 +667,6 @@
   "detail.near_more": "and {n} more",
   "status.vectors_undeclared": "No word-vector file declared in the catalog. To declare the server’s file, add: {declaration}",
   "status.vectors_mismatch": "The server’s word-vector file differs from {declared} declared in the catalog. Matches may differ at the same threshold.",
-  "help.p_near": "ATTR near WORD >= 0.6 matches tokens whose ATTR value has a cosine similarity to WORD of at least 0.6. not near matches other values. Neither matches tokens without ATTR. A word-vector file is required. Check matching values on the Similar Words page."
+  "help.p_near": "ATTR near WORD >= 0.6 matches tokens whose ATTR value has a cosine similarity to WORD of at least 0.6. not near matches other values. Neither matches tokens without ATTR. A word-vector file is required. Check matching values on the Similar Words page.",
+  "status.shutdown": "This search was stopped because the server is shutting down."
 }

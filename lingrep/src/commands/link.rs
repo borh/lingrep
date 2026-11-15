@@ -127,7 +127,7 @@ pub fn run(cli: &Cli, terminal: &TerminalArbiter) -> Result<CommandOutcome, CliE
                 terminal.signal_count(),
                 &query,
             )
-            .map_err(CliError::InvalidArgs)?;
+            .map_err(CliError::from)?;
         }
     }
     Ok(CommandOutcome::Success)

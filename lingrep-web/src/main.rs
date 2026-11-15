@@ -7,6 +7,9 @@ use clap::Parser;
 fn main() {
     if let Err(message) = lingrep_web::serve::run(&lingrep_web::Args::parse()) {
         eprintln!("lingrep-web: {message}");
-        std::process::exit(2);
+        std::process::exit(match message {
+            lingrep_web::serve::ServeError::InvalidArguments(_) => 2,
+            lingrep_web::serve::ServeError::Runtime(_) => 1,
+        });
     }
 }

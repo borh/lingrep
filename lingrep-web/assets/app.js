@@ -665,6 +665,7 @@ if (typeof document !== "undefined") {
         };
 
         const showNotice = (stream) => {
+            if (stream.dataset.streamFinished === "true") return;
             if (stream.parentElement?.querySelector(".stream-lost")) return;
             const notice = document.createElement("div");
             notice.className = "stream-lost";
@@ -702,6 +703,14 @@ if (typeof document !== "undefined") {
             }
             clearTimeout(stream.streamLostTimer);
             stream.streamLostTimer = setTimeout(() => showNotice(stream), SHOW_DELAY_MS);
+        });
+
+        document.body.addEventListener("htmx:sseClose", (event) => {
+            if (event.detail?.type !== "message") return;
+            const stream = streamElement(event.target);
+            if (!stream) return;
+            stream.dataset.streamFinished = "true";
+            clearNotice(stream);
         });
 
         // Reconnects fire htmx:sseOpen; any recovery withdraws the pending notice.

@@ -1142,6 +1142,20 @@ impl CoordinatorRegistry {
     pub async fn shutdown(&self) {
         let mut handles = Vec::new();
         for entry in self.inner.entries.lock().await.values() {
+            {
+                let mut state = entry.state.lock().await;
+                if let Some(revision) = state.current_attempt().map(|attempt| attempt.revision) {
+                    let workbench = state.workbench().clone();
+                    if state.apply_terminal(CoordinatorEvent::Cancelled {
+                        workbench,
+                        revision,
+                        reason: CancelReason::Shutdown,
+                    }) {
+                        let progress = entry.view_tx.borrow().progress;
+                        entry.publish(&state, progress);
+                    }
+                }
+            }
             let cancellation = entry
                 .cancellation
                 .lock()

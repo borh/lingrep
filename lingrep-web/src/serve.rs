@@ -2,6 +2,7 @@
 //! `ling serve`.
 
 use std::future::{Future, IntoFuture};
+use std::io::IsTerminal as _;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,12 +17,17 @@ use crate::server_context::ServerContext;
 use crate::state::{Config, DetailLimits, RequestStore};
 use crate::{Args, app_router_at};
 
-/// Returns `Err` with a message when the configuration is invalid or the
-/// listener cannot bind its address; otherwise serves until SIGINT or SIGTERM
-/// and returns `Ok` once in-flight requests, scans and corpus builds have
-/// ended or the bounded wait for each has. A serving failure panics. Must not
-/// be called from inside a Tokio runtime.
-pub fn run(args: &Args) -> Result<(), String> {
+#[derive(Debug, thiserror::Error)]
+pub enum ServeError {
+    #[error("{0}")]
+    InvalidArguments(String),
+    #[error("{0}")]
+    Runtime(String),
+}
+
+/// Serves until SIGINT or SIGTERM, then waits boundedly for requests, scans and builds.
+/// Distinguishes invocation and runtime failures; must not run inside a Tokio runtime.
+pub fn run(args: &Args) -> Result<(), ServeError> {
     run_with(args, os_signal_count, None)
 }
 
@@ -32,7 +38,7 @@ pub fn run(args: &Args) -> Result<(), String> {
 /// # Errors
 ///
 /// As [`run`].
-pub fn run_until(args: &Args, signals: watch::Receiver<u32>) -> Result<(), String> {
+pub fn run_until(args: &Args, signals: watch::Receiver<u32>) -> Result<(), ServeError> {
     run_with(args, move || signals, None)
 }
 
@@ -48,7 +54,7 @@ pub fn run_until_opening(
     args: &Args,
     signals: watch::Receiver<u32>,
     query: &str,
-) -> Result<(), String> {
+) -> Result<(), ServeError> {
     run_with(args, move || signals, Some(query))
 }
 
@@ -56,25 +62,29 @@ fn run_with(
     args: &Args,
     signals: impl FnOnce() -> watch::Receiver<u32> + Send,
     query: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ServeError> {
+    let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_ansi(std::io::stderr().is_terminal() && !no_color)
         .with_writer(std::io::stderr)
         .init();
     let config = config(args)?;
-    crate::patterns::open_word_vectors(args.vectors.as_deref())?;
-    let context = Arc::new(
-        ServerContext::new(&config.dict_path).expect("the shared scan pool must be constructible"),
-    );
+    crate::patterns::open_word_vectors(args.vectors.as_deref()).map_err(ServeError::Runtime)?;
+    let context = Arc::new(ServerContext::new(&config.dict_path).map_err(|error| {
+        ServeError::Runtime(format!("cannot create server scan pool: {error}"))
+    })?);
     block_on(async move {
         let signals = signals();
         let result = serve(args, config, Arc::clone(&context), signals.clone(), query).await;
         stop_corpus_builds(&context, signals).await;
         result
     })
+    .map_err(|error| ServeError::Runtime(format!("cannot create server runtime: {error}")))?
+    .map_err(ServeError::Runtime)
 }
 
 async fn stop_corpus_builds(context: &ServerContext, mut signals: watch::Receiver<u32>) {
@@ -92,43 +102,51 @@ async fn stop_corpus_builds(context: &ServerContext, mut signals: watch::Receive
     }
 }
 
-fn block_on<F: Future>(future: F) -> F::Output {
+fn block_on<F: Future>(future: F) -> std::io::Result<F::Output> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()
-        .expect("the server runtime must be constructible");
+        .build()?;
     let output = runtime.block_on(future);
     runtime.shutdown_background();
-    output
+    Ok(output)
 }
 
 /// The validated server configuration `args` declare.
 ///
 /// # Errors
 ///
-/// A message naming the invalid argument.
-pub fn config(args: &Args) -> Result<Config, String> {
+/// Invalid declarations or unreadable configured inputs.
+pub fn config(args: &Args) -> Result<Config, ServeError> {
     let config = Config {
         dict_path: args
             .dict
             .resolve()
             .ok_or_else(|| {
-                format!(
+                ServeError::InvalidArguments(format!(
                     "no dictionary: {}",
                     lingrep_cli_common::MISSING_DICTIONARY_HINT
-                )
+                ))
             })?
             .display()
             .to_string(),
-        corpora: crate::cli::declared_corpora(args)?,
+        corpora: crate::cli::declared_corpora(args).map_err(ServeError::InvalidArguments)?,
         input_format: args.input.input_format,
-        markdown: args.markdown.resolve()?,
+        markdown: args
+            .markdown
+            .resolve()
+            .map_err(ServeError::InvalidArguments)?,
         max_record_bytes: args.max_record_bytes,
         detail_limits: DetailLimits {
             max_kwic: args.max_kwic_lines_per_pattern,
         },
     };
-    config.validate().map_err(|error| error.to_string())?;
+    config.validate().map_err(|error| match error {
+        crate::state::ConfigError::UnreadablePath { .. }
+        | crate::state::ConfigError::UnreadableArtifact { .. } => {
+            ServeError::Runtime(error.to_string())
+        }
+        _ => ServeError::InvalidArguments(error.to_string()),
+    })?;
     Ok(config)
 }
 
@@ -161,17 +179,9 @@ async fn serve(
         println!("{link}");
         open_in_browser(&link);
     }
-    #[expect(
-        clippy::unwrap_used,
-        reason = "startup serve failure is a hard error for the lingrep-web entry point"
-    )]
-    {
-        serve_until(listener, app, signals.clone(), SHUTDOWN_GRACE)
-            .await
-            .unwrap();
-    }
+    let result = serve_until(listener, app, signals.clone(), SHUTDOWN_GRACE).await;
     stop_scans(&coordinators, signals).await;
-    Ok(())
+    result.map_err(|error| format!("server at {addr} stopped: {error}"))
 }
 
 fn open_in_browser(link: &str) {
@@ -222,7 +232,10 @@ async fn serve_until(
 ) -> std::io::Result<()> {
     let mut first = signals.clone();
     let server = axum::serve(listener, app)
-        .with_graceful_shutdown(async move { signal_number(&mut first, 1).await })
+        .with_graceful_shutdown(async move {
+            signal_number(&mut first, 1).await;
+            tracing::info!("termination signal received; finishing in-flight requests");
+        })
         .into_future();
     tokio::pin!(server);
     let mut signals = signals;
@@ -230,7 +243,6 @@ async fn serve_until(
         result = &mut server => return result,
         () = signal_number(&mut signals, 1) => {}
     }
-    tracing::info!("termination signal received; finishing in-flight requests");
     tokio::select! {
         result = &mut server => result,
         () = tokio::time::sleep(grace) => {
@@ -299,7 +311,8 @@ fn os_signal_count() -> watch::Receiver<u32> {
 /// that stops startup.
 pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
     let context = Arc::new(
-        ServerContext::new(&config.dict_path).expect("the shared scan pool must be constructible"),
+        ServerContext::new(&config.dict_path)
+            .map_err(|error| format!("cannot create server scan pool: {error}"))?,
     );
     store_in(args, config, context).await
 }
@@ -416,7 +429,8 @@ mod tests {
                         std::thread::sleep(Duration::from_secs(1));
                     }
                 });
-            });
+            })
+            .expect("runtime");
             returned_tx.send(()).unwrap();
         });
         returned_rx

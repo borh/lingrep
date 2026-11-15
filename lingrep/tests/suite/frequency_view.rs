@@ -1045,7 +1045,7 @@ fn a_table_that_cannot_be_bound_stops_startup_naming_it() {
     let fails = |extra: Vec<OsString>| match serve(&fixture, &extra) {
         Ok(_) => panic!("startup succeeded with {extra:?}"),
         Err((code, stderr)) => {
-            assert_eq!(code, Some(2), "{stderr}");
+            assert_eq!(code, Some(1), "{stderr}");
             stderr
         }
     };
@@ -1135,7 +1135,7 @@ fn an_invalid_label_file_stops_startup_naming_it() {
     let Err((code, stderr)) = serve(&fixture, &extra) else {
         panic!("startup succeeded with an invalid label file");
     };
-    assert_eq!(code, Some(2), "{stderr}");
+    assert_eq!(code, Some(1), "{stderr}");
     assert!(
         stderr.contains(&format!(
             "--metadata-labels {}: missing field",

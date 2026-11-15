@@ -42,6 +42,7 @@ pub enum AttemptPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelReason {
     Superseded,
+    Shutdown,
     /// The workbench had no open event stream for the grace period.
     Abandoned,
 }

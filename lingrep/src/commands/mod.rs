@@ -115,7 +115,7 @@ pub fn dispatch(
         #[cfg(feature = "web")]
         Command::Serve(args) => lingrep_web::serve::run_until(args, terminal.signal_count())
             .map(|()| CommandOutcome::Success)
-            .map_err(CliError::InvalidArgs),
+            .map_err(CliError::from),
         Command::Describe(args) => describe::run(args, output),
         Command::Completions(args) => completions::run(args, output),
         Command::Manpages(args) => manpages::run(args, output),

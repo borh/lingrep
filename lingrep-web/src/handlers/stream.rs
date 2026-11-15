@@ -60,6 +60,8 @@ pub(crate) fn render_stream_event(view: &CoordinatorView, request_id: &str) -> S
         .unwrap_or_else(|_| "<p>Unable to render search status.</p>".into());
         let name = if status.kind == RevisionStatusKind::Error {
             "error"
+        } else if status.terminal {
+            "cancelled"
         } else {
             "progress"
         };
@@ -86,18 +88,36 @@ pub async fn stream(
     let workbench = WorkbenchId::new(&request_id);
     if let Some(rx) = store.coordinators.subscribe(&workbench).await {
         let stream_request_id = request_id.clone();
-        let coordinator_stream = tokio_stream::wrappers::WatchStream::new(rx).map(move |view| {
-            let frame = render_stream_event(&view, &stream_request_id);
-            Ok(Event::default().event(frame.name).data(frame.body))
-        });
+        let views = tokio_stream::wrappers::WatchStream::new(rx);
+        let coordinator_stream = futures::stream::unfold(
+            (views, stream_request_id, false),
+            |(mut views, request_id, finished)| async move {
+                if finished {
+                    return None;
+                }
+                let view = views.next().await?;
+                let terminal = view.state.is_terminal();
+                let frame = render_stream_event(&view, &request_id);
+                Some((
+                    Ok(Event::default().event(frame.name).data(frame.body)),
+                    (views, request_id, terminal),
+                ))
+            },
+        )
+        .chain(futures::stream::once(async { Ok(close_event()) }));
         return Sse::new(Box::pin(coordinator_stream));
     }
 
-    Sse::new(Box::pin(futures::stream::iter(vec![Ok(
-        Event::default().event("error").data(
+    Sse::new(Box::pin(futures::stream::iter([
+        Ok(Event::default().event("error").data(
             r#"<div class="alert alert-error" data-i18n="status.request_not_found">Request not found. Run the search again.</div>"#,
-        ),
-    )])))
+        )),
+        Ok(close_event()),
+    ])))
+}
+
+fn close_event() -> Event {
+    Event::default().event("close").data("done")
 }
 
 /// Assemble the completed-`result` SSE body: an out-of-band swap of the rendered
@@ -490,5 +510,40 @@ mod tests {
                 .body
                 .contains("id=\"live-results\" hx-swap-oob=\"innerHTML\"></div>")
         );
+    }
+    #[test]
+    fn cancelled_revisions_render_a_terminal_event() {
+        for reason in [
+            crate::revision::CancelReason::Abandoned,
+            crate::revision::CancelReason::Superseded,
+        ] {
+            let mut view = running_view(3, 7);
+            assert!(view.state.apply_terminal(CoordinatorEvent::Cancelled {
+                workbench: WorkbenchId::new("wb"),
+                revision: RevisionId(1),
+                reason,
+            }));
+            let frame = super::render_stream_event(&view, "wb");
+            assert_eq!(frame.name, "cancelled");
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_requests_emit_a_close_event() {
+        use axum::{
+            extract::{Path, State},
+            response::IntoResponse,
+        };
+        use http_body_util::BodyExt;
+        let response = super::stream(
+            State(crate::state::RequestStore::default()),
+            Path("missing".into()),
+        )
+        .await
+        .into_response();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        assert!(body.contains("Request not found"), "{body}");
+        assert!(body.contains("event: close\ndata: done\n\n"), "{body}");
     }
 }
