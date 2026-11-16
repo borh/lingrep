@@ -88,15 +88,27 @@ impl<'a> SentenceMatcher<'a> {
     }
 
     /// Matches every sentence in its input order using the supplied pool.
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_match_all`] to handle this error.
     pub fn match_all<T: TokenInfoTrait + Send + Sync>(
         &self,
         pool: &rayon::ThreadPool,
         sentences: &[Vec<T>],
     ) -> Vec<Vec<Match>> {
+        self.try_match_all(pool, sentences)
+            .expect("graph matching exceeded its sentence budget")
+    }
+
+    /// Preserves sentence order and returns no batch results if any sentence exceeds its graph budget.
+    pub fn try_match_all<T: TokenInfoTrait + Send + Sync>(
+        &self,
+        pool: &rayon::ThreadPool,
+        sentences: &[Vec<T>],
+    ) -> Result<Vec<Vec<Match>>, crate::fsm::MatchResourceError> {
         pool.install(|| {
             sentences
                 .par_iter()
-                .map(|sentence| self.matcher.find_matches(sentence))
+                .map(|sentence| self.matcher.try_find_matches(sentence))
                 .collect()
         })
     }

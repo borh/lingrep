@@ -126,6 +126,8 @@ fn diagnostic_bytes(bytes: usize) -> String {
 /// Errors reported while enforcing execution resource bounds.
 #[derive(Debug, Error)]
 pub enum ExecutionError {
+    #[error(transparent)]
+    Matching(#[from] crate::fsm::BoundExecutionError),
     /// A caller-supplied execution limit is invalid.
     #[error("invalid execution limit {field}: {message}")]
     InvalidLimit {

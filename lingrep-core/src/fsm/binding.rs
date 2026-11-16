@@ -82,9 +82,10 @@ const fn kind_name(kind: AttributeKind) -> &'static str {
 
 impl std::error::Error for SchemaBindError {}
 
-/// Why bound execution cannot begin for a projected sentence.
+/// Why bound execution failed for a projected sentence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BoundExecutionError {
+    Resource(super::MatchResourceError),
     SchemaMismatch {
         expected: TokenSchemaDigest,
         actual: TokenSchemaDigest,
@@ -116,6 +117,7 @@ impl std::error::Error for BoundExplanationError {}
 impl fmt::Display for BoundExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Resource(error) => error.fmt(formatter),
             Self::SchemaMismatch { .. } => {
                 formatter.write_str("bound lingrep patterns catalog and token sentence use different schemas")
             }
@@ -128,7 +130,14 @@ impl fmt::Display for BoundExecutionError {
     }
 }
 
-impl std::error::Error for BoundExecutionError {}
+impl std::error::Error for BoundExecutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Resource(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl CompiledCatalog {
     /// Resolves the catalog's complete attribute projection against one schema.
@@ -245,14 +254,19 @@ impl BoundCatalog {
             .map_err(BoundExplanationError::Bound)?;
         let context = window_context(&tokens);
         self.compiled
-            .explain_sentence_in_context(
+            .try_explain_sentence_in_context(
                 &BoundExecutionTokens {
                     tokens: input.words(),
                     projection: &self.projection,
                 },
                 &context,
             )
-            .map_err(BoundExplanationError::Policy)
+            .map_err(|error| match error {
+                super::MatchPublicationError::Policy(error) => BoundExplanationError::Policy(error),
+                super::MatchPublicationError::Resource(error) => {
+                    BoundExplanationError::Bound(BoundExecutionError::Resource(error))
+                }
+            })
     }
 
     fn window_tokens<'a>(
@@ -287,13 +301,19 @@ impl BoundCatalog {
             projection: &self.projection,
         };
         if !self.compiled.requires_enhanced_graph() {
-            return Ok(self.compiled.find_matches_with_context(&tokens, context));
+            return self
+                .compiled
+                .try_find_matches_with_context(&tokens, context)
+                .map_err(BoundExecutionError::Resource);
         }
         match input.enhanced_graph() {
             EnhancedGraphInput::NotRequested => Err(BoundExecutionError::EnhancedGraphNotRequested),
             EnhancedGraphInput::Observation(observation) => {
                 let Some(graph) = observation.complete() else {
-                    return Ok(self.compiled.find_matches_with_context(&tokens, context));
+                    return self
+                        .compiled
+                        .try_find_matches_with_context(&tokens, context)
+                        .map_err(BoundExecutionError::Resource);
                 };
                 if graph.word_count() != input.words().len() {
                     return Err(BoundExecutionError::EnhancedGraphWordCountMismatch {
@@ -301,9 +321,9 @@ impl BoundCatalog {
                         actual: graph.word_count(),
                     });
                 }
-                Ok(self
-                    .compiled
-                    .find_matches_with_complete_graph(&tokens, graph, context))
+                self.compiled
+                    .try_find_matches_with_complete_graph(&tokens, graph, context)
+                    .map_err(BoundExecutionError::Resource)
             }
         }
     }
@@ -362,10 +382,12 @@ impl BoundCatalog {
         tokens: &BoundTokenSentence,
     ) -> Result<Vec<Match>, BoundExecutionError> {
         self.validate_tokens(tokens)?;
-        Ok(self.compiled.find_matches(&BoundExecutionTokens {
-            tokens,
-            projection: &self.projection,
-        }))
+        self.compiled
+            .try_find_matches(&BoundExecutionTokens {
+                tokens,
+                projection: &self.projection,
+            })
+            .map_err(BoundExecutionError::Resource)
     }
 
     /// Runs schema-bound matching while collecting benchmark execution work.

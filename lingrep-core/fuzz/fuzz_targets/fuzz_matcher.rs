@@ -66,5 +66,5 @@ fuzz_target!(|data: &[u8]| {
     // Generate tokens from remaining bytes
     let tokens = generate_tokens(&data[1..]);
 
-    let _ = fsm.find_matches(&tokens);
+    let _ = fsm.try_find_matches(&tokens);
 });

@@ -302,10 +302,20 @@ fn token_index_at_char<T: TokenInfoTrait>(tokens: &[T], offset: usize) -> Option
 /// Fragments are not reachable here — they never emit and so never appear in
 /// `patterns()`. A claim attached to one is either reported by the compiler or,
 /// for `max_nesting:`, executed by [`verify_anchor_claims`].
+/// # Panics
+/// Panics on graph-enumeration or publication failure; use [`try_verify_examples`] to handle these errors.
 pub fn verify_examples<T: TokenInfoTrait>(
     matcher: &CompiledCatalog,
     tokenize: &dyn Fn(&str) -> Vec<T>,
 ) -> ExampleReport {
+    try_verify_examples(matcher, tokenize).expect("example matching or publication failed")
+}
+
+/// As [`verify_examples`], with matching and publication failures returned as errors.
+pub fn try_verify_examples<T: TokenInfoTrait>(
+    matcher: &CompiledCatalog,
+    tokenize: &dyn Fn(&str) -> Vec<T>,
+) -> Result<ExampleReport, crate::fsm::MatchPublicationError> {
     let mut report = ExampleReport::default();
     for (name, pattern) in matcher.patterns() {
         for (key, must_match) in VERIFIED_KEYS {
@@ -334,7 +344,7 @@ pub fn verify_examples<T: TokenInfoTrait>(
                 };
                 let tokens = tokenize(entry);
                 let matched = matcher
-                    .find_matches(&tokens)
+                    .try_find_matches(&tokens)?
                     .iter()
                     .any(|matched| matched.pattern == *name);
                 report.checked += 1;
@@ -352,7 +362,7 @@ pub fn verify_examples<T: TokenInfoTrait>(
             }
         }
     }
-    verify_post_policy(matcher, tokenize, &mut report);
+    verify_post_policy(matcher, tokenize, &mut report)?;
     // `patterns()` is an IndexMap in source order, which is stable, but the
     // sort makes the report independent of it so a reordering in the catalog
     // cannot reorder a CLI diff.
@@ -364,7 +374,7 @@ pub fn verify_examples<T: TokenInfoTrait>(
     };
     report.failures.sort_by(order);
     report.post_policy_failures.sort_by(order);
-    report
+    Ok(report)
 }
 
 /// Re-check every claim against the published records.
@@ -382,10 +392,10 @@ fn verify_post_policy<T: TokenInfoTrait>(
     matcher: &CompiledCatalog,
     tokenize: &dyn Fn(&str) -> Vec<T>,
     report: &mut ExampleReport,
-) {
+) -> Result<(), crate::fsm::MatchPublicationError> {
     let policy = matcher.catalog_policy();
     if !policy.declared() {
-        return;
+        return Ok(());
     }
     for (name, pattern) in matcher.patterns() {
         let published_name = policy.published_name(name);
@@ -401,9 +411,7 @@ fn verify_post_policy<T: TokenInfoTrait>(
             };
             for entry in entries.iter().filter_map(|entry| entry.as_str()) {
                 let tokens = tokenize(entry);
-                let published = matcher
-                    .find_published_matches(&tokens)
-                    .expect("a compiled catalog resolves its own declared anchors");
+                let published = matcher.try_find_published_matches(&tokens)?;
                 let matched = published
                     .iter()
                     .any(|matched| matched.pattern == published_name);
@@ -422,6 +430,7 @@ fn verify_post_policy<T: TokenInfoTrait>(
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

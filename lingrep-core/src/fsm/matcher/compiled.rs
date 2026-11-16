@@ -12,6 +12,7 @@ use super::exec::Matcher;
 use super::predicate::PredicateMetrics;
 use super::predicate::{PredicateCatalog, PredicateDigest, PredicateSession};
 use super::program::Program;
+use super::resource::{MatchBudget, MatchResourceError};
 #[cfg(feature = "bench-instrumentation")]
 use super::spawn_candidate_metrics::SpawnCandidateAccumulator;
 use crate::corpus::conllu::{EnhancedGraph, EnhancedGraphObservation};
@@ -572,11 +573,30 @@ impl CompiledCatalog {
     /// # Errors
     ///
     /// Returns an anchor-resolution error if the catalog's anchor cannot be resolved.
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_published_matches`] to handle this error.
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "The legacy error type cannot represent resource exhaustion; the try_* replacement returns it."
+    )]
     pub fn find_published_matches<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
     ) -> Result<Vec<Match>, crate::fsm::policy::AnchorResolutionError> {
-        let canonical = self.find_matches(tokens);
+        match self.try_find_published_matches(tokens) {
+            Ok(value) => Ok(value),
+            Err(crate::fsm::MatchPublicationError::Policy(error)) => Err(error),
+            Err(crate::fsm::MatchPublicationError::Resource(error)) => panic!("{error}"),
+        }
+    }
+
+    /// As [`Self::find_published_matches`], with graph-enumeration failures returned as errors.
+    pub fn try_find_published_matches<S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &S,
+    ) -> Result<Vec<Match>, crate::fsm::MatchPublicationError> {
+        let canonical = self.try_find_matches(tokens)?;
         if self.catalog_policy.declared() {
             let anchors = self.anchor_positions(tokens);
             let mut stats = crate::fsm::policy::PolicyStats::default();
@@ -587,6 +607,7 @@ impl CompiledCatalog {
                 &anchors,
                 &mut stats,
             )
+            .map_err(Into::into)
         } else {
             // Nothing declared means nothing synthesized, so the canonical
             // stream is already the published one — no copy, and no anchor
@@ -610,11 +631,30 @@ impl CompiledCatalog {
     /// Returns [`crate::fsm::policy::AnchorResolutionError`] if the declared
     /// result policy cannot resolve an anchor. This is the same failure mode as
     /// [`Self::find_published_matches`].
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_explain_sentence`] to handle this error.
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "The legacy error type cannot represent resource exhaustion; the try_* replacement returns it."
+    )]
     pub fn explain_sentence<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
     ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
-        self.explain_sentence_with_context(tokens, None)
+        match self.try_explain_sentence(tokens) {
+            Ok(value) => Ok(value),
+            Err(crate::fsm::MatchPublicationError::Policy(error)) => Err(error),
+            Err(crate::fsm::MatchPublicationError::Resource(error)) => panic!("{error}"),
+        }
+    }
+
+    /// As [`Self::explain_sentence`], with graph-enumeration failures returned as errors.
+    pub fn try_explain_sentence<S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &S,
+    ) -> Result<SentenceExplanation, crate::fsm::MatchPublicationError> {
+        self.try_explain_sentence_with_context(tokens, None)
     }
 
     /// [`Self::explain_sentence`] with `within=` lookarounds reading the
@@ -623,20 +663,40 @@ impl CompiledCatalog {
     /// # Errors
     ///
     /// As [`Self::explain_sentence`].
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_explain_sentence_in_context`] to handle this error.
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "The legacy error type cannot represent resource exhaustion; the try_* replacement returns it."
+    )]
     pub fn explain_sentence_in_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         context: &'t super::LookaroundContext<'t, S>,
     ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
-        self.explain_sentence_with_context(tokens, Some(context))
+        match self.try_explain_sentence_in_context(tokens, context) {
+            Ok(value) => Ok(value),
+            Err(crate::fsm::MatchPublicationError::Policy(error)) => Err(error),
+            Err(crate::fsm::MatchPublicationError::Resource(error)) => panic!("{error}"),
+        }
     }
 
-    fn explain_sentence_with_context<'t, S: TokenSequence + ?Sized>(
+    /// As [`Self::explain_sentence_in_context`], with graph-enumeration failures returned as errors.
+    pub fn try_explain_sentence_in_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: &'t super::LookaroundContext<'t, S>,
+    ) -> Result<SentenceExplanation, crate::fsm::MatchPublicationError> {
+        self.try_explain_sentence_with_context(tokens, Some(context))
+    }
+
+    fn try_explain_sentence_with_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-    ) -> Result<SentenceExplanation, crate::fsm::policy::AnchorResolutionError> {
-        let canonical = self.find_matches_with_context(tokens, context);
+    ) -> Result<SentenceExplanation, crate::fsm::MatchPublicationError> {
+        let canonical = self.try_find_matches_with_context(tokens, context)?;
         let policy_declared = self.catalog_policy.declared();
         let mut published_by_raw = std::collections::HashMap::<Match, Vec<Match>>::new();
 
@@ -778,8 +838,19 @@ impl CompiledCatalog {
         &self.predicates
     }
 
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Vec<Match> {
-        self.find_matches_with_context(tokens, None)
+        self.try_find_matches(tokens)
+            .expect("graph matching exceeded its sentence budget")
+    }
+
+    /// Returns complete canonical matches, or an error when one sentence exceeds a graph-enumeration budget.
+    pub fn try_find_matches<S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &S,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        self.try_find_matches_with_context(tokens, None)
     }
 
     /// Matches one sentence. Each `within=` lookaround reads the window that
@@ -787,12 +858,24 @@ impl CompiledCatalog {
     ///
     /// Matching reads at most [`Self::lookaround_reach`] tokens of a window on
     /// each side of the sentence.
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_in_context`] to handle this error.
     pub fn find_matches_in_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         context: &'t super::LookaroundContext<'t, S>,
     ) -> Vec<Match> {
-        self.find_matches_with_context(tokens, Some(context))
+        self.try_find_matches_with_context(tokens, Some(context))
+            .expect("graph matching exceeded its sentence budget")
+    }
+
+    /// As [`Self::find_matches_in_context`], with graph-enumeration failures returned as errors.
+    pub fn try_find_matches_in_context<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: &'t super::LookaroundContext<'t, S>,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        self.try_find_matches_with_context(tokens, Some(context))
     }
 
     /// The context each scope's `within=` lookarounds can read.
@@ -814,11 +897,12 @@ impl CompiledCatalog {
             .collect()
     }
 
-    pub(crate) fn find_matches_with_context<'t, S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_with_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
             let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
@@ -830,9 +914,13 @@ impl CompiledCatalog {
                 }
             }
             for plan in &self.evaluated_plans {
-                matches.extend(plan.find_matches_without_assertions(&predicates, tokens));
+                matches.extend(plan.try_find_matches_without_assertions(
+                    &mut budget,
+                    &predicates,
+                    tokens,
+                )?);
             }
-            return self.finish_catalog_matches(tokens, canonical_matches(matches));
+            return Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)));
         }
 
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
@@ -857,9 +945,14 @@ impl CompiledCatalog {
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(plan.find_matches(&predicates, tokens, &mut session));
+            matches.extend(plan.try_find_matches(
+                &mut budget,
+                &predicates,
+                tokens,
+                &mut session,
+            )?);
         }
-        self.finish_catalog_matches(tokens, canonical_matches(matches))
+        Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)))
     }
 
     /// Matches with an explicit enhanced-graph observation.
@@ -869,29 +962,52 @@ impl CompiledCatalog {
     /// plain [`Self::find_matches`] method has those same unavailable-graph
     /// semantics; bound execution additionally fails when its source did not
     /// request a graph required by the catalog.
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_with_enhanced_graph`] to handle this error.
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "The legacy error type cannot represent resource exhaustion; the try_* replacement returns it."
+    )]
     pub fn find_matches_with_enhanced_graph<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
         observation: &EnhancedGraphObservation,
     ) -> Result<Vec<Match>, crate::fsm::EnhancedGraphExecutionError> {
+        match self.try_find_matches_with_enhanced_graph(tokens, observation) {
+            Ok(value) => Ok(value),
+            Err(crate::fsm::EnhancedMatchError::Graph(error)) => Err(error),
+            Err(crate::fsm::EnhancedMatchError::Resource(error)) => panic!("{error}"),
+        }
+    }
+
+    /// As [`Self::find_matches_with_enhanced_graph`], with graph-enumeration failures returned as errors.
+    pub fn try_find_matches_with_enhanced_graph<S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &S,
+        observation: &EnhancedGraphObservation,
+    ) -> Result<Vec<Match>, crate::fsm::EnhancedMatchError> {
         let Some(graph) = observation.complete() else {
-            return Ok(self.find_matches(tokens));
+            return self.try_find_matches(tokens).map_err(Into::into);
         };
         if graph.word_count() != tokens.len() {
             return Err(crate::fsm::EnhancedGraphExecutionError {
                 expected_words: tokens.len(),
                 actual_words: graph.word_count(),
-            });
+            }
+            .into());
         }
-        Ok(self.find_matches_with_complete_graph(tokens, graph, None))
+        self.try_find_matches_with_complete_graph(tokens, graph, None)
+            .map_err(Into::into)
     }
 
-    pub(crate) fn find_matches_with_complete_graph<'t, S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_with_complete_graph<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         graph: &EnhancedGraph,
         context: Option<&'t super::LookaroundContext<'t, S>>,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
             let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
@@ -903,13 +1019,14 @@ impl CompiledCatalog {
                 }
             }
             for plan in &self.evaluated_plans {
-                matches.extend(plan.find_matches_without_assertions_with_graph(
+                matches.extend(plan.try_find_matches_without_assertions_with_graph(
+                    &mut budget,
                     &predicates,
                     tokens,
                     graph,
-                ));
+                )?);
             }
-            return self.finish_catalog_matches(tokens, canonical_matches(matches));
+            return Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)));
         }
 
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
@@ -934,9 +1051,15 @@ impl CompiledCatalog {
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(plan.find_matches_with_graph(&predicates, tokens, &mut session, graph));
+            matches.extend(plan.try_find_matches_with_graph(
+                &mut budget,
+                &predicates,
+                tokens,
+                &mut session,
+                graph,
+            )?);
         }
-        self.finish_catalog_matches(tokens, canonical_matches(matches))
+        Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)))
     }
 
     /// Runs normal matching and reports assertion-evaluator work.
@@ -945,6 +1068,8 @@ impl CompiledCatalog {
     /// `bench-instrumentation` feature. Default builds contain neither this
     /// method nor the counters it reads.
     #[cfg(feature = "bench-instrumentation")]
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_assertion_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -953,6 +1078,7 @@ impl CompiledCatalog {
             return (self.find_matches(tokens), AssertionMetrics::default());
         }
 
+        let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
         let mut matches = Matcher::find_matches_dense_with_assertions(
@@ -975,7 +1101,10 @@ impl CompiledCatalog {
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(plan.find_matches(&predicates, tokens, &mut session));
+            matches.extend(
+                plan.try_find_matches(&mut budget, &predicates, tokens, &mut session)
+                    .expect("graph matching exceeded its sentence budget"),
+            );
         }
         let metrics = session.metrics();
         (
@@ -990,6 +1119,8 @@ impl CompiledCatalog {
     /// [`Self::find_matches`]. The timers and counters are compiled only for
     /// benchmark-instrumentation builds.
     #[cfg(feature = "bench-instrumentation")]
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_execution_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1003,6 +1134,8 @@ impl CompiledCatalog {
     /// and returns the same [`ExecutionMetrics`] as
     /// [`Self::find_matches_with_execution_metrics`].
     #[cfg(feature = "bench-instrumentation")]
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_spawn_candidate_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1017,6 +1150,7 @@ impl CompiledCatalog {
         tokens: &S,
         spawn: Option<&mut SpawnCandidateAccumulator>,
     ) -> (Vec<Match>, ExecutionMetrics) {
+        let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         if spawn.is_some() {
             let (group_count, shape_count) = self.dense.spawn_table.spawn_candidate_dimensions();
@@ -1053,7 +1187,9 @@ impl CompiledCatalog {
             let evaluated_started = Instant::now();
             for plan in &self.evaluated_plans {
                 metrics.evaluated_plan_invocations += 1;
-                let found = plan.find_matches_without_assertions(&predicates, tokens);
+                let found = plan
+                    .try_find_matches_without_assertions(&mut budget, &predicates, tokens)
+                    .expect("graph matching exceeded its sentence budget");
                 metrics.evaluated_matches += found.len();
                 matches.extend(found);
             }
@@ -1105,7 +1241,9 @@ impl CompiledCatalog {
         let evaluated_started = Instant::now();
         for plan in &self.evaluated_plans {
             metrics.evaluated_plan_invocations += 1;
-            let found = plan.find_matches(&predicates, tokens, &mut session);
+            let found = plan
+                .try_find_matches(&mut budget, &predicates, tokens, &mut session)
+                .expect("graph matching exceeded its sentence budget");
             metrics.evaluated_matches += found.len();
             matches.extend(found);
         }
@@ -1120,7 +1258,19 @@ impl CompiledCatalog {
         )
     }
 
+    /// # Panics
+    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_with_trace`] to handle this error.
     pub fn find_matches_with_trace<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Trace {
+        self.try_find_matches_with_trace(tokens)
+            .expect("graph matching exceeded its sentence budget")
+    }
+
+    /// As [`Self::find_matches_with_trace`], with graph-enumeration failures returned as errors.
+    pub fn try_find_matches_with_trace<S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &S,
+    ) -> Result<Trace, MatchResourceError> {
+        let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         let mut trace = if self.requires_assertion_session() {
             let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
@@ -1144,9 +1294,12 @@ impl CompiledCatalog {
                 }
             }
             for plan in &self.evaluated_plans {
-                trace
-                    .matches
-                    .extend(plan.find_matches(&predicates, tokens, &mut session));
+                trace.matches.extend(plan.try_find_matches(
+                    &mut budget,
+                    &predicates,
+                    tokens,
+                    &mut session,
+                )?);
             }
             trace.matches = self.finish_catalog_matches(tokens, canonical_matches(trace.matches));
             trace
@@ -1159,7 +1312,7 @@ impl CompiledCatalog {
             // repeated as `if !requires_assertion_session()` below: the two are
             // one decision, and reading them as one is what stops a later change
             // moving only one of them.
-            trace.matches = self.find_matches(tokens);
+            trace.matches = self.try_find_matches(tokens)?;
             trace
         };
         trace
@@ -1193,7 +1346,7 @@ impl CompiledCatalog {
                 });
             }
         }
-        trace
+        Ok(trace)
     }
 
     pub fn patterns(&self) -> &IndexMap<CompactString, Pattern> {

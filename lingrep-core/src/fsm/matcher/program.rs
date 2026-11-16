@@ -4,6 +4,7 @@ use super::predicate::{
     PREDICATE_SITE_CAPTURE_TOKEN, PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN,
     PREDICATE_SITE_EVALUATED_TOKEN, PredicateCatalog, PredicateId, PredicateSession,
 };
+use super::resource::{MAX_RELATION_DEPTH, MatchBudget, MatchResourceError};
 use crate::corpus::conllu::{EnhancedGraph, EnhancedHead, EnhancedNodeId};
 use crate::fsm::compiler::model::{
     CaptureId, CaptureProjection, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
@@ -142,6 +143,28 @@ struct GraphAssignment {
         compact_str::CompactString,
         (EnhancedNodeId, EnhancedNodeId, compact_str::CompactString),
     >,
+}
+
+impl GraphAssignment {
+    fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.nodes
+                    .keys()
+                    .map(|name| 1024usize.saturating_add(name.len()))
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.edges
+                    .iter()
+                    .map(|(name, (_, _, label))| {
+                        1536usize
+                            .saturating_add(name.len())
+                            .saturating_add(label.len())
+                    })
+                    .sum::<usize>(),
+            )
+    }
 }
 
 trait AssertionLookup {
@@ -365,30 +388,33 @@ impl Program {
 
     pub(crate) fn matches<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
-    ) -> Vec<ProgramMatch> {
-        self.matches_with(predicates, tokens, session, None)
+    ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
+        self.matches_with(budget, predicates, tokens, session, None)
     }
 
     pub(crate) fn matches_with_graph<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
         graph: &EnhancedGraph,
-    ) -> Vec<ProgramMatch> {
-        self.matches_with(predicates, tokens, session, Some(graph))
+    ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
+        self.matches_with(budget, predicates, tokens, session, Some(graph))
     }
 
     fn matches_with<S: TokenSequence + ?Sized, A: AssertionLookup>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         assertions: &mut A,
         enhanced_graph: Option<&EnhancedGraph>,
-    ) -> Vec<ProgramMatch> {
+    ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
         let mut matches = Vec::new();
         let mut captured_negative_observation = None;
         for start in 0..tokens.len() {
@@ -413,15 +439,17 @@ impl Program {
                         &mut captured_negative_observation,
                     )
                 })
-                .filter_map(|candidate| {
+                .map(|candidate| {
                     let assignments = self.enhanced_assignments(
+                        budget,
                         &candidate,
                         tokens,
                         enhanced_graph,
-                    );
-                    (!assignments.is_empty()).then_some((candidate, assignments))
+                    )?;
+                    Ok((candidate, assignments))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, MatchResourceError>>()?;
+            accepted.retain(|(_, assignments)| !assignments.is_empty());
             accepted.sort_by_key(|(candidate, _)| std::cmp::Reverse(candidate.position));
             let mut seen_branches = BTreeSet::new();
             for (candidate, assignments) in accepted
@@ -429,6 +457,23 @@ impl Program {
                 .filter(|(candidate, _)| seen_branches.insert(candidate.any_order_branches.clone()))
             {
                 for assignment in assignments {
+                    if !self.enhanced_relations.is_empty() {
+                        let graph_bytes =
+                            self.public_graph_bytes(budget, &assignment, tokens, enhanced_graph)?;
+                        budget.allocate(
+                            self.definition.name.as_str(),
+                            graph_bytes
+                                .saturating_add(self.definition.name.len())
+                                .saturating_add(
+                                    self.captures
+                                        .iter()
+                                        .map(|capture| {
+                                            128 + capture.name.len() + capture.path.len()
+                                        })
+                                        .sum::<usize>(),
+                                ),
+                        )?;
+                    }
                     matches.push(ProgramMatch {
                         start,
                         end: candidate.position,
@@ -442,7 +487,7 @@ impl Program {
                 }
             }
         }
-        matches
+        Ok(matches)
     }
 
     /// Whether every `where` edge holds for one accepted candidate.
@@ -543,22 +588,25 @@ impl Program {
 
     fn enhanced_assignments<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         candidate: &Candidate,
         tokens: &S,
         graph: Option<&EnhancedGraph>,
-    ) -> Vec<GraphAssignment> {
+    ) -> Result<Vec<GraphAssignment>, MatchResourceError> {
         if self.enhanced_relations.is_empty() {
             let assignment = GraphAssignment::default();
-            return self
+            return Ok(self
                 .orders_hold(candidate, tokens, &assignment)
                 .then_some(assignment)
                 .into_iter()
-                .collect();
+                .collect());
         }
         if graph.is_none() && self.has_enhanced_relations() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let mut assignments = enhanced_assignments_from(
+            budget,
+            self.definition.name.as_str(),
             &self.enhanced_relations,
             0,
             candidate,
@@ -573,20 +621,28 @@ impl Program {
                 basic_binders_are_distinct(&self.enhanced_relations, candidate, partial)
                     && self.orders_can_hold(candidate, tokens, partial)
             },
-        );
+        )?;
         assignments.retain(|assignment| {
             basic_binders_are_distinct(&self.enhanced_relations, candidate, assignment)
                 && self.orders_hold(candidate, tokens, assignment)
         });
-        assignments.sort_by(|left, right| {
-            self.public_graph_bindings(left, tokens, graph)
-                .cmp(&self.public_graph_bindings(right, tokens, graph))
-        });
-        assignments.dedup_by(|left, right| {
-            self.public_graph_bindings(left, tokens, graph)
-                == self.public_graph_bindings(right, tokens, graph)
-        });
-        assignments
+        let mut keyed = assignments
+            .into_iter()
+            .map(|assignment| {
+                let graph_bytes = self.public_graph_bytes(budget, &assignment, tokens, graph)?;
+                budget.allocate(self.definition.name.as_str(), graph_bytes)?;
+                Ok((
+                    self.public_graph_bindings(&assignment, tokens, graph),
+                    assignment,
+                ))
+            })
+            .collect::<Result<Vec<_>, MatchResourceError>>()?;
+        keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+        keyed.dedup_by(|(left, _), (right, _)| left == right);
+        Ok(keyed
+            .into_iter()
+            .map(|(_, assignment)| assignment)
+            .collect())
     }
 
     fn orders_hold<S: TokenSequence + ?Sized>(
@@ -626,19 +682,21 @@ impl Program {
 
     pub(crate) fn matches_without_assertions<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-    ) -> Vec<ProgramMatch> {
-        self.matches_with(predicates, tokens, &mut NoAssertions, None)
+    ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
+        self.matches_with(budget, predicates, tokens, &mut NoAssertions, None)
     }
 
     pub(crate) fn matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         graph: &EnhancedGraph,
-    ) -> Vec<ProgramMatch> {
-        self.matches_with(predicates, tokens, &mut NoAssertions, Some(graph))
+    ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
+        self.matches_with(budget, predicates, tokens, &mut NoAssertions, Some(graph))
     }
 
     pub(crate) fn required_attributes(&self) -> impl Iterator<Item = AttributeKey> + '_ {
@@ -752,6 +810,56 @@ impl Program {
             .collect::<Vec<_>>();
         captures.sort_by_key(|capture| (capture.start, capture.end));
         captures.into_boxed_slice()
+    }
+
+    fn public_graph_bytes<S: TokenSequence + ?Sized>(
+        &self,
+        budget: &mut MatchBudget,
+        assignment: &GraphAssignment,
+        tokens: &S,
+        graph: Option<&EnhancedGraph>,
+    ) -> Result<usize, MatchResourceError> {
+        for node in assignment.nodes.values() {
+            let probes = match node {
+                EnhancedNodeId::Word { .. } => 10,
+                EnhancedNodeId::Empty { .. } => graph
+                    .map_or(0, |graph| graph.empty_nodes().len())
+                    .saturating_mul(2)
+                    .saturating_add(10),
+            };
+            budget.work(self.definition.name.as_str(), probes)?;
+        }
+        Ok(assignment
+            .nodes
+            .values()
+            .fold(assignment.estimated_bytes(), |bytes, node| {
+                let values = match node {
+                    EnhancedNodeId::Word { token_index } => {
+                        ["text", "lemma", "norm", "upos", "xpos"]
+                            .into_iter()
+                            .filter_map(|name| {
+                                tokens.scalar_key(
+                                    *token_index,
+                                    &AttributeKey::new(name).expect("canonical graph key"),
+                                )
+                            })
+                            .map(str::len)
+                            .sum::<usize>()
+                    }
+                    EnhancedNodeId::Empty { .. } => graph
+                        .and_then(|graph| {
+                            graph.empty_nodes().iter().find(|empty| empty.id() == *node)
+                        })
+                        .map_or(0, |empty| {
+                            [empty.form(), empty.lemma(), empty.upos(), empty.xpos()]
+                                .into_iter()
+                                .flatten()
+                                .map(str::len)
+                                .sum()
+                        }),
+                };
+                bytes.saturating_add(1024).saturating_add(values)
+            }))
     }
 
     fn public_graph_bindings<S: TokenSequence + ?Sized>(
@@ -883,6 +991,8 @@ fn compile_enhanced_endpoint(endpoint: &ExecutionEnhancedEndpoint) -> RuntimeEnh
 
 #[allow(clippy::too_many_arguments)]
 fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
+    budget: &mut MatchBudget,
+    pattern: &str,
     relations: &[RuntimeEnhancedRelation],
     index: usize,
     candidate: &Candidate,
@@ -890,16 +1000,28 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
     graph: Option<&EnhancedGraph>,
     assignment: &GraphAssignment,
     admissible: &dyn Fn(&GraphAssignment) -> bool,
-) -> Vec<GraphAssignment> {
+) -> Result<Vec<GraphAssignment>, MatchResourceError> {
+    if index > MAX_RELATION_DEPTH {
+        return Err(MatchResourceError {
+            pattern: pattern.into(),
+            resource: "graph relation depth",
+            limit: MAX_RELATION_DEPTH,
+        });
+    }
     if index == relations.len() {
-        return enhanced_negative_relations_hold(relations, candidate, tokens, graph, assignment)
-            .then(|| assignment.clone())
-            .into_iter()
-            .collect();
+        if enhanced_negative_relations_hold(
+            budget, pattern, relations, candidate, tokens, graph, assignment,
+        )? {
+            budget.assignment(pattern, assignment.estimated_bytes())?;
+            return Ok(vec![assignment.clone()]);
+        }
+        return Ok(Vec::new());
     }
     let relation = &relations[index];
     if relation.polarity == RelationPolarity::Negative {
         return enhanced_assignments_from(
+            budget,
+            pattern,
             relations,
             index + 1,
             candidate,
@@ -909,55 +1031,71 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             admissible,
         );
     }
-    layer_edges(&relation.layer, tokens, graph)
-        .into_iter()
-        .flat_map(|(head, dependent, label)| {
-            if !relation_label_matches(&relation.labels, label) {
-                return Vec::new();
+    let mut assignments = Vec::new();
+    for edge in layer_edges(&relation.layer, tokens, graph) {
+        budget.step(pattern)?;
+        let Some((head, dependent, label)) = edge else {
+            continue;
+        };
+        if !relation_label_matches(&relation.labels, label) {
+            continue;
+        }
+        budget.allocate(pattern, assignment.estimated_bytes())?;
+        let mut next = assignment.clone();
+        if !enhanced_endpoint_accepts(
+            budget,
+            pattern,
+            &relation.head,
+            head,
+            candidate,
+            tokens,
+            graph,
+            &mut next.nodes,
+        )? || !enhanced_endpoint_accepts(
+            budget,
+            pattern,
+            &relation.dependent,
+            dependent,
+            candidate,
+            tokens,
+            graph,
+            &mut next.nodes,
+        )? {
+            continue;
+        }
+        if let Some(name) = &relation.edge {
+            budget.allocate(
+                pattern,
+                1536usize
+                    .saturating_add(name.len())
+                    .saturating_add(label.len()),
+            )?;
+            let value = (head, dependent, label.into());
+            if next
+                .edges
+                .get(name)
+                .is_some_and(|assigned| *assigned != value)
+            {
+                continue;
             }
-            let mut next = assignment.clone();
-            if !enhanced_endpoint_accepts(
-                &relation.head,
-                head,
-                candidate,
-                tokens,
-                graph,
-                &mut next.nodes,
-            ) || !enhanced_endpoint_accepts(
-                &relation.dependent,
-                dependent,
-                candidate,
-                tokens,
-                graph,
-                &mut next.nodes,
-            ) {
-                return Vec::new();
-            }
-            if let Some(name) = &relation.edge {
-                let value = (head, dependent, label.into());
-                if next
-                    .edges
-                    .get(name)
-                    .is_some_and(|assigned| *assigned != value)
-                {
-                    return Vec::new();
-                }
-                next.edges.insert(name.clone(), value);
-            }
-            if !admissible(&next) {
-                return Vec::new();
-            }
-            enhanced_assignments_from(
-                relations,
-                index + 1,
-                candidate,
-                tokens,
-                graph,
-                &next,
-                admissible,
-            )
-        })
-        .collect()
+            next.edges.insert(name.clone(), value);
+        }
+        if !admissible(&next) {
+            continue;
+        }
+        assignments.extend(enhanced_assignments_from(
+            budget,
+            pattern,
+            relations,
+            index + 1,
+            candidate,
+            tokens,
+            graph,
+            &next,
+            admissible,
+        )?);
+    }
+    Ok(assignments)
 }
 
 fn basic_binders_are_distinct(
@@ -993,86 +1131,86 @@ fn basic_binders_are_distinct(
         .all(|node| occupied.insert(*node))
 }
 
-/// Every `(head, dependent, label)` edge of one layer, root attachments
-/// excluded.
-///
-/// A basic edge comes from a token whose `dep.head` parses as a word number
-/// of this sentence; an enhanced relation has no edges without a complete
-/// enhanced graph.
+/// Yields one item per source row so the caller also charges skipped and root edges.
 fn layer_edges<'a, S: TokenSequence + ?Sized>(
-    layer: &RuntimeLayer,
+    layer: &'a RuntimeLayer,
     tokens: &'a S,
     graph: Option<&'a EnhancedGraph>,
-) -> Vec<(EnhancedNodeId, EnhancedNodeId, &'a str)> {
+) -> Box<dyn Iterator<Item = Option<(EnhancedNodeId, EnhancedNodeId, &'a str)>> + 'a> {
     match layer {
         RuntimeLayer::Basic {
             head_attribute,
             relation_attribute,
-        } => (0..tokens.len())
-            .filter_map(|token_index| {
-                let Some(AttributeValueRef::Scalar(head)) =
-                    tokens.value_locator(token_index, head_attribute)
-                else {
-                    return None;
-                };
-                let head = head.parse::<usize>().ok()?;
-                if !(1..=tokens.len()).contains(&head) {
-                    return None;
-                }
-                let Some(AttributeValueRef::Scalar(label)) =
-                    tokens.value_locator(token_index, relation_attribute)
-                else {
-                    return None;
-                };
-                Some((
-                    EnhancedNodeId::Word {
-                        token_index: head - 1,
-                    },
-                    EnhancedNodeId::Word { token_index },
-                    label,
-                ))
-            })
-            .collect(),
-        RuntimeLayer::Enhanced => graph
-            .into_iter()
-            .flat_map(EnhancedGraph::edges)
-            .filter_map(|edge| match edge.head() {
+        } => Box::new((0..tokens.len()).map(|token_index| {
+            let Some(AttributeValueRef::Scalar(head)) =
+                tokens.value_locator(token_index, head_attribute)
+            else {
+                return None;
+            };
+            let head = head.parse::<usize>().ok()?;
+            if !(1..=tokens.len()).contains(&head) {
+                return None;
+            }
+            let Some(AttributeValueRef::Scalar(label)) =
+                tokens.value_locator(token_index, relation_attribute)
+            else {
+                return None;
+            };
+            Some((
+                EnhancedNodeId::Word {
+                    token_index: head - 1,
+                },
+                EnhancedNodeId::Word { token_index },
+                label,
+            ))
+        })),
+        RuntimeLayer::Enhanced => Box::new(graph.into_iter().flat_map(EnhancedGraph::edges).map(
+            |edge| match edge.head() {
                 EnhancedHead::Node(head) => Some((head, edge.dependent(), edge.relation())),
                 EnhancedHead::Root => None,
-            })
-            .collect(),
+            },
+        )),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enhanced_negative_relations_hold<S: TokenSequence + ?Sized>(
+    budget: &mut MatchBudget,
+    pattern: &str,
     relations: &[RuntimeEnhancedRelation],
     candidate: &Candidate,
     tokens: &S,
     graph: Option<&EnhancedGraph>,
     assignment: &GraphAssignment,
-) -> bool {
-    relations
+) -> Result<bool, MatchResourceError> {
+    for relation in relations
         .iter()
         .filter(|relation| relation.polarity == RelationPolarity::Negative)
-        .all(|relation| {
-            let Some(head) =
-                enhanced_endpoint_assignment(&relation.head, candidate, tokens, assignment)
-            else {
-                return false;
+    {
+        let Some(head) =
+            enhanced_endpoint_assignment(&relation.head, candidate, tokens, assignment)
+        else {
+            return Ok(false);
+        };
+        let Some(dependent) =
+            enhanced_endpoint_assignment(&relation.dependent, candidate, tokens, assignment)
+        else {
+            return Ok(false);
+        };
+        for edge in layer_edges(&relation.layer, tokens, graph) {
+            budget.step(pattern)?;
+            let Some((actual_head, actual_dependent, label)) = edge else {
+                continue;
             };
-            let Some(dependent) =
-                enhanced_endpoint_assignment(&relation.dependent, candidate, tokens, assignment)
-            else {
-                return false;
-            };
-            !layer_edges(&relation.layer, tokens, graph).into_iter().any(
-                |(actual_head, actual_dependent, label)| {
-                    actual_head == head
-                        && actual_dependent == dependent
-                        && relation_label_matches(&relation.labels, label)
-                },
-            )
-        })
+            if actual_head == head
+                && actual_dependent == dependent
+                && relation_label_matches(&relation.labels, label)
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn enhanced_endpoint_assignment<S: TokenSequence + ?Sized>(
@@ -1102,14 +1240,16 @@ fn relation_label_matches(labels: &RelationLabels<RelationLabel>, actual: &str) 
 
 #[allow(clippy::too_many_arguments)]
 fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
+    budget: &mut MatchBudget,
+    pattern: &str,
     endpoint: &RuntimeEnhancedEndpoint,
     node: EnhancedNodeId,
     candidate: &Candidate,
     tokens: &S,
     graph: Option<&EnhancedGraph>,
     assignments: &mut BTreeMap<compact_str::CompactString, EnhancedNodeId>,
-) -> bool {
-    match endpoint {
+) -> Result<bool, MatchResourceError> {
+    Ok(match endpoint {
         RuntimeEnhancedEndpoint::Surface(capture) => {
             candidate.slots[capture.index()].is_some_and(|(start, end)| {
                 end == start + 1 && node == EnhancedNodeId::Word { token_index: start }
@@ -1128,17 +1268,25 @@ fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
                 .get(name)
                 .is_some_and(|assigned| *assigned != node)
             {
-                return false;
+                return Ok(false);
             }
-            let matches = symbolic.iter().zip(members).any(|(predicate, members)| {
-                graph_node_predicate_matches(node, tokens, graph, predicate, members)
-            });
+            let mut matches = false;
+            for (predicate, members) in symbolic.iter().zip(members) {
+                if matches!(node, EnhancedNodeId::Empty { .. }) {
+                    budget.work(pattern, graph.map_or(0, |graph| graph.empty_nodes().len()))?;
+                }
+                if graph_node_predicate_matches(node, tokens, graph, predicate, members) {
+                    matches = true;
+                    break;
+                }
+            }
             if matches {
+                budget.allocate(pattern, 1024usize.saturating_add(name.len()))?;
                 assignments.insert(name.clone(), node);
             }
             matches
         }
-    }
+    })
 }
 
 fn derived_basic_head<S: TokenSequence + ?Sized>(
@@ -2076,6 +2224,224 @@ mod tests {
             node_test(),
             clauses.join(", ")
         )
+    }
+
+    fn graph_fixture(
+        words: usize,
+        binders: usize,
+    ) -> (crate::fsm::BoundCatalog, BoundSentenceInput) {
+        let clauses = (0..binders)
+            .map(|index| format!("$v -[*]-> (?<b{index}> [])"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        graph_fixture_with_clauses(words, &clauses)
+    }
+
+    fn graph_fixture_with_clauses(
+        words: usize,
+        clauses: &str,
+    ) -> (crate::fsm::BoundCatalog, BoundSentenceInput) {
+        let compiled = compile_catalog(
+            PatternSource::named(
+                "budget.lx",
+                &format!("pattern p := (?<v> [upos=VERB]) where {clauses}."),
+            ),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let bound = compiled
+            .bind(&crate::corpus::conllu::token_schema())
+            .unwrap();
+        let mut sentence = String::from("1\tv\tv\tVERB\t_\t_\t0\troot\t_\t_\n");
+        for index in 2..=words {
+            writeln!(sentence, "{index}\tn\tn\tNOUN\t_\t_\t1\tobj\t_\t_").unwrap();
+        }
+        sentence.push('\n');
+        let read = crate::corpus::conllu::Reader::new(sentence.as_bytes(), "budget")
+            .next()
+            .unwrap()
+            .unwrap();
+        let input = BoundSentenceInput::new(
+            read.project(bound.projection()).unwrap(),
+            EnhancedGraphInput::Observation(read.enhanced_graph().clone()),
+        );
+        (bound, input)
+    }
+
+    #[test]
+    fn unordered_graph_binders_return_a_resource_error() {
+        let (bound, input) = graph_fixture(32, 5);
+        let error = bound.find_matches_input(&input).unwrap_err();
+        assert!(
+            matches!(error, crate::fsm::BoundExecutionError::Resource(_)),
+            "{error}"
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        assert!(matches!(
+            crate::fsm::BoundSentenceMatcher::new(&bound).match_all(&pool, &[input]),
+            Err(crate::fsm::BoundExecutionError::Resource(_))
+        ));
+    }
+
+    #[test]
+    fn graph_resource_failure_propagates_through_execution_without_publication() {
+        use crate::execution::{
+            AnalysisBinding, CancellationFlag, ExecutionBatch, ExecutionError, ExecutionLimits,
+            ExecutionSentence, MatchSink, PolicySelection, SentenceAdmission, SentenceBatchSource,
+            SentenceLocation, SinkControl, TokenizedBatchObservation, execute_analyzed,
+        };
+        struct Source(Option<ExecutionBatch>);
+        impl SentenceBatchSource for Source {
+            fn wants_lookahead(&self) -> bool {
+                false
+            }
+            fn next_batch(
+                &mut self,
+                _: &ExecutionLimits,
+            ) -> Result<Option<ExecutionBatch>, ExecutionError> {
+                Ok(self.0.take())
+            }
+        }
+        #[derive(Default)]
+        struct Sink(usize);
+        impl MatchSink for Sink {
+            fn push(
+                &mut self,
+                _: &SentenceLocation,
+                _: &dyn crate::token_match::TokenSequence,
+                _: &[crate::fsm::Match],
+            ) -> Result<SinkControl, ExecutionError> {
+                self.0 += 1;
+                Ok(SinkControl::Continue { records_emitted: 0 })
+            }
+        }
+        let (bound, input) = graph_fixture(32, 5);
+        let charge = input.resident_bytes().unwrap();
+        let source = Source(Some(ExecutionBatch::bound_tokenized_with_charges(
+            vec![ExecutionSentence {
+                location: SentenceLocation::run_local(0),
+                value: input,
+            }],
+            vec![charge],
+        )));
+        let mut sink = Sink::default();
+        type NoAnalyzer = crate::testing::execution::FixtureSession<
+            fn(&str) -> Vec<crate::token_match::TokenInfo>,
+        >;
+        let error = execute_analyzed::<_, NoAnalyzer, _, _, _>(
+            source,
+            AnalysisBinding::Prepared(crate::corpus::conllu::token_schema()),
+            &bound,
+            &rayon::ThreadPoolBuilder::new()
+                .num_threads(2)
+                .build()
+                .unwrap(),
+            &ExecutionLimits::default(),
+            1,
+            &CancellationFlag::new(),
+            &mut sink,
+            &mut |_, _: &Sink| {},
+            &mut |_: TokenizedBatchObservation| Ok(()),
+            PolicySelection::Apply,
+            &SentenceAdmission::All,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::Matching(crate::fsm::BoundExecutionError::Resource(_))
+            ),
+            "{error}"
+        );
+        assert_eq!(sink.0, 0);
+    }
+
+    #[test]
+    fn wide_single_relation_with_a_rare_node_predicate_completes() {
+        let (bound, input) =
+            graph_fixture_with_clauses(20_000, "$v -[*]-> (?<b0> [node.id=20000])");
+        let matches = bound.find_matches_input(&input).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].graph_bindings.iter().any(|binding| matches!(
+            binding,
+            crate::fsm::GraphBinding::Node {
+                node: crate::corpus::conllu::EnhancedNodeId::Word {
+                    token_index: 19_999
+                },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn root_only_graph_scans_exhaust_the_work_budget() {
+        for layer in ["", "enhanced "] {
+            let catalog = compile_catalog(
+                PatternSource::named(
+                    "roots.lx",
+                    &format!("pattern p := (?<v> []) where $v -[{layer}*]-> (?<b> [])."),
+                ),
+                CompileLimits::default(),
+            )
+            .unwrap()
+            .matcher;
+            let bound = catalog
+                .bind(&crate::corpus::conllu::token_schema())
+                .unwrap();
+            let mut sentence = String::new();
+            for index in 1..=2000 {
+                writeln!(sentence, "{index}\tn\tn\tNOUN\t_\t_\t0\troot\t0:root\t_").unwrap();
+            }
+            sentence.push('\n');
+            let read = crate::corpus::conllu::Reader::new(sentence.as_bytes(), "roots")
+                .next()
+                .unwrap()
+                .unwrap();
+            let input = BoundSentenceInput::new(
+                read.project(bound.projection()).unwrap(),
+                EnhancedGraphInput::Observation(read.enhanced_graph().clone()),
+            );
+            let crate::fsm::BoundExecutionError::Resource(error) =
+                bound.find_matches_input(&input).unwrap_err()
+            else {
+                panic!("graph work error expected");
+            };
+            assert_eq!(error.resource, "graph work steps");
+            assert_eq!(error.limit, 1_000_000);
+        }
+    }
+
+    #[test]
+    fn graph_chain_with_no_complete_assignment_returns_a_resource_error() {
+        let (bound, input) =
+            graph_fixture_with_clauses(1100, "$v -[*]-> (?<b0> []), $b0 -[*]-> (?<b1> [])");
+        let error = bound.find_matches_input(&input).unwrap_err();
+        assert!(
+            matches!(error, crate::fsm::BoundExecutionError::Resource(_)),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn bounded_graph_enumeration_preserves_complete_matches() {
+        let (bound, input) = graph_fixture(5, 2);
+        let bounded = bound.find_matches_input(&input).unwrap();
+        UNPRUNED_ORACLE.set(true);
+        let unpruned = bound.find_matches_input(&input);
+        UNPRUNED_ORACLE.set(false);
+        assert_eq!(bounded, unpruned.unwrap());
+        assert_eq!(bounded.len(), 12);
+        assert!(
+            bounded
+                .iter()
+                .all(|matched| matched.graph_bindings.len() == 2
+                    && matched.captures.len() == 1
+                    && matched.lexical.is_none())
+        );
     }
 
     #[hegel::test(test_cases = 400, derandomize = true)]

@@ -207,9 +207,9 @@ fn build_line_analysis<'a>(
     // matcher owns that one policy application so this view cannot drift from
     // normal publication behavior.
     let explanation = matcher
-        .explain_sentence_in_context(line, context)
+        .try_explain_sentence_in_context(line, context)
         .map_err(|error| SampleAnalysisError {
-            message: format!("Result policy failed: {error}"),
+            message: format!("Could not inspect this sentence: {error}"),
         })?;
     for m in explanation
         .candidates

@@ -47,7 +47,7 @@ pub use compiler::{
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,
-    verify_anchor_claims, verify_examples,
+    try_verify_examples, verify_anchor_claims, verify_examples,
 };
 pub use explanation::{ExplainedMatch, SentenceExplanation};
 pub use identity::{
@@ -58,8 +58,9 @@ pub use inline::normalize_inline_pattern;
 pub use labels::{LabelDeclaration, OutOfSetValues};
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
-    CompiledLexiconDefinition, ContextSegment, ContextWindow, FsmBuilder, LookaroundContext,
-    LookaroundReach, PredicateDigest, TokenWindow, WindowKeyField, clear_pools,
+    CompiledLexiconDefinition, ContextSegment, ContextWindow, EnhancedMatchError, FsmBuilder,
+    LookaroundContext, LookaroundReach, MatchPublicationError, MatchResourceError, PredicateDigest,
+    TokenWindow, WindowKeyField, clear_pools,
 };
 #[cfg(feature = "bench-instrumentation")]
 pub use matcher::{

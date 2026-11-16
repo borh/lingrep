@@ -572,7 +572,7 @@ where
         |sentences, links, targets| {
             BoundSentenceMatcher::new(fsm)
                 .match_in_windows(pool, sentences, links, targets)
-                .expect("the executor admits only this binding's sentence schema")
+                .map_err(ExecutionError::Matching)
         },
     )?;
     if matches!(outcome, RunOutcome::Completed(_))
@@ -718,7 +718,11 @@ where
     K: MatchSink,
     P: ProgressSink<K>,
     O: TokenizedBatchObserver,
-    M: FnMut(&[BoundSentenceInput], &[bool], Range<usize>) -> Vec<Vec<Match>>,
+    M: FnMut(
+        &[BoundSentenceInput],
+        &[bool],
+        Range<usize>,
+    ) -> Result<Vec<Vec<Match>>, ExecutionError>,
 {
     limits.validate()?;
     if logical_batch_sentences == 0 {
@@ -1539,7 +1543,7 @@ where
     K: MatchSink,
     P: ProgressSink<K>,
     O: TokenizedBatchObserver,
-    M: FnMut(&[V], &[bool], Range<usize>) -> Vec<Vec<Match>>,
+    M: FnMut(&[V], &[bool], Range<usize>) -> Result<Vec<Vec<Match>>, ExecutionError>,
 {
     if cancel.is_cancelled() {
         return Ok(BatchControl::Cancelled);
@@ -1571,7 +1575,7 @@ where
         }
         Found::Windows(&windows)
     } else {
-        found = match_batch(held, links, targets);
+        found = match_batch(held, links, targets)?;
         debug_assert_eq!(found.len(), sentences.len());
         for (sentence, matches) in sentences.iter().zip(&found) {
             state.observe_match(sentence, matches.len())?;
@@ -1918,7 +1922,7 @@ mod tests {
             labels,
             BTreeMap::new(),
             None,
-            |sentences, _, targets| matcher(&sentences[targets]),
+            |sentences, _, targets| Ok(matcher(&sentences[targets])),
         )
     }
 
