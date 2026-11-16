@@ -1729,3 +1729,107 @@ async fn bounded_analysis_skips_large_neighbors_without_caching_the_block() {
         );
     }
 }
+
+#[tokio::test]
+async fn document_value_distribution_orders_global_frequencies_and_preserves_types() {
+    use futures::TryStreamExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("distribution.sqlite");
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    let mut records = (0..125)
+        .map(|n| serde_json::json!({"tag":format!("value{n:03}")}))
+        .collect::<Vec<_>>();
+    records.extend((0..5).map(|_| serde_json::json!({"tag":["zzpopular","zzpopular"]})));
+    records.push(serde_json::json!({"tag":[1,"1",true,"true",null,1.0,18446744073709551615_u64]}));
+    let count = records.len();
+    for (ordinal, metadata) in records.into_iter().enumerate() {
+        let mut record = rich();
+        record.metadata_json = Some(metadata.to_string());
+        writer
+            .push_sentence(
+                &location(ordinal as u64, "doc.md", ordinal as u64, 0),
+                &record,
+            )
+            .await
+            .unwrap();
+    }
+    for (offset, json) in [
+        r#"{"tag":"猫"}"#,
+        r#"{"tag":"\u732b"}"#,
+        r#"{"tag":["猫","\u732b"]}"#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ordinal = (count + offset) as u64;
+        let mut record = rich();
+        record.metadata_json = Some(json.to_owned());
+        writer
+            .push_sentence(&location(ordinal, "doc.md", ordinal, 0), &record)
+            .await
+            .unwrap();
+    }
+    writer.finish(analysis_identity()).await.unwrap();
+    let view = ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+    let rows = view
+        .document_metadata_distribution("tag")
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    assert_eq!(
+        rows[0],
+        ("text".to_owned(), Some("\"zzpopular\"".to_owned()), 5)
+    );
+    assert!(rows.windows(2).all(|rows| rows[0].2 >= rows[1].2));
+    assert_eq!(
+        rows.iter()
+            .filter(|(_, value, _)| value.as_deref() == Some("\"猫\""))
+            .count(),
+        1
+    );
+    assert!(
+        rows.iter()
+            .any(|(_, value, documents)| value.as_deref() == Some("\"猫\"") && *documents == 3)
+    );
+    for value in [
+        "1",
+        "\"1\"",
+        "true",
+        "\"true\"",
+        "null",
+        "1.0",
+        "18446744073709551615",
+    ] {
+        assert!(
+            rows.iter()
+                .any(|(_, json, documents)| json.as_deref() == Some(value) && *documents == 1),
+            "{value}"
+        );
+    }
+    let again = view
+        .document_metadata_distribution("tag")
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    assert_eq!(rows, again);
+    let temp: i64 = sqlx::query_scalar("PRAGMA temp_store")
+        .fetch_one(&view.pool)
+        .await
+        .unwrap();
+    let cache: i64 = sqlx::query_scalar("PRAGMA cache_size")
+        .fetch_one(&view.pool)
+        .await
+        .unwrap();
+    assert_eq!((temp, cache), (1, -2048));
+    let options = sqlx::query("PRAGMA compile_options")
+        .fetch_all(&view.pool)
+        .await
+        .unwrap();
+    assert!(
+        !options
+            .iter()
+            .any(|row| row.get::<String, _>(0) == "TEMP_STORE=3")
+    );
+}
