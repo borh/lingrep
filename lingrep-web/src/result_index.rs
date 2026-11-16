@@ -120,7 +120,7 @@ impl ResultIndex {
         &self.publication_attributes
     }
 
-    /// Returns at most 30 occurrences after the exclusive global sequence; -1 starts at the beginning.
+    /// Returns occurrences after the exclusive global sequence; -1 starts at the beginning.
     pub async fn page(
         &self,
         pattern: PatternKey,
@@ -131,8 +131,9 @@ impl ResultIndex {
         if after < -1 {
             return Err(ResultIndexError::InvalidPosition);
         }
-        let limit = limit.clamp(1, 30);
+        let limit = limit.max(1);
         let matches_total = self.count(pattern, document).await?;
+        let limit = limit.min(usize::try_from(matches_total).unwrap_or(usize::MAX).max(1));
         let mut query = QueryBuilder::new("SELECT COUNT(*) FROM matches WHERE ");
         scope(&mut query, pattern, document)?;
         query.push(" AND sequence <= ").push_bind(after);
@@ -743,11 +744,11 @@ mod tests {
         .unwrap();
         let p = PatternKey::new(0).unwrap();
         let page = index.page(p, None, 255, usize::MAX).await.unwrap();
-        assert_eq!(page.rows.len(), 30);
+        assert_eq!(page.rows.len(), 344);
         assert_eq!(page.rows.first().unwrap().sequence, 256);
         assert_eq!(
             (page.start, page.matches_total, page.previous, page.next),
-            (256, 600, Some(225), Some(285))
+            (256, 600, Some(-1), None)
         );
         assert_eq!(
             index

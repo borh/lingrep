@@ -43,3 +43,9 @@ test('work-scoped locations retain the unscoped return position and reject inval
   assert.throws(()=>parseView(JSON.stringify({...location,scopeDocument:-1})),/invalid/);
   assert.throws(()=>parseView(JSON.stringify({...location,returnAfter:-2})),/invalid/);
 });
+
+test('example counts above thirty survive saved settings while context remains bounded',()=>{
+  const settings=questionSettings(new URLSearchParams({lines:'1000',context:'999'}));
+  assert.equal(settings.lines,1000);
+  assert.equal(settings.context,24);
+});

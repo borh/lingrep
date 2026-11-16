@@ -227,6 +227,12 @@ with (out / "browser-driver.log").open("w") as log:
             assert matches == expected, (
                 "Question export differs from a separate CLI query"
             )
+        js("document.querySelector('#line-limit').value=100;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
+        wait("return document.querySelectorAll('.kwic-row').length===" + str(args.expected_matches))
+        assert js("return document.querySelector('#line-limit').max") == ""
+        assert js("return __probe.state.current.id") == first_id
+        js("document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
+        wait("return document.querySelectorAll('.kwic-row').length===20 && document.querySelector('.kwic-list').getAttribute('aria-busy')==='false'")
         wait("return document.querySelectorAll('.document-nav select option').length>2")
         inventory = js(
             "return [...document.querySelectorAll('.document-nav select option')].slice(1).map(o=>({id:Number(o.value),title:o.textContent}))"
