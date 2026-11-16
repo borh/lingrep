@@ -186,6 +186,12 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 true,
                 RevisionStatusKind::Superseded,
             ),
+            Some(AttemptPhase::Cancelled(CancelReason::User)) => (
+                ("Search stopped.".into(), None, None),
+                false,
+                true,
+                RevisionStatusKind::Neutral,
+            ),
             Some(AttemptPhase::Cancelled(CancelReason::Shutdown)) => (
                 ("This search was stopped because the server is shutting down.".into(), Some("status.shutdown"), None),
                 false,

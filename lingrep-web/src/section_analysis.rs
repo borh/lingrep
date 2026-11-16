@@ -280,6 +280,7 @@ mod tests {
                 })
                 .collect(),
             match_refs: Box::default(),
+            result_index: None,
             capture_catalog: Box::default(),
             sections,
             observed_sentences: 3,

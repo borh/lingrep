@@ -49,6 +49,7 @@ fn snapshot_with_patterns(
         compound_category: lingrep_web::snapshot::CompoundCategory::Compound,
         patterns,
         match_refs: Box::default(),
+        result_index: None,
         capture_catalog: Box::default(),
         oversized_omissions: None,
         unavailable_attributes: None,
@@ -62,7 +63,8 @@ fn first_running_revision_is_busy_but_not_stale() {
     assert!(state.accept(
         RevisionId(1),
         "p := [upos=VERB].".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.mark_running(RevisionId(1)));
 
@@ -80,7 +82,8 @@ fn newer_running_revision_is_stale_only_when_an_older_snapshot_exists() {
     assert!(state.accept(
         RevisionId(1),
         "old := [upos=NOUN].".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.mark_running(RevisionId(1)));
     assert!(state.apply_terminal(CoordinatorEvent::Completed {
@@ -91,7 +94,8 @@ fn newer_running_revision_is_stale_only_when_an_older_snapshot_exists() {
     assert!(state.accept(
         RevisionId(2),
         "new := [upos=VERB].".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.mark_running(RevisionId(2)));
 
@@ -108,7 +112,8 @@ fn cancelled_is_superseded_not_failed() {
     assert!(state.accept(
         RevisionId(1),
         "p := [upos=VERB].".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.apply_terminal(CoordinatorEvent::Cancelled {
         workbench,
@@ -129,7 +134,8 @@ fn a_revision_cancelled_for_an_absent_page_is_not_reported_as_superseded() {
     assert!(state.accept(
         RevisionId(1),
         "p := [upos=VERB].".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.apply_terminal(CoordinatorEvent::Cancelled {
         workbench,
@@ -155,7 +161,8 @@ fn failed_status(
     assert!(state.accept(
         RevisionId(1),
         "p := [upos=VERB".into(),
-        CacheReadinessView::Ready
+        CacheReadinessView::Ready,
+        Default::default()
     ));
     assert!(state.apply_terminal(CoordinatorEvent::Failed {
         workbench,
@@ -221,7 +228,12 @@ fn matched_pattern(exact_total: u64) -> lingrep_web::snapshot::PatternDescriptor
 fn stale_export_revision_after_a_newer_accept(exact_total: u64) -> Option<u64> {
     let workbench = WorkbenchId::new("status");
     let mut state = state();
-    assert!(state.accept(RevisionId(1), "p := [].".into(), CacheReadinessView::Ready));
+    assert!(state.accept(
+        RevisionId(1),
+        "p := [].".into(),
+        CacheReadinessView::Ready,
+        Default::default()
+    ));
     assert!(state.apply_terminal(CoordinatorEvent::Completed {
         workbench,
         revision: RevisionId(1),
@@ -229,7 +241,12 @@ fn stale_export_revision_after_a_newer_accept(exact_total: u64) -> Option<u64> {
     }));
     let current = project_revision_status(Some(&view(state.clone())));
     assert_eq!(current.stale_export_revision, None);
-    assert!(state.accept(RevisionId(2), "q := [].".into(), CacheReadinessView::Ready));
+    assert!(state.accept(
+        RevisionId(2),
+        "q := [].".into(),
+        CacheReadinessView::Ready,
+        Default::default()
+    ));
     project_revision_status(Some(&view(state))).stale_export_revision
 }
 
@@ -245,7 +262,12 @@ fn a_completed_run_reports_a_vector_file_the_catalog_does_not_declare() {
 
     let notice = |binding: Option<VectorsBinding>| {
         let mut state = state();
-        assert!(state.accept(RevisionId(1), "p := [].".into(), CacheReadinessView::Ready));
+        assert!(state.accept(
+            RevisionId(1),
+            "p := [].".into(),
+            CacheReadinessView::Ready,
+            Default::default()
+        ));
         let mut snapshot = Arc::unwrap_or_clone(snapshot(RevisionId(1)));
         snapshot.vectors_binding = binding;
         assert!(state.apply_terminal(CoordinatorEvent::Completed {

@@ -33,6 +33,8 @@ const ABANDONED_SCAN_GRACE: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct RevisionRequest {
     pub source: String,
+    pub index_results: bool,
+    pub expected_analysis_identity: Option<String>,
     /// None uses the configured ceiling; supplied values are clamped to 1..=ceiling.
     pub retained: Option<usize>,
     pub derive_compounds: bool,
@@ -46,6 +48,8 @@ impl Default for RevisionRequest {
     fn default() -> Self {
         Self {
             source: String::new(),
+            index_results: false,
+            expected_analysis_identity: None,
             retained: None,
             derive_compounds: false,
             compound_category: CompoundCategory::Compound,
@@ -58,6 +62,8 @@ impl Default for RevisionRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScanOptions {
+    pub(crate) index_results: bool,
+    pub(crate) expected_analysis_identity: Option<String>,
     pub(crate) search_scope: crate::search_scope::SearchScope,
     pub(crate) retained: usize,
     pub(crate) derive_compounds: bool,
@@ -143,6 +149,14 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
                 "An input sentence is {actual} bytes; the server limit is {limit}. Ask the server operator to review the source and sentence limit."
             ),
         },
+        ExecutionError::Sink(message)
+            if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string() =>
+        {
+            AttemptFailure {
+                category: ErrorCategory::Execution,
+                message: message.clone(),
+            }
+        }
         ExecutionError::Cache(_) | ExecutionError::Source { .. } => integrity_failure(),
         _ => execution_failure(),
     }
@@ -264,6 +278,7 @@ fn resolve_scan(
                         compound_category: sink.compound_category,
                         patterns: sink.patterns.into_boxed_slice(),
                         match_refs: sink.refs.into_boxed_slice(),
+                        result_index: sink.result_index.take(),
                         capture_catalog: sink.capture_catalog.into_boxed_slice(),
                         sections,
                         observed_sentences: sink.observed_sentences,
@@ -427,6 +442,7 @@ fn run_scan_blocking(
         Default::default(),
         Default::default(),
         None,
+        false,
     )
 }
 
@@ -443,6 +459,7 @@ fn run_scan_blocking_with_options(
     overlaps: Overlaps,
     search_scope: crate::search_scope::SearchScope,
     provenance: Option<Arc<lingrep_corpus::ProvenanceView>>,
+    index_results: bool,
 ) -> Result<(RunOutcome, SnapshotSink, Option<OversizedSentenceOmissions>), AttemptFailure> {
     let (resolved, scope) = match provenance {
         Some(provenance) => {
@@ -472,17 +489,19 @@ fn run_scan_blocking_with_options(
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
     let mut sink = snapshot;
+    let attributes: Arc<[AttributeKey]> =
+        lingrep_core::execution::cached_run_attributes(&output.matcher).into();
+    if index_results {
+        sink.enable_result_index(attributes.clone())
+            .map_err(|error| AttemptFailure {
+                category: ErrorCategory::Execution,
+                message: error.to_string(),
+            })?;
+    }
     sink.search_scope = search_scope;
     sink.admission = resolved.admission;
     sink.cli_arguments = cli_arguments(ready, resolved.clause.as_deref(), overlaps);
     sink.overlaps = overlaps;
-    let mut attributes = output.matcher.execution_attributes();
-    // Snapshot/KWIC projection needs surface forms even when recognition does
-    // not. Keep that output requirement explicit at the execution boundary.
-    let text = AttributeKey::new("text").expect("form is a canonical attribute key");
-    if !attributes.contains(&text) {
-        attributes.push(text);
-    }
     // Held rather than borrowed inline: it binds the catalog *and* tells the
     // executor which schema the artifact's stored tokens are in, which is the
     // one question a prepared run cannot answer from an analyzer session.
@@ -542,6 +561,10 @@ fn run_scan_blocking_with_options(
             tracing::warn!(%error, "span stream did not drain cleanly");
             integrity_failure()
         })?;
+        sink.finish_result_index().map_err(|error| AttemptFailure {
+            category: ErrorCategory::Execution,
+            message: error.to_string(),
+        })?;
     } else {
         sink.discard_sections();
     }
@@ -581,12 +604,18 @@ pub struct LivePatternTotal {
 pub struct LiveSummary {
     pub revision: RevisionId,
     pub rows: Arc<[LivePatternTotal]>,
+    pub preview: Arc<[crate::result_index::ResultOccurrence]>,
+    pub capture_catalog: Arc<[crate::snapshot::CaptureDescriptor]>,
+    pub publication_attributes: Arc<[AttributeKey]>,
 }
 
 #[derive(Debug, Clone)]
 struct ScanProgress {
     progress: ExecutionProgress,
     rows: Arc<[LivePatternTotal]>,
+    preview: Arc<[crate::result_index::ResultOccurrence]>,
+    capture_catalog: Arc<[crate::snapshot::CaptureDescriptor]>,
+    publication_attributes: Arc<[AttributeKey]>,
 }
 
 struct Entry {
@@ -782,6 +811,8 @@ impl CoordinatorRegistry {
     ) -> Result<RevisionId, AdmitError> {
         let RevisionRequest {
             source,
+            index_results,
+            expected_analysis_identity,
             retained,
             derive_compounds,
             compound_category,
@@ -790,6 +821,8 @@ impl CoordinatorRegistry {
             search_scope,
         } = request;
         let options = ScanOptions {
+            index_results,
+            expected_analysis_identity,
             search_scope,
             retained: retained.map_or(self.inner.max_refs, |asked| {
                 asked.clamp(1, self.inner.max_refs)
@@ -810,7 +843,12 @@ impl CoordinatorRegistry {
                 .expect("revision id exhausted")
         });
         let revision = RevisionId(next);
-        let accepted = state.accept(revision, source.as_str().into(), readiness_view(&readiness));
+        let accepted = state.accept(
+            revision,
+            source.as_str().into(),
+            readiness_view(&readiness),
+            options.search_scope.clone(),
+        );
         assert!(accepted, "coordinator-allocated revision must be monotonic");
         let cancellation = CancellationFlag::new();
         let previous_cancellation = entry
@@ -941,6 +979,51 @@ impl CoordinatorRegistry {
             .expect("reading permit semaphore is never closed")
     }
 
+    pub async fn cancel(
+        &self,
+        workbench: &WorkbenchId,
+        expected: RevisionId,
+    ) -> Result<bool, SnapshotLookupError> {
+        let entry = self
+            .inner
+            .entries
+            .lock()
+            .await
+            .get(workbench)
+            .cloned()
+            .ok_or(SnapshotLookupError::UnknownWorkbench)?;
+        let mut state = entry.state.lock().await;
+        if state
+            .current_attempt()
+            .is_none_or(|attempt| attempt.revision != expected)
+            || state.is_terminal()
+        {
+            return Ok(false);
+        }
+        if let Some(flag) = entry
+            .cancellation
+            .lock()
+            .expect("cancellation mutex poisoned")
+            .as_ref()
+        {
+            flag.cancel();
+        }
+        let changed = state.apply_terminal(CoordinatorEvent::Cancelled {
+            workbench: workbench.clone(),
+            revision: expected,
+            reason: CancelReason::User,
+        });
+        if changed {
+            let progress = entry.view_tx.borrow().progress;
+            entry.publish(&state, progress);
+            let handle = entry.handle.lock().expect("handle mutex poisoned").take();
+            if let Some(handle) = handle {
+                handle.abort();
+            }
+        }
+        Ok(changed)
+    }
+
     pub async fn subscribe(
         &self,
         workbench: &WorkbenchId,
@@ -998,6 +1081,20 @@ impl CoordinatorRegistry {
         let Some((ready, permit)) = admitted else {
             return;
         };
+        if options
+            .expected_analysis_identity
+            .as_ref()
+            .is_some_and(|expected| {
+                expected
+                    != &lingrep_corpus::format_identity(
+                        ready.artifact.analysis_identity().as_bytes(),
+                    )
+            })
+        {
+            let mut state = entry.state.lock().await;
+            if state.apply_terminal(CoordinatorEvent::Failed { workbench, revision, failure: AttemptFailure { category: ErrorCategory::Binding, message: "The corpus saved with this question is unavailable. Choose the current corpus and search again.".into() } }) { entry.publish(&state, ExecutionProgress::default()); }
+            return;
+        }
         {
             let mut state = entry.state.lock().await;
             if !state.mark_running(revision) {
@@ -1053,6 +1150,7 @@ impl CoordinatorRegistry {
                             options.overlaps,
                             options.search_scope,
                             Some(provenance),
+                            options.index_results,
                         )
                     })
                     .await;
@@ -1210,6 +1308,9 @@ async fn forward_progress(
             LiveSummary {
                 revision,
                 rows: update.rows,
+                preview: update.preview,
+                capture_catalog: update.capture_catalog,
+                publication_attributes: update.publication_attributes,
             },
         );
     }
@@ -1299,8 +1400,17 @@ impl ProgressSink<SnapshotSink> for WatchProgress {
             })
             .collect::<Vec<_>>()
             .into();
-        self.sender
-            .send_replace(Some(ScanProgress { progress, rows }));
+        self.sender.send_replace(Some(ScanProgress {
+            progress,
+            rows,
+            preview: sink.preview.clone().into(),
+            publication_attributes: sink.publication_attributes.clone(),
+            capture_catalog: if sink.preview.is_empty() {
+                Arc::from([])
+            } else {
+                sink.capture_catalog.clone().into()
+            },
+        }));
     }
 }
 
@@ -1320,6 +1430,136 @@ mod tests {
         let context = Arc::new(crate::server_context::ServerContext::new("/tmp/dict").unwrap());
         let runtime = Arc::new(CorpusRuntime::new(context, "unused-corpus").unwrap());
         CorpusSlot::new(CorpusName::default_key(), runtime, "unused-corpus".into())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn indexed_scan_keeps_every_occurrence_without_changing_the_sample() {
+        let (_dir, ready) = tiny_ready_corpus(90);
+        let (plain, indexed, preview) = tokio::task::spawn_blocking(move || {
+            let scan = |indexed| {
+                let (progress_tx, progress_rx) = watch::channel(None::<ScanProgress>);
+                let sink = run_scan_blocking_with_options(
+                    &ready,
+                    crate::patterns::compile_web_pattern("p := [].").unwrap(),
+                    2,
+                    no_sections(),
+                    &CancellationFlag::new(),
+                    progress_tx,
+                    false,
+                    CompoundCategory::Compound,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    None,
+                    indexed,
+                )
+                .unwrap()
+                .1;
+                let live = progress_rx.borrow().clone().unwrap();
+                (sink, live)
+            };
+            let (plain, plain_live) = scan(false);
+            let (indexed, indexed_live) = scan(true);
+            assert!(plain_live.publication_attributes.is_empty());
+            assert_eq!(
+                indexed_live.publication_attributes,
+                indexed.publication_attributes
+            );
+            assert_eq!(plain.refs, indexed.refs);
+            assert_eq!(plain.patterns, indexed.patterns);
+            assert_eq!(plain.capture_catalog, indexed.capture_catalog);
+            assert!(plain.result_index.is_none());
+            assert!(plain.preview.is_empty());
+            assert_eq!(
+                indexed
+                    .publication_attributes
+                    .iter()
+                    .map(AttributeKey::as_str)
+                    .collect::<Vec<_>>(),
+                ["text"]
+            );
+            assert_eq!(
+                indexed
+                    .result_index
+                    .as_ref()
+                    .unwrap()
+                    .publication_attributes(),
+                indexed.publication_attributes.as_ref()
+            );
+            let preview = indexed.preview.clone();
+            (plain.refs, indexed.result_index.unwrap(), preview)
+        })
+        .await
+        .unwrap();
+        let key = PatternKey::new(0).unwrap();
+        assert_eq!(plain.len(), 2);
+        assert_eq!(indexed.count(key, None).await.unwrap(), 90);
+        assert_eq!(preview.len(), 30);
+        for (sequence, row) in preview.into_iter().enumerate() {
+            assert_eq!(row.sequence, sequence as u64);
+            assert_eq!(indexed.reference(sequence as u64).await.unwrap(), Some(row));
+        }
+    }
+
+    #[tokio::test]
+    async fn user_cancellation_is_revision_bound_terminal_and_preserves_displayed_evidence() {
+        let registry = CoordinatorRegistry::new(2);
+        let workbench = WorkbenchId::new("cancel");
+        let entry = registry.entry(&workbench, &test_slot()).await;
+        let retained = snapshot(&workbench, RevisionId(1));
+        {
+            let mut state = entry.state.lock().await;
+            state.accept(
+                RevisionId(1),
+                "p := [].".into(),
+                CacheReadinessView::Ready,
+                Default::default(),
+            );
+            state.apply_terminal(CoordinatorEvent::Completed {
+                workbench: workbench.clone(),
+                revision: RevisionId(1),
+                snapshot: retained.clone(),
+            });
+            state.accept(
+                RevisionId(2),
+                "p := [].".into(),
+                CacheReadinessView::Ready,
+                Default::default(),
+            );
+            entry.publish(&state, ExecutionProgress::default());
+        }
+        let cancellation = CancellationFlag::new();
+        *entry.cancellation.lock().unwrap() = Some(cancellation.clone());
+        assert!(!registry.cancel(&workbench, RevisionId(1)).await.unwrap());
+        assert!(!cancellation.is_cancelled());
+        assert!(registry.cancel(&workbench, RevisionId(2)).await.unwrap());
+        assert!(cancellation.is_cancelled());
+        assert!(!registry.cancel(&workbench, RevisionId(2)).await.unwrap());
+        let view = registry.snapshot(&workbench).await.unwrap();
+        assert_eq!(
+            view.state.current_attempt().unwrap().phase,
+            AttemptPhase::Cancelled(CancelReason::User)
+        );
+        assert_eq!(view.state.displayed_snapshot(), Some(retained.as_ref()));
+        let mut state = entry.state.lock().await;
+        assert!(!state.apply_terminal(CoordinatorEvent::Completed {
+            workbench,
+            revision: RevisionId(2),
+            snapshot: retained
+        }));
+    }
+
+    #[test]
+    fn result_budget_failure_tells_the_user_to_narrow_the_query() {
+        let error =
+            ExecutionError::Sink(crate::result_index::ResultIndexError::BudgetExceeded.to_string());
+        let failure = classify_execution_error(&error);
+        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert!(
+            failure
+                .message
+                .contains("Narrow the pattern or document conditions")
+        );
     }
 
     #[test]
@@ -1395,7 +1635,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         let progress = ExecutionProgress {
             sentences_admitted: 4,
@@ -1447,7 +1688,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [dep.rel=nsubj].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         let mut snapshot = (*snapshot(&workbench, RevisionId(1))).clone();
         snapshot.unavailable_attributes = Some(unavailable);
@@ -1521,6 +1763,7 @@ mod tests {
             Default::default(),
             Default::default(),
             None,
+            false,
         )
         .unwrap();
         assert!(omissions.is_none());
@@ -1564,6 +1807,7 @@ mod tests {
             Default::default(),
             Default::default(),
             None,
+            false,
         )
         .expect("a derived chain is published output, not an over-count");
         assert!(matches!(outcome, RunOutcome::Completed(_)));
@@ -1720,7 +1964,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         let mut snapshot = (*snapshot(&workbench, RevisionId(1))).clone();
         snapshot.oversized_omissions = Some(OversizedSentenceOmissions {
@@ -2324,6 +2569,7 @@ mod tests {
                 },
             ]
             .into_boxed_slice(),
+            result_index: None,
             capture_catalog: Box::default(),
             oversized_omissions: None,
             unavailable_attributes: None,
@@ -2347,7 +2593,8 @@ mod tests {
                 assert!(state.accept(
                     revision,
                     "pattern test := [upos=NOUN].".into(),
-                    CacheReadinessView::Ready
+                    CacheReadinessView::Ready,
+                    Default::default()
                 ));
                 assert!(state.apply_terminal(CoordinatorEvent::Completed {
                     workbench: workbench.clone(),
@@ -2394,7 +2641,8 @@ mod tests {
                 assert!(state.accept(
                     RevisionId(revision),
                     "p := [].".into(),
-                    CacheReadinessView::Ready
+                    CacheReadinessView::Ready,
+                    Default::default()
                 ));
             }
             entry.publish(&state, ExecutionProgress::default());
@@ -2412,6 +2660,9 @@ mod tests {
                 ..ExecutionProgress::default()
             },
             rows: Arc::from([]),
+            preview: Arc::from([]),
+            capture_catalog: Arc::from([]),
+            publication_attributes: Arc::from([]),
         }));
         drop(progress_tx);
         forward.await.unwrap();
@@ -2444,7 +2695,8 @@ mod tests {
         assert!(state.accept(
             revision,
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Building
+            CacheReadinessView::Building,
+            Default::default()
         ));
         assert_eq!(
             state.current_attempt().unwrap().phase,

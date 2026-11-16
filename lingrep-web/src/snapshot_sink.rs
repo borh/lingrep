@@ -52,6 +52,11 @@ pub(crate) struct SnapshotSink {
     pub(crate) cli_arguments: String,
     pub(crate) refs: Vec<MatchRef>,
     max_refs: usize,
+    journal: Option<crate::result_index::ResultIndexWriter>,
+    pub(crate) preview: Vec<crate::result_index::ResultOccurrence>,
+    preview_bytes: usize,
+    pub(crate) publication_attributes: std::sync::Arc<[AttributeKey]>,
+    pub(crate) result_index: Option<std::sync::Arc<crate::result_index::ResultIndex>>,
     pattern_ids: HashMap<String, PatternKey>,
     compound_ids: HashMap<Vec<PatternKey>, PatternKey>,
     /// Same-span coincidences per `(compound, authored)` pair, written into
@@ -145,6 +150,11 @@ impl SnapshotSink {
             cli_arguments: String::new(),
             refs: Vec::new(),
             max_refs,
+            journal: None,
+            preview: Vec::new(),
+            preview_bytes: 0,
+            publication_attributes: std::sync::Arc::from([]),
+            result_index: None,
             pattern_ids,
             compound_ids: HashMap::new(),
             coincidences: HashMap::new(),
@@ -167,6 +177,17 @@ impl SnapshotSink {
             surface_scratch: Vec::new(),
             surface_used: 0,
         })
+    }
+
+    pub(crate) fn enable_result_index(
+        &mut self,
+        publication_attributes: std::sync::Arc<[AttributeKey]>,
+    ) -> Result<(), crate::result_index::ResultIndexError> {
+        self.journal = Some(crate::result_index::ResultIndexWriter::new(
+            publication_attributes.clone(),
+        )?);
+        self.publication_attributes = publication_attributes;
+        Ok(())
     }
 
     fn add_compound(&mut self, components: &[PatternKey]) -> Result<PatternKey, ExecutionError> {
@@ -278,11 +299,24 @@ impl SnapshotSink {
         Ok(())
     }
 
+    pub(crate) fn finish_result_index(
+        &mut self,
+    ) -> Result<(), crate::result_index::ResultIndexError> {
+        if let Some(journal) = self.journal.take() {
+            self.result_index = Some(journal.finish()?);
+        }
+        Ok(())
+    }
+
     /// Cancelled or failed run: drop the builder undrained. Nothing will be
     /// published, but the receiver must still go away before the producer is
     /// joined, or the join waits on a task parked on a full channel.
     pub(crate) fn discard_sections(&mut self) {
         self.sections = None;
+        self.journal = None;
+        self.result_index = None;
+        self.preview.clear();
+        self.preview_bytes = 0;
     }
 
     fn insert_capture_descriptor(
@@ -406,12 +440,14 @@ impl SnapshotSink {
     /// reservoir admits it.
     fn observe_match(
         &mut self,
-        sentence_index: u64,
+        location: &SentenceLocation,
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         matched: &lingrep_core::fsm::Match,
         in_chain: bool,
         counting_surfaces: bool,
+        published: Option<lingrep_core::fsm::RecordView<'_>>,
     ) -> Result<(), ExecutionError> {
+        let sentence_index = location.corpus_sentence_ordinal;
         let pattern = matched.pattern.to_string();
         let pattern_key =
             self.pattern_ids.get(&pattern).copied().ok_or_else(|| {
@@ -443,9 +479,9 @@ impl SnapshotSink {
             let candidate = usize::try_from(draw % seen).unwrap_or(usize::MAX);
             (candidate < self.max_refs).then_some(Some(candidate))
         };
-        let Some(replaces) = slot else {
+        if slot.is_none() && self.journal.is_none() {
             return Ok(());
-        };
+        }
         let captures = matched
             .captures
             .iter()
@@ -483,6 +519,38 @@ impl SnapshotSink {
                         .collect(),
                 }),
             in_chain,
+        };
+        if let Some(journal) = &mut self.journal {
+            let mut occurrence = crate::result_index::ResultOccurrence::from_reference(
+                location.document_ordinal,
+                reference.clone(),
+            );
+            occurrence.document_sentence_ordinal = location.document_sentence_ordinal;
+            occurrence.source_name = location.source_name.clone();
+            occurrence.source_metadata = location.source_metadata.clone();
+            occurrence.char_span = character_span(sentence, reference.span.clone());
+            occurrence.capture_char_spans = reference
+                .captures
+                .iter()
+                .map(|capture| character_span(sentence, capture.span.clone()))
+                .collect();
+            if let Some(published) = published {
+                occurrence.unit = published.unit.map(str::to_owned);
+                occurrence.key = published.key.map(<[_]>::to_vec);
+                occurrence.lexical_key = published.lexical_key.map(<[_]>::to_vec);
+                occurrence.tags = published.tags.to_vec();
+            }
+            journal
+                .append_occurrence(&mut occurrence)
+                .map_err(|error| ExecutionError::Sink(error.to_string()))?;
+            let preview_bytes = occurrence_bytes(&occurrence);
+            if seen <= 30 && self.preview_bytes.saturating_add(preview_bytes) <= 4 * 1024 * 1024 {
+                self.preview.push(occurrence);
+                self.preview_bytes += preview_bytes;
+            }
+        }
+        let Some(replaces) = slot else {
+            return Ok(());
         };
         let reservoir = self.reservoirs.entry(pattern_key).or_default();
         match replaces {
@@ -589,12 +657,97 @@ fn sink_error(error: SectionTallyError) -> ExecutionError {
     ExecutionError::Sink(error.to_string())
 }
 
-impl MatchSink for SnapshotSink {
-    fn push(
+fn character_span(
+    sentence: &dyn lingrep_core::token_match::TokenSequence,
+    span: std::ops::Range<usize>,
+) -> Option<std::ops::Range<u32>> {
+    if span.is_empty() {
+        return None;
+    }
+    let first = sentence.char_span(span.start)?;
+    let last = sentence.char_span(span.end - 1)?;
+    Some(first.start..last.end)
+}
+
+fn occurrence_bytes(row: &crate::result_index::ResultOccurrence) -> usize {
+    reference_bytes(&row.reference)
+        + row.source_name.len()
+        + row.source_metadata.as_ref().map_or(0, |metadata| {
+            serde_json::to_vec(metadata)
+                .map_or(usize::MAX / 8, |bytes| bytes.len().saturating_mul(8))
+        })
+        + std::mem::size_of_val(row.capture_char_spans.as_ref())
+        + row.unit.as_ref().map_or(0, String::len)
+        + row.key.as_ref().map_or(0, |fields| {
+            std::mem::size_of_val(fields.as_slice())
+                + fields
+                    .iter()
+                    .map(|field| field.name.len() + field.value.len())
+                    .sum::<usize>()
+        })
+        + row.lexical_key.as_ref().map_or(0, |fields| {
+            std::mem::size_of_val(fields.as_slice())
+                + fields
+                    .iter()
+                    .map(|field| {
+                        field.name.len()
+                            + match &field.value {
+                                lingrep_core::fsm::LexicalProjectedKeyValue::Scalar(value) => {
+                                    value.len()
+                                }
+                                lingrep_core::fsm::LexicalProjectedKeyValue::Segments(values) => {
+                                    std::mem::size_of_val(values.as_slice())
+                                        + values.iter().map(String::len).sum::<usize>()
+                                }
+                            }
+                    })
+                    .sum::<usize>()
+        })
+        + std::mem::size_of_val(row.tags.as_slice())
+        + row
+            .tags
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+}
+
+fn reference_bytes(reference: &MatchRef) -> usize {
+    use lingrep_core::fsm::GraphBinding;
+    std::mem::size_of::<crate::result_index::ResultOccurrence>()
+        + std::mem::size_of_val(reference.captures.as_ref())
+        + std::mem::size_of_val(reference.graph_bindings.as_ref())
+        + reference
+            .graph_bindings
+            .iter()
+            .map(|binding| match binding {
+                GraphBinding::Node {
+                    name, attributes, ..
+                } => {
+                    name.len()
+                        + std::mem::size_of_val(attributes.as_ref())
+                        + attributes
+                            .iter()
+                            .map(|attribute| attribute.name.as_str().len() + attribute.value.len())
+                            .sum::<usize>()
+                }
+                GraphBinding::Edge { name, relation, .. } => name.len() + relation.len(),
+            })
+            .sum::<usize>()
+        + reference.lexical.as_ref().map_or(0, |lexical| {
+            std::mem::size_of_val(lexical)
+                + lexical.term.len()
+                + std::mem::size_of_val(lexical.matched_by.as_ref())
+                + lexical.matched_by.iter().map(String::len).sum::<usize>()
+        })
+}
+
+impl SnapshotSink {
+    fn push_matches(
         &mut self,
         location: &SentenceLocation,
         _sentence: &dyn lingrep_core::token_match::TokenSequence,
         matches: &[lingrep_core::fsm::Match],
+        records: Option<&[lingrep_core::fsm::PublishedRecord]>,
     ) -> Result<SinkControl, ExecutionError> {
         let sentence_index = location.corpus_sentence_ordinal;
         // The section sweep's cursor cannot move backwards, so an out-of-order
@@ -640,29 +793,43 @@ impl MatchSink for SnapshotSink {
                 let mut published = matches
                     .iter()
                     .zip(in_chain.iter().copied())
-                    .chain(compounds.iter().map(|matched| (matched, false)))
+                    .enumerate()
+                    .map(|(index, (matched, in_chain))| {
+                        (
+                            matched,
+                            in_chain,
+                            records.map(|records| {
+                                lingrep_core::fsm::RecordView::published(&records[index])
+                            }),
+                        )
+                    })
+                    .chain(compounds.iter().map(|matched| (matched, false, None)))
                     .collect::<Vec<_>>();
-                published.sort_by_key(|(matched, _)| {
+                published.sort_by_key(|(matched, _, _)| {
                     (matched.start, matched.end, matched.pattern.as_str())
                 });
-                for (matched, in_chain) in published {
+                for (matched, in_chain, record) in published {
                     self.observe_match(
-                        sentence_index,
+                        location,
                         _sentence,
                         matched,
                         in_chain,
                         counting_surfaces,
+                        record,
                     )?;
                 }
             }
             None => {
-                for matched in matches {
+                for (index, matched) in matches.iter().enumerate() {
                     self.observe_match(
-                        sentence_index,
+                        location,
                         _sentence,
                         matched,
                         false,
                         counting_surfaces,
+                        records.map(|records| {
+                            lingrep_core::fsm::RecordView::published(&records[index])
+                        }),
                     )?;
                 }
             }
@@ -690,6 +857,44 @@ impl MatchSink for SnapshotSink {
         Ok(SinkControl::Continue {
             records_emitted: matches.len(),
         })
+    }
+}
+
+impl MatchSink for SnapshotSink {
+    fn push(
+        &mut self,
+        location: &SentenceLocation,
+        sentence: &dyn lingrep_core::token_match::TokenSequence,
+        matches: &[lingrep_core::fsm::Match],
+    ) -> Result<SinkControl, ExecutionError> {
+        self.push_matches(location, sentence, matches, None)
+    }
+
+    fn push_records(
+        &mut self,
+        location: &SentenceLocation,
+        sentence: &dyn lingrep_core::token_match::TokenSequence,
+        records: Vec<lingrep_core::fsm::PublishedRecord>,
+    ) -> Result<SinkControl, ExecutionError> {
+        if self.journal.is_none() {
+            let matches = records
+                .into_iter()
+                .map(lingrep_core::fsm::PublishedRecord::into_match)
+                .collect::<Vec<_>>();
+            return self.push_matches(location, sentence, &matches, None);
+        }
+        let matches = records
+            .iter()
+            .map(|record| lingrep_core::fsm::Match {
+                pattern: record.name.clone(),
+                start: record.start,
+                end: record.end,
+                captures: record.components.clone(),
+                graph_bindings: record.raw.graph_bindings.clone(),
+                lexical: record.raw.lexical.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.push_matches(location, sentence, &matches, Some(&records))
     }
 }
 
@@ -791,6 +996,81 @@ mod tests {
             .iter()
             .map(|reference| reference.sentence_index)
             .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn indexed_policy_records_preserve_derived_fields_surviving_captures_and_offsets() {
+        use lingrep_core::fsm::{
+            LexicalProjectedKeyField, LexicalProjectedKeyValue, ProjectedKeyField, PublishedRecord,
+        };
+        let (index, expected, captures) = tokio::task::spawn_blocking(|| {
+            let mut sink = sink_with_sections(1, &["p"], vec![]);
+            sink.enable_result_index(std::sync::Arc::from([])).unwrap();
+            let words = vec![TokenInfo::default().with_orth("猫")];
+            let schema = lingrep_core::token_match::TokenSchema::from_keys(["text"]).unwrap();
+            let projection = schema
+                .bind_projection([lingrep_core::token_match::AttributeKey::new("text").unwrap()])
+                .unwrap();
+            let sentence =
+                lingrep_core::token_match::BoundTokenSentence::project(&projection, &words)
+                    .unwrap()
+                    .with_char_offsets(Some(std::sync::Arc::new(vec![
+                        lingrep_core::token_match::CharSpan::new(2, 3),
+                    ])));
+            let record = PublishedRecord {
+                raw: match_with_capture("p", "item"),
+                start: 0,
+                end: 1,
+                name: "p".into(),
+                unit: Some("normalized".into()),
+                key: Some(vec![ProjectedKeyField {
+                    name: "item.lemma".into(),
+                    value: "猫".into(),
+                }]),
+                lexical_key: Some(vec![LexicalProjectedKeyField {
+                    name: "lemma".into(),
+                    value: LexicalProjectedKeyValue::Segments(vec!["ネコ".into(), "猫".into()]),
+                }]),
+                tags: vec![("kind".into(), "animal".into())],
+                components: match_with_capture("p", "item").captures,
+                overrides: vec![],
+            };
+            let mut location = location(7);
+            location.document_ordinal = 4;
+            location.document_sentence_ordinal = 2;
+            location.source_name = "book.md".into();
+            sink.push_records(&location, &sentence, vec![record.clone()])
+                .unwrap();
+            let expected = sink.preview[0].clone();
+            assert!(sink.result_index.is_none());
+            sink.finish().unwrap();
+            sink.finish_result_index().unwrap();
+            (
+                sink.result_index.unwrap(),
+                (expected, record),
+                sink.capture_catalog,
+            )
+        })
+        .await
+        .unwrap();
+        let row = index.reference(0).await.unwrap().unwrap();
+        assert_eq!(row, expected.0);
+        assert_eq!(
+            (row.document_ordinal, row.document_sentence_ordinal),
+            (4, 2)
+        );
+        assert_eq!(row.reference.sentence_index, 7);
+        assert_eq!(row.source_name.as_ref(), "book.md");
+        assert_eq!(row.char_span, Some(2..3));
+        assert_eq!(row.capture_char_spans.as_ref(), &[Some(2..3)]);
+        assert_eq!(row.unit, expected.1.unit);
+        assert_eq!(row.key, expected.1.key);
+        assert_eq!(row.lexical_key, expected.1.lexical_key);
+        assert_eq!(row.tags, expected.1.tags);
+        assert_eq!(
+            captures[row.reference.captures[0].capture_key.index()].name,
+            "item"
+        );
     }
 
     /// Below the cap nothing is sampled: every match is retained, in corpus

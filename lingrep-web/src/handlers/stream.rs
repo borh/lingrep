@@ -271,6 +271,7 @@ mod tests {
             }]
             .into_boxed_slice(),
             match_refs: Box::default(),
+            result_index: None,
             capture_catalog: Box::default(),
             oversized_omissions: None,
             unavailable_attributes: None,
@@ -310,7 +311,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         assert!(state.mark_running(RevisionId(1)));
         CoordinatorView {
@@ -341,6 +343,9 @@ mod tests {
     fn running_phase_publishes_exact_prefix_totals_in_a_separate_panel() {
         let mut view = running_view(3, 7);
         view.live_summary = Some(crate::coordinator::LiveSummary {
+            preview: std::sync::Arc::from([]),
+            capture_catalog: std::sync::Arc::from([]),
+            publication_attributes: std::sync::Arc::from([]),
             revision: RevisionId(1),
             rows: vec![
                 crate::coordinator::LivePatternTotal {
@@ -388,6 +393,9 @@ mod tests {
     fn a_live_summary_from_another_revision_is_not_rendered() {
         let mut view = running_view(3, 7);
         view.live_summary = Some(crate::coordinator::LiveSummary {
+            preview: std::sync::Arc::from([]),
+            capture_catalog: std::sync::Arc::from([]),
+            publication_attributes: std::sync::Arc::from([]),
             revision: RevisionId(2),
             rows: vec![crate::coordinator::LivePatternTotal {
                 name: Arc::from("stale"),
@@ -413,7 +421,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         assert!(state.apply_terminal(CoordinatorEvent::Failed {
             workbench,
@@ -453,7 +462,8 @@ mod tests {
         assert!(state.accept(
             RevisionId(1),
             "p := [upos=NOUN].".into(),
-            CacheReadinessView::Ready
+            CacheReadinessView::Ready,
+            Default::default()
         ));
         let snapshot = Arc::new(CompletedSnapshot {
             search_scope: Default::default(),
@@ -481,6 +491,7 @@ mod tests {
             }]
             .into_boxed_slice(),
             match_refs: Box::default(),
+            result_index: None,
             capture_catalog: Box::default(),
             oversized_omissions: None,
             unavailable_attributes: None,

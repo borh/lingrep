@@ -724,12 +724,26 @@ fn web_has_no_competing_provenance_or_identity_owner() {
     }
     for path in runtime_rust_sources(workspace.join("lingrep-web/src")) {
         let source = fs::read_to_string(&path).unwrap();
-        assert!(!source.contains("sqlx::SqlitePool"), "{}", path.display());
-        assert!(
-            !source.contains("SqliteConnectOptions"),
-            "{}",
-            path.display()
-        );
+        if path == workspace.join("lingrep-web/src/result_index.rs") {
+            for forbidden in [
+                "CorpusBuilder",
+                "CREATE TABLE sentence_provenance",
+                "CREATE TABLE document_metadata",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{forbidden} in {}",
+                    path.display()
+                );
+            }
+        } else {
+            assert!(!source.contains("sqlx::SqlitePool"), "{}", path.display());
+            assert!(
+                !source.contains("SqliteConnectOptions"),
+                "{}",
+                path.display()
+            );
+        }
         assert!(!source.contains("identity_component"), "{}", path.display());
     }
 }

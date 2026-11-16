@@ -104,6 +104,8 @@ pub async fn search(
             slot,
             RevisionRequest {
                 source: form.pattern,
+                index_results: false,
+                expected_analysis_identity: None,
                 retained: form.retained,
                 derive_compounds: form.derive_compounds.unwrap_or(false),
                 compound_category,

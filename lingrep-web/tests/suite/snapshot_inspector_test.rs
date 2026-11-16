@@ -74,6 +74,7 @@ fn fixture(
             in_chain: false,
         }]
         .into_boxed_slice(),
+        result_index: None,
         capture_catalog: Box::default(),
         oversized_omissions: None,
         unavailable_attributes: None,

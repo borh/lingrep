@@ -93,6 +93,123 @@ async fn wait_for_completed_snapshot(
 }
 
 #[tokio::test]
+async fn indexed_revisions_validate_saved_analysis_identity_before_execution() {
+    let (_dir, runtime, slot, registry) = ready_registry();
+    let ready = runtime.ready().await.unwrap();
+    let expected = lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes());
+    for (name, expected_identity, success) in [
+        ("current", expected, true),
+        ("changed", "another-analysis".into(), false),
+    ] {
+        let workbench = WorkbenchId::new(name);
+        let revision = registry
+            .accept_revision(
+                workbench.clone(),
+                &slot,
+                lingrep_web::coordinator::RevisionRequest {
+                    source: "p := [].".into(),
+                    index_results: true,
+                    expected_analysis_identity: Some(expected_identity),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let mut subscription = registry.subscribe(&workbench).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !subscription.borrow_and_update().state.is_terminal() {
+                subscription.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let view = registry.snapshot(&workbench).await.unwrap();
+        let attempt = view.state.current_attempt().unwrap();
+        if success {
+            assert_eq!(attempt.phase, AttemptPhase::Completed);
+            let snapshot = registry
+                .displayed_snapshot(&workbench, revision)
+                .await
+                .unwrap();
+            assert_eq!(
+                snapshot
+                    .result_index
+                    .as_ref()
+                    .unwrap()
+                    .count(lingrep_web::snapshot::PatternKey::new(0).unwrap(), None)
+                    .await
+                    .unwrap(),
+                100
+            );
+        } else {
+            assert_eq!(attempt.phase, AttemptPhase::Failed);
+            assert_eq!(
+                attempt.failure.as_ref().unwrap().category,
+                ErrorCategory::Binding
+            );
+            assert!(
+                attempt
+                    .failure
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("corpus saved with this question")
+            );
+            assert!(view.state.displayed_snapshot().is_none());
+            assert_eq!(attempt.sentences, 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_revision_does_not_cancel_its_replacement() {
+    let (_dir, _runtime, slot, registry) = ready_registry();
+    let permit = registry.acquire_scan_permit().await;
+    let workbench = WorkbenchId::new("queued-cancel");
+    let revision = registry
+        .accept_revision(
+            workbench.clone(),
+            &slot,
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                index_results: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(registry.cancel(&workbench, revision).await.unwrap());
+    assert_eq!(
+        registry
+            .snapshot(&workbench)
+            .await
+            .unwrap()
+            .state
+            .current_attempt()
+            .unwrap()
+            .phase,
+        AttemptPhase::Cancelled(CancelReason::User)
+    );
+    let replacement = registry
+        .accept_revision(
+            workbench.clone(),
+            &slot,
+            lingrep_web::coordinator::RevisionRequest {
+                source: "p := [].".into(),
+                index_results: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!registry.cancel(&workbench, revision).await.unwrap());
+    let _subscription = registry.subscribe(&workbench).await.unwrap();
+    drop(permit);
+    let completed = wait_for_completed_snapshot(&registry, &workbench, replacement).await;
+    assert!(completed.result_index.is_some());
+}
+
+#[tokio::test]
 async fn subscribed_entry_is_pinned_and_new_id_is_rejected_when_full() {
     let (_dir, _runtime, slot, _r) = ready_registry();
     let registry = CoordinatorRegistry::with_max_entries(5, NonZeroUsize::new(1).unwrap());

@@ -20,6 +20,7 @@ pub mod patterns;
 pub mod permalink;
 pub mod provenance_view;
 mod reading;
+pub mod result_index;
 pub mod revision;
 pub mod revision_status;
 pub mod sample;

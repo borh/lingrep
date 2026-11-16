@@ -718,6 +718,23 @@ impl TokenReader {
         Ok(raw)
     }
 
+    fn sentence_attributes_bounded(
+        &self,
+        ordinal: u64,
+        limit: usize,
+    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
+        if self.resident_size(ordinal)? > limit {
+            return Ok(None);
+        }
+        let projection = self
+            .schema
+            .bind_projection(self.schema.keys().iter().cloned())
+            .map_err(|error| invalid(error.to_string()))?;
+        Ok(self
+            .decode_bound_ordinals(&[ordinal], &projection, false)?
+            .pop())
+    }
+
     pub(crate) fn decode_bound_ordinals(
         &self,
         ordinals: &[u64],
@@ -750,7 +767,15 @@ impl TokenReader {
         }
         let decode = |(entry, locals): &(DirectoryEntry, Vec<usize>)| {
             let raw = self.load_block(*entry)?;
-            decode_block(&raw, *entry, &self.schema, projection, locals, char_offsets)
+            decode_block(
+                &raw,
+                *entry,
+                &self.schema,
+                projection,
+                locals,
+                char_offsets,
+                None,
+            )
         };
         let decoders = (blocks.len() > 1)
             .then(|| self.decoders.get_or_init(block_decoder_pool).as_ref())
@@ -1123,6 +1148,54 @@ impl PreparedSentenceSource {
             .filter(|attribute| self.reader.schema.keys().contains(&(*attribute).into()))
             .collect::<Vec<_>>();
         self.decode_sentences_with_attributes(pool, sentence_indices, &attributes)
+    }
+
+    /// Reads one complete schema projection, returning `None` before decoding
+    /// when the recorded sentence residency exceeds `limit`.
+    pub fn sentence_attributes_bounded(
+        &self,
+        ordinal: u64,
+        limit: usize,
+    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
+        self.reader.sentence_attributes_bounded(ordinal, limit)
+    }
+
+    pub fn sentence_projection_bounded(
+        &self,
+        ordinal: u64,
+        attributes: &[lingrep_core::token_match::AttributeKey],
+        limit: usize,
+    ) -> Result<Option<BoundTokenSentence>, CorpusError> {
+        let projection = self
+            .reader
+            .schema
+            .bind_projection(attributes.iter().cloned())
+            .map_err(|error| invalid(error.to_string()))?;
+        let (_, entry) = self.reader.block_for_sentence(ordinal)?;
+        let local = usize::try_from(ordinal - entry.first_sentence)
+            .map_err(|_| invalid("block-local sentence ordinal exceeds usize"))?;
+        let raw = self.reader.load_block(entry)?;
+        let sentence = decode_block(
+            &raw,
+            entry,
+            &self.reader.schema,
+            &projection,
+            &[local],
+            false,
+            Some(limit),
+        )?
+        .pop();
+        match sentence {
+            Some(sentence)
+                if sentence
+                    .resident_bytes()
+                    .map_err(|error| invalid(error.to_string()))?
+                    <= limit =>
+            {
+                Ok(Some(sentence))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Reads only written word forms. Returns `None` before token projection
@@ -1891,7 +1964,7 @@ fn validate_block(
         .bind_projection(schema.keys().iter().cloned())
         .map_err(|error| invalid(error.to_string()))?;
     let locals = (0..entry.sentence_count as usize).collect::<Vec<_>>();
-    let _ = decode_block(raw, entry, schema, &projection, &locals, true)?;
+    let _ = decode_block(raw, entry, schema, &projection, &locals, true, None)?;
     Ok(())
 }
 
@@ -1902,6 +1975,7 @@ fn decode_block(
     projection: &BoundProjection,
     locals: &[usize],
     char_offsets: bool,
+    max_selected_bytes: Option<usize>,
 ) -> Result<Vec<BoundTokenSentence>, CorpusError> {
     if slice(raw, 0, 8)? != BLOCK_MAGIC {
         return Err(invalid("wrong V1 block magic"));
@@ -1950,6 +2024,23 @@ fn decode_block(
             .position(|candidate| candidate == key)
             .ok_or_else(|| invalid("projection key absent"))?;
         requested[stored] = Some(ordinal);
+    }
+    let mut selected_bytes = 0usize;
+    for local in locals {
+        selected_bytes = selected_bytes
+            .checked_add(
+                ranges[*local]
+                    .len()
+                    .checked_mul(projection.len())
+                    .and_then(|cells| {
+                        cells.checked_mul(std::mem::size_of::<ProjectedAttributeValue>())
+                    })
+                    .ok_or_else(|| invalid("projected cell residency overflow"))?,
+            )
+            .ok_or_else(|| invalid("projected residency overflow"))?;
+    }
+    if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+        return Ok(Vec::new());
     }
     let mut selected = locals
         .iter()
@@ -2040,6 +2131,13 @@ fn decode_block(
                     if let Some(projected) = requested[stored]
                         && let Some(local_index) = owner
                     {
+                        if id != 0 {
+                            selected_bytes =
+                                selected_bytes.saturating_add(strings[id as usize - 1].len());
+                            if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                                return Ok(Vec::new());
+                            }
+                        }
                         let start = selected[local_index].0.start;
                         selected[local_index].1[(token - start) * projection.len() + projected] =
                             if id == 0 {
@@ -2051,17 +2149,31 @@ fn decode_block(
                 }
                 AttributeKind::StringSet => {
                     let count = read_u32_at(raw, &mut cursor)? as usize;
-                    let mut set = Vec::with_capacity(count);
+                    let selected_cell = requested[stored].zip(owner);
+                    if selected_cell.is_some() {
+                        selected_bytes = selected_bytes.saturating_add(
+                            count.saturating_mul(std::mem::size_of::<CompactString>()),
+                        );
+                        if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                            return Ok(Vec::new());
+                        }
+                    }
+                    let mut set =
+                        Vec::with_capacity(if selected_cell.is_some() { count } else { 0 });
                     for _ in 0..count {
                         let id = read_u32_at(raw, &mut cursor)? as usize;
                         if id == 0 || id > strings.len() {
                             return Err(invalid("invalid set string id"));
                         }
-                        set.push(CompactString::new(strings[id - 1]));
+                        if selected_cell.is_some() {
+                            selected_bytes = selected_bytes.saturating_add(strings[id - 1].len());
+                            if max_selected_bytes.is_some_and(|limit| selected_bytes > limit) {
+                                return Ok(Vec::new());
+                            }
+                            set.push(CompactString::new(strings[id - 1]));
+                        }
                     }
-                    if let Some(projected) = requested[stored]
-                        && let Some(local_index) = owner
-                    {
+                    if let Some((projected, local_index)) = selected_cell {
                         let start = selected[local_index].0.start;
                         selected[local_index].1[(token - start) * projection.len() + projected] =
                             ProjectedAttributeValue::StringSet(set);
@@ -2667,6 +2779,21 @@ mod tests {
             decoded[0].token(1).unwrap().value(AttributeOrdinal::new(1)),
             None
         );
+        let before = reader.decoded_block_count();
+        assert!(reader.sentence_attributes_bounded(0, 1).unwrap().is_none());
+        assert_eq!(reader.decoded_block_count(), before);
+        let full = reader
+            .sentence_attributes_bounded(0, 1024 * 1024)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            full.value_key(0, &AttributeKey::new("spacy.morph.reading").unwrap()),
+            Some(AttributeValueRef::StringSet(&["キャッツ".into()]))
+        );
+        assert_eq!(
+            full.scalar_key(0, &AttributeKey::new("text").unwrap()),
+            Some("cats")
+        );
         reader.verify_integrity().unwrap();
     }
 
@@ -2710,8 +2837,16 @@ mod tests {
             .unwrap();
         for char_offsets in [true, false] {
             for locals in [vec![0, 1, 2], vec![0, 2], vec![1], vec![2]] {
-                let decoded =
-                    decode_block(&raw, entry, &schema, &projected, &locals, char_offsets).unwrap();
+                let decoded = decode_block(
+                    &raw,
+                    entry,
+                    &schema,
+                    &projected,
+                    &locals,
+                    char_offsets,
+                    None,
+                )
+                .unwrap();
                 for (sentence, local) in decoded.iter().zip(locals) {
                     for token in 0..3 {
                         assert_eq!(
@@ -2739,8 +2874,16 @@ mod tests {
             malformed[position..position + 4].copy_from_slice(&value.to_le_bytes());
             for char_offsets in [true, false] {
                 assert!(
-                    decode_block(&malformed, entry, &schema, &projected, &[1], char_offsets)
-                        .is_err()
+                    decode_block(
+                        &malformed,
+                        entry,
+                        &schema,
+                        &projected,
+                        &[1],
+                        char_offsets,
+                        None
+                    )
+                    .is_err()
                 );
             }
         }
@@ -2751,7 +2894,8 @@ mod tests {
                 &schema,
                 &projected,
                 &[0],
-                true
+                true,
+                None
             )
             .is_err()
         );
@@ -2823,7 +2967,7 @@ mod tests {
             token_count: 3,
             checksum: [0; 32],
         };
-        let decoded = decode_block(&raw, entry, &schema, &projection, &[0], true).unwrap();
+        let decoded = decode_block(&raw, entry, &schema, &projection, &[0], true, None).unwrap();
         assert_eq!(decoded[0], sentence);
     }
 

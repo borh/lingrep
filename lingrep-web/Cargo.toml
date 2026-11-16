@@ -14,6 +14,7 @@ description = "Browser front end over an immutable prepared corpus"
 testing = []
 
 [dependencies]
+sqlx.workspace = true
 tempfile.workspace = true
 serde_urlencoded = "0.7"
 blake3.workspace = true
@@ -60,7 +61,6 @@ trycmd.workspace = true
 lingrep-core = { workspace = true, features = ["testing"] }
 lingrep-web = { path = ".", features = ["testing"] }
 calamine = "0.37"
-sqlx.workspace = true
 
 [lints]
 workspace = true

@@ -265,6 +265,27 @@ impl CorpusReader {
 }
 
 impl BoundCorpusReader {
+    pub fn sentence_attributes_bounded(
+        &self,
+        index: u64,
+        limit: usize,
+    ) -> Result<Option<lingrep_core::token_match::BoundTokenSentence>, CorpusReadError> {
+        self.source
+            .sentence_attributes_bounded(index, limit)
+            .map_err(CorpusReadError::Corruption)
+    }
+
+    pub fn sentence_projection_bounded(
+        &self,
+        index: u64,
+        attributes: &[lingrep_core::token_match::AttributeKey],
+        limit: usize,
+    ) -> Result<Option<lingrep_core::token_match::BoundTokenSentence>, CorpusReadError> {
+        self.source
+            .sentence_projection_bounded(index, attributes, limit)
+            .map_err(CorpusReadError::Corruption)
+    }
+
     pub fn sentence_words_bounded(
         &self,
         index: u64,
