@@ -729,7 +729,8 @@ impl ParsedDefinition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedKey {
-    pub(crate) attribute_span: Option<SourceSpan>,
+    /// The attribute's span for each projection, in the same order; `None` for `term`.
+    pub(crate) attribute_spans: Vec<Option<SourceSpan>>,
     pub(crate) projections: Vec<KeyProjection>,
     pub(crate) source_span: SourceSpan,
     pub(crate) inherited: bool,

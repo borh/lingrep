@@ -575,12 +575,19 @@ fn graph_binding_is_word(definition: &ExecutionDefinition, name: &str) -> bool {
     })
 }
 
-/// A single-token capture key whose attribute can be replaced at its original UTF-8 byte range.
-/// Inherited keys and keys with multiple fields have no edit descriptor.
+/// One field of a local key whose attribute can be replaced at its original UTF-8 byte range.
+///
+/// A field is editable when it projects `text`, `lemma` or `norm` from a
+/// statically single-token capture or from a graph node proven to be a word.
+/// Inherited keys, span components, whole-match fields, other attributes and
+/// graph nodes that may be empty have no descriptor, so they stay editable only
+/// in the source.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct CaptureKeyEdit {
     pub definition: String,
     pub published_name: String,
+    /// Zero-based position of this field in the definition's `key:` list.
+    pub field: usize,
     pub capture: String,
     pub attribute: String,
     pub attributes: [&'static str; 3],
@@ -593,38 +600,48 @@ pub(crate) fn editable_capture_keys(
     definitions: &[ExecutionDefinition],
     sources: &SourceRegistry,
 ) -> Vec<CaptureKeyEdit> {
+    let attributes = ["text", "lemma", "norm"];
     definitions
         .iter()
         .filter_map(|definition| {
-            let key = definition.key.as_ref()?;
-            if key.inherited {
-                return None;
-            }
-            let span = key.attribute_span?;
+            let key = definition.key.as_ref().filter(|key| !key.inherited)?;
             let fields = &policy.get(&definition.name)?.key;
-            let [field] = fields.as_slice() else {
-                return None;
-            };
-            let KeyTarget::Capture {
-                name,
-                component: KeyComponent::Sole,
-            } = &field.target
-            else {
-                return None;
-            };
-            let attributes = ["text", "lemma", "norm"];
-            if !attributes.contains(&field.attribute.as_str()) {
-                return None;
-            }
-            Some(CaptureKeyEdit {
-                definition: definition.name.to_string(),
-                published_name: policy.published_name(&definition.name).to_owned(),
-                capture: name.to_string(),
-                attribute: field.attribute.to_string(),
-                attributes,
-                source_name: sources.source_label(span.source()),
-                byte_range: span.byte_range().start as usize..span.byte_range().end as usize,
-            })
+            Some(
+                fields
+                    .iter()
+                    .zip(&key.attribute_spans)
+                    .enumerate()
+                    .filter_map(move |(index, (field, span))| {
+                        let name = match &field.target {
+                            KeyTarget::Capture {
+                                name,
+                                component: KeyComponent::Sole,
+                            } => name,
+                            KeyTarget::GraphNode { name }
+                                if graph_binding_is_word(definition, name) =>
+                            {
+                                name
+                            }
+                            _ => return None,
+                        };
+                        if !attributes.contains(&field.attribute.as_str()) {
+                            return None;
+                        }
+                        let span = (*span)?;
+                        Some(CaptureKeyEdit {
+                            definition: definition.name.to_string(),
+                            published_name: policy.published_name(&definition.name).to_owned(),
+                            field: index,
+                            capture: name.to_string(),
+                            attribute: field.attribute.to_string(),
+                            attributes,
+                            source_name: sources.source_label(span.source()),
+                            byte_range: span.byte_range().start as usize
+                                ..span.byte_range().end as usize,
+                        })
+                    }),
+            )
         })
+        .flatten()
         .collect()
 }

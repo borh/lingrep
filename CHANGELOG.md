@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Workbench key picker can switch one `text`, `lemma` or `norm` field of a
+  key with several fields, including a field read from a `where` graph node
+  that binds only words, such as `$v` in `key: [$n.lemma, $p.lemma, $v.lemma]`.
+  The other fields and the rest of the source are unchanged.
+  `check --json` reports one `capture_key_edits` descriptor per eligible field
+  and adds its `field` position.
 - Prepared artifacts use generation 3 and provenance schema 5. Rebuild
   generation 2 artifacts with `ling corpus build`.
 

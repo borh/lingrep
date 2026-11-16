@@ -753,11 +753,16 @@ catalog can declare both the analyzer and the dictionary with
 ling check --patterns patterns/ud-dependency.lx --schema conllu
 ```
 
-`check --json` also reports `capture_key_edits` for local, single-field keys
-projecting `text`, `lemma`, or `norm` from a statically single-token surface
-capture. Each descriptor names its definition, capture, source file, choices,
-and UTF-8 byte range of the attribute in the original source. Inherited keys,
-wide projections, graph bindings and keys with several fields remain text-only.
+`check --json` also reports `capture_key_edits`, one descriptor per field of a
+local key that projects `text`, `lemma`, or `norm` from a statically
+single-token capture or from a `where` graph node that can bind only words. In
+a key with several fields, each eligible field has its own descriptor, and
+`field` is its zero-based position in the `key:` list. Each descriptor names its
+definition, capture, source file, choices, and UTF-8 byte range of the attribute
+in the original source; replacing that range changes only that field. Inherited
+keys, span components, whole-match fields, other attributes, enhanced-graph
+nodes that can be empty nodes, and edge relations have no descriptor and remain
+text-only.
 
 JSON output carries a `binding` object listing each unavailable attribute with
 its referencing definition sites; human output prints one line per attribute.

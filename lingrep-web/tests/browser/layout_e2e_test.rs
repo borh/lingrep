@@ -1406,6 +1406,20 @@ fn feedback_fixture_html() -> &'static str {
 </main><script type="module" src="/assets/results-explorer.js"></script></body></html>"#
 }
 
+const CAPTURE_KEY_SOURCE: &str = r#"description: "capture-picker-fixture 猫😀"
+key: [$word.lemma]
+pattern p := (?&lt;word&gt; [text=猫]).
+"#;
+
+const COMPOUND_CAPTURE_KEY_SOURCE: &str = r#"description: "capture-picker-fixture 猫😀"
+key: [$n.lemma, $p.lemma, $v.lemma]
+pattern npv := (?&lt;n&gt; [upos=NOUN]) (?&lt;p&gt; [text=を]) (?&lt;v&gt; [upos=VERB]).
+"#;
+
+fn capture_key_fixture_html(source: &str) -> String {
+    r#"<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/editor/pattern-editor.css"></head><body><label for="corpus-pattern">Pattern</label><form><textarea id="corpus-pattern" data-pattern-editor>{source}</textarea><details data-search-scope data-imrad-labels='["methods"]'><summary data-scope-summary>All text</summary><input type="hidden" data-search-scope-value value='{"included_sections":null,"include_unlabelled":true}'><div data-search-scope-options><input type="checkbox" data-scope-include value="methods" checked><input type="checkbox" data-scope-include value="results" checked></div><input type="checkbox" data-scope-unlabelled checked><span data-scope-pending hidden></span><button type="button" data-scope-preset="main">Main</button><button type="button" data-scope-preset="all">All</button></details></form><div class="corpus-context" data-corpus-digest="fixture"><i data-corpus-section-label="methods"></i><i data-corpus-section-label="results"></i></div><button type="button" data-locale-toggle>日本語</button><div id="results">Previous summary</div><div id="results-stale" role="status"></div><script type="module" src="/assets/editor/pattern-editor.js"></script><script type="module" src="/assets/search-scope.js"></script></body></html>"#.replace("{source}", source)
+}
+
 async fn fixture_server() -> FixtureServer {
     fixture_server_with(FormatMode::Echo).await
 }
@@ -1443,10 +1457,8 @@ async fn fixture_server_with(format_mode: FormatMode) -> FixtureServer {
             "/navigation",
             get(|| async { Html(navigation_fixture_html()) }),
         )
-        .route("/capture-key", get(|| async { Html(r#"<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/editor/pattern-editor.css"></head><body><label for="corpus-pattern">Pattern</label><form><textarea id="corpus-pattern" data-pattern-editor>description: "capture-picker-fixture 猫😀"
-key: [$word.lemma]
-pattern p := (?&lt;word&gt; [text=猫]).
-</textarea><details data-search-scope data-imrad-labels='["methods"]'><summary data-scope-summary>All text</summary><input type="hidden" data-search-scope-value value='{"included_sections":null,"include_unlabelled":true}'><div data-search-scope-options><input type="checkbox" data-scope-include value="methods" checked><input type="checkbox" data-scope-include value="results" checked></div><input type="checkbox" data-scope-unlabelled checked><span data-scope-pending hidden></span><button type="button" data-scope-preset="main">Main</button><button type="button" data-scope-preset="all">All</button></details></form><div class="corpus-context" data-corpus-digest="fixture"><i data-corpus-section-label="methods"></i><i data-corpus-section-label="results"></i></div><button type="button" data-locale-toggle>日本語</button><div id="results">Previous summary</div><div id="results-stale" role="status"></div><script type="module" src="/assets/editor/pattern-editor.js"></script><script type="module" src="/assets/search-scope.js"></script></body></html>"#) }))
+        .route("/capture-key", get(|| async { Html(capture_key_fixture_html(CAPTURE_KEY_SOURCE)) }))
+        .route("/capture-key-compound", get(|| async { Html(capture_key_fixture_html(COMPOUND_CAPTURE_KEY_SOURCE)) }))
         .route("/assets/search-scope.js", get(|| async { ([(header::CONTENT_TYPE,"text/javascript; charset=utf-8")], include_str!("../../assets/search-scope.js")) }))
         .route("/api/pattern/summary", post(|axum::Json(body): axum::Json<serde_json::Value>| async move {
             let scope: serde_json::Value = serde_json::from_str(body["search_scope"].as_str().unwrap_or("null")).unwrap();
@@ -4794,6 +4806,66 @@ return ['#results','#detail-body','#sample-results','#inspector-body'].map(selec
         }
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+#[tokio::test]
+async fn compound_key_picker_switches_one_field_and_keeps_the_others() -> WebDriverResult<()> {
+    let Some(driver_url) = crate::chromedriver_url().await else {
+        return Ok(());
+    };
+    let fixture = fixture_server().await;
+    let mut capabilities = DesiredCapabilities::chrome();
+    capabilities.add_arg("--headless")?;
+    capabilities.add_arg("--no-sandbox")?;
+    let driver = WebDriver::new(driver_url, capabilities).await?;
+    driver
+        .goto(format!("{}/capture-key-compound", fixture.address))
+        .await?;
+    wait_for_enhanced_editor(&driver).await?;
+    wait_for_selector(&driver, "[data-key-attribute]:not([disabled])").await?;
+    let source = "return document.querySelector('#corpus-pattern').value";
+    let before: String = driver.execute(source, vec![]).await?.convert()?;
+    let options = "return [...document.querySelectorAll('[data-key-definition] option')].map(o=>[o.value,o.textContent])";
+    let labels: Vec<(String, String)> = driver.execute(options, vec![]).await?.convert()?;
+    assert_eq!(
+        labels,
+        [
+            ("npv#0", "npv ($n.lemma)"),
+            ("npv#1", "npv ($p.lemma)"),
+            ("npv#2", "npv ($v.lemma)")
+        ]
+        .map(|(value, label)| (value.to_owned(), label.to_owned()))
+    );
+    driver
+        .find(By::Css("[data-capture-key-picker] summary"))
+        .await?
+        .click()
+        .await?;
+    let field_select = driver.find(By::Css("[data-key-definition]")).await?;
+    thirtyfour::components::SelectElement::new(&field_select)
+        .await?
+        .select_by_value("npv#2")
+        .await?;
+    let attribute_select = driver.find(By::Css("[data-key-attribute]")).await?;
+    thirtyfour::components::SelectElement::new(&attribute_select)
+        .await?
+        .select_by_value("norm")
+        .await?;
+    wait_for_selector(
+        &driver,
+        "[data-key-definition] option[value='npv#2']:checked",
+    )
+    .await?;
+    wait_for_selector(
+        &driver,
+        "[data-key-attribute]:not([disabled]) option[value=norm]:checked",
+    )
+    .await?;
+    let after: String = driver.execute(source, vec![]).await?.convert()?;
+    assert_eq!(after, before.replace("$v.lemma", "$v.norm"));
+    let labels: Vec<(String, String)> = driver.execute(options, vec![]).await?.convert()?;
+    assert_eq!(labels[2].1, "npv ($v.norm)");
+    driver.quit().await
 }
 
 #[tokio::test]

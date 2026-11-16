@@ -143,7 +143,6 @@ async fn capture_key_edits_preserve_unicode_source_and_exclude_unsupported_keys(
     assert_eq!(&source[start..end], "lemma");
     for source in [
         "defaults\nkey: [$word.lemma]\nend\np := (?<word> []).",
-        "key: [$word.text, $word.lemma]\np := (?<word> []).",
         "key: [$word.span.lemma]\np := (?<word> []+).",
         "key: [$word.node.id]\np := (?<n> []) where (?<word> []) -[obj]-> $n.",
     ] {
@@ -151,4 +150,27 @@ async fn capture_key_edits_preserve_unicode_source_and_exclude_unsupported_keys(
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["capture_key_edits"], json!([]));
     }
+}
+
+#[tokio::test]
+async fn capture_key_edits_cover_each_field_of_a_compound_graph_key() {
+    let source = "# 名詞😀\nset ROLE := {nsubj, obj, obl}.\n\
+key: [$n.lemma, $p.lemma, $v.lemma]\n\
+npv := (?<n> [dep.rel in @ROLE]) (?<p> [dep.rel=case])\n\
+       where (?<v> [upos=VERB]) -[@ROLE]-> $n, $n -[case]-> $p.\n";
+    let (status, body) = post("/check", json!({"source": source})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let at = |needle: &str| source.find(needle).unwrap() + 3;
+    let edit = |field: usize, capture: &str| {
+        json!({
+            "definition": "npv", "published_name": "npv", "field": field,
+            "capture": capture, "attribute": "lemma",
+            "attributes": ["text", "lemma", "norm"], "source_name": "lingrep-web.lx",
+            "byte_range": {"start": at(&format!("${capture}.lemma")), "end": at(&format!("${capture}.lemma")) + 5},
+        })
+    };
+    assert_eq!(
+        body["capture_key_edits"],
+        json!([edit(0, "n"), edit(1, "p"), edit(2, "v")])
+    );
 }

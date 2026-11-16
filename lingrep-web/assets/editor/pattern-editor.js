@@ -85,14 +85,19 @@ export function applyCaptureKeyEdit(source, edit, attribute) {
   }
 }
 
+function keyEditId(edit) {
+  return `${edit.definition}#${edit.field}`;
+}
+
 export function summaryContext(request) {
   return request ? JSON.stringify([request.source, request.corpus, request.search_scope, request.overlaps]) : null;
 }
 
 function summaryRequest(state) {
   if (state.keyEditSource !== state.source()) return null;
-  const definition = state.keyPicker?.querySelector("[data-key-definition]")?.value;
-  if (!state.keyEdits?.some((edit) => edit.definition === definition)) return null;
+  const selected = state.keyPicker?.querySelector("[data-key-definition]")?.value;
+  const definition = state.keyEdits?.find((edit) => keyEditId(edit) === selected)?.definition;
+  if (!definition) return null;
   const form = state.textarea.closest("form");
   return {
     source: state.source(), definition,
@@ -233,11 +238,11 @@ function captureKeyPicker(state, edits = [], checkedSource = null) {
   patterns.dataset.keyDefinition = "";
   for (const edit of edits) {
     const option = document.createElement("option");
-    option.value = edit.definition;
-    option.textContent = `${edit.definition} ($${edit.capture})`;
+    option.value = keyEditId(edit);
+    option.textContent = `${edit.definition} ($${edit.capture}.${edit.attribute})`;
     patterns.append(option);
   }
-  if (edits.some((edit) => edit.definition === selected)) patterns.value = selected;
+  if (edits.some((edit) => keyEditId(edit) === selected)) patterns.value = selected;
   patternLabel.append(patterns);
   const attributeLabel = document.createElement("label");
   attributeLabel.append(t("editor.grouping_attribute"));
@@ -245,7 +250,7 @@ function captureKeyPicker(state, edits = [], checkedSource = null) {
   attributes.dataset.keyAttribute = "";
   attributeLabel.append(attributes);
   function choosePattern() {
-    const edit = edits.find((entry) => entry.definition === patterns.value);
+    const edit = edits.find((entry) => keyEditId(entry) === patterns.value);
     attributes.replaceChildren();
     for (const attribute of edit.attributes) {
       const option = document.createElement("option");
@@ -259,7 +264,7 @@ function captureKeyPicker(state, edits = [], checkedSource = null) {
   patterns.addEventListener("change", choosePattern);
   attributes.addEventListener("change", () => {
     if (state.source() !== checkedSource) return;
-    const edit = edits.find((entry) => entry.definition === patterns.value);
+    const edit = edits.find((entry) => keyEditId(entry) === patterns.value);
     const source = applyCaptureKeyEdit(checkedSource, edit, attributes.value);
     if (source === null) return;
     state.refreshSummary = true;
