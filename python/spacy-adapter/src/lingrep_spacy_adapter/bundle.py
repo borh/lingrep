@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -92,32 +91,38 @@ def save_model(model: str, destination: Path, *, offline: bool = False) -> None:
         raise ValueError(
             f"{model} needs Hugging Face downloads; rerun setup without --offline"
         )
+    import shutil
     import tempfile
 
     from huggingface_hub import snapshot_download
 
     with tempfile.TemporaryDirectory(prefix="lingrep-hub-") as directory:
         hub = Path(directory)
-        for value in sources.values():
-            local = hub / value["repository"]
+        staged = hub / "model"
+        shutil.copytree(source, staged)
+        snapshots = {}
+        for name, value in sources.items():
+            local = (hub / "snapshots" / name).resolve()
             snapshot_download(
                 value["repository"], revision=value["revision"], local_dir=local
             )
             _drop_sudachitra_auto_map(local / "tokenizer_config.json")
+            _point_transformer_at(staged / name / "model", value["repository"], local)
+            snapshots[name] = str(local)
         _register_sudachitra_tokenizer()
-        # transformer_custom passes the repository name to from_pretrained, which
-        # reads a directory of that relative name before it consults the Hub, so
-        # a loaded name equal to the pinned repository was read from the download.
-        previous = Path.cwd()
-        os.chdir(hub)
-        try:
-            pipeline = spacy.load(source)
-        finally:
-            os.chdir(previous)
+        pipeline = spacy.load(staged)
         for name, value in sources.items():
-            loaded = _hf_transformer(pipeline.get_pipe(name)).config._name_or_path
-            if loaded != value["repository"]:
+            objects = _hf_objects(pipeline.get_pipe(name))
+            loaded = {
+                objects.transformer.config._name_or_path,
+                objects.tokenizer.name_or_path,
+            }
+            if loaded != {snapshots[name]}:
                 raise ValueError(f"component {name!r} loaded {loaded}, not the pin")
+            # The saved shim records these names; the temporary path would make
+            # every setup's bundle, and so its identity, differ.
+            objects.transformer.config._name_or_path = value["repository"]
+            objects.tokenizer.name_or_path = value["repository"]
         pipeline.to_disk(destination)
     saved = spacy.util.load_config(destination / "config.cfg")
     for name in sources:
@@ -182,10 +187,30 @@ def _drop_sudachitra_auto_map(path: Path) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False))
 
 
-def _hf_transformer(component: Any) -> Any:
+def _point_transformer_at(path: Path, repository: str, local: Path) -> None:
+    """Rewrite a transformer_custom component's serialized repository name to the
+    absolute path of its download, so from_pretrained reads only that directory."""
+
+    import srsly
+
+    value = srsly.msgpack_loads(path.read_bytes())
+    replaced = 0
+    for shims in value["shims"]:
+        for index, data in enumerate(shims):
+            shim = srsly.msgpack_loads(data)
+            if shim.get("config", {}).get("_name_or_path") == repository:
+                shim["config"]["_name_or_path"] = str(local)
+                shims[index] = srsly.msgpack_dumps(shim)
+                replaced += 1
+    if replaced != 1:
+        raise ValueError(f"{path} names {repository} in {replaced} shims, not one")
+    path.write_bytes(srsly.msgpack_dumps(value))
+
+
+def _hf_objects(component: Any) -> Any:
     for node in component.model.walk():
         if node.shims:
-            return node.shims[0]._hfmodel.transformer
+            return node.shims[0]._hfmodel
     raise ValueError(f"component {component.name!r} holds no transformer")
 
 

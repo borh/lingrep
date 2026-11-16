@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -989,6 +990,91 @@ class ModelBundleTests(unittest.TestCase):
                 self.assertFalse(destination.exists())
             with self.assertRaisesRegex(ValueError, "Hugging Face Hub"):
                 prepare_model_bundle(source, probe_text="Cats run.")
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("ginza_transformers"),
+        "requires the electra or bert-large uv extra",
+    )
+    def test_hub_transformer_is_saved_from_its_pinned_download_alone(self) -> None:
+        import spacy
+        import srsly
+        from transformers import BertConfig, BertModel, BertTokenizerFast
+
+        repository = "lingrep-test/tiny"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tiny = root / "tiny"
+            tiny.mkdir()
+            vocab = tiny / "vocab.txt"
+            vocab.write_text(
+                "\n".join(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "cats", "run"])
+            )
+            BertTokenizerFast(str(vocab)).save_pretrained(tiny)
+            BertModel(
+                BertConfig(
+                    vocab_size=7,
+                    hidden_size=8,
+                    num_hidden_layers=1,
+                    num_attention_heads=1,
+                    intermediate_size=8,
+                    max_position_embeddings=32,
+                )
+            ).save_pretrained(tiny)
+            # A GiNZA package stores no weights: its shim names the repository
+            # that transformer_custom passes to from_pretrained.
+            source = root / "source"
+            pipeline = spacy.blank("en")
+            pipeline.add_pipe("transformer", config={"model": {"name": str(tiny)}})
+            pipeline.initialize()
+            pipeline.to_disk(source)
+            config = spacy.util.load_config(source / "config.cfg")
+            config["components"]["transformer"]["factory"] = "transformer_custom"
+            config["components"]["transformer"]["model"]["name"] = repository
+            config.to_disk(source / "config.cfg")
+            model = srsly.msgpack_loads((source / "transformer" / "model").read_bytes())
+            model["shims"] = [
+                [
+                    srsly.msgpack_dumps(
+                        {
+                            "config": {"_name_or_path": repository},
+                            "_init_tokenizer_config": {"use_fast": True},
+                            "_init_transformer_config": {},
+                        }
+                    )
+                    for _ in shims
+                ]
+                for shims in model["shims"]
+            ]
+            (source / "transformer" / "model").write_bytes(srsly.msgpack_dumps(model))
+
+            requests = []
+
+            def refuse(session, method, url, *args, **kwargs):
+                requests.append(url)
+                raise ConnectionError(f"Hugging Face Hub request: {url}")
+
+            for complete in (True, False):
+
+                def download(repo_id, *, revision, local_dir, complete=complete):
+                    self.assertEqual((repo_id, revision), (repository, "0" * 40))
+                    if complete:
+                        shutil.copytree(tiny, local_dir)
+
+                destination = root / f"model-{complete}"
+                with (
+                    self.subTest(complete=complete),
+                    patch.dict(HUB_REVISIONS, {repository: "0" * 40}),
+                    patch("huggingface_hub.snapshot_download", download),
+                    patch("requests.sessions.Session.request", refuse),
+                ):
+                    if complete:
+                        save_model(str(source), destination)
+                        saved = spacy.load(destination)
+                        self.assertTrue(saved("cats run")._.trf_data.tensors)
+                    else:
+                        with self.assertRaises((OSError, ValueError)):
+                            save_model(str(source), destination)
+                    self.assertEqual(requests, [])
 
     def test_blank_model_does_not_advertise_morphology(self) -> None:
         import spacy
