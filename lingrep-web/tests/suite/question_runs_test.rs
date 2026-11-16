@@ -401,6 +401,7 @@ async fn pending_scope_survives_completion_and_saved_identity_mismatch_publishes
     let frames = updates(&app, &mismatch).await;
     let failure = frames.last().unwrap();
     assert_eq!(failure["patch"]["phase"], "failed");
+    assert_eq!(failure["patch"]["error_code"], "analysis_changed");
     assert!(
         failure["patch"]["error"]
             .as_str()

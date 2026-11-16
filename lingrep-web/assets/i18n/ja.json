@@ -569,6 +569,7 @@
   "status.server_error": "リクエストを完了できませんでした。もう一度お試しください。再び失敗する場合は、サーバー管理者にログの確認を依頼してください。",
   "status.failed": "検索に失敗しました。",
   "status.failed_scan": "コーパスのスキャンを完了できませんでした。",
+  "status.failed_analysis_changed": "この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。",
   "status.failed_cache": "コーパスキャッシュを利用できません。",
   "status.failed_compile": "パターンをコンパイルできませんでした：",
   "status.failed_scope": "この検索範囲はこのコーパスに適用できません：",

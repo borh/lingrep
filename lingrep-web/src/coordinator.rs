@@ -1092,7 +1092,7 @@ impl CoordinatorRegistry {
             })
         {
             let mut state = entry.state.lock().await;
-            if state.apply_terminal(CoordinatorEvent::Failed { workbench, revision, failure: AttemptFailure { category: ErrorCategory::Binding, message: "The corpus saved with this question is unavailable. Choose the current corpus and search again.".into() } }) { entry.publish(&state, ExecutionProgress::default()); }
+            if state.apply_terminal(CoordinatorEvent::Failed { workbench, revision, failure: AttemptFailure { category: ErrorCategory::AnalysisChanged, message: "The corpus saved with this question has changed. Choose the current corpus and search again.".into() } }) { entry.publish(&state, ExecutionProgress::default()); }
             return;
         }
         {

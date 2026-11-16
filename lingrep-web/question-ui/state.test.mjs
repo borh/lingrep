@@ -72,3 +72,14 @@ test('search notices survive progress patches and remain attached to retained ev
   assert.deepEqual(visible(replacement,'keep').notices,['Attribute dep.rel is unavailable.','2 oversized sentences were omitted.']);
   for(const notices of ['warning',[7],[null],{}])assert.throws(()=>parseUpdate(JSON.stringify({id:'warned',reset:false,patch:{notices},append:{}})),/notices/);
 });
+
+test('a changed-analysis failure is shown in the page language and other errors verbatim',async()=>{
+  const {runError}=await import('./model.js');
+  const t=key=>({analysisChanged:'この問いを保存したときのコーパスは変更されています。'})[key]??key;
+  const failed={...runningSnapshot('r',{source:'',dataset:'d',where:''}),phase:'failed',error:'The corpus saved with this question is unavailable.'};
+  assert.equal(runError({...failed,error_code:'analysis_changed'},t),'この問いを保存したときのコーパスは変更されています。');
+  assert.equal(runError({...failed,error_code:null},t),'The corpus saved with this question is unavailable.');
+  assert.equal(runError(runningSnapshot('r',{source:'',dataset:'d',where:''}),t),null);
+  assert.equal(parseUpdate(JSON.stringify({id:'r',reset:false,patch:{phase:'failed',error:'x',error_code:'analysis_changed',version:1},append:{}})).patch.error_code,'analysis_changed');
+  assert.throws(()=>parseUpdate(JSON.stringify({id:'r',reset:false,patch:{error_code:7,version:1},append:{}})),/error_code/);
+});
