@@ -159,7 +159,7 @@ pub fn run_render(
     .map_err(CliError::stdout)?;
     writeln!(
         writer,
-        "{} document(s), {} sentence(s), {} rendered in full, {} without rendered text, {} byte(s)",
+        "{} document(s), {} sentence(s), {} rendered in full, {} without mapped text, {} byte(s)",
         stats.documents,
         stats.sentences,
         stats.sentences_rendered_in_full,

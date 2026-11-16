@@ -278,17 +278,26 @@ fn rendered_characters(document: &RenderedDocument, line: usize) -> Vec<Rendered
 }
 
 fn align(stored: &str, rendered: &[RenderedCharacter]) -> Vec<Segment> {
-    let stored_characters: Vec<char> = stored.chars().collect();
-    let rendered_characters: Vec<char> = rendered.iter().map(|r| r.character).collect();
-    let pairs: Vec<(usize, usize)> = if let Some(start) = rendered_characters
-        .windows(stored_characters.len().max(1))
-        .position(|window| window == stored_characters.as_slice())
-        .filter(|_| !stored_characters.is_empty())
-    {
-        (0..stored_characters.len())
+    let rendered_text: String = rendered.iter().map(|r| r.character).collect();
+    let stored_length = stored.chars().count();
+    let pairs: Vec<(usize, usize)> = if stored.is_empty() {
+        return Vec::new();
+    } else if let Some(byte_start) = rendered_text.find(stored) {
+        let start = rendered_text
+            .get(..byte_start)
+            .expect("substring starts at a character boundary")
+            .chars()
+            .count();
+        (0..stored_length)
             .map(|index| (index, start + index))
             .collect()
     } else {
+        const MAX_DIFF_CHARACTERS: usize = 4096;
+        if stored_length.saturating_add(rendered.len()) > MAX_DIFF_CHARACTERS {
+            return Vec::new();
+        }
+        let stored_characters: Vec<char> = stored.chars().collect();
+        let rendered_characters: Vec<char> = rendered.iter().map(|r| r.character).collect();
         similar::capture_diff_slices(
             similar::Algorithm::Myers,
             &stored_characters,
@@ -1648,6 +1657,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn nonexact_text_at_the_diff_limit_retains_matching_characters() {
+        let stored = "a".repeat(2048);
+        let rendered = characters(&format!("{}b", "a".repeat(2047)), 0);
+        let segments = align(&stored, &rendered);
+        assert_eq!(covered(&segments, &(0..2048)), 2047);
+        assert_eq!(segments, [Segment(0, 2047, 0, 0, 2047)]);
+    }
+
+    #[test]
+    fn wide_exact_text_preserves_scalar_and_utf16_offsets() {
+        let stored = format!("{}𝑥", "あ".repeat(10000));
+        let rendered = characters(&format!("前{stored}後"), 3);
+        let segments = align(&stored, &rendered);
+        assert_eq!(covered(&segments, &(0..10001)), 10001);
+        assert_eq!(
+            highlight(&segments, &(10000..10001)),
+            [HighlightRange {
+                container: 3,
+                utf16_start: 10001,
+                utf16_end: 10003,
+            }]
+        );
+    }
+
+    #[test]
+    fn unaligned_occurrences_keep_readable_html_without_highlights() {
+        let mut record = paged_record(1);
+        let stored = "a | ".repeat(2000);
+        let text = "a".repeat(2000);
+        record.blocks[0].html = format!("<p data-c=\"0\">{text}</p>");
+        record.sentences[0].segments = align(&stored, &characters(&text, 0));
+        let frame =
+            zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
+        let (_directory, sidecar) = record_fixture(&frame, 1);
+        sidecar.verify().expect("verify");
+        let (page, occurrence) = sidecar
+            .page_at(SentenceId::new(0), 0..1, 1024)
+            .expect("readable page");
+        assert_eq!(page.html, record.blocks[0].html);
+        assert_eq!(occurrence.block, 0);
+        assert!(!occurrence.exact);
+        assert!(occurrence.ranges.is_empty());
     }
 
     #[test]

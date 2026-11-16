@@ -2189,8 +2189,10 @@ analysis.
 Each stored sentence is mapped to the rendered characters of its source line.
 Characters that render as markup, such as table pipes and footnote markers,
 and ordered-list numbers, which render as list markers, have no rendered text.
-The command reports how many sentences render in full and how many have no
-rendered text.
+The command reports how many sentences map in full and how many have no
+mapped text. Exact text matches remain mapped regardless of line length.
+Other alignments are attempted only when the stored and rendered text total
+at most 4,096 characters. Longer lines remain readable, without highlights.
 
 A sidecar records the artifact's analysis identity and source identity and
 the renderer revision. Two renders with the same three identities write
