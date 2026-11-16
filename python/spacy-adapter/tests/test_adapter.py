@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,9 +29,12 @@ from lingrep_spacy_adapter.adapter import (
     serve,
 )
 from lingrep_spacy_adapter.bundle import (
+    BUNSETU_KEY,
+    HUB_REVISIONS,
     MANIFEST_HASH_CHUNK_BYTES,
     prepare_model_bundle,
     resource_manifest_digest,
+    save_model,
     selection_digest,
 )
 
@@ -955,6 +959,121 @@ class ModelBundleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "multiple boundary producers"):
                 prepare_model_bundle(model, probe_text="One. Two.")
 
+    def test_hub_transformers_are_refused_unless_pinned_and_downloadable(
+        self,
+    ) -> None:
+        import spacy
+
+        pinned = next(iter(HUB_REVISIONS))
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            spacy.blank("en").to_disk(source)
+            config = spacy.util.load_config(source / "config.cfg")
+            config["nlp"]["pipeline"] = ["transformer"]
+            for repository, offline, message in (
+                ("someone/unpinned", False, "pins no revision"),
+                (pinned, True, "without --offline"),
+            ):
+                config["components"]["transformer"] = {
+                    "factory": "transformer_custom",
+                    "model": {"name": repository},
+                }
+                config.to_disk(source / "config.cfg")
+                destination = Path(directory) / "model"
+                with (
+                    self.subTest(repository=repository, offline=offline),
+                    self.assertRaisesRegex(ValueError, message),
+                ):
+                    save_model(str(source), destination, offline=offline)
+                self.assertFalse(destination.exists())
+            with self.assertRaisesRegex(ValueError, "Hugging Face Hub"):
+                prepare_model_bundle(source, probe_text="Cats run.")
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("ginza_transformers"),
+        "requires the electra or bert-large uv extra",
+    )
+    def test_hub_transformer_is_saved_from_its_pinned_download_alone(self) -> None:
+        import spacy
+        import srsly
+        from transformers import BertConfig, BertModel, BertTokenizerFast
+
+        repository = "lingrep-test/tiny"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tiny = root / "tiny"
+            tiny.mkdir()
+            vocab = tiny / "vocab.txt"
+            vocab.write_text(
+                "\n".join(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "cats", "run"])
+            )
+            BertTokenizerFast(str(vocab)).save_pretrained(tiny)
+            BertModel(
+                BertConfig(
+                    vocab_size=7,
+                    hidden_size=8,
+                    num_hidden_layers=1,
+                    num_attention_heads=1,
+                    intermediate_size=8,
+                    max_position_embeddings=32,
+                )
+            ).save_pretrained(tiny)
+            # A GiNZA package stores no weights: its shim names the repository
+            # that transformer_custom passes to from_pretrained.
+            source = root / "source"
+            pipeline = spacy.blank("en")
+            pipeline.add_pipe("transformer", config={"model": {"name": str(tiny)}})
+            pipeline.initialize()
+            pipeline.to_disk(source)
+            config = spacy.util.load_config(source / "config.cfg")
+            config["components"]["transformer"]["factory"] = "transformer_custom"
+            config["components"]["transformer"]["model"]["name"] = repository
+            config.to_disk(source / "config.cfg")
+            model = srsly.msgpack_loads((source / "transformer" / "model").read_bytes())
+            model["shims"] = [
+                [
+                    srsly.msgpack_dumps(
+                        {
+                            "config": {"_name_or_path": repository},
+                            "_init_tokenizer_config": {"use_fast": True},
+                            "_init_transformer_config": {},
+                        }
+                    )
+                    for _ in shims
+                ]
+                for shims in model["shims"]
+            ]
+            (source / "transformer" / "model").write_bytes(srsly.msgpack_dumps(model))
+
+            requests = []
+
+            def refuse(session, method, url, *args, **kwargs):
+                requests.append(url)
+                raise ConnectionError(f"Hugging Face Hub request: {url}")
+
+            for complete in (True, False):
+
+                def download(repo_id, *, revision, local_dir, complete=complete):
+                    self.assertEqual((repo_id, revision), (repository, "0" * 40))
+                    if complete:
+                        shutil.copytree(tiny, local_dir)
+
+                destination = root / f"model-{complete}"
+                with (
+                    self.subTest(complete=complete),
+                    patch.dict(HUB_REVISIONS, {repository: "0" * 40}),
+                    patch("huggingface_hub.snapshot_download", download),
+                    patch("requests.sessions.Session.request", refuse),
+                ):
+                    if complete:
+                        save_model(str(source), destination)
+                        saved = spacy.load(destination)
+                        self.assertTrue(saved("cats run")._.trf_data.tensors)
+                    else:
+                        with self.assertRaises((OSError, ValueError)):
+                            save_model(str(source), destination)
+                    self.assertEqual(requests, [])
+
     def test_blank_model_does_not_advertise_morphology(self) -> None:
         import spacy
 
@@ -974,63 +1093,110 @@ class ModelBundleTests(unittest.TestCase):
     "requires LINGREP_SPACY_GINZA_MODEL and the ginza uv extra",
 )
 class GiNzaModelTests(unittest.TestCase):
-    def test_python_projection_matches_ginza_cli_conllu_dependencies(self) -> None:
-        import spacy
+    def test_default_profiles_match_ginza_cli_conllu(self) -> None:
+        lines = [
+            "彼女は坂を一つ上った。",
+            "猫が走った。犬は庭で寝ている。",
+            "えたいの知れない不吉な塊が私の心を始終圧えつけていた。",
+            # bunsetu_recognizer reads the ner component's entity 一つ一つ.
+            "開いている窓を一つ一つ見ていると、僕はそのことを憶い出す。",
+        ]
+        name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
+        process = subprocess.run(
+            ["ginza", "-g", "-1", "-m", name, "-f", "conllu"],
+            input="".join(line + "\n" for line in lines),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        keys = ["text", "lemma", "upos", "xpos", "dep.head", "dep.rel", BUNSETU_KEY]
+        cli: list[list[list[str | None]]] = [[]]
+        for line in process.stdout.splitlines():
+            if not line:
+                if cli[-1]:
+                    cli.append([])
+                continue
+            columns = line.split("\t")
+            if line.startswith("#") or not columns[0].isdigit():
+                continue
+            misc = dict(
+                entry.split("=", 1) for entry in columns[9].split("|") if "=" in entry
+            )
+            cli[-1].append(
+                [
+                    columns[1],
+                    None if columns[2] == "_" else columns[2],
+                    None if columns[3] == "_" else columns[3],
+                    None if columns[4] == "_" else columns[4],
+                    columns[6],
+                    columns[7].lower(),
+                    misc["BunsetuBILabel"],
+                ]
+            )
+        cli = [sentence for sentence in cli if sentence]
 
-        text = "猫が走る。"
+        def rows(loaded, segmentation):
+            projection = [
+                ProjectionAttribute(key, "scalar")
+                for key in keys
+                if ProjectionAttribute(key, "scalar") in loaded.schema
+            ]
+            self.assertEqual([attribute.key for attribute in projection], keys)
+            sentences = []
+            for doc in loaded.pipeline.pipe(lines, batch_size=1):
+                for sentence in analyze_document(doc, projection, segmentation):
+                    values = sentence["values"]
+                    sentences.append(
+                        [
+                            values[offset : offset + len(keys)]
+                            for offset in range(0, len(values), len(keys))
+                        ]
+                    )
+            return sentences
+
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "model"
-            pipeline = spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"])
-            pipeline.to_disk(model)
-            doc = pipeline(text)
-            projection = [
-                ProjectionAttribute("text", "scalar"),
-                ProjectionAttribute("lemma", "scalar"),
-                ProjectionAttribute("upos", "scalar"),
-                ProjectionAttribute("xpos", "scalar"),
-                ProjectionAttribute("dep.enhanced", "string_set"),
-                ProjectionAttribute("dep.head", "scalar"),
-                ProjectionAttribute("dep.rel", "scalar"),
-            ]
-            direct = analyze_document(doc, projection, "input")[0]
-            process = subprocess.run(
-                ["ginza", "-b", str(model), "-f", "conllu"],
-                input=text + "\n",
-                text=True,
-                capture_output=True,
-                check=True,
+            save_model(name, model)
+            prepare_model_bundle(model, probe_text="猫が走る。")
+            analyzer = rows(
+                load_spacy_pipeline(str(model), "cpu", "morphology", "analyzer"),
+                "analyzer",
             )
-
-        cli_rows = [
-            line.split("\t")
-            for line in process.stdout.splitlines()
-            if line and not line.startswith("#") and line.split("\t", 1)[0].isdigit()
+            unit = rows(
+                load_spacy_pipeline(str(model), "cpu", "morphology", "input"), "input"
+            )
+        self.assertEqual(analyzer, cli)
+        self.assertEqual({"B", "I"}, {row[-1] for sentence in cli for row in sentence})
+        # One input line holds two parser sentences, so its heads are numbered
+        # from the line's first token and it has two roots.
+        self.assertEqual(unit[0], cli[0])
+        self.assertEqual(unit[2:], cli[3:])
+        second = [
+            row[:4]
+            + [str(int(row[4]) + len(cli[1])) if row[4] != "0" else "0"]
+            + row[5:]
+            for row in cli[2]
         ]
-        cli = [
-            [
-                columns[1],
-                None if columns[2] == "_" else columns[2],
-                None if columns[3] == "_" else columns[3],
-                None if columns[4] == "_" else columns[4],
-                [] if columns[8] == "_" else columns[8].split("|"),
-                None if columns[6] == "_" else columns[6],
-                None if columns[7] == "_" else columns[7].lower(),
-            ]
-            for columns in cli_rows
-        ]
-        width = len(projection)
-        projected = [
-            direct["values"][offset : offset + width]
-            for offset in range(0, len(direct["values"]), width)
-        ]
-        self.assertEqual(projected, cli)
+        self.assertEqual(unit[1], cli[1] + second)
 
     def test_real_ginza_model_produces_source_aligned_portable_morphology(self) -> None:
+        """The saved model analyzes offline, from its own files, like the original."""
+
         import spacy
 
+        text = "坂を一つ上った。"
+        name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
+        projection = [
+            ProjectionAttribute("text", "scalar"),
+            ProjectionAttribute("lemma", "scalar"),
+            ProjectionAttribute("upos", "scalar"),
+            ProjectionAttribute("xpos", "scalar"),
+        ]
+        expected = analyze_document(spacy.load(name)(text), projection, "input")[0]
         with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model"
-            spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"]).to_disk(model)
+            root = Path(directory)
+            model = root / "model"
+            save_model(name, model)
             prepare_model_bundle(
                 model,
                 probe_text="猫が走る。",
@@ -1039,21 +1205,36 @@ class GiNzaModelTests(unittest.TestCase):
                     "spacy.morph.reading",
                 ),
             )
-            loaded = load_spacy_pipeline(str(model), "cpu", "morphology", "input")
-            doc = next(loaded.pipeline.pipe(["猫が走る。"], batch_size=1))
-            mapped = analyze_document(
-                doc,
-                [
-                    ProjectionAttribute("text", "scalar"),
-                    ProjectionAttribute("lemma", "scalar"),
-                    ProjectionAttribute("upos", "scalar"),
-                    ProjectionAttribute("xpos", "scalar"),
-                ],
-                "input",
-            )[0]
-        forms = mapped["values"][0::4]
-        self.assertEqual("".join(forms), "猫が走る。")
-        self.assertTrue(all(mapped["values"][index] for index in range(1, 4)))
+            empty_hub = root / "hub"
+            empty_hub.mkdir()
+            script = (
+                "import json, sys\n"
+                "from lingrep_spacy_adapter.adapter import ProjectionAttribute, "
+                "analyze_document, load_spacy_pipeline\n"
+                "loaded = load_spacy_pipeline(sys.argv[1], 'cpu', 'morphology', "
+                "'input')\n"
+                "doc = next(loaded.pipeline.pipe([sys.argv[2]], batch_size=1))\n"
+                "projection = [ProjectionAttribute(k, 'scalar') "
+                "for k in ('text', 'lemma', 'upos', 'xpos')]\n"
+                "print(json.dumps(analyze_document(doc, projection, 'input')[0]))\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(model), text],
+                capture_output=True,
+                check=False,
+                cwd=empty_hub,
+                env={
+                    **os.environ,
+                    "HF_HUB_OFFLINE": "1",
+                    "HF_HOME": str(empty_hub),
+                    "HF_HUB_CACHE": str(empty_hub),
+                    "HF_MODULES_CACHE": str(empty_hub),
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(list(empty_hub.iterdir()), [])
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.assertEqual("".join(expected["values"][0::4]), text)
 
     @unittest.skipUnless(
         os.environ.get("LINGREP_SPACY_RUN_ROCM") == "1",
@@ -1113,12 +1294,10 @@ class GiNzaModelTests(unittest.TestCase):
                 "metadata_digest": zero,
             },
         }
-        import spacy
-
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model = root / "model"
-            spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"]).to_disk(model)
+            save_model(os.environ["LINGREP_SPACY_GINZA_MODEL"], model)
             profile = prepare_model_bundle(
                 model,
                 probe_text="猫が走る。",
@@ -1247,6 +1426,7 @@ class EnglishModelTests(unittest.TestCase):
         keys = [attribute.key for attribute in loaded.schema]
         for key in ("text", "lemma", "upos", "feat.Number", "dep.head", "dep.rel"):
             self.assertIn(key, keys)
+        self.assertNotIn(BUNSETU_KEY, keys)
         text = "I was speaking. They listened."
         results = []
         for _ in range(2):
@@ -1260,3 +1440,17 @@ class EnglishModelTests(unittest.TestCase):
         self.assertTrue(any(row[keys.index("lemma")] == "speak" for row in rows))
         self.assertTrue(any(row[keys.index("dep.rel")] == "nsubj" for row in rows))
         self.assertTrue(any(row[keys.index("feat.Number")] for row in rows))
+
+    def test_packaged_model_splits_sentences_like_its_full_pipeline(self):
+        import spacy
+
+        root = os.environ["LINGREP_SPACY_ENGLISH_MODEL"]
+        text = (
+            "I was speaking to the man who came yesterday. They listened "
+            "carefully and then they left the room. It rained."
+        )
+        loaded = load_spacy_pipeline(root, "cpu", "tokenize", "analyzer")
+        self.assertEqual(
+            [sentence.text for sentence in loaded.pipeline(text).sents],
+            [sentence.text for sentence in spacy.load(root)(text).sents],
+        )

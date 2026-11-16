@@ -1709,6 +1709,40 @@ to use this preparation command. The standalone `lingrep-spacy-setup` and
 `lingrep-stanza-setup` wheel entry points remain available for custom model and
 GPU setup, with a caller-managed Python environment.
 
+`ling analyzer prepare ginza` installs GiNZA 5.3.1 with `ja_ginza` 5.3.0, whose
+weights are inside the wheel. GiNZA's transformer models, `ja_ginza_electra`
+5.3.1 and `ja_ginza_bert_large` 5.3.0 (the adapter's `electra` and `bert-large`
+extras), ship without weights. For them, `lingrep-spacy-setup` downloads the
+weights and tokenizer from the Hugging Face Hub once, at the commit lingrep pins
+for each repository, into a temporary directory it removes afterwards, and saves
+them in the model directory: about 0.4 GB for Electra and 1.3 GB for BERT large.
+`model/lingrep-hub-sources.json` records the repository and commit. Setup
+therefore needs network access, and `--offline` rejects these models. Analysis
+reads only the saved files and disables Hugging Face Hub access, so the analyzer
+runs offline, and the resource manifest digest changes when the weights change.
+Bundles that earlier releases set up from these models fetch the weights from
+the Hub, at whatever commit it serves, each time the analyzer starts; set them up
+again into a new directory.
+
+A GiNZA profile selection that runs GiNZA's `bunsetu_recognizer` adds the scalar
+`spacy.ginza.bunsetu`: `B` on the first token of each bunsetu (文節) and `I` on
+the others, the label `ginza -f conllu` prints as `BunsetuBILabel`. Write
+`[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens.
+
+Setup records which pipeline components each profile selection runs: every
+component up to the last one that assigns lemma, UPOS, XPOS, morphological
+features or dependencies (`morphology/*`) or sentence boundaries
+(`*/analyzer`). Components can read earlier components' output without
+declaring it, so none before that point is left out. When the declared
+assignments do not cover lemma, UPOS and XPOS, as with `en_core_web_sm`, whose
+`attribute_ruler` declares none, `morphology/*` runs the whole pipeline.
+GiNZA's `morphology/*` selections run its whole pipeline and
+`tokenize/analyzer` runs `tok2vec` or `transformer` and `parser`. With `--segmentation analyzer`, the dependencies,
+UPOS and bunsetu labels equal `ginza -f conllu`. With `--segmentation input`,
+the parser runs over each input unit and still splits it where it would split
+a document, so a unit holding two parser sentences has two tokens with
+`dep.head` `0`, and its heads count from the unit's first token.
+
 The bundle hashes staged adapter/protocol code and model files. Its runtime
 receipt checks Python and installed package versions, without hashing third-party
 library binaries. Managed analyzer identity does not depend on the output

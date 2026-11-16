@@ -84,6 +84,8 @@ the GPU libraries itself and does not require this launcher.
      --extra "$backend" --extra spacy --extra ginza
    ```
 
+   Add `--extra electra` or `--extra bert-large` for GiNZA's transformer models.
+
 2. Run the launcher inside `nix develop`, which supplies `hipcc` for ROCm
    kernel compilation, and select the device with GiNZA's `-g` flag:
 

@@ -40,16 +40,16 @@ case "$mode" in
     model_extra=${LINGREP_SPACY_MODEL_EXTRA:-ginza}
     if [[ -n $ginza_model ]]; then
       case "$model_extra" in
-        ginza|electra) ;;
+        ginza|electra|bert-large) ;;
         *)
-          echo "LINGREP_SPACY_MODEL_EXTRA must be ginza or electra" >&2
+          echo "LINGREP_SPACY_MODEL_EXTRA must be ginza, electra or bert-large" >&2
           exit 2
           ;;
       esac
       LINGREP_SPACY_GINZA_MODEL=$ginza_model \
         uv run --project "$project" --frozen --extra cpu --extra spacy \
         --extra "$model_extra" pytest "$project/tests" \
-        -k real_ginza_model
+        -k 'real_ginza_model or default_profiles_match_ginza_cli_conllu'
       adapter_python=$(uv run --project "$project" --frozen \
         --extra cpu --extra spacy --extra "$model_extra" \
         python -c 'import sys; print(sys.executable)')

@@ -95,7 +95,8 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="use only an installed spaCy model or a local Stanza resource root",
+        help="download nothing: use an installed spaCy model that needs no "
+        "Hugging Face weights, or a local Stanza resource root",
     )
     if kind == "spacy":
         parser.add_argument(
@@ -146,17 +147,13 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
             if kind == "spacy":
                 from lingrep_spacy_adapter.adapter import initialize_spacy_backend
 
-                spacy, *_ = initialize_spacy_backend(args.backend)
-                from lingrep_spacy_adapter.bundle import prepare_model_bundle
+                initialize_spacy_backend(args.backend)
+                from lingrep_spacy_adapter.bundle import (
+                    prepare_model_bundle,
+                    save_model,
+                )
 
-                try:
-                    pipeline = spacy.load(args.model)
-                except OSError as error:
-                    raise ValueError(
-                        "spaCy model is unavailable; install its wheel in the same "
-                        "uvx environment with --with MODEL_WHEEL"
-                    ) from error
-                pipeline.to_disk(model)
+                save_model(args.model, model, offline=args.offline)
                 prepare_model_bundle(model, probe_text=args.probe_text)
             else:
                 from lingrep_stanza_adapter.adapter import _initialize_backend

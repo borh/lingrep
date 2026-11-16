@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The spaCy adapter publishes GiNZA's bunsetu (文節) segmentation as
+  `spacy.ginza.bunsetu`, `B` on each bunsetu-initial token and `I` on the
+  others, for a profile selection that runs GiNZA's `bunsetu_recognizer`.
+  The values equal `ginza -f conllu`'s `BunsetuBILabel`. Other spaCy pipelines
+  are unchanged.
 - `ling table --select PATTERN --key FIELD=VALUE` keeps the rows whose
   compound key has exactly the given field values, and reports their summed
   occurrences in a `subset` record and each row's share of them. The
@@ -51,11 +56,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and adds its `field` position.
 - Prepared artifacts use generation 3 and provenance schema 5. Rebuild
   generation 2 artifacts with `ling corpus build`.
+- The spaCy adapter installs GiNZA 5.3.1 with `ja_ginza` 5.3.0 and spaCy
+  3.8.18; its `electra` extra installs `ja_ginza_electra` 5.3.1, and a new
+  `bert-large` extra installs `ja_ginza_bert_large` 5.3.0. `ja_ginza` 5.3.0 has
+  the same weights and configuration as 5.2.0.
 
 ### Fixed
 
 - The Workbench reports unavailable token attributes and catalog-binding
   failures with their reasons.
+- spaCy setup profiles run every pipeline component up to the last one that
+  produces a selected output, because components read earlier components'
+  output without declaring it. GiNZA's `morphology/input` profile was
+  tokenizer-only and its `morphology/analyzer` profile ran the parser without
+  its `tok2vec` or `transformer`, so `ja_ginza` emitted wrong dependencies and
+  UPOS, and `ja_ginza_electra` and `ja_ginza_bert_large` failed with
+  `unregistered extension trf_data`. Both GiNZA profiles now run the whole
+  pipeline and produce the dependencies, UPOS and `spacy.ginza.bunsetu` that
+  `ginza -f conllu` prints. `en_core_web_sm`'s `tokenize/analyzer` profile ran
+  its parser without `tok2vec` and did not split sentences; its morphology
+  profiles are unchanged. The changed profiles change analyzer identity, so
+  set existing spaCy analyzers up again.
+- `lingrep-spacy-setup` saves the transformer weights of `ja_ginza_electra` and
+  `ja_ginza_bert_large` in the analyzer, downloaded once from the Hugging Face
+  Hub at a pinned commit. Analyzers set up by earlier releases fetched the
+  weights from the Hub, at whatever commit it served, each time they started,
+  so their output could change without a change to the analyzer files.
+  Analysis now runs with Hugging Face Hub access disabled, and the Electra
+  tokenizer loads from the locked `sudachitra` without running repository
+  code. Set up existing transformer analyzers again into a new directory.
 - Searches cancel after 30 seconds without an open progress stream. A
   replacement scan waits for the superseded scan to stop and displays only
   its own progress. Failed searches no longer also report a lost connection.

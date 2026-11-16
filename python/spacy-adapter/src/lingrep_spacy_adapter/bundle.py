@@ -33,6 +33,187 @@ MORPH_TARGETS = {
     "token.pos": lambda token: bool(token.pos_),
     "token.tag": lambda token: bool(token.tag_),
 }
+# Projected attributes that some pipelines do not assign.
+MORPH_OUTPUTS = {"token.morph", "token.dep", "token.head"}
+# GiNZA's `transformer_custom` component loads its transformer by Hugging Face
+# repository name, from whatever commit the repository's `main` names when the
+# model loads. Setup fetches the commit pinned here instead and saves the
+# weights inside the model directory, where the resource manifest covers them.
+HUB_FACTORY = "transformer_custom"
+HUB_REVISIONS = {
+    "megagonlabs/transformers-ud-japanese-bert-large-ginza": (
+        "7683285d102ba2098cf5f2641388cd69c7406241"
+    ),
+    "megagonlabs/transformers-ud-japanese-electra-base-ginza-v5.3": (
+        "5858be1efff32fcac88a6d2e3747df129c9dfe4a"
+    ),
+}
+HUB_SOURCES_FILE = "lingrep-hub-sources.json"
+# GiNZA's bunsetu_recognizer labels each token B (first in its bunsetu) or I;
+# `ginza -f conllu` prints the same label as BunsetuBILabel in MISC.
+BUNSETU_KEY = "spacy.ginza.bunsetu"
+# The Electra repository's tokenizer_config.json names this class through an
+# `auto_map` entry whose modeling.py only imports it from sudachitra. Registering
+# the class from the locked sudachitra lets the tokenizer load without running
+# repository code.
+SUDACHITRA_TOKENIZER = "modeling.ElectraSudachipyTokenizer"
+
+
+def save_model(model: str, destination: Path, *, offline: bool = False) -> None:
+    """Save an installed or local spaCy model so that loading reads only files
+    inside ``destination``.
+
+    A GiNZA transformer is fetched at its pinned revision, loaded from that local
+    copy, saved with its weights, and switched to spacy-transformers' stock
+    ``transformer`` factory, which loads the saved weights instead of the Hub.
+    """
+
+    import spacy
+
+    source = _model_path(spacy, model)
+    config = spacy.util.load_config(source / "config.cfg")
+    sources = {}
+    for name, component in config["components"].items():
+        if component.get("factory") != HUB_FACTORY:
+            continue
+        repository = component["model"]["name"]
+        if repository not in HUB_REVISIONS:
+            raise ValueError(
+                f"component {name!r} loads {repository} from the Hugging Face Hub, "
+                "and lingrep pins no revision of it"
+            )
+        sources[name] = {
+            "repository": repository,
+            "revision": HUB_REVISIONS[repository],
+        }
+    if not sources:
+        spacy.load(source).to_disk(destination)
+        return
+    if offline:
+        raise ValueError(
+            f"{model} needs Hugging Face downloads; rerun setup without --offline"
+        )
+    import shutil
+    import tempfile
+
+    from huggingface_hub import snapshot_download
+
+    with tempfile.TemporaryDirectory(prefix="lingrep-hub-") as directory:
+        hub = Path(directory)
+        staged = hub / "model"
+        shutil.copytree(source, staged)
+        snapshots = {}
+        for name, value in sources.items():
+            local = (hub / "snapshots" / name).resolve()
+            snapshot_download(
+                value["repository"], revision=value["revision"], local_dir=local
+            )
+            _drop_sudachitra_auto_map(local / "tokenizer_config.json")
+            _point_transformer_at(staged / name / "model", value["repository"], local)
+            snapshots[name] = str(local)
+        _register_sudachitra_tokenizer()
+        pipeline = spacy.load(staged)
+        for name, value in sources.items():
+            objects = _hf_objects(pipeline.get_pipe(name))
+            loaded = {
+                objects.transformer.config._name_or_path,
+                objects.tokenizer.name_or_path,
+            }
+            if loaded != {snapshots[name]}:
+                raise ValueError(f"component {name!r} loaded {loaded}, not the pin")
+            # The saved shim records these names; the temporary path would make
+            # every setup's bundle, and so its identity, differ.
+            objects.transformer.config._name_or_path = value["repository"]
+            objects.tokenizer.name_or_path = value["repository"]
+        pipeline.to_disk(destination)
+    saved = spacy.util.load_config(destination / "config.cfg")
+    for name in sources:
+        saved["components"][name]["factory"] = "transformer"
+    saved.to_disk(destination / "config.cfg")
+    (destination / HUB_SOURCES_FILE).write_bytes(canonical_json(sources) + b"\n")
+
+
+def admit_saved_transformers(config: Mapping[str, Any]) -> None:
+    """Reject Hub-loading components and register saved tokenizer classes."""
+
+    factories = {
+        component.get("factory") for component in config["components"].values()
+    }
+    if HUB_FACTORY in factories:
+        raise ValueError(
+            "model loads a transformer from the Hugging Face Hub; "
+            "save it with lingrep-spacy-setup, which stores the weights in the model"
+        )
+    if "transformer" in factories:
+        _register_sudachitra_tokenizer()
+
+
+def _register_sudachitra_tokenizer() -> None:
+    try:
+        from sudachitra import ElectraSudachipyTokenizer
+    except ImportError:
+        return
+    from transformers import AutoTokenizer
+
+    AutoTokenizer.register(
+        ElectraSudachipyTokenizer.__name__,
+        slow_tokenizer_class=ElectraSudachipyTokenizer,
+        exist_ok=True,
+    )
+
+
+def _model_path(spacy: Any, model: str) -> Path:
+    path = Path(model)
+    if path.is_dir():
+        return path
+    try:
+        package = spacy.util.get_package_path(model)
+        meta = spacy.util.get_model_meta(package)
+    except (ImportError, OSError) as error:
+        raise ValueError(
+            "spaCy model is unavailable; install its wheel in the same "
+            "uvx environment with --with MODEL_WHEEL"
+        ) from error
+    return package / f"{meta['lang']}_{meta['name']}-{meta['version']}"
+
+
+def _drop_sudachitra_auto_map(path: Path) -> None:
+    if not path.is_file():
+        return
+    value = json.loads(path.read_bytes())
+    auto_map = value.pop("auto_map", None)
+    if auto_map is None:
+        return
+    if auto_map != {"AutoTokenizer": [SUDACHITRA_TOKENIZER, None]}:
+        raise ValueError(f"{path.parent.name} names tokenizer code lingrep lacks")
+    path.write_text(json.dumps(value, ensure_ascii=False))
+
+
+def _point_transformer_at(path: Path, repository: str, local: Path) -> None:
+    """Rewrite a transformer_custom component's serialized repository name to the
+    absolute path of its download, so from_pretrained reads only that directory."""
+
+    import srsly
+
+    value = srsly.msgpack_loads(path.read_bytes())
+    replaced = 0
+    for shims in value["shims"]:
+        for index, data in enumerate(shims):
+            shim = srsly.msgpack_loads(data)
+            if shim.get("config", {}).get("_name_or_path") == repository:
+                shim["config"]["_name_or_path"] = str(local)
+                shims[index] = srsly.msgpack_dumps(shim)
+                replaced += 1
+    if replaced != 1:
+        raise ValueError(f"{path} names {repository} in {replaced} shims, not one")
+    path.write_bytes(srsly.msgpack_dumps(value))
+
+
+def _hf_objects(component: Any) -> Any:
+    for node in component.model.walk():
+        if node.shims:
+            return node.shims[0]._hfmodel
+    raise ValueError(f"component {component.name!r} holds no transformer")
 
 
 def prepare_model_bundle(
@@ -48,6 +229,7 @@ def prepare_model_bundle(
     import spacy
 
     root = model_root.resolve(strict=True)
+    admit_saved_transformers(spacy.util.load_config(root / "config.cfg"))
     full = spacy.load(root)
     names = list(full.pipe_names)
     summary = full.analyze_pipes(pretty=False)["summary"]
@@ -76,8 +258,8 @@ def prepare_model_bundle(
         for attribute, available in MORPH_TARGETS.items()
         if all(available(token) for token in probe if not token.is_space)
     }
-    morphology_components = _minimal_components(
-        names, summary, set(MORPH_TARGETS).difference(base_assignments), None
+    morphology_components = _morphology_components(
+        names, summary, base_assignments, None
     )
     if morphology_components is None:
         try:
@@ -93,12 +275,9 @@ def prepare_model_bundle(
         full, [], "input-v1", [PORTABLE_SCHEMA[0]]
     )
     if boundary_component is not None:
-        boundary = _minimal_components(names, summary, set(), boundary_component)
-        if boundary is None:
-            raise ValueError("boundary component dependencies are unavailable")
         selections["tokenize/analyzer"] = _selection(
             full,
-            boundary,
+            _components_through(names, summary, set(), boundary_component),
             f"spacy:{boundary_component}:v1",
             [PORTABLE_SCHEMA[0]],
         )
@@ -113,11 +292,8 @@ def prepare_model_bundle(
             full, morphology_components, "input-v1", schema
         )
         if boundary_component is not None:
-            combined = _minimal_components(
-                names,
-                summary,
-                set(MORPH_TARGETS).difference(base_assignments),
-                boundary_component,
+            combined = _morphology_components(
+                names, summary, base_assignments, boundary_component
             )
             if combined is None:
                 combined = names
@@ -179,25 +355,36 @@ def resource_manifest_digest(resource_root: Path, manifest_root: Path) -> str:
     return _resource_manifest_digest(resource_root, manifest_root, provider="spaCy")
 
 
-def _minimal_components(
+def _morphology_components(
+    names: Sequence[str],
+    summary: Mapping[str, Mapping[str, Any]],
+    base_assignments: set[str],
+    boundary: str | None,
+) -> list[str] | None:
+    selected = _components_through(
+        names, summary, set(MORPH_TARGETS) | MORPH_OUTPUTS, boundary
+    )
+    assigned = set(base_assignments).union(
+        *(summary[name]["assigns"] for name in selected)
+    )
+    return selected if assigned.issuperset(MORPH_TARGETS) else None
+
+
+def _components_through(
     names: Sequence[str],
     summary: Mapping[str, Mapping[str, Any]],
     targets: set[str],
     boundary: str | None,
-) -> list[str] | None:
-    needed = set(targets)
-    selected = {boundary} if boundary is not None else set()
-    if boundary is not None:
-        needed.update(summary[boundary]["requires"])
-    for name in reversed(names):
-        assigns = set(summary[name]["assigns"])
-        if name in selected or assigns.intersection(needed):
-            selected.add(name)
-            needed.difference_update(assigns)
-            needed.update(summary[name]["requires"])
-    if needed:
-        return None
-    return [name for name in names if name in selected]
+) -> list[str]:
+    """Return the pipeline prefix through the last component that is ``boundary``
+    or assigns one of ``targets``. A component can read earlier components'
+    output without declaring it in ``requires``, so none of them is dropped."""
+
+    last = -1
+    for index, name in enumerate(names):
+        if name == boundary or targets.intersection(summary[name]["assigns"]):
+            last = index
+    return list(names[: last + 1])
 
 
 def _selection(
@@ -218,9 +405,14 @@ def _selection(
                 {"key": "dep.enhanced", "kind": "string_set"},
             ]
         )
-        from .adapter import _projection_order
+    if len(schema) > 1 and any(
+        pipeline.config["components"][name].get("factory") == "bunsetu_recognizer"
+        for name in components
+    ):
+        schema.append({"key": BUNSETU_KEY, "kind": "scalar"})
+    from .adapter import _projection_order
 
-        schema.sort(key=lambda attribute: _projection_order(attribute["key"]))
+    schema.sort(key=lambda attribute: _projection_order(attribute["key"]))
     configured = []
     for name in components:
         config = _plain(pipeline.config["components"][name])

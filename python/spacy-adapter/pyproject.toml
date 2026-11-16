@@ -17,17 +17,21 @@ lingrep-spacy-setup = "lingrep_spacy_adapter.setup:main"
 spacy = [
     # spaCy imports Click directly; Typer no longer supplies it transitively.
     "click>=8.4.2,<9",
-    # GiNZA 5.2 model configs use nullable factory values rejected by Confection 1.
-    "confection>=0.1.5,<1",
     "numpy>=2,<3",
-    "spacy>=3.8.11,<3.8.12",
+    # GiNZA 5.3 requires spaCy 3.8.16 or newer.
+    "spacy>=3.8.18,<3.8.19",
 ]
 ginza = [
-    "ginza==5.2.0",
-    "ja-ginza==5.2.0",
+    "ginza==5.3.1",
+    "ja-ginza==5.3.0",
 ]
 electra = [
-    "ja-ginza-electra==5.2.0",
+    "ja-ginza-electra==5.3.1",
+    "tokenizers==0.22.2",
+    "transformers==4.57.6",
+]
+bert-large = [
+    "ja-ginza-bert-large==5.3.0",
     "tokenizers==0.22.2",
     "transformers==4.57.6",
 ]
@@ -75,6 +79,8 @@ conflicts = [
         { extra = "rocm" },
     ],
 ]
+# spacy-transformers 1.4 requires transformers<4.53.3; 4.57.6 has fewer OSV
+# advisories than 4.53.2.
 override-dependencies = ["transformers==4.57.6"]
 
 [tool.uv.extra-build-variables]

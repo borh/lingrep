@@ -558,7 +558,9 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
     let status = ProcessCommand::new(&python)
         .args([
             "-c",
-            "import spacy,sys; spacy.load(sys.argv[1]).to_disk('model')",
+            "import sys; from pathlib import Path; \
+             from lingrep_spacy_adapter.bundle import save_model; \
+             save_model(sys.argv[1], Path('model'))",
             &ginza_model,
         ])
         .current_dir(root)
@@ -612,6 +614,10 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
         SchemaAttribute::new("norm", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("upos", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("xpos", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("dep.enhanced", AttributeKind::StringSet).unwrap(),
+        SchemaAttribute::new("dep.head", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("dep.rel", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("spacy.ginza.bunsetu", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("spacy.morph.inflection", AttributeKind::StringSet).unwrap(),
         SchemaAttribute::new("spacy.morph.reading", AttributeKind::StringSet).unwrap(),
     ])
