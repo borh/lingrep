@@ -2819,3 +2819,75 @@ async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<(
     served.server.abort();
     result
 }
+
+/// The question page's line filter names the lines it filters, counts
+/// within them, and when nothing matches, says so and links to the same
+/// pattern on Frequencies, filtered by the typed text.
+#[tokio::test]
+async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to_frequencies()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        driver
+            .find(By::Css(".fq-kwic li[data-i='0'] .fq-inspect"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "const lab = document.querySelector('#token-lab'); return !!lab && !lab.hidden",
+            "the opened line",
+        )
+        .await?;
+        let filter = "const input = document.querySelector('.line-controls input'); \
+            const r = {placeholder: input.placeholder, label: input.getAttribute('aria-label'), \
+              count: document.querySelector('.line-controls span').textContent, \
+              empty: document.querySelector('.kwic-list > p.line-note')?.textContent ?? null, \
+              link: document.querySelector('.kwic-list > p.line-note a')?.getAttribute('href') ?? null};";
+        let before = driver
+            .execute(&format!("{filter} return r;"), Vec::new()).await?.json().clone();
+        let shown = before["placeholder"].as_str().unwrap().to_owned();
+        assert!(shown.starts_with("Filter the ") && shown.ends_with(" lines shown"), "{before}");
+        assert_eq!(before["label"], before["placeholder"]);
+        driver
+            .execute(
+                "const input = document.querySelector('.line-controls input'); input.value = '犬'; \
+                 input.dispatchEvent(new Event('input', {bubbles: true}))",
+                Vec::new(),
+            )
+            .await?;
+        let after = wait_for(
+            &driver,
+            &format!("{filter} return r.link ? r : false;"),
+            "the Frequencies link",
+        )
+        .await?;
+        let n = shown.trim_start_matches("Filter the ").trim_end_matches(" lines shown");
+        assert!(
+            after["count"].as_str().unwrap().starts_with(&format!("0 of the {n} lines shown · ")),
+            "{after}"
+        );
+        assert!(
+            after["empty"].as_str().unwrap().starts_with(&format!("None of the {n} lines shown contain “犬”.")),
+            "{after}"
+        );
+        let link = after["link"].as_str().unwrap();
+        let params: std::collections::BTreeMap<String, String> =
+            serde_urlencoded::from_str(link.strip_prefix("frequencies#").unwrap()).unwrap();
+        assert_eq!(params.get("pattern").map(String::as_str), Some("noun"), "{link}");
+        assert_eq!(params.get("q").map(String::as_str), Some("犬"), "{link}");
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

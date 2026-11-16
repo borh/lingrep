@@ -19,9 +19,9 @@ let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
   readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',emptyTitle:'調べたい表現から始める。',emptyBody:'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。',example:'このパターンを検索',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'作品を読む',
-  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',filter:'このページを絞り込む',noLines:'このパターンの用例はまだありません。',noFilter:'絞り込みに一致する用例はありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
+  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
 };
-const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',filter:'Filter this page',noLines:'No lines for this pattern yet.',noFilter:'No examples on this page contain this text.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
+const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',noLines:'No lines for this pattern yet.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
 Object.assign(ja,{skip:'検索結果へ移動',readingEnd:'。',noMatches:'このパターンに一致する用例はありません。',partialCount:'途中までの件数',limitChoice:'定義を 1 つだけ検索:',chooseDefinition:'検索する定義を 1 つ選んでください。',occurrenceNotFound:'この検索には、その文で同じ語が同じ役割に入る用例がありません。',occurrenceChanged:'頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。',analysisChanged:'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。',searchCurrentCorpus:'現在のコーパスで検索',resultLimit:'結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。',emptyBody:'パターンや文書の条件を変えて検索できます。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
 Object.assign(extra,{root:'heads the sentence',noMatches:'No examples match this pattern.',partialCount:'Count so far',limitChoice:'Search one definition only:',chooseDefinition:'Choose one definition to search.',occurrenceNotFound:'This search has no example in that sentence with the same words in the same roles.',occurrenceChanged:'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.'});extra.current='Results';extra.resultLimit='Too many results to retain. Narrow the pattern or document conditions and search again.';extra.analysisChanged='The corpus has changed since this question was saved. You can search the current corpus instead.';extra.searchCurrentCorpus='Search the current corpus';extra.previous='Previous results';
@@ -516,8 +516,6 @@ function render(force=false) {
     $('.query-tools-detail pre',panel).textContent=run.source;
     $('[data-copy]',panel).textContent=t('copy');
     $('[data-source]',panel).textContent=t('savedQuery');
-    const input=$<HTMLInputElement>('.line-controls input',panel);
-    input.placeholder=t('filter');input.setAttribute('aria-label',t('filter'));
     renderLines(panel,run,force);
   }
   compactCompletedStatus();
@@ -662,9 +660,11 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   const rows=allRows.filter(row=>(words(row.left_context)+row.surface+words(row.right_context)).includes(filter)).slice(0,limit);
   const shownCounts=new Map<number,number>(),landmarks=new Map(view.landmarks.map(document=>[document.ordinal,document]));
   for(const row of rows)shownCounts.set(row.document_ordinal,(shownCounts.get(row.document_ordinal)??0)+1);
-  const total=pageReady?view.matchesTotal:run.counts[pattern]??0;
+  const total=pageReady?view.matchesTotal:run.counts[pattern]??0,shownLines=Math.min(allRows.length,limit);
+  const input=$<HTMLInputElement>('.line-controls input',panel),hint=locale==='ja'?`表示中の${count(shownLines)}件から絞り込む`:`Filter the ${count(shownLines)} lines shown`;
+  input.placeholder=hint;input.setAttribute('aria-label',hint);
   $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
-    ? filter?(locale==='ja'?`このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
+    ? filter?(locale==='ja'?`表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
     :!rows.length?'':(locale==='ja'?`${count(view.start+1)}–${count(view.start+rows.length)} 件を表示。`:`Reading ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)}.`)
     : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
   if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
@@ -731,7 +731,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     }
     if(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden){desired.push(tokenLab);if(readerPanel.open)desired.push(readerPanel);}
   }
-  if(!rows.length){const empty=node('empty','p','line-note');empty.textContent=t(filter?'noFilter':run.phase==='complete'?'noMatches':'noLines');desired.push(empty);}
+  if(!rows.length){const empty=node('empty','p','line-note');if(filter)filterEmpty(empty,run,pattern,filter,shownLines);else{renderSignatures.delete(empty);empty.textContent=t(run.phase==='complete'?'noMatches':'noLines');}desired.push(empty);}
   const desiredNodes=new Set(desired);
   for(const child of [...list.children])if(!desiredNodes.has(child as HTMLElement)){
     if(child===tokenLab||child===readerPanel)document.body.append(child);else child.remove();
@@ -740,6 +740,20 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   for(const key of nodes.keys())if(!used.has(key))nodes.delete(key);
 }
 
+// The Frequencies tables served, read once when a page filter first finds nothing.
+let frequencyPairs:readonly {corpus:string;catalog:string;patterns:readonly {name:string}[]}[]|null|undefined;
+// A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
+function filterEmpty(element:HTMLElement,run:RunSnapshot,pattern:string,filter:string,shown:number){
+  if(frequencyPairs===undefined){frequencyPairs=null;void request<{pairs:typeof frequencyPairs}>('api/frequency/meta').then(meta=>{frequencyPairs=meta.pairs??[];render(true);},()=>{frequencyPairs=[];});}
+  const pair=frequencyPairs?.find(pair=>pair.corpus===run.dataset&&pair.patterns.some(item=>item.name===pattern));
+  const signature=JSON.stringify([locale,run.id,pattern,filter,shown,pair?.catalog??null]);if(renderSignatures.get(element)===signature)return;renderSignatures.set(element,signature);
+  element.textContent=locale==='ja'?`表示中の${count(shown)}件に「${filter}」を含む用例はありません。`:`None of the ${count(shown)} lines shown contain “${filter}”.`;
+  if(pair){
+    const link=document.createElement('a');link.href=`frequencies#${new URLSearchParams({corpus:pair.corpus,catalog:pair.catalog,pattern,q:filter})}`;
+    link.textContent=locale==='ja'?`頻度表で「${filter}」を含む${pattern}を数える`:`Count ${pattern} entries containing “${filter}” in Frequencies`;
+    element.append(' ',link);
+  }else element.append(locale==='ja'?' 絞り込みは表示中の用例だけを対象にします。コーパス全体で探すには、パターンを変えて検索してください。':' The filter searches only these lines. To search the whole corpus, change the pattern and search again.');
+}
 async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
   const epoch=++inspectionEpoch;inspectionFailure=null;
   button.setAttribute('aria-busy','true');

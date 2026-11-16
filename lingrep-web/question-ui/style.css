@@ -90,3 +90,4 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .search-status.has-update{background:var(--wash);padding:6px 10px}
 .search-status.has-update #show-latest{font-weight:600}
 #token-origin:focus{outline:none}
+.line-controls input{width:auto;field-sizing:content;min-width:14ch;max-width:100%}
