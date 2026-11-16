@@ -94,10 +94,24 @@ async fn config(State(store): State<RequestStore>) -> Response {
             .expect("bundled metadata labels are valid JSON")["keys"]
             .clone()
     });
+    let mut labels = LABELS.clone();
+    if let (Some(labels), Value::Object(custom)) = (
+        labels.as_object_mut(),
+        store.frequency.labels().question_labels(),
+    ) {
+        for (key, names) in custom {
+            let entry = labels.entry(key).or_insert_with(|| serde_json::json!({}));
+            for field in ["labels", "values"] {
+                if !names[field].is_null() {
+                    entry[field] = names[field].clone();
+                }
+            }
+        }
+    }
     Json(Configuration {
         datasets,
         source: store.default_pattern.to_string(),
-        labels: LABELS.clone(),
+        labels,
     })
     .into_response()
 }
@@ -242,6 +256,7 @@ struct MetadataQuery {
     field: Option<String>,
     q: Option<String>,
     after: Option<String>,
+    locale: Option<String>,
 }
 impl MetadataQuery {
     fn validate(&self) -> Result<(), &'static str> {
@@ -256,6 +271,13 @@ impl MetadataQuery {
                 .is_some_and(|v| v.len() > MAX_CURSOR_BYTES)
         {
             return Err("The metadata query is too long.");
+        }
+        if self
+            .locale
+            .as_deref()
+            .is_some_and(|locale| !crate::metadata_labels::LOCALES.contains(&locale))
+        {
+            return Err("Choose English (en) or Japanese (ja) for metadata labels.");
         }
         Ok(())
     }
@@ -395,6 +417,7 @@ async fn collect_distribution(
         Item = Result<(String, Option<String>, u64), lingrep_corpus::CorpusError>,
     >,
     query: &MetadataQuery,
+    labels: &crate::metadata_labels::KeyLabels,
 ) -> Result<(Vec<MetadataChoice>, Option<String>), DistributionError> {
     use futures::TryStreamExt;
     let after = query
@@ -432,7 +455,13 @@ async fn collect_distribution(
         if raw.len() > MAX_VALUE_BYTES {
             return Err(DistributionError::OversizedValue);
         }
-        let label = value_label(query.field.as_deref().unwrap_or(""), &raw);
+        let field = query.field.as_deref().unwrap_or("");
+        let label = value
+            .as_str()
+            .and_then(|value| {
+                labels.value_label(field, value, query.locale.as_deref().unwrap_or("en"))
+            })
+            .unwrap_or_else(|| value_label(field, &raw));
         if !label.to_lowercase().contains(&needle) {
             continue;
         }
@@ -504,7 +533,13 @@ async fn metadata(
     }
     let mut result = summary.finish();
     if let Some(field) = query.field.as_deref() {
-        match collect_distribution(provenance.document_metadata_distribution(field), &query).await {
+        match collect_distribution(
+            provenance.document_metadata_distribution(field),
+            &query,
+            store.frequency.labels(),
+        )
+        .await
+        {
             Ok((values, next)) => {
                 result.values = values;
                 result.next = next;
@@ -539,6 +574,41 @@ mod tests {
     use super::*;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn question_configuration_includes_custom_key_and_value_labels() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("labels.json");
+        std::fs::write(&path, r#"{"vocabulary":"local","edition":"1","source":"local","licence":"MIT",
+            "keys":{"@document.author":{"labels":{"ja":"執筆者"}},"@document.subject":{"values":{"lit":{"labels":{"en":"Literature","ja":"文学"}}}}}}"#).unwrap();
+        let labels = crate::metadata_labels::KeyLabels::read(&[path]).unwrap();
+        let store = RequestStore::default().with_frequency(Arc::new(
+            crate::frequency::FrequencyViews::default().with_labels(labels),
+        ));
+        let response = routes()
+            .with_state(store)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/config")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["labels"]["@document.author"]["labels"]["ja"], "執筆者");
+        assert_eq!(
+            body["labels"]["@document.subject"]["values"]["lit"]["labels"]["ja"],
+            "文学"
+        );
+        assert_eq!(
+            body["labels"]["@document.ndc"]["labels"]["en"],
+            "NDC classification"
+        );
+    }
 
     #[tokio::test]
     #[ignore = "requires LINGREP_QUESTION_TEST_CORPUS pointing to a prepared Soranoha author corpus"]
@@ -829,6 +899,7 @@ mod tests {
         let (first, next) = collect_distribution(
             futures::stream::iter(rows.clone().into_iter().map(Ok)),
             &query,
+            &crate::metadata_labels::KeyLabels::default(),
         )
         .await
         .unwrap();
@@ -841,10 +912,13 @@ mod tests {
             field: query.field,
             ..Default::default()
         };
-        let (second, next) =
-            collect_distribution(futures::stream::iter(rows.into_iter().map(Ok)), &query)
-                .await
-                .unwrap();
+        let (second, next) = collect_distribution(
+            futures::stream::iter(rows.into_iter().map(Ok)),
+            &query,
+            &crate::metadata_labels::KeyLabels::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(second.len(), 51);
         assert_eq!(second[0].value, "value099");
         assert!(next.is_none());
@@ -861,9 +935,13 @@ mod tests {
             Ok(("text".into(), Some("\"019\"".into()), 10)),
             Ok(("text".into(), Some("\"913\"".into()), 2)),
         ];
-        let (values, next) = collect_distribution(futures::stream::iter(rows), &query)
-            .await
-            .unwrap();
+        let (values, next) = collect_distribution(
+            futures::stream::iter(rows),
+            &query,
+            &crate::metadata_labels::KeyLabels::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             values,
             vec![MetadataChoice {
@@ -881,9 +959,13 @@ mod tests {
             Ok(("integer".into(), Some("1".into()), 1)),
             Ok(("text".into(), Some("\"1\"".into()), 1)),
         ];
-        let (values, _) = collect_distribution(futures::stream::iter(rows), &query)
-            .await
-            .unwrap();
+        let (values, _) = collect_distribution(
+            futures::stream::iter(rows),
+            &query,
+            &crate::metadata_labels::KeyLabels::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             values.iter().map(|v| v.value.clone()).collect::<Vec<_>>(),
             [serde_json::json!(1), serde_json::json!("1")]
@@ -893,9 +975,49 @@ mod tests {
             ..query
         };
         assert!(matches!(
-            collect_distribution(futures::stream::empty(), &query).await,
+            collect_distribution(
+                futures::stream::empty(),
+                &query,
+                &crate::metadata_labels::KeyLabels::default()
+            )
+            .await,
             Err(DistributionError::InvalidCursor)
         ));
+    }
+
+    #[tokio::test]
+    async fn localized_value_search_preserves_types_counts_and_raw_codes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("labels.json");
+        std::fs::write(&path, r#"{"vocabulary":"subjects","edition":"1","source":"local","licence":"MIT",
+            "keys":{"@document.subject":{"values":{"1":{"labels":{"en":"Literature","ja":"文学"}}}}}}"#).unwrap();
+        let labels = crate::metadata_labels::KeyLabels::read(&[path]).unwrap();
+        for (locale, search, expected) in [
+            ("en", "literature", "1 Literature"),
+            ("ja", "文学", "1 文学"),
+        ] {
+            let query = MetadataQuery {
+                field: Some("subject".into()),
+                q: Some(search.into()),
+                locale: Some(locale.into()),
+                ..Default::default()
+            };
+            let rows = vec![
+                Ok(("integer".into(), Some("1".into()), 7)),
+                Ok(("text".into(), Some("\"1\"".into()), 3)),
+            ];
+            let (values, _) = collect_distribution(futures::stream::iter(rows), &query, &labels)
+                .await
+                .unwrap();
+            assert_eq!(
+                values,
+                vec![MetadataChoice {
+                    value: serde_json::json!("1"),
+                    label: expected.into(),
+                    documents: 3
+                }]
+            );
+        }
     }
 
     #[test]

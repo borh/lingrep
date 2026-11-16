@@ -73,7 +73,7 @@ Options:
           Reading sidecar written by `ling corpus render`, used to show a declared prepared corpus's documents as rendered Markdown. Repeatable. A sidecar is bound to the corpus with the analysis identity, source identity and renderer revision it records. A sidecar that cannot be read, does not verify, matches no corpus, or renders the same corpus as another sidecar stops startup. A corpus without one keeps the sentence reader
 
       --metadata-labels <PATH>
-          JSON file of display labels for document-metadata keys, by locale, shown in Frequencies and Compare in place of key names. Repeatable. Clauses, commands and addresses keep the keys. A file that cannot be read or is invalid, or that labels a key also labelled by another file, stops startup
+          JSON file of localized document-metadata key and value labels. Repeatable. The question document uses both; Frequencies and Compare use key labels. Clauses, commands and addresses keep the keys. A file that cannot be read or is invalid, or that labels a key also labelled by another file, stops startup
 
   -h, --help
           Print help (see a summary with '-h')

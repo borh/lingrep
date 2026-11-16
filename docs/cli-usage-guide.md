@@ -2443,8 +2443,8 @@ identical, or are disjoint. A narrow screen keeps each scope's rate and drops
 its counts. The URL stores both scopes, so a copied link reopens the page.
 
 `--metadata-labels PATH` reads a JSON file of display labels for document
-metadata keys, by locale. The view names a condition by its label in the
-page's language; a key without a label in that language is named by the key,
+metadata keys and string values, by locale. The question document, Frequencies
+and Compare name a condition by its label in the page's language; a key without a label in that language is named by the key,
 with spaces for underscores in English. The flag is repeatable. Labels change
 no clause: the address, the clause and the shown `ling table` command keep the
 keys. A label applies to the key it names in every served corpus.
@@ -2464,9 +2464,17 @@ keys. A label applies to the key it names in every served corpus.
 
 `vocabulary`, `edition`, `source` and `licence` identify the labels and their
 terms and must not be empty. Each entry in `keys` names an `@document` key and
-gives at least one non-empty label, each under `en` or `ja`, the locales the
-page is served in. Startup stops with an error naming the file when the file
-cannot be read, has an unknown or empty field, names a key or a locale twice,
+gives non-empty labels under `en` or `ja`, the page's supported locales.
+A key entry may also contain a `values` map, keyed by the exact stored string:
+`"values": {"lit": {"labels": {"en": "Literature", "ja": "文学"}}}`.
+A value-only entry may omit the key's `labels`. The question document shows
+`lit Literature` or `lit 文学` beside the document count and searches both the
+name and the code. Codes with the same name remain separate. Missing
+translations use the raw value; numbers and booleans keep their original types.
+Changing a label changes neither conditions nor prepared-corpus identity.
+Grouping and splitting values are outside this format.
+
+Startup stops with an error naming the file when it cannot be read, has an unknown or empty field, names a key, value or locale twice,
 gives two keys the same label in one locale, or labels a key that another file
 labels. If no corpus with a count table contains a labelled key, the server
 reports the key at startup and continues.

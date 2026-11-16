@@ -28,6 +28,11 @@ export function scopeClause(metadata, raw = '') {
         clauses[0] = `(${clauses[0]})`;
     return clauses.join(' & ');
 }
+export function metadataValueLabel(config, field, value, locale, fallback = String(value)) {
+    const names = typeof value === 'string' ? config.labels?.[`@document.${field}`]?.values?.[value]?.labels : undefined;
+    const name = names?.[locale];
+    return name === undefined ? (names ? String(value) : fallback) : name === value ? String(value) : `${value} ${name}`;
+}
 export function numberDragDelta(distance, step = 1, precise = false) {
     const steps = Math.trunc(distance / 8);
     return Math.sign(steps) * Math.min(Number.MAX_SAFE_INTEGER, Math.round(precise || Math.abs(steps) <= 4 ? Math.abs(steps) : 4 + 4 * Math.expm1((Math.abs(steps) - 4) / 4)) * step);
@@ -135,7 +140,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
                 node.textContent = message;
         }
     }
-    const label = (field) => config.labels?.[`@document.${field}`]?.labels?.[getLocale()] ?? field;
+    const label = (field) => config.labels?.[`@document.${field}`]?.labels?.[getLocale()] ?? (getLocale() === 'en' ? field.replaceAll('_', ' ') : field);
     const api = async (path) => { const response = await fetch(serviceURL(path)); const data = await response.json(); if (!response.ok)
         throw new Error(data.error ?? `HTTP ${response.status}`); return data; };
     function changedScope(runSearch = true) {
@@ -149,7 +154,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     function renderChips() {
         const active = Object.entries(state.metadata).filter(([, c]) => c.numeric ? (c.min !== '' && c.min != null) || (c.max !== '' && c.max != null) : c.values?.length);
         $('#scope-label').textContent = active.length || state.raw ? text('selected documents', '条件に合う作品') : text('all documents', 'すべての作品');
-        $('#scope-chips').innerHTML = active.map(([key, c]) => `<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric ? `${esc(c.min ?? '…')}–${esc(c.max ?? '…')}` : esc(c.values.map(v => c.labels && Object.hasOwn(c.labels, String(v)) ? c.labels[String(v)] : String(v)).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
+        $('#scope-chips').innerHTML = active.map(([key, c]) => `<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric ? `${esc(c.min ?? '…')}–${esc(c.max ?? '…')}` : esc(c.values.map(v => metadataValueLabel(config, key, v, getLocale(), c.labels && Object.hasOwn(c.labels, String(v)) ? c.labels[String(v)] : String(v))).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
         for (const button of $('#scope-chips').querySelectorAll('button'))
             button.addEventListener('click', () => { delete state.metadata[button.dataset.field ?? '']; changedScope(); if (button.dataset.field === key)
                 loadValues(); });
@@ -165,7 +170,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             fields = data.fields.filter(field => !hiddenMetadataFields.has(field.key));
             const initialKey = fields.some(f => f.key === 'author') ? 'author' : fields[0]?.key;
             const initialField = fields.find(f => f.key === initialKey);
-            const initialValues = initialField && !initialField.numeric ? await api(`api/questions/data/${$('#corpus').value}/metadata?${new URLSearchParams({ field: initialKey, q: '', after: '' })}`) : undefined;
+            const initialValues = initialField && !initialField.numeric ? await api(`api/questions/data/${$('#corpus').value}/metadata?${new URLSearchParams({ field: initialKey, q: '', after: '', locale: getLocale() })}`) : undefined;
             if (epoch !== requestId)
                 return;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
@@ -263,7 +268,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             return;
         }
         const category = condition.numeric ? { list: false, values: [], exclude: false } : condition;
-        const query = new URLSearchParams({ field: key, q: $('#metadata-query').value, after });
+        const query = new URLSearchParams({ field: key, q: $('#metadata-query').value, after, locale: getLocale() });
         try {
             const data = initialValues ?? await api(`api/questions/data/${$('#corpus').value}/metadata?${query}`);
             if (epoch !== requestId)
@@ -360,5 +365,10 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             const selected = $('#metadata-field').value;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
             $('#metadata-field').value = selected;
+            if (!$('#metadata-picker').hidden) {
+                after = '';
+                previous = [];
+                loadValues();
+            }
         } } };
 }

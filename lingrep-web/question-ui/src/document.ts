@@ -23,6 +23,11 @@ export function scopeClause(metadata: Record<string,MetadataCondition>, raw='') 
   return clauses.join(' & ');
 }
 
+export function metadataValueLabel(config: Configuration,field: string,value: MetadataValue,locale: Locale,fallback=String(value)): string {
+  const names=typeof value==='string'?config.labels?.[`@document.${field}`]?.values?.[value]?.labels:undefined;
+  const name=names?.[locale];
+  return name===undefined?(names?String(value):fallback):name===value?String(value):`${value} ${name}`;
+}
 export function numberDragDelta(distance: number,step=1,precise=false): number {
   const steps=Math.trunc(distance/8);
   return Math.sign(steps)*Math.min(Number.MAX_SAFE_INTEGER,Math.round(precise||Math.abs(steps)<=4?Math.abs(steps):4+4*Math.expm1((Math.abs(steps)-4)/4))*step);
@@ -95,7 +100,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
       ['metadata-validation','Use whole numbers within this field’s bounds, with the minimum no greater than the maximum.','項目の範囲内の整数で、下限が上限を超えない値を入力してください。'],
     ]){const node=$('#'+id),message=text(en,ja);if(node.textContent!==message)node.textContent=message;}
   }
-  const label=(field: string)=>config.labels?.[`@document.${field}`]?.labels?.[getLocale()]??field;
+  const label=(field: string)=>config.labels?.[`@document.${field}`]?.labels?.[getLocale()]??(getLocale()==='en'?field.replaceAll('_',' '):field);
   const api=async (path: string): Promise<MetadataResult>=>{const response=await fetch(serviceURL(path));const data=await response.json();if(!response.ok)throw new Error(data.error??`HTTP ${response.status}`);return data;};
   function changedScope(runSearch=true) {
     state.raw=$<HTMLInputElement>('#where').value;
@@ -105,7 +110,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   function renderChips() {
     const active=Object.entries(state.metadata).filter(([,c])=>c.numeric?(c.min!==''&&c.min!=null)||(c.max!==''&&c.max!=null):c.values?.length);
     $('#scope-label').textContent=active.length||state.raw?text('selected documents','条件に合う作品'):text('all documents','すべての作品');
-    $('#scope-chips').innerHTML=active.map(([key,c])=>`<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric?`${esc(c.min??'…')}–${esc(c.max??'…')}`:esc(c.values.map(v=>c.labels&&Object.hasOwn(c.labels,String(v))?c.labels[String(v)]:String(v)).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
+    $('#scope-chips').innerHTML=active.map(([key,c])=>`<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric?`${esc(c.min??'…')}–${esc(c.max??'…')}`:esc(c.values.map(v=>metadataValueLabel(config,key,v,getLocale(),c.labels&&Object.hasOwn(c.labels,String(v))?c.labels[String(v)]:String(v))).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
     for(const button of $('#scope-chips').querySelectorAll<HTMLButtonElement>('button'))button.addEventListener('click',()=>{delete state.metadata[button.dataset.field??''];changedScope();if(button.dataset.field===key)loadValues();});
     $('#clause-preview').textContent=scopeClause(state.metadata,state.raw)||text('All documents','すべての作品');
   }
@@ -118,7 +123,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
       fields=data.fields.filter(field=>!hiddenMetadataFields.has(field.key));
       const initialKey=fields.some(f=>f.key==='author')?'author':fields[0]?.key;
       const initialField=fields.find(f=>f.key===initialKey);
-      const initialValues=initialField&&!initialField.numeric?await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata?${new URLSearchParams({field:initialKey,q:'',after:''})}`):undefined;
+      const initialValues=initialField&&!initialField.numeric?await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata?${new URLSearchParams({field:initialKey,q:'',after:'',locale:getLocale()})}`):undefined;
       if(epoch!==requestId)return;
       $<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
       key=initialKey;$<HTMLInputElement>('#metadata-query').value='';
@@ -175,7 +180,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
       $<HTMLButtonElement>('#metadata-next').disabled=true;$<HTMLButtonElement>('#metadata-previous').disabled=true;values.removeAttribute('aria-busy');values.inert=false;return;
     }
     const category=condition.numeric?{list:false,values:[] as MetadataValue[],exclude:false}:condition;
-    const query=new URLSearchParams({field:key,q:$<HTMLInputElement>('#metadata-query').value,after});
+    const query=new URLSearchParams({field:key,q:$<HTMLInputElement>('#metadata-query').value,after,locale:getLocale()});
     try {
       const data=initialValues??await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata?${query}`);
       if(epoch!==requestId)return;
@@ -226,5 +231,5 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     for(const input of document.querySelectorAll('.number-span'))input.removeAttribute('aria-invalid');
     $('#reading-validation').hidden=true;$('#metadata-validation').hidden=true;
     fields=[];renderChips();if(!$('#metadata-picker').hidden)loadFields();
-  },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;}}};
+  },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;if(!$('#metadata-picker').hidden){after='';previous=[];loadValues();}}}};
 }

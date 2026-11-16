@@ -175,8 +175,8 @@ pub struct Args {
     #[arg(long = "reading-sidecar", value_name = "PATH")]
     pub reading_sidecar: Vec<PathBuf>,
 
-    /// JSON file of display labels for document-metadata keys, by locale,
-    /// shown in Frequencies and Compare in place of key names. Repeatable.
+    /// JSON file of localized document-metadata key and value labels. Repeatable.
+    /// The question document uses both; Frequencies and Compare use key labels.
     /// Clauses, commands and addresses keep the keys. A file that cannot be read or is
     /// invalid, or that labels a key also labelled by another file, stops
     /// startup.

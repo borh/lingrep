@@ -157,8 +157,9 @@ entry, so the unit needs the corpus as well as the table. A request matches
 only the sentences that hold its page of lines: 50 by default, at most 200.
 
 `services.lingrep-web.metadataLabels` lists display-label files; the module
-passes each as `--metadata-labels` and mounts it read-only. The Frequencies
-view then names its conditions by those labels in English and Japanese, while
+passes each as `--metadata-labels` and mounts it read-only. The question document,
+Frequencies and Compare use the key labels in English and Japanese; the question
+document also uses configured value labels. Meanwhile,
 clauses, commands and addresses keep the keys. The package installs the
 Soranoha catalog labels:
 

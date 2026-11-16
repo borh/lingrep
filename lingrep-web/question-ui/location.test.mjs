@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultView, locationHash, locationURL, parseView, savedQuestion } from './location.js';
-import { questionSettings, scopeClause } from './document.js';
+import { questionSettings, scopeClause, metadataValueLabel } from './document.js';
 
 test('reader locations preserve their document, occurrence and return page through a URL',()=>{
   const context={...defaultView(),pattern:'かもしれない',document:9,after:21,filter:'こと'};
@@ -86,4 +86,14 @@ test('standalone question fragments preserve reader locations and literal query 
     assert.equal(params.get('evidence'),evidence);
     assert.deepEqual(parseView(params.get('view')),view);
   }
+});
+
+test('translated metadata names retain raw codes and leave predicates unchanged', () => {
+  const config={labels:{'@document.subject':{values:{lit:{labels:{en:'Literature',ja:'文学'}},other:{labels:{en:'Literature'}}}}}};
+  assert.equal(metadataValueLabel(config,'subject','lit','en'),'lit Literature');
+  assert.equal(metadataValueLabel(config,'subject','lit','ja'),'lit 文学');
+  assert.equal(metadataValueLabel(config,'subject','other','ja','other Literature'),'other');
+  assert.equal(metadataValueLabel(config,'subject',1,'en'),'1');
+  assert.equal(metadataValueLabel(config,'subject','unknown','en'),'unknown');
+  assert.equal(scopeClause({subject:{list:false,exclude:false,values:['lit'],labels:{lit:'lit 文学'}}}),'@document.subject in {"lit"}');
 });

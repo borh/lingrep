@@ -1,6 +1,5 @@
-//! Display labels for document-metadata keys, read from `--metadata-labels`
-//! files. A label is shown in place of a key's name; clauses, commands and
-//! addresses keep the key.
+//! Display labels for document-metadata keys and string values, read from `--metadata-labels`
+//! files. Labels change presentation only; predicates retain canonical keys and values.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -27,6 +26,15 @@ struct LabelFile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KeyEntry {
+    #[serde(default, deserialize_with = "unique_map")]
+    labels: BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "unique_map")]
+    values: BTreeMap<String, ValueEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ValueEntry {
     #[serde(deserialize_with = "unique_map")]
     labels: BTreeMap<String, String>,
 }
@@ -58,13 +66,15 @@ where
     deserializer.deserialize_map(Unique(PhantomData))
 }
 
-/// Labels by unqualified document-metadata key, then by locale.
+/// Serialization exposes only key labels for Frequencies and Compare.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct KeyLabels {
     labels: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(skip)]
     files: BTreeMap<String, PathBuf>,
+    #[serde(skip)]
+    values: BTreeMap<String, BTreeMap<String, ValueEntry>>,
 }
 
 const DOCUMENT_SCOPE: &str = "@document.";
@@ -84,7 +94,7 @@ impl KeyLabels {
                 |message: String| format!("--metadata-labels {}: {message}", path.display());
             let text = std::fs::read_to_string(path).map_err(|error| named(error.to_string()))?;
             let file = parse(&text).map_err(named)?;
-            for (key, locales) in file {
+            for (key, entry) in file {
                 if let Some(other) = read.files.get(&key) {
                     return Err(format!(
                         "--metadata-labels {} and --metadata-labels {} both label \
@@ -94,7 +104,12 @@ impl KeyLabels {
                     ));
                 }
                 read.files.insert(key.clone(), path.clone());
-                read.labels.insert(key, locales);
+                if !entry.labels.is_empty() {
+                    read.labels.insert(key.clone(), entry.labels);
+                }
+                if !entry.values.is_empty() {
+                    read.values.insert(key, entry.values);
+                }
             }
         }
         read.check_distinct()?;
@@ -127,6 +142,35 @@ impl KeyLabels {
         Ok(())
     }
 
+    #[must_use]
+    pub fn question_labels(&self) -> serde_json::Value {
+        let mut keys = serde_json::Map::new();
+        for key in self.files.keys() {
+            keys.insert(
+                format!("{DOCUMENT_SCOPE}{key}"),
+                serde_json::json!({
+                    "labels": self.labels.get(key),
+                    "values": self.values.get(key),
+                }),
+            );
+        }
+        serde_json::Value::Object(keys)
+    }
+
+    /// Returns the requested translation, retaining the raw value beside its name.
+    #[must_use]
+    pub fn value_label(&self, key: &str, value: &str, locale: &str) -> Option<String> {
+        let names = &self.values.get(key)?.get(value)?.labels;
+        let Some(label) = names.get(locale) else {
+            return Some(value.to_owned());
+        };
+        Some(if label == value {
+            value.to_owned()
+        } else {
+            format!("{value} {label}")
+        })
+    }
+
     /// Each labelled key outside `keys`, with the file that labels it.
     pub fn unused<'a>(
         &'a self,
@@ -139,7 +183,22 @@ impl KeyLabels {
     }
 }
 
-fn parse(text: &str) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+fn check_labels(qualified: &str, labels: &BTreeMap<String, String>) -> Result<(), String> {
+    for (locale, label) in labels {
+        if !LOCALES.contains(&locale.as_str()) {
+            return Err(format!(
+                "{qualified}: {locale:?} is not a locale the page is served in: {}",
+                LOCALES.join(", ")
+            ));
+        }
+        if label.trim().is_empty() {
+            return Err(format!("{qualified}: the {locale} label is empty"));
+        }
+    }
+    Ok(())
+}
+
+fn parse(text: &str) -> Result<BTreeMap<String, KeyEntry>, String> {
     let file: LabelFile = serde_json::from_str(text).map_err(|error| error.to_string())?;
     for (field, value) in [
         ("vocabulary", &file.vocabulary),
@@ -159,21 +218,18 @@ fn parse(text: &str) -> Result<BTreeMap<String, BTreeMap<String, String>>, Strin
             .ok_or_else(|| {
                 format!("{qualified:?} is not a document key such as {DOCUMENT_SCOPE}author")
             })?;
-        if entry.labels.is_empty() {
-            return Err(format!("{qualified} has no labels"));
+        if entry.labels.is_empty() && entry.values.is_empty() {
+            return Err(format!("{qualified} has no labels or value labels"));
         }
-        for (locale, label) in &entry.labels {
-            if !LOCALES.contains(&locale.as_str()) {
-                return Err(format!(
-                    "{qualified}: {locale:?} is not a locale the page is served in: {}",
-                    LOCALES.join(", ")
-                ));
+        check_labels(&qualified, &entry.labels)?;
+        for (value, names) in &entry.values {
+            let qualified = format!("{qualified} value {value:?}");
+            if names.labels.is_empty() {
+                return Err(format!("{qualified} has no labels"));
             }
-            if label.trim().is_empty() {
-                return Err(format!("{qualified}: the {locale} label is empty"));
-            }
+            check_labels(&qualified, &names.labels)?;
         }
-        keys.insert(key.to_owned(), entry.labels);
+        keys.insert(key.to_owned(), entry);
     }
     Ok(keys)
 }
@@ -181,6 +237,39 @@ fn parse(text: &str) -> Result<BTreeMap<String, BTreeMap<String, String>>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_names_preserve_codes_and_allow_shared_names_and_missing_translations() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("values.json");
+        std::fs::write(
+            &path,
+            r#"{"vocabulary":"subjects","edition":"1","source":"local","licence":"MIT",
+            "keys":{"@document.subject":{"values":{
+                "a":{"labels":{"en":"Literature","ja":"文学"}},
+                "b":{"labels":{"en":"Literature"}}
+            }}}}"#,
+        )
+        .unwrap();
+        let labels = KeyLabels::read(&[path]).unwrap();
+        assert_eq!(
+            labels.value_label("subject", "a", "ja").as_deref(),
+            Some("a 文学")
+        );
+        assert_eq!(
+            labels.value_label("subject", "b", "en").as_deref(),
+            Some("b Literature")
+        );
+        assert_eq!(
+            labels.value_label("subject", "b", "ja").as_deref(),
+            Some("b")
+        );
+        assert_eq!(labels.value_label("subject", "unknown", "en"), None);
+        assert_eq!(
+            serde_json::to_value(&labels).unwrap(),
+            serde_json::json!({})
+        );
+    }
 
     #[test]
     fn the_soranoha_file_labels_every_catalog_column_in_english_and_japanese() {
@@ -214,6 +303,24 @@ mod tests {
             )
         };
         let cases = [
+            (
+                file(r#"{"@document.a":{"values":{"x":{"labels":{}}}}}"#),
+                "value \"x\" has no labels",
+            ),
+            (
+                file(r#"{"@document.a":{"values":{"x":{"labels":{"en":" "}}}}}"#),
+                "the en label is empty",
+            ),
+            (
+                file(r#"{"@document.a":{"values":{"x":{"labels":{"fr":"nom"}}}}}"#),
+                "is not a locale",
+            ),
+            (
+                file(
+                    r#"{"@document.a":{"values":{"x":{"labels":{"en":"one"}},"x":{"labels":{"en":"two"}}}}}"#,
+                ),
+                "\"x\" appears twice",
+            ),
             ("not json".to_owned(), "expected"),
             (r#"{"keys": {}}"#.to_owned(), "missing field"),
             (
@@ -226,8 +333,8 @@ mod tests {
             ),
             (file(r#"{"@document.a": {"labels": {}}}"#), "has no labels"),
             (
-                file(r#"{"@document.a": {"labels": {"en": "a"}, "values": {}}}"#),
-                "unknown field `values`",
+                file(r#"{"@document.a": {"values": {}}}"#),
+                "has no labels or value labels",
             ),
             (
                 file("{}").replace(r#""edition": "1""#, r#""edition": """#),
