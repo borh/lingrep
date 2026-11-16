@@ -51,7 +51,7 @@ export interface Configuration { datasets: Record<string, Dataset>; source: stri
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }
-export interface QuestionControls { state: QuestionSettings; where(): string; entries(): Record<string, string | number>; localize(): void; restore(params: URLSearchParams): void; }
+export interface QuestionControls { state: QuestionSettings; boundExamples(maximum:number|null): void; where(): string; entries(): Record<string, string | number>; localize(): void; restore(params: URLSearchParams): void; }
 export interface Field { key: string; list: boolean; numeric: boolean; min: number; max: number; present: number; }
 export interface MetadataResult { fields: Field[]; documents: number; values: { value: MetadataValue; label: string; documents: number }[]; next: string | null; }
 export interface StoredSentence { analysis_identity: string; sentence: number; tokens: readonly Token[]; }

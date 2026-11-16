@@ -508,6 +508,8 @@ function connect(id) {
 function render(force = false) {
     if (!config || !controls)
         return;
+    const evidence = displayedEvidence(), pattern = evidence ? (selection.get(evidence.id) ?? evidence.definitions[0] ?? '') : '';
+    controls.boundExamples(evidence?.phase === 'complete' ? evidence.counts[pattern] ?? 0 : null);
     updateDraft(false);
     const current = state.current;
     if (current && documentSections.has(current.id))
