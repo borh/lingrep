@@ -1069,6 +1069,7 @@ with (out / "browser-driver.log").open("w") as log:
             "window.fetch=window.__submitFetch;document.querySelector('.kwic-row').click()"
         )
         wait("return document.querySelector('#token-ribbon .selected')")
+        js("document.querySelector('#token-attributes>details').open=true")
         for width, expected_attributes in [(1440, 18), (850, 12), (390, 6)]:
             req(prefix + "/window/rect", {"width": width, "height": 1100})
             wait(

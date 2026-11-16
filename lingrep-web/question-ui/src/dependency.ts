@@ -1,5 +1,5 @@
 import {attributeMembers} from './model.js';
-import type {Token,MatchRecord} from './model.js';
+import type {Token,MatchRecord,Locale} from './model.js';
 
 /** A word the match binds: the span, every capture, and every word a `where` clause binds, as `ling matches --evidence` lists them. */
 export interface EvidenceWord { readonly index:number; readonly roles:readonly string[]; readonly inSpan:boolean; }
@@ -109,3 +109,17 @@ export function dependencyView(choice:DependencyView|null,bunsetsu:boolean,compa
   if(choice)return choice==='bunsetsu'&&!bunsetsu?'words':choice;
   return compact?'vertical':bunsetsu?'bunsetsu':'words';
 }
+
+/** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
+export function headLabel(tokens:readonly Token[],index:number):string|null {
+  const head=headIndex(tokens[index]);
+  return head===null||!tokens[head]?null:`${scalar(tokens[head],'text')??''}·${head+1}`;
+}
+
+// The Universal Dependencies part-of-speech tags.
+const UPOS:Record<Locale,Record<string,string>>={
+  ja:{ADJ:'形容詞',ADP:'助詞',ADV:'副詞',AUX:'助動詞',CCONJ:'接続詞',DET:'連体詞',INTJ:'感動詞',NOUN:'名詞',NUM:'数詞',PART:'助詞',PRON:'代名詞',PROPN:'固有名詞',PUNCT:'記号',SCONJ:'接続助詞',SYM:'記号',VERB:'動詞',X:'その他'},
+  en:{ADJ:'adjective',ADP:'particle',ADV:'adverb',AUX:'auxiliary',CCONJ:'conjunction',DET:'determiner',INTJ:'interjection',NOUN:'noun',NUM:'numeral',PART:'particle',PRON:'pronoun',PROPN:'proper noun',PUNCT:'punctuation',SCONJ:'conjunctive particle',SYM:'symbol',VERB:'verb',X:'other'},
+};
+/** A UPOS tag in plain words; any other value as written. */
+export const partOfSpeech=(code:string,locale:Locale):string=>UPOS[locale][code]??code;

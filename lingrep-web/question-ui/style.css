@@ -82,3 +82,8 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .dependency-evidence-scroll{flex:0 1 auto;min-width:0;max-width:100%;overflow-x:auto}
 @media print{.skip{display:none}.dependency-role{color:var(--ink);background:none;border:1px solid var(--ink)}}
 @media(max-width:480px){.site{height:auto;flex-wrap:wrap;row-gap:0}.routes .brand{margin-right:6px}.routes a:not(.brand){padding:3px 5px}.question-actions{margin-left:auto}}
+.dependency-evidence tr.in-span td{background:var(--match-wash)}
+.role-names{font:13px var(--mono);color:var(--soft)}
+.token-ribbon button.bound{font-weight:600;color:var(--green)}
+.token-ribbon button.bound::before{content:attr(data-roles);font:700 12px/1.4 var(--mono);color:var(--ground);background:var(--green);border-radius:2px;padding:0 3px;margin-right:3px;vertical-align:2px}
+.attribute-span{margin:4px 0;color:var(--soft)}

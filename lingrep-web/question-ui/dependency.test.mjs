@@ -121,3 +121,19 @@ test('the dependency view is the reader\'s choice, else the whole sentence on a 
   for(const [choice,bunsetsu,compact,view] of [[null,true,false,'bunsetsu'],[null,false,false,'words'],[null,true,true,'vertical'],['words',true,true,'words'],['bunsetsu',false,false,'words'],['bunsetsu',false,true,'words']])
     assert.equal(dependencyView(choice,bunsetsu,compact),view,JSON.stringify([choice,bunsetsu,compact]));
 });
+
+test('a head is named by its word and its 1-based number, and the root has none',async()=>{
+  const {headLabel}=await import('./dependency.js');
+  const tokens=ginza(KUSAMAKURA);
+  assert.equal(headLabel(tokens,2),'練り上る·11');
+  assert.equal(headLabel(tokens,21),null);
+});
+
+test('a part of speech reads as a plain word, and an unknown tag stays as written',async()=>{
+  const {partOfSpeech}=await import('./dependency.js');
+  assert.equal(partOfSpeech('NOUN','ja'),'名詞');
+  assert.equal(partOfSpeech('ADP','ja'),'助詞');
+  assert.equal(partOfSpeech('VERB','en'),'verb');
+  assert.equal(partOfSpeech('名詞-普通名詞-一般','ja'),'名詞-普通名詞-一般');
+  assert.equal(partOfSpeech('','en'),'');
+});
