@@ -115,3 +115,9 @@ test('context words bound only by a where clause are reported with their roles, 
   assert.deepEqual([...boundOutside(row,20)],[[11,['v']]]);
   assert.deepEqual([...boundOutside({span:{start:0,end:1}},5)],[]);
 });
+
+test('the dependency view is the reader\'s choice, else the whole sentence on a narrow screen, else bunsetsu when labelled',async()=>{
+  const {dependencyView}=await import('./dependency.js');
+  for(const [choice,bunsetsu,compact,view] of [[null,true,false,'bunsetsu'],[null,false,false,'words'],[null,true,true,'vertical'],['words',true,true,'words'],['bunsetsu',false,false,'words'],['bunsetsu',false,true,'words']])
+    assert.equal(dependencyView(choice,bunsetsu,compact),view,JSON.stringify([choice,bunsetsu,compact]));
+});

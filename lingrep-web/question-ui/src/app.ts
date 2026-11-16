@@ -7,8 +7,8 @@ import {expectedAnalysis,defaultView,parseView,locationHash,locationURL,savedQue
 import type {ViewLocation,ConcordanceLocation,HitLocation,OccurrenceTarget} from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import {boundOutside,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs} from './dependency.js';
-import type {Arc,EvidenceWord} from './dependency.js';
+import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs} from './dependency.js';
+import type {Arc,DependencyView,EvidenceWord} from './dependency.js';
 
 import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 import type { SearchLimit, Behavior, Locale, Configuration, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
@@ -802,9 +802,8 @@ function selectToken(index: number) {
   renderComposer();
 }
 
-type DependencyView='bunsetsu'|'words'|'vertical';
 let dependencyChoice:DependencyView|null=null;
-const ARC_STEP=24,ARC_LABEL=16,TREE_ROW=26,TREE_COLUMN=9;
+const ARC_STEP=26,ARC_LABEL=18,TREE_ROW=26,TREE_COLUMN=9;
 const arcLayouts=new WeakMap<HTMLElement,readonly Arc[]>();
 const svgNode=(name:string,attributes:Record<string,string|number>)=>{const node=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));return node;};
 // Chip positions come from layout, so arcs are redrawn whenever the chip row is laid out again (fonts, locale, printing).
@@ -829,7 +828,7 @@ function renderDependencies(){
   dependencyPanel.hidden=!tokens||!row||!hasDependencies(tokens);
   if(!tokens||!row||dependencyPanel.hidden)return;
   const words=evidenceWords(row,tokens.length),byIndex=new Map(words.map(word=>[word.index,word])),starts=bunsetsuStarts(tokens);
-  const view:DependencyView=dependencyChoice==='bunsetsu'&&!starts||!dependencyChoice?starts?'bunsetsu':'words':dependencyChoice;
+  const view=dependencyView(dependencyChoice,!!starts,compactLayout.matches);
   for(const button of dependencyPanel.querySelectorAll<HTMLButtonElement>('[data-dependency-view]')){button.hidden=button.dataset.dependencyView==='bunsetsu'&&!starts;button.setAttribute('aria-pressed',String(button.dataset.dependencyView===view));}
   const diagram=$('#dependency-diagram'),value=(index:number,key:string)=>{const value=tokens[index].attributes[key];return typeof value==='string'?value:'';};
   arcObserver.disconnect();
@@ -857,6 +856,7 @@ function renderDependencies(){
   }
   $('#dependency-evidence').innerHTML=words.map(word=>`<tr><td>${word.index+1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale==='ja'?word.inSpan?'はい':'いいえ':word.inSpan?'yes':'no'}</td>${['text','lemma','upos','dep.head','dep.rel'].map(key=>`<td>${key==='dep.head'&&value(word.index,key)==='0'?t('root'):escape(value(word.index,key))}</td>`).join('')}</tr>`).join('');
 }
+compactLayout.addEventListener('change',()=>{if(!dependencyChoice)renderDependencies();});
 dependencyPanel.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-dependency-view]');if(!button)return;dependencyChoice=button.dataset.dependencyView as DependencyView;renderDependencies();});
 
 // A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.

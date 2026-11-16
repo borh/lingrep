@@ -214,7 +214,7 @@
 .fq table.freq .fig { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fq table.freq b { font-weight: 600; }
 .fq .entry-cell { font-family: var(--font-cjk); overflow-wrap: anywhere; }
-.fq .entry-cell small { display: block; color: var(--fq-soft); font-size: 11px; }
+.fq .entry-cell small { display: block; color: var(--fq-soft); font-size: 13px; }
 .fq .spread { width: 9rem; }
 .fq .spread span { display: block; height: 7px; background: var(--fq-bar-off); }
 .fq .spread i { display: block; height: 100%; background: var(--fq-accent); }
@@ -415,7 +415,7 @@
 .fq-kwic .kn { padding: 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--fq-accent); margin-right: 0.15em; cursor: pointer; }
 .fq-kwic .kn:hover { text-decoration: underline; }
 .fq-kwic .kn:focus-visible { outline-offset: -2px; }
-.fq-kwic .src { font: 11px/2.6 var(--font-sans); color: var(--fq-soft); text-align: right; white-space: nowrap; }
+.fq-kwic .src { font: 13px/2.2 var(--font-sans); color: var(--fq-soft); text-align: right; white-space: nowrap; }
 .fq-kwic .fq-inspect { margin-left: 0.6em; color: var(--fq-accent); }
 
 @media (max-width: 40rem) {

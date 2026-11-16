@@ -4,7 +4,7 @@ import { addCondition, patternSource } from './composer.js';
 import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import { boundOutside, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
+import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
 import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
@@ -1234,7 +1234,7 @@ function selectToken(index) {
     renderComposer();
 }
 let dependencyChoice = null;
-const ARC_STEP = 24, ARC_LABEL = 16, TREE_ROW = 26, TREE_COLUMN = 9;
+const ARC_STEP = 26, ARC_LABEL = 18, TREE_ROW = 26, TREE_COLUMN = 9;
 const arcLayouts = new WeakMap();
 const svgNode = (name, attributes) => { const node = document.createElementNS('http://www.w3.org/2000/svg', name); for (const [key, value] of Object.entries(attributes))
     node.setAttribute(key, String(value)); return node; };
@@ -1267,7 +1267,7 @@ function renderDependencies() {
     if (!tokens || !row || dependencyPanel.hidden)
         return;
     const words = evidenceWords(row, tokens.length), byIndex = new Map(words.map(word => [word.index, word])), starts = bunsetsuStarts(tokens);
-    const view = dependencyChoice === 'bunsetsu' && !starts || !dependencyChoice ? starts ? 'bunsetsu' : 'words' : dependencyChoice;
+    const view = dependencyView(dependencyChoice, !!starts, compactLayout.matches);
     for (const button of dependencyPanel.querySelectorAll('[data-dependency-view]')) {
         button.hidden = button.dataset.dependencyView === 'bunsetsu' && !starts;
         button.setAttribute('aria-pressed', String(button.dataset.dependencyView === view));
@@ -1310,6 +1310,8 @@ function renderDependencies() {
     }
     $('#dependency-evidence').innerHTML = words.map(word => `<tr><td>${word.index + 1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale === 'ja' ? word.inSpan ? 'はい' : 'いいえ' : word.inSpan ? 'yes' : 'no'}</td>${['text', 'lemma', 'upos', 'dep.head', 'dep.rel'].map(key => `<td>${key === 'dep.head' && value(word.index, key) === '0' ? t('root') : escape(value(word.index, key))}</td>`).join('')}</tr>`).join('');
 }
+compactLayout.addEventListener('change', () => { if (!dependencyChoice)
+    renderDependencies(); });
 dependencyPanel.addEventListener('click', event => { const button = event.target.closest('[data-dependency-view]'); if (!button)
     return; dependencyChoice = button.dataset.dependencyView; renderDependencies(); });
 // A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.
