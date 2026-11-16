@@ -41,11 +41,12 @@ function clampNumber(input, commit = true) {
 function scrubNumber(input, changed, committed = () => { }) {
     let drag;
     input.title = document.documentElement.lang === 'ja' ? '左右にドラッグ、または数値を入力。Shift キーで細かく調整' : 'Drag horizontally or type a number. Hold Shift for precise dragging';
-    input.addEventListener('input', () => { clampNumber(input, false); if (input.checkValidity())
-        changed(false); });
-    input.addEventListener('change', () => { const previous = input.value; clampNumber(input); if (input.value !== previous)
-        changed(false); if (input.checkValidity())
-        committed(); });
+    input.addEventListener('input', () => { clampNumber(input, false); if (input.checkValidity()) {
+        input.removeAttribute('aria-invalid');
+        changed(false);
+    } });
+    input.addEventListener('change', () => { const previous = input.value; clampNumber(input); const valid = input.checkValidity(); input.setAttribute('aria-invalid', String(!valid)); if (valid && input.value !== previous)
+        changed(false); committed(); });
     input.addEventListener('pointerdown', event => {
         if (event.button !== 0)
             return;
@@ -124,6 +125,16 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     let requestId = 0;
     let searchTimer;
     const text = (en, ja) => getLocale() === 'ja' ? ja : en;
+    function localizeNumberErrors() {
+        for (const [id, en, ja] of [
+            ['reading-validation', 'Enter a whole number for the example count and context size.', '用例数と文脈の長さは整数で入力してください。'],
+            ['metadata-validation', 'Use whole numbers within this field’s bounds, with the minimum no greater than the maximum.', '項目の範囲内の整数で、下限が上限を超えない値を入力してください。'],
+        ]) {
+            const node = $('#' + id), message = text(en, ja);
+            if (node.textContent !== message)
+                node.textContent = message;
+        }
+    }
     const label = (field) => config.labels?.[`@document.${field}`]?.labels?.[getLocale()] ?? field;
     const api = async (path) => { const response = await fetch(serviceURL(path)); const data = await response.json(); if (!response.ok)
         throw new Error(data.error ?? `HTTP ${response.status}`); return data; };
@@ -190,12 +201,14 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
         if (field.numeric) {
             const bounds = condition.numeric ? condition : { numeric: true, min: '', max: '' };
             const numericField = field;
-            $('#metadata-values').innerHTML = `<div class="range-fields"><span class="number-range"><input type="number" class="number-span" aria-label="${text('Minimum', '下限')}" data-bound="min" step="1" min="${numericField.min}" max="${bounds.max || numericField.max}" value="${esc(bounds.min ?? '')}" placeholder="${numericField.min}"><button type="button" class="range-window" role="slider" tabindex="0" aria-label="${text('Move range', '範囲を移動')}" aria-valuemin="${numericField.min}" aria-valuemax="${numericField.max}">–</button><input type="number" class="number-span" aria-label="${text('Maximum', '上限')}" data-bound="max" step="1" min="${bounds.min || numericField.min}" max="${numericField.max}" value="${esc(bounds.max ?? '')}" placeholder="${numericField.max}"></span></div>`;
+            $('#metadata-values').innerHTML = `<div class="range-fields"><span class="number-range"><input type="number" class="number-span" aria-label="${text('Minimum', '下限')}" data-bound="min" aria-describedby="metadata-validation" aria-errormessage="metadata-validation" step="1" min="${numericField.min}" max="${bounds.max || numericField.max}" value="${esc(bounds.min ?? '')}" placeholder="${numericField.min}"><button type="button" class="range-window" role="slider" tabindex="0" aria-label="${text('Move range', '範囲を移動')}" aria-valuemin="${numericField.min}" aria-valuemax="${numericField.max}">–</button><input type="number" class="number-span" aria-label="${text('Maximum', '上限')}" data-bound="max" aria-describedby="metadata-validation" aria-errormessage="metadata-validation" step="1" min="${bounds.min || numericField.min}" max="${numericField.max}" value="${esc(bounds.max ?? '')}" placeholder="${numericField.max}"></span></div>`;
             const lower = $('[data-bound=min]'), upper = $('[data-bound=max]'), windowControl = $('.range-window');
             function validRange() {
                 const valid = lower.checkValidity() && upper.checkValidity();
+                for (const input of [lower, upper])
+                    input.setAttribute('aria-invalid', String(!input.checkValidity()));
                 $('#metadata-validation').hidden = valid;
-                $('#metadata-validation').textContent = text('Use values within this field’s bounds, with the minimum no greater than the maximum.', '項目の範囲内で、下限が上限を超えない値を入力してください。');
+                localizeNumberErrors();
                 return valid;
             }
             function updateRange(dragging = false) {
@@ -312,12 +325,20 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     $('#metadata-clear').addEventListener('click', () => { state.metadata = Object.create(null); state.raw = ''; $('#where').value = ''; changedScope(); loadValues(); });
     $('#corpus').addEventListener('change', () => { const reopen = pickerState !== 'closed'; closePicker(); ++requestId; state.metadata = Object.create(null); fields = []; $('#metadata-field').replaceChildren(); $('#metadata-values').replaceChildren(); renderChips(); if (reopen)
         void openPicker(); clearTimeout(searchTimer); changed(); search(); });
+    function validateReadingNumbers() {
+        const inputs = [$('#context-size'), $('#line-limit')], valid = inputs.every(input => input.checkValidity());
+        for (const input of inputs)
+            input.setAttribute('aria-invalid', String(!input.checkValidity()));
+        $('#reading-validation').hidden = valid;
+        localizeNumberErrors();
+    }
     scrubNumber($('#context-size'), () => { if (!$('#context-size').checkValidity() || $('#context-size').value === '')
-        return; state.context = Number($('#context-size').value); viewChanged(); changed(); });
+        return; state.context = Number($('#context-size').value); validateReadingNumbers(); viewChanged(); changed(); }, validateReadingNumbers);
     scrubNumber($('#line-limit'), () => { if (!$('#line-limit').checkValidity() || $('#line-limit').value === '')
-        return; state.lines = Number($('#line-limit').value); viewChanged(); changed(); });
+        return; state.lines = Number($('#line-limit').value); validateReadingNumbers(); viewChanged(); changed(); }, validateReadingNumbers);
     renderChips();
-    return { state, boundExamples(maximum) { const input = $('#line-limit'); input.disabled = maximum === 0; input.max = String(maximum == null || maximum === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, maximum))); clampNumber(input); if (input.value !== '')
+    return { state, boundExamples(maximum) { const input = $('#line-limit'); input.disabled = maximum === 0; input.max = String(maximum == null || maximum === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, maximum))); state.lines = Math.min(state.lines, Number(input.max)); if (input.validity.rangeOverflow && !input.validity.stepMismatch && !input.validity.badInput)
+            clampNumber(input); if (input.value !== '' && input.checkValidity())
             state.lines = Number(input.value); }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
             clearTimeout(searchTimer);
             clearTimeout(valueTimer);
@@ -326,11 +347,15 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             $('#where').value = state.raw;
             $('#context-size').value = String(state.context);
             $('#line-limit').value = String(state.lines);
+            for (const input of document.querySelectorAll('.number-span'))
+                input.removeAttribute('aria-invalid');
+            $('#reading-validation').hidden = true;
+            $('#metadata-validation').hidden = true;
             fields = [];
             renderChips();
             if (!$('#metadata-picker').hidden)
                 loadFields();
-        }, localize() { for (const input of document.querySelectorAll('.number-span'))
+        }, localize() { localizeNumberErrors(); for (const input of document.querySelectorAll('.number-span'))
             input.title = text('Drag horizontally or type a number. Hold Shift for precise dragging', '左右にドラッグ、または数値を入力。Shift キーで細かく調整'); $('#line-limit').setAttribute('aria-label', text('Number of examples', '表示する用例数')); $('#context-size').setAttribute('aria-label', text('Context tokens', '前後の文脈のトークン数')); renderChips(); if (fields.length) {
             const selected = $('#metadata-field').value;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');

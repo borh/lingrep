@@ -35,8 +35,8 @@ function clampNumber(input: HTMLInputElement,commit=true){
 function scrubNumber(input: HTMLInputElement, changed: (dragging: boolean)=>void, committed=()=>{}) {
   let drag: {id:number;x:number;lastX:number;value:number;moved:boolean;precise:boolean} | undefined;
   input.title=document.documentElement.lang==='ja'?'左右にドラッグ、または数値を入力。Shift キーで細かく調整':'Drag horizontally or type a number. Hold Shift for precise dragging';
-  input.addEventListener('input',()=>{clampNumber(input,false);if(input.checkValidity())changed(false);});
-  input.addEventListener('change',()=>{const previous=input.value;clampNumber(input);if(input.value!==previous)changed(false);if(input.checkValidity())committed();});
+  input.addEventListener('input',()=>{clampNumber(input,false);if(input.checkValidity()){input.removeAttribute('aria-invalid');changed(false);}});
+  input.addEventListener('change',()=>{const previous=input.value;clampNumber(input);const valid=input.checkValidity();input.setAttribute('aria-invalid',String(!valid));if(valid&&input.value!==previous)changed(false);committed();});
   input.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;
     drag={id:event.pointerId,x:event.clientX,lastX:event.clientX,value:Number(input.value||input.placeholder),moved:false,precise:event.shiftKey};
@@ -89,6 +89,12 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   let pickerState:'closed'|'opening'|'open'='closed';let pickerEpoch=0;
   let fields: Field[]=[];let key='';let after='';let previous: string[]=[];let requestId=0;let searchTimer: ReturnType<typeof setTimeout> | undefined;
   const text=(en: string,ja: string)=>getLocale()==='ja'?ja:en;
+  function localizeNumberErrors(){
+    for(const [id,en,ja] of [
+      ['reading-validation','Enter a whole number for the example count and context size.','用例数と文脈の長さは整数で入力してください。'],
+      ['metadata-validation','Use whole numbers within this field’s bounds, with the minimum no greater than the maximum.','項目の範囲内の整数で、下限が上限を超えない値を入力してください。'],
+    ]){const node=$('#'+id),message=text(en,ja);if(node.textContent!==message)node.textContent=message;}
+  }
   const label=(field: string)=>config.labels?.[`@document.${field}`]?.labels?.[getLocale()]??field;
   const api=async (path: string): Promise<MetadataResult>=>{const response=await fetch(serviceURL(path));const data=await response.json();if(!response.ok)throw new Error(data.error??`HTTP ${response.status}`);return data;};
   function changedScope(runSearch=true) {
@@ -135,12 +141,13 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     if(field.numeric) {
       const bounds=condition.numeric?condition:{numeric:true,min:'',max:''};
       const numericField=field;
-      $('#metadata-values').innerHTML=`<div class="range-fields"><span class="number-range"><input type="number" class="number-span" aria-label="${text('Minimum','下限')}" data-bound="min" step="1" min="${numericField.min}" max="${bounds.max||numericField.max}" value="${esc(bounds.min??'')}" placeholder="${numericField.min}"><button type="button" class="range-window" role="slider" tabindex="0" aria-label="${text('Move range','範囲を移動')}" aria-valuemin="${numericField.min}" aria-valuemax="${numericField.max}">–</button><input type="number" class="number-span" aria-label="${text('Maximum','上限')}" data-bound="max" step="1" min="${bounds.min||numericField.min}" max="${numericField.max}" value="${esc(bounds.max??'')}" placeholder="${numericField.max}"></span></div>`;
+      $('#metadata-values').innerHTML=`<div class="range-fields"><span class="number-range"><input type="number" class="number-span" aria-label="${text('Minimum','下限')}" data-bound="min" aria-describedby="metadata-validation" aria-errormessage="metadata-validation" step="1" min="${numericField.min}" max="${bounds.max||numericField.max}" value="${esc(bounds.min??'')}" placeholder="${numericField.min}"><button type="button" class="range-window" role="slider" tabindex="0" aria-label="${text('Move range','範囲を移動')}" aria-valuemin="${numericField.min}" aria-valuemax="${numericField.max}">–</button><input type="number" class="number-span" aria-label="${text('Maximum','上限')}" data-bound="max" aria-describedby="metadata-validation" aria-errormessage="metadata-validation" step="1" min="${bounds.min||numericField.min}" max="${numericField.max}" value="${esc(bounds.max??'')}" placeholder="${numericField.max}"></span></div>`;
       const lower=$<HTMLInputElement>('[data-bound=min]'),upper=$<HTMLInputElement>('[data-bound=max]'),windowControl=$('.range-window');
       function validRange() {
         const valid=lower.checkValidity()&&upper.checkValidity();
+        for(const input of [lower,upper])input.setAttribute('aria-invalid',String(!input.checkValidity()));
         $('#metadata-validation').hidden=valid;
-        $('#metadata-validation').textContent=text('Use values within this field’s bounds, with the minimum no greater than the maximum.','項目の範囲内で、下限が上限を超えない値を入力してください。');
+        localizeNumberErrors();
         return valid;
       }
       function updateRange(dragging=false) {
@@ -205,12 +212,19 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   $<HTMLInputElement>('#where').addEventListener('input',()=>changedScope());
   $('#metadata-clear').addEventListener('click',()=>{state.metadata=Object.create(null);state.raw='';$<HTMLInputElement>('#where').value='';changedScope();loadValues();});
   $<HTMLSelectElement>('#corpus').addEventListener('change',()=>{const reopen=pickerState!=='closed';closePicker();++requestId;state.metadata=Object.create(null);fields=[];$('#metadata-field').replaceChildren();$('#metadata-values').replaceChildren();renderChips();if(reopen)void openPicker();clearTimeout(searchTimer);changed();search();});
-  scrubNumber($<HTMLInputElement>('#context-size'),()=>{if(!$<HTMLInputElement>('#context-size').checkValidity()||$<HTMLInputElement>('#context-size').value==='')return;state.context=Number($<HTMLInputElement>('#context-size').value);viewChanged();changed();});
-  scrubNumber($<HTMLInputElement>('#line-limit'),()=>{if(!$<HTMLInputElement>('#line-limit').checkValidity()||$<HTMLInputElement>('#line-limit').value==='')return;state.lines=Number($<HTMLInputElement>('#line-limit').value);viewChanged();changed();});
+  function validateReadingNumbers(){
+    const inputs=[$<HTMLInputElement>('#context-size'),$<HTMLInputElement>('#line-limit')],valid=inputs.every(input=>input.checkValidity());
+    for(const input of inputs)input.setAttribute('aria-invalid',String(!input.checkValidity()));
+    $('#reading-validation').hidden=valid;localizeNumberErrors();
+  }
+  scrubNumber($<HTMLInputElement>('#context-size'),()=>{if(!$<HTMLInputElement>('#context-size').checkValidity()||$<HTMLInputElement>('#context-size').value==='')return;state.context=Number($<HTMLInputElement>('#context-size').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
+  scrubNumber($<HTMLInputElement>('#line-limit'),()=>{if(!$<HTMLInputElement>('#line-limit').checkValidity()||$<HTMLInputElement>('#line-limit').value==='')return;state.lines=Number($<HTMLInputElement>('#line-limit').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
   renderChips();
-  return {state,boundExamples(maximum:number|null){const input=$<HTMLInputElement>('#line-limit');input.disabled=maximum===0;input.max=String(maximum==null||maximum===0?Number.MAX_SAFE_INTEGER:Math.max(1,Math.min(Number.MAX_SAFE_INTEGER,maximum)));clampNumber(input);if(input.value!=='')state.lines=Number(input.value);},where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
+  return {state,boundExamples(maximum:number|null){const input=$<HTMLInputElement>('#line-limit');input.disabled=maximum===0;input.max=String(maximum==null||maximum===0?Number.MAX_SAFE_INTEGER:Math.max(1,Math.min(Number.MAX_SAFE_INTEGER,maximum)));state.lines=Math.min(state.lines,Number(input.max));if(input.validity.rangeOverflow&&!input.validity.stepMismatch&&!input.validity.badInput)clampNumber(input);if(input.value!==''&&input.checkValidity())state.lines=Number(input.value);},where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
     clearTimeout(searchTimer);clearTimeout(valueTimer);++requestId;Object.assign(state,questionSettings(params));
     $<HTMLInputElement>('#where').value=state.raw;$<HTMLInputElement>('#context-size').value=String(state.context);$<HTMLInputElement>('#line-limit').value=String(state.lines);
+    for(const input of document.querySelectorAll('.number-span'))input.removeAttribute('aria-invalid');
+    $('#reading-validation').hidden=true;$('#metadata-validation').hidden=true;
     fields=[];renderChips();if(!$('#metadata-picker').hidden)loadFields();
-  },localize(){for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;}}};
+  },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;}}};
 }

@@ -74,3 +74,5 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .result-reading>.document-scope{display:inline;font:inherit;margin:0}.result-reading>.document-scope a{font:inherit}
 
 .number-span:disabled{cursor:default;opacity:.6}
+
+.file-action:focus-within{outline:2px solid var(--green);outline-offset:3px}.question-sentence #edit-source{max-inline-size:100%;overflow-wrap:anywhere;white-space:normal;text-align:start}#reading-validation{font:12px/1.5 var(--font);padding:2px 4px;white-space:normal}

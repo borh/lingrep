@@ -141,6 +141,9 @@ with (out / "browser-driver.log").open("w") as log:
         req(prefix + "/window/rect", {"width": 1440, "height": 1100})
         req(prefix + "/url", {"url": initial_url})
         wait("return !!window.__probe")
+        assert js("return document.querySelector('#error').getAttribute('role')") == "alert"
+        assert js("return document.querySelector('#metadata-state').getAttribute('role')") == "status"
+        assert js("document.querySelector('#open-question').focus();const s=getComputedStyle(document.querySelector('.file-action'));return s.outlineStyle!=='none' && parseFloat(s.outlineWidth)>0")
         assert js(
             "return !document.querySelector('#run').hidden && document.querySelector('#run').textContent==='Search'"
         )
@@ -236,6 +239,23 @@ with (out / "browser-driver.log").open("w") as log:
         js("document.querySelector('#line-limit').value=9999999;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         assert js("return Number(document.querySelector('#line-limit').value)") == args.expected_matches
         js("document.querySelector('#context-size').value=12;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
+        for selector, state_key in [("#context-size", "context"), ("#line-limit", "lines")]:
+            previous = js("return __probe.controls.state." + state_key)
+            js("const input=document.querySelector(" + json.dumps(selector) + ");input.focus();input.value=1.5;input.dispatchEvent(new Event('input'))")
+            assert js("return document.querySelector('#reading-validation').hidden")
+            js("document.querySelector(" + json.dumps(selector) + ").dispatchEvent(new Event('change'))")
+            assert js("return !document.querySelector('#reading-validation').hidden")
+            assert js("return document.querySelector(" + json.dumps(selector) + ").getAttribute('aria-invalid')") == "true"
+            js("document.querySelector('#behavior').dispatchEvent(new Event('change'))")
+            assert js("return __probe.controls.state." + state_key) == previous
+            js("document.querySelector('#language').click()")
+            assert "整数" in js("return document.querySelector('#reading-validation').textContent")
+            js("document.querySelector('#language').click()")
+            assert "whole number" in js("return document.querySelector('#reading-validation').textContent")
+            js("__probe.controls.restore(new URLSearchParams(__probe.controls.entries()))")
+            assert js("return document.querySelector('#reading-validation').hidden && !document.querySelector(" + json.dumps(selector) + ").hasAttribute('aria-invalid')")
+            js("const input=document.querySelector(" + json.dumps(selector) + ");input.value=" + str(previous) + ";input.dispatchEvent(new Event('input'))")
+            assert js("return document.querySelector('#reading-validation').hidden")
         js("document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         wait("return document.querySelectorAll('.kwic-row').length===20 && document.querySelector('.kwic-list').getAttribute('aria-busy')==='false'")
         js("document.querySelector('#line-limit').value=5;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
@@ -470,6 +490,11 @@ with (out / "browser-driver.log").open("w") as log:
         assert js("return document.querySelector('#metadata-validation').hidden")
         req(prefix + "/element/" + year_element + "/value", {"text":"940"})
         assert js("return document.querySelector('[data-bound=min]').value") == "1940"
+        js("window.__validMetadata=JSON.stringify(__probe.controls.state.metadata);const input=document.querySelector('[data-bound=min]');input.value=1940.5;input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'))")
+        assert js("return !document.querySelector('#metadata-validation').hidden && document.querySelector('[data-bound=min]').getAttribute('aria-invalid')==='true' && document.querySelector('[data-bound=min]').getAttribute('aria-describedby').includes('metadata-validation')")
+        assert js("return JSON.stringify(__probe.controls.state.metadata)") == js("return __validMetadata")
+        js("const input=document.querySelector('[data-bound=min]');input.value=1940;input.dispatchEvent(new Event('input'))")
+        assert js("return document.querySelector('#metadata-validation').hidden")
         js(
             "document.querySelector('[data-bound=max]').value=1960;document.querySelector('[data-bound=max]').dispatchEvent(new Event('input'));document.querySelector('[data-bound=min]').value=1940;document.querySelector('[data-bound=min]').dispatchEvent(new Event('input'))"
         )
@@ -865,8 +890,8 @@ with (out / "browser-driver.log").open("w") as log:
             + json.dumps(previous_origin)
         )
         assert js("return document.querySelector('.test-builder').hidden")
-        js("document.querySelector('#close-token').click()")
-        wait("return document.querySelector('#token-lab').hidden")
+        js("window.__returnFocusRow=document.querySelector('.kwic-row[aria-expanded=true]');document.querySelector('#close-token').focus();document.querySelector('#close-token').click()")
+        wait("return document.querySelector('#token-lab').hidden && document.activeElement===__returnFocusRow")
         assert js(
             "return __first===document.querySelector('.kwic-row') && __second===document.querySelectorAll('.kwic-row')[1] && __removed===0"
         )
@@ -1192,6 +1217,12 @@ with (out / "browser-driver.log").open("w") as log:
             "restored_after_reload": True,
             "copied_with_lineage": True,
         }
+        long_name = "pattern_" + "a" * 100
+        js("document.querySelector('#source').value=" + json.dumps(long_name + " := か も しれ ない.") + ";document.querySelector('#source').dispatchEvent(new Event('input'));__probe.search()")
+        wait("return __probe.state.current?.phase==='complete' && document.querySelector('#source-label').textContent===" + json.dumps(long_name))
+        metrics["long-pattern"] = capture("long-pattern", 320, 844)
+        assert js("return document.querySelector('#edit-source').getBoundingClientRect().width<=document.querySelector('main').getBoundingClientRect().width")
+        metrics["accessibility"] = {"file_focus_visible":True,"close_returns_focus":True,"committed_numeric_errors":True}
         (out / "browser-metrics.json").write_text(
             json.dumps(metrics, ensure_ascii=False, indent=2)
         )

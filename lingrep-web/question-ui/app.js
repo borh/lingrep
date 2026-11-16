@@ -1527,6 +1527,7 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         updateDraft();
         return;
     }
+    const returnFocus = target.kind === 'concordance' && inspecting?.run.id === run.id && tokenLab.contains(document.activeElement) ? inspecting.row.sequence : null;
     ++inspectionEpoch;
     inspectionFailure = null;
     if (target.kind === 'concordance' || inspecting?.run.id !== run.id) {
@@ -1554,6 +1555,8 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
         await loadDocumentPage(panel, run, pattern, context.document, context.after, null, scope);
     if (epoch !== navigationEpoch)
         return;
+    if (returnFocus != null && document.activeElement === document.body)
+        (panel.querySelector(`[data-sequence="${returnFocus}"]`) ?? $('#results')).focus({ preventScroll: true });
     if (target.kind !== 'concordance') {
         let row = documentView(run, pattern).rows.find(row => target.sequence != null && row.sequence === target.sequence) ?? run.rows[pattern]?.find(row => target.sequence != null && row.sequence === target.sequence);
         if (!row && run.phase !== 'complete') {
