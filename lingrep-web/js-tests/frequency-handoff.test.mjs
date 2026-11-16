@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inspectHref, readState, stateEntries } from "../assets/frequency.js";
+import { documentNames, entryFieldNames, inspectHref, keyFieldLabel, readState, stateEntries } from "../assets/frequency.js";
 import { parseOccurrence, frequencyReturn } from "../question-ui/location.js";
 
 test("a frequency line's handoff address names its occurrence and document, and returns to the conditioned entry", () => {
@@ -18,4 +18,27 @@ test("a frequency line's handoff address names its occurrence and document, and 
   const returned = frequencyReturn(params.get("return"));
   assert.equal(returned, back);
   assert.deepEqual(readState(returned.slice("frequencies".length)), s);
+});
+
+test("an exact-key field is named by its capture and attribute in plain words", () => {
+  assert.equal(keyFieldLabel("$n.lemma"), "n: lemma (dictionary form)");
+  assert.equal(keyFieldLabel("$v.unidic.cform"), "v: unidic.cform");
+  assert.equal(keyFieldLabel("upos"), "upos (part of speech)");
+});
+
+test("frequency lines name documents by source name unless one source name covers several documents", () => {
+  const named = documentNames([
+    { document: 0, source_name: "Natsume_S_Bocchan.conllu" },
+    { document: 5, source_name: "Natsume_S_Maboroshinotate.conllu" },
+    { document: 7, source_name: "doc.md" },
+    { document: 8, source_name: "doc.md" },
+  ]);
+  assert.equal(named({ document: 5, source_name: "Natsume_S_Maboroshinotate.conllu" }), "Natsume_S_Maboroshinotate");
+  assert.equal(named({ document: 8, source_name: "doc.md" }), "document 8");
+  assert.equal(named({ document: 9 }), "document 9");
+});
+
+test("a multi-field entry lists its captures when every field is a capture's attribute", () => {
+  assert.equal(entryFieldNames(["$n.lemma", "$p.lemma", "$v.lemma"]), "n · p · v");
+  assert.equal(entryFieldNames(["lemma", "upos"]), "lemma (dictionary form) · upos (part of speech)");
 });

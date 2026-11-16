@@ -59,6 +59,27 @@ export function stateEntries(s) {
   return out;
 }
 
+/** Each line's document name: its source name without a corpus file extension, or `document N` where one source name covers several documents. */
+export function documentNames(lines) {
+  const documents = new Map();
+  for (const l of lines) if (l.source_name) documents.set(l.source_name, (documents.get(l.source_name) ?? new Set()).add(l.document));
+  return (l) => (l.source_name && documents.get(l.source_name).size === 1 ? l.source_name.replace(/\.(conllu|jsonl|txt|md|xml)$/i, "") : t("frequency.document", { id: l.document }));
+}
+
+const ATTRIBUTE_WORDS = { text: "frequency.attribute_text", lemma: "frequency.attribute_lemma", norm: "frequency.attribute_norm", upos: "frequency.attribute_upos", xpos: "frequency.attribute_xpos" };
+/** An exact-key field in plain words: `$n.lemma` as “n の lemma（辞書形）”, keeping the attribute's own name. */
+export function keyFieldLabel(field) {
+  const [, capture, attribute] = /^\$([^.]+)\.(.+)$/.exec(field) ?? [null, null, field];
+  const word = ATTRIBUTE_WORDS[attribute] ? t(ATTRIBUTE_WORDS[attribute]) : attribute;
+  return capture ? t("frequency.capture_field", { capture, field: word }) : word;
+}
+
+/** The fields under a multi-field entry: their capture names when every field is a capture's attribute, else their labels. */
+export function entryFieldNames(fields) {
+  const captures = fields.map((f) => /^\$([^.]+)\./.exec(f)?.[1]);
+  return captures.every(Boolean) ? captures.join(" · ") : fields.map(keyFieldLabel).join(" · ");
+}
+
 /** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. */
 export function inspectHref(s, line, { source, analysis, fingerprint }, back) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
@@ -239,7 +260,7 @@ export function mountFrequency(root) {
     const fields = keyFields();
     if (fields.length < 2) return "";
     const label = t("frequency.key_equals");
-    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label><code>${esc(f)}</code> = <input data-k="${esc(f)}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
+    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
   }
 
   function renderSentence() {
@@ -301,7 +322,7 @@ export function mountFrequency(root) {
 
   function renderFigures() {
     if (!answer || entering()) figuresEl.textContent = "";
-    else if (answer.subset) figuresEl.textContent = t("frequency.subset_figures", { key: Object.entries(keyEquals()).map(([f, v]) => `${f} = ${v}`).join(", "), entries: num(answer.subset.entries), occurrences: num(answer.subset.occurrences), works: num(answer.subset.works), total: num(answer.occurrences), documents: num(answer.documents_admitted) });
+    else if (answer.subset) figuresEl.textContent = t("frequency.subset_figures", { key: Object.entries(keyEquals()).map(([f, v]) => `${keyFieldLabel(f)} = ${v}`).join(", "), entries: num(answer.subset.entries), occurrences: num(answer.subset.occurrences), works: num(answer.subset.works), total: num(answer.occurrences), documents: num(answer.documents_admitted) });
     else figuresEl.textContent = t("frequency.figures", { entries: num(answer.entries), occurrences: num(answer.occurrences), documents: num(answer.documents_admitted) });
   }
 
@@ -325,8 +346,14 @@ export function mountFrequency(root) {
           return `${esc(command.slice(0, at))}<span class="where">${esc(command.slice(at, end))}</span>${esc(command.slice(end))}`;
         })()
       : esc(where);
-    clauseEl.innerHTML = `<div class="clause"><code data-c="code">${code}</code>${command ? `<button data-c="copy">${esc(t("views.copy"))}</button>` : ""}<button data-c="edit">${esc(t("frequency.edit"))}</button>${s.where != null ? `<button data-c="blanks">${esc(t("views.use_controls"))}</button>` : ""}</div>${source ? `<p>${esc(command ? t("views.command_context") : t("views.command_unavailable"))}</p>` : ""}`;
+    const actions = `<button data-c="edit">${esc(t("frequency.edit"))}</button>${s.where != null ? `<button data-c="blanks">${esc(t("views.use_controls"))}</button>` : ""}`;
+    // The command sits in a disclosure; a typed condition keeps it open, because the command shows that condition.
+    clauseEl.innerHTML = command
+      ? `<details class="fq-cli"${cliOpen || s.where != null ? " open" : ""}><summary>${esc(t("frequency.cli"))}</summary><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}</details><div class="clause">${actions}</div>`
+      : `<div class="clause"><code data-c="code">${code}</code>${actions}</div>${source ? `<p>${esc(t("views.command_unavailable"))}</p>` : ""}`;
   }
+  let cliOpen = false;
+  clauseEl.addEventListener("toggle", (e) => { if (e.target.matches(".fq-cli")) cliOpen = e.target.open; }, true);
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
     if (c === "copy") {
@@ -360,14 +387,15 @@ export function mountFrequency(root) {
     sourceEl.innerHTML = `${pattern.source ? `<pre>${esc(pattern.source)}</pre>` : ""}${p.workbench ? `<a href="${esc(p.workbench)}">${esc(t("frequency.workbench"))}</a>` : ""}`;
   }
 
-  const keyNames = (group) => (group.kind === "key" && group.fields.length > 1 ? group.fields.map((f) => f.name).join(" ") : "");
+  const keyNames = (group) => (group.kind === "key" && group.fields.length > 1 ? group.fields.map((f) => f.name) : null);
+  const namesHtml = (names) => (names ? `<small title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "");
   function rowHtml(r, i) {
     const docs = answer.documents_admitted, tokens = answer.tokens_admitted;
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
     const names = keyNames(r.group);
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${names ? `<small>${esc(names)}</small>` : ""}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -510,10 +538,11 @@ export function mountFrequency(root) {
     `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption>${dim(c.key)?.list ? `<p class="fq-multivalue-note">${esc(t("frequency.multivalue_note"))}</p>` : ""}<p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
 
   const lineHtml = (st) => {
+    const named = documentNames(st.lines);
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
     const identity = { source, analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
     return (l, i) =>
-      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src"><span>${esc(t("frequency.document", { id: l.document }))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
+      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
   };
   function linesHtml(st, previewing) {
     return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml(st)).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;
@@ -573,7 +602,7 @@ export function mountFrequency(root) {
     plan = planOf(profile);
     const names = keyNames(profile.group);
     entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
-      <h2 class="fq-entry-name">${esc(groupText(profile.group))}${names ? `<small>${esc(names)}</small>` : ""}</h2>
+      <h2 class="fq-entry-name">${esc(groupText(profile.group))}${namesHtml(names)}</h2>
       <p class="fq-entry-figures" data-e="figures">${esc(figuresText(profile))}</p>
       <div class="fq-profile" data-e="profile">${profile.charts.map(chartHtml).join("")}</div>
       <section class="fq-lines" data-e="lines">${linesHtml(lined, false)}</section>`;

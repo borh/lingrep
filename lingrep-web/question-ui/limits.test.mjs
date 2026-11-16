@@ -31,3 +31,10 @@ test('the question page reads the language setting shared with Frequencies befor
   assert.equal(storedLocale(storage({}),'ja'),'ja');
   assert.equal(storedLocale(null,'en-GB'),'en');
 });
+
+test('a document is named by its metadata title, else by its source name without the corpus file extension',async()=>{
+  const {documentTitle}=await import('./model.js');
+  assert.equal(documentTitle({source_name:'Natsume_S_Bocchan.conllu'}),'Natsume_S_Bocchan');
+  assert.equal(documentTitle({source_name:'a.conllu',source_metadata:{document:{title:'坊っちゃん'}}}),'坊っちゃん');
+  assert.equal(documentTitle({source_name:'notes.v2'}),'notes.v2');
+});

@@ -430,3 +430,7 @@
 .fq-key-label { color: var(--fq-soft); }
 .fq-key label { display: inline-flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
 .fq-key input { font: inherit; width: 7em; }
+.fq-cli { margin: 0.6rem 0 0; }
+.fq-cli > summary { cursor: pointer; width: fit-content; font: 14px/1.6 var(--font-sans); color: var(--fq-soft); }
+.fq-cli > summary:hover { color: var(--text); }
+.fq-clause p { margin: 0.3rem 0 0; font: 13px/1.5 var(--font-sans); color: var(--fq-soft); }

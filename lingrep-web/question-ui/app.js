@@ -4,8 +4,8 @@ import { addCondition, patternSource } from './composer.js';
 import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import { evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
-import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { boundOutside, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
+import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
@@ -13,12 +13,12 @@ let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
     readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', emptyTitle: '調べたい表現から始める。', emptyBody: 'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。', example: 'このパターンを検索', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
-    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceInSpan: '範囲内', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
+    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceInSpan: '一致範囲', evidenceText: '表層形', evidenceLemma: '辞書形', evidencePos: '品詞', evidenceHead: '係り先', evidenceRel: '関係', root: '文の中心', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
 Object.assign(ja, { skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
-Object.assign(extra, { noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
+Object.assign(extra, { root: 'root', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
 extra.analysisChanged = 'The corpus has changed since this question was saved. You can search the current corpus instead.';
@@ -674,7 +674,7 @@ function render(force = false) {
     for (const run of shown) {
         const limited = runLimits.get(run.id)?.document, titled = limited == null ? undefined : Object.values(run.rows).flat()[0];
         if (titled && limited != null)
-            documentTitles.set(`${run.dataset}:${limited}`, titled.source_metadata?.document?.title ?? titled.source_name);
+            documentTitles.set(`${run.dataset}:${limited}`, documentTitle(titled));
         let panel = panels.get(run.id);
         if (!panel) {
             panel = document.createElement('article');
@@ -938,12 +938,21 @@ const concordanceNodes = new WeakMap();
 const concordanceContent = new WeakMap();
 const concordanceHeadings = new WeakMap();
 function setConcordanceText(element, text) {
-    if (element.textContent !== text) {
-        if (element.firstChild)
+    if (element.childNodes.length === 1 && element.firstChild.nodeType === Node.TEXT_NODE) {
+        if (element.firstChild.nodeValue !== text)
             element.firstChild.nodeValue = text;
-        else
-            element.append(text);
     }
+    else
+        element.replaceChildren(text);
+}
+// Context words a `where` clause binds outside the span (the verb of n–p–v) are marked like the span.
+function setContext(element, tokens, bound) {
+    if (!tokens.some(token => bound.has(token.index))) {
+        setConcordanceText(element, words(tokens));
+        return;
+    }
+    element.replaceChildren(...tokens.map(token => { const roles = bound.get(token.index); if (!roles)
+        return document.createTextNode(token.attributes.text); const mark = document.createElement('mark'); mark.className = 'bound-word'; mark.title = roles.join(', '); mark.textContent = token.attributes.text; return mark; }));
 }
 function renderLines(panel, run, _force = false) {
     if (!run)
@@ -1012,7 +1021,7 @@ function renderLines(panel, run, _force = false) {
             }
             if (content.link.getAttribute('href') !== href)
                 content.link.setAttribute('href', href);
-            setConcordanceText(content.link, row.source_metadata?.document?.title ?? row.source_name);
+            setConcordanceText(content.link, documentTitle(row));
             const author = row.source_metadata?.document?.author ?? '';
             if (content.author.hidden !== !author)
                 content.author.hidden = !author;
@@ -1031,7 +1040,7 @@ function renderLines(panel, run, _force = false) {
             link.setAttribute('href', href);
         const rowIndex = allRows.indexOf(row, sourceOffset), ordinal = view.start + rowIndex + 1;
         sourceOffset = rowIndex + 1;
-        const label = (row.source_metadata?.document?.title ?? row.source_name) + ', ' + ordinal + ': ' + words(row.left_context) + row.surface + words(row.right_context);
+        const label = (documentTitle(row)) + ', ' + ordinal + ': ' + words(row.left_context) + row.surface + words(row.right_context);
         if (link.getAttribute('aria-label') !== label)
             link.setAttribute('aria-label', label);
         const expanded = String(inspecting?.run.id === run.id && inspecting.row.sequence === row.sequence && !tokenLab.hidden);
@@ -1044,9 +1053,11 @@ function renderLines(panel, run, _force = false) {
             concordanceContent.set(link, content);
         }
         if (content.row !== row || content.ordinal !== ordinal || content.context !== context) {
-            const left = context ? words((row.left_context ?? []).slice(-context)) : '', right = words((row.right_context ?? []).slice(0, context));
-            for (const [element, text] of [[content.number, String(ordinal)], [content.left, left], [content.hit, row.surface], [content.right, right]])
+            const bound = boundOutside(row, row.span.end + (row.right_context?.length ?? 0));
+            for (const [element, text] of [[content.number, String(ordinal)], [content.hit, row.surface]])
                 setConcordanceText(element, text);
+            setContext(content.left, context ? (row.left_context ?? []).slice(-context) : [], bound);
+            setContext(content.right, (row.right_context ?? []).slice(0, context), bound);
             content.row = row;
             content.ordinal = ordinal;
             content.context = context;
@@ -1122,7 +1133,7 @@ async function inspect(run, row, button) {
         const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
         $('[data-example-step="-1"]', exampleSteps).disabled = position <= 0 && page.previousAfter == null;
         $('[data-example-step="1"]', exampleSteps).disabled = position === page.rows.length - 1 && page.next == null;
-        $('#token-origin').textContent = `${row.source_metadata?.document?.title ?? row.source_name} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
+        $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
         $('#token-ribbon').innerHTML = data.tokens.map(token => `<button type="button" data-token="${token.index}" class="${token.index >= row.span.start && token.index < row.span.end ? 'is-hit' : ''}">${escape(token.attributes.text)}</button>`).join('');
         const keys = Object.keys(data.tokens[tokenIndex].attributes);
         attributeKey = keys.includes('lemma') ? 'lemma' : keys[0] ?? 'text';
@@ -1270,7 +1281,7 @@ function renderDependencies() {
             const y1 = (arc.from + .5) * TREE_ROW, y2 = (arc.to + .5) * TREE_ROW, x = gutter - 6 - arc.column * TREE_COLUMN;
             svg.append(svgNode('path', { class: arc.bound ? 'dependency-arc bound' : 'dependency-arc', d: `M${gutter},${y1} H${x} V${y2} H${gutter - 3} M${gutter - 8},${y2 - 4} L${gutter - 3},${y2} L${gutter - 8},${y2 + 4}` }));
         }
-        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}→${escape(value(index, 'dep.head'))}</span>`; }).join('')}</div>`;
+        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}</span>`; }).join('')}</div>`;
         diagram.firstElementChild.prepend(svg);
     }
     else {
@@ -1297,7 +1308,7 @@ function renderDependencies() {
         arcLayouts.set(chips, arcs);
         arcObserver.observe(chips);
     }
-    $('#dependency-evidence').innerHTML = words.map(word => `<tr><td>${word.index + 1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale === 'ja' ? word.inSpan ? 'はい' : 'いいえ' : word.inSpan ? 'yes' : 'no'}</td>${['text', 'lemma', 'upos', 'dep.head', 'dep.rel'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}</tr>`).join('');
+    $('#dependency-evidence').innerHTML = words.map(word => `<tr><td>${word.index + 1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale === 'ja' ? word.inSpan ? 'はい' : 'いいえ' : word.inSpan ? 'yes' : 'no'}</td>${['text', 'lemma', 'upos', 'dep.head', 'dep.rel'].map(key => `<td>${key === 'dep.head' && value(word.index, key) === '0' ? t('root') : escape(value(word.index, key))}</td>`).join('')}</tr>`).join('');
 }
 dependencyPanel.addEventListener('click', event => { const button = event.target.closest('[data-dependency-view]'); if (!button)
     return; dependencyChoice = button.dataset.dependencyView; renderDependencies(); });
@@ -1322,7 +1333,7 @@ async function readDocument(scope, path = null) {
     if (!inspection)
         return;
     const { run, row } = inspection;
-    const target = $('#document-body'), title = row.source_metadata?.document?.title ?? row.source_name;
+    const target = $('#document-body'), title = documentTitle(row);
     readerStatus.classList.remove('error');
     readerStatus.textContent = locale === 'ja' ? `${title}を読み込んでいます…` : `Loading ${title}…`;
     target.setAttribute('aria-busy', 'true');
@@ -1488,7 +1499,7 @@ $('#use-pattern').addEventListener('click', () => {
         return;
     const run = inspecting.run;
     analysisExpectation = run.contract_run?.analysis_identity ?? null;
-    const origin = { parent: run.id, view: hitLocation(run, inspecting.row, 'example'), label: `${inspecting.row.source_metadata?.document?.title ?? inspecting.row.source_name} · ${inspecting.row.surface}` };
+    const origin = { parent: run.id, view: hitLocation(run, inspecting.row, 'example'), label: `${documentTitle(inspecting.row)} · ${inspecting.row.surface}` };
     $('#source').value = patternSource(conditions);
     $('#corpus').value = run.dataset;
     controls.restore(new URLSearchParams({ ...controls.entries(), metadata: '{}', raw: run.where }));

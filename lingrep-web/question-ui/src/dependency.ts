@@ -97,3 +97,8 @@ export function verticalArcs(tokens:readonly Token[],words:readonly EvidenceWord
   }
   return placed;
 }
+
+/** The context words a match binds outside its span, by sentence token index, with their roles. */
+export function boundOutside(row:Row,length:number):ReadonlyMap<number,readonly string[]> {
+  return new Map(evidenceWords(row,length).filter(word=>!word.inSpan&&word.roles.length).map(word=>[word.index,word.roles]));
+}

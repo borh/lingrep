@@ -302,6 +302,8 @@ fn json_group(value: &serde_json::Value) -> Option<Group<'_>> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Line {
     pub document: u64,
+    /// The document's source name, which names it on the page when its metadata has no title.
+    pub source_name: String,
     pub sentence: u64,
     pub start: usize,
     pub end: usize,
@@ -346,6 +348,7 @@ impl EntrySink<'_> {
         let skip = left.chars().count().saturating_sub(CONTEXT_CHARS);
         self.lines.push(Line {
             document: location.document_id.get(),
+            source_name: location.source_name.to_string(),
             sentence: location.corpus_sentence_ordinal,
             start: record.start,
             end: record.end,

@@ -139,3 +139,7 @@ export function storedLocale(storage, language) {
     }
     return language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
 }
+/** The name a match's document is shown by: its metadata title, else its source name without a corpus file extension. */
+export function documentTitle(row) {
+    return row.source_metadata?.document?.title ?? row.source_name.replace(/\.(conllu|jsonl|txt|md|xml)$/i, '');
+}

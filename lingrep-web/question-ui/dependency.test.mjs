@@ -108,3 +108,10 @@ test('dependency views require a basic head on every word',()=>{
   assert.equal(hasDependencies(unlabelled([['猫','NOUN',2,'nsubj']])),false);
   assert.equal(hasDependencies([]),false);
 });
+
+test('context words bound only by a where clause are reported with their roles, span words are not',async()=>{
+  const {boundOutside}=await import('./dependency.js');
+  const row={span:{start:3,end:5},captures:[{name:'n',span:{start:3,end:4}},{name:'p',span:{start:4,end:5}}],graph_bindings:[{binding_kind:'node',name:'v',node:{node_kind:'word',token_index:11}},{binding_kind:'node',name:'n',node:{node_kind:'word',token_index:3}}]};
+  assert.deepEqual([...boundOutside(row,20)],[[11,['v']]]);
+  assert.deepEqual([...boundOutside({span:{start:0,end:1}},5)],[]);
+});
