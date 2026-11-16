@@ -4,7 +4,7 @@ import { addCondition, patternSource } from './composer.js';
 import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, partOfSpeech } from './dependency.js';
+import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName } from './dependency.js';
 import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
@@ -25,6 +25,7 @@ extra.analysisChanged = 'The corpus has changed since this question was saved. Y
 extra.searchCurrentCorpus = 'Search the current corpus';
 extra.previous = 'Previous results';
 let config;
+const named = (attribute, value) => valueName(config?.value_names, attribute, value, locale);
 let controls;
 const tokenLab = $('#token-lab');
 const focusedSentence = document.createElement('p');
@@ -1294,6 +1295,8 @@ for (const control of exampleSteps.querySelectorAll('button'))
             }
         }
     });
+// Token details name the dependency keys in words, as the evidence table's headings do.
+const ATTRIBUTE_NAMES = { 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
 function selectToken(index) {
     if (!tokenData)
         return;
@@ -1310,7 +1313,8 @@ function selectToken(index) {
     const basics = [...common.filter(key => key in token.attributes), ...entries.map(([key]) => key).filter(key => !common.includes(key))].slice(0, 18).map(key => [key, token.attributes[key]]);
     const row = ([key, value]) => {
         const values = attributeMembers(value);
-        return values.length ? values.map(member => { const selected = field === key && attributeMember === member; return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${escape(key)}</span><strong>${escape(member)}</strong></button>`; }).join('') : `<div class="attribute-row"><span>${escape(key)}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
+        const name = ATTRIBUTE_NAMES[key]?.[locale], label = name ? `${escape(name)} <code>${escape(key)}</code>` : escape(key);
+        return values.length ? values.map(member => { const selected = field === key && attributeMember === member, gloss = named(key, member); return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${label}</span><strong${gloss ? ` title="${escape(gloss)}"` : ''}>${escape(member)}</strong></button>`; }).join('') : `<div class="attribute-row"><span>${label}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
     };
     const attributes = $('#token-attributes'), more = attributes.querySelector(':scope>details')?.open ?? false, expanded = attributes.querySelector('.attribute-more')?.open ?? false;
     const span = inspecting?.row.span, inSpan = !!span && index >= span.start && index < span.end;
@@ -1339,6 +1343,12 @@ function drawArcs(chips) {
         svg.append(svgNode('path', { class: kind, d: `M${x1 + offset},${y} C${x1 + offset},${y - h} ${x2 - offset},${y - h} ${x2 - offset},${y} M${x2 - offset - 4},${y - 7} L${x2 - offset},${y} L${x2 - offset + 4},${y - 7}` }));
         const label = svgNode('text', { class: kind, x: (x1 + x2) / 2, y: y - h * 0.75 - 4, 'text-anchor': 'middle' });
         label.textContent = arc.rel;
+        const gloss = named('dep.rel', arc.rel);
+        if (gloss) {
+            const title = svgNode('title', {});
+            title.textContent = gloss;
+            label.append(title);
+        }
         svg.append(label);
     }
     chips.prepend(svg);
@@ -1347,6 +1357,9 @@ const arcObserver = new ResizeObserver(entries => { for (const entry of entries)
     drawArcs(entry.target); });
 addEventListener('beforeprint', () => { for (const chips of document.querySelectorAll('.dependency-chips'))
     drawArcs(chips); });
+// A relation in plain words with its code beside it, or the code alone when no label set names it.
+function relationCell(rel) { const gloss = named('dep.rel', rel); return gloss ? `${escape(gloss)} <code>${escape(rel)}</code>` : escape(rel); }
+function relationGloss(rel) { const gloss = named('dep.rel', rel); return gloss ? ` <span class="dependency-gloss">${escape(gloss)}</span>` : ''; }
 function roleTags(roles) { return roles.map(role => `<span class="dependency-role">${escape(role)}</span>`).join(''); }
 function renderDependencies() {
     const tokens = tokenData?.tokens, row = inspecting?.row;
@@ -1368,7 +1381,7 @@ function renderDependencies() {
             const y1 = (arc.from + .5) * TREE_ROW, y2 = (arc.to + .5) * TREE_ROW, x = gutter - 6 - arc.column * TREE_COLUMN;
             svg.append(svgNode('path', { class: arc.bound ? 'dependency-arc bound' : 'dependency-arc', d: `M${gutter},${y1} H${x} V${y2} H${gutter - 3} M${gutter - 8},${y2 - 4} L${gutter - 3},${y2} L${gutter - 8},${y2 + 4}` }));
         }
-        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}</span>`; }).join('')}</div>`;
+        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}${relationGloss(value(index, 'dep.rel'))}</span>`; }).join('')}</div>`;
         diagram.firstElementChild.prepend(svg);
     }
     else {
@@ -1395,7 +1408,7 @@ function renderDependencies() {
         arcLayouts.set(chips, arcs);
         arcObserver.observe(chips);
     }
-    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(partOfSpeech(value(word.index, 'upos'), locale))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td>${['text', 'lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${escape(value(word.index, 'dep.rel'))}</td></tr>`).join('');
+    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(named('upos', value(word.index, 'upos')) ?? value(word.index, 'upos'))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td>${['text', 'lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${relationCell(value(word.index, 'dep.rel'))}</td></tr>`).join('');
 }
 compactLayout.addEventListener('change', () => { if (!dependencyChoice)
     renderDependencies(); });

@@ -12,6 +12,17 @@ use serde::{Deserialize, Serialize};
 /// The locales the page is served in, one per dictionary under `assets/i18n`.
 pub const LOCALES: [&str; 2] = ["en", "ja"];
 
+/// The display names of token-attribute values by label set and attribute,
+/// the `sets` object of [`lingrep_core::fsm::LABEL_NAMES_JSON`].
+pub(crate) fn value_names() -> &'static serde_json::Value {
+    static NAMES: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+        serde_json::from_str::<serde_json::Value>(lingrep_core::fsm::LABEL_NAMES_JSON)
+            .expect("bundled value names are valid JSON")["sets"]
+            .take()
+    });
+    &NAMES
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LabelFile {

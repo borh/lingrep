@@ -48,7 +48,7 @@ export interface SearchState {
   readonly previous: CompletedSnapshot | null;
 }
 export interface Dataset { label:string; documents:number|null; sentences:number|null; analysis_identity:string|null; readiness:'ready'|'checking'|'building'|'failed'; }
-export interface Configuration { datasets: Record<string, Dataset>; source: string; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; }
+export interface Configuration { datasets: Record<string, Dataset>; source: string; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }

@@ -62,3 +62,16 @@ test("a line's context marks the words its where clause binds, by code point and
   assert.equal(contextHtml(right, bound, "right"), 'ゆっくり<mark class="kb" title="v">𠮟る</mark>&lt;b&gt;');
   assert.equal(contextHtml("坂", undefined, "left"), "坂");
 });
+
+test("Frequencies names values as the question page does, and glosses an entry's named fields", async () => {
+  const { valueName, entryGlosses } = await import("../assets/frequency.js");
+  const question = await import("../question-ui/dependency.js");
+  const { readFileSync } = await import("node:fs");
+  const names = JSON.parse(readFileSync(new URL("../../lingrep-core/src/fsm/label_names.json", import.meta.url), "utf8")).sets;
+  for (const [attribute, value] of [["upos", "NOUN"], ["upos", "SPACE"], ["dep.rel", "nsubj:pass"], ["dep.rel", "obl:x"], ["dep.rel", "dobj"], ["xpos", "NN"], ["xpos", "名詞-普通名詞-一般"], ["lemma", "NOUN"]])
+    for (const locale of ["en", "ja"]) assert.equal(valueName(names, attribute, value, locale), question.valueName(names, attribute, value, locale), `${attribute} ${value} ${locale}`);
+  const tags = { kind: "key", fields: [{ kind: "scalar", name: "xpos", value: "名詞-普通名詞-一般" }, { kind: "scalar", name: "upos", value: "NOUN" }] };
+  assert.deepEqual(entryGlosses(tags, names, "ja"), ["名詞"]);
+  assert.deepEqual(entryGlosses({ kind: "key", fields: [{ kind: "scalar", name: "$v.dep.rel", value: "obj" }] }, names, "en"), ["object"]);
+  assert.deepEqual(entryGlosses({ kind: "surface", value: "NOUN" }, names, "en"), []);
+});

@@ -130,6 +130,12 @@ const PENN_XPOS: &[&str] = &[
     "WDT", "WP", "WP$", "WRB", "XX", "_SP", "``",
 ];
 
+/// Japanese and English display names of the named label sets' values, as
+/// JSON: `sets.<label set>.<attribute>.<value>` is `{"en": …, "ja": …}`. A
+/// value without an entry under its own set shares the same value's `ud-v2`
+/// entry, and a `ud-v2` relation subtype without an entry shares its base's.
+pub const LABEL_NAMES_JSON: &str = include_str!("label_names.json");
+
 pub(crate) const NAMED_LABEL_SETS: &[NamedLabelSet] = &[
     NamedLabelSet {
         name: "ud-v2",
@@ -363,6 +369,72 @@ mod tests {
                 set.name,
                 set.attribute
             );
+        }
+    }
+
+    fn label_names(set: &str, attribute: &str) -> serde_json::Map<String, serde_json::Value> {
+        let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();
+        names["sets"][set][attribute].as_object().unwrap().clone()
+    }
+
+    fn named(
+        names: &serde_json::Map<String, serde_json::Value>,
+        value: &str,
+        locale: &str,
+    ) -> bool {
+        names
+            .get(value)
+            .and_then(|name| name[locale].as_str())
+            .is_some_and(|name| !name.is_empty())
+    }
+
+    #[test]
+    fn every_ud_v2_and_spacy_value_has_a_japanese_and_an_english_name() {
+        let upos = label_names("ud-v2", "upos");
+        let spacy = label_names("spacy", "upos");
+        let deprel = label_names("ud-v2", "dep.rel");
+        for locale in ["en", "ja"] {
+            for value in UD_V2_UPOS {
+                assert!(named(&upos, value, locale), "ud-v2 upos {value} {locale}");
+            }
+            for value in SPACY_UPOS {
+                assert!(
+                    named(&spacy, value, locale) || named(&upos, value, locale),
+                    "spacy upos {value} {locale}"
+                );
+            }
+            for value in UD_V2_DEPREL {
+                assert!(
+                    named(&deprel, value, locale),
+                    "ud-v2 dep.rel {value} {locale}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn named_values_belong_to_their_label_set() {
+        let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();
+        for (set, attributes) in names["sets"].as_object().unwrap() {
+            for (attribute, values) in attributes.as_object().unwrap() {
+                let key = AttributeKey::new(attribute).unwrap();
+                let declared = named_label_set(set, &key)
+                    .unwrap_or_else(|error| panic!("{set} {attribute}: {error}"));
+                for (value, name) in values.as_object().unwrap() {
+                    let base = value
+                        .split_once(':')
+                        .map_or(value.as_str(), |(base, _)| base);
+                    assert!(
+                        declared.values.binary_search(&base).is_ok()
+                            && (base == value || declared.admits_subtypes),
+                        "{set} {attribute} {value}"
+                    );
+                    assert!(
+                        name["en"].as_str().is_some_and(|en| !en.is_empty()),
+                        "{value}"
+                    );
+                }
+            }
         }
     }
 

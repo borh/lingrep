@@ -7,7 +7,7 @@ import {expectedAnalysis,defaultView,parseView,locationHash,locationURL,savedQue
 import type {ViewLocation,ConcordanceLocation,HitLocation,OccurrenceTarget,EntryLines} from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,partOfSpeech} from './dependency.js';
+import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName} from './dependency.js';
 import type {Arc,DependencyView,EvidenceWord} from './dependency.js';
 
 import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
@@ -26,6 +26,7 @@ const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extr
 Object.assign(ja,{skip:'検索結果へ移動',readingEnd:'。',noMatches:'このパターンに一致する用例はありません。',partialCount:'途中までの件数',limitChoice:'定義を 1 つだけ検索:',chooseDefinition:'検索する定義を 1 つ選んでください。',occurrenceNotFound:'この検索には、その文で同じ語が同じ役割に入る用例がありません。',occurrenceChanged:'頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。',analysisChanged:'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。',searchCurrentCorpus:'現在のコーパスで検索',resultLimit:'結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。',emptyBody:'パターンや文書の条件を変えて検索できます。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
 Object.assign(extra,{root:'heads the sentence',noMatches:'No examples match this pattern.',partialCount:'Count so far',limitChoice:'Search one definition only:',chooseDefinition:'Choose one definition to search.',occurrenceNotFound:'This search has no example in that sentence with the same words in the same roles.',occurrenceChanged:'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.'});extra.current='Results';extra.resultLimit='Too many results to retain. Narrow the pattern or document conditions and search again.';extra.analysisChanged='The corpus has changed since this question was saved. You can search the current corpus instead.';extra.searchCurrentCorpus='Search the current corpus';extra.previous='Previous results';
 let config: Configuration;
+const named=(attribute:string,value:string)=>valueName(config?.value_names,attribute,value,locale);
 let controls: QuestionControls;
 const tokenLab=$('#token-lab');
 const focusedSentence=document.createElement('p');focusedSentence.id='focused-sentence';focusedSentence.lang='ja';focusedSentence.tabIndex=-1;
@@ -828,6 +829,8 @@ for(const control of exampleSteps.querySelectorAll<HTMLButtonElement>('button'))
     if(hadFocus&&document.activeElement===document.body&&(inspecting===origin||inspecting?.run.id===run.id&&inspecting.row.sequence===successor)){const target=control.disabled?exampleSteps.querySelector<HTMLButtonElement>('button:not(:disabled)'):control;(target??focusedSentence).focus({preventScroll:true});}
   }
 });
+// Token details name the dependency keys in words, as the evidence table's headings do.
+const ATTRIBUTE_NAMES:Record<string,Record<Locale,string>>={'dep.head':{ja:'係り先',en:'attaches to'},'dep.rel':{ja:'関係',en:'relation'}};
 function selectToken(index: number) {
   if(!tokenData)return;tokenIndex=index;
   const token=tokenData.tokens[index],field=attributeKey,members=attributeMembers(token.attributes[field]);
@@ -837,7 +840,8 @@ function selectToken(index: number) {
   const basics=[...common.filter(key=>key in token.attributes),...entries.map(([key])=>key).filter(key=>!common.includes(key))].slice(0,18).map(key=>[key,token.attributes[key]] as [string,AttributeValue]);
   const row=([key,value]:[string,AttributeValue])=>{
     const values=attributeMembers(value);
-    return values.length?values.map(member=>{const selected=field===key&&attributeMember===member;return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected?'selected':''}" aria-pressed="${selected}"><span>${escape(key)}</span><strong>${escape(member)}</strong></button>`;}).join(''):`<div class="attribute-row"><span>${escape(key)}</span><span>${locale==='ja'?'値なし':'No values'}</span></div>`;
+    const name=ATTRIBUTE_NAMES[key]?.[locale],label=name?`${escape(name)} <code>${escape(key)}</code>`:escape(key);
+    return values.length?values.map(member=>{const selected=field===key&&attributeMember===member,gloss=named(key,member);return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected?'selected':''}" aria-pressed="${selected}"><span>${label}</span><strong${gloss?` title="${escape(gloss)}"`:''}>${escape(member)}</strong></button>`;}).join(''):`<div class="attribute-row"><span>${label}</span><span>${locale==='ja'?'値なし':'No values'}</span></div>`;
   };
   const attributes=$('#token-attributes'),more=attributes.querySelector<HTMLDetailsElement>(':scope>details')?.open??false,expanded=attributes.querySelector<HTMLDetailsElement>('.attribute-more')?.open??false;
   const span=inspecting?.row.span,inSpan=!!span&&index>=span.start&&index<span.end;
@@ -861,12 +865,17 @@ function drawArcs(chips:HTMLElement){
   for(const arc of [...arcs].sort((a,b)=>Number(a.bound)-Number(b.bound))){
     const x1=x(arc.from),x2=x(arc.to),offset=x1<x2?4:-4,y=top-1,h=arc.level*ARC_STEP,kind=arc.bound?'dependency-arc bound':'dependency-arc';
     svg.append(svgNode('path',{class:kind,d:`M${x1+offset},${y} C${x1+offset},${y-h} ${x2-offset},${y-h} ${x2-offset},${y} M${x2-offset-4},${y-7} L${x2-offset},${y} L${x2-offset+4},${y-7}`}));
-    const label=svgNode('text',{class:kind,x:(x1+x2)/2,y:y-h*0.75-4,'text-anchor':'middle'});label.textContent=arc.rel;svg.append(label);
+    const label=svgNode('text',{class:kind,x:(x1+x2)/2,y:y-h*0.75-4,'text-anchor':'middle'});label.textContent=arc.rel;
+    const gloss=named('dep.rel',arc.rel);if(gloss){const title=svgNode('title',{});title.textContent=gloss;label.append(title);}
+    svg.append(label);
   }
   chips.prepend(svg);
 }
 const arcObserver=new ResizeObserver(entries=>{for(const entry of entries)drawArcs(entry.target as HTMLElement);});
 addEventListener('beforeprint',()=>{for(const chips of document.querySelectorAll<HTMLElement>('.dependency-chips'))drawArcs(chips);});
+// A relation in plain words with its code beside it, or the code alone when no label set names it.
+function relationCell(rel:string){const gloss=named('dep.rel',rel);return gloss?`${escape(gloss)} <code>${escape(rel)}</code>`:escape(rel);}
+function relationGloss(rel:string){const gloss=named('dep.rel',rel);return gloss?` <span class="dependency-gloss">${escape(gloss)}</span>`:'';}
 function roleTags(roles:readonly string[]){return roles.map(role=>`<span class="dependency-role">${escape(role)}</span>`).join('');}
 function renderDependencies(){
   const tokens=tokenData?.tokens,row=inspecting?.row;
@@ -884,7 +893,7 @@ function renderDependencies(){
       const y1=(arc.from+.5)*TREE_ROW,y2=(arc.to+.5)*TREE_ROW,x=gutter-6-arc.column*TREE_COLUMN;
       svg.append(svgNode('path',{class:arc.bound?'dependency-arc bound':'dependency-arc',d:`M${gutter},${y1} H${x} V${y2} H${gutter-3} M${gutter-8},${y2-4} L${gutter-3},${y2} L${gutter-8},${y2+4}`}));
     }
-    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}</span>`;}).join('')}</div>`;
+    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
     diagram.firstElementChild!.prepend(svg);
   }else{
     const units=dependencyUnits(tokens,view==='bunsetsu'?starts:null),{items,arcs}=focusLayout(units,words);
@@ -899,7 +908,7 @@ function renderDependencies(){
     }).join('');
     diagram.replaceChildren(chips);arcLayouts.set(chips,arcs);arcObserver.observe(chips);
   }
-  $('#dependency-evidence').innerHTML=words.map(word=>`<tr${word.inSpan?' class="in-span"':''}><td>${word.index+1}</td><td>${escape(partOfSpeech(value(word.index,'upos'),locale))}${word.roles.length?` <small class="role-names">${escape(word.roles.join(', '))}</small>`:''}</td>${['text','lemma','upos'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}<td>${escape(headLabel(tokens,word.index)??t('root'))}</td><td>${escape(value(word.index,'dep.rel'))}</td></tr>`).join('');
+  $('#dependency-evidence').innerHTML=words.map(word=>`<tr${word.inSpan?' class="in-span"':''}><td>${word.index+1}</td><td>${escape(named('upos',value(word.index,'upos'))??value(word.index,'upos'))}${word.roles.length?` <small class="role-names">${escape(word.roles.join(', '))}</small>`:''}</td>${['text','lemma','upos'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}<td>${escape(headLabel(tokens,word.index)??t('root'))}</td><td>${relationCell(value(word.index,'dep.rel'))}</td></tr>`).join('');
 }
 compactLayout.addEventListener('change',()=>{if(!dependencyChoice)renderDependencies();});
 dependencyPanel.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-dependency-view]');if(!button)return;dependencyChoice=button.dataset.dependencyView as DependencyView;renderDependencies();});

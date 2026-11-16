@@ -76,6 +76,20 @@ export function keyFieldLabel(field) {
   return capture ? t("frequency.capture_field", { capture, field: word }) : word;
 }
 
+const LABEL_SETS = ["ud-v2", "spacy", "clearnlp", "penn"];
+/** `value` of `attribute` in plain words from `names`, the frequency meta's `value_names`, by the question page's rule (question-ui dependency.ts `valueName`); null when no label set names it. */
+export function valueName(names, attribute, value, locale) {
+  const entry = (v) => LABEL_SETS.map((set) => names?.[set]?.[attribute]?.[v]).find(Boolean);
+  const found = entry(value) ?? (attribute === "dep.rel" && value.includes(":") ? entry(value.slice(0, value.indexOf(":"))) : undefined);
+  return found?.[locale] ?? found?.en ?? null;
+}
+
+/** The plain-word names of a key entry's scalar fields whose values a label set names, such as 名詞 for `upos` NOUN. */
+export function entryGlosses(group, names, locale) {
+  if (group.kind !== "key") return [];
+  return group.fields.flatMap((f) => (f.kind === "scalar" ? [valueName(names, f.name.replace(/^\$[^.]+\./, ""), f.value, locale)] : [])).filter(Boolean);
+}
+
 /** The fields under a multi-field entry: their capture names when every field is a capture's attribute, else their labels. */
 export function entryFieldNames(fields) {
   const captures = fields.map((f) => /^\$([^.]+)\./.exec(f)?.[1]);
@@ -403,13 +417,17 @@ export function mountFrequency(root) {
 
   const keyNames = (group) => (group.kind === "key" && group.fields.length > 1 ? group.fields.map((f) => f.name) : null);
   const namesHtml = (names) => (names ? `<small title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "");
+  const glossHtml = (group) => {
+    const glosses = entryGlosses(group, meta.value_names, currentLocale());
+    return glosses.length ? `<small class="gloss">${esc(glosses.join(" · "))}</small>` : "";
+  };
   function rowHtml(r, i) {
     const docs = answer.documents_admitted, tokens = answer.tokens_admitted;
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
     const names = keyNames(r.group);
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -617,7 +635,7 @@ export function mountFrequency(root) {
     plan = planOf(profile);
     const names = keyNames(profile.group);
     entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
-      <h2 class="fq-entry-name" tabindex="-1">${esc(groupText(profile.group))}${namesHtml(names)}</h2>
+      <h2 class="fq-entry-name" tabindex="-1">${esc(groupText(profile.group))}${glossHtml(profile.group)}${namesHtml(names)}</h2>
       <p class="fq-entry-figures" data-e="figures">${esc(figuresText(profile))}</p>
       <div class="fq-profile" data-e="profile">${profile.charts.map(chartHtml).join("")}</div>
       <section class="fq-lines" data-e="lines">${linesHtml(lined, false)}</section>`;

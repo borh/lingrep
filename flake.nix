@@ -119,6 +119,8 @@
                 # lingrep-core compiles the checked-in NDC9 lookup table into the
                 # BCCWJ reader with include_str!.
                 isNdc9Data = toString path == toString ./lingrep-core/src/corpus/bccwj/data/ndc9.tsv;
+                # lingrep-core include_str!s the label sets' value names.
+                isLabelNames = toString path == toString ./lingrep-core/src/fsm/label_names.json;
                 # lingrep-web include_bytes!s assets under lingrep-web/assets (both the pattern
                 # subdir and top-level results-explorer.js / app.css), so keep the
                 # whole tree, not just assets/editor.
@@ -140,6 +142,7 @@
               isHtml
               || isSgx
               || isNdc9Data
+              || isLabelNames
               || isWebAsset
               || isQuestionAsset
               || isSqlxCache
