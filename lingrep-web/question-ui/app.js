@@ -1,27 +1,28 @@
 import { serviceURL, ServiceError, expiredSearch } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
+import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
-import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
-let locale = localStorage.getItem('ling-questions-locale') === 'ja' ? 'ja' : 'en';
+let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
-    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', emptyTitle: '調べたい表現から始める。', emptyBody: 'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。', example: 'このパターンを検索', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
+    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', emptyTitle: '調べたい表現から始める。', emptyBody: 'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。', example: 'このパターンを検索', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
     current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceInSpan: '範囲内', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(ja, { skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
 Object.assign(extra, { noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
-extra.analysisChanged = 'The corpus saved with this question has changed. Choose the current corpus and search again.';
+extra.analysisChanged = 'The corpus has changed since this question was saved. You can search the current corpus instead.';
+extra.searchCurrentCorpus = 'Search the current corpus';
 extra.previous = 'Previous results';
 let config;
 let controls;
@@ -290,6 +291,12 @@ limitChoices.id = 'limit-choices';
 limitChoices.className = 'limit-choices';
 limitChoices.hidden = true;
 editError.after(limitChoices);
+const currentCorpus = document.createElement('button');
+currentCorpus.type = 'button';
+currentCorpus.id = 'search-current-corpus';
+currentCorpus.hidden = true;
+limitChoices.after(currentCorpus);
+currentCorpus.addEventListener('click', () => { analysisExpectation = null; void search(); });
 const overflowed = (run) => run?.phase === 'failed' && run.error_code === 'result_limit';
 // After an overflow, each definition the overflow did not come from can be searched alone.
 function renderLimitChoices(run) {
@@ -607,13 +614,15 @@ function render(force = false) {
         $('#timeline').value = String(Math.max(0, recorded.length - 1));
     $('#cancel').hidden = !activeId && !isReplay && !restoreController;
     $('#cancel').textContent = restoreController ? (locale === 'ja' ? '保存した検索の実行を停止' : 'Stop saved searches') : t(isReplay ? 'stopReplay' : 'stop');
-    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete' || overflowed(current);
+    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete' || overflowed(current) || current.error_code === 'analysis_changed';
     $('#replay').disabled = !recorded.length || !!activeId || isReplay;
     $('#error').hidden = !current?.error;
     const diagnostic = patternFailure(current), line = diagnostic?.data.location?.line;
     const located = current?.phase === 'failed' ? (current.diagnostics ?? []).filter(d => d.data.stage === 'catalog' && d.data.severity === 'error') : [];
     $('#error').textContent = located.length ? located.map(d => diagnosticText(d, locale)).join('\n') : current ? overflowText(current) ?? runError(current, t) ?? '' : '';
     renderLimitChoices(current);
+    currentCorpus.hidden = !(current?.phase === 'failed' && current.error_code === 'analysis_changed');
+    currentCorpus.textContent = t('searchCurrentCorpus');
     editError.hidden = !diagnostic;
     editError.textContent = line ? (locale === 'ja' ? `${line} 行目のパターンを修正` : `Edit pattern at line ${line}`) : (locale === 'ja' ? 'パターンを修正' : 'Edit pattern');
     if (diagnostic && current && revealedFailure !== current.id) {
@@ -1541,7 +1550,10 @@ $('#cancel').addEventListener('click', async () => {
     }
 });
 $('#retry').addEventListener('click', search);
-$('#language').addEventListener('click', () => { locale = locale === 'en' ? 'ja' : 'en'; localStorage.setItem('ling-questions-locale', locale); translate(); });
+$('#language').addEventListener('click', () => { locale = locale === 'en' ? 'ja' : 'en'; try {
+    localStorage.setItem(LOCALE_KEY, locale);
+}
+catch { } translate(); });
 $('#edit-source').addEventListener('click', () => {
     const editor = $('#source-editor');
     editor.hidden = !editor.hidden;
@@ -1834,8 +1846,7 @@ async function init() {
         for (const [key, value] of new URLSearchParams({ source: current.source, corpus: current.dataset, raw: current.where }))
             if (!params.has(key) && (key !== 'raw' || !params.has('metadata')))
                 params.set(key, value);
-        if (!params.has('analysis'))
-            analysisExpectation = current.contract_run?.analysis_identity ?? analysisExpectation;
+        analysisExpectation = expectedAnalysis(params, current);
         $('#corpus').value = params.get('corpus');
         $('#source').value = params.get('source');
         controls.restore(params);

@@ -24,13 +24,13 @@ pub(crate) fn page(seed: Value, frequency_view: bool) -> Html<String> {
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
     let navigation = if frequency_view {
-        r#" · <a href="frequencies" data-t="frequencyNav">Frequencies</a> · <a href="compare" data-t="compareNav">Compare</a>"#
+        r#"<a href="frequencies" data-t="frequencyNav">Frequencies</a><a href="compare" data-t="compareNav">Compare</a>"#
     } else {
         ""
     };
     Html(
         INDEX
-            .replace("<template id=\"table-analyses\"></template>", navigation)
+            .replace("<template id=\"analysis-routes\"></template>", navigation)
             .replace(
                 "</body>",
                 &format!(
@@ -111,6 +111,22 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(json).unwrap(), expected);
         assert!(!json.contains(['<', '>', '&', '\u{2028}', '\u{2029}']));
         assert!(html.contains("src=\"assets/questions/app.js\""));
+    }
+
+    #[test]
+    fn the_header_routes_to_frequencies_and_compare_only_when_a_count_table_is_served() {
+        let header = |frequency_view| {
+            let html = page(serde_json::json!({}), frequency_view).0;
+            let start = html.find("<nav class=\"routes\"").unwrap();
+            html[start..start + html[start..].find("</nav>").unwrap()].to_owned()
+        };
+        let served = header(true);
+        assert!(served.contains(r#"<a href="frequencies" data-t="frequencyNav">"#));
+        assert!(served.contains(r#"<a href="compare" data-t="compareNav">"#));
+        assert!(served.contains(r#"<a href="help""#));
+        let plain = header(false);
+        assert!(!plain.contains("frequencies"));
+        assert!(plain.contains(r#"<a href="help""#));
     }
 
     #[tokio::test]

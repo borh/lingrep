@@ -44,6 +44,8 @@
   font-feature-settings: "palt";
 }
 :lang(ja) .fq-sentence { line-height: 2.7; letter-spacing: 0.02em; }
+/* Clears the role labels that sit above the first line's blanks. */
+.comparison-note:not([hidden]) + .fq-head .fq-sentence { margin-top: 1rem; }
 .fq-sentence .tail { color: var(--fq-soft); }
 
 .fq .blank {
@@ -107,7 +109,7 @@
 .fq .blank .pick[aria-expanded="true"] { background-color: var(--fq-accent-wash); }
 .fq .blank.lead select { font-size: var(--fq-lead); font-weight: 800; letter-spacing: 0.01em; padding-right: 1.25rem; }
 .fq .blank input { width: 7em; cursor: text; }
-.fq .blank input::placeholder { color: var(--fq-accent-mid); font-weight: 400; }
+.fq .blank input::placeholder { color: var(--fq-soft); font-weight: 400; }
 
 .fq .add {
   all: unset;

@@ -97,3 +97,21 @@ test('translated metadata names retain raw codes and leave predicates unchanged'
   assert.equal(metadataValueLabel(config,'subject','unknown','en'),'unknown');
   assert.equal(scopeClause({subject:{list:false,exclude:false,values:['lit'],labels:{lit:'lit 文学'}}}),'@document.subject in {"lit"}');
 });
+
+test('a corpus chosen in the address drops the seed analysis that described another corpus',async()=>{
+  const {seedParams}=await import('./location.js');
+  const seed={source:'p := 猫.',corpus:'natsume',analysis:'natsume-analysis',run:'0'};
+  const chosen=seedParams(seed,'#fresh=1&corpus=sample');
+  assert.equal(chosen.get('corpus'),'sample');assert.equal(chosen.get('analysis'),null);
+  assert.equal(seedParams(seed,'#corpus=sample&analysis=sample-analysis').get('analysis'),'sample-analysis');
+  assert.equal(seedParams(seed,'#corpus=natsume').get('analysis'),'natsume-analysis');
+});
+
+test('a stored run supplies the expected analysis only for its own corpus',async()=>{
+  const {expectedAnalysis}=await import('./location.js');
+  const run={dataset:'natsume',contract_run:{analysis_identity:'natsume-analysis'}};
+  assert.equal(expectedAnalysis(new URLSearchParams('corpus=natsume'),run),'natsume-analysis');
+  assert.equal(expectedAnalysis(new URLSearchParams('corpus=sample'),run),null);
+  assert.equal(expectedAnalysis(new URLSearchParams('corpus=sample&analysis=saved'),run),'saved');
+  assert.equal(expectedAnalysis(new URLSearchParams('corpus=natsume'),null),null);
+});

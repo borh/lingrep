@@ -22,3 +22,12 @@ test('a catalog diagnostic names its line and column in the page language withou
   const other={...diagnostic,data:{...diagnostic.data,message:'unknown key `orth`',location:{line:3}}};
   assert.equal(diagnosticText(other,'ja'),'3 行: unknown key `orth`');
 });
+
+test('the question page reads the language setting shared with Frequencies before its former key',async()=>{
+  const {storedLocale}=await import('./model.js');
+  const storage=entries=>({getItem:key=>entries[key]??null});
+  assert.equal(storedLocale(storage({'lingrep-web:locale:v1':'en','ling-questions-locale':'ja'}),'ja-JP'),'en');
+  assert.equal(storedLocale(storage({'ling-questions-locale':'ja'}),'en-US'),'ja');
+  assert.equal(storedLocale(storage({}),'ja'),'ja');
+  assert.equal(storedLocale(null,'en-GB'),'en');
+});

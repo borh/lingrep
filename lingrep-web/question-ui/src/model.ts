@@ -174,3 +174,15 @@ export function diagnosticText(diagnostic: Diagnostic, locale: Locale): string {
   const place = locale === 'ja' ? `${line} 行${column ? ` ${column} 文字目` : ''}` : `Line ${line}${column ? `, column ${column}` : ''}`;
   return `${place}: ${message}`;
 }
+
+export const LOCALE_KEY = 'lingrep-web:locale:v1';
+/** The saved page language, shared with the other lingrep-web pages: that key, else this page's former `ling-questions-locale` key, else the browser language. */
+export function storedLocale(storage: Pick<Storage, 'getItem'> | null | undefined, language: string): Locale {
+  for (const key of [LOCALE_KEY, 'ling-questions-locale']) {
+    try {
+      const stored = storage?.getItem(key);
+      if (stored === 'ja' || stored === 'en') return stored;
+    } catch { /* Fall through to the browser language. */ }
+  }
+  return language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
+}

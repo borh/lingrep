@@ -82,12 +82,12 @@ mod handlers_test {
         assert!(html.contains(r#"<script type="module" src="assets/editor/pattern-editor.js">"#));
         assert_eq!(html.matches(r#"aria-current="page""#).count(), 1);
         let corpus_marker = html
-            .split_once(">Corpus Search</span></a>")
-            .expect("Corpus Search nav link present")
+            .split_once(">Analysis tools</span></a>")
+            .expect("Analysis tools nav link present")
             .0;
         assert!(
             corpus_marker
-                .rsplit("<a href=\"./\"")
+                .rsplit("<a href=\"workbench\"")
                 .next()
                 .is_some_and(|segment| segment.contains(r#"aria-current="page""#))
         );
@@ -442,7 +442,7 @@ mod handlers_test {
             assert_eq!(html.matches("aria-current=\"page\"").count(), 1, "{path}");
             assert!(!html.contains("github.com/anomalyco/lingrep#pattern-syntax"));
             if path == "/workbench" {
-                assert!(html.contains(">Corpus Search</span></a>"));
+                assert!(html.contains(">Analysis tools</span></a>"));
                 continue;
             }
 

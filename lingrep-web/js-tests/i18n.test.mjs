@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lookup, localize } from "../assets/i18n.js";
+import { lookup, localize, storedLocale } from "../assets/i18n.js";
 
 /** Minimal element stand-in matching the localize contract. */
 function node({ key = null, src = "Hello", title = null } = {}) {
@@ -146,4 +146,13 @@ test("an attribute a script wrote in the active locale restores to the English e
   localize(root(n), { "nav.help": "ヘルプ" }, "ja");
   localize(root(n), { "nav.help": "ヘルプ" }, "en");
   assert.equal(n.getAttribute("aria-label"), "Help");
+});
+
+test("the page language is the shared setting, else the question page's former one, else the browser's", () => {
+  const storage = (entries) => ({ getItem: (key) => entries[key] ?? null });
+  assert.equal(storedLocale(storage({ "lingrep-web:locale:v1": "en", "ling-questions-locale": "ja" }), "ja-JP"), "en");
+  assert.equal(storedLocale(storage({ "ling-questions-locale": "ja" }), "en-US"), "ja");
+  assert.equal(storedLocale(storage({}), "ja-JP"), "ja");
+  assert.equal(storedLocale(storage({ "lingrep-web:locale:v1": "fr" }), "en-US"), "en");
+  assert.equal(storedLocale({ getItem() { throw new Error("blocked"); } }, "ja"), "ja");
 });

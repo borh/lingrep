@@ -54,9 +54,18 @@ export function seedParams(seed, hash) {
     if (overrides.has('evidence') || overrides.has('attempt'))
         for (const key of ['source', 'corpus', 'analysis', 'raw', 'run'])
             params.delete(key);
+    // An analysis identity describes one corpus, so a corpus chosen without one drops the seed's.
+    if (overrides.has('corpus') && !overrides.has('analysis') && overrides.get('corpus') !== params.get('corpus'))
+        params.delete('analysis');
     for (const [key, value] of overrides)
         params.set(key, value);
     return params;
+}
+/** The analysis identity a search of `params`' corpus expects: the address's own, else `run`'s when `run` read that corpus. */
+export function expectedAnalysis(params, run) {
+    if (params.get('analysis'))
+        return params.get('analysis');
+    return run && run.dataset === params.get('corpus') ? run.contract_run?.analysis_identity ?? null : null;
 }
 export function parseOccurrence(text) {
     if (!text)

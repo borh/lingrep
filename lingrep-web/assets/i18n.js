@@ -28,16 +28,23 @@ const save = (locale) => {
   }
 };
 
-const read = () => {
-  try {
-    const stored = globalThis.localStorage?.getItem(STORE_KEY);
-    if (stored && supported(stored)) return stored;
-  } catch (_error) {
-    // Fall through to the browser hint.
+/**
+ * The saved page language, shared with the question page: this key, else the
+ * question page's former `ling-questions-locale` key, else the browser language.
+ */
+export function storedLocale(storage, language) {
+  for (const key of [STORE_KEY, "ling-questions-locale"]) {
+    try {
+      const stored = storage?.getItem(key);
+      if (stored && supported(stored)) return stored;
+    } catch (_error) {
+      // Fall through to the browser hint.
+    }
   }
-  const nav = (globalThis.navigator?.language || "").toLowerCase();
-  return nav.startsWith("ja") ? "ja" : "en";
-};
+  return (language || "").toLowerCase().startsWith("ja") ? "ja" : "en";
+}
+
+const read = () => storedLocale(globalThis.localStorage, globalThis.navigator?.language);
 
 async function dictionary(locale) {
   if (dictionaries[locale]) return dictionaries[locale];
