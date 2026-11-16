@@ -8,7 +8,8 @@ use lingrep_core::execution::CancellationFlag;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     CountTable, CountTableError, CountTableKey, CountTableWriter, DocumentMask, DocumentTotals,
-    FieldValue, Group, GroupKind, GroupSchema, PatternTotal, TopRow, ValueSlots,
+    FieldValue, Group, GroupKind, GroupSchema, KeyEquals, KeyFieldError, KeySubset, PatternTotal,
+    TopRow, ValueSlots,
 };
 
 fn key() -> CountTableKey {
@@ -1766,4 +1767,193 @@ fn cancellation_during_value_aggregation_stops_before_the_remaining_documents() 
         ));
         assert_eq!(slots.visits.get(), cancel_after);
     }
+}
+
+/// One `npv`-shaped pattern: `(noun, particle, verb)` keys counted per
+/// document, and one surface pattern beside it.
+fn npv_table(path: &Path, entries: &[([&str; 3], &[(u32, u64)])]) -> CountTable {
+    let mut values = entries
+        .iter()
+        .flat_map(|(key, _)| key.iter().copied())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    let rank = |value: &str| values.binary_search(&value).expect("value") as u32;
+    let mut sorted = entries.to_vec();
+    sorted.sort_by_key(|(key, _)| key.map(rank));
+    let documents = [0, 1].map(|document_id| DocumentTotals {
+        document_id,
+        sentences: 10,
+        tokens: 100,
+    });
+    let mut writer = CountTableWriter::create(
+        path,
+        key(),
+        vec!["npv".into(), "nouns".into()],
+        vec![
+            GroupSchema {
+                kind: GroupKind::Key,
+                names: vec!["$n.lemma".into(), "$p.lemma".into(), "$v.lemma".into()],
+            },
+            surface(),
+        ],
+        &values,
+        &documents,
+    )
+    .expect("create");
+    for (key, pairs) in &sorted {
+        writer
+            .begin_entry(0, 0, &key.map(rank))
+            .expect("begin entry");
+        for (document, count) in *pairs {
+            writer
+                .add_sentence(*document, u64::from(*document) * 100, *count)
+                .expect("add sentence");
+        }
+    }
+    writer.begin_entry(1, 1, &[rank("坂")]).expect("begin");
+    writer.add_sentence(0, 0, 1).expect("sentence");
+    publish(writer);
+    CountTable::open(path, &key()).expect("open")
+}
+
+fn equals(fields: &[(&str, &str)]) -> KeyEquals {
+    KeyEquals::new(
+        fields
+            .iter()
+            .map(|(field, value)| ((*field).to_owned(), (*value).to_owned()))
+            .collect(),
+    )
+}
+
+#[test]
+fn a_key_subset_sums_exactly_equal_fields_before_any_limit() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = npv_table(
+        &directory.path().join("t.lingtable"),
+        &[
+            (["坂", "を", "上る"], &[(0, 6), (1, 4)]),
+            (["坂", "を", "下りる"], &[(1, 4)]),
+            (["坂", "を", "照らす"], &[(0, 1)]),
+            (["寺坂", "を", "上る"], &[(0, 9)]),
+            (["坂", "が", "ある"], &[(0, 3)]),
+            (["山", "を", "上る"], &[(1, 2)]),
+        ],
+    );
+    let cancellation = CancellationFlag::new();
+    let saka_wo = equals(&[("$n.lemma", "坂"), ("$p.lemma", "を")]);
+    let all = table.mask(|_| true);
+    assert_eq!(
+        table
+            .key_subset(0, &all, &saka_wo, &cancellation)
+            .expect("table")
+            .expect("fields"),
+        KeySubset {
+            occurrences: 15,
+            works: 2,
+            entries: 3
+        }
+    );
+    let first = table.mask(|id| id == 0);
+    assert_eq!(
+        table
+            .key_subset(0, &first, &saka_wo, &cancellation)
+            .expect("table")
+            .expect("fields"),
+        KeySubset {
+            occurrences: 7,
+            works: 1,
+            entries: 2
+        }
+    );
+    let admitted = table
+        .unranked_pattern_rows(0, &all, &cancellation)
+        .expect("rows")
+        .map(|row| row.expect("row"))
+        .filter(|row| {
+            table
+                .key_admits(0, row.entry, &saka_wo)
+                .expect("table")
+                .expect("fields")
+        })
+        .map(|row| table.group(row.entry).expect("group"))
+        .collect::<Vec<_>>();
+    let mut keys = admitted
+        .iter()
+        .map(|group| match group {
+            Group::Key(fields) => fields
+                .iter()
+                .map(|(_, value)| match value {
+                    FieldValue::Scalar(value) => *value,
+                    FieldValue::List(_) => panic!("{group:?}"),
+                })
+                .collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            ["坂", "を", "上る"],
+            ["坂", "を", "下りる"],
+            ["坂", "を", "照らす"]
+        ]
+    );
+    assert_eq!(
+        table
+            .key_subset(0, &table.mask(|_| false), &saka_wo, &cancellation)
+            .expect("table")
+            .expect("fields"),
+        KeySubset::default()
+    );
+    assert_eq!(
+        table
+            .key_subset(0, &all, &equals(&[("$n.lemma", "谷")]), &cancellation)
+            .expect("table")
+            .expect("fields"),
+        KeySubset::default()
+    );
+    assert_eq!(
+        table
+            .key_subset(0, &all, &KeyEquals::default(), &cancellation)
+            .expect("table")
+            .expect("fields"),
+        KeySubset {
+            occurrences: 29,
+            works: 2,
+            entries: 6
+        }
+    );
+}
+
+#[test]
+fn a_key_subset_names_a_field_the_pattern_lacks() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let table = npv_table(
+        &directory.path().join("t.lingtable"),
+        &[(["坂", "を", "上る"], &[(0, 1)])],
+    );
+    let all = table.mask(|_| true);
+    let cancellation = CancellationFlag::new();
+    assert_eq!(
+        table
+            .key_subset(0, &all, &equals(&[("$v.norm", "上る")]), &cancellation)
+            .expect("table"),
+        Err(KeyFieldError::UnknownField {
+            pattern: "npv".into(),
+            field: "$v.norm".into(),
+            fields: vec!["$n.lemma".into(), "$p.lemma".into(), "$v.lemma".into()],
+        })
+    );
+    assert_eq!(
+        table
+            .key_subset(1, &all, &equals(&[("$n.lemma", "坂")]), &cancellation)
+            .expect("table"),
+        Err(KeyFieldError::UnknownField {
+            pattern: "nouns".into(),
+            field: "$n.lemma".into(),
+            fields: Vec::new(),
+        })
+    );
 }

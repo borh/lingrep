@@ -10,7 +10,7 @@ use lingrep_core::scope::ScopeClause;
 use lingrep_core::spill::{SpillPolicy, TempBudget};
 use lingrep_corpus::{
     Admission, BlockingProvenance, CorpusArtifact, CountTable, CountTableError, CountTableKey,
-    FieldValue, Group, GroupKind, GroupSchema, TopRow, ValueSlots,
+    FieldValue, Group, GroupKind, GroupSchema, KeyEquals, TopRow, ValueSlots,
 };
 
 use roaring::RoaringTreemap;
@@ -26,8 +26,8 @@ use crate::output::sanitize_terminal;
 use crate::presentation::{OutputMode, resolve_summary_top};
 use crate::protocol::query::{ProtocolKeyField, SummaryGroupData};
 use crate::protocol::table::{
-    TableComplete, TableEntryCount, TableEnvelope, TableEvent, TableMetadataValue, TablePattern,
-    TableRow, TableRun,
+    TableComplete, TableEntryCount, TableEnvelope, TableEvent, TableKeyEquals, TableMetadataValue,
+    TablePattern, TableRow, TableRun, TableSubset,
 };
 use crate::protocol::write_jsonl;
 use crate::terminal::TerminalArbiter;
@@ -130,9 +130,43 @@ pub fn run(
             })
         })
         .transpose()?;
+    let key_equals = KeyEquals::new(
+        args.key
+            .iter()
+            .map(|item| match item.split_once('=') {
+                Some((field, value)) if !field.is_empty() => {
+                    Ok((field.to_owned(), value.to_owned()))
+                }
+                _ => Err(CliError::InvalidArgs(format!(
+                    "table --key takes FIELD=VALUE, not {item}"
+                ))),
+            })
+            .collect::<Result<_, _>>()?,
+    );
     let top = resolve_summary_top(output, args.top);
     let artifact = CorpusArtifact::open(&args.corpus)?;
     let (table, key) = open_table(table_path, &artifact, &catalog.fingerprint)?;
+    let selected = args
+        .select
+        .as_deref()
+        .map(|name| {
+            table
+                .pattern_names()
+                .position(|candidate| candidate == name)
+                .ok_or_else(|| {
+                    CliError::InvalidArgs(format!(
+                        "table --select: the table has no pattern {name}"
+                    ))
+                })
+        })
+        .transpose()?;
+    if let Some(pattern) = selected
+        && let Err(error) = table
+            .check_key_equals(pattern, &key_equals)
+            .map_err(table_error)?
+    {
+        return Err(CliError::InvalidArgs(format!("table --key: {error}")));
+    }
     let lookup = Instant::now();
     let entry = entry
         .map(|(pattern, entry_key)| find_entry(&table, pattern, entry_key))
@@ -179,6 +213,8 @@ pub fn run(
             requested_top: None,
             entry: args.entry.clone(),
             by_metadata: args.by_metadata.clone(),
+            select: None,
+            key: Vec::new(),
         }))?;
         for record in records {
             emit(TableEvent::MetadataValue(record))?;
@@ -199,36 +235,59 @@ pub fn run(
     let mask = table.mask(admits);
     let queried = Instant::now();
     let totals = table.pattern_totals(&mask).map_err(table_error)?;
-    let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) = if let Some(top) = top {
-        let result = table
-            .top(&mask, usize::try_from(top).unwrap_or(usize::MAX))
-            .map_err(table_error)?;
-        let admission = Admission {
-            documents_admitted: result.documents_admitted,
-            sentences_admitted: result.sentences_admitted,
-            tokens_admitted: result.tokens_admitted,
+    let (admission, mut rows): (Admission, Box<dyn Iterator<Item = _>>) =
+        if let Some(pattern) = selected {
+            let admission = table.top(&mask, 0).map_err(table_error)?;
+            let admission = Admission {
+                documents_admitted: admission.documents_admitted,
+                sentences_admitted: admission.sentences_admitted,
+                tokens_admitted: admission.tokens_admitted,
+            };
+            let rows = table
+                .ranked_pattern_rows(
+                    pattern,
+                    &mask,
+                    SpillPolicy {
+                        max_pending_bytes: usize::MAX,
+                        max_pending_keys: RESIDENT_ROWS,
+                        merge_fan_in: MERGE_FAN_IN,
+                    },
+                    Arc::new(TempBudget::new(args.max_temp_bytes)),
+                    terminal.cancellation(),
+                )
+                .map_err(table_error)?
+                .map(move |row| row.map(|row| (pattern, row)));
+            (admission, Box::new(rows))
+        } else if let Some(top) = top {
+            let result = table
+                .top(&mask, usize::try_from(top).unwrap_or(usize::MAX))
+                .map_err(table_error)?;
+            let admission = Admission {
+                documents_admitted: result.documents_admitted,
+                sentences_admitted: result.sentences_admitted,
+                tokens_admitted: result.tokens_admitted,
+            };
+            let rows = result.patterns.into_iter().flat_map(|pattern| {
+                pattern
+                    .rows
+                    .into_iter()
+                    .map(move |row| Ok::<(usize, TopRow), CountTableError>((pattern.pattern, row)))
+            });
+            (admission, Box::new(rows))
+        } else {
+            let rows = table
+                .rows(
+                    &mask,
+                    SpillPolicy {
+                        max_pending_bytes: usize::MAX,
+                        max_pending_keys: RESIDENT_ROWS,
+                        merge_fan_in: MERGE_FAN_IN,
+                    },
+                    Arc::new(TempBudget::new(args.max_temp_bytes)),
+                )
+                .map_err(table_error)?;
+            (rows.admission(), Box::new(rows))
         };
-        let rows = result.patterns.into_iter().flat_map(|pattern| {
-            pattern
-                .rows
-                .into_iter()
-                .map(move |row| Ok::<(usize, TopRow), CountTableError>((pattern.pattern, row)))
-        });
-        (admission, Box::new(rows))
-    } else {
-        let rows = table
-            .rows(
-                &mask,
-                SpillPolicy {
-                    max_pending_bytes: usize::MAX,
-                    max_pending_keys: RESIDENT_ROWS,
-                    merge_fan_in: MERGE_FAN_IN,
-                },
-                Arc::new(TempBudget::new(args.max_temp_bytes)),
-            )
-            .map_err(table_error)?;
-        (rows.admission(), Box::new(rows))
-    };
 
     if terminal.cancellation().is_cancelled() {
         return Ok(CommandOutcome::Cancelled);
@@ -253,10 +312,15 @@ pub fn run(
                 requested_top: top,
                 entry: None,
                 by_metadata: None,
+                select: args.select.clone(),
+                key: key_fields(&key_equals),
             }),
         )?;
     }
-    for total in &totals {
+    for total in totals
+        .iter()
+        .filter(|total| selected.is_none_or(|pattern| pattern == total.pattern))
+    {
         let name = names
             .get(total.pattern)
             .copied()
@@ -281,6 +345,47 @@ pub fn run(
             .map_err(|error| CliError::Execution(execution_output_io(error)))?;
         }
     }
+    let subset = match selected.filter(|_| !key_equals.is_empty()) {
+        Some(pattern) => Some(
+            table
+                .key_subset(pattern, &mask, &key_equals, terminal.cancellation())
+                .map_err(table_error)?
+                .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?,
+        ),
+        None => None,
+    };
+    if let (Some(subset), Some(pattern)) = (subset, args.select.as_deref()) {
+        if jsonl {
+            emit(
+                &mut writer,
+                TableEvent::Subset(TableSubset {
+                    pattern: pattern.to_owned(),
+                    key: key_fields(&key_equals),
+                    occurrences: subset.occurrences,
+                    works: subset.works,
+                    entries: subset.entries,
+                }),
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "subset {} {}: {} occurrences in {} documents, {} groups",
+                sanitize_terminal(pattern),
+                sanitize_terminal(
+                    &key_equals
+                        .fields()
+                        .iter()
+                        .map(|(field, value)| format!("{field}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+                subset.occurrences,
+                subset.works,
+                subset.entries
+            )
+            .map_err(|error| CliError::Execution(execution_output_io(error)))?;
+        }
+    }
     let mut emitted = 0u64;
     let mut previous_pattern = None;
     let mut rank = 0u64;
@@ -289,6 +394,19 @@ pub fn run(
             return Ok(CommandOutcome::Cancelled);
         }
         let (pattern, row) = row.map_err(table_error)?;
+        if selected.is_some() {
+            if top.is_some_and(|top| emitted >= top) {
+                break;
+            }
+            if !table
+                .key_admits(pattern, row.entry, &key_equals)
+                .map_err(table_error)?
+                .map_err(|error| CliError::InvalidArgs(format!("table --key: {error}")))?
+            {
+                continue;
+            }
+        }
+        let share = subset.map(|subset| row.count as f64 / subset.occurrences as f64);
         let name = names
             .get(pattern)
             .copied()
@@ -309,12 +427,14 @@ pub fn run(
                     group: group_data(&group),
                     count: row.count,
                     works: row.works,
+                    share,
                 }),
             )?;
         } else {
+            let share = share.map_or_else(String::new, |share| format!(" {:>6.1}%", share * 100.0));
             writeln!(
                 writer,
-                "{:>8} {:>6}  {}  {}",
+                "{:>8} {:>6}{share}  {}  {}",
                 row.count,
                 row.works,
                 sanitize_terminal(name),
@@ -346,6 +466,16 @@ pub fn run(
         .map_err(|error| CliError::Execution(execution_output_io(error)))?;
     }
     Ok(CommandOutcome::Success)
+}
+
+fn key_fields(key: &KeyEquals) -> Vec<TableKeyEquals> {
+    key.fields()
+        .iter()
+        .map(|(name, value)| TableKeyEquals {
+            name: name.clone(),
+            value: value.clone(),
+        })
+        .collect()
 }
 
 enum EntryKey {

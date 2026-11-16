@@ -934,6 +934,27 @@ pub struct TableArgs {
     )]
     pub by_metadata: Option<String>,
 
+    /// Show only PATTERN: its total, then its rows.
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        conflicts_with = "entry",
+        help_heading = "Selection"
+    )]
+    pub select: Option<String>,
+
+    /// Keep only the --select rows whose key field FIELD is exactly VALUE,
+    /// such as `--key '$n.lemma=坂'`; repeat for more fields. A `subset`
+    /// total, summed before --top, precedes the rows, and each row gives its
+    /// share of it.
+    #[arg(
+        long = "key",
+        value_name = "FIELD=VALUE",
+        requires = "select",
+        help_heading = "Selection"
+    )]
+    pub key: Vec<String>,
+
     /// Maximum bytes of temporary storage for ordering every group.
     #[arg(
         long,

@@ -2730,6 +2730,224 @@ fn table_rows_equal_summarize_where_and_by_document_works() {
     }
 }
 
+const KEYED_TABLE_CATALOG: &str = "key: [$a.text, $b.text, $c.text]\n\
+    pattern tri := (?<a> []) (?<b> []) (?<c> []).\n\
+    key: [text]\n\
+    pattern word := [].\n";
+
+/// Rows of `summarize` (`--by-document` when `by_document`) for `tri` whose
+/// key fields equal `fields`.
+fn keyed_summary(
+    artifact: &std::path::Path,
+    catalog: &std::path::Path,
+    clause: Option<&str>,
+    fields: &[(&str, &str)],
+    by_document: bool,
+) -> Vec<Value> {
+    let mut command = lingrep_without_dictionary();
+    command.args(["--json", "summarize", "--top", "all"]);
+    if by_document {
+        command.arg("--by-document");
+    }
+    command
+        .arg("--patterns")
+        .arg(catalog)
+        .arg("--corpus")
+        .arg(artifact);
+    if let Some(clause) = clause {
+        command.args(["--where", clause]);
+    }
+    let output = command.output().unwrap();
+    assert_success(&output);
+    summary_events(&parse_jsonl(&output.stdout))
+        .iter()
+        .map(|record| record["data"].clone())
+        .filter(|data| data["pattern"] == "tri")
+        .filter(|data| {
+            fields.iter().all(|(name, value)| {
+                data["group"]["fields"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|field| field["name"] == *name && field["value"] == *value)
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn table_key_subset_sums_exactly_equal_fields_and_shares_rows_before_top() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("keyed.lx");
+    fs::write(&catalog, KEYED_TABLE_CATALOG).unwrap();
+    let table = directory.path().join("keyed.lingtable");
+    write_table(&artifact, &catalog, &table);
+    for clause in [
+        None,
+        Some("@document.year = 2001"),
+        Some("@document.year = 1999"),
+    ] {
+        for (fields, top) in [
+            (&[("$a.text", "猫"), ("$b.text", "が")][..], None),
+            (&[("$a.text", "猫")][..], Some(1)),
+            (&[("$a.text", "猫が")][..], None),
+        ] {
+            let case = format!("{clause:?} {fields:?} {top:?}");
+            let expected = keyed_summary(&artifact, &catalog, clause, fields, false);
+            let occurrences = expected
+                .iter()
+                .map(|data| data["count"].as_u64().unwrap())
+                .sum::<u64>();
+            let works = keyed_summary(&artifact, &catalog, clause, fields, true)
+                .iter()
+                .map(|data| data["document"].as_u64().unwrap())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            let keys = fields
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>();
+            let top_text = top.map(|top: usize| top.to_string());
+            let mut extra = vec!["--select", "tri"];
+            for key in &keys {
+                extra.extend(["--key", key.as_str()]);
+            }
+            extra.extend(clause.iter().flat_map(|clause| ["--where", *clause]));
+            extra.extend(top_text.iter().flat_map(|top| ["--top", top.as_str()]));
+            let output = table_events(&table, &catalog, &artifact, &extra);
+            assert_success(&output);
+            let records = parse_jsonl(&output.stdout);
+            for record in &records {
+                serde_json::from_value::<lingrep::protocol::table::TableEnvelope>(record.clone())
+                    .unwrap();
+            }
+            let of = |kind: &str| {
+                records
+                    .iter()
+                    .filter(|record| record["type"] == kind)
+                    .map(|record| record["data"].clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                of("pattern")
+                    .iter()
+                    .map(|data| data["pattern"].clone())
+                    .collect::<Vec<_>>(),
+                ["tri"],
+                "{case}"
+            );
+            assert_eq!(
+                of("subset"),
+                [serde_json::json!({
+                    "pattern": "tri",
+                    "key": fields
+                        .iter()
+                        .map(|(name, value)| serde_json::json!({"name": name, "value": value}))
+                        .collect::<Vec<_>>(),
+                    "occurrences": occurrences,
+                    "works": works,
+                    "entries": expected.len(),
+                })],
+                "{case}"
+            );
+            let rows = of("row");
+            let expected_rows = expected
+                .iter()
+                .take(top.unwrap_or(usize::MAX))
+                .enumerate()
+                .map(|(rank, data)| {
+                    (
+                        rank + 1,
+                        data["group"].clone(),
+                        data["count"].as_u64().unwrap(),
+                        data["count"].as_u64().unwrap() as f64 / occurrences as f64,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows.iter()
+                    .map(|row| (
+                        row["rank"].as_u64().unwrap() as usize,
+                        row["group"].clone(),
+                        row["count"].as_u64().unwrap(),
+                        row["share"].as_f64().unwrap(),
+                    ))
+                    .collect::<Vec<_>>(),
+                expected_rows,
+                "{case}"
+            );
+        }
+    }
+
+    let unkeyed = table_events(&table, &catalog, &artifact, &["--select", "tri"]);
+    assert_success(&unkeyed);
+    let unkeyed = parse_jsonl(&unkeyed.stdout);
+    assert!(unkeyed.iter().all(|record| record["type"] != "subset"));
+    assert!(
+        unkeyed
+            .iter()
+            .filter(|record| record["type"] == "row")
+            .all(|record| record["data"]["pattern"] == "tri"
+                && record["data"].get("share").is_none())
+    );
+
+    for (case, extra, diagnostic) in [
+        (
+            "unknown field",
+            &["--select", "tri", "--key", "$a.lemma=猫"][..],
+            "$a.lemma",
+        ),
+        ("unknown pattern", &["--select", "nope"][..], "nope"),
+        (
+            "no field",
+            &["--select", "tri", "--key", "=猫"][..],
+            "FIELD=VALUE",
+        ),
+        (
+            "key without select",
+            &["--key", "$a.text=猫"][..],
+            "--select",
+        ),
+    ] {
+        let output = table_events(&table, &catalog, &artifact, extra);
+        assert_eq!(output.status.code(), Some(2), "{case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let text = lingrep_without_dictionary()
+        .arg("table")
+        .arg(&table)
+        .arg("--patterns")
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .args([
+            "--select",
+            "tri",
+            "--key",
+            "$a.text=猫",
+            "--key",
+            "$b.text=が",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&text);
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert!(lines[0].starts_with("pattern tri: "), "{stdout}");
+    assert!(
+        lines[1].starts_with("subset tri $a.text=猫 $b.text=が: "),
+        "{stdout}"
+    );
+    assert!(lines[2].contains("100.0%"), "{stdout}");
+}
+
 #[test]
 fn table_text_output_begins_with_each_pattern_total() {
     let dictionary = MiniDictionary::new();

@@ -28,6 +28,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                     max: None,
                 },
                 StreamPhase {
+                    name: "subset",
+                    events: &["subset"],
+                    min: 0,
+                    max: Some(1),
+                },
+                StreamPhase {
                     name: "rows",
                     events: &["row"],
                     min: 0,
@@ -48,15 +54,15 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "One pattern record per pattern in catalog order, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`. Under --entry, the records between run and complete are metadata_value records, in the value order of `ling summarize --by-metadata`.",
-        "Every pattern's totals under the clause, then every entry with a nonzero count under the clause, or the first --top of each pattern. Under --entry, one record per value with at least one admitted document; a final value: null record appears when admitted documents have no value.",
+        "One pattern record per pattern in catalog order (only the --select pattern under --select), then under --key one subset record, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`. Under --entry, the records between run and complete are metadata_value records, in the value order of `ling summarize --by-metadata`.",
+        "Every pattern's totals under the clause, then every entry (under --key, every entry whose key has the given field values, with its share of the subset) with a nonzero count under the clause, or the first --top of each pattern. Under --entry, one record per value with at least one admitted document; a final value: null record appears when admitted documents have no value.",
         "A closed pipe is a machine-output failure.",
         "0 complete, 1 runtime/output failure, 2 invocation failure.",
         &[],
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TableEnvelope {
     #[serde(deserialize_with = "deserialize_schema")]
     pub schema: String,
@@ -83,11 +89,12 @@ impl TableEnvelope {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum TableEvent {
     Run(TableRun),
     Pattern(TablePattern),
+    Subset(TableSubset),
     Row(TableRow),
     MetadataValue(TableMetadataValue),
     Complete(TableComplete),
@@ -107,6 +114,10 @@ pub struct TableRun {
     pub entry: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by_metadata: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key: Vec<TableKeyEquals>,
 }
 
 /// One pattern's totals over all of its entries under the clause, whatever
@@ -119,14 +130,39 @@ pub struct TablePattern {
     pub works: u64,
 }
 
+/// One `--key FIELD=VALUE`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableKeyEquals {
+    pub name: String,
+    pub value: String,
+}
+
+/// The entries of the `--select` pattern whose key fields equal every
+/// `--key` value, summed under the clause before `--top`. A subset that
+/// admits nothing is 0.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableSubset {
+    pub pattern: String,
+    pub key: Vec<TableKeyEquals>,
+    pub occurrences: u64,
+    /// Admitted documents with at least one occurrence of the subset.
+    pub works: u64,
+    /// Entries of the subset with a nonzero count.
+    pub entries: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TableRow {
     pub pattern: String,
+    /// Under --key, the rank within the subset.
     pub rank: u64,
     pub group: SummaryGroupData,
     pub count: u64,
     /// Admitted documents with at least one occurrence.
     pub works: u64,
+    /// Under --key, `count` divided by the subset's `occurrences`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<f64>,
 }
 
 /// One value of the `--by-metadata` key, shaped as a `lingrep.query/v2`

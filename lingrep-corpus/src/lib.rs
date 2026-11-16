@@ -38,9 +38,9 @@ mod mapped_index;
 pub use count_table::{
     Admission, COUNT_TABLE_FORMAT, COUNT_TABLE_VERSION, Contrast, ContrastRow, ContrastRows,
     CountTable, CountTableError, CountTableKey, CountTableStats, CountTableWriter, Direction,
-    DocumentMask, DocumentTotals, FieldValue, Group, GroupKind, GroupSchema, PatternTop,
-    PatternTotal, RankedContrast, ScopeCount, ScopeRelation, Scopes, StagedCountTable, TableRows,
-    TopResult, TopRow, ValueCount,
+    DocumentMask, DocumentTotals, FieldValue, Group, GroupKind, GroupSchema, KeyEquals,
+    KeyFieldError, KeySubset, PatternTop, PatternTotal, RankedContrast, ScopeCount, ScopeRelation,
+    Scopes, StagedCountTable, TableRows, TopResult, TopRow, ValueCount,
 };
 mod value_slots;
 pub use value_slots::{DocumentSlots, TooManyValues, ValueSlots};

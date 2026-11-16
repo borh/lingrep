@@ -22,10 +22,12 @@ use crate::publication::StagingDirectory;
 use crate::value_slots::DocumentSlots;
 
 mod contrast;
+mod key_subset;
 pub use contrast::{
     Contrast, ContrastRow, ContrastRows, Direction, RankedContrast, ScopeCount, ScopeRelation,
     Scopes,
 };
+pub use key_subset::{KeyEquals, KeyFieldError, KeySubset};
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("count tables map little-endian arrays in place");

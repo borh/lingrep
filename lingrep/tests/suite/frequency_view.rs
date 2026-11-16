@@ -539,9 +539,9 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
             "corpus_name": meta["pairs"][0]["corpus_name"],
             "catalog": "table.lx",
             "patterns": [
-                {"name": "cat", "source": "cat := [text=猫]."},
-                {"name": "word", "source": "key: [text]\npattern word := []."},
-                {"name": "pair", "source": "pattern pair := [] []."},
+                {"name": "cat", "source": "cat := [text=猫].", "key_fields": []},
+                {"name": "word", "source": "key: [text]\npattern word := [].", "key_fields": ["text"]},
+                {"name": "pair", "source": "pattern pair := [] [].", "key_fields": []},
             ],
             "workbench": meta["pairs"][0]["workbench"],
         }])
@@ -826,6 +826,123 @@ fn the_shown_command_reproduces_the_rows() {
             ))
             .collect::<Vec<_>>(),
         rows
+    );
+}
+
+#[test]
+fn exact_key_fields_select_a_subset_whose_total_and_command_match_ling_table() {
+    let fixture = fixture_with(
+        "key: [$a.text, $b.text]\n\
+         pattern pair := (?<a> []) (?<b> []).\n",
+        DOCUMENTS,
+    );
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let ask = |params: &[(&str, &str)]| {
+        let mut all = vec![
+            ("corpus", "default"),
+            ("catalog", "table.lx"),
+            ("pattern", "pair"),
+        ];
+        all.extend_from_slice(params);
+        get_json(&server, &format!("/api/frequency?{}", query(&all)))
+    };
+    let meta = get_json(&server, "/api/frequency/meta");
+    assert_eq!(
+        meta["pairs"][0]["patterns"][0]["key_fields"],
+        json!(["$a.text", "$b.text"])
+    );
+    let whole = ask(&[("limit", "1000")]);
+    let cat = r#"{"$a.text":"猫"}"#;
+    let keyed = ask(&[("k", cat), ("limit", "1000")]);
+    let expected = whole["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["group"]["fields"][0]["value"] == "猫")
+        .map(|row| (row["group"].clone(), row["count"].clone()))
+        .collect::<Vec<_>>();
+    assert!(expected.len() > 1, "{whole}");
+    assert_eq!(
+        keyed["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (row["group"].clone(), row["count"].clone()))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let occurrences = expected
+        .iter()
+        .map(|(_, count)| count.as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(keyed["occurrences"], whole["occurrences"]);
+    assert_eq!(keyed["subset"]["occurrences"], occurrences);
+    assert_eq!(keyed["subset"]["entries"], expected.len());
+    assert_eq!(keyed["entries"], expected.len());
+
+    let page = ask(&[("k", cat), ("limit", "1"), ("offset", "1")]);
+    assert_eq!(page["subset"], keyed["subset"]);
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["rank"], 2);
+
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            &format!(
+                "ling() {{ \"$LINGREP_BINARY\" --json \"$@\"; }}\n{}",
+                keyed["command"].as_str().unwrap()
+            ),
+        ])
+        .env("LINGREP_BINARY", lingrep_binary_path())
+        .current_dir(fixture.directory.path())
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert!(
+        keyed["command"]
+            .as_str()
+            .unwrap()
+            .contains("--select 'pair' --key '$a.text=猫'"),
+        "{}",
+        keyed["command"]
+    );
+    let records = parse_jsonl(&output.stdout);
+    let subset = records
+        .iter()
+        .find(|record| record["type"] == "subset")
+        .unwrap();
+    for field in ["occurrences", "works", "entries"] {
+        assert_eq!(subset["data"][field], keyed["subset"][field], "{field}");
+    }
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["type"] == "row")
+            .map(|record| (
+                record["data"]["group"].clone(),
+                record["data"]["count"].clone()
+            ))
+            .collect::<Vec<_>>(),
+        expected
+    );
+
+    let none = ask(&[("k", r#"{"$a.text":"象"}"#)]);
+    assert_eq!(
+        (&none["status"], &none["subset"], &none["rows"]),
+        (
+            &json!("ok"),
+            &json!({"occurrences": 0, "works": 0, "entries": 0}),
+            &json!([])
+        )
+    );
+    let unknown = ask(&[("k", r#"{"$a.lemma":"猫"}"#)]);
+    assert_eq!(
+        (&unknown["status"], &unknown["reason"]),
+        (&json!("unsupported"), &json!("key_field"))
+    );
+    assert!(
+        unknown["message"].as_str().unwrap().contains("$a.lemma"),
+        "{unknown}"
     );
 }
 

@@ -421,3 +421,8 @@
   .fq { --fq-size: 18px; --fq-lead: 24px; }
   .fq .spread, .fq table.freq th:nth-child(5), .fq table.freq td:nth-child(5) { display: none; }
 }
+
+.fq-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.95rem; }
+.fq-key-label { color: var(--fq-soft); }
+.fq-key label { display: inline-flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
+.fq-key input { font: inherit; width: 7em; }

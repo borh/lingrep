@@ -99,6 +99,9 @@ struct QueryParams {
     sort: Sort,
     #[serde(default)]
     q: String,
+    /// Exact key predicates as a JSON object of field names to values.
+    #[serde(default)]
+    k: Option<String>,
     #[serde(default)]
     offset: usize,
     #[serde(default)]
@@ -239,6 +242,16 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         Ok(conditions) => conditions,
         Err(response) => return *response,
     };
+    let key = match params.k.as_deref().map(serde_json::from_str).transpose() {
+        Ok(key) => key.unwrap_or_default(),
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("k: {error}")})),
+            )
+                .into_response();
+        }
+    };
     let pattern = params.pattern.clone();
     let query = crate::frequency::Query {
         pattern: params.pattern,
@@ -246,6 +259,7 @@ async fn query(State(store): State<RequestStore>, Query(params): Query<QueryPara
         clause: params.clause,
         sort: params.sort,
         filter: params.q,
+        key,
         offset: params.offset,
         limit: params.limit,
     };

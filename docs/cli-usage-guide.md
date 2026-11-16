@@ -520,6 +520,26 @@ JSON output without `--top`, groups are ordered through temporary files, which
 gives the admitted documents, sentences and tokens. The output contract is
 `lingrep.table/v1`, whose `pattern` records carry the totals.
 
+`--select PATTERN` limits the output to one pattern's total and rows.
+`--key FIELD=VALUE`, repeatable and only with `--select`, keeps the rows whose
+compound key has exactly that value in that field; other fields are
+unrestricted. Equality is exact, so `--key '$n.lemma=坂'` keeps `坂` and
+omits `寺坂`, unlike a substring search over printed keys:
+
+```bash
+ling table class6.table --corpus natsume.lingcorpus --patterns class6.lx \
+  --select npv --key '$n.lemma=坂' --key '$p.lemma=を' --top all
+```
+
+Under `--key`, a `subset` record follows the `pattern` record. It gives the
+admitted occurrences of every selected row, summed before `--top`, the admitted
+documents holding any of them, and the number of rows. Each row then gives its
+`share` of the subset's occurrences and its rank within the subset; terminal
+output prints the share as a percentage. The `pattern` record keeps the whole
+pattern's total, and both totals use the same `--where` clause. A subset that
+matches no row gives 0 and no rows. A FIELD that is not a field of the
+pattern's key, or one whose values are lists, is rejected with exit code `2`.
+
 `ling table` and `ling contrast` verify the table's contents before publishing
 results. This integrity read scales with the table size; it does not repeat
 matching or tokenization.
@@ -2229,7 +2249,12 @@ selected values remain available outside the first page. Each condition shows
 the number of occurrences that satisfy all conditions as a share of those that
 satisfy the other conditions. The page shows the corresponding `ling table …
 --where …` command. The view applies its selected sort order and substring
-filter separately. Command paths are relative to the common parent directory of
+filter separately. For a pattern whose key has several fields, one input per
+field selects rows whose field equals the typed value exactly; the figures
+line then gives the subset's occurrences, documents and rows beside the whole
+pattern's total, a "Share of subset" column divides each row's count by the
+subset's occurrences, and the command adds the equivalent `--select` and
+`--key` options. Command paths are relative to the common parent directory of
 the table, corpus and catalog files; run the copied command from that directory.
 Absolute server paths are omitted. When the inputs share only the filesystem
 root, the command uses `TABLE.lingtable`, `CORPUS.lingcorpus` and `CATALOG.lx`;

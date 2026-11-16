@@ -7,7 +7,7 @@ use std::sync::Arc;
 use lingrep_core::corpus::{Metadata, MetadataScalar, MetadataValue, metadata_from_json};
 use lingrep_core::scope::{DocumentOutcome, ExclusionReason, ScopeClause, Verdict};
 use lingrep_corpus::{
-    CountTable, CountTableError, CountTableKey, DocumentMask, FieldValue, Group, TopRow,
+    CountTable, CountTableError, CountTableKey, DocumentMask, FieldValue, Group, KeyEquals, TopRow,
     format_identity,
 };
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,9 @@ pub struct FrequencyPair {
 pub struct PatternSource {
     pub name: String,
     pub source: Option<String>,
+    /// The field names of the pattern's compound keys, which exact key
+    /// predicates can name.
+    pub key_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -134,6 +137,11 @@ pub enum Unsupported {
     },
     /// The pattern has no entry with the given group.
     UnknownEntry,
+    /// An exact key predicate names a field the pattern's keys lack, or one
+    /// holding a list.
+    KeyField {
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -153,6 +161,8 @@ pub struct Query {
     pub clause: Option<String>,
     pub sort: Sort,
     pub filter: String,
+    /// Key fields that must equal the given values exactly.
+    pub key: BTreeMap<String, String>,
     pub offset: usize,
     pub limit: usize,
 }
@@ -183,13 +193,25 @@ pub struct Answer {
     pub works: u64,
     pub documents_admitted: u64,
     pub tokens_admitted: u64,
-    /// Entries with a nonzero count, and those the filter keeps.
+    /// Entries with a nonzero count, or under exact key predicates those
+    /// they admit, and those the text filter keeps.
     pub entries: u64,
     pub matching: u64,
     /// For each condition that writes a predicate, the occurrences under
     /// every condition and under every condition except it.
     pub kept: BTreeMap<String, Kept>,
+    /// Under exact key predicates, the entries they admit, summed before
+    /// the text filter, paging and limits.
+    pub subset: Option<Subset>,
     pub rows: Vec<Row>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Subset {
+    pub occurrences: u64,
+    /// Admitted documents with at least one occurrence of the subset.
+    pub works: u64,
+    pub entries: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -531,11 +553,16 @@ impl FrequencyViews {
             .map_err(|message| format!("catalog {catalog}: {message}"))?;
             let patterns = table
                 .pattern_names()
-                .map(|name| PatternSource {
-                    name: name.to_owned(),
-                    source: definition_source(source, name),
+                .enumerate()
+                .map(|(pattern, name)| {
+                    Ok(PatternSource {
+                        name: name.to_owned(),
+                        source: definition_source(source, name),
+                        key_fields: table.pattern_key_fields(pattern)?,
+                    })
                 })
-                .collect();
+                .collect::<Result<_, CountTableError>>()
+                .map_err(|error| format!("catalog {catalog}: {error}"))?;
             let workbench = crate::permalink::encode_query_only(source, name.as_str(), None, None)
                 .ok()
                 .map(|query| format!("./{query}"));
@@ -1107,8 +1134,18 @@ impl FrequencyPair {
         })
     }
 
-    fn command(&self, clause: &str) -> String {
-        self.ling_command("table ", &[("--where", clause)])
+    fn command(&self, clause: &str, pattern: &str, key: &KeyEquals) -> String {
+        let keys = key
+            .fields()
+            .iter()
+            .map(|(field, value)| format!("{field}={value}"))
+            .collect::<Vec<_>>();
+        let mut options = vec![("--where", clause)];
+        if !keys.is_empty() {
+            options.push(("--select", pattern));
+            options.extend(keys.iter().map(|key| ("--key", key.as_str())));
+        }
+        self.ling_command("table ", &options)
     }
 
     fn ling_command(&self, head: &str, options: &[(&str, &str)]) -> String {
@@ -1181,9 +1218,31 @@ impl FrequencyPair {
             Ok(clause) => clause,
             Err(unsupported) => return Ok(Outcome::Unsupported(unsupported)),
         };
+        let key = KeyEquals::new(query.key.clone().into_iter().collect());
+        if let Err(error) = self.table.check_key_equals(pattern, &key)? {
+            return Ok(Outcome::Unsupported(Unsupported::KeyField {
+                message: error.to_string(),
+            }));
+        }
         self.admit_query()?;
         let mask = self.mask(&self.admitted(clause.as_ref(), cancellation)?);
         check_cancellation(cancellation)?;
+        let subset = if key.is_empty() {
+            None
+        } else {
+            match self.table.key_subset(pattern, &mask, &key, cancellation)? {
+                Ok(subset) => Some(Subset {
+                    occurrences: subset.occurrences,
+                    works: subset.works,
+                    entries: subset.entries,
+                }),
+                Err(error) => {
+                    return Ok(Outcome::Unsupported(Unsupported::KeyField {
+                        message: error.to_string(),
+                    }));
+                }
+            }
+        };
         let totals = self.table.pattern_totals(&mask)?;
         let total = totals[pattern];
         let mut kept = BTreeMap::new();
@@ -1259,6 +1318,15 @@ impl FrequencyPair {
         let mut matching = 0;
         for entry in entries {
             let entry = entry?;
+            match self.table.key_admits(pattern, entry.entry, &key)? {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    return Ok(Outcome::Unsupported(Unsupported::KeyField {
+                        message: error.to_string(),
+                    }));
+                }
+            }
             entry_count += 1;
             let text = if (query.sort == Sort::Key && !past_end) || !query.filter.is_empty() {
                 let group = self.table.bounded_group(entry.entry, MAX_QUERY_ITEMS)?;
@@ -1323,7 +1391,7 @@ impl FrequencyPair {
             .collect::<Result<_, QueryError>>()?;
         let admission = self.table.top(&mask, 0)?;
         Ok(Outcome::Answer(Answer {
-            command: self.command(&clause_text),
+            command: self.command(&clause_text, &query.pattern, &key),
             clause: clause_text,
             occurrences: total.occurrences,
             works: total.works,
@@ -1332,6 +1400,7 @@ impl FrequencyPair {
             entries: entry_count,
             matching,
             kept,
+            subset,
             rows,
         }))
     }
@@ -1561,6 +1630,7 @@ pub(crate) mod tests {
                 patterns: vec![PatternSource {
                     name: "p".into(),
                     source: None,
+                    key_fields: Vec::new(),
                 }],
                 workbench: None,
                 matcher: None,

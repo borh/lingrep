@@ -41,3 +41,18 @@ test("reading valid conditions preserves defaults, ranges, Unicode and unconsume
     }
   }
 });
+
+test("exact key values round-trip through the frequency address and malformed ones are rejected", async () => {
+  const { stateEntries } = await import("../assets/frequency.js");
+  const k = { "$n.lemma": "坂", "$p.lemma": "を" };
+  const state = frequencyState(`#${new URLSearchParams({ pattern: "npv", k: JSON.stringify(k) })}`);
+  assert.equal(state.bad, false);
+  assert.deepEqual(state.k, k);
+  assert.deepEqual(frequencyState(`#${new URLSearchParams(stateEntries(state))}`).k, k);
+  assert.equal(stateEntries({ ...state, k: {} }).some(([key]) => key === "k"), false);
+  for (const value of [null, [], "坂", { "$n.lemma": 1 }, { "$n.lemma": ["坂"] }]) {
+    const bad = frequencyState(`#${new URLSearchParams({ k: JSON.stringify(value) })}`);
+    assert.equal(bad.bad, true, JSON.stringify(value));
+    assert.deepEqual(bad.k, {});
+  }
+});

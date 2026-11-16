@@ -62,6 +62,7 @@ const REASONS = {
   unwritable: "views.reason_unwritable",
   shape: "views.reason_shape",
   unknown_entry: "frequency.reason_unknown_entry",
+  key_field: "views.reason_key_field",
 };
 
 /** Localizes an unsupported-query reason; unknown reason codes remain visible. */

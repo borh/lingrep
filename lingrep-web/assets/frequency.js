@@ -6,7 +6,7 @@ import { api, conditionText, esc, fieldName, fullStop, isAny, latestRequest, loa
 const PAGE = 100;
 const LINES = 50;
 const REST = 120;
-const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "entry", "read", "scope"];
+const KEYS = ["corpus", "catalog", "pattern", "w", "where", "sort", "q", "k", "entry", "read", "scope"];
 
 export const pctOf = (x, y) =>
   !y ? "0" : x && x / y < 0.01 ? "<1" : x < y && Math.round((x / y) * 100) === 100 ? (Math.floor((x / y) * 1000) / 10).toFixed(1) : String(Math.round((x / y) * 100));
@@ -27,7 +27,16 @@ export function validConditions(value) {
 
 export function readState(hash) {
   const h = new URLSearchParams(hash.replace(/^#/, ""));
-  const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", entry: h.get("entry"), read: h.get("read"), scope: h.get("scope"), bad: false };
+  const s = { corpus: h.get("corpus"), catalog: h.get("catalog"), pattern: h.get("pattern"), w: {}, where: h.get("where"), sort: h.get("sort") || "count", q: h.get("q") || "", k: {}, entry: h.get("entry"), read: h.get("read"), scope: h.get("scope"), bad: false };
+  if (h.get("k")) {
+    try {
+      const k = JSON.parse(h.get("k"));
+      if (k !== null && typeof k === "object" && !Array.isArray(k) && Object.values(k).every((v) => typeof v === "string")) s.k = k;
+      else s.bad = true;
+    } catch {
+      s.bad = true;
+    }
+  }
   if (h.get("w")) {
     try {
       const w = JSON.parse(h.get("w"));
@@ -44,8 +53,8 @@ export function stateEntries(s) {
   const out = [];
   for (const k of KEYS) {
     const v = s[k];
-    if (v === null || v === undefined || v === "" || (k === "w" && !Object.keys(v).length) || (k === "sort" && v === "count")) continue;
-    out.push([k, k === "w" ? JSON.stringify(v) : String(v)]);
+    if (v === null || v === undefined || v === "" || ((k === "w" || k === "k") && !Object.keys(v).length) || (k === "sort" && v === "count")) continue;
+    out.push([k, k === "w" || k === "k" ? JSON.stringify(v) : String(v)]);
   }
   return out;
 }
@@ -213,8 +222,18 @@ export function mountFrequency(root) {
         order: blank(role(roles.order), select("sort", roles.order, SORTS.map(([value, key]) => [value, t(key)]), s.sort)),
         filter: blank(role(roles.filter, "filter"), `<input data-b="q" type="search" placeholder="${esc(t("frequency.placeholder"))}" aria-label="${esc(roles.filter)}" value="${esc(s.q)}">`),
         stop: fullStop(),
-      }) + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t("frequency.add_label"))}">${esc(t("views.add"))}</button>` : "")
+      }) + keyFieldsHtml() + (free ? `<button class="add" data-b="add" aria-haspopup="menu" aria-expanded="${picker.isOpen(null)}" aria-label="${esc(t("frequency.add_label"))}">${esc(t("views.add"))}</button>` : "")
     );
+  }
+
+  const keyFields = () => pair()?.patterns.find((x) => x.name === s.pattern)?.key_fields ?? [];
+  const keyEquals = () => Object.fromEntries(Object.entries(s.k).filter(([, v]) => v !== ""));
+  /** One exact-match input per field of the pattern's compound key. */
+  function keyFieldsHtml() {
+    const fields = keyFields();
+    if (fields.length < 2) return "";
+    const label = t("frequency.key_equals");
+    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label><code>${esc(f)}</code> = <input data-k="${esc(f)}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
   }
 
   function renderSentence() {
@@ -275,7 +294,9 @@ export function mountFrequency(root) {
   }
 
   function renderFigures() {
-    figuresEl.textContent = answer && !entering() ? t("frequency.figures", { entries: num(answer.entries), occurrences: num(answer.occurrences), documents: num(answer.documents_admitted) }) : "";
+    if (!answer || entering()) figuresEl.textContent = "";
+    else if (answer.subset) figuresEl.textContent = t("frequency.subset_figures", { key: Object.entries(keyEquals()).map(([f, v]) => `${f} = ${v}`).join(", "), entries: num(answer.subset.entries), occurrences: num(answer.subset.occurrences), works: num(answer.subset.works), total: num(answer.occurrences), documents: num(answer.documents_admitted) });
+    else figuresEl.textContent = t("frequency.figures", { entries: num(answer.entries), occurrences: num(answer.occurrences), documents: num(answer.documents_admitted) });
   }
 
   function renderClause() {
@@ -339,7 +360,8 @@ export function mountFrequency(root) {
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
     const names = keyNames(r.group);
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${names ? `<small>${esc(names)}</small>` : ""}</td><td class="fig r"><b>${num(r.count)}</b></td><td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${names ? `<small>${esc(names)}</small>` : ""}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -352,10 +374,11 @@ export function mountFrequency(root) {
       return;
     }
     if (!answer.rows.length) {
-      tableEl.innerHTML = `<p class="fq-empty">${esc(s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
+      tableEl.innerHTML = `<p class="fq-empty">${esc(answer.subset && answer.occurrences ? t("frequency.no_key_match") : s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
       return;
     }
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${HEADS.map((h, i) => `<th class="${[0, 2, 3, 5].includes(i) ? "r" : ""}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${h === "views.head_entry" || h === "frequency.head_share" ? "" : "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);
@@ -389,14 +412,20 @@ export function mountFrequency(root) {
     const b = e.target.dataset.b;
     if (b === "catalog") {
       const [corpus, catalog] = e.target.value.split("\n");
-      set({ corpus, catalog, pattern: null, w: corpus === s.corpus ? s.w : {}, q: "", entry: null });
-    } else if (b === "pattern") set({ pattern: e.target.value, entry: null });
+      set({ corpus, catalog, pattern: null, w: corpus === s.corpus ? s.w : {}, q: "", k: {}, entry: null });
+    } else if (b === "pattern") set({ pattern: e.target.value, k: {}, entry: null });
     else if (b === "sort") set({ sort: e.target.value });
   });
   let typing;
   sentenceEl.addEventListener("input", (e) => {
-    if (e.target.dataset.b !== "q") return;
-    s.q = e.target.value;
+    const field = e.target.dataset.k;
+    if (field != null) {
+      const k = { ...s.k };
+      if (e.target.value) k[field] = e.target.value;
+      else delete k[field];
+      s.k = k;
+    } else if (e.target.dataset.b === "q") s.q = e.target.value;
+    else return;
     clearTimeout(typing);
     typing = setTimeout(() => {
       persist();
@@ -796,7 +825,7 @@ export function mountFrequency(root) {
     set({ w: { ...s.w, [key]: next } });
   });
 
-  const params = () => ({ corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, w: s.where == null ? conditions() : undefined, where: s.where ?? undefined, sort: s.sort, q: s.q, limit: PAGE });
+  const params = () => ({ corpus: s.corpus, catalog: s.catalog, pattern: s.pattern, w: s.where == null ? conditions() : undefined, where: s.where ?? undefined, sort: s.sort, q: s.q, k: Object.keys(keyEquals()).length ? JSON.stringify(keyEquals()) : undefined, limit: PAGE });
 
   function renderAll() {
     const r = resolve();

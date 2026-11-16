@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ling table --select PATTERN --key FIELD=VALUE` keeps the rows whose
+  compound key has exactly the given field values, and reports their summed
+  occurrences in a `subset` record and each row's share of them. The
+  Frequencies view offers the same exact-match inputs per key field.
 - `ling serve` and `lingrep-web` accept `--vectors FILE`. With a word-vector
   file, the Workbench reports a file that the catalog's `vectors:` lines do not
   name, its Definition tab lists the values each `near` test selects, and a
