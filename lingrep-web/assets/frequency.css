@@ -425,7 +425,9 @@
   .fq { --fq-size: 18px; --fq-lead: 24px; }
   /* Room above each wrapped line for its blanks' role captions. */
   .fq-sentence, :lang(ja) .fq-sentence { line-height: 3.3; }
-  .fq .spread, .fq table.freq th:nth-child(5), .fq table.freq td:nth-child(5) { display: none; }
+  .fq .spread { display: none; }
+  .fq table.freq th:first-child { width: auto; }
+  .fq .entry-cell { min-width: 5em; }
 }
 
 .fq-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.95rem; }
@@ -448,5 +450,6 @@ html:root {
   --fq-accent-wash: var(--wash);
 }
 .site + main { margin: 1rem 2rem 2rem; }
+@media (max-width: 40rem) { .site + main { margin-inline: 0.5rem; } }
 .fq-kwic mark.kb { background: none; color: inherit; padding: 0; font-weight: 600; text-decoration: underline; text-decoration-color: var(--fq-accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .fq-entry-name:focus { outline: none; }

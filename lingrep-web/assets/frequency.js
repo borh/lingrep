@@ -13,6 +13,8 @@ export const pctOf = (x, y) =>
 
 const SORTS = [["count", "frequency.sort_count"], ["works", "frequency.sort_works"], ["key", "frequency.sort_key"]];
 const HEADS = ["views.head_rank", "views.head_entry", "views.head_occurrences", "views.head_documents", "frequency.head_share", "frequency.head_per_million"];
+/** A header's class where it is not a right-aligned figure; the narrow layout hides `spread` from the header and the rows alike. */
+const HEAD_CLASS = { "views.head_entry": "", "frequency.head_share": "spread" };
 const TABLE_HEADS = ["frequency.head_value", "views.head_occurrences", "views.head_documents"];
 
 
@@ -423,7 +425,7 @@ export function mountFrequency(root) {
       return;
     }
     const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${h === "views.head_entry" || h === "frequency.head_share" ? "" : "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);

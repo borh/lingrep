@@ -2602,3 +2602,149 @@ async fn an_opened_or_restored_entry_takes_focus_at_its_name() -> WebDriverResul
     result?;
     Ok(())
 }
+
+/// The `noun` pattern counted as an `n · p · v` key, as the class's `npv`
+/// is, so its table gains the subset column once an exact field is set.
+fn write_key_table(artifact: &std::path::Path, destination: &std::path::Path) {
+    let entries: [([&str; 3], &[(u32, u64)]); 4] = [
+        (["坂", "を", "上る"], &[(0, 6), (1, 4)]),
+        (["坂", "を", "下りる"], &[(1, 4)]),
+        (["坂", "が", "ある"], &[(0, 3)]),
+        (["山", "を", "上る"], &[(1, 2)]),
+    ];
+    let mut values = entries
+        .iter()
+        .flat_map(|(key, _)| key.iter().copied())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    let rank = |value: &str| values.binary_search(&value).unwrap() as u32;
+    let mut sorted = entries.to_vec();
+    sorted.sort_by_key(|(key, _)| key.map(rank));
+    let documents = (0..6u64)
+        .map(|document_id| DocumentTotals {
+            document_id,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let mut writer = CountTableWriter::create(
+        destination,
+        table_key(artifact, CATALOG),
+        vec!["noun".into(), "verb".into()],
+        vec![
+            GroupSchema {
+                kind: GroupKind::Key,
+                names: vec!["$n.lemma".into(), "$p.lemma".into(), "$v.lemma".into()],
+            },
+            GroupSchema {
+                kind: GroupKind::Surface,
+                names: Vec::new(),
+            },
+        ],
+        &values,
+        &documents,
+    )
+    .unwrap();
+    for (key, pairs) in &sorted {
+        writer.begin_entry(0, 0, &key.map(rank)).unwrap();
+        for (document, count) in *pairs {
+            writer
+                .add_sentence(*document, u64::from(*document), *count)
+                .unwrap();
+        }
+    }
+    writer.begin_entry(1, 1, &[rank("上る")]).unwrap();
+    writer.add_sentence(0, 0, 1).unwrap();
+    writer
+        .finish(&CancellationFlag::new())
+        .unwrap()
+        .publish()
+        .unwrap();
+}
+
+/// Every visible header of the table and the first row's visible cells, as
+/// column extents, with the header over the per-million values and the
+/// entry cell's width in its own font size.
+const COLUMNS: &str = r"
+const shown = (e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0;
+const extent = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; };
+const heads = [...document.querySelectorAll('table.freq thead th')].filter(shown);
+const cells = [...document.querySelectorAll('table.freq tbody tr:first-child td')].filter(shown);
+const pm = document.querySelector('table.freq tbody tr:first-child td.pm');
+const entry = document.querySelector('table.freq tbody tr:first-child td.entry-cell');
+const over = heads.find((h) => { const [l, r] = extent(h), [a, b] = extent(pm); return l === a && r === b; });
+return {
+  heads: heads.map((h) => [h.textContent, ...extent(h)]),
+  cells: cells.map((c) => [c.textContent, ...extent(c)]),
+  perMillion: over ? over.textContent : null,
+  entryEms: entry.getBoundingClientRect().width / parseFloat(getComputedStyle(entry).fontSize),
+  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+};";
+
+/// At phone width the table hides the same columns from its header and its
+/// rows, so each visible header stays over its own values, with and without
+/// the subset column an exact-match field adds; the entry stays readable.
+#[tokio::test]
+async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    driver.set_window_rect(0, 0, 390, 844).await?;
+    let served = serve_artifact(
+        support::build_artifact_with_metadata(
+            (0..6u64)
+                .map(|index| {
+                    (
+                        "doc.md",
+                        index,
+                        false,
+                        vec![vec![TokenInfo::default().with_orth("x")]],
+                    )
+                })
+                .collect(),
+            Vec::new(),
+            metadata(),
+        ),
+        CATALOG,
+        write_key_table,
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &served.base, ROWS).await?;
+        driver
+            .execute("localStorage.setItem('lingrep-web:locale:v1', 'ja')", Vec::new())
+            .await?;
+        let exact = serde_urlencoded::to_string([("k", json!({"$n.lemma": "坂"}).to_string())]).unwrap();
+        for (address, subset) in [
+            (format!("{}#pattern=noun&{exact}", served.base), true),
+            (format!("{}#pattern=noun", served.base), false),
+        ] {
+            open(&driver, &address, ROWS).await?;
+            let subset_head = "return [...document.querySelectorAll('table.freq thead th')].some((h) => h.textContent === '絞り込み内の割合')";
+            if subset {
+                wait_for(&driver, subset_head, "the subset column").await?;
+            }
+            let columns = driver.execute(COLUMNS, Vec::new()).await?.json().clone();
+            let heads = columns["heads"].as_array().unwrap();
+            let cells = columns["cells"].as_array().unwrap();
+            assert_eq!(heads.len(), cells.len(), "{subset}: {columns}");
+            for (head, cell) in heads.iter().zip(cells) {
+                assert_eq!(
+                    (&head[1], &head[2]),
+                    (&cell[1], &cell[2]),
+                    "{subset}: {head} over {cell}"
+                );
+            }
+            assert_eq!(columns["perMillion"], json!("100万語あたり"), "{subset}: {columns}");
+            assert!(columns["entryEms"].as_f64().unwrap() >= 4.0, "{subset}: {columns}");
+            assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
+        }
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
