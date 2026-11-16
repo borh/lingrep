@@ -67,6 +67,7 @@ from lingrep_adapter_protocol import (
 )
 
 from .bundle import (
+    admit_saved_transformers,
     digest_json,
     load_profile,
     resource_manifest_digest,
@@ -492,6 +493,7 @@ def load_spacy_pipeline(
     if selection is None:
         raise ValueError(f"spaCy model does not provide {selection_key}")
     config = spacy.util.load_config(root / "config.cfg")
+    admit_saved_transformers(config)
     all_components = list(config["nlp"]["pipeline"])
     selected = [component["name"] for component in selection["components"]]
     pipeline = spacy.load(
@@ -721,6 +723,7 @@ def _runtime_description(
         "ginza",
         "ja-ginza",
         "ja-ginza-electra",
+        "ja-ginza-bert-large",
         "torch",
         cupy_distribution,
     ):

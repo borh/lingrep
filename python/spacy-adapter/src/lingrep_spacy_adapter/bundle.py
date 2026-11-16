@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,156 @@ MORPH_TARGETS = {
     "token.pos": lambda token: bool(token.pos_),
     "token.tag": lambda token: bool(token.tag_),
 }
+# GiNZA's `transformer_custom` component loads its transformer by Hugging Face
+# repository name, from whatever commit the repository's `main` names when the
+# model loads. Setup fetches the commit pinned here instead and saves the
+# weights inside the model directory, where the resource manifest covers them.
+HUB_FACTORY = "transformer_custom"
+HUB_REVISIONS = {
+    "megagonlabs/transformers-ud-japanese-bert-large-ginza": (
+        "7683285d102ba2098cf5f2641388cd69c7406241"
+    ),
+    "megagonlabs/transformers-ud-japanese-electra-base-ginza-v5.3": (
+        "5858be1efff32fcac88a6d2e3747df129c9dfe4a"
+    ),
+}
+HUB_SOURCES_FILE = "lingrep-hub-sources.json"
+# The Electra repository's tokenizer_config.json names this class through an
+# `auto_map` entry whose modeling.py only imports it from sudachitra. Registering
+# the class from the locked sudachitra lets the tokenizer load without running
+# repository code.
+SUDACHITRA_TOKENIZER = "modeling.ElectraSudachipyTokenizer"
+
+
+def save_model(model: str, destination: Path, *, offline: bool = False) -> None:
+    """Save an installed or local spaCy model so that loading reads only files
+    inside ``destination``.
+
+    A GiNZA transformer is fetched at its pinned revision, loaded from that local
+    copy, saved with its weights, and switched to spacy-transformers' stock
+    ``transformer`` factory, which loads the saved weights instead of the Hub.
+    """
+
+    import spacy
+
+    source = _model_path(spacy, model)
+    config = spacy.util.load_config(source / "config.cfg")
+    sources = {}
+    for name, component in config["components"].items():
+        if component.get("factory") != HUB_FACTORY:
+            continue
+        repository = component["model"]["name"]
+        if repository not in HUB_REVISIONS:
+            raise ValueError(
+                f"component {name!r} loads {repository} from the Hugging Face Hub, "
+                "and lingrep pins no revision of it"
+            )
+        sources[name] = {
+            "repository": repository,
+            "revision": HUB_REVISIONS[repository],
+        }
+    if not sources:
+        spacy.load(source).to_disk(destination)
+        return
+    if offline:
+        raise ValueError(
+            f"{model} needs Hugging Face downloads; rerun setup without --offline"
+        )
+    import tempfile
+
+    from huggingface_hub import snapshot_download
+
+    with tempfile.TemporaryDirectory(prefix="lingrep-hub-") as directory:
+        hub = Path(directory)
+        for value in sources.values():
+            local = hub / value["repository"]
+            snapshot_download(
+                value["repository"], revision=value["revision"], local_dir=local
+            )
+            _drop_sudachitra_auto_map(local / "tokenizer_config.json")
+        _register_sudachitra_tokenizer()
+        # transformer_custom passes the repository name to from_pretrained, which
+        # reads a directory of that relative name before it consults the Hub, so
+        # a loaded name equal to the pinned repository was read from the download.
+        previous = Path.cwd()
+        os.chdir(hub)
+        try:
+            pipeline = spacy.load(source)
+        finally:
+            os.chdir(previous)
+        for name, value in sources.items():
+            loaded = _hf_transformer(pipeline.get_pipe(name)).config._name_or_path
+            if loaded != value["repository"]:
+                raise ValueError(f"component {name!r} loaded {loaded}, not the pin")
+        pipeline.to_disk(destination)
+    saved = spacy.util.load_config(destination / "config.cfg")
+    for name in sources:
+        saved["components"][name]["factory"] = "transformer"
+    saved.to_disk(destination / "config.cfg")
+    (destination / HUB_SOURCES_FILE).write_bytes(canonical_json(sources) + b"\n")
+
+
+def admit_saved_transformers(config: Mapping[str, Any]) -> None:
+    """Reject Hub-loading components and register saved tokenizer classes."""
+
+    factories = {
+        component.get("factory") for component in config["components"].values()
+    }
+    if HUB_FACTORY in factories:
+        raise ValueError(
+            "model loads a transformer from the Hugging Face Hub; "
+            "save it with lingrep-spacy-setup, which stores the weights in the model"
+        )
+    if "transformer" in factories:
+        _register_sudachitra_tokenizer()
+
+
+def _register_sudachitra_tokenizer() -> None:
+    try:
+        from sudachitra import ElectraSudachipyTokenizer
+    except ImportError:
+        return
+    from transformers import AutoTokenizer
+
+    AutoTokenizer.register(
+        ElectraSudachipyTokenizer.__name__,
+        slow_tokenizer_class=ElectraSudachipyTokenizer,
+        exist_ok=True,
+    )
+
+
+def _model_path(spacy: Any, model: str) -> Path:
+    path = Path(model)
+    if path.is_dir():
+        return path
+    try:
+        package = spacy.util.get_package_path(model)
+        meta = spacy.util.get_model_meta(package)
+    except (ImportError, OSError) as error:
+        raise ValueError(
+            "spaCy model is unavailable; install its wheel in the same "
+            "uvx environment with --with MODEL_WHEEL"
+        ) from error
+    return package / f"{meta['lang']}_{meta['name']}-{meta['version']}"
+
+
+def _drop_sudachitra_auto_map(path: Path) -> None:
+    if not path.is_file():
+        return
+    value = json.loads(path.read_bytes())
+    auto_map = value.pop("auto_map", None)
+    if auto_map is None:
+        return
+    if auto_map != {"AutoTokenizer": [SUDACHITRA_TOKENIZER, None]}:
+        raise ValueError(f"{path.parent.name} names tokenizer code lingrep lacks")
+    path.write_text(json.dumps(value, ensure_ascii=False))
+
+
+def _hf_transformer(component: Any) -> Any:
+    for node in component.model.walk():
+        if node.shims:
+            return node.shims[0]._hfmodel.transformer
+    raise ValueError(f"component {component.name!r} holds no transformer")
 
 
 def prepare_model_bundle(
@@ -48,6 +199,7 @@ def prepare_model_bundle(
     import spacy
 
     root = model_root.resolve(strict=True)
+    admit_saved_transformers(spacy.util.load_config(root / "config.cfg"))
     full = spacy.load(root)
     names = list(full.pipe_names)
     summary = full.analyze_pipes(pretty=False)["summary"]

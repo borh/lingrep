@@ -28,9 +28,11 @@ from lingrep_spacy_adapter.adapter import (
     serve,
 )
 from lingrep_spacy_adapter.bundle import (
+    HUB_REVISIONS,
     MANIFEST_HASH_CHUNK_BYTES,
     prepare_model_bundle,
     resource_manifest_digest,
+    save_model,
     selection_digest,
 )
 
@@ -955,6 +957,36 @@ class ModelBundleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "multiple boundary producers"):
                 prepare_model_bundle(model, probe_text="One. Two.")
 
+    def test_hub_transformers_are_refused_unless_pinned_and_downloadable(
+        self,
+    ) -> None:
+        import spacy
+
+        pinned = next(iter(HUB_REVISIONS))
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            spacy.blank("en").to_disk(source)
+            config = spacy.util.load_config(source / "config.cfg")
+            config["nlp"]["pipeline"] = ["transformer"]
+            for repository, offline, message in (
+                ("someone/unpinned", False, "pins no revision"),
+                (pinned, True, "without --offline"),
+            ):
+                config["components"]["transformer"] = {
+                    "factory": "transformer_custom",
+                    "model": {"name": repository},
+                }
+                config.to_disk(source / "config.cfg")
+                destination = Path(directory) / "model"
+                with (
+                    self.subTest(repository=repository, offline=offline),
+                    self.assertRaisesRegex(ValueError, message),
+                ):
+                    save_model(str(source), destination, offline=offline)
+                self.assertFalse(destination.exists())
+            with self.assertRaisesRegex(ValueError, "Hugging Face Hub"):
+                prepare_model_bundle(source, probe_text="Cats run.")
+
     def test_blank_model_does_not_advertise_morphology(self) -> None:
         import spacy
 
@@ -1026,11 +1058,23 @@ class GiNzaModelTests(unittest.TestCase):
         self.assertEqual(projected, cli)
 
     def test_real_ginza_model_produces_source_aligned_portable_morphology(self) -> None:
+        """The saved model analyzes offline, from its own files, like the original."""
+
         import spacy
 
+        text = "坂を一つ上った。"
+        name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
+        projection = [
+            ProjectionAttribute("text", "scalar"),
+            ProjectionAttribute("lemma", "scalar"),
+            ProjectionAttribute("upos", "scalar"),
+            ProjectionAttribute("xpos", "scalar"),
+        ]
+        expected = analyze_document(spacy.load(name)(text), projection, "input")[0]
         with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model"
-            spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"]).to_disk(model)
+            root = Path(directory)
+            model = root / "model"
+            save_model(name, model)
             prepare_model_bundle(
                 model,
                 probe_text="猫が走る。",
@@ -1039,21 +1083,36 @@ class GiNzaModelTests(unittest.TestCase):
                     "spacy.morph.reading",
                 ),
             )
-            loaded = load_spacy_pipeline(str(model), "cpu", "morphology", "input")
-            doc = next(loaded.pipeline.pipe(["猫が走る。"], batch_size=1))
-            mapped = analyze_document(
-                doc,
-                [
-                    ProjectionAttribute("text", "scalar"),
-                    ProjectionAttribute("lemma", "scalar"),
-                    ProjectionAttribute("upos", "scalar"),
-                    ProjectionAttribute("xpos", "scalar"),
-                ],
-                "input",
-            )[0]
-        forms = mapped["values"][0::4]
-        self.assertEqual("".join(forms), "猫が走る。")
-        self.assertTrue(all(mapped["values"][index] for index in range(1, 4)))
+            empty_hub = root / "hub"
+            empty_hub.mkdir()
+            script = (
+                "import json, sys\n"
+                "from lingrep_spacy_adapter.adapter import ProjectionAttribute, "
+                "analyze_document, load_spacy_pipeline\n"
+                "loaded = load_spacy_pipeline(sys.argv[1], 'cpu', 'morphology', "
+                "'input')\n"
+                "doc = next(loaded.pipeline.pipe([sys.argv[2]], batch_size=1))\n"
+                "projection = [ProjectionAttribute(k, 'scalar') "
+                "for k in ('text', 'lemma', 'upos', 'xpos')]\n"
+                "print(json.dumps(analyze_document(doc, projection, 'input')[0]))\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(model), text],
+                capture_output=True,
+                check=False,
+                cwd=empty_hub,
+                env={
+                    **os.environ,
+                    "HF_HUB_OFFLINE": "1",
+                    "HF_HOME": str(empty_hub),
+                    "HF_HUB_CACHE": str(empty_hub),
+                    "HF_MODULES_CACHE": str(empty_hub),
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(list(empty_hub.iterdir()), [])
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.assertEqual("".join(expected["values"][0::4]), text)
 
     @unittest.skipUnless(
         os.environ.get("LINGREP_SPACY_RUN_ROCM") == "1",
@@ -1113,12 +1172,10 @@ class GiNzaModelTests(unittest.TestCase):
                 "metadata_digest": zero,
             },
         }
-        import spacy
-
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model = root / "model"
-            spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"]).to_disk(model)
+            save_model(os.environ["LINGREP_SPACY_GINZA_MODEL"], model)
             profile = prepare_model_bundle(
                 model,
                 probe_text="猫が走る。",

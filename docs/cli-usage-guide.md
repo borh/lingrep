@@ -1709,6 +1709,21 @@ to use this preparation command. The standalone `lingrep-spacy-setup` and
 `lingrep-stanza-setup` wheel entry points remain available for custom model and
 GPU setup, with a caller-managed Python environment.
 
+`ling analyzer prepare ginza` installs GiNZA 5.3.1 with `ja_ginza` 5.3.0, whose
+weights are inside the wheel. GiNZA's transformer models, `ja_ginza_electra`
+5.3.1 and `ja_ginza_bert_large` 5.3.0 (the adapter's `electra` and `bert-large`
+extras), ship without weights. For them, `lingrep-spacy-setup` downloads the
+weights and tokenizer from the Hugging Face Hub once, at the commit lingrep pins
+for each repository, into a temporary directory it removes afterwards, and saves
+them in the model directory: about 0.4 GB for Electra and 1.3 GB for BERT large.
+`model/lingrep-hub-sources.json` records the repository and commit. Setup
+therefore needs network access, and `--offline` rejects these models. Analysis
+reads only the saved files and disables Hugging Face Hub access, so the analyzer
+runs offline, and the resource manifest digest changes when the weights change.
+Bundles that earlier releases set up from these models fetch the weights from
+the Hub, at whatever commit it serves, each time the analyzer starts; set them up
+again into a new directory.
+
 The bundle hashes staged adapter/protocol code and model files. Its runtime
 receipt checks Python and installed package versions, without hashing third-party
 library binaries. Managed analyzer identity does not depend on the output

@@ -44,6 +44,19 @@ wheels = [
 ]
 
 [[package]]
+name = "anyio"
+version = "4.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/98/7e457a3b014976887a050561955c0b76e1e7e2d6e27b78ecef2ef80518f2/anyio-4.16.0.tar.gz", hash = "sha256:59bb03251907983d1603d27c3087ddb1e93299ea2163adcdba37899a4fb12ffb", size = 310971, upload-time = "2026-11-01T11:20:07.282Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/16/7757fb84c819accc7d7e9af5291b261e4abb8627ee040f99e7d35ef2457a/anyio-4.16.0-py3-none-any.whl", hash = "sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026", size = 134521, upload-time = "2026-11-01T11:20:05.59Z" },
+]
+
+[[package]]
 name = "blake3"
 version = "1.0.11"
 source = { registry = "https://pypi.org/simple" }
@@ -215,15 +228,11 @@ wheels = [
 
 [[package]]
 name = "confection"
-version = "0.1.5"
+version = "1.3.4"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "srsly" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/51/d3/57c6631159a1b48d273b40865c315cf51f89df7a9d1101094ef12e3a37c2/confection-0.1.5.tar.gz", hash = "sha256:8e72dd3ca6bd4f48913cd220f10b8275978e740411654b6e8ca6d7008c590f0e", size = 38924, upload-time = "2024-05-31T16:17:01.559Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/b0/f43e446048750a34149532084abea73a79ec693e277e6db45da8662b754f/confection-1.3.4.tar.gz", hash = "sha256:560aebbeabaaeee369c54e21afc97953165b2166909ea81e14e341838f4b260d", size = 55094, upload-time = "2026-10-26T14:26:36.509Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/00/3106b1854b45bd0474ced037dfe6b73b90fe68a68968cef47c23de3d43d2/confection-0.1.5-py3-none-any.whl", hash = "sha256:e29d3c3f8eac06b3f77eb9dfb4bf2fc6bcc9622a98ca00a698e3d019c6430b14", size = 35451, upload-time = "2024-05-31T16:16:59.075Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/65/411a5a4a83c98c907c5a76906fad35c6841e7ca9370165a625696ffdc71a/confection-1.3.4-py3-none-any.whl", hash = "sha256:6c2e1ae87de7d989a79bdb62977eb9c43c28fb3371f3462492667eb0520e6796", size = 35961, upload-time = "2026-10-26T14:26:35.243Z" },
 ]
 
 [[package]]
@@ -365,30 +374,55 @@ wheels = [
 ]
 
 [[package]]
+name = "fugashi"
+version = "1.5.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/ec/b2e5aeba9438551ee4ae5275e95da506a279f53432e618daa1d4bd14c7d5/fugashi-1.5.2.tar.gz", hash = "sha256:a7959eab95bb37a6a934fc2314d3ff888664d11b88d0e1c596260a5785d5880e", size = 339768, upload-time = "2025-10-24T07:24:27.581Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/43/4782f2a2ab963f2ca532a017884e915cecf120640f5c03ae9ee108c1d83c/fugashi-1.5.2-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:0535dcc5a844fb196c215020a5791e5ac0b6c26ee4879cb0e63545c5e6f33642", size = 511665, upload-time = "2025-10-24T07:27:14.985Z" },
+    { url = "https://files.pythonhosted.org/packages/76/ed/d9aa07712244b0488ee201a3435b3354fa93accc0d3d0a801b5af258fcba/fugashi-1.5.2-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:0805863a5268e112bc3c01e9d77e58a7c5ea079d893a18e0d381f3874f690949", size = 456084, upload-time = "2025-10-24T07:27:16.324Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/c5/10331bc9a8140570e84752981a1cbe379987071064a8825279e5ac60445e/fugashi-1.5.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:75a8f6219e26e54c95a969af6c5c67f6ea65e333aecc4e85ccc360488e4ba056", size = 454547, upload-time = "2025-10-24T07:27:17.272Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/19/bdbcfbd3d63a03ed8265ae5cb696dcff0b9cfbb79b8952e81d641aafcfcc/fugashi-1.5.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:79cf4b79809e7e9016dc179e35789bb6a0b9df44e03993835c23d5cb31994de2", size = 673301, upload-time = "2025-10-24T07:48:58.264Z" },
+    { url = "https://files.pythonhosted.org/packages/39/76/2502adeac68d11194c52bef0cd14d27eed5776a7013045ca2ec94e9e4b58/fugashi-1.5.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:71c0027aa11747adcb3753d31663290c53fea8007371f0b080c53c192918ceb9", size = 686424, upload-time = "2025-10-24T07:25:42.015Z" },
+    { url = "https://files.pythonhosted.org/packages/71/0e/a5776ae1e355d2db9a3874cbdbf9c7325cbd11b300f1a25d3e86ecb26420/fugashi-1.5.2-cp314-cp314-win_amd64.whl", hash = "sha256:a3c69086650a66bfffb5dd4952d42a9274cea9b110df7b4837c74da1fe4f98f3", size = 519467, upload-time = "2025-10-24T07:25:46.623Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/c5/b2b7903a52703d1eb30623ed42dab54fcf13764e3efc72e5e18b55130630/fugashi-1.5.2-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:41e3f388913a87826045722ab59611b27a4654a51e2037c69d6189e04f33f6f5", size = 518986, upload-time = "2025-10-24T07:27:18.218Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/dd/ccdbf674060965930a04ba69f889f3b449fdce7ebcfc4ad26570ed53b02e/fugashi-1.5.2-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:bb6e06928bd428a8a139660866f01dadd55546b6395a34dffe5602d8c1329205", size = 459402, upload-time = "2025-10-24T07:27:19.126Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/d0/3cc82f13f0414f2d0daa231a5811d23ee58dfb734403b2b2a3f44deb7bb9/fugashi-1.5.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:e516bde355c2ba53b5b2ce37760cf67f6f186c79efa049f9ab3767bc843f341b", size = 458548, upload-time = "2025-10-24T07:27:20.195Z" },
+]
+
+[[package]]
 name = "ginza"
-version = "5.2.0"
+version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "plac" },
     { name = "spacy" },
     { name = "sudachidict-core" },
     { name = "sudachipy" },
+    { name = "thinc-apple-ops", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/8a/53db545ae22545c572cf40829c760ade5036a537f1eeacd925e9104ae7ce/ginza-5.2.0.tar.gz", hash = "sha256:a05e21b020637310c6763a670a70d6fdb0cc0ac2a996d54c7d9fa08f3fec640f", size = 27048, upload-time = "2024-03-30T23:05:57.577Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/6f/beaaeac69a027d88064a450466d2f88d329d360dfbc54c78d0af4796a62d/ginza-5.2.0-py3-none-any.whl", hash = "sha256:0c81e69fc34070cdba583f6c35b701b0aa60ef486d73a052fe32917c47e55125", size = 21203, upload-time = "2024-03-30T23:05:55.819Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/8a/a22e3052e420d90099a4ff3224727b09836b4a87a7dcfcae3b052cf46f6b/ginza-5.3.1-py3-none-any.whl", hash = "sha256:0d69e17efe4b7a1576410aebb909429781e8c89f244be6fa001d19e56fa4480b", size = 22156, upload-time = "2026-11-12T20:43:57.661Z" },
 ]
 
 [[package]]
 name = "ginza-transformers"
-version = "0.4.2"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "spacy-transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/62/8a3da4e36df3e07c4b2b88761f93fa66ac5cb0041176a57053e7b86f1393/ginza-transformers-0.4.2.tar.gz", hash = "sha256:11b414b7fc58a5ac0a10dfcbb59b41cb777d41190311100b5b8127c4384f8e56", size = 6591, upload-time = "2022-08-09T10:04:58.103Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/c9/5f9b58b66d9056f6f29a5d78f8114a630d3781abda990229b26f71c311a1/ginza_transformers-0.4.2-py3-none-any.whl", hash = "sha256:4da6d31f5b20acdbab9aae97d2e7e66c757bcd9cbe9a334a6fe2c482c98c6525", size = 7182, upload-time = "2022-08-09T10:04:56.698Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/64/d872b2621e23821730ece7ee4aaed825b3a4a0695d889361fbe1781216fb/ginza_transformers-1.4.0-py3-none-any.whl", hash = "sha256:9a44fcae5b890ced4863c8396598861d2395836a65c8892ecbe100f087e0349b", size = 6583, upload-time = "2026-09-30T05:58:36.243Z" },
+]
+
+[[package]]
+name = "h11"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
 ]
 
 [[package]]
@@ -413,6 +447,34 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/e7/1521ffbecec428bbba62f495ba91ea294b1cada4c6289a7354be4edc7823/hf_xet-1.7.1-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:aaa2cf2f7a35bd653a365f6444ac0860b7b5ec11b7658090005d4aa6e10ae60b", size = 4430493, upload-time = "2026-10-28T15:09:49.113Z" },
     { url = "https://files.pythonhosted.org/packages/d4/56/e0f82a9f31772c2db59ca95e85beeb99e6da1a55f47d3fedac1b23ea1bc9/hf_xet-1.7.1-cp38-abi3-win_amd64.whl", hash = "sha256:d6e2c99e5dc7d6fa301e92e79a4f02cf962620dfc9fef84b687df597845cd72a", size = 3833194, upload-time = "2026-10-28T15:09:51.295Z" },
     { url = "https://files.pythonhosted.org/packages/c7/ce/faaa9326f8dce6e3e6eef1738a27834e77eebd3c0db00e5757a01dee0f7e/hf_xet-1.7.1-cp38-abi3-win_arm64.whl", hash = "sha256:c1f2c5685e89ee251e885c65ab366d981f555b2c8857642f4f8ee1e7dc4efdf6", size = 3665289, upload-time = "2026-10-28T15:09:53.107Z" },
+]
+
+[[package]]
+name = "httpcore"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[[package]]
+name = "httpx"
+version = "0.28.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
 [[package]]
@@ -454,7 +516,7 @@ wheels = [
 
 [[package]]
 name = "ja-ginza"
-version = "5.2.0"
+version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ginza" },
@@ -462,14 +524,31 @@ dependencies = [
     { name = "sudachidict-core" },
     { name = "sudachipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/9d/4b17a5b0e00f67fe69602af59d0779ac079076f0d82a84ffa8da0b18274f/ja_ginza-5.2.0.tar.gz", hash = "sha256:c12e875fbf30144acd05ca0e17dd211372777e9b762a2167862456e1894c605d", size = 58981719, upload-time = "2024-03-30T23:06:53.103Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/f8/d1bbc8bd545e61cacb7c0f0fedcfc041e2853e573ec4825136a8bd85e586/ja_ginza-5.2.0-py3-none-any.whl", hash = "sha256:c31a2ac57a7c2a1440f7e58111e37306c20dfaf08fd5a3f6f065948ff126cb30", size = 59112919, upload-time = "2024-03-30T23:06:30.954Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/61/f605f3f00483d6948547a287bf1ca3af158ac915e9f0b196b7097782e462/ja_ginza-5.3.0-py3-none-any.whl", hash = "sha256:ac6479a805c5c5c23c270554934c1c1f344039560ef3a7e4b15a4275bea3c685", size = 59112915, upload-time = "2026-09-30T06:05:49.801Z" },
+]
+
+[[package]]
+name = "ja-ginza-bert-large"
+version = "5.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fugashi" },
+    { name = "ginza" },
+    { name = "ginza-transformers" },
+    { name = "spacy" },
+    { name = "spacy-transformers" },
+    { name = "sudachidict-core" },
+    { name = "sudachipy" },
+    { name = "unidic-lite" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/f4/c77d6720c5e0037dd75c4dc1585442f49994a7b90cc6b638677c0c276451/ja_ginza_bert_large-5.3.0-py3-none-any.whl", hash = "sha256:9114483c50613cce78be75499e994a3f50181867e89f7b67a5e8439c70e33268", size = 2911523, upload-time = "2026-09-02T08:12:54.148Z" },
 ]
 
 [[package]]
 name = "ja-ginza-electra"
-version = "5.2.0"
+version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ginza" },
@@ -480,9 +559,8 @@ dependencies = [
     { name = "sudachipy" },
     { name = "sudachitra" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/04/fea28f6304dbc8f22190682e48a1117648fa34053b30d60725efaa056e5e/ja_ginza_electra-5.2.0.tar.gz", hash = "sha256:d35444a24238b0c8c3f714a20a5d719a35ef535b053579085fd4b60b58cf170e", size = 2806338, upload-time = "2024-03-30T23:07:41.383Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/2f/3c9b2360f035a9538f3b0d32042f0f38e1860dddba8ea6734a2d6bcea67d/ja_ginza_electra-5.2.0-py3-none-any.whl", hash = "sha256:e407d95f656e140fe5bc1b36de08bc6843d73abb28cfbfb95714baafe09709fc", size = 2825824, upload-time = "2024-03-30T23:07:36.692Z" },
+    { url = "https://files.pythonhosted.org/packages/48/7e/99607dc3a5c352b2599c32c92b97b8fcad8d4a951d92384b564169b451fa/ja_ginza_electra-5.3.1-py3-none-any.whl", hash = "sha256:9fad6262a9258f7d06de40d46971c83245ef919221f204ab75179362fb305e49", size = 2712065, upload-time = "2026-09-30T07:58:15.711Z" },
 ]
 
 [[package]]
@@ -517,6 +595,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bert-large = [
+    { name = "ja-ginza-bert-large" },
+    { name = "tokenizers" },
+    { name = "transformers" },
+]
 cpu = [
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-21-lingrep-spacy-adapter-cpu') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-rocm') or (extra == 'extra-21-lingrep-spacy-adapter-cuda' and extra == 'extra-21-lingrep-spacy-adapter-rocm')" },
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-21-lingrep-spacy-adapter-cpu') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-rocm') or (extra == 'extra-21-lingrep-spacy-adapter-cuda' and extra == 'extra-21-lingrep-spacy-adapter-rocm')" },
@@ -541,7 +624,6 @@ rocm = [
 ]
 spacy = [
     { name = "click" },
-    { name = "confection" },
     { name = "numpy" },
     { name = "spacy" },
 ]
@@ -555,24 +637,26 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", marker = "extra == 'spacy'", specifier = ">=8.4.2,<9" },
-    { name = "confection", marker = "extra == 'spacy'", specifier = ">=0.1.5,<1" },
     { name = "cupy-cuda12x", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = ">=14.1.1,<15" },
     { name = "cupy-rocm-7-0", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==14.1.1" },
-    { name = "ginza", marker = "extra == 'ginza'", specifier = "==5.2.0" },
-    { name = "ja-ginza", marker = "extra == 'ginza'", specifier = "==5.2.0" },
-    { name = "ja-ginza-electra", marker = "extra == 'electra'", specifier = "==5.2.0" },
+    { name = "ginza", marker = "extra == 'ginza'", specifier = "==5.3.1" },
+    { name = "ja-ginza", marker = "extra == 'ginza'", specifier = "==5.3.0" },
+    { name = "ja-ginza-bert-large", marker = "extra == 'bert-large'", specifier = "==5.3.0" },
+    { name = "ja-ginza-electra", marker = "extra == 'electra'", specifier = "==5.3.1" },
     { name = "lingrep-adapter-protocol", editable = "../adapter-protocol" },
     { name = "numpy", marker = "extra == 'spacy'", specifier = ">=2,<3" },
-    { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.8.11,<3.8.12" },
+    { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.8.18,<3.8.19" },
+    { name = "tokenizers", marker = "extra == 'bert-large'", specifier = "==0.22.2" },
     { name = "tokenizers", marker = "extra == 'electra'", specifier = "==0.22.2" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'cpu'", specifier = "==2.13.0" },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'cpu'", specifier = "==2.13.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "lingrep-spacy-adapter", extra = "cpu" } },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = "==2.13.0+cu126", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "lingrep-spacy-adapter", extra = "cuda" } },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==2.13.0+rocm7.2", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "lingrep-spacy-adapter", extra = "rocm" } },
+    { name = "transformers", marker = "extra == 'bert-large'", specifier = "==4.57.6" },
     { name = "transformers", marker = "extra == 'electra'", specifier = "==4.57.6" },
     { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==3.7.1", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "lingrep-spacy-adapter", extra = "rocm" } },
 ]
-provides-extras = ["spacy", "ginza", "electra", "cpu", "cuda", "rocm"]
+provides-extras = ["spacy", "ginza", "electra", "bert-large", "cpu", "cuda", "rocm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1212,12 +1296,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/c5/14732c140fa0af0e59345949eaf9016c75ad3f076586f2413e3d3566a8da/smart_open-7.7.1-py3-none-any.whl", hash = "sha256:cb62dc45f519bf39b612564d326d2a17556f3a6056e3c3a86a07215d670d45bc", size = 65061, upload-time = "2026-06-26T07:56:33.685Z" },
 ]
 
+[package.optional-dependencies]
+http = [
+    { name = "requests" },
+]
+
 [[package]]
 name = "spacy"
-version = "3.8.11"
+version = "3.8.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "catalogue" },
+    { name = "click" },
+    { name = "confection" },
     { name = "cymem" },
     { name = "jinja2" },
     { name = "murmurhash" },
@@ -1232,20 +1323,20 @@ dependencies = [
     { name = "srsly" },
     { name = "thinc" },
     { name = "tqdm" },
-    { name = "typer-slim" },
+    { name = "typer" },
     { name = "wasabi" },
     { name = "weasel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/9f/424244b0e2656afc9ff82fb7a96931a47397bfce5ba382213827b198312a/spacy-3.8.11.tar.gz", hash = "sha256:54e1e87b74a2f9ea807ffd606166bf29ac45e2bd81ff7f608eadc7b05787d90d", size = 1326804, upload-time = "2025-11-17T20:40:03.079Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/3a/1805baf651a20b9f2dbc2e76bc9ba085028175a9d104c5e72da514e34c50/spacy-3.8.18.tar.gz", hash = "sha256:cbb0a630b30b2c20f96eefc5c7c65f8b2ca264c943050043db0c9315d1cc876d", size = 1331024, upload-time = "2026-10-26T21:24:01.029Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/78/ddeb09116b593f3cccc7eb489a713433076b11cf8cdfb98aec641b73a2c2/spacy-3.8.11-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:43c24d19a3f85bde0872935294a31fd9b3a6db3f92bb2b75074177cd3acec03f", size = 6067734, upload-time = "2025-11-17T20:39:42.629Z" },
-    { url = "https://files.pythonhosted.org/packages/65/bb/1bb630250dc70e00fa3821879c6e2cb65c19425aba38840d3484061285c1/spacy-3.8.11-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b6158c21da57b8373d2d1afb2b73977c4bc4235d2563e7788d44367fc384939a", size = 5732963, upload-time = "2025-11-17T20:39:44.872Z" },
-    { url = "https://files.pythonhosted.org/packages/7a/56/c58071b3db23932ab2b934af3462a958e7edf472da9668e4869fe2a2199e/spacy-3.8.11-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1c0bd1bde1d91f1d7a44774ca4ca3fcf064946b72599a8eb34c25e014362ace1", size = 32447290, upload-time = "2025-11-17T20:39:47.392Z" },
-    { url = "https://files.pythonhosted.org/packages/34/eb/d3947efa2b46848372e89ced8371671d77219612a3eebef15db5690aa4d2/spacy-3.8.11-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:99b767c41a772e544cf2d48e0808764f42f17eb2fd6188db4a729922ff7f0c1e", size = 32488011, upload-time = "2025-11-17T20:39:50.408Z" },
-    { url = "https://files.pythonhosted.org/packages/04/9e/8c6c01558b62388557247e553e48874f52637a5648b957ed01fbd628391d/spacy-3.8.11-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:a3c500f04c164e4366a1163a61bf39fd50f0c63abdb1fc17991281ec52a54ab4", size = 31731340, upload-time = "2025-11-17T20:39:53.221Z" },
-    { url = "https://files.pythonhosted.org/packages/23/1f/21812ec34b187ef6ba223389760dfea09bbe27d2b84b553c5205576b4ac2/spacy-3.8.11-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:a2bfe45c0c1530eaabc68f5434c52b1be8df10d5c195c54d4dc2e70cea97dc65", size = 32478557, upload-time = "2025-11-17T20:39:55.826Z" },
-    { url = "https://files.pythonhosted.org/packages/f3/16/a0c9174a232dfe7b48281c05364957e2c6d0f80ef26b67ce8d28a49c2d91/spacy-3.8.11-cp314-cp314-win_amd64.whl", hash = "sha256:45d0bbc8442d18dcea9257be0d1ab26e884067e038b1fa133405bf2f20c74edf", size = 14396041, upload-time = "2025-11-17T20:39:58.557Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/d0/a6aad5b73d523e4686474b0cfcf46f37f3d7a18765be5c1f56c1dcee4c18/spacy-3.8.11-cp314-cp314-win_arm64.whl", hash = "sha256:90a12961ecc44e0195fd42db9f0ce4aade17e6fe03f8ab98d4549911d9e6f992", size = 13823760, upload-time = "2025-11-17T20:40:00.831Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/0e/f1376cf925d4fce338949ccdcd4873303e0ba4e8508a755fe9ff797752dd/spacy-3.8.18-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:25e2d9a6f7c4edb691fac050caaa6b1d79f2f10fdf1ba711bab835e9fd2d9725", size = 6613745, upload-time = "2026-10-26T21:23:20.143Z" },
+    { url = "https://files.pythonhosted.org/packages/28/59/c6e37885f4918fc976b6614867b5face9a5fd8f64216ddc9011620c37e7f/spacy-3.8.18-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:50085aa7ab0a65991f599ce90b5bd6d082ded60580a111d261a3d96aab42e518", size = 6512642, upload-time = "2026-10-26T21:23:21.836Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/7e/829245667eccabab27c36967dc6ce4ef57ce4e1f35b9841c4d57c09df78e/spacy-3.8.18-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:af4f06bf18133181e4cf156ae063e06ea601cbf60d7522889ee76a5543ffcf21", size = 34465491, upload-time = "2026-10-26T21:23:23.998Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/a1/c279ac1671aef653c2a0db897dbd0145af8b2cf481f0e9164e2633e78dec/spacy-3.8.18-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2a3fdda935fea0a9b36ceb82189540d69347d3c9e1121bddaf217a24899b8a00", size = 34847413, upload-time = "2026-10-26T21:23:26.883Z" },
+    { url = "https://files.pythonhosted.org/packages/80/f8/82a9189d810e12792297db0c2136eaae71b5c3a56733a1b8545f46cba0ac/spacy-3.8.18-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:812fbd4f8af4fb185e00cd09aab67f2edc6f5f0cf93a154264a12a1bddeba703", size = 34664088, upload-time = "2026-10-26T21:23:29.615Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/44/255220b671df61e450cfd61b37ef757133c602d5f0478af189c0fa348df0/spacy-3.8.18-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:c6238498efa8d6c7f035750ec60a4b29e082887149ed6e324f55744e18a040e0", size = 35445691, upload-time = "2026-10-26T21:23:32.338Z" },
+    { url = "https://files.pythonhosted.org/packages/17/6f/3720f3e781c8652f4b9d50b3385cc5c51a5e7696e015d2423c10845ce497/spacy-3.8.18-cp314-cp314-win_amd64.whl", hash = "sha256:ea0c1016c8f3c1272af9ffff485344bba3c21b846e80104f189c54dca65085cd", size = 15208519, upload-time = "2026-10-26T21:23:35.291Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/ac/bd3e9ee202ef262e1557e2f235c79454de94af5aa42b9c076783490b6499/spacy-3.8.18-cp314-cp314-win_arm64.whl", hash = "sha256:e86ab6081836915dd0bdcd9abf60398cec15a1b1da415bad33672f5431618de2", size = 14884835, upload-time = "2026-10-26T21:23:37.591Z" },
 ]
 
 [[package]]
@@ -1284,9 +1375,10 @@ wheels = [
 
 [[package]]
 name = "spacy-transformers"
-version = "1.1.9"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "numpy" },
     { name = "spacy" },
     { name = "spacy-alignments" },
     { name = "srsly" },
@@ -1296,9 +1388,16 @@ dependencies = [
     { name = "torch", version = "2.13.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "extra == 'extra-21-lingrep-spacy-adapter-rocm' or (extra != 'extra-21-lingrep-spacy-adapter-cpu' and extra != 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda')" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/5f/c4593e2460f2a94a7b0cc7b01c00def28d48810ac1062e34c91c4fac2830/spacy-transformers-1.1.9.tar.gz", hash = "sha256:dae53acbfaecbcd48ba5e5cbe8ef48390d1130dd0010c1fefc8287eaeb9fbac5", size = 42568, upload-time = "2022-12-19T10:50:36.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/25/89757dcb5c0e19ec9530241c69010aef183716d642d7da9c96fb35bcc0cf/spacy_transformers-1.4.0.tar.gz", hash = "sha256:73831fc941ce11e661d452099053c138a764da49c16d32231bd5d4ea679f55ef", size = 49828, upload-time = "2026-03-17T12:44:20.138Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/a1/8ee8939a0acef294a84cde0df5867312a746fa9d62c48a830db2af8106f3/spacy_transformers-1.1.9-py2.py3-none-any.whl", hash = "sha256:864a18c26a33a4945765616bfa3f7e3da2f06541d57718980e31eb4d48a0ce5b", size = 53533, upload-time = "2022-12-19T10:50:34.781Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/1e/287972efc13229e1fe88f7bad6a093d1261dcbfba7d102cf6860ed4301b5/spacy_transformers-1.4.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:21384231bbf1da6c1fa283531ef6573184f39c474fa147f357f714dae966328e", size = 171520, upload-time = "2026-03-17T12:44:09.231Z" },
+    { url = "https://files.pythonhosted.org/packages/36/f6/eee62b392560ec4573e0ac24c9d9c52309291c7d45a90d9f38598f9f7293/spacy_transformers-1.4.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b12a2565afb0d340547bffb350a43f5261c8df8f03a847ce4ee9e1181cf62a45", size = 167378, upload-time = "2026-03-17T12:44:10.347Z" },
+    { url = "https://files.pythonhosted.org/packages/21/e3/9255d692a2ef2cf28fc0ee846a720c2abb211b2f809158a4bb972df0275b/spacy_transformers-1.4.0-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:319b84227abb17d530468ba065a2ab988df918752a0d8e1e8d2c4bcc58c247e1", size = 756999, upload-time = "2026-03-17T12:44:11.815Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/78/1da1847b4b67a3b56fea541b3513dddf05c8513e714dcba89b942ca2ecb3/spacy_transformers-1.4.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8c1375ce91cc573aad84f57178fa9d4fa98d383b2410a0e8a67c6516b112cba8", size = 763019, upload-time = "2026-03-17T12:44:13.293Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/0e/c1711a3e485e19a5c72bad6f011286d8143c12cc23ebe947fdf24e5a2408/spacy_transformers-1.4.0-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:92cbccaabc18693aa3f6b410b75c735fd6acc44f64e8050ed0758cc4b358c413", size = 1677629, upload-time = "2026-03-17T12:44:14.759Z" },
+    { url = "https://files.pythonhosted.org/packages/22/c0/4900a10861fda53227781943b794a0b7e275b7f1728a59becc4af26890c8/spacy_transformers-1.4.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:a50d7fda39d06176fe8c55f50345c92fb92b6fa51e4ef7e7c0cd01a09014cc4a", size = 1751855, upload-time = "2026-03-17T12:44:16.049Z" },
+    { url = "https://files.pythonhosted.org/packages/97/60/98f3b7ff64114b1a155afd6d172949f55bbbe3982df42a6f06aa31d426a2/spacy_transformers-1.4.0-cp314-cp314-win_amd64.whl", hash = "sha256:c4ae513d46b02a86a12e18afb2465879f05e5b7d6334ee817a8f61ffb7853149", size = 352402, upload-time = "2026-03-17T12:44:17.532Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/eb/df37c10ecc74b00f9b284fb3ab1b747b6e6bbcd84940c6cd1abfd5848c7e/spacy_transformers-1.4.0-cp314-cp314-win_arm64.whl", hash = "sha256:07978dafefe6c9a3e81975eccb9ad24997c55e0f2b0f58b40f4c30187677b0c2", size = 337614, upload-time = "2026-03-17T12:44:18.955Z" },
 ]
 
 [[package]]
@@ -1386,7 +1485,7 @@ wheels = [
 
 [[package]]
 name = "thinc"
-version = "8.3.11"
+version = "8.3.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "blis" },
@@ -1402,16 +1501,29 @@ dependencies = [
     { name = "srsly" },
     { name = "wasabi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/93/383073cf130108c7e4e5866a2745ada8acae9a6f000f5a5124153a196eeb/thinc-8.3.11.tar.gz", hash = "sha256:440ad9030ecee31e4a6ba25bd760fa272fb48768a6f6cce3f734595de5a8b0f4", size = 194557, upload-time = "2026-03-20T09:25:22.868Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/be/b93c2774b00d498fe4360966d8b6489d60085333df39ffdda3056052a05c/thinc-8.3.14.tar.gz", hash = "sha256:35d26c2d3138f6c08bd7c192f493a01e00513b8439ffaf4ce9d2def9b31e6dfa", size = 194842, upload-time = "2026-10-25T23:40:21.669Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/3f/59f40acacf918550d86398f5a8850def89d3f96ba2847c6e59d8e7caabc2/thinc-8.3.11-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:e4d1fa3d228024d921d44632642b0babda6ace2335783b0a713c2eb8ea144db3", size = 815843, upload-time = "2026-03-20T09:25:09.096Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/35/ae8296a99abd764283f999f89152a2b86ddc6121d37bab492ebf7ea28b44/thinc-8.3.11-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:98d44471d98bbda784777dd3dc18415eb486c372705fe9ccf48cd538ca7f4430", size = 791117, upload-time = "2026-03-20T09:25:10.549Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/84/b171c55de05c42a77347db4c0a5f250237d985a4545ee0fcbd21eb9776b5/thinc-8.3.11-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:293270f95556859f1d19e15163cf964fb6ce6d8151a18490dda24c22abd024d8", size = 3836030, upload-time = "2026-03-20T09:25:12.082Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/55/3777ffc236ac987e2fa2bf35c5457a0f85fd22516ab2fa19c545a658470a/thinc-8.3.11-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8a1eb1f6cffefc09cca155bd84bb30fbb7f9246d1548beee5388d432b43b9726", size = 3844908, upload-time = "2026-03-20T09:25:14.052Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/09/c46cd6bd16b10e65f83cb78a3d1afa7b64258692642ef0c75c863a021792/thinc-8.3.11-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:892abc9616a4afbb1a779145c946da414cca9ab8838c75da51ec2969c2dcf05b", size = 4825254, upload-time = "2026-03-20T09:25:15.801Z" },
-    { url = "https://files.pythonhosted.org/packages/60/81/316a4023b990f2dd09564a16a6f848a4fd8b31b1b236e44b664bc35a8beb/thinc-8.3.11-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:2ca7b0de68583a263f3886cc9dc3b868b45423f7046abe3bb5821e59401d5b47", size = 4982495, upload-time = "2026-03-20T09:25:17.658Z" },
-    { url = "https://files.pythonhosted.org/packages/4c/6f/6b5bb06d4db604dca64d0f41d031e20af743862963761c16d13245d99fa9/thinc-8.3.11-cp314-cp314-win_amd64.whl", hash = "sha256:fdc49065ae03dd0e750c70a19c0b464231c35ee9e5b822401e3ea1485459d541", size = 1738089, upload-time = "2026-03-20T09:25:19.737Z" },
-    { url = "https://files.pythonhosted.org/packages/34/63/cb7d8011856f2e7484bcf42067c1b3a480d027b51f2eb8ca545e8dfe6174/thinc-8.3.11-cp314-cp314-win_arm64.whl", hash = "sha256:91ead1d52493bf7764ff7cddcc7be9fde19fbde9d6d2e1d8363e2c749f55cb52", size = 1665997, upload-time = "2026-03-20T09:25:21.321Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/a5/f396527796658c283675989c18a7d0a1df3ce93decec77894e1efa3b948f/thinc-8.3.14-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:361d621d19ee4121d41559d2da2a455bb83b6224d3621a623ea2bfc00f0cfe6a", size = 851000, upload-time = "2026-10-25T23:39:50.676Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/49/8fd3aa6974c0cc0bd4236734699c829f86bb06feb83c87b94e16db6075ab/thinc-8.3.14-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:ddfc3c81616f3514e83a1f85b2fc807f3b597db7dc78053e5573209339093594", size = 839160, upload-time = "2026-10-25T23:39:52.262Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/37/7b2819da68ac036d4a4b621ecee88b0d521f8a6cf4e78631eaa46ac91ade/thinc-8.3.14-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c4c499101b1045244bea08d343c1b633576ca702674629cb5832d1864579c289", size = 4169368, upload-time = "2026-10-25T23:39:53.962Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/e6/37bd7265d49aa46002f191d0d7540936f69615b694e7d86d93e55054808b/thinc-8.3.14-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a90ed9256ccf8932c1b8e7c9d5a6eab64187e15043c2138dd9147000b5d77e23", size = 4229099, upload-time = "2026-10-25T23:39:55.846Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/97/317ff861cf8ff6689aeb8d6997d1cadac53cf9277c86c72c132675482013/thinc-8.3.14-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:02e42020781eef72acc8f61db4eff963a437b4044670024a61a5373ff96630a7", size = 5043141, upload-time = "2026-10-25T23:39:58.036Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/2e/5d260ad8cde62a6fa7263a3286b28166db64fa44a58b49ecec0bcfcb9d37/thinc-8.3.14-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:0d30b93eb8ea2e979c68da646fa9f08ab37cb8abd2a1174ba3cc9dbf78c3ba02", size = 5208997, upload-time = "2026-10-25T23:40:00.409Z" },
+    { url = "https://files.pythonhosted.org/packages/13/ed/a45a766e840d048648300b525b6f296382b365df79f52aafdba640c92dcc/thinc-8.3.14-cp314-cp314-win_amd64.whl", hash = "sha256:0f7973844113ccb5cd843e09aa150336d4a2d31f51c8af4f72a7097e3c2bff63", size = 1810582, upload-time = "2026-10-25T23:40:02.604Z" },
+    { url = "https://files.pythonhosted.org/packages/41/cd/17bddacf1041388c617700b5542a3f4e12f38a33e3a82e933f168dadd9d4/thinc-8.3.14-cp314-cp314-win_arm64.whl", hash = "sha256:78e9fa85e80374bc1744a35fee57dfb208789cf3c1e78cfc48930a1d65c312d5", size = 1766862, upload-time = "2026-10-25T23:40:04.412Z" },
+]
+
+[[package]]
+name = "thinc-apple-ops"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "thinc" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/96/4a/3f2a4b23f3d20e1539c9ed88f00b9f6c6502330ab22d548345bc5dec5140/thinc_apple_ops-1.0.3.tar.gz", hash = "sha256:4a117981f9b9f298015a2b07f7ed55543d8bb36832682d4732a7ed79db097cc4", size = 76554, upload-time = "2026-10-27T10:19:50.746Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/ae/0a7708b5be421b6534f41de0aac076ee832359e177b58edd19e9e16c7fe5/thinc_apple_ops-1.0.3-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:20ceecbcd7b961277f8cb034b6d3402213b5a3ea25f6eb0b1d0e61f7f0d1b087", size = 179066, upload-time = "2026-10-27T10:19:46.211Z" },
 ]
 
 [[package]]
@@ -1611,18 +1723,6 @@ wheels = [
 ]
 
 [[package]]
-name = "typer-slim"
-version = "0.24.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typer" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/a7/e6aecc4b4eb59598829a3b5076a93aff291b4fdaa2ded25efc4e1f4d219c/typer_slim-0.24.0.tar.gz", hash = "sha256:f0ed36127183f52ae6ced2ecb2521789995992c521a46083bfcdbb652d22ad34", size = 4776, upload-time = "2026-02-16T22:08:51.2Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/24/5480c20380dfd18cf33d14784096dca45a24eae6102e91d49a718d3b6855/typer_slim-0.24.0-py3-none-any.whl", hash = "sha256:d5d7ee1ee2834d5020c7c616ed5e0d0f29b9a4b1dd283bdebae198ec09778d0e", size = 3394, upload-time = "2026-02-16T22:08:49.92Z" },
-]
-
-[[package]]
 name = "typing-extensions"
 version = "4.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1642,6 +1742,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/a3/26/b09b8010994eccc3c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750, upload-time = "2026-08-12T12:37:24.648Z" },
 ]
+
+[[package]]
+name = "unidic-lite"
+version = "1.0.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/2b/8cf7514cb57d028abcef625afa847d60ff1ffbf0049c36b78faa7c35046f/unidic-lite-1.0.8.tar.gz", hash = "sha256:db9d4572d9fdd4d00a97949d4b0741ec480ee05a7e7e2e32f547500dae27b245", size = 47356746, upload-time = "2021-01-25T06:07:54.719Z" }
 
 [[package]]
 name = "urllib3"
@@ -1666,22 +1772,23 @@ wheels = [
 
 [[package]]
 name = "weasel"
-version = "0.4.3"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "click" },
     { name = "cloudpathlib" },
     { name = "confection" },
+    { name = "httpx" },
     { name = "packaging" },
     { name = "pydantic" },
-    { name = "requests" },
-    { name = "smart-open" },
+    { name = "smart-open", extra = ["http"] },
     { name = "srsly" },
-    { name = "typer-slim" },
+    { name = "typer" },
     { name = "wasabi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/d7/edd9c24e60cf8e5de130aa2e8af3b01521f4d0216c371d01212f580d0d8e/weasel-0.4.3.tar.gz", hash = "sha256:f293d6174398e8f478c78481e00c503ee4b82ea7a3e6d0d6a01e46a6b1396845", size = 38733, upload-time = "2025-11-13T23:52:28.193Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/bf/490fc13b28ad51b6c5c36d2abae1b9b64101d24ec7cb2aefa7d6504fd5cf/weasel-1.0.1.tar.gz", hash = "sha256:ca5dbfd24002dd85bd8a73a7f02d2471744c1b1a64d25698e05bb587a099a43e", size = 39092, upload-time = "2026-10-26T14:34:11.161Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/74/a148b41572656904a39dfcfed3f84dd1066014eed94e209223ae8e9d088d/weasel-0.4.3-py3-none-any.whl", hash = "sha256:08f65b5d0dbded4879e08a64882de9b9514753d9eaa4c4e2a576e33666ac12cf", size = 50757, upload-time = "2025-11-13T23:52:26.982Z" },
+    { url = "https://files.pythonhosted.org/packages/89/66/53b57003567d506e2f0f7b9859a4d2e6e748d3f0ed8f494b98f684d6696d/weasel-1.0.1-py3-none-any.whl", hash = "sha256:a7d37540e4b5e53c783bae292d2e5dfaa8f6054160cec633e0782afce89c504d", size = 51002, upload-time = "2026-10-26T14:34:09.987Z" },
 ]
 
 [[package]]

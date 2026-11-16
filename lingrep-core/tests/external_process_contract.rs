@@ -558,7 +558,9 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
     let status = ProcessCommand::new(&python)
         .args([
             "-c",
-            "import spacy,sys; spacy.load(sys.argv[1]).to_disk('model')",
+            "import sys; from pathlib import Path; \
+             from lingrep_spacy_adapter.bundle import save_model; \
+             save_model(sys.argv[1], Path('model'))",
             &ginza_model,
         ])
         .current_dir(root)

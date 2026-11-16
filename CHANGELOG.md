@@ -51,11 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and adds its `field` position.
 - Prepared artifacts use generation 3 and provenance schema 5. Rebuild
   generation 2 artifacts with `ling corpus build`.
+- The spaCy adapter installs GiNZA 5.3.1 with `ja_ginza` 5.3.0 and spaCy
+  3.8.18; its `electra` extra installs `ja_ginza_electra` 5.3.1, and a new
+  `bert-large` extra installs `ja_ginza_bert_large` 5.3.0. `ja_ginza` 5.3.0 has
+  the same weights and configuration as 5.2.0.
 
 ### Fixed
 
 - The Workbench reports unavailable token attributes and catalog-binding
   failures with their reasons.
+- `lingrep-spacy-setup` saves the transformer weights of `ja_ginza_electra` and
+  `ja_ginza_bert_large` in the analyzer, downloaded once from the Hugging Face
+  Hub at a pinned commit. Analyzers set up by earlier releases fetched the
+  weights from the Hub, at whatever commit it served, each time they started,
+  so their output could change without a change to the analyzer files.
+  Analysis now runs with Hugging Face Hub access disabled, and the Electra
+  tokenizer loads from the locked `sudachitra` without running repository
+  code. Set up existing transformer analyzers again into a new directory.
 - Searches cancel after 30 seconds without an open progress stream. A
   replacement scan waits for the superseded scan to stop and displays only
   its own progress. Failed searches no longer also report a lost connection.
