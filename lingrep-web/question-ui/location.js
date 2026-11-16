@@ -18,14 +18,16 @@ export function parseView(text) {
     }
     throw new Error('The saved reading location is invalid. Open a new question.');
 }
-export function locationURL(base, params, evidence, view) {
-    const url = new URL(base);
-    const entries = Object.entries(params).map(([key, value]) => [key, String(value)]);
-    const hash = new URLSearchParams(entries);
+export function locationHash(params, evidence, view) {
+    const hash = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]));
     if (evidence)
         hash.set('evidence', evidence);
     hash.set('view', JSON.stringify(view));
-    url.hash = hash.toString();
+    return '#' + hash.toString();
+}
+export function locationURL(base, params, evidence, view) {
+    const url = new URL(base);
+    url.hash = locationHash(params, evidence, view);
     return url.href;
 }
 export function savedQuestion(value) {

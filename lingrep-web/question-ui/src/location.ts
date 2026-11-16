@@ -21,15 +21,18 @@ export function parseView(text: string | null): ViewLocation {
   }
   throw new Error('The saved reading location is invalid. Open a new question.');
 }
-export function locationURL(base: string, params: Record<string,string|number>, evidence: string | null, view: ViewLocation): string {
-  const url=new URL(base);
-  const entries=Object.entries(params).map(([key,value])=>[key,String(value)]);
-  const hash=new URLSearchParams(entries);
+export function locationHash(params: Record<string,string|number>, evidence: string | null, view: ViewLocation): string {
+  const hash=new URLSearchParams(Object.entries(params).map(([key,value])=>[key,String(value)]));
   if(evidence)hash.set('evidence',evidence);
   hash.set('view',JSON.stringify(view));
-  url.hash=hash.toString();
+  return '#'+hash.toString();
+}
+export function locationURL(base: string, params: Record<string,string|number>, evidence: string | null, view: ViewLocation): string {
+  const url=new URL(base);
+  url.hash=locationHash(params,evidence,view);
   return url.href;
 }
+
 export function savedQuestion(value: unknown): SavedQuestion {
   if(!record(value)||!['lingrep.question/v1','lingrep.question-probe/v1'].includes(String(value.format))||!['question','source','corpus','analysis','where'].every(key=>typeof value[key]==='string'))throw new Error('Choose a saved lingrep question document.');
   if(!Object.values(value).every(field=>typeof field==='string'||typeof field==='number'&&Number.isFinite(field)))throw new Error('The question document contains invalid settings.');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultView, locationURL, parseView, savedQuestion } from './location.js';
+import { defaultView, locationHash, locationURL, parseView, savedQuestion } from './location.js';
 import { questionSettings, scopeClause } from './document.js';
 
 test('reader locations preserve their document, occurrence and return page through a URL',()=>{
@@ -71,4 +71,19 @@ test('number drags preserve small steps and cover large ranges with a short gest
     assert.ok(numberDragDelta(distance)>=numberDragDelta(distance-8));
   }
   assert.equal(numberDragDelta(1000000),Number.MAX_SAFE_INTEGER);
+});
+
+
+test('standalone question fragments preserve reader locations and literal query text',()=>{
+  const view={kind:'example',pattern:'かもしれない',document:5,sequence:12,returnTo:defaultView()};
+  for(const evidence of [null,'a'.repeat(32)]){
+    const values={source:'p := [text="a+b & \'()!"].',context:24,lines:8000};
+    const hash=locationHash(values,evidence,view);
+    assert.equal(hash,new URL(locationURL('http://localhost:9992/?old=1#old',values,evidence,view)).hash);
+    const params=new URLSearchParams(hash.slice(1));
+    assert.equal(params.get('source'),values.source);
+    assert.equal(params.get('lines'),'8000');
+    assert.equal(params.get('evidence'),evidence);
+    assert.deepEqual(parseView(params.get('view')),view);
+  }
 });
