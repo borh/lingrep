@@ -82,7 +82,6 @@ export function entryFieldNames(fields) {
   return captures.every(Boolean) ? captures.join(" · ") : fields.map(keyFieldLabel).join(" · ");
 }
 
-/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. */
 /** A line's `left` or `right` text as HTML, with the role words its `bound` places on that side marked. Offsets count code points. */
 export function contextHtml(text, bound, side) {
   const chars = Array.from(text), marks = (bound ?? []).filter((b) => b.side === side).sort((a, b) => a.start - b.start);
@@ -94,9 +93,11 @@ export function contextHtml(text, bound, side) {
   }
   return html + esc(chars.slice(at).join(""));
 }
-export function inspectHref(s, line, { source, analysis, fingerprint }, back) {
+/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words` and `total` and its listed `lines`, `at` the index of `line`, so the question page steps through those lines. */
+export function inspectHref(s, line, { source, analysis, fingerprint }, back, entry = null) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
-  return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back })}`;
+  const lines = entry && { words: entry.words, total: entry.total, at: entry.at, lines: entry.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles })) };
+  return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), ...(lines ? { entry: JSON.stringify(lines) } : {}), return: back })}`;
 }
 
 export const hashHolds = (hash, entries) => {
@@ -497,7 +498,8 @@ export function mountFrequency(root) {
   });
 
   const entering = () => s.entry != null && s.where == null;
-  const groupText = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)).join(" ") : g.value);
+  const groupWords = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)) : [g.value]);
+  const groupText = (g) => groupWords(g).join(" ");
   const valueName = (v) => v ?? t("frequency.no_value");
   const ems = (text) => [...text].reduce((w, c) => w + (c.charCodeAt(0) > 0x2e7f ? 1 : 0.6), 0);
   const barsOf = (c) => [...c.bars, ...(c.none ? [{ ...c.none, value: null }] : [])];
@@ -828,6 +830,15 @@ export function mountFrequency(root) {
     entryEl.querySelector(`.fq-kwic li[data-sentence="${sentence}"][data-start="${start}"][data-end="${end}"] .kn`)?.focus({ preventScroll: true });
   });
 
+  // The hand-off carries the entry's lines, which only the opened link needs; the address is completed when the link is pressed or activated.
+  const withEntryLines = (e) => {
+    const link = e.target.closest?.(".fq-inspect"), i = Number(link?.closest("li[data-i]")?.dataset.i);
+    if (!link || !lined || entryEl.classList.contains("previewing") || !lined.lines[i]) return;
+    const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
+    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, lines: lined.lines, at: i });
+  };
+  entryEl.addEventListener("pointerdown", withEntryLines);
+  entryEl.addEventListener("click", withEntryLines, true);
   function leaveEntry() {
     lastEntry = s.entry;
     set({ entry: null });

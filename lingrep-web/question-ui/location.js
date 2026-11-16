@@ -82,5 +82,21 @@ export function parseOccurrence(text) {
         throw new Error('The frequency occurrence in this address is invalid. Open it again from the frequency view.');
     return { pattern: value.pattern, sentence: value.sentence, document: value.document, roles: value.roles.map(({ name, start, end }) => ({ name, start, end })), analysis: value.analysis, fingerprint: value.fingerprint };
 }
+export function parseEntryLines(text) {
+    if (!text)
+        return null;
+    let value;
+    try {
+        value = JSON.parse(text);
+    }
+    catch {
+        value = null;
+    }
+    const role = (item) => record(item) && typeof item.name === 'string' && ordinal(item.start) && ordinal(item.end) && item.end >= item.start;
+    const line = (item) => record(item) && ordinal(item.sentence) && ordinal(item.document) && Array.isArray(item.roles) && item.roles.every(role);
+    if (!record(value) || !Array.isArray(value.words) || !value.words.every(word => typeof word === 'string') || !Array.isArray(value.lines) || !value.lines.length || !value.lines.every(line) || !ordinal(value.total) || value.total < value.lines.length || !ordinal(value.at) || value.at >= value.lines.length)
+        throw new Error('The frequency entry in this address is invalid. Open it again from the frequency view.');
+    return { words: value.words, total: value.total, at: value.at, lines: value.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles: roles.map(({ name, start, end }) => ({ name, start, end })) })) };
+}
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn = (value) => value !== null && /^frequencies(#|$)/.test(value) ? value : null;

@@ -54,6 +54,15 @@ test('a frequency handoff names one occurrence and returns only to the frequency
   assert.equal(frequencyReturn('frequencies#corpus=c&entry=x'),'frequencies#corpus=c&entry=x');
   for(const bad of ['https://example.org/frequencies#x','//evil/frequencies','javascript:alert(1)','frequenciesx',null])assert.equal(frequencyReturn(bad),null);
 });
+test("a frequency entry's lines name each occurrence and the position of the opened one",async()=>{
+  const {parseEntryLines}=await import('./location.js');
+  const lines=[{sentence:3,document:1,roles:[{name:'n',start:0,end:1}]},{sentence:41,document:5,roles:[]}];
+  const entry={words:['坂','を','上る'],total:12,at:1,lines};
+  assert.deepEqual(parseEntryLines(JSON.stringify({...entry,extra:1})),entry);
+  assert.equal(parseEntryLines(null),null);
+  for(const bad of ['[',JSON.stringify({...entry,at:2}),JSON.stringify({...entry,at:-1}),JSON.stringify({...entry,words:[1]}),JSON.stringify({...entry,total:1}),JSON.stringify({...entry,lines:[{sentence:-1,document:1,roles:[]}]})])
+    assert.throws(()=>parseEntryLines(bad),/frequency entry/);
+});
 test('example counts above thirty survive saved settings while context remains bounded',()=>{
   const settings=questionSettings(new URLSearchParams({lines:'1000',context:'999'}));
   assert.equal(settings.lines,1000);

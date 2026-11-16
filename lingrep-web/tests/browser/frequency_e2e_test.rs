@@ -2748,3 +2748,74 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
     served.server.abort();
     result
 }
+
+/// トークンを調べる from an entry's line opens that line on the question page
+/// with the entry as a removable context: the title names the entry and the
+/// line's position among its lines, and the example steps go through those
+/// lines, within the searched document and into the next one, until the
+/// context is removed.
+#[tokio::test]
+async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let cats = (0..WORKS.len())
+        .map(|document| work_sentences(document).len())
+        .sum::<usize>();
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        driver
+            .find(By::Css(".fq-kwic li[data-i='1'] .fq-inspect"))
+            .await?
+            .click()
+            .await?;
+        let title = "const lab = document.querySelector('#token-lab'); \
+            return lab && !lab.hidden ? document.querySelector('#token-origin').textContent : null";
+        let at = |n: usize| {
+            format!(
+                "const lab = document.querySelector('#token-lab'), t = document.querySelector('#token-origin')?.textContent ?? ''; \
+                 return !!lab && !lab.hidden && t.startsWith('猫 · {n} / {cats} · ') && t"
+            )
+        };
+        wait_for(&driver, &at(2), "the second line").await?;
+        let chip = "return document.querySelector('[data-clear-limit=entry]')?.textContent ?? null";
+        observed(&driver, chip, json!("Examples: 猫 ×"), "the entry chip").await?;
+        let step = |direction: &'static str| {
+            format!("document.querySelector('[data-example-step=\"{direction}\"]').click()")
+        };
+        for (direction, n) in [("1", 3), ("1", 4), ("-1", 3), ("-1", 2), ("-1", 1)] {
+            driver.execute(&step(direction), Vec::new()).await?;
+            wait_for(&driver, &at(n), &format!("line {n}")).await?;
+        }
+        observed(
+            &driver,
+            "return document.querySelector('[data-example-step=\"-1\"]').disabled",
+            json!(true),
+            "no step before the first line",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new())
+            .await?;
+        observed(&driver, chip, Value::Null, "the removed chip").await?;
+        let plain = driver.execute(title, Vec::new()).await?.json().clone();
+        assert!(!plain.as_str().unwrap().contains(" / "), "{plain}");
+        observed(
+            &driver,
+            "const a = document.querySelector('#frequency-return'); return !a.hidden && a.getAttribute('href').startsWith('frequencies#')",
+            json!(true),
+            "the return link",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

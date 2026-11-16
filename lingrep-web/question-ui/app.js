@@ -1,7 +1,7 @@
 import { serviceURL, ServiceError, expiredSearch } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
+import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, partOfSpeech } from './dependency.js';
@@ -256,6 +256,10 @@ let viewEvidence = null;
 let navigationEpoch = 0;
 let pendingView = null;
 let pendingOccurrence = null;
+// The frequency entry a hand-off came from: example steps go through its lines while the open example is the line at `at`.
+let entryLines = null;
+const entryLine = (at) => ({ ...entryLines.lines[at], pattern: entryLines.pattern, analysis: entryLines.analysis, fingerprint: entryLines.fingerprint });
+function entryActive() { return !!entryLines && !!inspecting && !tokenLab.hidden && inspecting.row.pattern === entryLines.pattern && inspecting.row.corpus_sentence_ordinal === entryLines.lines[entryLines.at].sentence; }
 // The draft's definition and document limit; it applies while the pattern source is `source`.
 let searchLimit = null;
 const runLimits = new Map();
@@ -444,14 +448,19 @@ function renderLimits(limit) {
         delete label.dataset.limited;
         label.textContent = locale === 'ja' ? 'すべての作品' : 'all documents';
     }
-    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : [])];
+    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : []), ...(entryActive() ? [['entry', locale === 'ja' ? `用例: ${entryLines.words.join(' ')}` : `Examples: ${entryLines.words.join(' ')}`]] : [])];
     const signature = JSON.stringify(chips);
     if (renderSignatures.get(limitChips) === signature)
         return;
     renderSignatures.set(limitChips, signature);
     limitChips.replaceChildren(...chips.map(([kind, text]) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'scope-chip'; button.dataset.clearLimit = kind; button.setAttribute('aria-label', locale === 'ja' ? `${text} の限定を外す` : `Remove the limit ${text}`); button.innerHTML = `${escape(text)}<span aria-hidden="true"> ×</span>`; return button; }));
 }
-limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (!button || !searchLimit)
+limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (button?.dataset.clearLimit === 'entry') {
+    entryLines = null;
+    renderExampleSteps();
+    updateDraft();
+    return;
+} if (!button || !searchLimit)
     return; searchLimit = button.dataset.clearLimit === 'pattern' ? { ...searchLimit, pattern: null } : { ...searchLimit, document: null }; updateDraft(); });
 function restoreLimit(params) {
     const pattern = params.get('pattern') || null, document = params.get('document');
@@ -1139,10 +1148,6 @@ async function inspect(run, row, button) {
         tokenData = data;
         tokenIndex = row.span.start;
         focusedSentence.innerHTML = escape(words(data.tokens.slice(0, row.span.start))) + '<mark>' + escape(words(data.tokens.slice(row.span.start, row.span.end))) + '</mark>' + escape(words(data.tokens.slice(row.span.end)));
-        const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
-        $('[data-example-step="-1"]', exampleSteps).disabled = position <= 0 && page.previousAfter == null;
-        $('[data-example-step="1"]', exampleSteps).disabled = position === page.rows.length - 1 && page.next == null;
-        $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
         const roles = new Map(evidenceWords(row, data.tokens.length).filter(word => word.roles.length).map(word => [word.index, word.roles.join(' ')]));
         $('#token-ribbon').innerHTML = data.tokens.map(token => { const bound = roles.get(token.index); return `<button type="button" data-token="${token.index}" class="${token.index >= row.span.start && token.index < row.span.end ? 'is-hit' : ''}${bound ? ' bound' : ''}"${bound ? ` data-roles="${escape(bound)}"` : ''}>${escape(token.attributes.text)}</button>`; }).join('');
         const keys = Object.keys(data.tokens[tokenIndex].attributes);
@@ -1154,6 +1159,7 @@ async function inspect(run, row, button) {
         tokenLab.hidden = false;
         button.after(tokenLab);
         button.setAttribute('aria-expanded', 'true');
+        renderExampleSteps();
         renderDependencies();
         $('#document').setAttribute('href', hrefFor(run, hitLocation(run, row, 'reader')));
         $('#close-token').setAttribute('href', hrefFor(run, concordanceFor(run)));
@@ -1176,11 +1182,52 @@ async function inspect(run, row, button) {
         button.removeAttribute('aria-busy');
     }
 }
+// The example's position, among the run's examples or, from a frequency entry, among the entry's lines.
+function renderExampleSteps() {
+    if (!inspecting)
+        return;
+    const { run, row } = inspecting, previous = $('[data-example-step="-1"]', exampleSteps), next = $('[data-example-step="1"]', exampleSteps);
+    if (entryActive()) {
+        const { at, lines, total, words } = entryLines;
+        previous.disabled = at <= 0;
+        next.disabled = at >= lines.length - 1;
+        $('#token-origin').textContent = `${words.join('')} · ${count(at + 1)} / ${count(total)} · ${documentTitle(row)}`;
+        return;
+    }
+    const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
+    previous.disabled = position <= 0 && page.previousAfter == null;
+    next.disabled = position === page.rows.length - 1 && page.next == null;
+    $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
+}
+// A step from an entry's line opens the next line in this search when the search covers its document, else searches that document.
+async function stepEntry(step) {
+    const from = entryLines.at, at = from + step, target = entryLine(at), run = inspecting.run, limited = runLimits.get(run.id)?.document;
+    entryLines = { ...entryLines, at };
+    if (limited == null || limited === target.document) {
+        if (!await openOccurrence(run, target))
+            entryLines = { ...entryLines, at: from };
+        return;
+    }
+    await search(undefined, undefined, target);
+    pendingView = null;
+    pendingOccurrence = target;
+}
 for (const control of exampleSteps.querySelectorAll('button'))
     control.addEventListener('click', async () => {
         const origin = inspecting;
         if (!origin)
             return;
+        if (entryActive()) {
+            control.disabled = true;
+            try {
+                await stepEntry(Number(control.dataset.exampleStep));
+            }
+            finally {
+                if (inspecting === origin)
+                    renderExampleSteps();
+            }
+            return;
+        }
         const { run, row } = origin, step = Number(control.dataset.exampleStep), view = documentView(run, row.pattern), position = view.rows.findIndex(value => value.sequence === row.sequence);
         const top = tokenLab.getBoundingClientRect().top, epoch = navigationEpoch, hadFocus = document.activeElement === control;
         let successor = null;
@@ -1338,11 +1385,13 @@ async function openOccurrence(run, target) {
             heading.focus({ preventScroll: true });
             tokenLab.scrollIntoView({ block: 'nearest' });
         }
+        return true;
     }
     catch (error) {
         const detail = error instanceof ServiceError && error.status === 404 ? t('occurrenceNotFound') : error instanceof ServiceError && error.status === 409 && /frequency table/.test(error.message) ? t('occurrenceChanged') : errorMessage(error);
         $('#error').hidden = false;
         $('#error').textContent = `${t('occurrenceMissing')} ${detail}`;
+        return false;
     }
 }
 let readerEpoch = 0;
@@ -1923,7 +1972,9 @@ async function init() {
         $('#frequency-return').href = returnHref;
         $('#frequency-return').hidden = false;
     }
-    const occurrence = parseOccurrence(params.get('occurrence'));
+    const occurrence = parseOccurrence(params.get('occurrence')), entry = parseEntryLines(params.get('entry'));
+    if (occurrence && entry)
+        entryLines = { ...entry, pattern: occurrence.pattern, analysis: occurrence.analysis, fingerprint: occurrence.fingerprint };
     window.__probe = { get state() { return state; }, get recorded() { return recorded; }, get controls() { return controls; }, get view() { return viewLocation; }, search, questionDocument };
     if (current)
         await applyView(follow && current.phase === 'complete' && initialView.kind === 'concordance' ? current : evidence ?? current, follow && current.phase === 'complete' && initialView.kind === 'concordance' ? defaultView() : initialView, !follow);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { contextHtml, documentNames, entryFieldNames, inspectHref, keyFieldLabel, readState, stateEntries } from "../assets/frequency.js";
-import { parseOccurrence, frequencyReturn } from "../question-ui/location.js";
+import { parseOccurrence, parseEntryLines, frequencyReturn } from "../question-ui/location.js";
 
 test("a frequency line's handoff address names its occurrence and document, and returns to the conditioned entry", () => {
   const s = readState(`#${new URLSearchParams({ corpus: "natsume", catalog: "class6.lx", pattern: "npv", entry: '{"kind":"key"}', k: JSON.stringify({ "$n.lemma": "坂", "$p.lemma": "を" }), w: JSON.stringify({ genre: { m: "in", v: ["novel"] } }) })}`);
@@ -18,6 +18,19 @@ test("a frequency line's handoff address names its occurrence and document, and 
   const returned = frequencyReturn(params.get("return"));
   assert.equal(returned, back);
   assert.deepEqual(readState(returned.slice("frequencies".length)), s);
+});
+
+test("a line's handoff carries its entry's words, total and lines, at the line's position", () => {
+  const s = readState(`#${new URLSearchParams({ corpus: "natsume", catalog: "class6.lx", pattern: "npv", entry: '{"kind":"key"}' })}`);
+  const roles = (n) => [{ name: "n", start: n, end: n + 1 }];
+  const lines = [{ sentence: 3, document: 1, start: 0, end: 2, left: "x", right: "y", roles: roles(0) }, { sentence: 41, document: 5, start: 0, end: 2, left: "", right: "", roles: roles(2) }];
+  const identity = { source: "npv := [].", analysis: "a".repeat(64), fingerprint: "f".repeat(64) };
+  const href = inspectHref(s, lines[1], identity, "frequencies#x", { words: ["坂", "を", "上る"], total: 10, lines, at: 1 });
+  assert.deepEqual(parseEntryLines(new URLSearchParams(href.slice(3)).get("entry")), {
+    words: ["坂", "を", "上る"], total: 10, at: 1,
+    lines: [{ sentence: 3, document: 1, roles: roles(0) }, { sentence: 41, document: 5, roles: roles(2) }],
+  });
+  assert.equal(new URLSearchParams(inspectHref(s, lines[1], identity, "frequencies#x").slice(3)).get("entry"), null);
 });
 
 test("an exact-key field is named by its capture and attribute in plain words", () => {
