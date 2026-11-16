@@ -541,8 +541,9 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
                 )
                 .await?;
             assert!(
-                note.json().as_str().is_some_and(|text| text
-                    .starts_with("Overlapping matches are counted using the catalog's policy.")),
+                note.json().as_str().is_some_and(
+                    |text| text.starts_with("Overlapping matches follow the catalog's policy")
+                ),
                 "{page} states how overlaps are counted: {:?}",
                 note.json()
             );
