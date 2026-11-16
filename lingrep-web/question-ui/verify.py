@@ -528,8 +528,8 @@ with (out / "browser-driver.log").open("w") as log:
             "document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'));document.querySelector('#context-size').value=12;document.querySelector('#context-size').dispatchEvent(new Event('input'))"
         )
         wait("return document.querySelectorAll('.kwic-row').length===20")
-        js("document.querySelector('.kwic-row').click()")
-        wait("return document.querySelectorAll('#token-ribbon button').length>0")
+        js("window.__inspectionTarget=document.querySelector('.kwic-row');__inspectionTarget.click()")
+        wait("return __inspectionTarget.getAttribute('aria-expanded')==='true' && !__inspectionTarget.hasAttribute('aria-busy') && document.querySelector('#token-lab').previousElementSibling===__inspectionTarget && document.querySelectorAll('#token-ribbon button').length>0")
         selected = js(
             "return document.querySelector('#token-ribbon .selected').dataset.token"
         )
