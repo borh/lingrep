@@ -39,8 +39,8 @@ use crate::protocol::query::{
 };
 use crate::protocol::write_jsonl;
 use crate::summary::{
-    AggregationGroup, AggregationInput, MetadataValueTally, OwnedAggregationInput, SectionTally,
-    SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows, shard_hash,
+    AggregationGroup, AggregationInput, GroupingTally, MetadataValueTally, OwnedAggregationInput,
+    SectionTally, SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows, shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -278,6 +278,11 @@ pub fn run(
         QueryMode::Summarize,
     )?;
 
+    if args.grouping_coverage && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "--grouping-coverage requires --json".to_owned(),
+        ));
+    }
     if args.by_document && output != OutputMode::Jsonl {
         return Err(CliError::InvalidArgs(
             "--by-document requires --json".to_owned(),
@@ -530,7 +535,19 @@ pub fn run(
             })
             .transpose()
             .map_err(CliError::Aggregation)?;
-        let windows = if args.by_document
+        let grouping_coverage = args
+            .grouping_coverage
+            .then(|| {
+                GroupingTally::new(
+                    pattern_projection.selected.iter().copied(),
+                    args.by_document,
+                    aggregation.temp_budget(),
+                )
+            })
+            .transpose()
+            .map_err(CliError::Aggregation)?;
+        let windows = if args.grouping_coverage
+            || args.by_document
             || args.write_table.is_some()
             || args.trace_policy.is_some()
             || sections.is_some()
@@ -544,6 +561,7 @@ pub fn run(
             None
         };
         let mut sink = SummarySink {
+            grouping_coverage,
             windows,
             aggregation: Some(aggregation),
             aggregation_error: None,
@@ -649,6 +667,7 @@ pub fn run(
             .aggregation
             .take()
             .expect("summary aggregation remains available after successful execution");
+        let grouping_coverage = sink.grouping_coverage.take();
         let windows = sink.windows.take();
         let mut records_unkeyed = sink.records_unkeyed;
         let documents = sink.documents.take();
@@ -661,6 +680,15 @@ pub fn run(
             .iter()
             .map(|descriptor| catalog_policy.published_name(descriptor.name.as_str()))
             .collect::<Vec<_>>();
+        let mut grouping_coverage = grouping_coverage
+            .map(GroupingTally::into_records)
+            .transpose()
+            .map_err(CliError::Aggregation)?;
+        let complete_grouping_coverage = grouping_coverage
+            .as_mut()
+            .map(|coverage| coverage.take_partition(None, &pattern_names))
+            .transpose()
+            .map_err(CliError::Aggregation)?;
         let mut finalized_windows = windows
             .map(|windows| windows.finalize(&pool))
             .transpose()
@@ -770,6 +798,7 @@ pub fn run(
             lingrep_corpus::PreparedFilterStats::sentences_proven_absent,
         );
         let complete = QueryComplete {
+            grouping_coverage: complete_grouping_coverage,
             retained_matches: None,
             coverage: Coverage::Full,
             corpus: complete_corpus,
@@ -812,6 +841,11 @@ pub fn run(
             publish_query_jsonl(
                 &mut writer,
                 &QueryEnvelope::new(QueryEvent::Document(DocumentData {
+                    grouping_coverage: grouping_coverage
+                        .as_mut()
+                        .map(|coverage| coverage.take_partition(Some(ordinal), &pattern_names))
+                        .transpose()
+                        .map_err(CliError::Aggregation)?,
                     document: ordinal,
                     source_name: tally.source_name.to_string(),
                     sentences_admitted: tally.sentences,
@@ -918,6 +952,7 @@ pub fn run(
 }
 
 struct SummarySink<'a> {
+    grouping_coverage: Option<GroupingTally>,
     windows: Option<WindowTally>,
     aggregation: Option<SummaryAggregator>,
     aggregation_error: Option<io::Error>,
@@ -1362,12 +1397,28 @@ impl SummarySink<'_> {
         Ok(())
     }
 
+    fn observe_grouping(
+        &mut self,
+        partition: SummaryPartition,
+        grouped: bool,
+    ) -> Result<(), ExecutionError> {
+        if let Some(coverage) = self.grouping_coverage.as_mut()
+            && let Err(error) = coverage.observe(partition, grouped)
+        {
+            let message = error.to_string();
+            self.aggregation_error = Some(error);
+            return Err(ExecutionError::Sink(message));
+        }
+        Ok(())
+    }
+
     fn add_owned_groups(
         &mut self,
         groups: Vec<(SummaryPartition, Option<(OwnedAggregationInput, u64)>)>,
     ) -> Result<usize, ExecutionError> {
         let records_emitted = groups.len();
         for (partition, grouped) in groups {
+            self.observe_grouping(partition, grouped.is_some())?;
             let Some((grouped, hash)) = grouped else {
                 self.records_unkeyed += 1;
                 continue;
@@ -1411,11 +1462,13 @@ impl SummarySink<'_> {
             if self.sections.is_some() || self.metadata_values.is_some() {
                 matched.push(pattern_ordinal);
             }
-            let Some(grouped) = self.grouping(location, sentence, record)? else {
+            let partition = self.partition(pattern_ordinal, location);
+            let grouped = self.grouping(location, sentence, record)?;
+            self.observe_grouping(partition, grouped.is_some())?;
+            let Some(grouped) = grouped else {
                 self.records_unkeyed += 1;
                 continue;
             };
-            let partition = self.partition(pattern_ordinal, location);
             if let Err(error) = self
                 .aggregation
                 .as_mut()
@@ -1704,6 +1757,7 @@ mod tests {
 
     fn complete_fixture() -> QueryComplete {
         QueryComplete {
+            grouping_coverage: None,
             retained_matches: None,
             coverage: Coverage::Full,
             corpus: CompleteCorpus::Prepared {

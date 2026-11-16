@@ -16,7 +16,9 @@ use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, Proj
 use lingrep_core::spill::{SortedDrain, SortedRunCounts, SpillPolicy, TempBudget};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::query::{MetadataValueData, PatternCount, SectionData};
+use crate::protocol::query::{
+    MetadataValueData, PatternCount, PatternGroupingCoverage, SectionData,
+};
 
 /// Keys held in the scan's sorted buffer before it spills a run.
 ///
@@ -1698,6 +1700,117 @@ impl SlotDrain<'_> {
     }
 }
 
+type GroupingCoverageKey = (Option<u64>, u64, bool);
+
+pub(crate) struct GroupingTally {
+    counts: SortedRunCounts<GroupingCoverageKey>,
+    by_document: bool,
+}
+
+impl GroupingTally {
+    pub(crate) fn new(
+        published: impl Iterator<Item = u64>,
+        by_document: bool,
+        budget: Arc<TempBudget>,
+    ) -> io::Result<Self> {
+        let mut counts = SortedRunCounts::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: DEFAULT_RESIDENT_KEYS,
+                merge_fan_in: DEFAULT_MERGE_FAN_IN,
+            },
+            budget,
+        )?;
+        for pattern in published {
+            counts.add((None, pattern, false), 0)?;
+        }
+        Ok(Self {
+            counts,
+            by_document,
+        })
+    }
+
+    pub(crate) fn observe(&mut self, partition: SummaryPartition, grouped: bool) -> io::Result<()> {
+        self.counts
+            .add((None, partition.pattern_ordinal, grouped), 1)?;
+        if self.by_document {
+            let document = partition
+                .document_ordinal
+                .ok_or_else(|| io::Error::other("grouping coverage requires a document ordinal"))?;
+            self.counts
+                .add((Some(document), partition.pattern_ordinal, grouped), 1)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn into_records(self) -> io::Result<GroupingCoverageRows> {
+        Ok(GroupingCoverageRows {
+            drain: self.counts.into_sorted_drain()?,
+            pending: None,
+        })
+    }
+}
+
+pub(crate) struct GroupingCoverageRows {
+    drain: SortedDrain<GroupingCoverageKey>,
+    pending: Option<(GroupingCoverageKey, usize)>,
+}
+
+impl GroupingCoverageRows {
+    pub(crate) fn take_partition(
+        &mut self,
+        document: Option<u64>,
+        names: &[&str],
+    ) -> io::Result<Vec<PatternGroupingCoverage>> {
+        let mut rows: Vec<PatternGroupingCoverage> = Vec::new();
+        let mut current_pattern = None;
+        loop {
+            if self.pending.is_none() {
+                self.pending = self.drain.next_entry()?;
+            }
+            let Some(((entry_document, pattern, grouped), count)) = self.pending else {
+                break;
+            };
+            if entry_document > document {
+                break;
+            }
+            if entry_document < document {
+                return Err(io::Error::other(
+                    "grouping coverage document is out of order",
+                ));
+            }
+            self.pending = None;
+            if current_pattern != Some(pattern) {
+                rows.push(PatternGroupingCoverage {
+                    pattern: names
+                        .get(pattern as usize)
+                        .ok_or_else(|| {
+                            io::Error::other("grouping coverage pattern is out of range")
+                        })?
+                        .to_string(),
+                    ..Default::default()
+                });
+                current_pattern = Some(pattern);
+            }
+            let row = rows
+                .last_mut()
+                .ok_or_else(|| io::Error::other("grouping coverage row is absent"))?;
+            let count = u64::try_from(count)
+                .map_err(|_| io::Error::other("grouping coverage count overflow"))?;
+            row.records_presented = row
+                .records_presented
+                .checked_add(count)
+                .ok_or_else(|| io::Error::other("grouping coverage count overflow"))?;
+            if grouped {
+                row.records_grouped = count;
+            } else {
+                row.records_unkeyed = count;
+            }
+        }
+        Ok(rows)
+    }
+}
+
 /// Counts matches per section label, followed by an unlabelled slot.
 pub struct SectionTally {
     labels: Vec<(String, roaring::RoaringTreemap)>,
@@ -1913,5 +2026,97 @@ impl MetadataValueRecords<'_> {
                 tokens_admitted: totals.tokens,
                 patterns,
             }))
+    }
+}
+
+#[cfg(test)]
+mod grouping_coverage_tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::panic_in_result_fn)]
+    fn grouping_coverage_spills_with_bounded_keys_and_a_shared_temporary_budget() -> io::Result<()>
+    {
+        let run = |limit| -> io::Result<_> {
+            let budget = Arc::new(TempBudget::new(16 * 1024 * 1024));
+            let mut tally = GroupingTally {
+                counts: SortedRunCounts::with_policy(
+                    SpillPolicy {
+                        max_pending_bytes: usize::MAX,
+                        max_pending_keys: limit,
+                        merge_fan_in: 2,
+                    },
+                    Arc::clone(&budget),
+                )?,
+                by_document: true,
+            };
+            for pattern in 0..3 {
+                tally.counts.add((None, pattern, false), 0)?;
+            }
+            for document in 0..100 {
+                for grouped in [false, true, true] {
+                    tally.observe(
+                        SummaryPartition {
+                            pattern_ordinal: 0,
+                            document_ordinal: Some(document),
+                            sentence_ordinal: None,
+                        },
+                        grouped,
+                    )?;
+                }
+                if document % 2 == 0 {
+                    tally.observe(
+                        SummaryPartition {
+                            pattern_ordinal: 1,
+                            document_ordinal: Some(document),
+                            sentence_ordinal: None,
+                        },
+                        true,
+                    )?;
+                }
+            }
+            assert!(tally.counts.snapshot().peak_buffered_keys() <= limit);
+            let mut rows = tally.into_records()?;
+            let mut result = vec![rows.take_partition(None, &["first", "second", "absent"])?];
+            for document in 0..100 {
+                result.push(rows.take_partition(Some(document), &["first", "second", "absent"])?);
+            }
+            if limit == 2 {
+                assert!(budget.peak_used_bytes() > 0);
+            }
+            assert!(budget.peak_used_bytes() <= budget.snapshot().limit_bytes());
+            drop(rows);
+            assert_eq!(budget.used_bytes(), 0);
+            Ok(result)
+        };
+        let spilled = run(2)?;
+        assert_eq!(spilled, run(65_536)?);
+        assert_eq!(spilled[0][0].records_presented, 300);
+        assert_eq!(spilled[0][0].records_grouped, 200);
+        assert_eq!(spilled[0][0].records_unkeyed, 100);
+        assert_eq!(spilled[0][1].records_presented, 50);
+        assert_eq!(spilled[0][2].records_presented, 0);
+        let budget = Arc::new(TempBudget::new(1));
+        let mut tally = GroupingTally {
+            counts: SortedRunCounts::with_policy(
+                SpillPolicy {
+                    max_pending_bytes: usize::MAX,
+                    max_pending_keys: 2,
+                    merge_fan_in: 2,
+                },
+                budget,
+            )?,
+            by_document: true,
+        };
+        let result = tally.observe(
+            SummaryPartition {
+                pattern_ordinal: 0,
+                document_ordinal: Some(0),
+                sentence_ordinal: None,
+            },
+            true,
+        );
+        assert!(result.is_err());
+        Ok(())
     }
 }

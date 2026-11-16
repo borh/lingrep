@@ -1540,6 +1540,7 @@ fn query_v7_round_trips_tagged_graph_assignments() {
 
 fn query_complete() -> QueryEnvelope {
     QueryEnvelope::new(QueryEvent::Complete(QueryComplete {
+        grouping_coverage: None,
         retained_matches: None,
         coverage: Coverage::Full,
         corpus: complete_corpus(),

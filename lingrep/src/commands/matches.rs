@@ -571,6 +571,7 @@ pub fn run(
             publish_query_jsonl(
                 sink.writer,
                 &QueryEnvelope::new(QueryEvent::Complete(QueryComplete {
+                    grouping_coverage: None,
                     retained_matches,
                     coverage,
                     corpus: complete_corpus,

@@ -500,6 +500,23 @@ attribute) is dropped from keyed output and counted in
 `counters.records_unkeyed`. It is never grouped under a partial key that could
 collide with another pattern's complete key.
 
+`--grouping-coverage` adds a `grouping_coverage` array to the JSONL `complete`
+record. Each entry names a published pattern and reports `records_presented`,
+`records_grouped` and `records_unkeyed`; presented equals grouped plus unkeyed.
+Counts describe records admitted to grouping after matcher selection and catalog
+publication policy, before unkeyed records are omitted or `--top` selects rows.
+A missing projected attribute or capture increments unkeyed; a scalar or list
+key that is available increments grouped once per record. These are record
+counts, not distinct key counts or the raw `matches_found` counter.
+
+Every published pattern appears in catalog order, including patterns with zero
+records. With `--by-document`, each `document` record also carries a sparse
+`grouping_coverage` array: omitted patterns have zero presented records, and an
+empty array means no published record reached grouping in that document.
+The arrays are absent unless requested, so existing JSONL and keyed rows remain
+unchanged. Coverage counters spill under the shared `--max-temp-bytes` limit;
+a failed run never publishes successful completion coverage.
+
 ### Counting per document
 
 `--by-document` counts each group per admitted document, and `--top` ranks

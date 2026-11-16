@@ -795,6 +795,11 @@ pub struct SummarizeArgs {
     #[arg(long, help_heading = "Output")]
     pub by_document: bool,
 
+    /// Report per-pattern grouped and unkeyed records after publication policy
+    /// (requires --json). With --by-document, also report each document's coverage.
+    #[arg(long, help_heading = "Output", hide_short_help = true)]
+    pub grouping_coverage: bool,
+
     /// Count each pattern's matches and matched sentences under every section
     /// label of a prepared corpus, and publish them as `section` records
     /// (requires --json and --corpus or --cache).
