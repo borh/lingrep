@@ -190,6 +190,28 @@ impl ResultIndex {
         })
     }
 
+    /// The occurrences of `pattern` in corpus sentence `sentence`, in sequence order.
+    pub async fn sentence_occurrences(
+        &self,
+        pattern: PatternKey,
+        sentence: u64,
+    ) -> Result<Vec<ResultOccurrence>, ResultIndexError> {
+        let mut query = QueryBuilder::new("SELECT sequence, document, payload FROM matches WHERE ");
+        scope(&mut query, pattern, None)?;
+        query
+            .push(" AND sentence = ")
+            .push_bind(integer(sentence)?)
+            .push(" ORDER BY sequence");
+        query
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database)?
+            .into_iter()
+            .map(occurrence)
+            .collect()
+    }
+
     pub async fn count(
         &self,
         pattern: PatternKey,

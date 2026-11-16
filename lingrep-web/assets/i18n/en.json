@@ -78,6 +78,7 @@
   "frequency.workbench": "Open in Workbench",
   "frequency.reason_unknown_entry": "This entry does not occur in the table.",
   "frequency.back": "Frequencies of {pattern} in {catalog}",
+  "frequency.inspect": "Inspect tokens",
   "frequency.reader_title": "Occurrence in its document",
   "frequency.reader_return": "Back to the lines",
   "frequency.reader_loading": "Loading the document…",

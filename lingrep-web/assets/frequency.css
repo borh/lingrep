@@ -414,10 +414,12 @@
 .fq-kwic .kn:hover { text-decoration: underline; }
 .fq-kwic .kn:focus-visible { outline-offset: -2px; }
 .fq-kwic .src { font: 11px/2.6 var(--font-sans); color: var(--fq-soft); text-align: right; white-space: nowrap; }
+.fq-kwic .fq-inspect { margin-left: 0.6em; color: var(--fq-accent); }
 
 @media (max-width: 40rem) {
   .fq-kwic li { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .fq-kwic .src { display: none; }
+  .fq-kwic .src { grid-column: 1 / -1; line-height: 1.6; }
+  .fq-kwic .src > span { display: none; }
   .fq { --fq-size: 18px; --fq-lead: 24px; }
   .fq .spread, .fq table.freq th:nth-child(5), .fq table.freq td:nth-child(5) { display: none; }
 }

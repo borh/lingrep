@@ -2370,6 +2370,15 @@ jq` command, in the same order. The server takes the sentences to match from
 the table and fails the request if a document's lines do not add up to the
 table's count for it.
 
+Selecting a line's node opens the line in its document. "Inspect tokens" opens
+the question page on the same corpus: it reruns the table's catalog in the
+entry's document scope and opens the token inspection of the match in that
+sentence whose captures and `where`-bound words fill the same roles, so a verb
+outside the span appears in the dependency panel. If the corpus analysis or
+catalog differs from the table's, the question page reports the difference and
+opens no example. Its "Back to frequencies" link, or the browser's Back,
+returns to the entry with its exact key and conditions.
+
 Resting the pointer on a bar for 120 ms, or focusing it, previews its value as
 the key's condition: the other charts, the entry's figures and its lines
 redraw, and the sentence and the URL keep the committed conditions. A preview

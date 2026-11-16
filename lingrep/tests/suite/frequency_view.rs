@@ -538,6 +538,7 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
             "corpus": "default",
             "corpus_name": meta["pairs"][0]["corpus_name"],
             "catalog": "table.lx",
+            "source": CATALOG,
             "patterns": [
                 {"name": "cat", "source": "cat := [text=猫].", "key_fields": []},
                 {"name": "word", "source": "key: [text]\npattern word := [].", "key_fields": ["text"]},
@@ -2127,4 +2128,105 @@ fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() 
         );
         assert_eq!(table_bytes(), saved);
     }
+}
+
+fn post_json(server: &Server, path: &str, body: &Value) -> (u16, Value) {
+    let body = body.to_string();
+    let mut stream = TcpStream::connect(&server.address).unwrap();
+    write!(stream, "POST {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", server.address, body.len(), body).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap();
+    (
+        head.split(' ').nth(1).unwrap().parse().unwrap(),
+        serde_json::from_str(body).unwrap(),
+    )
+}
+
+#[test]
+fn a_frequency_line_identifies_its_occurrence_in_a_question_run_of_the_same_catalog() {
+    let source = "key: [$a.text]\npair := (?<a> [text=猫]) (?<b> []).\n";
+    let fixture = fixture_with(source, DOCUMENTS);
+    let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
+    let meta = get_json(&server, "/api/frequency/meta");
+    assert_eq!(meta["pairs"][0]["source"], source);
+    let entries = get_json(
+        &server,
+        &format!(
+            "/api/frequency?{}",
+            query(&[
+                ("corpus", "default"),
+                ("catalog", "table.lx"),
+                ("pattern", "pair")
+            ])
+        ),
+    );
+    let group = entries["rows"][0]["group"].clone();
+    let lines = get_json(
+        &server,
+        &format!(
+            "/api/frequency/lines?{}",
+            entry_query("pair", &group, &Conditions::new(), &[])
+        ),
+    );
+    let line = lines["lines"].as_array().unwrap().last().unwrap().clone();
+    let start = line["start"].as_u64().unwrap();
+    assert_eq!(
+        line["roles"],
+        json!([{"name": "a", "start": start, "end": start + 1}, {"name": "b", "start": start + 1, "end": start + 2}])
+    );
+    let analysis = lines["analysis_identity"].as_str().unwrap().to_owned();
+    let fingerprint = lines["catalog_fingerprint"].as_str().unwrap().to_owned();
+    assert_eq!(
+        get_json(&server, "/api/questions/config")["datasets"]["default"]["analysis_identity"],
+        analysis.as_str()
+    );
+
+    let (status, submitted) = post_json(
+        &server,
+        "/api/questions/runs",
+        &json!({"source": source, "dataset": "default", "where": "", "expected_analysis_identity": analysis}),
+    );
+    assert_eq!(status, 200, "{submitted}");
+    let id = submitted["id"].as_str().unwrap();
+    for _ in 0..500 {
+        if get_json(&server, &format!("/api/questions/runs/{id}"))["phase"] == "complete" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let locate = |analysis: &str, fingerprint: &str| {
+        get(
+            &server,
+            &format!(
+                "/api/questions/runs/{id}/occurrence?{}",
+                query(&[
+                    ("pattern", "pair"),
+                    ("sentence", &line["sentence"].to_string()),
+                    ("roles", &line["roles"].to_string()),
+                    ("analysis", analysis),
+                    ("fingerprint", fingerprint),
+                ])
+            ),
+        )
+    };
+    let (status, body) = locate(&analysis, &fingerprint);
+    assert_eq!(status, 200, "{body}");
+    let found: Value = serde_json::from_str(&body).unwrap();
+    let page = get_json(
+        &server,
+        &format!(
+            "/api/questions/runs/{id}/documents?pattern=pair&document={}&after={}&limit=1",
+            found["document"],
+            found["sequence"].as_u64().unwrap() - 1
+        ),
+    );
+    let row = &page["rows"][0];
+    assert_eq!(row["corpus_sentence_ordinal"], line["sentence"]);
+    assert_eq!(
+        row["span"],
+        json!({"start": line["start"], "end": line["end"]})
+    );
+    assert_eq!(locate(&"0".repeat(64), &fingerprint).0, 409);
+    assert_eq!(locate(&analysis, &"0".repeat(64)).0, 409);
 }

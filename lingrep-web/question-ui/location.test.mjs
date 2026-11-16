@@ -43,3 +43,14 @@ test('work-scoped locations retain the unscoped return position and reject inval
   assert.throws(()=>parseView(JSON.stringify({...location,scopeDocument:-1})),/invalid/);
   assert.throws(()=>parseView(JSON.stringify({...location,returnAfter:-2})),/invalid/);
 });
+
+test('a frequency handoff names one occurrence and returns only to the frequency view',async()=>{
+  const {parseOccurrence,frequencyReturn}=await import('./location.js');
+  const target={pattern:'npv',sentence:4,roles:[{name:'n',start:0,end:1},{name:'p',start:1,end:2},{name:'v',start:3,end:4}],analysis:'a'.repeat(64),fingerprint:'f'.repeat(64)};
+  assert.deepEqual(parseOccurrence(JSON.stringify({...target,extra:1})),target);
+  assert.equal(parseOccurrence(null),null);
+  for(const bad of ['{',JSON.stringify({...target,sentence:-1}),JSON.stringify({...target,roles:[{name:'n',start:2,end:1}]}),JSON.stringify({...target,analysis:undefined})])
+    assert.throws(()=>parseOccurrence(bad),/frequency occurrence/);
+  assert.equal(frequencyReturn('frequencies#corpus=c&entry=x'),'frequencies#corpus=c&entry=x');
+  for(const bad of ['https://example.org/frequencies#x','//evil/frequencies','javascript:alert(1)','frequenciesx',null])assert.equal(frequencyReturn(bad),null);
+});

@@ -66,6 +66,7 @@ pub(crate) fn routes() -> Router<RequestStore> {
         .route("/runs/{id}/events", get(events))
         .route("/runs/{id}/cancel", post(cancel))
         .route("/runs/{id}/documents", get(documents))
+        .route("/runs/{id}/occurrence", get(occurrence))
         .route("/runs/{id}/export", get(export))
 }
 
@@ -672,6 +673,71 @@ async fn project_occurrences(
         output.push(row);
     }
     Ok(output)
+}
+
+#[derive(Deserialize)]
+struct OccurrenceQuery {
+    pattern: String,
+    sentence: u64,
+    /// JSON array of the occurrence's roles, as frequency lines list them.
+    roles: String,
+    analysis: String,
+    fingerprint: String,
+}
+
+/// Finds the occurrence a frequency line names: the completed run's match of
+/// `pattern` in corpus sentence `sentence` with exactly `roles`. The run must
+/// read the same corpus analysis and compile the same catalog as the table
+/// the line came from.
+async fn occurrence(
+    State(store): State<RequestStore>,
+    Path(id): Path<String>,
+    query: std::result::Result<Query<OccurrenceQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>> {
+    let Query(query) = query.map_err(|_| invalid("The occurrence address could not be read."))?;
+    let roles: Vec<crate::occurrence::Role> = serde_json::from_str(&query.roles)
+        .map_err(|_| invalid("The occurrence address could not be read."))?;
+    let _permit = store.coordinators.acquire_reading_permit().await;
+    let (snapshot, ready, index) = completed(&store, &id).await?;
+    if ready.identity.as_str() != query.analysis {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "This corpus analysis differs from the one the frequency table counts. The occurrence cannot be located.".into(),
+        ));
+    }
+    if crate::patterns::web_catalog_fingerprint(&snapshot.source) != query.fingerprint {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "This search's catalog differs from the one the frequency table counts. The occurrence cannot be located.".into(),
+        ));
+    }
+    let key = snapshot
+        .patterns
+        .iter()
+        .find(|pattern| pattern.name == query.pattern)
+        .map(|p| p.key)
+        .ok_or_else(|| invalid("Choose a pattern from this search."))?;
+    let found = index
+        .sentence_occurrences(key, query.sentence)
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .find(|row| {
+            let captures = row.reference.captures.iter().filter_map(|capture| {
+                let descriptor = snapshot.capture_catalog.get(capture.capture_key.index())?;
+                Some((descriptor.name.as_str(), capture.span.clone()))
+            });
+            crate::occurrence::roles(captures, &row.reference.graph_bindings) == roles
+        })
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::NOT_FOUND,
+                "This search has no occurrence in that sentence with the same words in the same roles.".into(),
+            )
+        })?;
+    Ok(Json(
+        json!({"document":found.document_ordinal,"sequence":found.sequence}),
+    ))
 }
 
 #[derive(Default, Deserialize)]
