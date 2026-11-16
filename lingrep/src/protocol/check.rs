@@ -64,6 +64,8 @@ pub struct DefinitionDescriptor {
 pub struct CaptureKeyEdit {
     pub definition: String,
     pub published_name: String,
+    /// Zero-based position of the field in the definition's `key:` list.
+    pub field: u64,
     pub capture: String,
     pub attribute: String,
     pub attributes: Vec<String>,
@@ -76,6 +78,7 @@ impl From<lingrep_core::fsm::CaptureKeyEdit> for CaptureKeyEdit {
         Self {
             definition: edit.definition,
             published_name: edit.published_name,
+            field: edit.field as u64,
             capture: edit.capture,
             attribute: edit.attribute,
             attributes: edit.attributes.into_iter().map(str::to_owned).collect(),

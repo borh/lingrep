@@ -1028,7 +1028,9 @@ fn remap_definition_source(definition: &mut ParsedDefinition, source: SourceId) 
     definition.span = definition.span.with_source(source);
     if let Some(key) = &mut definition.key {
         key.source_span = key.source_span.with_source(source);
-        key.attribute_span = key.attribute_span.map(|span| span.with_source(source));
+        for span in key.attribute_spans.iter_mut().flatten() {
+            *span = span.with_source(source);
+        }
     }
     if let model::ParsedDefinitionBody::Pattern { expr, .. } = &mut definition.body {
         remap_expr_source(expr, source);

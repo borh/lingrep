@@ -2072,8 +2072,16 @@ fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() 
     let saved = table_bytes();
     let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
     let _ = get(&server, "/");
-    for attribute in ["lemma", "norm"] {
-        let source = source.replace("$word.text", &format!("$word.{attribute}"));
+    let compound =
+        "key: [$a.lemma, $b.lemma, $c.text]\npattern q := (?<a> []) (?<b> []) (?<c> []).\n";
+    let edits = [
+        (source, "$word.text", "$word.lemma", "p"),
+        (source, "$word.text", "$word.norm", "p"),
+        (compound, "$c.text", "$c.lemma", "q"),
+        (compound, "$c.text", "$c.norm", "q"),
+    ];
+    for (source, field, replacement, definition) in edits {
+        let source = source.replace(field, replacement);
         let path = fixture.directory.path().join("edited.lx");
         fs::write(&path, &source).unwrap();
         let direct = crate::support::lingrep_without_dictionary()
@@ -2084,7 +2092,7 @@ fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() 
             .output()
             .unwrap();
         assert_success(&direct);
-        let body = json!({"source": source, "definition":"p"}).to_string();
+        let body = json!({"source": source, "definition": definition}).to_string();
         let mut last = (0, String::new());
         for _ in 0..100 {
             let mut stream = TcpStream::connect(&server.address).unwrap();
@@ -2112,6 +2120,7 @@ fn edited_capture_keys_run_fresh_cli_summaries_without_rewriting_saved_tables() 
                 .collect::<Vec<_>>()
         };
         assert_eq!(groups(&actual), groups(&expected));
+        assert!(!groups(&actual).is_empty(), "{source}");
         assert_eq!(
             actual[0]["data"]["matcher_semantics_identity"],
             lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY

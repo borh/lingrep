@@ -1014,3 +1014,238 @@ fn accumulated_capture_key_edits_name_their_own_source_files() {
         ["first", "second"]
     );
 }
+
+const CLASS6_NPV: &str = "# 猫😀 名詞・格助詞・動詞\r\n\
+set CASE := {が, を, に, で, から, より, と, へ}.\r\n\
+set NOMINAL := {NOUN, PROPN, PRON, NUM}.\r\n\
+set ROLE := {nsubj, obj, obl}.\r\n\
+key: [$n.lemma, $p.lemma, $v.lemma]\r\n\
+npv := (?<n> [upos in @NOMINAL & dep.rel in @ROLE])\r\n\
+       (?<p> [dep.rel=case & lemma in @CASE])\r\n\
+       not_followed_by([dep.rel=fixed])\r\n\
+       where (?<v> [upos=VERB]) -[@ROLE]-> $n, $n -[case]-> $p.\r\n\
+key: [$n.lemma, $p.lemma, $v.lemma]\r\n\
+npv_adjacent := (?<n> [upos in @NOMINAL]) (?<p> [lemma in @CASE]) (?<v> [upos=VERB]).\r\n";
+
+/// One sentence `名詞 を 動詞` with the verb's surface, lemma and norm.
+fn npv_sentence(
+    bound: &lingrep_core::fsm::BoundCatalog,
+    verb: [&str; 3],
+    norm_present: bool,
+) -> lingrep_core::token_match::BoundTokenSentence {
+    let rows = [
+        [
+            ("text", "手紙"),
+            ("lemma", "手紙"),
+            ("norm", "手紙"),
+            ("upos", "NOUN"),
+            ("dep.head", "3"),
+            ("dep.rel", "obj"),
+        ],
+        [
+            ("text", "を"),
+            ("lemma", "を"),
+            ("norm", "を"),
+            ("upos", "ADP"),
+            ("dep.head", "1"),
+            ("dep.rel", "case"),
+        ],
+        [
+            ("text", verb[0]),
+            ("lemma", verb[1]),
+            ("norm", verb[2]),
+            ("upos", "VERB"),
+            ("dep.head", "0"),
+            ("dep.rel", "root"),
+        ],
+    ];
+    let values = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(index, row)| {
+            bound.projection().keys().iter().map(move |key| {
+                if key.as_str() == "norm" && index == 2 && !norm_present {
+                    return None;
+                }
+                row.iter()
+                    .find(|(name, _)| *name == key.as_str())
+                    .map(|(_, value)| (*value).into())
+            })
+        })
+        .collect();
+    lingrep_core::token_match::BoundTokenSentence::from_projected_values(
+        bound.projection(),
+        3,
+        values,
+    )
+    .unwrap()
+}
+
+#[test]
+fn compound_key_edits_name_each_eligible_field_including_word_graph_binders() {
+    let source = CLASS6_NPV;
+    let output = compile(source).unwrap();
+    let ranges = source
+        .match_indices("$v.lemma")
+        .chain(source.match_indices("$n.lemma"))
+        .chain(source.match_indices("$p.lemma"))
+        .map(|(at, text)| (at + 3, &text[1..2]))
+        .collect::<Vec<_>>();
+    let range_of = |capture: &str, occurrence: usize| {
+        let at = ranges
+            .iter()
+            .filter(|(_, name)| *name == capture)
+            .nth(occurrence)
+            .unwrap()
+            .0;
+        at..at + "lemma".len()
+    };
+    let expected = ["npv", "npv_adjacent"]
+        .into_iter()
+        .enumerate()
+        .flat_map(|(occurrence, definition)| {
+            ["n", "p", "v"]
+                .into_iter()
+                .enumerate()
+                .map(move |(field, capture)| (definition, field, capture, occurrence))
+        })
+        .map(
+            |(definition, field, capture, occurrence)| lingrep_core::fsm::CaptureKeyEdit {
+                definition: definition.into(),
+                published_name: definition.into(),
+                field,
+                capture: capture.into(),
+                attribute: "lemma".into(),
+                attributes: ["text", "lemma", "norm"],
+                source_name: "test.lx".into(),
+                byte_range: range_of(capture, occurrence),
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(output.capture_key_edits, expected);
+    for edit in &output.capture_key_edits {
+        assert_eq!(&source[edit.byte_range.clone()], "lemma");
+    }
+}
+
+#[test]
+fn switching_the_graph_verb_field_changes_only_that_key_value() {
+    use lingrep_core::token_match::TokenSchema;
+    let output = compile(CLASS6_NPV).unwrap();
+    let verb = output
+        .capture_key_edits
+        .iter()
+        .find(|edit| edit.definition == "npv" && edit.capture == "v")
+        .unwrap();
+    let schema =
+        TokenSchema::from_keys(["text", "lemma", "norm", "upos", "dep.head", "dep.rel"]).unwrap();
+    let baseline = output
+        .matcher
+        .bind_with_projection(&schema, schema.keys().iter().cloned())
+        .unwrap();
+    // Two spellings of one lemma, and a verb whose norm the corpus does not supply.
+    let sentences = [
+        (["云っ", "言う", "云う"], true),
+        (["言っ", "言う", "言う"], true),
+        (["言っ", "言う", "言う"], false),
+    ];
+    let expected_keys: [(&str, [Option<&str>; 3]); 3] = [
+        ("text", [Some("云っ"), Some("言っ"), Some("言っ")]),
+        ("lemma", [Some("言う"), Some("言う"), Some("言う")]),
+        ("norm", [Some("云う"), Some("言う"), None]),
+    ];
+    for (attribute, values) in expected_keys {
+        let mut changed = CLASS6_NPV.to_owned();
+        changed.replace_range(verb.byte_range.clone(), attribute);
+        let recompiled = compile(&changed).unwrap();
+        let unchanged_edits = output
+            .capture_key_edits
+            .iter()
+            .map(|edit| {
+                let mut edit = edit.clone();
+                if edit == *verb {
+                    edit.attribute = attribute.into();
+                    edit.byte_range.end = edit.byte_range.start + attribute.len();
+                } else if edit.byte_range.start > verb.byte_range.start {
+                    let shift = attribute.len() as isize - "lemma".len() as isize;
+                    edit.byte_range = (edit.byte_range.start as isize + shift) as usize
+                        ..(edit.byte_range.end as isize + shift) as usize;
+                }
+                edit
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(recompiled.capture_key_edits, unchanged_edits);
+        let bound = recompiled
+            .matcher
+            .bind_with_projection(&schema, schema.keys().iter().cloned())
+            .unwrap();
+        for (((spelling, norm_present), value), sentence_index) in
+            sentences.iter().zip(values).zip(0..)
+        {
+            let words = npv_sentence(&bound, *spelling, *norm_present);
+            let matches = bound.find_matches(&words).unwrap();
+            assert_eq!(
+                matches,
+                baseline.find_matches(&words).unwrap(),
+                "sentence {sentence_index}"
+            );
+            let npv = matches
+                .iter()
+                .find(|matched| matched.pattern == "npv")
+                .unwrap();
+            assert_eq!(
+                project_key(bound.catalog_policy(), npv, &words),
+                value.map(|value| vec![
+                    field("$n.lemma", "手紙"),
+                    field("$p.lemma", "を"),
+                    field(&format!("$v.{attribute}"), value),
+                ]),
+                "{attribute} on sentence {sentence_index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ineligible_key_fields_have_no_edit_and_leave_eligible_siblings_editable() {
+    let cases: [(&str, &[(usize, &str)]); 7] = [
+        // A span component reads a whole capture; only the other field is editable.
+        (
+            "key: [$w.span.lemma, $x.lemma]\np := (?<w> []+) (?<x> []).",
+            &[(1, "x")],
+        ),
+        // An enhanced node not proven to be a word cannot project norm.
+        (
+            "key: [$n.lemma, $v.lemma]\np := (?<n> []) where (?<v> [upos=VERB]) -[enhanced obj]-> $n.",
+            &[(0, "n")],
+        ),
+        // node.id and edge relations are not surface attributes.
+        (
+            "key: [$n.lemma, $v.node.id]\np := (?<n> []) where (?<v> []) -[obj]-> $n.",
+            &[(0, "n")],
+        ),
+        (
+            "key: [$n.lemma, $e.rel]\np := (?<n> []) where (?<v> []) -[enhanced obj as $e]-> $n.",
+            &[(0, "n")],
+        ),
+        // Other attributes, whole-match fields and inherited keys stay text-only.
+        ("key: [$w.upos, $w.lemma]\np := (?<w> []).", &[(1, "w")]),
+        ("key: [lemma, upos]\np := [].", &[]),
+        (
+            "defaults\nkey: [$w.lemma, $w.text]\nend\np := (?<w> []).",
+            &[],
+        ),
+    ];
+    for (source, expected) in cases {
+        let output = compile(source).unwrap_or_else(|error| panic!("{source}: {error:?}"));
+        assert_eq!(
+            output
+                .capture_key_edits
+                .iter()
+                .map(|edit| (edit.field, edit.capture.as_str()))
+                .collect::<Vec<_>>(),
+            expected,
+            "{source}"
+        );
+    }
+}
