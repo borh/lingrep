@@ -2143,9 +2143,13 @@ fn post_json(server: &Server, path: &str, body: &Value) -> (u16, Value) {
     )
 }
 
+/// `every` matches every token, as the class 6 catalog's `pos := []` does: a
+/// handoff that ran the whole catalog over the whole corpus retained a row per
+/// token and could exceed the server's result budget before the occurrence
+/// was located.
 #[test]
-fn a_frequency_line_identifies_its_occurrence_in_a_question_run_of_the_same_catalog() {
-    let source = "key: [$a.text]\npair := (?<a> [text=猫]) (?<b> []).\n";
+fn a_frequency_line_opens_in_a_question_run_of_its_pattern_over_its_document() {
+    let source = "every := [].\nkey: [$a.text]\npair := (?<a> [text=猫]) (?<b> []).\n";
     let fixture = fixture_with(source, DOCUMENTS);
     let server = served(&fixture, &args(&[&"--count-table", &fixture.table]));
     let meta = get_json(&server, "/api/frequency/meta");
@@ -2166,7 +2170,7 @@ fn a_frequency_line_identifies_its_occurrence_in_a_question_run_of_the_same_cata
         &server,
         &format!(
             "/api/frequency/lines?{}",
-            entry_query("pair", &group, &Conditions::new(), &[])
+            entry_query("pair", &group, &Conditions::new(), &[("limit", "1000")])
         ),
     );
     let line = lines["lines"].as_array().unwrap().last().unwrap().clone();
@@ -2185,16 +2189,29 @@ fn a_frequency_line_identifies_its_occurrence_in_a_question_run_of_the_same_cata
     let (status, submitted) = post_json(
         &server,
         "/api/questions/runs",
-        &json!({"source": source, "dataset": "default", "where": "", "expected_analysis_identity": analysis}),
+        &json!({"source": source, "dataset": "default", "where": "", "expected_analysis_identity": analysis, "pattern": "pair", "document": line["document"]}),
     );
     assert_eq!(status, 200, "{submitted}");
     let id = submitted["id"].as_str().unwrap();
+    let mut run = Value::Null;
     for _ in 0..500 {
-        if get_json(&server, &format!("/api/questions/runs/{id}"))["phase"] == "complete" {
+        run = get_json(&server, &format!("/api/questions/runs/{id}"));
+        if run["phase"] != "running" {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    assert_eq!(run["phase"], "complete", "{run}");
+    assert_eq!(run["source"], source);
+    assert_eq!(run["definitions"], json!(["pair"]));
+    assert_eq!(run["counters"]["counters"]["documents_admitted"], 1);
+    let in_document = lines["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|other| other["document"] == line["document"])
+        .count();
+    assert_eq!(run["counts"], json!({"pair": in_document}));
     let locate = |analysis: &str, fingerprint: &str| {
         get(
             &server,
@@ -2218,7 +2235,7 @@ fn a_frequency_line_identifies_its_occurrence_in_a_question_run_of_the_same_cata
         &format!(
             "/api/questions/runs/{id}/documents?pattern=pair&document={}&after={}&limit=1",
             found["document"],
-            found["sequence"].as_u64().unwrap() - 1
+            found["sequence"].as_i64().unwrap() - 1
         ),
     );
     let row = &page["rows"][0];

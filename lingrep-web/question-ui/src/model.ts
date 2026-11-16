@@ -35,7 +35,7 @@ export interface SnapshotFields extends Question {
   readonly version: number;
   readonly started: number;
   readonly error: string | null;
-  readonly error_code?: 'analysis_changed' | null;
+  readonly error_code?: 'analysis_changed' | 'result_limit' | null;
   readonly counters: { readonly counters: { readonly documents_admitted: number } } | null;
   readonly contract_run: { readonly analysis_identity: string } | null;
 }
@@ -61,7 +61,7 @@ export interface DocumentPage { landmarks: DocumentSummary[]; after: number; sta
 export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null;limit:number}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
 export interface SavedQuestion { format: 'lingrep.question/v1' | 'lingrep.question-probe/v1'; question: string; source: string; corpus: string; analysis: string; where: string; [key: string]: string | number; }
 /** A run's failure text, translated when the server reports a known failure code. */
-export const runError = (run: Pick<RunSnapshot,'error'|'error_code'>, t: (key: string) => string): string | null => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error;
+export const runError = (run: Pick<RunSnapshot,'error'|'error_code'>, t: (key: string) => string): string | null => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error_code === 'result_limit' ? t('resultLimit') : run.error;
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 export function element<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {
   const node = root.querySelector<T>(selector);
@@ -109,7 +109,7 @@ export function parseUpdate(text: string): SearchUpdate {
     elapsed:finiteNumber,received:finiteNumber,version:finiteNumber,started:finiteNumber,
     diagnostics:v=>Array.isArray(v)&&v.every(diagnosticValue),
     notices:v=>Array.isArray(v)&&v.every(value=>typeof value==='string'),
-    error:v=>v===null||typeof v==='string',error_code:v=>v===null||v==='analysis_changed',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
+    error:v=>v===null||typeof v==='string',error_code:v=>v===null||v==='analysis_changed'||v==='result_limit',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
     bodies:stringMap, counts:v=>objectValue(v)&&Object.values(v).every(finiteNumber),
     contract_run:v=>v===null||objectValue(v)&&typeof v.analysis_identity==='string',
     counters:v=>v===null||objectValue(v)&&objectValue(v.counters)&&finiteNumber(v.counters.documents_admitted),

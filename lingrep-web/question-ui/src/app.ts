@@ -23,8 +23,8 @@ const ja: Record<string,string> = {
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',filter:'Filter this page',noLines:'No lines for this pattern yet.',noFilter:'No examples on this page contain this text.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja,{analysisChanged:'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。',emptyBody:'パターンや文書の条件を変えて検索できます。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
-extra.current='Results';extra.analysisChanged='The corpus saved with this question has changed. Choose the current corpus and search again.';extra.previous='Previous results';
+Object.assign(ja,{analysisChanged:'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。',resultLimit:'結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。',emptyBody:'パターンや文書の条件を変えて検索できます。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
+extra.current='Results';extra.resultLimit='Too many results to retain. Narrow the pattern or document conditions and search again.';extra.analysisChanged='The corpus saved with this question has changed. Choose the current corpus and search again.';extra.previous='Previous results';
 let config: Configuration;
 let controls: QuestionControls;
 const tokenLab=$('#token-lab');
@@ -152,6 +152,7 @@ let viewEvidence: RunSnapshot | null=null;
 let navigationEpoch=0;
 let pendingView: ViewLocation | null=null;
 let pendingOccurrence: OccurrenceTarget | null=null;
+let handoffPattern: {readonly pattern:string;readonly source:string} | null=null;
 let revealedFailure:string|null=null;
 const editError=document.createElement('button');editError.type='button';editError.id='edit-pattern-error';editError.hidden=true;$('#error').after(editError);
 const patternFailure=(run:RunSnapshot|null)=>run?.phase==='failed'?run.diagnostics?.find(d=>d.data.stage==='catalog'&&d.data.severity==='error'):undefined;
@@ -247,7 +248,7 @@ function restoreReplay(final: CompletedSnapshot): RunSnapshot[] {
 }
 
 let sourceAtFocus='';
-async function search(event?: Event,derivedFrom?:SectionOrigin) {
+async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:OccurrenceTarget) {
   event?.preventDefault();
   if(restoreController)return;
   const parent=displayedEvidence();
@@ -255,7 +256,10 @@ async function search(event?: Event,derivedFrom?:SectionOrigin) {
   if(origin&&parent&&!documentSections.has(parent.id)){documentSections.set(parent.id,{run:parent,origin:null});saveSections();}
   const epoch = ++requestEpoch;
   viewEvidence=null;pendingView=null;++navigationEpoch;
-  const body={source:$<HTMLTextAreaElement>('#source').value,dataset:$<HTMLSelectElement>('#corpus').value,where:controls?.where()??$<HTMLInputElement>('#where').value,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{})};
+  const source=$<HTMLTextAreaElement>('#source').value;
+  if(occurrence)handoffPattern={pattern:occurrence.pattern,source};
+  const pattern=handoffPattern?.source===source?handoffPattern.pattern:null;
+  const body={source,dataset:$<HTMLSelectElement>('#corpus').value,where:controls?.where()??$<HTMLInputElement>('#where').value,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{}),...(pattern?{pattern}:{}),...(occurrence?{document:occurrence.document}:{})};
   sourceAtFocus=body.source;
   ++replayEpoch;
   isReplay = false;
@@ -450,7 +454,7 @@ function render(force=false) {
 function compactCompletedStatus(){
   const current=state.current,pattern=current?(selection.get(current.id)??current.definitions[0]??''):'';
   const ready=current?.phase==='complete'&&documentView(current,pattern).documents!==null;
-  $('.search-status').classList.toggle('is-idle',!!ready&&!activeId&&!isReplay&&$('#show-latest').hidden===true);
+  $('.search-status').classList.toggle('is-idle',!!ready&&!activeId&&!isReplay&&$('#show-latest').hidden===true&&$('#frequency-return').hidden===true);
 }
 const runFor=(id: string): RunSnapshot=>{const run=[state.current,state.previous,state.completed,inspecting?.run,viewEvidence,documentSections.get(id)?.run].find(run=>run?.id===id);if(!run)throw new Error('Search is no longer displayed.');return run;};
 
@@ -1107,7 +1111,7 @@ async function init() {
   const occurrence=parseOccurrence(params.get('occurrence'));
   (window as Window & {__probe?:object}).__probe={get state(){return state;},get recorded(){return recorded;},get controls(){return controls;},get view(){return viewLocation;},search,questionDocument};
   if(current)await applyView(follow&&current.phase==='complete'&&initialView.kind==='concordance'?current:evidence??current,follow&&current.phase==='complete'&&initialView.kind==='concordance'?defaultView():initialView,!follow);
-  if(!expired&&!savedManifest.some(link=>!availableRun(link.id))&&params.get('run')==='1'&&(!current||current.source!==$<HTMLTextAreaElement>('#source').value||current.dataset!==$<HTMLSelectElement>('#corpus').value||current.where!==controls.where())){await search();pendingView=current?defaultView():initialView;if(occurrence){pendingView=null;pendingOccurrence=occurrence;}}
+  if(!expired&&!savedManifest.some(link=>!availableRun(link.id))&&params.get('run')==='1'&&(!current||current.source!==$<HTMLTextAreaElement>('#source').value||current.dataset!==$<HTMLSelectElement>('#corpus').value||current.where!==controls.where())){await search(undefined,undefined,occurrence??undefined);pendingView=current?defaultView():initialView;if(occurrence){pendingView=null;pendingOccurrence=occurrence;}}
   else if(occurrence&&current?.phase==='complete')await openOccurrence(current,occurrence);
 }
 

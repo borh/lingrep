@@ -69,9 +69,9 @@ export function parseOccurrence(text) {
         value = null;
     }
     const role = (item) => record(item) && typeof item.name === 'string' && ordinal(item.start) && ordinal(item.end) && item.end >= item.start;
-    if (!record(value) || typeof value.pattern !== 'string' || !value.pattern || !ordinal(value.sentence) || !Array.isArray(value.roles) || !value.roles.every(role) || typeof value.analysis !== 'string' || typeof value.fingerprint !== 'string')
+    if (!record(value) || typeof value.pattern !== 'string' || !value.pattern || !ordinal(value.sentence) || !ordinal(value.document) || !Array.isArray(value.roles) || !value.roles.every(role) || typeof value.analysis !== 'string' || typeof value.fingerprint !== 'string')
         throw new Error('The frequency occurrence in this address is invalid. Open it again from the frequency view.');
-    return { pattern: value.pattern, sentence: value.sentence, roles: value.roles.map(({ name, start, end }) => ({ name, start, end })), analysis: value.analysis, fingerprint: value.fingerprint };
+    return { pattern: value.pattern, sentence: value.sentence, document: value.document, roles: value.roles.map(({ name, start, end }) => ({ name, start, end })), analysis: value.analysis, fingerprint: value.fingerprint };
 }
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn = (value) => value !== null && /^frequencies(#|$)/.test(value) ? value : null;

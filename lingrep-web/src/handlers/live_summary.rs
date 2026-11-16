@@ -400,6 +400,7 @@ mod tests {
             included_sections: tc.draw(g::booleans()).then_some(selected),
             include_unlabelled: tc.draw(g::booleans()),
             clause: None,
+            document: None,
         };
         let clause = scope
             .where_clause(&all)

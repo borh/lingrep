@@ -104,6 +104,7 @@ pub async fn search(
             slot,
             RevisionRequest {
                 source: form.pattern,
+                pattern: None,
                 index_results: false,
                 expected_analysis_identity: None,
                 retained: form.retained,

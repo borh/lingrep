@@ -33,6 +33,10 @@ const ABANDONED_SCAN_GRACE: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct RevisionRequest {
     pub source: String,
+    /// Publishes only the definitions with this published name, as
+    /// [`lingrep_core::fsm::compile_catalog_pattern`] selects them; `None`
+    /// publishes the whole catalog.
+    pub pattern: Option<String>,
     pub index_results: bool,
     pub expected_analysis_identity: Option<String>,
     /// None uses the configured ceiling; supplied values are clamped to 1..=ceiling.
@@ -48,6 +52,7 @@ impl Default for RevisionRequest {
     fn default() -> Self {
         Self {
             source: String::new(),
+            pattern: None,
             index_results: false,
             expected_analysis_identity: None,
             retained: None,
@@ -62,6 +67,7 @@ impl Default for RevisionRequest {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ScanOptions {
+    pub(crate) pattern: Option<String>,
     pub(crate) index_results: bool,
     pub(crate) expected_analysis_identity: Option<String>,
     pub(crate) search_scope: crate::search_scope::SearchScope,
@@ -153,7 +159,7 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
             if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string() =>
         {
             AttemptFailure {
-                category: ErrorCategory::Execution,
+                category: ErrorCategory::ResultLimit,
                 message: message.clone(),
             }
         }
@@ -352,9 +358,13 @@ enum Prepared {
 async fn prepare_scan(
     ready: &ReadyCorpus,
     source: &str,
+    pattern: Option<&str>,
     scope: &crate::search_scope::SearchScope,
 ) -> Prepared {
-    let compiled = match compile_web_pattern(source) {
+    let compiled = match pattern.map_or_else(
+        || compile_web_pattern(source),
+        |pattern| crate::patterns::compile_web_catalog_pattern(source, pattern),
+    ) {
         Ok(output) => output,
         Err(error) => {
             return Prepared::Failed(AttemptFailure {
@@ -562,7 +572,10 @@ fn run_scan_blocking_with_options(
             integrity_failure()
         })?;
         sink.finish_result_index().map_err(|error| AttemptFailure {
-            category: ErrorCategory::Execution,
+            category: match error {
+                crate::result_index::ResultIndexError::BudgetExceeded => ErrorCategory::ResultLimit,
+                _ => ErrorCategory::Execution,
+            },
             message: error.to_string(),
         })?;
     } else {
@@ -811,6 +824,7 @@ impl CoordinatorRegistry {
     ) -> Result<RevisionId, AdmitError> {
         let RevisionRequest {
             source,
+            pattern,
             index_results,
             expected_analysis_identity,
             retained,
@@ -821,6 +835,7 @@ impl CoordinatorRegistry {
             search_scope,
         } = request;
         let options = ScanOptions {
+            pattern,
             index_results,
             expected_analysis_identity,
             search_scope,
@@ -1122,7 +1137,13 @@ impl CoordinatorRegistry {
         let scan_cancel = cancel.clone();
         let scan_source = Arc::clone(&source);
         let scan = async {
-            let prepared = prepare_scan(&ready, &scan_source, &options.search_scope).await;
+            let prepared = prepare_scan(
+                &ready,
+                &scan_source,
+                options.pattern.as_deref(),
+                &options.search_scope,
+            )
+            .await;
 
             match prepared {
                 Prepared::Failed(failure) => {
@@ -1554,7 +1575,7 @@ mod tests {
         let error =
             ExecutionError::Sink(crate::result_index::ResultIndexError::BudgetExceeded.to_string());
         let failure = classify_execution_error(&error);
-        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert_eq!(failure.category, ErrorCategory::ResultLimit);
         assert!(
             failure
                 .message
@@ -2307,7 +2328,7 @@ mod tests {
     async fn prepare_scan_maps_a_compile_error_to_a_compile_failure() {
         let (_dir, ready) = tiny_ready_corpus(1);
         let Prepared::Failed(failure) =
-            prepare_scan(&ready, "broken := [text~/x/.", &Default::default()).await
+            prepare_scan(&ready, "broken := [text~/x/.", None, &Default::default()).await
         else {
             panic!("a syntactically invalid catalog cannot be prepared");
         };
@@ -2321,7 +2342,7 @@ mod tests {
         let (_dir, ready) = tiny_ready_corpus(1);
         let Prepared::Ready {
             producer, sections, ..
-        } = prepare_scan(&ready, "p := [].", &Default::default()).await
+        } = prepare_scan(&ready, "p := [].", None, &Default::default()).await
         else {
             panic!("a valid catalog over a readable corpus prepares");
         };

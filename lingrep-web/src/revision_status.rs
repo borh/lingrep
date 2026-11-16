@@ -244,7 +244,9 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                             Some("status.failed_analysis_changed"),
                             None,
                         ),
-                        ErrorCategory::Execution | ErrorCategory::Integrity => {
+                        ErrorCategory::Execution
+                        | ErrorCategory::ResultLimit
+                        | ErrorCategory::Integrity => {
                             diagnostic = Some(failure.message.clone());
                             ("The corpus scan could not be completed.".into(), Some("status.failed_scan"), None)
                         }

@@ -78,6 +78,12 @@ struct Submission {
     condition: String,
     #[serde(default)]
     expected_analysis_identity: Option<String>,
+    /// Publishes only this pattern of `source`.
+    #[serde(default)]
+    pattern: Option<String>,
+    /// Admits only this corpus document; refused beside a `where` condition.
+    #[serde(default)]
+    document: Option<u64>,
 }
 async fn submit(
     State(store): State<RequestStore>,
@@ -97,7 +103,7 @@ async fn submit(
     slot.runtime.start_or_observe().await;
     let clause = body.condition;
     let scope = crate::search_scope::SearchScope::parse(Some(
-        &json!({"clause":if clause.trim().is_empty(){None}else{Some(clause)}}).to_string(),
+        &json!({"clause":if clause.trim().is_empty(){None}else{Some(clause)},"document":body.document}).to_string(),
     ))
     .map_err(invalid)?;
     let id = uuid::Uuid::new_v4().simple().to_string();
@@ -108,6 +114,7 @@ async fn submit(
             slot,
             RevisionRequest {
                 source: body.source,
+                pattern: body.pattern.filter(|pattern| !pattern.is_empty()),
                 retained: Some(30),
                 document_reach: true,
                 search_scope: scope,
@@ -369,11 +376,11 @@ async fn project_run(
         elapsed: 0.0,
         version,
         error: attempt.failure.as_ref().map(|e| e.message.clone()),
-        error_code: attempt
-            .failure
-            .as_ref()
-            .filter(|e| e.category == ErrorCategory::AnalysisChanged)
-            .map(|_| "analysis_changed"),
+        error_code: attempt.failure.as_ref().and_then(|e| match e.category {
+            ErrorCategory::AnalysisChanged => Some("analysis_changed"),
+            ErrorCategory::ResultLimit => Some("result_limit"),
+            _ => None,
+        }),
         diagnostics,
         notices: crate::revision_status::project_revision_status(Some(view))
             .notices

@@ -59,12 +59,10 @@ export function stateEntries(s) {
   return out;
 }
 
-/** The question page address that reruns `source` over the corpus in the frequency view's document scope and opens `line`'s occurrence; `back` is the frequency view address to return to. */
-export function inspectHref(s, line, { source, clause, analysis, fingerprint }, back) {
-  const occurrence = { pattern: s.pattern, sentence: line.sentence, roles: line.roles, analysis, fingerprint };
-  const params = new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back });
-  if (clause) params.set("raw", clause);
-  return `./#${params}`;
+/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. */
+export function inspectHref(s, line, { source, analysis, fingerprint }, back) {
+  const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
+  return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back })}`;
 }
 
 export const hashHolds = (hash, entries) => {
@@ -513,7 +511,7 @@ export function mountFrequency(root) {
 
   const lineHtml = (st) => {
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
-    const identity = { source, clause: profile?.clause ?? s.where ?? "", analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
+    const identity = { source, analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
     return (l, i) =>
       `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src"><span>${esc(t("frequency.document", { id: l.document }))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
   };

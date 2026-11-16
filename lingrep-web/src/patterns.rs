@@ -4,8 +4,9 @@ use std::sync::OnceLock;
 use lingrep_core::fsm::{
     CompileError, CompileLimits, CompileOutput, DefinitionExpansion, ExpandError, FormatError,
     FormatOutcome, PatternSource, catalog_fingerprint, catalog_fingerprint_with_vectors,
-    compile_catalog, compile_catalog_with_vectors, expand_pattern_definition,
-    format_pattern_source, render_definition_diagram, render_pattern_error,
+    compile_catalog, compile_catalog_pattern, compile_catalog_with_vectors,
+    expand_pattern_definition, format_pattern_source, render_definition_diagram,
+    render_pattern_error,
 };
 use lingrep_corpus::word_vectors::{VectorTable, VectorsBinding, vectors_binding};
 
@@ -46,6 +47,20 @@ pub(crate) fn word_vectors() -> Option<&'static VectorTable> {
 
 pub fn compile_web_pattern(source: &str) -> Result<CompileOutput, CompileError> {
     compile_with(source, word_vectors())
+}
+
+/// Compiles `source` publishing only the definitions named `pattern`, as
+/// [`compile_catalog_pattern`] selects them; the word-vector table is not
+/// consulted, so a catalog with `near` tests does not compile.
+pub fn compile_web_catalog_pattern(
+    source: &str,
+    pattern: &str,
+) -> Result<CompileOutput, CompileError> {
+    compile_catalog_pattern(
+        PatternSource::named(WEB_PATTERN_SOURCE_NAME, source),
+        CompileLimits::default(),
+        pattern,
+    )
 }
 
 fn compile_with(source: &str, table: Option<&VectorTable>) -> Result<CompileOutput, CompileError> {

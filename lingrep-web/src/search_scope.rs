@@ -17,6 +17,10 @@ pub struct SearchScope {
     /// A `--where` clause every admitted sentence must also satisfy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clause: Option<String>,
+    /// Admits only this document, by its corpus document ID. Excludes
+    /// sections and `clause`, which [`Self::parse`] refuses beside it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<u64>,
 }
 
 impl Default for SearchScope {
@@ -25,6 +29,7 @@ impl Default for SearchScope {
             included_sections: None,
             include_unlabelled: true,
             clause: None,
+            document: None,
         }
     }
 }
@@ -35,7 +40,8 @@ impl SearchScope {
     /// # Errors
     ///
     /// A message for the search form: the JSON is malformed, a label is out of
-    /// bounds, or `clause` is not a valid scope clause.
+    /// bounds, `clause` is not a valid scope clause, or `document` is combined
+    /// with sections or a clause.
     pub fn parse(encoded: Option<&str>) -> Result<Self, String> {
         let mut scope: Self = match encoded {
             Some(encoded) => serde_json::from_str(encoded).map_err(|_| "Invalid search scope.")?,
@@ -67,6 +73,9 @@ impl SearchScope {
                 )
             })?;
         }
+        if scope.document.is_some() && !(scope.selects_every_section() && scope.clause.is_none()) {
+            return Err("Invalid search scope.".into());
+        }
         Ok(scope)
     }
 
@@ -75,7 +84,7 @@ impl SearchScope {
     }
 
     pub fn is_unrestricted(&self) -> bool {
-        self.selects_every_section() && self.clause.is_none()
+        self.selects_every_section() && self.clause.is_none() && self.document.is_none()
     }
 
     fn selects_every_section(&self) -> bool {
@@ -155,6 +164,9 @@ pub(crate) fn resolve(
     if scope.is_unrestricted() {
         return Ok(ResolvedScope::default());
     }
+    if let Some(document) = scope.document {
+        return resolve_document(document, provenance, runtime);
+    }
     let all = runtime
         .block_on(provenance.section_coverage(lingrep_corpus::MAX_SECTION_LABELS))
         .map_err(|error| ResolveError::Corpus(error.to_string()))?
@@ -193,6 +205,36 @@ pub(crate) fn resolve(
     })
 }
 
+fn resolve_document(
+    document: u64,
+    provenance: &ProvenanceView,
+    runtime: &tokio::runtime::Handle,
+) -> Result<ResolvedScope, ResolveError> {
+    let mut next = 0;
+    loop {
+        let rows = runtime
+            .block_on(provenance.document_metadata_page(next))
+            .map_err(|error| ResolveError::Corpus(error.to_string()))?;
+        if let Some(row) = rows.iter().find(|row| row.document_id.get() == document) {
+            return Ok(ResolvedScope {
+                clause: None,
+                admission: SentenceAdmission::Documents(std::iter::once(document).collect()),
+                excluded_sentences: provenance.sentence_count() - row.sentence_count,
+            });
+        }
+        match rows.last() {
+            Some(last) if last.first_sentence + last.sentence_count > next => {
+                next = last.first_sentence + last.sentence_count;
+            }
+            _ => {
+                return Err(ResolveError::Unanswerable(
+                    "This corpus has no such document.".into(),
+                ));
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct BoundScope {
     admission: SentenceAdmission,
@@ -224,6 +266,25 @@ impl BoundScope {
             Some((provenance, runtime)) if !division_kinds.is_empty() => artifact
                 .with_shared_lookaround_divisions(source, division_kinds, provenance, runtime),
             _ => Ok(source),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchScope;
+
+    #[test]
+    fn a_document_scope_stands_alone() {
+        let document = SearchScope::parse(Some(r#"{"document":5}"#)).unwrap();
+        assert_eq!(document.document, Some(5));
+        assert!(!document.is_unrestricted());
+        for combined in [
+            r#"{"document":5,"clause":"@document.genre = x"}"#,
+            r#"{"document":5,"included_sections":["a"]}"#,
+            r#"{"document":5,"include_unlabelled":false}"#,
+        ] {
+            assert!(SearchScope::parse(Some(combined)).is_err(), "{combined}");
         }
     }
 }

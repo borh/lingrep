@@ -2410,13 +2410,16 @@ the table and fails the request if a document's lines do not add up to the
 table's count for it.
 
 Selecting a line's node opens the line in its document. "Inspect tokens" opens
-the question page on the same corpus: it reruns the table's catalog in the
-entry's document scope and opens the token inspection of the match in that
-sentence whose captures and `where`-bound words fill the same roles, so a verb
-outside the span appears in the dependency panel. If the corpus analysis or
-catalog differs from the table's, the question page reports the difference and
-opens no example. Its "Back to frequencies" link, or the browser's Back,
-returns to the entry with its exact key and conditions.
+the question page on the same corpus: it runs only the table's pattern of the
+catalog, as the entry's lines do, over the line's document, and opens the token
+inspection of the match in that sentence whose captures and `where`-bound words
+fill the same roles, so a verb outside the span appears in the dependency panel.
+Searching again with the catalog unchanged keeps that pattern and searches the
+document conditions then set. If the corpus analysis or catalog differs from the
+table's, the question page reports the difference and opens no example. Its
+"Back to frequencies" link, shown beside the search status even when the search
+fails, or the browser's Back, returns to the entry with its exact key and
+conditions.
 
 Resting the pointer on a bar for 120 ms, or focusing it, previews its value as
 the key's condition: the other charts, the entry's figures and its lines

@@ -69,6 +69,8 @@ pub enum ErrorCategory {
     Scope,
     Cache,
     Execution,
+    /// The results exceed the server's budget for retaining a run's results.
+    ResultLimit,
     /// A completed scan whose result contradicts the corpus's own provenance
     /// (sentence-count mismatch) or a corrupt-cache decode failure. Distinct
     /// from a genuine matcher `Execution` error or a worker panic.
