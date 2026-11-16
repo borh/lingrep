@@ -1334,7 +1334,9 @@ impl ProvenanceView {
         let options = SqliteConnectOptions::new()
             .filename(path)
             .read_only(true)
-            .immutable(true);
+            .immutable(true)
+            .pragma("temp_store", "FILE")
+            .pragma("cache_size", "-2048");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
@@ -1792,6 +1794,37 @@ impl ProvenanceView {
                 })
             })
             .collect()
+    }
+
+    /// Streams typed JSON values in descending document-frequency order, with
+    /// `(JSON type, encoded value)` ties. Repeated list members count once per
+    /// document. `None` marks an encoded value larger than 24,578 bytes.
+    pub fn document_metadata_distribution(
+        &self,
+        field: &str,
+    ) -> impl futures::Stream<Item = Result<(String, Option<String>, u64), CorpusError>> + '_ {
+        use futures::StreamExt;
+        sqlx::query(r#"
+            WITH fields AS (
+                SELECT d.document_id,f.type,f.value,CASE WHEN f.type='text' THEN json_quote(f.value) ELSE d.metadata_json -> f.fullkey END AS encoded
+                FROM document_metadata d, json_each(CASE WHEN length(CAST(d.metadata_json AS BLOB))>1048576 THEN 'oversized metadata record' ELSE d.metadata_json END) f WHERE f.key=?
+            ), members AS (
+                SELECT document_id,type,encoded FROM fields
+                WHERE type IN ('text','integer','real','true','false','null')
+                UNION ALL
+                SELECT f.document_id,m.type,CASE WHEN m.type='text' THEN json_quote(m.value) ELSE f.value -> m.fullkey END
+                FROM fields f,json_each(CASE WHEN f.type='array' THEN f.value ELSE '[]' END) m
+                WHERE f.type='array' AND m.type IN ('text','integer','real','true','false','null')
+            ), distribution AS (
+                SELECT type,encoded,COUNT(DISTINCT document_id) AS documents
+                FROM members GROUP BY type,encoded
+            )
+            SELECT type,CASE WHEN length(CAST(encoded AS BLOB))<=24578 THEN encoded END AS encoded,documents
+            FROM distribution ORDER BY documents DESC,type,distribution.encoded
+        "#).bind(field.to_owned()).fetch(&self.pool).map(|row| {
+            let row=row.map_err(database)?;
+            Ok((row.try_get("type").map_err(database)?,row.try_get("encoded").map_err(database)?,sqlite_u64(row.try_get("documents").map_err(database)?,"document count")?))
+        })
     }
 
     /// Every document's `(document ID, first sentence, sentence count)`, in

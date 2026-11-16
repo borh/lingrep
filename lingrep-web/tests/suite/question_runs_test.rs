@@ -244,6 +244,19 @@ async fn submitted_runs_stream_bounded_previews_and_page_export_every_complete_m
         }
     }
     assert_eq!(streamed.len(), 60);
+    let large_page = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}/documents?pattern=phrase&continuous=1&limit=100"),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(large_page["rows"].as_array().unwrap().len(), 42);
+    assert!(large_page["next"].is_null());
     let mut paged = Vec::new();
     let mut after = -1;
     loop {

@@ -54,3 +54,8 @@ test('a frequency handoff names one occurrence and returns only to the frequency
   assert.equal(frequencyReturn('frequencies#corpus=c&entry=x'),'frequencies#corpus=c&entry=x');
   for(const bad of ['https://example.org/frequencies#x','//evil/frequencies','javascript:alert(1)','frequenciesx',null])assert.equal(frequencyReturn(bad),null);
 });
+test('example counts above thirty survive saved settings while context remains bounded',()=>{
+  const settings=questionSettings(new URLSearchParams({lines:'1000',context:'999'}));
+  assert.equal(settings.lines,1000);
+  assert.equal(settings.context,24);
+});

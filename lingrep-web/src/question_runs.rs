@@ -279,6 +279,7 @@ async fn project_run(
                     &snapshot.capture_catalog,
                     &definitions,
                     index.publication_attributes(),
+                    None,
                 )
                 .await?;
                 preview_bytes = preview_bytes
@@ -319,6 +320,7 @@ async fn project_run(
                     &summary.capture_catalog,
                     &definitions,
                     &summary.publication_attributes,
+                    None,
                 )
                 .await?;
                 preview_bytes = preview_bytes
@@ -533,6 +535,7 @@ async fn project_occurrences(
     captures: &[CaptureDescriptor],
     patterns: &[String],
     publication_attributes: &[lingrep_core::token_match::AttributeKey],
+    max_response_bytes: Option<usize>,
 ) -> Result<Vec<Value>> {
     let reader = ready
         .reader()
@@ -554,6 +557,7 @@ async fn project_occurrences(
         .cloned()
         .collect();
     let mut output = Vec::with_capacity(occurrences.len());
+    let mut output_bytes = 0usize;
     for (occurrence, origin) in occurrences.iter().zip(provenance) {
         let reader = reader.clone();
         let sentence = occurrence.reference.sentence_index;
@@ -669,6 +673,17 @@ async fn project_occurrences(
         }
         if let Some(metadata) = &occurrence.source_metadata {
             row["source_metadata"] = json!(metadata);
+        }
+        if let Some(limit) = max_response_bytes {
+            output_bytes =
+                output_bytes.saturating_add(serde_json::to_vec(&row).map_err(unavailable)?.len());
+            if output_bytes > limit {
+                return Err(ApiError(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "These examples are too large to display together. Request fewer examples."
+                        .into(),
+                ));
+            }
         }
         output.push(row);
     }
@@ -882,7 +897,7 @@ async fn documents(
     let continuous = query.continuous == Some(1);
     let scoped = if continuous { None } else { query.document };
     let mut after = query.after.unwrap_or(-1);
-    let limit = query.limit.unwrap_or(20).clamp(1, 30);
+    let limit = query.limit.unwrap_or(20).max(1);
     let mut inventory = document_inventory(
         &index,
         &ready,
@@ -930,6 +945,7 @@ async fn documents(
         &snapshot.capture_catalog,
         &patterns,
         index.publication_attributes(),
+        Some(32 * 1024 * 1024),
     )
     .await?;
     let mut landmarks = Vec::new();
@@ -972,7 +988,7 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
             let page=index.export_page(cursor,16).await.map_err(std::io::Error::other)?;
             if page.is_empty(){(vec![json!({"schema":"lingrep.question-results/v1","type":"complete","data":{"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),"counters":{"matches_found":snapshot.patterns.iter().map(|p|p.exact_total).sum::<u64>()}}})],cursor,true)}else{
                 let next=page.last().expect("nonempty page").sequence as i64;
-                let values=project_occurrences(&ready,&page,&snapshot.capture_catalog,&patterns,index.publication_attributes()).await.map_err(|e|std::io::Error::other(e.1))?;
+                let values=project_occurrences(&ready,&page,&snapshot.capture_catalog,&patterns,index.publication_attributes(),None).await.map_err(|e|std::io::Error::other(e.1))?;
                 (values.into_iter().map(|row|json!({"schema":"lingrep.question-results/v1","type":"match","data":row})).collect(),next,false)
             }
         };

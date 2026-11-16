@@ -227,6 +227,12 @@ with (out / "browser-driver.log").open("w") as log:
             assert matches == expected, (
                 "Question export differs from a separate CLI query"
             )
+        js("document.querySelector('#line-limit').value=100;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
+        wait("return document.querySelectorAll('.kwic-row').length===" + str(args.expected_matches))
+        assert js("return document.querySelector('#line-limit').max") == ""
+        assert js("return __probe.state.current.id") == first_id
+        js("document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
+        wait("return document.querySelectorAll('.kwic-row').length===20 && document.querySelector('.kwic-list').getAttribute('aria-busy')==='false'")
         wait("return document.querySelectorAll('.document-nav select option').length>2")
         inventory = js(
             "return [...document.querySelectorAll('.document-nav select option')].slice(1).map(o=>({id:Number(o.value),title:o.textContent}))"
@@ -849,6 +855,7 @@ with (out / "browser-driver.log").open("w") as log:
             )
             == 2
         )
+        assert js("return document.querySelector('.evidence-sentence').textContent") == "2 matches in 1 document."
         capture("work-scoped")
         js(
             "window.__scoped=[...document.querySelectorAll('.kwic-row')];window.__oldFetch=window.fetch;window.__held=false;window.fetch=(url,...args)=>{if(!__held&&String(url).includes('/documents?')){__held=true;return new Promise(resolve=>window.__releasePage=()=>resolve(__oldFetch(url,...args)));}return __oldFetch(url,...args)};document.querySelector('[data-document-step=\"1\"]').click()"

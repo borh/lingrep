@@ -52,7 +52,7 @@ function scrubNumber(input, changed, committed = () => { }) {
             input.setPointerCapture(event.pointerId);
         }
         event.preventDefault();
-        input.value = String(Math.max(Number(input.min), Math.min(Number(input.max), drag.value + steps * Number(input.step || 1))));
+        input.value = String(Math.max(Number(input.min), Math.min(input.max ? Number(input.max) : Infinity, drag.value + steps * Number(input.step || 1))));
         paint();
         changed(true);
     });
@@ -87,7 +87,7 @@ export function questionSettings(params) {
         }
     }
     const number = (key, fallback, min, max) => { const value = Number(params.get(key) ?? fallback); return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback; };
-    return { metadata, raw: params.get('raw') ?? (params.has('metadata') ? '' : params.get('where') ?? ''), context: number('context', 12, 0, 24), lines: number('lines', 20, 1, 30) };
+    return { metadata, raw: params.get('raw') ?? (params.has('metadata') ? '' : params.get('where') ?? ''), context: number('context', 12, 0, 24), lines: number('lines', 20, 1, Number.MAX_SAFE_INTEGER) };
 }
 export function initQuestion(config, { changed, viewChanged, search, getLocale }, initialParams = new URLSearchParams(location.hash.slice(1))) {
     const params = initialParams;
@@ -95,7 +95,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     $('#where').value = state.raw;
     state.context = Number.isFinite(state.context) ? Math.round(state.context) : 12;
     $('#context-size').value = String(state.context);
-    state.lines = Number.isFinite(state.lines) ? Math.max(1, Math.min(30, Math.round(state.lines))) : 20;
+    state.lines = Number.isFinite(state.lines) ? Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, Math.round(state.lines))) : 20;
     $('#line-limit').value = String(state.lines);
     let pickerState = 'closed';
     let pickerEpoch = 0;

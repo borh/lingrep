@@ -40,7 +40,7 @@ function scrubNumber(input: HTMLInputElement, changed: (dragging: boolean)=>void
     if(!steps&&!drag.moved)return;
     if(!drag.moved){drag.moved=true;input.setPointerCapture(event.pointerId);}
     event.preventDefault();
-    input.value=String(Math.max(Number(input.min),Math.min(Number(input.max),drag.value+steps*Number(input.step||1))));
+    input.value=String(Math.max(Number(input.min),Math.min(input.max?Number(input.max):Infinity,drag.value+steps*Number(input.step||1))));
     paint();changed(true);
   });
   const finish=(event: PointerEvent)=>{if(!drag||event.pointerId!==drag.id)return;if(drag.moved)committed();drag=undefined;};
@@ -66,7 +66,7 @@ export function questionSettings(params: URLSearchParams): QuestionSettings {
     }
   }
   const number=(key:string,fallback:number,min:number,max:number)=>{const value=Number(params.get(key)??fallback);return Number.isFinite(value)?Math.max(min,Math.min(max,Math.round(value))):fallback;};
-  return {metadata,raw:params.get('raw')??(params.has('metadata')?'':params.get('where')??''),context:number('context',12,0,24),lines:number('lines',20,1,30)};
+  return {metadata,raw:params.get('raw')??(params.has('metadata')?'':params.get('where')??''),context:number('context',12,0,24),lines:number('lines',20,1,Number.MAX_SAFE_INTEGER)};
 }
 
 export function initQuestion(config: Configuration, {changed,viewChanged,search,getLocale}: {changed(commit?: boolean | Event): void;viewChanged(): void;search(): void;getLocale(): Locale}, initialParams=new URLSearchParams(location.hash.slice(1))): QuestionControls {
@@ -75,7 +75,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   $<HTMLInputElement>('#where').value=state.raw;
   state.context=Number.isFinite(state.context)?Math.round(state.context):12;
   $<HTMLInputElement>('#context-size').value=String(state.context);
-  state.lines=Number.isFinite(state.lines)?Math.max(1,Math.min(30,Math.round(state.lines))):20;
+  state.lines=Number.isFinite(state.lines)?Math.max(1,Math.min(Number.MAX_SAFE_INTEGER,Math.round(state.lines))):20;
   $<HTMLInputElement>('#line-limit').value=String(state.lines);
   let pickerState:'closed'|'opening'|'open'='closed';let pickerEpoch=0;
   let fields: Field[]=[];let key='';let after='';let previous: string[]=[];let requestId=0;let searchTimer: ReturnType<typeof setTimeout> | undefined;
