@@ -1915,6 +1915,10 @@ impl CorpusArtifact {
         Ok(())
     }
 
+    pub fn document_by_id(&self, id: crate::DocumentId) -> Result<StoredDocument, CorpusError> {
+        self.locations.document_by_id(id).map(stored_document)
+    }
+
     pub fn documents(&self) -> impl Iterator<Item = Result<StoredDocument, CorpusError>> + '_ {
         (0..self.locations.document_count())
             .map(|ordinal| self.locations.document(ordinal).map(stored_document))

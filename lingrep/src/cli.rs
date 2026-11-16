@@ -961,6 +961,19 @@ pub struct TableArgs {
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
 
+    /// Export every document, typed entry and nonzero count cell (requires --json).
+    #[arg(long, conflicts_with_all = ["top", "select", "key", "entry", "by_metadata"], help_heading = "Output")]
+    pub by_document: bool,
+
+    /// Publish selected @document.KEY values on exported documents. Repeatable.
+    #[arg(
+        long,
+        value_name = "SELECTOR",
+        requires = "by_document",
+        help_heading = "Output"
+    )]
+    pub source_metadata: Vec<String>,
+
     /// Count one entry of one pattern under --by-metadata. KEY is the `group`
     /// of the entry's JSON row, or its key as human rows print it.
     #[arg(

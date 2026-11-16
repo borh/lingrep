@@ -730,6 +730,50 @@ under each value, documents without a value are counted under `value: null`,
 and `--where` restricts the documents. It requires `--json` and cannot be
 combined with `--top`.
 
+### Exporting sparse document counts
+
+`table --by-document` exports the complete document-by-entry matrix from an
+existing table, without matching or tokenizing again. It requires `--json`:
+
+```bash
+ling --json table soranoha.collexeme.lingtable --by-document \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx \
+  --source-metadata @document.identifier --source-metadata @document.ndc \
+  --where '@document.source_edition_year >= 1950'
+```
+
+The stream uses `lingrep.table/v1` with these records, in order:
+
+- `run`: `by_document: true`, the corpus's `source_identity`, the table's
+  checked analysis/catalog/matcher identities, the clause, and the selected
+  source-metadata fields.
+- `document`: each admitted table document, including works with no selected
+  occurrences. `document_id` is its stable corpus ID; `document` is its
+  zero-based corpus ordinal. Records include the source name, admitted
+  sentence/token counts and the requested typed `@document` metadata, in the
+  same shape as `summarize --by-document`.
+- `entry`: the entire table dictionary, including entries with zero occurrences
+  under the clause. `entry` is a table-local ID; `pattern` and `group` preserve
+  the typed grouping key, including segment lists.
+- `cell`: each nonzero count, identified by `document_id` and `entry`. Missing
+  cells are zero. Cells follow entry order, then ascending stable document ID.
+- `complete`: admitted documents/sentences/tokens, `entries` (dictionary size)
+  and `rows` (number of cells).
+
+Document records follow corpus sentence order; entry IDs retain table order
+and do not change with the scope. Keep the dictionary and run identities
+with the cells; resolve entry IDs through that dictionary before joining
+independently written tables. An empty scope still exports the full dictionary;
+its document and cell sets are empty. Only documents with at least one
+admitted sentence are in the table.
+
+`--top`, `--select`, `--key`, `--entry` and `--by-metadata` are rejected in this
+mode. `--source-metadata` is repeatable and accepts only `@document.KEY`.
+The export traverses existing sparse cells and bounded metadata pages; it
+neither sorts rows nor creates temporary ordering files. Consumers must reject
+streams without the final `complete` record or whose process exits with an
+error; a truncated stream is not a complete statistical family.
+
 ### Comparing two scopes: `ling contrast`
 
 `ling contrast` reads the same count table and ranks each pattern's entries by

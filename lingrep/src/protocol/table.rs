@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-use super::query::SummaryGroupData;
+use super::query::{DocumentData, SummaryGroupData};
 
 pub const SCHEMA: &str = super::ContractId::Table.as_str();
 
@@ -12,7 +12,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<TableEnvelope>(
         super::ContractId::Table,
         &["table"],
-        "Per-pattern counts under a --where clause, or with --entry (JSON only) one entry's counts per document-metadata value as metadata_value records, read from a count table.",
+        "Per-pattern counts under a --where clause, or with --entry (JSON only) one entry's counts per document-metadata value as metadata_value records, or with --by-document the full sparse document-by-entry matrix, read from a count table.",
         StreamShape::Phased {
             phases: &[
                 StreamPhase {
@@ -46,6 +46,24 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                     max: None,
                 },
                 StreamPhase {
+                    name: "documents",
+                    events: &["document"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
+                    name: "entries",
+                    events: &["entry"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
+                    name: "cells",
+                    events: &["cell"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
                     name: "complete",
                     events: &["complete"],
                     min: 1,
@@ -54,8 +72,8 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "One pattern record per pattern in catalog order (only the --select pattern under --select), then under --key one subset record, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`. Under --entry, the records between run and complete are metadata_value records, in the value order of `ling summarize --by-metadata`.",
-        "Every pattern's totals under the clause, then every entry (under --key, every entry whose key has the given field values, with its share of the subset) with a nonzero count under the clause, or the first --top of each pattern. Under --entry, one record per value with at least one admitted document; a final value: null record appears when admitted documents have no value.",
+        "One pattern record per pattern in catalog order (only the --select pattern under --select), then under --key one subset record, then rows: patterns in catalog order; within a pattern, descending count, then the group order of `ling summarize`. Under --entry, the records between run and complete are metadata_value records, in the value order of `ling summarize --by-metadata`. Under --by-document: admitted documents in corpus order, every entry in table order, then nonzero cells in entry order and ascending stable document ID.",
+        "Every pattern's totals under the clause, then every entry (under --key, every entry whose key has the given field values, with its share of the subset) with a nonzero count under the clause, or the first --top of each pattern. Under --entry, one record per value with at least one admitted document; a final value: null record appears when admitted documents have no value. Under --by-document, documents include zero-count works, the entry dictionary covers the entire table even under empty scopes, and every admitted nonzero cell is emitted. Only a complete record confirms the matrix is complete; rows counts cells and entries counts dictionary records.",
         "A closed pipe is a machine-output failure.",
         "0 complete, 1 runtime/output failure, 2 invocation failure.",
         &[],
@@ -97,6 +115,9 @@ pub enum TableEvent {
     Subset(TableSubset),
     Row(TableRow),
     MetadataValue(TableMetadataValue),
+    Document(TableDocument),
+    Entry(TableEntry),
+    Cell(TableCell),
     Complete(TableComplete),
 }
 
@@ -110,6 +131,12 @@ pub struct TableRun {
     pub matcher_revision: String,
     pub clause: Option<String>,
     pub requested_top: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub by_document: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published_source_metadata: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,12 +217,37 @@ pub struct TableEntryCount {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableDocument {
+    /// Stable ID used by cells, bound to the run's corpus identity.
+    pub document_id: u64,
+    #[serde(flatten)]
+    pub data: DocumentData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableEntry {
+    /// Stable within this count table; unchanged by document scopes.
+    pub entry: u32,
+    pub pattern: String,
+    pub group: SummaryGroupData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TableCell {
+    pub document_id: u64,
+    pub entry: u32,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TableComplete {
     /// Admitted documents with at least one sentence.
     pub documents_admitted: u64,
     pub sentences_admitted: u64,
     pub tokens_admitted: u64,
     pub rows: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u64>,
     /// Time to answer from the opened table, excluding catalog compilation,
     /// table opening and clause resolution.
     pub query_millis: u64,

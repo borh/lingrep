@@ -45,3 +45,5 @@ mod variants_protocol;
 mod external_analyzer_cli;
 
 mod ending_report;
+
+mod table_document_export;
