@@ -81,6 +81,17 @@ export function entryFieldNames(fields) {
 }
 
 /** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. */
+/** A line's `left` or `right` text as HTML, with the role words its `bound` places on that side marked. Offsets count code points. */
+export function contextHtml(text, bound, side) {
+  const chars = Array.from(text), marks = (bound ?? []).filter((b) => b.side === side).sort((a, b) => a.start - b.start);
+  let html = "", at = 0;
+  for (const { name, start, end } of marks) {
+    if (start < at) continue;
+    html += esc(chars.slice(at, start).join("")) + `<mark class="kb" title="${esc(name)}">${esc(chars.slice(start, end).join(""))}</mark>`;
+    at = end;
+  }
+  return html + esc(chars.slice(at).join(""));
+}
 export function inspectHref(s, line, { source, analysis, fingerprint }, back) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
   return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back })}`;
@@ -542,7 +553,7 @@ export function mountFrequency(root) {
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
     const identity = { source, analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
     return (l, i) =>
-      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
+      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${contextHtml(l.left, l.bound, "left")}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${contextHtml(l.right, l.bound, "right")}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
   };
   function linesHtml(st, previewing) {
     return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml(st)).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;

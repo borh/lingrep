@@ -23,14 +23,12 @@ pub(crate) fn page(seed: Value, frequency_view: bool) -> Html<String> {
         .replace('>', "\\u003e")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
-    let navigation = if frequency_view {
-        r#"<a href="frequencies" data-t="frequencyNav">Frequencies</a><a href="compare" data-t="compareNav">Compare</a>"#
-    } else {
-        ""
-    };
     Html(
         INDEX
-            .replace("<template id=\"analysis-routes\"></template>", navigation)
+            .replace(
+                "<template id=\"site-routes\"></template>",
+                &site_routes("question", frequency_view),
+            )
             .replace(
                 "</body>",
                 &format!(
@@ -40,8 +38,43 @@ pub(crate) fn page(seed: Value, frequency_view: bool) -> Html<String> {
     )
 }
 
+/// The header's route links, shared by the question page and the
+/// Frequencies and Compare pages, with `current` (`question`, `frequencies`
+/// or `compare`) marked as the current page. Frequencies and Compare are
+/// offered only when a count table is served.
+pub(crate) fn site_routes(current: &str, frequency_view: bool) -> String {
+    let link = |href: &str, page: &str, question_key: &str, key: &str, label: &str| {
+        let marked = if page == current {
+            r#" aria-current="page""#
+        } else {
+            ""
+        };
+        format!(r#"<a href="{href}"{marked} data-t="{question_key}" data-i18n="{key}">{label}</a>"#)
+    };
+    let mut routes = String::from(
+        r#"<nav class="routes" aria-label="lingrep"><a class="brand" href="./">lingrep</a>"#,
+    );
+    routes += &link("./", "question", "questionNav", "nav.question", "Question");
+    if frequency_view {
+        routes += &link(
+            "frequencies",
+            "frequencies",
+            "frequencyNav",
+            "nav.frequencies",
+            "Frequencies",
+        );
+        routes += &link("compare", "compare", "compareNav", "nav.compare", "Compare");
+    }
+    routes += r#"<a href="help" target="_blank" rel="noopener" data-t="helpNav" data-i18n="nav.help">Help</a></nav>"#;
+    routes
+}
+
 async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Response {
     let (content_type, contents) = match name.as_str() {
+        "site.css" => (
+            "text/css; charset=utf-8",
+            include_str!("../question-ui/site.css"),
+        ),
         "style.css" => (
             "text/css; charset=utf-8",
             include_str!("../question-ui/style.css"),
@@ -121,8 +154,8 @@ mod tests {
             routes.split_once("</nav>").unwrap().0.to_owned()
         };
         let served = header(true);
-        assert!(served.contains(r#"<a href="frequencies" data-t="frequencyNav">"#));
-        assert!(served.contains(r#"<a href="compare" data-t="compareNav">"#));
+        assert!(served.contains(r#"<a href="frequencies" data-t="frequencyNav""#));
+        assert!(served.contains(r#"<a href="compare" data-t="compareNav""#));
         assert!(served.contains(r#"<a href="help""#));
         let plain = header(false);
         assert!(!plain.contains("frequencies"));
@@ -139,6 +172,7 @@ mod tests {
             "/research/tools/",
             "/research/tools/workbench",
             "/research/tools/assets/questions/style.css",
+            "/research/tools/assets/questions/site.css",
             "/research/tools/assets/questions/app.js",
             "/research/tools/assets/questions/service.js",
             "/research/tools/assets/questions/dependency.js",

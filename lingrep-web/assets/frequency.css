@@ -423,6 +423,8 @@
   .fq-kwic .src { grid-column: 1 / -1; line-height: 1.6; }
   .fq-kwic .src > span { display: none; }
   .fq { --fq-size: 18px; --fq-lead: 24px; }
+  /* Room above each wrapped line for its blanks' role captions. */
+  .fq-sentence, :lang(ja) .fq-sentence { line-height: 3.3; }
   .fq .spread, .fq table.freq th:nth-child(5), .fq table.freq td:nth-child(5) { display: none; }
 }
 
@@ -434,3 +436,16 @@
 .fq-cli > summary { cursor: pointer; width: fit-content; font: 14px/1.6 var(--font-sans); color: var(--fq-soft); }
 .fq-cli > summary:hover { color: var(--text); }
 .fq-clause p { margin: 0.3rem 0 0; font: 13px/1.5 var(--font-sans); color: var(--fq-soft); }
+
+/* The question page's palette (assets/questions/site.css), read through this
+   stylesheet's own names. */
+html:root {
+  --surface: var(--ground);
+  --text: var(--ink);
+  --text-muted: var(--soft);
+  --border-light: var(--rule);
+  --fq-accent: var(--green);
+  --fq-accent-wash: var(--wash);
+}
+.site + main { margin: 1rem 2rem 2rem; }
+.fq-kwic mark.kb { background: none; color: inherit; padding: 0; font-weight: 600; text-decoration: underline; text-decoration-color: var(--fq-accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }

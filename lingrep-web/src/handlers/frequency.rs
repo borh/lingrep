@@ -404,6 +404,32 @@ mod tests {
             .expect_err("a reservation above the budget")
     }
 
+    /// Frequencies and the question page show one header: the same route
+    /// links, with the current page marked, and the same colour tokens.
+    #[test]
+    fn frequencies_and_the_question_page_share_one_header() {
+        let routes = |html: &str| {
+            let (_, rest) = html.split_once("<nav class=\"routes\"").expect("routes");
+            rest.split_once("</nav>").expect("routes end").0.to_owned()
+        };
+        let question = crate::question_assets::page(serde_json::json!({}), true).0;
+        let frequencies = FrequencyPage {
+            current_page: "frequencies",
+            frequency_view: true,
+        }
+        .render()
+        .expect("page");
+        assert!(routes(&question).contains(r#"href="./" aria-current="page""#));
+        assert!(routes(&frequencies).contains(r#"href="frequencies" aria-current="page""#));
+        assert_eq!(
+            routes(&question).replace(r#" aria-current="page""#, ""),
+            routes(&frequencies).replace(r#" aria-current="page""#, "")
+        );
+        for html in [&question, &frequencies] {
+            assert!(html.contains(r#"href="assets/questions/site.css""#));
+        }
+    }
+
     #[tokio::test]
     async fn a_query_error_returns_400_with_its_message_only_when_the_request_caused_it() {
         use crate::frequency::QueryError;

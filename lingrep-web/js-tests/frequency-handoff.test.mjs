@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { documentNames, entryFieldNames, inspectHref, keyFieldLabel, readState, stateEntries } from "../assets/frequency.js";
+import { contextHtml, documentNames, entryFieldNames, inspectHref, keyFieldLabel, readState, stateEntries } from "../assets/frequency.js";
 import { parseOccurrence, frequencyReturn } from "../question-ui/location.js";
 
 test("a frequency line's handoff address names its occurrence and document, and returns to the conditioned entry", () => {
@@ -41,4 +41,11 @@ test("frequency lines name documents by source name unless one source name cover
 test("a multi-field entry lists its captures when every field is a capture's attribute", () => {
   assert.equal(entryFieldNames(["$n.lemma", "$p.lemma", "$v.lemma"]), "n · p · v");
   assert.equal(entryFieldNames(["lemma", "upos"]), "lemma (dictionary form) · upos (part of speech)");
+});
+
+test("a line's context marks the words its where clause binds, by code point and escaped", () => {
+  const right = "ゆっくり𠮟る<b>";
+  const bound = [{ name: "v", side: "right", start: 4, end: 6 }, { name: "n", side: "left", start: 0, end: 1 }];
+  assert.equal(contextHtml(right, bound, "right"), 'ゆっくり<mark class="kb" title="v">𠮟る</mark>&lt;b&gt;');
+  assert.equal(contextHtml("坂", undefined, "left"), "坂");
 });

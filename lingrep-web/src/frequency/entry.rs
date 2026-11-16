@@ -311,6 +311,93 @@ pub struct Line {
     pub node: String,
     pub right: String,
     pub roles: Vec<crate::occurrence::Role>,
+    /// The role words outside the span that `left` or `right` shows.
+    pub bound: Vec<BoundText>,
+}
+
+/// A role word in a line's context text, as Unicode scalar offsets into
+/// `left` or `right`; a word cut off at the context's edge is cut with it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BoundText {
+    pub name: String,
+    pub side: Side,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// A line's text around the span `start..end` of `texts`, the sentence's
+/// token surfaces, cut to [`CONTEXT_CHARS`] on each side.
+struct LineContext {
+    left: String,
+    node: String,
+    right: String,
+    bound: Vec<BoundText>,
+}
+
+impl LineContext {
+    fn new(texts: &[&str], start: usize, end: usize, roles: &[crate::occurrence::Role]) -> Self {
+        // Each token's character range in the joined text, spacing included
+        // before it rather than in it.
+        let joined = |texts: &[&str]| {
+            let mut text = String::new();
+            let mut ranges = Vec::with_capacity(texts.len());
+            for token in texts {
+                lingrep_core::utils::join_orth_into(&mut text, [*token]);
+                let to = text.chars().count();
+                ranges.push(to - token.chars().count()..to);
+            }
+            (text, ranges)
+        };
+        let (left, left_ranges) = joined(&texts[..start]);
+        let (right, right_ranges) = joined(&texts[end..]);
+        let skip = left.chars().count().saturating_sub(CONTEXT_CHARS);
+        let mut bound = Vec::new();
+        for role in roles {
+            let (side, first, last) = if role.end <= start && role.start < role.end {
+                (
+                    Side::Left,
+                    &left_ranges[role.start],
+                    &left_ranges[role.end - 1],
+                )
+            } else if role.start >= end && role.start < role.end && role.end <= texts.len() {
+                (
+                    Side::Right,
+                    &right_ranges[role.start - end],
+                    &right_ranges[role.end - 1 - end],
+                )
+            } else {
+                continue;
+            };
+            let (from, to) = match side {
+                Side::Left => (
+                    first.start.saturating_sub(skip),
+                    last.end.saturating_sub(skip),
+                ),
+                Side::Right => (first.start.min(CONTEXT_CHARS), last.end.min(CONTEXT_CHARS)),
+            };
+            if from < to {
+                bound.push(BoundText {
+                    name: role.name.clone(),
+                    side,
+                    start: from,
+                    end: to,
+                });
+            }
+        }
+        Self {
+            left: left.chars().skip(skip).collect(),
+            node: lingrep_core::utils::join_orth(texts[start..end].iter().copied()),
+            right: right.chars().take(CONTEXT_CHARS).collect(),
+            bound,
+        }
+    }
 }
 
 struct EntrySink<'a> {
@@ -343,25 +430,25 @@ impl EntrySink<'_> {
             .collect::<Vec<_>>();
         let end = record.end.min(texts.len());
         let start = record.start.min(end);
-        let left = lingrep_core::utils::join_orth(texts[..start].iter().copied());
-        let right = lingrep_core::utils::join_orth(texts[end..].iter().copied());
-        let skip = left.chars().count().saturating_sub(CONTEXT_CHARS);
+        let roles = crate::occurrence::roles(
+            record
+                .captures
+                .iter()
+                .map(|capture| (capture.name.as_str(), capture.start..capture.end)),
+            record.graph_bindings,
+        );
+        let context = LineContext::new(&texts, start, end, &roles);
         self.lines.push(Line {
             document: location.document_id.get(),
             source_name: location.source_name.to_string(),
             sentence: location.corpus_sentence_ordinal,
             start: record.start,
             end: record.end,
-            left: left.chars().skip(skip).collect(),
-            node: lingrep_core::utils::join_orth(texts[start..end].iter().copied()),
-            right: right.chars().take(CONTEXT_CHARS).collect(),
-            roles: crate::occurrence::roles(
-                record
-                    .captures
-                    .iter()
-                    .map(|capture| (capture.name.as_str(), capture.start..capture.end)),
-                record.graph_bindings,
-            ),
+            left: context.left,
+            node: context.node,
+            right: context.right,
+            roles,
+            bound: context.bound,
         });
     }
 }
@@ -955,6 +1042,69 @@ fn json_number(number: f64) -> serde_json::Number {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn role(name: &str, start: usize, end: usize) -> crate::occurrence::Role {
+        crate::occurrence::Role {
+            name: name.into(),
+            start,
+            end,
+        }
+    }
+
+    /// A word a `where` clause binds outside the span is located in the
+    /// context text by Unicode scalar offsets, after the context is cut to
+    /// its 40 characters; a role inside the span is the node's.
+    #[test]
+    fn bound_words_outside_the_span_are_located_in_the_cut_context() {
+        let far = "あ".repeat(45);
+        let texts = [
+            "彼",
+            &far,
+            "は",
+            "坂",
+            "を",
+            "ゆっくり",
+            "上る",
+            "Big",
+            "Ben",
+        ];
+        let roles = [
+            role("s", 0, 1),
+            role("t", 2, 3),
+            role("n", 3, 4),
+            role("p", 4, 5),
+            role("v", 6, 7),
+            role("x", 7, 9),
+        ];
+        let context = LineContext::new(&texts, 3, 5, &roles);
+        assert_eq!(context.node, "坂を");
+        assert_eq!(context.right, "ゆっくり上るBig Ben");
+        assert_eq!(context.left.chars().count(), CONTEXT_CHARS);
+        assert_eq!(
+            context.bound,
+            [
+                BoundText {
+                    name: "t".into(),
+                    side: Side::Left,
+                    start: 39,
+                    end: 40
+                },
+                BoundText {
+                    name: "v".into(),
+                    side: Side::Right,
+                    start: 4,
+                    end: 6
+                },
+                BoundText {
+                    name: "x".into(),
+                    side: Side::Right,
+                    start: 6,
+                    end: 13
+                },
+            ]
+        );
+    }
+
     use hegel::generators;
 
     /// Every finite value falls in exactly one column, in value order, and

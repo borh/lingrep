@@ -1,3 +1,9 @@
+{% if current_page == "frequencies" || current_page == "compare" %}
+<header class="site">
+    {{ crate::question_assets::site_routes(current_page, frequency_view.clone())|safe }}
+    <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
+</header>
+{% else %}
 <nav class="site-nav">
     <a href="./" class="site-nav-brand">lingrep</a>
     <span class="site-nav-sep">|</span>
@@ -28,3 +34,4 @@
     {% endif %}
     <button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language">日本語</button>
 </nav>
+{% endif %}

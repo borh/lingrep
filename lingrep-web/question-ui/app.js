@@ -880,7 +880,8 @@ function renderDocumentNavigation(panel, run, pattern, view) {
     paging.hidden = !view.error && view.previousAfter == null && view.next == null;
     for (const link of paging.querySelectorAll('[data-page-step]')) {
         const direction = Number(link.dataset.pageStep), after = direction < 0 ? view.previousAfter : view.next;
-        link.textContent = locale === 'ja' ? (direction < 0 ? '前の用例' : '次の用例') : (direction < 0 ? 'Previous examples' : 'Next examples');
+        const lines = count(controls.state.lines);
+        link.textContent = locale === 'ja' ? (direction < 0 ? `前の${lines}件` : `次の${lines}件`) : (direction < 0 ? `Previous ${lines}` : `Next ${lines}`);
         updateNavigationLink(link, after == null ? null : hrefFor(run, { ...concordanceFor(run), after }), view.loading);
     }
     const pageRetry = $('[data-page-retry]', paging);
