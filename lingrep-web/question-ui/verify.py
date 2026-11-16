@@ -466,7 +466,9 @@ with (out / "browser-driver.log").open("w") as log:
         wait("return document.querySelector('[data-bound=min]')")
         assert js("return ![...document.querySelector('#metadata-field').options].some(option=>['identifier','filename','source_content_hash','source_bundle_hash','release','url','doi'].includes(option.value))")
         year_element = req(prefix + "/element", {"using":"css selector","value":"[data-bound=min]"})["element-6066-11e4-a52e-4f735466cecf"]
-        req(prefix + "/element/" + year_element + "/value", {"text":"\ue009a\ue0001940"})
+        req(prefix + "/element/" + year_element + "/value", {"text":"\ue009a\ue0001"})
+        assert js("return document.querySelector('#metadata-validation').hidden")
+        req(prefix + "/element/" + year_element + "/value", {"text":"940"})
         assert js("return document.querySelector('[data-bound=min]').value") == "1940"
         js(
             "document.querySelector('[data-bound=max]').value=1960;document.querySelector('[data-bound=max]').dispatchEvent(new Event('input'));document.querySelector('[data-bound=min]').value=1940;document.querySelector('[data-bound=min]').dispatchEvent(new Event('input'))"

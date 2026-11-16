@@ -41,7 +41,8 @@ function clampNumber(input, commit = true) {
 function scrubNumber(input, changed, committed = () => { }) {
     let drag;
     input.title = document.documentElement.lang === 'ja' ? '左右にドラッグ、または数値を入力。Shift キーで細かく調整' : 'Drag horizontally or type a number. Hold Shift for precise dragging';
-    input.addEventListener('input', () => { clampNumber(input, false); changed(false); });
+    input.addEventListener('input', () => { clampNumber(input, false); if (input.checkValidity())
+        changed(false); });
     input.addEventListener('change', () => { const previous = input.value; clampNumber(input); if (input.value !== previous)
         changed(false); if (input.checkValidity())
         committed(); });

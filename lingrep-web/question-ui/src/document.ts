@@ -35,7 +35,7 @@ function clampNumber(input: HTMLInputElement,commit=true){
 function scrubNumber(input: HTMLInputElement, changed: (dragging: boolean)=>void, committed=()=>{}) {
   let drag: {id:number;x:number;lastX:number;value:number;moved:boolean;precise:boolean} | undefined;
   input.title=document.documentElement.lang==='ja'?'左右にドラッグ、または数値を入力。Shift キーで細かく調整':'Drag horizontally or type a number. Hold Shift for precise dragging';
-  input.addEventListener('input',()=>{clampNumber(input,false);changed(false);});
+  input.addEventListener('input',()=>{clampNumber(input,false);if(input.checkValidity())changed(false);});
   input.addEventListener('change',()=>{const previous=input.value;clampNumber(input);if(input.value!==previous)changed(false);if(input.checkValidity())committed();});
   input.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;
