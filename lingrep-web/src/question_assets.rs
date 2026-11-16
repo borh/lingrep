@@ -65,7 +65,15 @@ pub(crate) fn site_routes(current: &str, frequency_view: bool) -> String {
         );
         routes += &link("compare", "compare", "compareNav", "nav.compare", "Compare");
     }
-    routes += r#"<a href="help" target="_blank" rel="noopener" data-t="helpNav" data-i18n="nav.help">Help</a></nav>"#;
+    // The workbench pages carry the `#site-help` dialog that this link opens.
+    let help_dialog = if current == "question" {
+        ""
+    } else {
+        r#" data-site-help-open aria-haspopup="dialog" aria-controls="site-help""#
+    };
+    routes += &format!(
+        r#"<a href="help" target="_blank" rel="noopener"{help_dialog} data-t="helpNav" data-i18n="nav.help">Help</a></nav>"#
+    );
     routes
 }
 

@@ -405,7 +405,8 @@ mod tests {
     }
 
     /// Frequencies and the question page show one header: the same route
-    /// links, with the current page marked, and the same colour tokens.
+    /// links, with the current page marked, and the same colour tokens; on
+    /// Frequencies the Help link opens the site help dialog.
     #[test]
     fn frequencies_and_the_question_page_share_one_header() {
         let routes = |html: &str| {
@@ -421,9 +422,14 @@ mod tests {
         .expect("page");
         assert!(routes(&question).contains(r#"href="./" aria-current="page""#));
         assert!(routes(&frequencies).contains(r#"href="frequencies" aria-current="page""#));
+        let help_dialog =
+            r#" data-site-help-open aria-haspopup="dialog" aria-controls="site-help""#;
+        assert!(routes(&frequencies).contains(help_dialog));
         assert_eq!(
             routes(&question).replace(r#" aria-current="page""#, ""),
-            routes(&frequencies).replace(r#" aria-current="page""#, "")
+            routes(&frequencies)
+                .replace(r#" aria-current="page""#, "")
+                .replace(help_dialog, "")
         );
         for html in [&question, &frequencies] {
             assert!(html.contains(r#"href="assets/questions/site.css""#));
