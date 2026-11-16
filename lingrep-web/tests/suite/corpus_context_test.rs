@@ -52,10 +52,10 @@ async fn body_string(response: axum::response::Response) -> String {
 }
 
 #[tokio::test]
-async fn index_shows_a_preparing_strip_with_the_corpus_stem_and_no_full_path() {
+async fn workbench_shows_preparation_with_the_corpus_stem_and_no_full_path() {
     let app = app_router(store_with_corpus_path("/private/data/secret-corpus.jsonl"));
     let response = app
-        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/workbench").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

@@ -43,6 +43,7 @@ mod permalink_endpoint_test;
 mod policy_projection_test;
 mod provenance_runtime_test;
 mod publish_cleanup_test;
+mod question_runs_test;
 mod reading_test;
 mod render_security_support;
 mod results_workspace_characterization;

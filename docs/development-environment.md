@@ -149,11 +149,16 @@ assets only when the pinned grammar changes:
 scripts/refresh-pattern-web-assets.sh
 ```
 
-Run JavaScript tests and the browser layout check with the tools supplied by
-the Nix shell:
+The question document at `/` uses TypeScript modules with committed JavaScript.
+Cargo and Nix package those assets directly; neither build runs a JavaScript
+package manager. After editing `lingrep-web/question-ui/src/`, regenerate with
+`python3 lingrep-web/question-ui/build.py`. The Nix shell supplies `tsc`.
+
+Run asset freshness, JavaScript tests, and the browser layout check in that shell:
 
 ```bash
-node --test lingrep-web/js-tests/*.test.mjs
+python3 lingrep-web/question-ui/build.py --check
+node --test lingrep-web/js-tests/*.test.mjs lingrep-web/question-ui/*.test.mjs
 scripts/run_lingrep_web_layout_e2e.sh
 ```
 

@@ -98,6 +98,26 @@ route {
 }
 ```
 
+## Question documents
+
+The start page is a question document with linked investigations, continuous
+concordance, document conditions, and expandable sentence context. The existing
+pattern workbench remains at `workbench`; the Frequencies, Compare, and Sample
+pages keep their existing routes.
+
+Saved question files preserve queries, document conditions, corpus identities,
+and the links between investigations. Results belong to the current server
+session and can expire when the server reclaims old sessions or restarts. Reopening a saved document
+then offers to rerun its queries; it does not run them automatically. A corpus
+identity mismatch stops the rerun rather than silently searching different data.
+
+Complete question results use a temporary index capped at 128 MiB per search.
+If a search exceeds that limit, narrow its pattern or document conditions and
+run it again. Result previews are capped at 4 MiB; search fewer patterns when a
+preview exceeds that limit. Question exports stream all retained matches as JSON Lines using
+`lingrep.question-results/v1`; they are separate from the workbench's existing
+exports.
+
 ## Frequencies view
 
 `services.lingrep-web.countTables` lists count tables written by

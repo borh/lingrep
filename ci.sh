@@ -103,7 +103,9 @@ run_common_checks() {
 
 run_shared_tests() {
     echo "Running lingrep-web JavaScript tests"
-    node --test lingrep-web/js-tests/*.test.mjs
+    python3 lingrep-web/question-ui/build.py --check
+    python3 lingrep-web/question-ui/build_test.py
+    node --test lingrep-web/js-tests/*.test.mjs lingrep-web/question-ui/*.test.mjs
 
     echo "Running workspace doctests"
     cargo test --workspace --doc 2>&1 | tee "${TMPDIR:-/tmp}/cargo-test-doc.log"

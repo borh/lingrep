@@ -19,6 +19,9 @@ pub mod pattern_detail;
 pub mod patterns;
 pub mod permalink;
 pub mod provenance_view;
+mod question_assets;
+mod question_corpus;
+mod question_runs;
 mod reading;
 pub mod result_index;
 pub mod revision;
@@ -72,6 +75,10 @@ fn routes(store: RequestStore) -> Router {
         .merge(handlers::compare::page_routes())
         .merge(handlers::neighbors::page_routes())
         .nest(
+            "/assets/questions",
+            question_assets::routes().layer(CompressionLayer::new()),
+        )
+        .nest(
             "/assets/editor",
             handlers::editor_assets::routes().layer(CompressionLayer::new()),
         )
@@ -82,6 +89,12 @@ fn routes(store: RequestStore) -> Router {
         .nest(
             "/api",
             Router::<RequestStore>::new()
+                .nest(
+                    "/questions",
+                    Router::<RequestStore>::new()
+                        .merge(question_corpus::routes())
+                        .merge(question_runs::routes()),
+                )
                 .merge(handlers::search::routes())
                 .merge(handlers::corpus_context::routes())
                 .nest("/pattern", handlers::pattern_editor::routes())

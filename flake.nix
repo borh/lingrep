@@ -69,6 +69,7 @@
             time
             util-linux
             nodejs_24
+            typescript
             jq
             sqlx-cli
             tree-sitter
@@ -122,6 +123,7 @@
                 # subdir and top-level results-explorer.js / app.css), so keep the
                 # whole tree, not just assets/editor.
                 isWebAsset = lib.hasPrefix "${toString ./lingrep-web/assets}/" (toString path);
+                isQuestionAsset = lib.hasPrefix "${toString ./lingrep-web/question-ui}/" (toString path);
                 # lingrep-web's sqlx::query_as macros compile against this committed
                 # offline cache; filterCargoSources drops it, breaking any
                 # hermetic build of lingrep-web.
@@ -139,6 +141,7 @@
               || isSgx
               || isNdc9Data
               || isWebAsset
+              || isQuestionAsset
               || isSqlxCache
               || isWebLabels
               || isDictionaryLicense

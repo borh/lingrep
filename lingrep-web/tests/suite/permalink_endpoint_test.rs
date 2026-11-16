@@ -241,7 +241,10 @@ async fn post_permalink_fields(
 async fn get_index(store: RequestStore, target: &str) -> (StatusCode, String) {
     let request = Request::builder()
         .method("GET")
-        .uri(target)
+        .uri(format!(
+            "/workbench{}",
+            target.strip_prefix('/').unwrap_or(target)
+        ))
         .body(Body::empty())
         .unwrap();
     let response = app_router(store).oneshot(request).await.unwrap();

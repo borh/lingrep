@@ -43,7 +43,9 @@ const NOTICE_CORPUS_UNAVAILABLE: LinkNotice = LinkNotice {
 };
 
 pub fn routes() -> Router<RequestStore> {
-    Router::new().route("/", get(index_page))
+    Router::new()
+        .route("/", get(question_page))
+        .route("/workbench", get(index_page))
 }
 
 /// A parsed landing target.
@@ -321,6 +323,63 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
     }
 }
 
+async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuery) -> Html<String> {
+    let target = parse_target(raw.as_deref());
+    if let Target::Link(params) = &target {
+        let scope_supported = params
+            .search_scope
+            .as_ref()
+            .is_none_or(|scope| scope.included_sections.is_none() && scope.include_unlabelled);
+        if !params.run_options.document_reach
+            || params.run_options.compound_category != CompoundCategory::Compound
+            || params.run_options.overlaps != Overlaps::Catalog
+            || !scope_supported
+            || params.retained.is_some_and(|lines| lines > 30)
+        {
+            return index_page(State(store), RawQuery(raw)).await;
+        }
+    }
+    let selected_key = match &target {
+        Target::Link(params) => Some(params.corpus_key),
+        _ => None,
+    };
+    let Some(slot) = store.corpora.resolve(selected_key) else {
+        return index_page(State(store), RawQuery(raw)).await;
+    };
+    slot.runtime.start_or_observe().await;
+    let ready = slot.runtime.ready().await;
+    let digest = ready
+        .as_ref()
+        .map(|ready| crate::corpus_context::identity_digest(&ready.identity));
+    let readiness = match digest.as_deref() {
+        Some(digest) => Readiness::Ready(digest),
+        None => match &*slot.runtime.readiness().borrow() {
+            crate::corpus_runtime::CacheReadiness::Failed { .. } => Readiness::Failed,
+            _ => Readiness::Preparing,
+        },
+    };
+    let landing = interpret(&target, &store.default_pattern, &readiness);
+    let asserted = matches!(&target,Target::Link(params) if params.corpus.is_some());
+    if landing.link_banner.is_some() || (asserted && ready.is_none()) {
+        return index_page(State(store), RawQuery(raw)).await;
+    }
+    let mut seed = serde_json::json!({
+        "source":landing.seed_pattern,"corpus":slot.name.as_str(),
+        "raw":landing.search_scope.as_ref().and_then(|scope|scope.clause.as_deref()).unwrap_or(""),
+        "run":if landing.auto_run||landing.run_when_ready{"1"}else{"0"},
+    });
+    if let Some(ready) = ready {
+        seed["analysis"] = ready.identity.as_str().into();
+    }
+    if let Some(lines) = landing.retained {
+        seed["lines"] = lines.to_string().into();
+    }
+    if let Some(notice) = landing.link_notice {
+        seed["notice"] = notice.text.into();
+    }
+    crate::question_assets::page(seed, !store.frequency.is_empty())
+}
+
 pub async fn index_page(
     State(store): State<RequestStore>,
     RawQuery(raw): RawQuery,
@@ -431,6 +490,152 @@ fn render_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn question_seed(html: &str) -> serde_json::Value {
+        serde_json::from_str(
+            html.split("id=\"question-seed\" type=\"application/json\">")
+                .nth(1)
+                .unwrap()
+                .split("</script>")
+                .next()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    async fn ready_question_store() -> (tempfile::TempDir, RequestStore, String) {
+        let (directory, _) = crate::corpus_runtime::test_ready_corpus(vec![vec![
+            lingrep_core::token_match::TokenInfo::default().with_orth("猫"),
+        ]]);
+        let store = RequestStore::default();
+        let runtime = std::sync::Arc::new(
+            crate::corpus_runtime::CorpusRuntime::open(
+                directory.path().join("unit.lingcorpus"),
+                std::sync::Arc::clone(&store.context),
+            )
+            .await
+            .unwrap(),
+        );
+        let digest =
+            crate::corpus_context::identity_digest(&runtime.ready().await.unwrap().identity);
+        let store = RequestStore::with_runtime(store.config.clone(), runtime);
+        (directory, store, digest)
+    }
+
+    #[tokio::test]
+    async fn question_root_seeds_standard_cli_links_with_full_identity_and_clause() {
+        let (_directory, store, digest) = ready_question_store().await;
+        let source = "p := [text=\"</script>\"].";
+        let target = permalink::encode(source, "default", Some(&digest), Some(20)).unwrap();
+        let scope =
+            serde_urlencoded::to_string([("s", r#"{"clause":"@document.year >= 1940"}"#)]).unwrap();
+        let html = question_page(
+            State(store.clone()),
+            RawQuery(Some(format!(
+                "{}&d=0&{scope}",
+                target.strip_prefix("/?").unwrap()
+            ))),
+        )
+        .await
+        .0;
+        let seed = question_seed(&html);
+        assert_eq!(seed["source"], source);
+        assert_eq!(seed["corpus"], "default");
+        assert_eq!(
+            seed["analysis"],
+            store
+                .corpora
+                .resolve(None)
+                .unwrap()
+                .runtime
+                .ready()
+                .await
+                .unwrap()
+                .identity
+                .as_str()
+        );
+        assert_eq!(seed["run"], "1");
+        assert_eq!(seed["lines"], "20");
+        assert_eq!(seed["raw"], "@document.year >= 1940");
+        assert!(!html.contains("</script>\"]."));
+        let bare = question_page(
+            State(store.with_default_pattern("default := [].")),
+            RawQuery(None),
+        )
+        .await
+        .0;
+        let seed = question_seed(&bare);
+        assert_eq!(seed["source"], "default := [].");
+        assert_eq!(seed["run"], "0");
+    }
+
+    #[tokio::test]
+    async fn unsupported_legacy_options_scopes_and_identity_assertions_keep_workbench() {
+        let (_directory, store, digest) = ready_question_store().await;
+        let target = permalink::encode("legacy := [].", "default", Some(&digest), None).unwrap();
+        let scope = serde_urlencoded::to_string([(
+            "s",
+            r#"{"included_sections":["abstract"],"include_unlabelled":false}"#,
+        )])
+        .unwrap();
+        for suffix in [
+            "&g=source",
+            "&n=0",
+            "&o=keep",
+            "&r=50",
+            &format!("&{scope}"),
+        ] {
+            let html = question_page(
+                State(store.clone()),
+                RawQuery(Some(format!(
+                    "{}{suffix}",
+                    target.strip_prefix("/?").unwrap()
+                ))),
+            )
+            .await
+            .0;
+            assert!(html.contains("data-query-tab"), "{suffix}");
+            assert!(!html.contains("id=\"question-seed\""));
+        }
+        let mismatch =
+            permalink::encode("legacy := [].", "default", Some("deadbeefdead"), None).unwrap();
+        let html = question_page(
+            State(store),
+            RawQuery(Some(mismatch.strip_prefix("/?").unwrap().into())),
+        )
+        .await
+        .0;
+        assert!(html.contains("permalink-banner"));
+        let cold =
+            permalink::encode("legacy := [].", "default", Some("deadbeefdead"), None).unwrap();
+        let html = question_page(
+            State(RequestStore::default()),
+            RawQuery(Some(cold.strip_prefix("/?").unwrap().into())),
+        )
+        .await
+        .0;
+        assert!(!html.contains("id=\"question-seed\""));
+        assert!(html.contains("legacy := []."));
+    }
+
+    #[tokio::test]
+    async fn unreadable_question_links_seed_defaults_with_a_notice() {
+        let html = question_page(
+            State(RequestStore::default().with_default_pattern("default := [].")),
+            RawQuery(Some("v=1&q=invalid".into())),
+        )
+        .await
+        .0;
+        let seed = question_seed(&html);
+        assert_eq!(seed["source"], "default := [].");
+        assert_eq!(seed["run"], "0");
+        assert!(
+            seed["notice"]
+                .as_str()
+                .unwrap()
+                .contains("could not be read")
+        );
+    }
 
     #[test]
     fn complete_target_boundary_is_enforced() {
