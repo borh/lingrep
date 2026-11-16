@@ -59,3 +59,16 @@ test('example counts above thirty survive saved settings while context remains b
   assert.equal(settings.lines,1000);
   assert.equal(settings.context,24);
 });
+
+
+test('number drags preserve small steps and cover large ranges with a short gesture',async()=>{
+  const {numberDragDelta}=await import('./document.js');
+  assert.equal(numberDragDelta(16),2);
+  assert.ok(numberDragDelta(360)>=100000);
+  assert.equal(numberDragDelta(360,1,true),45);
+  for(let distance=8;distance<=400;distance+=8){
+    assert.equal(numberDragDelta(-distance),-numberDragDelta(distance));
+    assert.ok(numberDragDelta(distance)>=numberDragDelta(distance-8));
+  }
+  assert.equal(numberDragDelta(1000000),Number.MAX_SAFE_INTEGER);
+});

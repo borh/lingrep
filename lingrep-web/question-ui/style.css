@@ -72,3 +72,5 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .result-reading>.document-nav{display:inline-block;vertical-align:baseline;max-width:100%}.result-reading .document-jump{display:inline-block;white-space:nowrap}.result-reading>.document-nav::details-content{display:inline}.result-reading>.document-nav[open]::details-content{display:block}
 
 .result-reading>.document-scope{display:inline;font:inherit;margin:0}.result-reading>.document-scope a{font:inherit}
+
+.number-span:disabled{cursor:default;opacity:.6}

@@ -28,32 +28,48 @@ export function scopeClause(metadata, raw = '') {
         clauses[0] = `(${clauses[0]})`;
     return clauses.join(' & ');
 }
+export function numberDragDelta(distance, step = 1, precise = false) {
+    const steps = Math.trunc(distance / 8);
+    return Math.sign(steps) * Math.min(Number.MAX_SAFE_INTEGER, Math.round(precise || Math.abs(steps) <= 4 ? Math.abs(steps) : 4 + 4 * Math.expm1((Math.abs(steps) - 4) / 4)) * step);
+}
+function paintNumber(input) { input.style.width = `${Math.max(2, String(input.value || input.placeholder).length) + .8}ch`; }
+function clampNumber(input, commit = true) {
+    if (input.value !== '' && Number.isFinite(input.valueAsNumber))
+        input.value = String(Math.max(commit && input.min !== '' ? Number(input.min) : -Number.MAX_SAFE_INTEGER, Math.min(input.max !== '' ? Number(input.max) : Number.MAX_SAFE_INTEGER, input.valueAsNumber)));
+    paintNumber(input);
+}
 function scrubNumber(input, changed, committed = () => { }) {
     let drag;
-    const paint = () => { input.style.width = `${Math.max(2, String(input.value || input.placeholder).length) + .8}ch`; };
-    input.title = document.documentElement.lang === 'ja' ? '左右にドラッグ、または数値を入力' : 'Drag horizontally or type a number';
-    input.addEventListener('input', () => { paint(); changed(false); });
-    input.addEventListener('change', () => { if (input.checkValidity())
+    input.title = document.documentElement.lang === 'ja' ? '左右にドラッグ、または数値を入力。Shift キーで細かく調整' : 'Drag horizontally or type a number. Hold Shift for precise dragging';
+    input.addEventListener('input', () => { clampNumber(input, false); changed(false); });
+    input.addEventListener('change', () => { const previous = input.value; clampNumber(input); if (input.value !== previous)
+        changed(false); if (input.checkValidity())
         committed(); });
     input.addEventListener('pointerdown', event => {
         if (event.button !== 0)
             return;
-        drag = { id: event.pointerId, x: event.clientX, value: Number(input.value || input.placeholder), moved: false };
+        drag = { id: event.pointerId, x: event.clientX, lastX: event.clientX, value: Number(input.value || input.placeholder), moved: false, precise: event.shiftKey };
         input.setPointerCapture(event.pointerId);
     });
     input.addEventListener('pointermove', event => {
         if (!drag || event.pointerId !== drag.id)
             return;
-        const steps = Math.trunc((event.clientX - drag.x) / 8);
-        if (!steps && !drag.moved)
+        if (event.shiftKey !== drag.precise) {
+            drag.x = drag.lastX;
+            drag.value = Number(input.value || input.placeholder);
+            drag.precise = event.shiftKey;
+        }
+        drag.lastX = event.clientX;
+        const delta = numberDragDelta(event.clientX - drag.x, Number(input.step || 1), drag.precise);
+        if (!delta && !drag.moved)
             return;
         if (!drag.moved) {
             drag.moved = true;
             input.setPointerCapture(event.pointerId);
         }
         event.preventDefault();
-        input.value = String(Math.max(Number(input.min), Math.min(input.max ? Number(input.max) : Infinity, drag.value + steps * Number(input.step || 1))));
-        paint();
+        input.value = String(drag.value + delta);
+        clampNumber(input);
         changed(true);
     });
     const finish = (event) => { if (!drag || event.pointerId !== drag.id)
@@ -63,8 +79,9 @@ function scrubNumber(input, changed, committed = () => { }) {
     input.addEventListener('pointercancel', finish);
     input.addEventListener('lostpointercapture', () => { if (drag?.moved)
         committed(); drag = undefined; });
-    paint();
+    paintNumber(input);
 }
+const hiddenMetadataFields = new Set(['identifier', 'filename', 'source_bundle_hash', 'source_content_hash', 'release', 'url', 'doi']);
 export function questionSettings(params) {
     const metadata = Object.create(null);
     const parsed = JSON.parse(params.get('metadata') ?? '{}');
@@ -133,12 +150,12 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             const data = await api(`api/questions/data/${$('#corpus').value}/metadata`);
             if (epoch !== requestId)
                 return;
-            const initialKey = data.fields.some(f => f.key === 'author') ? 'author' : data.fields[0]?.key;
-            const initialField = data.fields.find(f => f.key === initialKey);
+            fields = data.fields.filter(field => !hiddenMetadataFields.has(field.key));
+            const initialKey = fields.some(f => f.key === 'author') ? 'author' : fields[0]?.key;
+            const initialField = fields.find(f => f.key === initialKey);
             const initialValues = initialField && !initialField.numeric ? await api(`api/questions/data/${$('#corpus').value}/metadata?${new URLSearchParams({ field: initialKey, q: '', after: '' })}`) : undefined;
             if (epoch !== requestId)
                 return;
-            fields = data.fields;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
             key = initialKey;
             $('#metadata-query').value = '';
@@ -205,14 +222,19 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
                 upper.value = String(initialUpper + delta);
                 updateRange(dragging);
             };
-            windowControl.addEventListener('keydown', event => { const delta = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10, Home: -Infinity, End: Infinity }[event.key]; if (delta != null) {
+            windowControl.addEventListener('keydown', event => { const delta = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -Math.max(10, Math.round((numericField.max - numericField.min) / 10)), PageUp: Math.max(10, Math.round((numericField.max - numericField.min) / 10)), Home: -Infinity, End: Infinity }[event.key]; if (delta != null) {
                 event.preventDefault();
                 moveRange(delta);
             } });
             windowControl.addEventListener('pointerdown', event => { if (event.button !== 0)
-                return; event.preventDefault(); windowControl.focus(); windowControl.setPointerCapture(event.pointerId); drag = { x: event.clientX, lower: Number(lower.value || numericField.min), upper: Number(upper.value || numericField.max) }; });
-            windowControl.addEventListener('pointermove', event => { if (drag)
-                moveRange(Math.trunc((event.clientX - drag.x) / 8), drag.lower, drag.upper, true); });
+                return; event.preventDefault(); windowControl.focus(); windowControl.setPointerCapture(event.pointerId); drag = { x: event.clientX, lastX: event.clientX, lower: Number(lower.value || numericField.min), upper: Number(upper.value || numericField.max), precise: event.shiftKey }; });
+            windowControl.addEventListener('pointermove', event => { if (!drag)
+                return; if (event.shiftKey !== drag.precise) {
+                drag.x = drag.lastX;
+                drag.lower = Number(lower.value || numericField.min);
+                drag.upper = Number(upper.value || numericField.max);
+                drag.precise = event.shiftKey;
+            } drag.lastX = event.clientX; moveRange(numberDragDelta(event.clientX - drag.x, 1, drag.precise), drag.lower, drag.upper, true); });
             const finish = () => { if (drag) {
                 drag = undefined;
                 commitRange();
@@ -294,7 +316,8 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     scrubNumber($('#line-limit'), () => { if (!$('#line-limit').checkValidity() || $('#line-limit').value === '')
         return; state.lines = Number($('#line-limit').value); viewChanged(); changed(); });
     renderChips();
-    return { state, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
+    return { state, boundExamples(maximum) { const input = $('#line-limit'); input.disabled = maximum === 0; input.max = String(maximum == null || maximum === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, maximum))); clampNumber(input); if (input.value !== '')
+            state.lines = Number(input.value); }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
             clearTimeout(searchTimer);
             clearTimeout(valueTimer);
             ++requestId;
@@ -307,7 +330,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             if (!$('#metadata-picker').hidden)
                 loadFields();
         }, localize() { for (const input of document.querySelectorAll('.number-span'))
-            input.title = text('Drag horizontally or type a number', '左右にドラッグ、または数値を入力'); $('#line-limit').setAttribute('aria-label', text('Number of examples', '表示する用例数')); $('#context-size').setAttribute('aria-label', text('Context tokens', '前後の文脈のトークン数')); renderChips(); if (fields.length) {
+            input.title = text('Drag horizontally or type a number. Hold Shift for precise dragging', '左右にドラッグ、または数値を入力。Shift キーで細かく調整'); $('#line-limit').setAttribute('aria-label', text('Number of examples', '表示する用例数')); $('#context-size').setAttribute('aria-label', text('Context tokens', '前後の文脈のトークン数')); renderChips(); if (fields.length) {
             const selected = $('#metadata-field').value;
             $('#metadata-field').innerHTML = fields.map(f => `<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
             $('#metadata-field').value = selected;

@@ -229,8 +229,13 @@ with (out / "browser-driver.log").open("w") as log:
             )
         js("document.querySelector('#line-limit').value=100;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         wait("return document.querySelectorAll('.kwic-row').length===" + str(args.expected_matches))
-        assert js("return document.querySelector('#line-limit').max") == ""
+        assert js("return Number(document.querySelector('#line-limit').max)") == args.expected_matches
         assert js("return __probe.state.current.id") == first_id
+        js("document.querySelector('#context-size').value=9999999;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
+        assert js("return document.querySelector('#context-size').value") == "24"
+        js("document.querySelector('#line-limit').value=9999999;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
+        assert js("return Number(document.querySelector('#line-limit').value)") == args.expected_matches
+        js("document.querySelector('#context-size').value=12;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
         js("document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         wait("return document.querySelectorAll('.kwic-row').length===20 && document.querySelector('.kwic-list').getAttribute('aria-busy')==='false'")
         js("document.querySelector('#line-limit').value=5;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
@@ -459,6 +464,10 @@ with (out / "browser-driver.log").open("w") as log:
             "document.querySelector('#metadata-field').value='source_edition_year';document.querySelector('#metadata-field').dispatchEvent(new Event('change'))"
         )
         wait("return document.querySelector('[data-bound=min]')")
+        assert js("return ![...document.querySelector('#metadata-field').options].some(option=>['identifier','filename','source_content_hash','source_bundle_hash','release','url','doi'].includes(option.value))")
+        year_element = req(prefix + "/element", {"using":"css selector","value":"[data-bound=min]"})["element-6066-11e4-a52e-4f735466cecf"]
+        req(prefix + "/element/" + year_element + "/value", {"text":"\ue009a\ue0001940"})
+        assert js("return document.querySelector('[data-bound=min]').value") == "1940"
         js(
             "document.querySelector('[data-bound=max]').value=1960;document.querySelector('[data-bound=max]').dispatchEvent(new Event('input'));document.querySelector('[data-bound=min]').value=1940;document.querySelector('[data-bound=min]').dispatchEvent(new Event('input'))"
         )
@@ -474,7 +483,7 @@ with (out / "browser-driver.log").open("w") as log:
         js(
             "document.querySelector('[data-bound=min]').value=2000;document.querySelector('[data-bound=min]').dispatchEvent(new Event('input'))"
         )
-        assert js("return !document.querySelector('#metadata-validation').hidden")
+        assert js("return document.querySelector('[data-bound=min]').value === document.querySelector('[data-bound=max]').value && document.querySelector('#metadata-validation').hidden")
         js(
             "document.querySelector('[data-bound=min]').value=1941;document.querySelector('[data-bound=min]').dispatchEvent(new Event('input'))"
         )

@@ -2423,7 +2423,7 @@ keys. A label applies to the key it names in every served corpus.
   "licence": "MIT",
   "keys": {
     "@document.orthographic_style": { "labels": { "en": "orthography", "ja": "文字遣い" } },
-    "@document.source_edition_year": { "labels": { "en": "first edition year of the source", "ja": "底本の初版発行年" } }
+    "@document.source_edition_year": { "labels": { "en": "Source book: first edition year", "ja": "底本の初版発行年" } }
   }
 }
 ```

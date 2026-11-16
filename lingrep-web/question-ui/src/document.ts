@@ -23,31 +23,40 @@ export function scopeClause(metadata: Record<string,MetadataCondition>, raw='') 
   return clauses.join(' & ');
 }
 
+export function numberDragDelta(distance: number,step=1,precise=false): number {
+  const steps=Math.trunc(distance/8);
+  return Math.sign(steps)*Math.min(Number.MAX_SAFE_INTEGER,Math.round(precise||Math.abs(steps)<=4?Math.abs(steps):4+4*Math.expm1((Math.abs(steps)-4)/4))*step);
+}
+function paintNumber(input: HTMLInputElement){input.style.width=`${Math.max(2,String(input.value||input.placeholder).length)+.8}ch`;}
+function clampNumber(input: HTMLInputElement,commit=true){
+  if(input.value!==''&&Number.isFinite(input.valueAsNumber))input.value=String(Math.max(commit&&input.min!==''?Number(input.min):-Number.MAX_SAFE_INTEGER,Math.min(input.max!==''?Number(input.max):Number.MAX_SAFE_INTEGER,input.valueAsNumber)));
+  paintNumber(input);
+}
 function scrubNumber(input: HTMLInputElement, changed: (dragging: boolean)=>void, committed=()=>{}) {
-  let drag: {id: number; x:number;value:number;moved:boolean} | undefined;
-  const paint=()=>{input.style.width=`${Math.max(2,String(input.value||input.placeholder).length)+.8}ch`;};
-  input.title=document.documentElement.lang==='ja'?'左右にドラッグ、または数値を入力':'Drag horizontally or type a number';
-  input.addEventListener('input',()=>{paint();changed(false);});
-  input.addEventListener('change',()=>{if(input.checkValidity())committed();});
+  let drag: {id:number;x:number;lastX:number;value:number;moved:boolean;precise:boolean} | undefined;
+  input.title=document.documentElement.lang==='ja'?'左右にドラッグ、または数値を入力。Shift キーで細かく調整':'Drag horizontally or type a number. Hold Shift for precise dragging';
+  input.addEventListener('input',()=>{clampNumber(input,false);changed(false);});
+  input.addEventListener('change',()=>{const previous=input.value;clampNumber(input);if(input.value!==previous)changed(false);if(input.checkValidity())committed();});
   input.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;
-    drag={id:event.pointerId,x:event.clientX,value:Number(input.value||input.placeholder),moved:false};
+    drag={id:event.pointerId,x:event.clientX,lastX:event.clientX,value:Number(input.value||input.placeholder),moved:false,precise:event.shiftKey};
     input.setPointerCapture(event.pointerId);
   });
   input.addEventListener('pointermove',event=>{
     if(!drag||event.pointerId!==drag.id)return;
-    const steps=Math.trunc((event.clientX-drag.x)/8);
-    if(!steps&&!drag.moved)return;
+    if(event.shiftKey!==drag.precise){drag.x=drag.lastX;drag.value=Number(input.value||input.placeholder);drag.precise=event.shiftKey;}
+    drag.lastX=event.clientX;
+    const delta=numberDragDelta(event.clientX-drag.x,Number(input.step||1),drag.precise);
+    if(!delta&&!drag.moved)return;
     if(!drag.moved){drag.moved=true;input.setPointerCapture(event.pointerId);}
-    event.preventDefault();
-    input.value=String(Math.max(Number(input.min),Math.min(input.max?Number(input.max):Infinity,drag.value+steps*Number(input.step||1))));
-    paint();changed(true);
+    event.preventDefault();input.value=String(drag.value+delta);clampNumber(input);changed(true);
   });
   const finish=(event: PointerEvent)=>{if(!drag||event.pointerId!==drag.id)return;if(drag.moved)committed();drag=undefined;};
   input.addEventListener('pointerup',finish);input.addEventListener('pointercancel',finish);
   input.addEventListener('lostpointercapture',()=>{if(drag?.moved)committed();drag=undefined;});
-  paint();
+  paintNumber(input);
 }
+const hiddenMetadataFields=new Set(['identifier','filename','source_bundle_hash','source_content_hash','release','url','doi']);
 
 export function questionSettings(params: URLSearchParams): QuestionSettings {
   const metadata: Record<string,MetadataCondition>=Object.create(null);
@@ -100,11 +109,11 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     try {
       const data=await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata`);
       if(epoch!==requestId)return;
-      const initialKey=data.fields.some(f=>f.key==='author')?'author':data.fields[0]?.key;
-      const initialField=data.fields.find(f=>f.key===initialKey);
+      fields=data.fields.filter(field=>!hiddenMetadataFields.has(field.key));
+      const initialKey=fields.some(f=>f.key==='author')?'author':fields[0]?.key;
+      const initialField=fields.find(f=>f.key===initialKey);
       const initialValues=initialField&&!initialField.numeric?await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata?${new URLSearchParams({field:initialKey,q:'',after:''})}`):undefined;
       if(epoch!==requestId)return;
-      fields=data.fields;
       $<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
       key=initialKey;$<HTMLInputElement>('#metadata-query').value='';
       $<HTMLSelectElement>('#metadata-field').value=key;
@@ -146,14 +155,14 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
       for(const input of [lower,upper])scrubNumber(input,updateRange,commitRange);
       windowControl.setAttribute('aria-valuenow',lower.value||String(numericField.min));
       windowControl.setAttribute('aria-valuetext',`${lower.value||numericField.min}–${upper.value||numericField.max}`);
-      let drag: {x:number;lower:number;upper:number} | undefined;
+      let drag: {x:number;lastX:number;lower:number;upper:number;precise:boolean} | undefined;
       const moveRange=(delta: number,initialLower=Number(lower.value||numericField.min),initialUpper=Number(upper.value||numericField.max),dragging=false)=>{
         delta=Math.max(numericField.min-initialLower,Math.min(numericField.max-initialUpper,delta));
         lower.value=String(initialLower+delta);upper.value=String(initialUpper+delta);updateRange(dragging);
       };
-      windowControl.addEventListener('keydown',event=>{const delta: number | undefined=({ArrowLeft:-1,ArrowDown:-1,ArrowRight:1,ArrowUp:1,PageDown:-10,PageUp:10,Home:-Infinity,End:Infinity} as Record<string,number>)[event.key];if(delta!=null){event.preventDefault();moveRange(delta);}});
-      windowControl.addEventListener('pointerdown',event=>{if(event.button!==0)return;event.preventDefault();windowControl.focus();windowControl.setPointerCapture(event.pointerId);drag={x:event.clientX,lower:Number(lower.value||numericField.min),upper:Number(upper.value||numericField.max)};});
-      windowControl.addEventListener('pointermove',event=>{if(drag)moveRange(Math.trunc((event.clientX-drag.x)/8),drag.lower,drag.upper,true);});
+      windowControl.addEventListener('keydown',event=>{const delta: number | undefined=({ArrowLeft:-1,ArrowDown:-1,ArrowRight:1,ArrowUp:1,PageDown:-Math.max(10,Math.round((numericField.max-numericField.min)/10)),PageUp:Math.max(10,Math.round((numericField.max-numericField.min)/10)),Home:-Infinity,End:Infinity} as Record<string,number>)[event.key];if(delta!=null){event.preventDefault();moveRange(delta);}});
+      windowControl.addEventListener('pointerdown',event=>{if(event.button!==0)return;event.preventDefault();windowControl.focus();windowControl.setPointerCapture(event.pointerId);drag={x:event.clientX,lastX:event.clientX,lower:Number(lower.value||numericField.min),upper:Number(upper.value||numericField.max),precise:event.shiftKey};});
+      windowControl.addEventListener('pointermove',event=>{if(!drag)return;if(event.shiftKey!==drag.precise){drag.x=drag.lastX;drag.lower=Number(lower.value||numericField.min);drag.upper=Number(upper.value||numericField.max);drag.precise=event.shiftKey;}drag.lastX=event.clientX;moveRange(numberDragDelta(event.clientX-drag.x,1,drag.precise),drag.lower,drag.upper,true);});
       const finish=()=>{if(drag){drag=undefined;commitRange();}};
       windowControl.addEventListener('pointerup',finish);windowControl.addEventListener('pointercancel',finish);windowControl.addEventListener('lostpointercapture',finish);
       $<HTMLButtonElement>('#metadata-next').disabled=true;$<HTMLButtonElement>('#metadata-previous').disabled=true;values.removeAttribute('aria-busy');values.inert=false;return;
@@ -199,9 +208,9 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   scrubNumber($<HTMLInputElement>('#context-size'),()=>{if(!$<HTMLInputElement>('#context-size').checkValidity()||$<HTMLInputElement>('#context-size').value==='')return;state.context=Number($<HTMLInputElement>('#context-size').value);viewChanged();changed();});
   scrubNumber($<HTMLInputElement>('#line-limit'),()=>{if(!$<HTMLInputElement>('#line-limit').checkValidity()||$<HTMLInputElement>('#line-limit').value==='')return;state.lines=Number($<HTMLInputElement>('#line-limit').value);viewChanged();changed();});
   renderChips();
-  return {state,where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
+  return {state,boundExamples(maximum:number|null){const input=$<HTMLInputElement>('#line-limit');input.disabled=maximum===0;input.max=String(maximum==null||maximum===0?Number.MAX_SAFE_INTEGER:Math.max(1,Math.min(Number.MAX_SAFE_INTEGER,maximum)));clampNumber(input);if(input.value!=='')state.lines=Number(input.value);},where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
     clearTimeout(searchTimer);clearTimeout(valueTimer);++requestId;Object.assign(state,questionSettings(params));
     $<HTMLInputElement>('#where').value=state.raw;$<HTMLInputElement>('#context-size').value=String(state.context);$<HTMLInputElement>('#line-limit').value=String(state.lines);
     fields=[];renderChips();if(!$('#metadata-picker').hidden)loadFields();
-  },localize(){for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number','左右にドラッグ、または数値を入力');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;}}};
+  },localize(){for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;}}};
 }
