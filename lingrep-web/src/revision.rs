@@ -64,6 +64,8 @@ pub enum ErrorCategory {
     Compile,
     /// The corpus remains usable with catalogs compatible with its token schema.
     Binding,
+    /// The question names an analysis identity the served corpus does not have.
+    AnalysisChanged,
     Scope,
     Cache,
     Execution,

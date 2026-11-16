@@ -1,4 +1,6 @@
 export const attributeMembers = (value) => value === undefined ? [] : typeof value === 'string' ? [value] : value;
+/** A run's failure text, translated when the server reports a known failure code. */
+export const runError = (run, t) => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error;
 export const errorMessage = (error) => error instanceof Error ? error.message : String(error);
 export function element(selector, root = document) {
     const node = root.querySelector(selector);
@@ -52,7 +54,7 @@ export function parseUpdate(text) {
         elapsed: finiteNumber, received: finiteNumber, version: finiteNumber, started: finiteNumber,
         diagnostics: v => Array.isArray(v) && v.every(diagnosticValue),
         notices: v => Array.isArray(v) && v.every(value => typeof value === 'string'),
-        error: v => v === null || typeof v === 'string', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
+        error: v => v === null || typeof v === 'string', error_code: v => v === null || v === 'analysis_changed', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
         bodies: stringMap, counts: v => objectValue(v) && Object.values(v).every(finiteNumber),
         contract_run: v => v === null || objectValue(v) && typeof v.analysis_identity === 'string',
         counters: v => v === null || objectValue(v) && objectValue(v.counters) && finiteNumber(v.counters.documents_admitted),

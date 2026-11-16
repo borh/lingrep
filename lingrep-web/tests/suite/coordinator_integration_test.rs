@@ -145,7 +145,7 @@ async fn indexed_revisions_validate_saved_analysis_identity_before_execution() {
             assert_eq!(attempt.phase, AttemptPhase::Failed);
             assert_eq!(
                 attempt.failure.as_ref().unwrap().category,
-                ErrorCategory::Binding
+                ErrorCategory::AnalysisChanged
             );
             assert!(
                 attempt

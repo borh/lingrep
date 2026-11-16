@@ -5,7 +5,7 @@ import { defaultView, parseView, locationURL, savedQuestion, seedParams, parseOc
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
-import { element as $, errorMessage, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection } from './model.js';
+import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
@@ -17,8 +17,9 @@ const ja = {
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(ja, { analysisChanged: 'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
 extra.current = 'Results';
+extra.analysisChanged = 'The corpus saved with this question has changed. Choose the current corpus and search again.';
 extra.previous = 'Previous results';
 let config;
 let controls;
@@ -182,7 +183,7 @@ async function executeSavedSection(link, signal) {
                     return;
                 stop();
                 if (run.phase !== 'complete') {
-                    reject(new Error(run.error ?? 'Saved search did not complete. Run saved searches to retry.'));
+                    reject(new Error(runError(run, t) ?? 'Saved search did not complete. Run saved searches to retry.'));
                     return;
                 }
                 documentSections.set(id, { run, origin: link.origin });
@@ -524,7 +525,7 @@ function render(force = false) {
     $('#replay').disabled = !recorded.length || !!activeId || isReplay;
     $('#error').hidden = !current?.error;
     const diagnostic = patternFailure(current), line = diagnostic?.data.location?.line;
-    $('#error').textContent = (line ? (locale === 'ja' ? `${line} 行目: ` : `Line ${line}: `) : '') + (current?.error ?? '');
+    $('#error').textContent = (line ? (locale === 'ja' ? `${line} 行目: ` : `Line ${line}: `) : '') + (current ? runError(current, t) ?? '' : '');
     editError.hidden = !diagnostic;
     editError.textContent = line ? (locale === 'ja' ? `${line} 行目のパターンを修正` : `Edit pattern at line ${line}`) : (locale === 'ja' ? 'パターンを修正' : 'Edit pattern');
     if (diagnostic && current && revealedFailure !== current.id) {

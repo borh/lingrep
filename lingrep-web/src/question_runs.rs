@@ -152,6 +152,7 @@ struct RunSnapshot {
     elapsed: f64,
     version: u64,
     error: Option<String>,
+    error_code: Option<&'static str>,
     diagnostics: Vec<Value>,
     notices: Vec<String>,
     counters: Option<Value>,
@@ -368,6 +369,11 @@ async fn project_run(
         elapsed: 0.0,
         version,
         error: attempt.failure.as_ref().map(|e| e.message.clone()),
+        error_code: attempt
+            .failure
+            .as_ref()
+            .filter(|e| e.category == ErrorCategory::AnalysisChanged)
+            .map(|_| "analysis_changed"),
         diagnostics,
         notices: crate::revision_status::project_revision_status(Some(view))
             .notices

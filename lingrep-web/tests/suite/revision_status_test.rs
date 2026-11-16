@@ -213,6 +213,10 @@ fn failure_status_preserves_scan_guidance_under_a_localized_heading() {
     assert_eq!(cache.message, "The English sentence.");
     assert_eq!(cache.message_key, Some("status.failed_cache"));
     assert_eq!(cache.diagnostic, None);
+    let changed = failed_status(ErrorCategory::AnalysisChanged, "The English sentence.");
+    assert_eq!(changed.message, "The English sentence.");
+    assert_eq!(changed.message_key, Some("status.failed_analysis_changed"));
+    assert_eq!(changed.diagnostic, None);
 }
 
 fn matched_pattern(exact_total: u64) -> lingrep_web::snapshot::PatternDescriptor {
