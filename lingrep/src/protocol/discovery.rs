@@ -49,6 +49,7 @@ contract_ids! {
     Diagnostic => "lingrep.diagnostic/v1",
     Dictionary => "lingrep.dictionary/v1",
     Doctor => "lingrep.doctor/v1",
+    EvidenceTsv => "lingrep.evidence-tsv/v1",
     Invocation => "lingrep.invocation/v1",
     Manpages => "lingrep.manpages/v1",
     MatchesTsv => "lingrep.matches-tsv/v1",

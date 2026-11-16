@@ -58,6 +58,38 @@ pub(crate) fn matches_contract() -> crate::protocol::discovery::ContractSpec {
     )
 }
 
+pub(crate) fn evidence_contract() -> crate::protocol::discovery::ContractSpec {
+    crate::protocol::discovery::tsv_contract(
+        crate::protocol::ContractId::EvidenceTsv,
+        &["matches"],
+        "Headerless per-word match evidence rows, selected by --tsv --evidence.",
+        columns![
+            "sequence",
+            "pattern",
+            "source_name",
+            "document_ordinal",
+            "document_sentence_ordinal",
+            "corpus_sentence_ordinal",
+            "match_start",
+            "match_end",
+            "word",
+            "roles",
+            "in_span",
+            "text",
+            "lemma",
+            "norm",
+            "upos",
+            "xpos",
+            "head",
+            "rel",
+            "sentence"
+        ],
+        "Canonical match order; within a match, sentence word order.",
+        "Complete evidence or the requested first-N prefix of matches.",
+        &["matches/catalog-file-direct-root"],
+    )
+}
+
 pub(crate) fn summarize_contract() -> crate::protocol::discovery::ContractSpec {
     crate::protocol::discovery::tsv_contract(
         crate::protocol::ContractId::SummarizeTsv,
@@ -126,6 +158,22 @@ pub struct MatchTsvRow {
     pub left_surface: Option<String>,
     pub surface: String,
     pub right_surface: Option<String>,
+}
+
+/// One word of one match's `--evidence`, with the match's provenance repeated
+/// so that every row stands alone. An absent value is an empty field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceTsvRow<'a> {
+    pub sequence: u64,
+    pub pattern: &'a str,
+    pub source_name: &'a str,
+    pub document_ordinal: u64,
+    pub document_sentence_ordinal: u64,
+    pub corpus_sentence_ordinal: u64,
+    pub match_start: u64,
+    pub match_end: u64,
+    pub word: &'a crate::protocol::query::EvidenceWord,
+    pub sentence: &'a str,
 }
 
 /// Fixed four-column TSV projection for an exact summary row.
@@ -217,6 +265,40 @@ pub fn write_match_tsv<W: Write>(writer: &mut W, row: &MatchTsvRow) -> Result<()
     }
     writer.write_all(b"\n")?;
     Ok(())
+}
+
+/// Write the nineteen evidence TSV columns in their public order; `roles` are
+/// comma-separated.
+pub fn write_evidence_tsv<W: Write>(
+    writer: &mut W,
+    row: &EvidenceTsvRow<'_>,
+) -> Result<(), OutputError> {
+    let word = row.word;
+    let value = |value: &Option<String>| value.clone().unwrap_or_default();
+    write_tsv_row(
+        writer,
+        &[
+            &row.sequence.to_string(),
+            row.pattern,
+            row.source_name,
+            &row.document_ordinal.to_string(),
+            &row.document_sentence_ordinal.to_string(),
+            &row.corpus_sentence_ordinal.to_string(),
+            &row.match_start.to_string(),
+            &row.match_end.to_string(),
+            &word.word.to_string(),
+            &word.roles.join(","),
+            &word.in_span.to_string(),
+            &value(&word.text),
+            &value(&word.lemma),
+            &value(&word.norm),
+            &value(&word.upos),
+            &value(&word.xpos),
+            &value(&word.head),
+            &value(&word.rel),
+            row.sentence,
+        ],
+    )
 }
 
 /// Write `pattern`, `rank`, `group`, and `count` in the fixed summary TSV

@@ -10,6 +10,7 @@ evidence.
 | Contract | Command | Columns in order | Ordering | Coverage |
 |---|---|---|---|---|
 | `lingrep.attributes-tsv/v1` | `coverage` | `attribute`, `present`, `unspecified`, `absent`, `admitted_tokens` | TokenAttributeIndex::ALL order. | Every attribute, always. Exclusions require --json. |
+| `lingrep.evidence-tsv/v1` | `matches` | `sequence`, `pattern`, `source_name`, `document_ordinal`, `document_sentence_ordinal`, `corpus_sentence_ordinal`, `match_start`, `match_end`, `word`, `roles`, `in_span`, `text`, `lemma`, `norm`, `upos`, `xpos`, `head`, `rel`, `sentence` | Canonical match order; within a match, sentence word order. | Complete evidence or the requested first-N prefix of matches. |
 | `lingrep.matches-tsv/v1` | `matches` | `sequence`, `pattern`, `source_name`, `document_ordinal`, `document_sentence_ordinal`, `corpus_sentence_ordinal`, `match_start`, `match_end`, `left_surface`, `surface`, `right_surface` | Canonical match order. | Complete evidence or the requested first-N prefix. |
 | `lingrep.sources-tsv/v1` | `corpus inventory` | `ordinal`, `logical_name`, `target_group_ordinal`, `external_target`, `target_multiplicity` | Stable source ordinal order. | Live-discovered or recorded inventory as selected by the command. |
 | `lingrep.summarize-tsv/v1` | `summarize` | `pattern`, `rank`, `group`, `count` | Authored definition; count descending; group kind surface, rendered unit, lexical term, projected key; keyed field-name vector in authored order; keyed value vector. | Exact aggregate, optionally top-N per pattern. |

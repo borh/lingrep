@@ -1280,7 +1280,10 @@ fn graph_node_scalar_attributes<S: TokenSequence + ?Sized>(
     tokens: &S,
     graph: Option<&EnhancedGraph>,
 ) -> Box<[GraphNodeAttribute]> {
-    const SCALARS: [&str; 4] = ["text", "lemma", "upos", "xpos"];
+    // Every portable scalar: a word node can be keyed by any of them, so each
+    // must be visible to audit a published key against its binding. An empty
+    // node has no `norm`, which its own list below reflects.
+    const SCALARS: [&str; 5] = ["text", "lemma", "norm", "upos", "xpos"];
     let mut attributes = Vec::new();
     attributes.push(GraphNodeAttribute {
         name: AttributeKey::new("node.kind").expect("node.kind is canonical"),

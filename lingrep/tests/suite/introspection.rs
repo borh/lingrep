@@ -108,7 +108,7 @@ fn describe_publishes_typed_argv_examples_and_registry_owned_contracts() {
     );
     assert_eq!(
         data["tsv_contracts"],
-        serde_json::json!(["lingrep.matches-tsv/v1"])
+        serde_json::json!(["lingrep.evidence-tsv/v1", "lingrep.matches-tsv/v1"])
     );
 }
 

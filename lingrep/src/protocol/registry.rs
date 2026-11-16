@@ -23,6 +23,7 @@ pub fn get(id: ContractId) -> ContractSpec {
         ContractId::ProtocolContract => contract::contract(),
         ContractId::Manpages => manpages::contract(),
         ContractId::MatchesTsv => crate::output::matches_contract(),
+        ContractId::EvidenceTsv => crate::output::evidence_contract(),
         ContractId::SummarizeTsv => crate::output::summarize_contract(),
         ContractId::TokenizeTsv => crate::output::tokenize_contract(),
         ContractId::SourcesTsv => crate::output::sources_contract(),

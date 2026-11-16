@@ -598,6 +598,15 @@ pub struct MatchesArgs {
     #[arg(long, conflicts_with = "json", help_heading = "Output")]
     pub tsv: bool,
 
+    /// Add each match's sentence and the words it rests on (requires --json or --tsv).
+    ///
+    /// The words are the span, its captures, and every word a `where` clause
+    /// binds, even outside the span or --context, each with its lemma, POS,
+    /// head and relation. With --tsv, writes one `lingrep.evidence-tsv/v1` row
+    /// per word instead of `lingrep.matches-tsv/v1`.
+    #[arg(long, help_heading = "Output")]
+    pub evidence: bool,
+
     /// Color the nearest N context morphemes on each side of the hit.
     #[arg(
         long,
