@@ -59,6 +59,14 @@ export function stateEntries(s) {
   return out;
 }
 
+/** The question page address that reruns `source` over the corpus in the frequency view's document scope and opens `line`'s occurrence; `back` is the frequency view address to return to. */
+export function inspectHref(s, line, { source, clause, analysis, fingerprint }, back) {
+  const occurrence = { pattern: s.pattern, sentence: line.sentence, roles: line.roles, analysis, fingerprint };
+  const params = new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back });
+  if (clause) params.set("raw", clause);
+  return `./#${params}`;
+}
+
 export const hashHolds = (hash, entries) => {
   const sorted = (p) => JSON.stringify([...p].sort());
   return sorted(new URLSearchParams(hash.replace(/^#/, ""))) === sorted(new URLSearchParams(entries));
@@ -503,10 +511,14 @@ export function mountFrequency(root) {
   const chartHtml = (c) =>
     `<figure class="fq-chart" data-key="${esc(c.key)}"><figcaption>${esc(keyName(c.key))}</figcaption>${dim(c.key)?.list ? `<p class="fq-multivalue-note">${esc(t("frequency.multivalue_note"))}</p>` : ""}<p class="fq-readout" data-readout aria-live="polite">&nbsp;</p><div class="fq-chart-body" data-body>${bodyHtml(c)}</div><details${opened.has(c.key) ? " open" : ""}><summary>${esc(t("frequency.as_table"))}</summary>${chartTable(c)}</details></figure>`;
 
-  const lineHtml = (l, i) =>
-    `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src">${esc(t("frequency.document", { id: l.document }))}</span></li>`;
+  const lineHtml = (st) => {
+    const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
+    const identity = { source, clause: profile?.clause ?? s.where ?? "", analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
+    return (l, i) =>
+      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${esc(l.left)}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${esc(l.right)}</span><span class="src"><span>${esc(t("frequency.document", { id: l.document }))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
+  };
   function linesHtml(st, previewing) {
-    return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;
+    return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml(st)).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;
   }
   function figuresText(p) {
     const o = num(p.count), d = num(p.works);
@@ -606,7 +618,7 @@ export function mountFrequency(root) {
       renderEntry(bad.status === "unsupported" ? reasonText(bad) : t("views.unavailable", { catalog: s.catalog, corpus: s.corpus }));
     } else {
       profile = { ...p, entry: s.entry };
-      lined = { total: l.total, lines: l.lines };
+      lined = { total: l.total, lines: l.lines, analysis_identity: l.analysis_identity, catalog_fingerprint: l.catalog_fingerprint };
       renderEntry();
     }
     renderClause();
@@ -799,6 +811,7 @@ export function mountFrequency(root) {
       );
       return;
     }
+    if (e.target.closest(".fq-inspect")) return;
     const line = e.target.closest(".fq-kwic li[data-sentence]");
     if (line && !entryEl.classList.contains("previewing") && getSelection().isCollapsed) {
       openReader(line);

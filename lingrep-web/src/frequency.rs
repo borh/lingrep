@@ -55,6 +55,8 @@ pub struct FrequencyPair {
     pub corpus: CorpusName,
     pub corpus_display: String,
     pub catalog: String,
+    /// The catalog source whose fingerprint the table records.
+    pub source: String,
     pub(crate) table: CountTable,
     command_inputs: Option<[String; 3]>,
     documents: Arc<documents::Documents>,
@@ -571,6 +573,7 @@ impl FrequencyViews {
                 corpus: name.clone(),
                 corpus_display: display.clone(),
                 catalog,
+                source: source.to_owned(),
                 command_inputs,
                 table,
                 documents: Arc::clone(&documents.store),
@@ -1619,6 +1622,7 @@ pub(crate) mod tests {
                 corpus: CorpusName::parse("default").expect("corpus"),
                 corpus_display: "default".into(),
                 catalog: "p.lx".into(),
+                source: String::new(),
                 table,
                 command_inputs: Some([
                     "table.lingtable".into(),

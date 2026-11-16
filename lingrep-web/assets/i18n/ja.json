@@ -78,6 +78,7 @@
   "frequency.workbench": "ワークベンチで開く",
   "frequency.reason_unknown_entry": "この項目は件数表にありません。",
   "frequency.back": "{catalog}における{pattern}の頻度",
+  "frequency.inspect": "トークンを調べる",
   "frequency.reader_title": "文書中の用例",
   "frequency.reader_return": "用例一覧に戻る",
   "frequency.reader_loading": "文書を読み込んでいます…",

@@ -334,7 +334,6 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
             || params.run_options.compound_category != CompoundCategory::Compound
             || params.run_options.overlaps != Overlaps::Catalog
             || !scope_supported
-            || params.retained.is_some_and(|lines| lines > 30)
         {
             return index_page(State(store), RawQuery(raw)).await;
         }
@@ -526,7 +525,7 @@ mod tests {
     async fn question_root_seeds_standard_cli_links_with_full_identity_and_clause() {
         let (_directory, store, digest) = ready_question_store().await;
         let source = "p := [text=\"</script>\"].";
-        let target = permalink::encode(source, "default", Some(&digest), Some(20)).unwrap();
+        let target = permalink::encode(source, "default", Some(&digest), Some(1000)).unwrap();
         let scope =
             serde_urlencoded::to_string([("s", r#"{"clause":"@document.year >= 1940"}"#)]).unwrap();
         let html = question_page(
@@ -555,7 +554,7 @@ mod tests {
                 .as_str()
         );
         assert_eq!(seed["run"], "1");
-        assert_eq!(seed["lines"], "20");
+        assert_eq!(seed["lines"], "1000");
         assert_eq!(seed["raw"], "@document.year >= 1940");
         assert!(!html.contains("</script>\"]."));
         let bare = question_page(
@@ -578,13 +577,7 @@ mod tests {
             r#"{"included_sections":["abstract"],"include_unlabelled":false}"#,
         )])
         .unwrap();
-        for suffix in [
-            "&g=source",
-            "&n=0",
-            "&o=keep",
-            "&r=50",
-            &format!("&{scope}"),
-        ] {
+        for suffix in ["&g=source", "&n=0", "&o=keep", &format!("&{scope}")] {
             let html = question_page(
                 State(store.clone()),
                 RawQuery(Some(format!(

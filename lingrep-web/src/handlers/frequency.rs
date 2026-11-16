@@ -53,6 +53,7 @@ struct PairMeta<'a> {
     corpus: &'a str,
     corpus_name: &'a str,
     catalog: &'a str,
+    source: &'a str,
     patterns: &'a [crate::frequency::PatternSource],
     workbench: Option<&'a str>,
 }
@@ -73,6 +74,7 @@ async fn meta(State(store): State<RequestStore>) -> Response {
                 corpus: pair.corpus.as_str(),
                 corpus_name: &pair.corpus_display,
                 catalog: &pair.catalog,
+                source: &pair.source,
                 patterns: pair.patterns(),
                 workbench: pair.workbench(),
             })

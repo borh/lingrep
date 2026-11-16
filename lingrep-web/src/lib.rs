@@ -13,6 +13,7 @@ pub mod frequency;
 pub mod handlers;
 pub mod inspection;
 pub mod metadata_labels;
+mod occurrence;
 pub mod page_projection;
 pub mod pattern_catalog;
 pub mod pattern_detail;

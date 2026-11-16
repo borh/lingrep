@@ -308,6 +308,7 @@ pub struct Line {
     pub left: String,
     pub node: String,
     pub right: String,
+    pub roles: Vec<crate::occurrence::Role>,
 }
 
 struct EntrySink<'a> {
@@ -351,6 +352,13 @@ impl EntrySink<'_> {
             left: left.chars().skip(skip).collect(),
             node: lingrep_core::utils::join_orth(texts[start..end].iter().copied()),
             right: right.chars().take(CONTEXT_CHARS).collect(),
+            roles: crate::occurrence::roles(
+                record
+                    .captures
+                    .iter()
+                    .map(|capture| (capture.name.as_str(), capture.start..capture.end)),
+                record.graph_bindings,
+            ),
         });
     }
 }
@@ -432,6 +440,10 @@ pub struct Profile {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Lines {
+    /// The table's corpus analysis identity and catalog fingerprint, which a
+    /// line's sentence ordinal and roles refer to.
+    pub analysis_identity: String,
+    pub catalog_fingerprint: String,
     pub total: u64,
     pub offset: usize,
     pub lines: Vec<Line>,
@@ -821,6 +833,8 @@ impl FrequencyPair {
             .take(limit)
             .collect();
         Ok(Ok(Lines {
+            analysis_identity: self.table.key().analysis_identity.clone(),
+            catalog_fingerprint: self.table.key().catalog_fingerprint.clone(),
             total,
             offset,
             lines,

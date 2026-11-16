@@ -244,6 +244,19 @@ async fn submitted_runs_stream_bounded_previews_and_page_export_every_complete_m
         }
     }
     assert_eq!(streamed.len(), 60);
+    let large_page = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}/documents?pattern=phrase&continuous=1&limit=100"),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(large_page["rows"].as_array().unwrap().len(), 42);
+    assert!(large_page["next"].is_null());
     let mut paged = Vec::new();
     let mut after = -1;
     loop {
@@ -781,4 +794,77 @@ async fn unreferenced_large_attributes_do_not_block_projected_pages_or_complete_
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.into_body().collect().await.is_err());
     store.coordinators.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_frequency_occurrence_is_located_by_sentence_and_roles_only_under_the_same_identity() {
+    let (_fixture, store, identity) = fixture(8);
+    let app = lingrep_web::app_router(store.clone());
+    let id = submit(&app, SOURCE, "", Some(&identity)).await;
+    assert_eq!(
+        updates(&app, &id).await.last().unwrap()["patch"]["phase"],
+        "complete"
+    );
+    let fingerprint = lingrep_web::patterns::web_catalog_fingerprint(SOURCE);
+    let item = json!([{"name":"item","start":0,"end":1}]).to_string();
+    let locate = |sentence: u64, roles: &str, analysis: &str, fingerprint: &str| {
+        let app = app.clone();
+        let query = serde_urlencoded::to_string([
+            ("pattern", "phrase"),
+            ("sentence", &sentence.to_string()),
+            ("roles", roles),
+            ("analysis", analysis),
+            ("fingerprint", fingerprint),
+        ])
+        .unwrap();
+        let path = format!("/api/questions/runs/{id}/occurrence?{query}");
+        async move { request(&app, Method::GET, &path, None).await }
+    };
+    let found = json_response(
+        locate(36, &item, &identity, &fingerprint).await,
+        StatusCode::OK,
+    )
+    .await;
+    let row = &json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/questions/runs/{id}/documents?pattern=phrase&document={}&after={}&limit=1",
+                found["document"],
+                found["sequence"].as_u64().unwrap() - 1
+            ),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await["rows"][0];
+    assert_eq!(row["sequence"], found["sequence"]);
+    assert_eq!(row["corpus_sentence_ordinal"], 36);
+    assert_eq!(row["document_ordinal"], 1);
+    assert_eq!(row["captures"][0]["name"], "item");
+    assert_eq!(row["captures"][0]["span"], json!({"start":0,"end":1}));
+
+    let other = json!([{"name":"item","start":1,"end":2}]).to_string();
+    json_response(
+        locate(36, &other, &identity, &fingerprint).await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    json_response(
+        locate(36, &item, &"0".repeat(64), &fingerprint).await,
+        StatusCode::CONFLICT,
+    )
+    .await;
+    json_response(
+        locate(36, &item, &identity, &"0".repeat(64)).await,
+        StatusCode::CONFLICT,
+    )
+    .await;
+    json_response(
+        locate(36, "[{", &identity, &fingerprint).await,
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
 }

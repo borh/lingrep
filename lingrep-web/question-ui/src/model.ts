@@ -4,6 +4,8 @@ export interface Question { readonly source: string; readonly dataset: string; r
 export type AttributeValue = string | readonly string[];
 export interface Token { readonly index: number; readonly attributes: Readonly<Record<string, AttributeValue>> & {readonly text:string}; }
 export const attributeMembers = (value:AttributeValue|undefined):readonly string[] => value===undefined?[]:typeof value==='string'?[value]:value;
+export interface GraphNode { readonly node_kind: string; readonly token_index?: number; }
+export type GraphBinding = { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
 export interface MatchRecord {
   readonly sequence: number;
   readonly pattern: string;
@@ -13,6 +15,8 @@ export interface MatchRecord {
   readonly source_name: string;
   readonly source_metadata?: { readonly document?: { readonly title?: string; readonly author?: string } };
   readonly surface: string;
+  readonly captures?: readonly { readonly name: string; readonly span: { readonly start: number; readonly end: number } }[];
+  readonly graph_bindings?: readonly GraphBinding[];
   readonly tokens: readonly Token[];
   readonly left_context?: readonly Token[];
   readonly right_context?: readonly Token[];
@@ -53,7 +57,7 @@ export interface MetadataResult { fields: Field[]; documents: number; values: { 
 export interface StoredSentence { analysis_identity: string; sentence: number; tokens: readonly Token[]; }
 export interface DocumentSummary { ordinal: number; title: string; author: string; matches: number; }
 export interface DocumentPage { landmarks: DocumentSummary[]; after: number; start: number; matches_total: number; previous: number | null; documents_total: number; documents_offset: number; selected: DocumentSummary | null; position: number | null; previous_document: number | null; next_document: number | null; documents: DocumentSummary[]; rows: MatchRecord[]; next: number | null; document: number | null; }
-export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
+export interface DocumentView { request: {document:number|null;after:number;documentsOffset:number|null;scopeDocument:number|null;limit:number}|null; scopeDocument: number | null; returnAfter: number; landmarks: DocumentSummary[]; start: number; matchesTotal: number; query: string; documentsTotal: number; documentsOffset: number; selectedDoc: DocumentSummary | null; position: number | null; previousDoc: number | null; nextDoc: number | null; documents: DocumentSummary[] | null; document: number | null; rows: MatchRecord[]; after: number; next: number | null; previousAfter: number | null; loading: boolean; error: string | null; epoch: number; limit: number; }
 export interface SavedQuestion { format: 'lingrep.question/v1' | 'lingrep.question-probe/v1'; question: string; source: string; corpus: string; analysis: string; where: string; [key: string]: string | number; }
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 export function element<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {

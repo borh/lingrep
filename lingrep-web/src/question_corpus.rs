@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use axum::{
@@ -21,7 +21,7 @@ const MAX_VALUES: usize = 100;
 const MAX_FIELDS: usize = 256;
 const MAX_VALUE_BYTES: usize = 4096;
 const MAX_QUERY_BYTES: usize = 256;
-const MAX_CURSOR_BYTES: usize = MAX_VALUE_BYTES * 6 + 2;
+const MAX_CURSOR_BYTES: usize = MAX_VALUE_BYTES * 12 + 128;
 const MAX_TOKEN_BYTES: usize = 1024 * 1024;
 const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 
@@ -286,8 +286,6 @@ struct MetadataResult {
 struct MetadataSummary {
     fields: BTreeMap<String, Field>,
     documents: u64,
-    values: BTreeMap<String, MetadataChoice>,
-    more: bool,
 }
 
 fn value_label(field: &str, value: &str) -> String {
@@ -352,8 +350,6 @@ impl MetadataSummary {
             } else {
                 std::slice::from_ref(value)
             };
-            let mut seen = BTreeSet::new();
-            let needle = query.q.as_deref().unwrap_or("").to_lowercase();
             for value in members {
                 if value.is_array() || value.is_object() {
                     continue;
@@ -364,42 +360,101 @@ impl MetadataSummary {
                 if raw.len() > MAX_VALUE_BYTES {
                     return Err("A metadata value exceeds the display limit.");
                 }
-                let label = value_label(key, &raw);
-                let cursor = value.to_string();
-                if query.after.as_ref().is_some_and(|after| cursor <= *after)
-                    || !label.to_lowercase().contains(&needle)
-                    || !seen.insert(cursor.clone())
-                {
-                    continue;
-                }
-                self.values
-                    .entry(cursor)
-                    .or_insert_with(|| MetadataChoice {
-                        value: value.clone(),
-                        label,
-                        documents: 0,
-                    })
-                    .documents += 1;
-                if self.values.len() > MAX_VALUES {
-                    self.values.pop_last();
-                    self.more = true;
-                }
             }
         }
         Ok(())
     }
     fn finish(self) -> MetadataResult {
-        let next = self
-            .more
-            .then(|| self.values.last_key_value().map(|(key, _)| key.clone()))
-            .flatten();
+        let mut fields = self.fields.into_values().collect::<Vec<_>>();
+        fields.sort_by(|a, b| b.present.cmp(&a.present).then_with(|| a.key.cmp(&b.key)));
         MetadataResult {
-            fields: self.fields.into_values().collect(),
+            fields,
             documents: self.documents,
-            values: self.values.into_values().collect(),
-            next,
+            values: Vec::new(),
+            next: None,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct DistributionCursor {
+    documents: u64,
+    kind: String,
+    value: String,
+}
+
+#[derive(Debug)]
+enum DistributionError {
+    Corpus(lingrep_corpus::CorpusError),
+    InvalidCursor,
+    OversizedValue,
+}
+
+async fn collect_distribution(
+    stream: impl futures::Stream<
+        Item = Result<(String, Option<String>, u64), lingrep_corpus::CorpusError>,
+    >,
+    query: &MetadataQuery,
+) -> Result<(Vec<MetadataChoice>, Option<String>), DistributionError> {
+    use futures::TryStreamExt;
+    let after = query
+        .after
+        .as_ref()
+        .filter(|encoded| !encoded.is_empty())
+        .map(|encoded| serde_json::from_str::<DistributionCursor>(encoded))
+        .transpose()
+        .map_err(|_| DistributionError::InvalidCursor)?;
+    let mut seeking = after.is_some();
+    let needle = query.q.as_deref().unwrap_or("").to_lowercase();
+    let mut values = Vec::new();
+    let mut last = None;
+    futures::pin_mut!(stream);
+    while let Some((kind, encoded, documents)) =
+        stream.try_next().await.map_err(DistributionError::Corpus)?
+    {
+        let encoded = encoded.ok_or(DistributionError::OversizedValue)?;
+        let cursor = DistributionCursor {
+            documents,
+            kind,
+            value: encoded,
+        };
+        if seeking {
+            if Some(&cursor) == after.as_ref() {
+                seeking = false;
+            }
+            continue;
+        }
+        let value: Value =
+            serde_json::from_str(&cursor.value).map_err(|_| DistributionError::InvalidCursor)?;
+        let raw = value
+            .as_str()
+            .map_or_else(|| value.to_string(), str::to_owned);
+        if raw.len() > MAX_VALUE_BYTES {
+            return Err(DistributionError::OversizedValue);
+        }
+        let label = value_label(query.field.as_deref().unwrap_or(""), &raw);
+        if !label.to_lowercase().contains(&needle) {
+            continue;
+        }
+        if values.len() == MAX_VALUES {
+            return Ok((
+                values,
+                last.map(|cursor| {
+                    serde_json::to_string(&cursor).expect("distribution cursor serializes")
+                }),
+            ));
+        }
+        values.push(MetadataChoice {
+            value,
+            label,
+            documents,
+        });
+        last = Some(cursor);
+    }
+    if seeking {
+        return Err(DistributionError::InvalidCursor);
+    }
+    Ok((values, None))
 }
 
 async fn metadata(
@@ -447,8 +502,36 @@ async fn metadata(
             return corrupt(&runtime, &ready).await;
         }
     }
+    let mut result = summary.finish();
+    if let Some(field) = query.field.as_deref() {
+        match collect_distribution(provenance.document_metadata_distribution(field), &query).await {
+            Ok((values, next)) => {
+                result.values = values;
+                result.next = next;
+            }
+            Err(DistributionError::InvalidCursor) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "This metadata page is no longer valid. Start from the first page.",
+                );
+            }
+            Err(DistributionError::OversizedValue) => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "A metadata value exceeds the display limit.",
+                );
+            }
+            Err(DistributionError::Corpus(cause)) => {
+                tracing::warn!(%cause,"metadata distribution could not be read");
+                return error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Metadata values could not be loaded. Try again.",
+                );
+            }
+        }
+    }
     drop(permit);
-    Json(summary.finish()).into_response()
+    Json(result).into_response()
 }
 
 #[cfg(test)]
@@ -472,6 +555,7 @@ mod tests {
         for path in [
             "/config",
             "/data/default/metadata?field=ndc&q=%E5%B0%8F%E8%AA%AC",
+            "/data/default/metadata?field=author",
             "/data/default/tokens?sentence=0",
         ] {
             let response = app
@@ -500,14 +584,24 @@ mod tests {
                         .iter()
                         .any(|field| field["key"] == "ndc" && field["list"] == true)
                 );
+                let values = body["values"].as_array().unwrap();
                 assert!(
-                    body["values"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|value| value["value"] == "913"
-                            && value["label"].as_str().unwrap().contains("小説"))
+                    values
+                        .windows(2)
+                        .all(|pair| pair[0]["documents"].as_u64().unwrap()
+                            >= pair[1]["documents"].as_u64().unwrap())
                 );
+                let fields = body["fields"].as_array().unwrap();
+                assert!(
+                    fields
+                        .windows(2)
+                        .all(|pair| pair[0]["present"].as_u64().unwrap()
+                            >= pair[1]["present"].as_u64().unwrap())
+                );
+                if path.contains("field=ndc") {
+                    assert!(values.iter().any(|value| value["value"] == "913"
+                        && value["label"].as_str().unwrap().contains("小説")));
+                }
             } else {
                 assert_eq!(body["analysis_identity"], identity);
                 assert!(
@@ -689,101 +783,119 @@ mod tests {
     }
 
     #[test]
-    fn metadata_counts_documents_once_per_value_and_keeps_ndc_codes() {
+    fn fields_follow_document_frequency_and_numeric_bounds_remain_natural() {
         let mut summary = MetadataSummary::default();
         let query = MetadataQuery {
             field: Some("ndc".into()),
-            q: Some("小説".into()),
             ..Default::default()
         };
         summary
             .observe(
-                serde_json::json!({"ndc":["913","913","019"],"year":1940}),
+                serde_json::json!({"ndc":["913","913"],"year":1960,"rare":true}),
                 &query,
             )
             .unwrap();
         summary
-            .observe(serde_json::json!({"ndc":["913"],"year":1960}), &query)
+            .observe(serde_json::json!({"ndc":["019"],"year":1940}), &query)
             .unwrap();
         let result = summary.finish();
         assert_eq!(result.documents, 2);
         assert_eq!(
-            result.values,
-            vec![MetadataChoice {
-                value: Value::String("913".into()),
-                label: "913 日本文学・小説・物語".into(),
-                documents: 2
-            }]
+            result
+                .fields
+                .iter()
+                .map(|field| field.key.as_str())
+                .collect::<Vec<_>>(),
+            ["ndc", "year", "rare"]
         );
-        let year = result.fields.iter().find(|f| f.key == "year").unwrap();
+        let year = &result.fields[1];
         assert!(year.numeric);
         assert_eq!(
             (year.min, year.max, year.present),
             (Some(1940.0), Some(1960.0), 2)
         );
-        assert!(result.fields.iter().find(|f| f.key == "ndc").unwrap().list);
+        assert!(result.fields[0].list);
     }
 
-    #[test]
-    fn value_pages_are_bounded_sorted_and_count_early_and_late_occurrences() {
-        let mut summary = MetadataSummary::default();
+    #[tokio::test]
+    async fn frequency_pages_keep_popular_values_and_ties_without_skips() {
+        let mut rows = vec![("text".into(), Some("\"zzpopular\"".into()), 20)];
+        rows.extend((0..150).map(|n| ("text".into(), Some(format!("\"value{n:03}\"")), 2)));
         let query = MetadataQuery {
             field: Some("title".into()),
+            after: Some(String::new()),
             ..Default::default()
         };
-        for n in (0..150).rev().chain(0..150) {
-            summary
-                .observe(serde_json::json!({"title":format!("{n:03}")}), &query)
-                .unwrap();
-            assert!(summary.values.len() <= MAX_VALUES);
-        }
-        let result = summary.finish();
-        assert_eq!(result.values.len(), 100);
-        assert_eq!(result.next.as_deref(), Some("\"099\""));
-        assert!(result.values.iter().all(|v| v.documents == 2));
+        let (first, next) = collect_distribution(
+            futures::stream::iter(rows.clone().into_iter().map(Ok)),
+            &query,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.len(), 100);
+        assert_eq!(first[0].value, "zzpopular");
+        assert_eq!(first[0].documents, 20);
+        assert_eq!(first[99].value, "value098");
         let query = MetadataQuery {
-            field: Some("title".into()),
-            after: result.next,
+            after: next,
+            field: query.field,
             ..Default::default()
         };
-        let mut summary = MetadataSummary::default();
-        for n in 0..150 {
-            summary
-                .observe(serde_json::json!({"title":format!("{n:03}")}), &query)
+        let (second, next) =
+            collect_distribution(futures::stream::iter(rows.into_iter().map(Ok)), &query)
+                .await
                 .unwrap();
-        }
-        let result = summary.finish();
-        assert_eq!(result.values.len(), 50);
-        assert_eq!(result.values[0].value, "100");
-        assert_eq!(result.next, None);
+        assert_eq!(second.len(), 51);
+        assert_eq!(second[0].value, "value099");
+        assert!(next.is_none());
     }
 
-    #[test]
-    fn similarly_spelled_metadata_values_keep_distinct_json_types() {
-        let mut summary = MetadataSummary::default();
-        summary
-            .observe(
-                serde_json::json!({"mixed":["1",1,"true",true]}),
-                &MetadataQuery {
-                    field: Some("mixed".into()),
-                    ..Default::default()
-                },
-            )
+    #[tokio::test]
+    async fn distribution_filter_uses_ndc_names_and_preserves_json_types() {
+        let query = MetadataQuery {
+            field: Some("ndc".into()),
+            q: Some("小説".into()),
+            ..Default::default()
+        };
+        let rows = vec![
+            Ok(("text".into(), Some("\"019\"".into()), 10)),
+            Ok(("text".into(), Some("\"913\"".into()), 2)),
+        ];
+        let (values, next) = collect_distribution(futures::stream::iter(rows), &query)
+            .await
             .unwrap();
-        let result = summary.finish();
-        assert_eq!(result.values.len(), 4);
-        assert!(
-            result
-                .values
-                .iter()
-                .any(|choice| choice.value == serde_json::json!(1))
+        assert_eq!(
+            values,
+            vec![MetadataChoice {
+                value: serde_json::json!("913"),
+                label: "913 日本文学・小説・物語".into(),
+                documents: 2
+            }]
         );
-        assert!(
-            result
-                .values
-                .iter()
-                .any(|choice| choice.value == serde_json::json!("1"))
+        assert!(next.is_none());
+        let query = MetadataQuery {
+            field: Some("mixed".into()),
+            ..Default::default()
+        };
+        let rows = vec![
+            Ok(("integer".into(), Some("1".into()), 1)),
+            Ok(("text".into(), Some("\"1\"".into()), 1)),
+        ];
+        let (values, _) = collect_distribution(futures::stream::iter(rows), &query)
+            .await
+            .unwrap();
+        assert_eq!(
+            values.iter().map(|v| v.value.clone()).collect::<Vec<_>>(),
+            [serde_json::json!(1), serde_json::json!("1")]
         );
+        let query = MetadataQuery {
+            after: Some("not a cursor".into()),
+            ..query
+        };
+        assert!(matches!(
+            collect_distribution(futures::stream::empty(), &query).await,
+            Err(DistributionError::InvalidCursor)
+        ));
     }
 
     #[test]

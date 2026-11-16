@@ -1,9 +1,10 @@
 import { serviceURL, ServiceError, expiredSearch } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { defaultView, parseView, locationURL, savedQuestion, seedParams } from './location.js';
+import { defaultView, parseView, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
+import { evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
 import { element as $, errorMessage, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
@@ -12,9 +13,9 @@ let locale = localStorage.getItem('ling-questions-locale') === 'ja' ? 'ja' : 'en
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
     readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', emptyTitle: '調べたい表現から始める。', emptyBody: 'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。', example: 'このパターンを検索', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
-    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: '全結果を JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明',
+    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceInSpan: '範囲内', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
-const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download all results as JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable' };
+const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
 Object.assign(ja, { emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
 extra.current = 'Results';
@@ -35,9 +36,11 @@ tokenDetails.id = 'token-details';
 tokenDetails.open = !matchMedia('(max-width:480px)').matches;
 const tokenSummary = document.createElement('summary');
 tokenDetails.append(tokenSummary);
+const dependencyPanel = $('#dependency-panel');
 for (const element of [...tokenLab.children].slice(1))
-    tokenDetails.append(element);
-tokenLab.append(focusedSentence, exampleSteps, tokenDetails);
+    if (element !== dependencyPanel)
+        tokenDetails.append(element);
+tokenLab.append(focusedSentence, exampleSteps, dependencyPanel, tokenDetails);
 function localizeExample() { tokenSummary.textContent = locale === 'ja' ? 'トークンを調べる' : 'Inspect tokens'; $('[data-example-step="-1"]', exampleSteps).textContent = locale === 'ja' ? '前の用例' : 'Previous example'; $('[data-example-step="1"]', exampleSteps).textContent = locale === 'ja' ? '次の用例' : 'Next example'; }
 const readerPanel = $('#inspector');
 const readerStatus = document.createElement('p');
@@ -248,6 +251,7 @@ let viewLocation = defaultView();
 let viewEvidence = null;
 let navigationEpoch = 0;
 let pendingView = null;
+let pendingOccurrence = null;
 let revealedFailure = null;
 const editError = document.createElement('button');
 editError.type = 'button';
@@ -272,7 +276,7 @@ function editFailedPattern(focus = true) {
 }
 editError.addEventListener('click', () => editFailedPattern());
 const compactLayout = matchMedia('(max-width:480px)');
-function adaptControls() { for (const selector of ['#question-actions', '.document-nav'])
+function adaptControls() { for (const selector of ['#question-actions'])
     for (const details of document.querySelectorAll(selector))
         details.open = !compactLayout.matches; }
 adaptControls();
@@ -288,6 +292,7 @@ const post = (path, body = {}, signal) => request(path, { method: 'POST', header
 function translate() {
     document.documentElement.lang = locale;
     localizeExample();
+    renderDependencies();
     for (const element of document.querySelectorAll('[data-t]'))
         element.textContent = t(element.dataset.t ?? '');
     $('#language').textContent = locale === 'en' ? '日本語' : 'English';
@@ -319,7 +324,8 @@ function updateCorpus() {
         facts.push(`${count(dataset.sentences)} ${locale === 'ja' ? '文' : 'sentences'}`);
     if (dataset.readiness !== 'ready')
         facts.push(locale === 'ja' ? (dataset.readiness === 'failed' ? 'コーパスの準備に失敗しました。検索で再試行できます。' : 'コーパスを準備しています。検索すると準備の完了を待ちます。') : (dataset.readiness === 'failed' ? 'Corpus preparation failed. Search to retry.' : 'Corpus preparing · searches wait until it is ready.'));
-    $('#corpus-meta').textContent = facts.join(' · ');
+    $('#corpus-meta').textContent = dataset.readiness === 'ready' ? '' : facts.join(' · ');
+    $('#corpus').title = facts.join(' · ');
     $('#incumbent').href = serviceURL('workbench');
     clearTimeout(configRefresh);
     if (dataset.readiness !== 'ready')
@@ -476,6 +482,11 @@ function connect(id) {
                     pendingView = null;
                     void navigateView(hrefFor(snapshot, target), true, 'replace');
                 }
+                if (pendingOccurrence) {
+                    const target = pendingOccurrence;
+                    pendingOccurrence = null;
+                    void openOccurrence(snapshot, target);
+                }
                 if (!state.previous && !$('#source-editor').contains(document.activeElement)) {
                     $('#source-editor').hidden = true;
                     $('#edit-source').setAttribute('aria-expanded', 'false');
@@ -565,8 +576,8 @@ function render(force = false) {
             panel = document.createElement('article');
             panel.className = 'result-panel';
             panel.dataset.run = run.id;
-            panel.innerHTML = '<header class="result-header"></header><p class="result-scope"></p><ul class="result-notices" hidden></ul><p class="document-scope" hidden></p><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><p class="evidence-sentence"></p><div class="line-controls"><span></span><input type="search"></div><details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><p class="line-note"></p></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
-            $('.document-nav', panel).open = !matchMedia('(max-width:480px)').matches;
+            panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+            $('.document-nav', panel).open = false;
             $('.line-controls input', panel).addEventListener('input', e => { filters.set(run.id, e.target.value); viewLocation = concordanceFor(runFor(run.id)); renderLines(panel, runFor(run.id), true); updateDraft(); });
             $('[data-copy]', panel).addEventListener('click', async (e) => {
                 const model = runFor(run.id);
@@ -611,7 +622,7 @@ function render(force = false) {
         const phase = run.phase === 'complete' ? t('completed') : run.phase === 'running' ? t('partial') : run.phase === 'cancelled' ? t('cancelled') : t('failed');
         const scope = `${config.datasets[run.dataset]?.label ?? ''} · ${run.where || t('all')}`;
         const identity = `${t('runNumber')} ${run.id} · ${phase} · ${scope}`;
-        const headerHTML = `${prior || compared ? `<span class="evidence-context">${title}${prior && current?.phase === 'running' ? ' · ' + t('keeping') : ''}</span>` : ''}${run.phase === 'complete' ? `<a href="api/questions/runs/${run.id}/export" title="${escape(identity)}">${t('download')}</a>` : ''}`;
+        const headerHTML = `${prior || compared ? `<span class="evidence-context">${title}${prior && current?.phase === 'running' ? ' · ' + t('keeping') : ''}</span>` : ''}${run.phase === 'complete' ? `<a href="api/questions/runs/${run.id}/export" aria-label="${locale === 'ja' ? '全結果を JSONL で保存' : 'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>` : ''}`;
         const header = $('.result-header', panel);
         header.hidden = !headerHTML;
         header.title = identity;
@@ -645,8 +656,6 @@ function render(force = false) {
             button.setAttribute('aria-pressed', String(button.dataset.pattern === chosen));
             $('.count', button).textContent = count(run.counts[button.dataset.pattern]);
         }
-        const admitted = run.counters?.counters?.documents_admitted;
-        $('.evidence-sentence', panel).textContent = admitted != null ? (locale === 'ja' ? `${count(admitted)} 作品を調べ、${selection.get(run.id) ?? ''} が ${count(run.counts[chosen])} 件見つかりました。` : `Across ${count(admitted)} documents, ${selection.get(run.id) ?? 'this pattern'} occurs ${count(run.counts[chosen])} times.`) : t('notTotal');
         $('.query-tools-detail summary', panel).textContent = t('source');
         $('.query-tools-detail pre', panel).textContent = run.source;
         $('[data-copy]', panel).textContent = t('copy');
@@ -673,7 +682,7 @@ function documentView(run, pattern) {
 }
 async function loadDocumentPage(panel, run, pattern, document = null, after = -1, documentsOffset = null, scopeDocument = documentView(run, pattern).scopeDocument) {
     const view = documentView(run, pattern), epoch = ++view.epoch, limit = controls.state.lines;
-    view.request = { document, after, documentsOffset, scopeDocument };
+    view.request = { document, after, documentsOffset, scopeDocument, limit };
     view.loading = true;
     view.error = null;
     if (panel)
@@ -709,9 +718,9 @@ function retryDocumentPage(panel, run, pattern, view) {
 }
 function renderDocumentNavigation(panel, run, pattern, view) {
     const wrapper = $('.document-nav', panel), nav = $('.document-choice', wrapper), finder = $('.document-finder', wrapper), paging = $('.document-pages', panel);
-    wrapper.hidden = isReplay || run.phase !== 'complete';
+    wrapper.hidden = isReplay || run.phase !== 'complete' || (view.documents !== null && view.documentsTotal <= 1 && !view.query && !view.error);
     paging.hidden = true;
-    if (wrapper.hidden)
+    if (isReplay || run.phase !== 'complete')
         return;
     if (!finder.children.length) {
         finder.innerHTML = '<input type="search"><button type="button" data-titles="-1"></button><button type="button" data-titles="1"></button><span></span>';
@@ -825,7 +834,7 @@ function renderLines(panel, run, _force = false) {
     if (!run)
         return;
     const pattern = selection.get(run.id) ?? '', view = documentView(run, pattern);
-    if (!isReplay && run.phase === 'complete' && !view.loading && !view.error && (view.documents === null || view.limit !== controls.state.lines)) {
+    if (!isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
         void loadDocumentPage(panel, run, pattern, view.document, view.after);
         return;
     }
@@ -838,15 +847,16 @@ function renderLines(panel, run, _force = false) {
     const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0;
     $('.line-controls span', panel).textContent = run.phase === 'complete' && !isReplay
         ? filter ? (locale === 'ja' ? `このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件` : `${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
-            : (locale === 'ja' ? `全 ${count(total)} 件中 ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)} 件` : `Matches ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)} of ${count(total)}`)
+            : (locale === 'ja' ? `${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)}.`)
         : locale === 'ja' ? `${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示` : `${count(rows.length)} shown · ${count(total)} found`;
     if (view.loading && !rows.length)
         $('.line-controls span', panel).textContent = locale === 'ja' ? `全 ${count(total)} 件` : `${count(total)} total matches`;
+    const matchingDocuments = pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
+    $('.evidence-sentence', panel).textContent = locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 作品`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`;
     const scope = $('.document-scope', panel);
     scope.hidden = view.scopeDocument == null;
     if (!scope.hidden) {
-        const label = view.selectedDoc?.title ?? '';
-        const markup = `${locale === 'ja' ? 'この作品の用例: ' : 'Showing only: '}${escape(label)} · <a data-view href="${escape(hrefFor(run, { ...concordanceFor(run), scopeDocument: null, document: null, after: view.returnAfter }))}">${locale === 'ja' ? 'すべての作品に戻る' : 'Return to all documents'}</a>`;
+        const markup = `<a data-view href="${escape(hrefFor(run, { ...concordanceFor(run), scopeDocument: null, document: null, after: view.returnAfter }))}">${locale === 'ja' ? 'すべての作品に戻る' : 'Return to all documents'}</a>`;
         if (renderSignatures.get(scope) !== markup) {
             scope.innerHTML = markup;
             renderSignatures.set(scope, markup);
@@ -854,7 +864,7 @@ function renderLines(panel, run, _force = false) {
     }
     const note = $('.line-note', panel);
     note.setAttribute('role', 'status');
-    note.textContent = view.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.error ? (locale === 'ja' ? '用例を読み込めませんでした。再読み込みできます。' : 'Examples could not be loaded. Try loading them again.') : run.phase === 'complete' ? '' : t('notTotal');
+    note.textContent = view.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'complete' ? '' : t('notTotal');
     note.hidden = !note.textContent;
     const list = $('.kwic-list', panel);
     list.setAttribute('aria-busy', String(view.loading));
@@ -986,6 +996,7 @@ async function inspect(run, row, button) {
         tokenLab.hidden = false;
         button.after(tokenLab);
         button.setAttribute('aria-expanded', 'true');
+        renderDependencies();
         $('#document').setAttribute('href', hrefFor(run, hitLocation(run, row, 'reader')));
         $('#close-token').setAttribute('href', hrefFor(run, concordanceFor(run)));
         $('#close-inspector').setAttribute('href', hrefFor(run, viewLocation.kind === 'reader' ? viewLocation.returnTo : hitLocation(run, row, 'example')));
@@ -1073,6 +1084,97 @@ function selectToken(index) {
     attributes.querySelector('details').open = expanded;
     $('#attribute-remix').disabled = attributeMember === undefined || conditions.some(condition => condition.tokenIndex === tokenIndex && condition.key === field && condition.value === attributeMember);
     renderComposer();
+}
+let dependencyChoice = null;
+const ARC_STEP = 24, ARC_LABEL = 16, TREE_ROW = 26, TREE_COLUMN = 9;
+const arcLayouts = new WeakMap();
+const svgNode = (name, attributes) => { const node = document.createElementNS('http://www.w3.org/2000/svg', name); for (const [key, value] of Object.entries(attributes))
+    node.setAttribute(key, String(value)); return node; };
+// Chip positions come from layout, so arcs are redrawn whenever the chip row is laid out again (fonts, locale, printing).
+function drawArcs(chips) {
+    const arcs = arcLayouts.get(chips);
+    if (!arcs)
+        return;
+    chips.querySelector(':scope>svg')?.remove();
+    const items = [...chips.querySelectorAll(':scope>[data-item]')], top = parseFloat(chips.style.paddingTop);
+    const x = (position) => items[position].offsetLeft + items[position].offsetWidth / 2;
+    const svg = svgNode('svg', { width: chips.scrollWidth, height: top, 'aria-hidden': 'true' });
+    for (const arc of [...arcs].sort((a, b) => Number(a.bound) - Number(b.bound))) {
+        const x1 = x(arc.from), x2 = x(arc.to), offset = x1 < x2 ? 4 : -4, y = top - 1, h = arc.level * ARC_STEP, kind = arc.bound ? 'dependency-arc bound' : 'dependency-arc';
+        svg.append(svgNode('path', { class: kind, d: `M${x1 + offset},${y} C${x1 + offset},${y - h} ${x2 - offset},${y - h} ${x2 - offset},${y} M${x2 - offset - 4},${y - 7} L${x2 - offset},${y} L${x2 - offset + 4},${y - 7}` }));
+        const label = svgNode('text', { class: kind, x: (x1 + x2) / 2, y: y - h * 0.75 - 4, 'text-anchor': 'middle' });
+        label.textContent = arc.rel;
+        svg.append(label);
+    }
+    chips.prepend(svg);
+}
+const arcObserver = new ResizeObserver(entries => { for (const entry of entries)
+    drawArcs(entry.target); });
+addEventListener('beforeprint', () => { for (const chips of document.querySelectorAll('.dependency-chips'))
+    drawArcs(chips); });
+function roleTags(roles) { return roles.map(role => `<span class="dependency-role">${escape(role)}</span>`).join(''); }
+function renderDependencies() {
+    const tokens = tokenData?.tokens, row = inspecting?.row;
+    dependencyPanel.hidden = !tokens || !row || !hasDependencies(tokens);
+    if (!tokens || !row || dependencyPanel.hidden)
+        return;
+    const words = evidenceWords(row, tokens.length), byIndex = new Map(words.map(word => [word.index, word])), starts = bunsetsuStarts(tokens);
+    const view = dependencyChoice === 'bunsetsu' && !starts || !dependencyChoice ? starts ? 'bunsetsu' : 'words' : dependencyChoice;
+    for (const button of dependencyPanel.querySelectorAll('[data-dependency-view]')) {
+        button.hidden = button.dataset.dependencyView === 'bunsetsu' && !starts;
+        button.setAttribute('aria-pressed', String(button.dataset.dependencyView === view));
+    }
+    const diagram = $('#dependency-diagram'), value = (index, key) => { const value = tokens[index].attributes[key]; return typeof value === 'string' ? value : ''; };
+    arcObserver.disconnect();
+    if (view === 'vertical') {
+        const arcs = verticalArcs(tokens, words), gutter = Math.max(0, ...arcs.map(arc => arc.column)) * TREE_COLUMN + 14;
+        const svg = svgNode('svg', { width: gutter, height: tokens.length * TREE_ROW, 'aria-hidden': 'true' });
+        for (const arc of [...arcs].sort((a, b) => Number(a.bound) - Number(b.bound))) {
+            const y1 = (arc.from + .5) * TREE_ROW, y2 = (arc.to + .5) * TREE_ROW, x = gutter - 6 - arc.column * TREE_COLUMN;
+            svg.append(svgNode('path', { class: arc.bound ? 'dependency-arc bound' : 'dependency-arc', d: `M${gutter},${y1} H${x} V${y2} H${gutter - 3} M${gutter - 8},${y2 - 4} L${gutter - 3},${y2} L${gutter - 8},${y2 + 4}` }));
+        }
+        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}→${escape(value(index, 'dep.head'))}</span>`; }).join('')}</div>`;
+        diagram.firstElementChild.prepend(svg);
+    }
+    else {
+        const units = dependencyUnits(tokens, view === 'bunsetsu' ? starts : null), { items, arcs } = focusLayout(units, words);
+        const gap = (count) => locale === 'ja' ? `… ${count}${view === 'bunsetsu' ? '文節' : '語'} …` : `… ${count} ${view === 'bunsetsu' ? 'bunsetsu' : count === 1 ? 'word' : 'words'} …`;
+        const chips = document.createElement('div');
+        chips.className = 'dependency-chips';
+        chips.style.paddingTop = `${Math.max(0, ...arcs.map(arc => arc.level)) * ARC_STEP + ARC_LABEL}px`;
+        chips.innerHTML = items.map((item, position) => {
+            if (item.kind === 'gap')
+                return `<span class="dependency-gap" data-item="${position}">${escape(gap(item.count))}</span>`;
+            const unit = units[item.unit], held = [];
+            let text = '';
+            for (let index = unit.first; index <= unit.last; index++) {
+                text += tokens[index].attributes.text;
+                const word = byIndex.get(index);
+                if (word)
+                    held.push(word);
+            }
+            const roles = held.flatMap(word => word.roles);
+            return `<span class="dependency-chip${held.some(word => word.inSpan) ? ' in-span' : ''}${roles.length ? ' bound' : ''}" data-item="${position}"><span>${roleTags(roles)}${escape(text)}</span><small>${escape([...new Set(held.map(word => value(word.index, 'upos')))].join(' '))}</small></span>`;
+        }).join('');
+        diagram.replaceChildren(chips);
+        arcLayouts.set(chips, arcs);
+        arcObserver.observe(chips);
+    }
+    $('#dependency-evidence').innerHTML = words.map(word => `<tr><td>${word.index + 1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale === 'ja' ? word.inSpan ? 'はい' : 'いいえ' : word.inSpan ? 'yes' : 'no'}</td>${['text', 'lemma', 'upos', 'dep.head', 'dep.rel'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}</tr>`).join('');
+}
+dependencyPanel.addEventListener('click', event => { const button = event.target.closest('[data-dependency-view]'); if (!button)
+    return; dependencyChoice = button.dataset.dependencyView; renderDependencies(); });
+// A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.
+async function openOccurrence(run, target) {
+    try {
+        const query = new URLSearchParams({ pattern: target.pattern, sentence: String(target.sentence), roles: JSON.stringify(target.roles), analysis: target.analysis, fingerprint: target.fingerprint });
+        const found = await request(`api/questions/runs/${run.id}/occurrence?${query}`);
+        await navigateView(hrefFor(run, { kind: 'example', pattern: target.pattern, document: found.document, sequence: found.sequence, returnTo: { ...defaultView(), pattern: target.pattern } }), true, 'replace');
+    }
+    catch (error) {
+        $('#error').hidden = false;
+        $('#error').textContent = `${t('occurrenceMissing')} ${errorMessage(error)}`;
+    }
 }
 let readerEpoch = 0;
 function openReader() { const reader = $('#inspector'); tokenLab.after(reader); reader.show(); reader.setAttribute('aria-modal', 'false'); reader.scrollIntoView({ block: 'nearest' }); }
@@ -1638,12 +1740,24 @@ async function init() {
         $('#error').hidden = false;
         $('#error').textContent = params.get('notice');
     }
+    const returnHref = frequencyReturn(params.get('return'));
+    if (returnHref) {
+        $('#frequency-return').href = returnHref;
+        $('#frequency-return').hidden = false;
+    }
+    const occurrence = parseOccurrence(params.get('occurrence'));
     window.__probe = { get state() { return state; }, get recorded() { return recorded; }, get controls() { return controls; }, get view() { return viewLocation; }, search, questionDocument };
     if (current)
         await applyView(follow && current.phase === 'complete' && initialView.kind === 'concordance' ? current : evidence ?? current, follow && current.phase === 'complete' && initialView.kind === 'concordance' ? defaultView() : initialView, !follow);
     if (!expired && !savedManifest.some(link => !availableRun(link.id)) && params.get('run') === '1' && (!current || current.source !== $('#source').value || current.dataset !== $('#corpus').value || current.where !== controls.where())) {
         await search();
         pendingView = current ? defaultView() : initialView;
+        if (occurrence) {
+            pendingView = null;
+            pendingOccurrence = occurrence;
+        }
     }
+    else if (occurrence && current?.phase === 'complete')
+        await openOccurrence(current, occurrence);
 }
 init().catch(error => { $('#status').textContent = errorMessage(error); $('#run').disabled = true; $('#example').disabled = true; $('#retry').hidden = true; });

@@ -1136,7 +1136,8 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
               name: document.querySelector('.fq-entry-name').textContent, \
               figures: document.querySelector('[data-e=figures]').textContent, \
               charts: [...document.querySelectorAll('.fq-chart figcaption')].map((c) => c.textContent), \
-              lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src').textContent), \
+              lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src > span').textContent), \
+              inspect: document.querySelectorAll('.fq-kwic li .src .fq-inspect').length, \
               none: [...document.querySelectorAll('.fq-chart[data-key=genre] [data-none]')].map((b) => b.getAttribute('aria-label'))}",
             Vec::new(),
         )
@@ -1161,6 +1162,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .collect::<Vec<_>>();
     assert!(lines.len() > LINES);
     assert_eq!(shown["lines"], json!(lines[..LINES]));
+    assert_eq!(shown["inspect"], json!(LINES));
     assert_eq!(
         shown["none"],
         json!([format!(
@@ -1181,7 +1183,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     assert_eq!(
         driver
             .execute(
-                "return {requests: __fetches.started, lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src').textContent), \
+                "return {requests: __fetches.started, lines: [...document.querySelectorAll('.fq-kwic li')].map((l) => l.querySelector('.kn').textContent + ' ' + l.querySelector('.src > span').textContent), \
                   more: document.querySelector('[data-e=more]').hidden}",
                 Vec::new(),
             )
