@@ -786,6 +786,46 @@ pub struct MatchData {
     /// absent is omitted rather than emitted empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<TagField>,
+    /// The sentence and the words the match rests on, present only under
+    /// `matches --evidence`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<MatchEvidence>,
+}
+
+/// The words a match's relation judgment rests on, readable without the
+/// sentence's full token stream.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MatchEvidence {
+    /// The whole sentence's token texts, concatenated as `surface` is.
+    pub sentence: String,
+    /// The span's words, every captured word, and every word a graph binding
+    /// names, in sentence order. A graph-bound word outside the span is
+    /// included whatever `--context` requests; an empty enhanced node has no
+    /// word and appears only in `graph_bindings`.
+    pub words: Vec<EvidenceWord>,
+}
+
+/// One word of [`MatchEvidence`]. A value the token does not carry is `null`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvidenceWord {
+    /// Sentence-local word number: the token index plus one, the identity
+    /// CoNLL-U `ID` and `dep.head` use.
+    pub word: u64,
+    /// Capture and graph-node names bound to this word, in name order; an
+    /// edge binding contributes `NAME.head` and `NAME.dependent`. Empty for
+    /// an unnamed word of the span.
+    pub roles: Vec<String>,
+    /// Whether the word lies inside the published `span`.
+    pub in_span: bool,
+    pub text: Option<String>,
+    pub lemma: Option<String>,
+    pub norm: Option<String>,
+    pub upos: Option<String>,
+    pub xpos: Option<String>,
+    /// `dep.head`: the head's word number, `0` for the root.
+    pub head: Option<String>,
+    /// `dep.rel`: the relation to the head.
+    pub rel: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

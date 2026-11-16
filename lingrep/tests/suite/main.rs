@@ -14,6 +14,7 @@ mod contrast;
 mod corpus_mode;
 mod corpus_render;
 mod corpus_sources;
+mod dependency_evidence;
 mod diagram_export;
 mod direct_protocol;
 mod document_reader;

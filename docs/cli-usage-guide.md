@@ -252,6 +252,51 @@ Selected metadata exceeding 64 KiB of serialized JSON per sentence fails the
 run. This option requires JSONL output and does not alter token matching or
 summary grouping.
 
+### Dependency evidence: `--evidence`
+
+A match's span and `--context` can omit the words a relation judgment rests
+on. In this catalog the span is the noun and particle, and `v` is bound
+anywhere in the sentence:
+
+```pattern
+npv := (?<n> [upos in {NOUN, PROPN, PRON, NUM} & dep.rel in {nsubj, obj, obl}])
+       (?<p> [dep.rel=case & lemma in {が, を, に, で, から, より, と, へ}])
+       where (?<v> [upos=VERB]) -[nsubj|obj|obl]-> $n, $n -[case]-> $p.
+```
+
+`--evidence` adds the sentence and those words to every match. With `--tsv` it
+writes `lingrep.evidence-tsv/v1` in place of `lingrep.matches-tsv/v1`: one row
+per word, with the match's provenance and the whole sentence repeated on each
+row.
+
+```bash
+ling matches --corpus natsume.lingcorpus --patterns class6.lx --tsv --evidence > npv-evidence.tsv
+```
+
+For `坂を一つ上った`, the `npv` match has these rows, shown from the `word`
+column onwards (`cut -f9-`):
+
+```text
+1	n	true	坂	坂		NOUN	名詞	4	obj	坂を一つ上った
+2	p	true	を	を		ADP	助詞	1	case	坂を一つ上った
+4	v	false	上った	上る		VERB	動詞	0	root	坂を一つ上った
+```
+
+The columns are the word number, its roles, whether it lies in the span,
+`text`, `lemma`, `norm`, `upos`, `xpos`, `head`, `rel`, and the sentence. The
+word number is the token index plus one, the numbering `head` uses, so `坂`
+depends on word 4, `上った`, as `obj`. The words are the span, every capture,
+and every word a `where` clause binds, whatever `--context` requests; a named
+enhanced edge `$e` marks its endpoints `e.head` and `e.dependent`. A value the
+corpus does not carry is an empty field, for example `norm` over CoNLL-U, and
+`head` and `rel` over a morphology-only corpus.
+
+With `--json`, each match record gains an `evidence` object with `sentence` and
+`words`; an absent value is `null`. Every other field of the record is
+unchanged. TSV has no run or completion record, so save the JSONL form when the
+evidence must name the corpus's `analysis_identity` or prove that the run
+completed. `--evidence` requires `--json` or `--tsv`.
+
 ### Declared result policy in published records
 
 A catalog's metadata and its `policy … end` block declare what it publishes,

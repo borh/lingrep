@@ -26,19 +26,20 @@ use crate::direct_source::OversizedSentenceOmissionSummary;
 use crate::direct_source::{matched_orth_tokens, matched_surface};
 use crate::error::{CliError, FailureCode};
 use crate::output::{
-    ColorPolicy, ContextColorPalette, HumanKwicRow, HumanMatchLayout, HumanRenderer,
-    MIN_HUMAN_MATCH_WIDTH, MatchTsvRow, TerminalColorCapability, write_match_tsv,
+    ColorPolicy, ContextColorPalette, EvidenceTsvRow, HumanKwicRow, HumanMatchLayout,
+    HumanRenderer, MIN_HUMAN_MATCH_WIDTH, MatchTsvRow, TerminalColorCapability, write_evidence_tsv,
+    write_match_tsv,
 };
 use crate::presentation::{
     ColorMode, OutputMode, ResultDelivery, resolve_match_context, resolve_match_limit,
 };
 use crate::protocol::query::{
     Capture, CharSpan as ProtocolCharSpan, CommittedPrefix, Coverage, DefinitionBody,
-    DefinitionData, GraphBinding as ProtocolGraphBinding,
+    DefinitionData, EvidenceWord, GraphBinding as ProtocolGraphBinding,
     GraphNodeAttribute as ProtocolGraphNodeAttribute, GraphNodeId as ProtocolGraphNodeId,
-    MatchData, MatchOrder, ProtocolKeyField, PublishedProjection, QueryComplete, QueryEnvelope,
-    QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters, SourceSpan, SpanConvention,
-    TagField, TemporaryStorageLimits, Termination,
+    MatchData, MatchEvidence, MatchOrder, ProtocolKeyField, PublishedProjection, QueryComplete,
+    QueryEnvelope, QueryEvent, QueryMode, QueryRun, ResourceHighWater, RunCounters, SourceSpan,
+    SpanConvention, TagField, TemporaryStorageLimits, Termination,
 };
 use crate::terminal::{PresentationProgress, TerminalArbiter};
 
@@ -64,7 +65,14 @@ fn protocol_graph_node(node: lingrep_core::corpus::conllu::EnhancedNodeId) -> Pr
     }
 }
 
-fn protocol_graph_binding(binding: &lingrep_core::fsm::GraphBinding) -> ProtocolGraphBinding {
+/// `published` narrows a word node's scalars to the run's attributes before
+/// `--evidence` widened the projection, so that `--evidence` adds a field and
+/// alters none. An empty node's scalars come from the graph, not the
+/// projection, and are never narrowed.
+fn protocol_graph_binding(
+    binding: &lingrep_core::fsm::GraphBinding,
+    published: Option<&[lingrep_core::token_match::AttributeKey]>,
+) -> ProtocolGraphBinding {
     match binding {
         lingrep_core::fsm::GraphBinding::Node {
             name,
@@ -75,6 +83,13 @@ fn protocol_graph_binding(binding: &lingrep_core::fsm::GraphBinding) -> Protocol
             node: protocol_graph_node(*node),
             attributes: attributes
                 .iter()
+                .filter(|attribute| {
+                    !matches!(
+                        node,
+                        lingrep_core::corpus::conllu::EnhancedNodeId::Word { .. }
+                    ) || attribute.name.as_str().starts_with("node.")
+                        || published.is_none_or(|keys| keys.contains(&attribute.name))
+                })
                 .map(|attribute| ProtocolGraphNodeAttribute {
                     name: attribute.name.pattern_key().to_owned(),
                     value: attribute.value.to_string(),
@@ -175,6 +190,11 @@ pub fn run(
             ))
         }
     };
+    if args.evidence && output == OutputMode::Human {
+        return Err(CliError::InvalidArgs(
+            "--evidence requires --json or --tsv matches output".to_owned(),
+        ));
+    }
     if !args.source_metadata.is_empty() && output != OutputMode::Jsonl {
         return Err(CliError::InvalidArgs(
             "--source-metadata requires --json matches output".to_owned(),
@@ -269,6 +289,17 @@ pub fn run(
         projected_attributes.dedup();
     }
     let published_projection = PublishedProjection::new(&projected_attributes);
+    // Evidence words read their values from the sentence rather than from
+    // `tokens`, so a prepared source must decode them without the run
+    // publishing them; the schema filter drops those the corpus lacks.
+    let graph_scalars = args.evidence.then(|| projected_attributes.clone());
+    if args.evidence {
+        projected_attributes.extend(EVIDENCE_ATTRIBUTES.iter().map(|key| {
+            lingrep_core::token_match::AttributeKey::new(key).expect("canonical evidence key")
+        }));
+        projected_attributes.sort_unstable();
+        projected_attributes.dedup();
+    }
     let ResolvedMatchingQuery {
         source,
         source_stats,
@@ -391,6 +422,7 @@ pub fn run(
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            evidence: graph_scalars,
             endings: args
                 .ending_report
                 .as_ref()
@@ -648,6 +680,87 @@ fn span_char_range(
     Some(first.join(last).into())
 }
 
+/// The token attributes an evidence word reports, in its field order.
+const EVIDENCE_ATTRIBUTES: [&str; 7] = [
+    "text", "lemma", "norm", "upos", "xpos", "dep.head", "dep.rel",
+];
+
+/// The sentence and the words a record rests on: the span, every capture, and
+/// every word a graph binding names, in sentence order.
+fn match_evidence(
+    sentence: &dyn lingrep_core::token_match::TokenSequence,
+    record: &RecordView<'_>,
+    location: &lingrep_core::execution::SentenceLocation,
+) -> Result<MatchEvidence, ExecutionError> {
+    use lingrep_core::corpus::conllu::EnhancedNodeId;
+    use lingrep_core::token_match::AttributeKey;
+    use std::collections::BTreeMap;
+
+    let mut roles: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for index in record.start..record.end {
+        roles.entry(index).or_default();
+    }
+    for capture in record.captures {
+        for index in capture.start..capture.end {
+            roles
+                .entry(index)
+                .or_default()
+                .push(capture.name.to_string());
+        }
+    }
+    let mut bind = |node: EnhancedNodeId, role: String| {
+        if let EnhancedNodeId::Word { token_index } = node {
+            roles.entry(token_index).or_default().push(role);
+        }
+    };
+    for binding in record.graph_bindings {
+        match binding {
+            lingrep_core::fsm::GraphBinding::Node { name, node, .. } => {
+                bind(*node, name.to_string())
+            }
+            lingrep_core::fsm::GraphBinding::Edge {
+                name,
+                head,
+                dependent,
+                ..
+            } => {
+                bind(*head, format!("{name}.head"));
+                bind(*dependent, format!("{name}.dependent"));
+            }
+        }
+    }
+    let keys =
+        EVIDENCE_ATTRIBUTES.map(|key| AttributeKey::new(key).expect("canonical evidence key"));
+    let words = roles
+        .into_iter()
+        .filter(|(index, _)| *index < sentence.len())
+        .map(|(index, mut roles)| {
+            roles.sort_unstable();
+            roles.dedup();
+            let [text, lemma, norm, upos, xpos, head, rel] = keys
+                .each_ref()
+                .map(|key| sentence.scalar_key(index, key).map(ToOwned::to_owned));
+            EvidenceWord {
+                word: index as u64 + 1,
+                roles,
+                in_span: (record.start..record.end).contains(&index),
+                text,
+                lemma,
+                norm,
+                upos,
+                xpos,
+                head,
+                rel,
+            }
+        })
+        .collect();
+    Ok(MatchEvidence {
+        sentence: matched_surface(sentence, 0..sentence.len(), location)
+            .map_err(ExecutionError::from)?,
+        words,
+    })
+}
+
 struct DirectMatchSink<'a, W> {
     last_human_flush: Option<Instant>,
     writer: &'a mut W,
@@ -671,6 +784,9 @@ struct DirectMatchSink<'a, W> {
     /// One buffer for the whole run rather than one allocation per record;
     /// see [`crate::protocol::write_jsonl_buffered`].
     scratch: Vec<u8>,
+    /// Present under `--evidence`: the attributes the run projected before
+    /// evidence widened it; see [`protocol_graph_binding`].
+    evidence: Option<Vec<lingrep_core::token_match::AttributeKey>>,
     endings: Option<super::ending_report::EndingReport>,
     retention: Option<MatchRetention>,
 }
@@ -854,7 +970,9 @@ impl<W: Write> DirectMatchSink<'_, W> {
                         graph_bindings: record
                             .graph_bindings
                             .iter()
-                            .map(protocol_graph_binding)
+                            .map(|binding| {
+                                protocol_graph_binding(binding, self.evidence.as_deref())
+                            })
                             .collect(),
                         corpus_sentence_ordinal: location.corpus_sentence_ordinal,
                         source_name: location.source_name.to_string(),
@@ -920,6 +1038,11 @@ impl<W: Write> DirectMatchSink<'_, W> {
                                 value: value.clone(),
                             })
                             .collect(),
+                        evidence: self
+                            .evidence
+                            .is_some()
+                            .then(|| match_evidence(sentence, &record, location))
+                            .transpose()?,
                     }));
                     if let Some(retention) = self.retention.as_mut() {
                         retention.push(self.sequence, &event, offsets_missing)?;
@@ -928,6 +1051,27 @@ impl<W: Write> DirectMatchSink<'_, W> {
                             self.writer,
                             &mut self.scratch,
                             &event,
+                        )
+                        .map_err(execution_output_error)?;
+                    }
+                }
+                MatchSinkOutput::Tsv if self.evidence.is_some() => {
+                    let evidence = match_evidence(sentence, &record, location)?;
+                    for word in &evidence.words {
+                        write_evidence_tsv(
+                            self.writer,
+                            &EvidenceTsvRow {
+                                sequence: self.sequence,
+                                pattern: record.pattern,
+                                source_name: &location.source_name,
+                                document_ordinal: location.document_ordinal,
+                                document_sentence_ordinal: location.document_sentence_ordinal,
+                                corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+                                match_start: record.start as u64,
+                                match_end: record.end as u64,
+                                word,
+                                sentence: &evidence.sentence,
+                            },
                         )
                         .map_err(execution_output_error)?;
                     }
@@ -1161,6 +1305,7 @@ mod tests {
             emitted: 0,
             last_committed: None,
             scratch: Vec::new(),
+            evidence: None,
             endings: None,
             retention: None,
         }

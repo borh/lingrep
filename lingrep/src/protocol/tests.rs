@@ -1473,6 +1473,7 @@ fn query_match() -> QueryEnvelope {
         key: None,
         lexical: None,
         tags: Vec::new(),
+        evidence: None,
     }))
 }
 
