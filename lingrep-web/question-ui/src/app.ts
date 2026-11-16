@@ -376,7 +376,7 @@ function render(force=false) {
     if (!panel) {
       panel=document.createElement('article');
       panel.className='result-panel';panel.dataset.run=run.id;
-      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><p class="line-note"></p></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
       $<HTMLDetailsElement>('.document-nav',panel).open=false;
       $<HTMLInputElement>('.line-controls input',panel).addEventListener('input',e=>{filters.set(run.id,(e.target as HTMLInputElement).value);viewLocation=concordanceFor(runFor(run.id));renderLines(panel!,runFor(run.id),true);updateDraft();});
       $('[data-copy]',panel).addEventListener('click',async e=>{
@@ -459,7 +459,7 @@ function documentView(run: RunSnapshot,pattern: string): DocumentView {
 }
 async function loadDocumentPage(panel: HTMLElement|null,run: RunSnapshot,pattern: string,document: number | null=null,after=-1,documentsOffset: number | null=null,scopeDocument=documentView(run,pattern).scopeDocument) {
   const view=documentView(run,pattern),epoch=++view.epoch,limit=controls.state.lines;
-  view.request={document,after,documentsOffset,scopeDocument};view.loading=true;view.error=null;
+  view.request={document,after,documentsOffset,scopeDocument,limit};view.loading=true;view.error=null;
   if(panel)renderLines(panel,run);
   const query=new URLSearchParams({pattern,limit:String(limit),q:view.query,continuous:scopeDocument==null?'1':'0',after:String(after)});
   const selected=scopeDocument??document;
@@ -565,7 +565,7 @@ const concordanceNodes=new WeakMap<HTMLElement,Map<string,HTMLElement>>();
 function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=false) {
   if (!run) return;
   const pattern=selection.get(run.id)??'',view=documentView(run,pattern);
-  if(!isReplay&&run.phase==='complete'&&!view.loading&&!view.error&&(view.documents===null||view.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
+  if(!isReplay&&run.phase==='complete'&&!view.loading&&(!view.error&&(view.documents===null||view.limit!==controls.state.lines)||view.error&&view.request?.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
   renderDocumentNavigation(panel,run,pattern,view);
   const pageReady=!isReplay&&run.phase==='complete'&&view.documents!==null;
   const prefixVisible=!view.request||view.request.after===-1&&view.request.document==null&&view.request.scopeDocument==null;
@@ -587,7 +587,7 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     if(renderSignatures.get(scope)!==markup){scope.innerHTML=markup;renderSignatures.set(scope,markup);}
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
-  note.textContent=view.loading?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):view.error?(locale==='ja'?'用例を読み込めませんでした。再読み込みできます。':'Examples could not be loaded. Try loading them again.'):run.phase==='complete'?'':t('notTotal');
+  note.textContent=view.loading?(locale==='ja'?'用例を読み込んでいます…':'Loading examples…'):view.error?(locale==='ja'?`用例を読み込めませんでした。${view.error}`:`Examples could not be loaded. ${view.error}`):run.phase==='complete'?'':t('notTotal');
   note.hidden=!note.textContent;
   const list=$('.kwic-list',panel);list.setAttribute('aria-busy',String(view.loading));
   let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
