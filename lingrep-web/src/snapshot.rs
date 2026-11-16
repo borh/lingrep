@@ -1,9 +1,11 @@
 use std::ops::Range;
 
+use serde::{Deserialize, Serialize};
+
 use crate::corpus_runtime::CorpusIdentity;
 use crate::revision::RevisionId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PatternKey(u32);
 
 impl PatternKey {
@@ -70,7 +72,7 @@ impl PatternDescriptor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CaptureKey(u32);
 
 impl CaptureKey {
@@ -91,18 +93,19 @@ pub struct CaptureDescriptor {
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptureSpanRef {
     pub capture_key: CaptureKey,
     pub span: Range<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchRef {
     pub sentence_index: u64,
     pub span: Range<usize>,
     pub pattern_key: PatternKey,
     pub captures: Box<[CaptureSpanRef]>,
+    #[serde(with = "crate::result_index::bindings")]
     pub graph_bindings: Box<[lingrep_core::fsm::GraphBinding]>,
     pub lexical: Option<LexicalMatchRef>,
     /// Whether this match is a component of a derived chain. `false` for a
@@ -110,7 +113,7 @@ pub struct MatchRef {
     pub in_chain: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LexicalMatchRef {
     pub term: String,
     pub matched_by: Box<[String]>,
@@ -133,6 +136,7 @@ pub struct CompletedSnapshot {
     pub compound_category: CompoundCategory,
     pub patterns: Box<[PatternDescriptor]>,
     pub match_refs: Box<[MatchRef]>,
+    pub result_index: Option<std::sync::Arc<crate::result_index::ResultIndex>>,
     pub capture_catalog: Box<[CaptureDescriptor]>,
     /// Exact per-`(pattern, section)` sentence counts, or the reason there are
     /// none. Run-result data rather than catalog description, which is why it

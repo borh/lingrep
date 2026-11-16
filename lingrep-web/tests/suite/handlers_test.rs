@@ -43,10 +43,15 @@ mod handlers_test {
     }
 
     #[tokio::test]
-    async fn index_page_preserves_load_bearing_dom() {
+    async fn workbench_preserves_editor_and_query_library_hooks() {
         let app = make_app().with_state(RequestStore::default());
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/workbench")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -68,7 +73,7 @@ mod handlers_test {
             r#"class="btn btn-primary""#,
             r#"class="btn btn-secondary""#,
         ] {
-            assert!(html.contains(hook), "missing index hook: {hook}");
+            assert!(html.contains(hook), "missing workbench hook: {hook}");
         }
         assert!(html.contains("hx-post=\"api/search/"));
         assert!(!html.contains(r#"id="search-stream""#));
@@ -88,13 +93,16 @@ mod handlers_test {
         );
     }
 
-    /// The sample debugger is its own page: the index carries no form that
-    /// re-posts `#corpus-pattern` on a keystroke timer.
     #[tokio::test]
-    async fn the_index_page_no_longer_carries_the_sample_debugger() {
+    async fn workbench_keeps_the_sample_debugger_on_its_own_page() {
         let app = make_app().with_state(RequestStore::default());
         let response = app
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/workbench")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -239,7 +247,12 @@ mod handlers_test {
             .with_state(store.clone());
         let response = app
             .clone()
-            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/workbench")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let html = String::from_utf8(
@@ -391,7 +404,7 @@ mod handlers_test {
             .merge(lingrep_web::handlers::help::routes())
             .merge(lingrep_web::handlers::sample::page_routes())
             .with_state(RequestStore::default());
-        for path in ["/", "/help", "/sample"] {
+        for path in ["/workbench", "/help", "/sample"] {
             let response = app
                 .clone()
                 .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -428,7 +441,7 @@ mod handlers_test {
             );
             assert_eq!(html.matches("aria-current=\"page\"").count(), 1, "{path}");
             assert!(!html.contains("github.com/anomalyco/lingrep#pattern-syntax"));
-            if path == "/" {
+            if path == "/workbench" {
                 assert!(html.contains(">Corpus Search</span></a>"));
                 continue;
             }

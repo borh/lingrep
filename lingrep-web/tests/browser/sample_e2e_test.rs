@@ -288,7 +288,7 @@ async fn a_reload_shows_the_draft_and_a_followed_link_shows_its_pattern() -> Web
         return Ok(());
     };
     let served = serve().await;
-    let index = served.base.trim_end_matches("sample").to_owned();
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
     let link = |pattern: &str| {
         let query = lingrep_web::permalink::encode_query_only(pattern, "default", None, None);
         format!("{index}{}", query.unwrap())
@@ -342,7 +342,7 @@ async fn the_overlapping_matches_option_changes_which_patterns_are_counted() -> 
         return Ok(());
     };
     let served = serve().await;
-    let index = served.base.trim_end_matches("sample").to_owned();
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
     let counts = "const rows = [...document.querySelectorAll('#pattern-table tbody tr')] \
         .map((row) => [row.querySelector('.pattern-selector').textContent.trim(), Number(row.dataset.exactTotal)]) \
         .filter(([name]) => name === 'kept' || name === 'lost'); \
@@ -395,7 +395,7 @@ async fn japanese_is_applied_to_stream_swaps_replaced_elements_and_attribute_slo
         return Ok(());
     };
     let served = serve().await;
-    let index = served.base.trim_end_matches("sample").to_owned();
+    let index = format!("{}workbench", served.base.trim_end_matches("sample"));
     driver
         .cdp()
         .send_raw(
@@ -567,7 +567,7 @@ async fn missing_and_abandoned_search_streams_close_without_retries_or_lost_noti
         AttemptPhase::Cancelled(CancelReason::Abandoned)
     );
     let result: WebDriverResult<()> = async {
-        driver.goto(served.base.trim_end_matches("sample")).await?;
+        driver.goto(format!("{}workbench",served.base.trim_end_matches("sample"))).await?;
         wait_for(&driver, "return !!window.htmx && !!document.querySelector('#search-status')", "the corpus search page").await?;
         driver.execute("window.__streams = []; const create = htmx.createEventSource; htmx.createEventSource = (url) => { const source = create(url); __streams.push(source); return source; };", vec![]).await?;
         for (id, view, message) in [("missing-stream", None, "Request not found"), ("abandoned-stream", Some(&cancelled), "This search was stopped")] {
@@ -595,7 +595,7 @@ async fn export_links_follow_locale_changes_and_new_result_swaps() -> WebDriverR
     };
     let served = serve().await;
     let result: WebDriverResult<()> = async {
-        driver.goto(served.base.trim_end_matches("sample")).await?;
+        driver.goto(format!("{}workbench",served.base.trim_end_matches("sample"))).await?;
         wait_for(&driver, "return !!document.querySelector('[data-corpus-search]') && !!window.htmx", "the search form").await?;
         driver.execute("const pattern = document.querySelector('#corpus-pattern'); pattern.value = 'p := [text=x].'; pattern.dispatchEvent(new Event('input', {bubbles:true})); document.querySelector('[data-corpus-search]').requestSubmit();", vec![]).await?;
         wait_for(&driver, "return document.querySelector('a[data-export-link]')?.href.includes('locale=en')", "English export links").await?;
@@ -621,7 +621,7 @@ async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
     let served = serve_sectioned(true).await;
     let result = std::panic::AssertUnwindSafe(async {
         driver.set_window_rect(0, 0, 1440, 1000).await?;
-        driver.goto(served.base.trim_end_matches("sample")).await?;
+        driver.goto(format!("{}workbench",served.base.trim_end_matches("sample"))).await?;
         wait_for(&driver, "return !!document.querySelector('.cm-lint-marker-warning')", "the unused-fragment warning").await?;
         driver.execute("document.querySelector('input[name=derive_compounds]').checked = false; document.querySelector('[data-corpus-search]').requestSubmit()", vec![]).await?;
         wait_for(&driver, "return !!document.querySelector('.kwic-row') && !!document.querySelector('[data-cli-command]')", "the concordance and its command summary").await?;

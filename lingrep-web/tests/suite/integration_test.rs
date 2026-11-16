@@ -29,7 +29,12 @@ async fn test_full_flow() {
 
     let response = app
         .clone()
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/workbench")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -87,11 +92,16 @@ async fn test_error_handling() {
 }
 
 #[tokio::test]
-async fn test_index_page_has_htmx_attrs() {
+async fn workbench_has_htmx_search_attributes() {
     let app = make_app();
 
     let response = app
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/workbench")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 

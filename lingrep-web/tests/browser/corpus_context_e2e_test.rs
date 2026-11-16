@@ -521,7 +521,7 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
     let served = serve(&[]).await;
     let root = served.base.trim_end_matches("frequencies");
     let result: WebDriverResult<()> = async {
-        driver.goto(root).await?;
+        driver.goto(format!("{root}workbench")).await?;
         let workbench = wait_for(&driver, CORPUS_LINE, "the workbench's corpus line").await?;
         let name = workbench.as_str().unwrap().strip_prefix("Corpus: ");
         assert!(

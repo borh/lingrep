@@ -73,6 +73,7 @@ fn snapshot(derive_compounds: bool) -> CompletedSnapshot {
         ]
         .into_boxed_slice(),
         match_refs: Box::default(),
+        result_index: None,
         capture_catalog: Box::default(),
         sections: SectionAvailability::VocabularyTooLarge(SectionRefusal {
             labels: 0,

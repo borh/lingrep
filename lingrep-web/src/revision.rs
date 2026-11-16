@@ -41,6 +41,7 @@ pub enum AttemptPhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelReason {
+    User,
     Superseded,
     Shutdown,
     /// The workbench had no open event stream for the grace period.
@@ -49,6 +50,7 @@ pub enum CancelReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAttempt {
+    pub search_scope: crate::search_scope::SearchScope,
     pub revision: RevisionId,
     pub source: Arc<str>,
     pub phase: AttemptPhase,
@@ -148,6 +150,7 @@ impl RevisionCoordinatorState {
         revision: RevisionId,
         source: Arc<str>,
         readiness: CacheReadinessView,
+        search_scope: crate::search_scope::SearchScope,
     ) -> bool {
         if self
             .current_attempt
@@ -157,6 +160,7 @@ impl RevisionCoordinatorState {
             return false;
         }
         self.current_attempt = Some(QueryAttempt {
+            search_scope,
             revision,
             source,
             phase: match readiness {

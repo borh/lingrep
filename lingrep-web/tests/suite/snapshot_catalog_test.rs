@@ -152,6 +152,7 @@ fn reference_ordinal_is_scoped_to_its_pattern() {
             },
         ]
         .into_boxed_slice(),
+        result_index: None,
         capture_catalog: Box::default(),
         oversized_omissions: None,
         unavailable_attributes: None,

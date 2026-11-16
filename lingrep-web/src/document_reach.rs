@@ -67,6 +67,7 @@ mod tests {
             ]
             .into_boxed_slice(),
             match_refs: Box::default(),
+            result_index: None,
             capture_catalog: Box::default(),
             sections: crate::section_tally::SectionAvailability::Available(
                 crate::section_tally::SectionTally::unlabelled(),
