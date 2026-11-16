@@ -43,7 +43,7 @@ export function seedParams(seed, hash) {
     if (seed != null) {
         if (!record(seed))
             throw new Error('The initial question could not be read.');
-        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run', 'notice', 'lines', 'context'])
+        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run', 'notice', 'lines', 'context', 'pattern'])
             if (seed[key] != null) {
                 if (typeof seed[key] !== 'string' || key === 'run' && !['0', '1'].includes(seed[key]))
                     throw new Error('The initial question contains invalid settings.');
@@ -52,7 +52,7 @@ export function seedParams(seed, hash) {
     }
     const overrides = new URLSearchParams(hash.replace(/^#/, ''));
     if (overrides.has('evidence') || overrides.has('attempt'))
-        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run'])
+        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run', 'pattern'])
             params.delete(key);
     // An analysis identity describes one corpus, so a corpus chosen without one drops the seed's.
     if (overrides.has('corpus') && !overrides.has('analysis') && overrides.get('corpus') !== params.get('corpus'))

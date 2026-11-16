@@ -869,3 +869,36 @@ async fn a_frequency_occurrence_is_located_by_sentence_and_roles_only_under_the_
     )
     .await;
 }
+
+/// The landing leaves a count-only definition out of its default selection,
+/// but a run that names one still searches it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_that_names_a_count_only_definition_searches_it() {
+    let (_fixture, store, identity) = fixture(8);
+    let app = lingrep_web::app_router(store.clone());
+    let source = "key: [upos]\nevery := [].\nphrase := [lemma=cat] [text=is].\n";
+    assert_eq!(
+        lingrep_web::patterns::default_question_definition(source).as_deref(),
+        Some("phrase")
+    );
+    let response = request(&app, Method::POST, "/api/questions/runs", Some(json!({"source":source,"dataset":"default","where":"","pattern":"every","expected_analysis_identity":identity}))).await;
+    let id = json_response(response, StatusCode::OK).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let last = updates(&app, &id).await.pop().unwrap();
+    assert_eq!(last["patch"]["phase"], "complete", "{last}");
+    let snapshot = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}"),
+            None,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(snapshot["definitions"], json!(["every"]));
+    assert_eq!(snapshot["counts"], json!({"every": 126}));
+}

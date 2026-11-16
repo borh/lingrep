@@ -78,6 +78,7 @@ pub struct CatalogAnalysis {
     absence_sensitive_exclusions: Box<[ExclusionSite]>,
     lexicon_projections: Box<[LexiconProjectionSite]>,
     attribute_references: Box<[AttributeReferenceSite]>,
+    single_token_definitions: Box<[CompactString]>,
 }
 
 impl CatalogAnalysis {
@@ -97,6 +98,14 @@ impl CatalogAnalysis {
     #[must_use]
     pub fn attribute_references(&self) -> &[AttributeReferenceSite] {
         &self.attribute_references
+    }
+
+    /// Definitions whose whole pattern is one token test, captured or not,
+    /// with no lookaround and no `where` or order constraint, in catalog
+    /// order. Each match of one is a single word, as in `pos := [].`.
+    #[must_use]
+    pub fn single_token_definitions(&self) -> &[CompactString] {
+        &self.single_token_definitions
     }
 
     /// The reference sites naming one attribute, in stored order.
@@ -196,7 +205,22 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
     let mut sites = Vec::new();
     let mut projections = Vec::new();
     let mut references = Vec::new();
+    let mut single_token = Vec::new();
     for definition in &bound.definitions {
+        if let BoundDefinitionBody::Pattern {
+            expr,
+            relations,
+            enhanced_relations,
+            orders,
+            ..
+        } = &definition.body
+            && relations.is_empty()
+            && enhanced_relations.is_empty()
+            && orders.is_empty()
+            && is_single_token(expr)
+        {
+            single_token.push(definition.name.clone());
+        }
         let mut per_attribute = BTreeMap::new();
         let mut referenced = BTreeMap::new();
         if let Some(expr) = definition.expr() {
@@ -320,6 +344,15 @@ pub(crate) fn analyze(bound: &BoundProgram, evaluated: &BTreeSet<DefinitionId>) 
         absence_sensitive_exclusions: sites.into_boxed_slice(),
         lexicon_projections: projections.into_boxed_slice(),
         attribute_references: references.into_boxed_slice(),
+        single_token_definitions: single_token.into_boxed_slice(),
+    }
+}
+
+fn is_single_token(expr: &BoundExpr) -> bool {
+    match expr {
+        BoundExpr::Token(_) => true,
+        BoundExpr::Capture { expr, .. } => is_single_token(expr),
+        _ => false,
     }
 }
 
@@ -609,5 +642,22 @@ mod tests {
             .map(|site| site.definition.to_string())
             .collect();
         assert_eq!(referrers, vec!["p".to_owned(), "q".to_owned()]);
+    }
+
+    /// A definition counts as one token only when nothing but captures
+    /// surrounds the token test: a second token, a lookaround or a `where`
+    /// clause each make it a structure rather than a word.
+    #[test]
+    fn single_token_definitions_are_a_lone_token_test_in_catalog_order() {
+        let text = "noun := (?<n> [upos=NOUN]).\n\
+                    pair := [upos=NOUN] [upos=ADP].\n\
+                    every := [].\n\
+                    looked := [upos=NOUN] not_followed_by([upos=ADP]).\n\
+                    linked := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $n.\n";
+        let analysis =
+            compile_catalog(PatternSource::named("t.lx", text), CompileLimits::default())
+                .expect("catalog compiles")
+                .analysis;
+        assert_eq!(analysis.single_token_definitions(), ["noun", "every"]);
     }
 }

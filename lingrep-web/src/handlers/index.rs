@@ -370,6 +370,12 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
     if let Some(ready) = ready {
         seed["analysis"] = ready.identity.as_str().into();
     }
+    // A link names what it runs; only the served catalog has a default selection.
+    if !matches!(target, Target::Link(_))
+        && let Some(pattern) = crate::patterns::default_question_definition(&landing.seed_pattern)
+    {
+        seed["pattern"] = pattern.into();
+    }
     if let Some(lines) = landing.retained {
         seed["lines"] = lines.to_string().into();
     }
@@ -566,6 +572,33 @@ mod tests {
         let seed = question_seed(&bare);
         assert_eq!(seed["source"], "default := [].");
         assert_eq!(seed["run"], "0");
+    }
+
+    /// A keyed definition that matches one word by itself is a count: its
+    /// concordance is every such word, which no run can retain on a real
+    /// corpus. The landing selects the first other definition instead.
+    #[tokio::test]
+    async fn the_landing_selects_the_first_definition_that_is_not_count_only() {
+        let (_directory, store, _digest) = ready_question_store().await;
+        let seed_of = |source: &'static str| {
+            let store = store.clone().with_default_pattern(source);
+            async move { question_seed(&question_page(State(store), RawQuery(None)).await.0) }
+        };
+        let seed = seed_of(
+            "key: [upos]\nevery := [].\nkey: [lemma]\nnouns := (?<n> [upos=NOUN]).\n\
+             key: [$n.lemma]\nreal := (?<n> [upos=NOUN]) [upos=ADP].\nlater := [upos=VERB].\n",
+        )
+        .await;
+        assert_eq!(seed["pattern"], "real");
+        assert_eq!(seed["run"], "0");
+        // Nothing to leave out: an unkeyed word, only counts, or no catalog.
+        for source in [
+            "every := [].\nreal := [upos=NOUN] [upos=ADP].\n",
+            "key: [upos]\nevery := [].\n",
+            "every := [",
+        ] {
+            assert!(seed_of(source).await.get("pattern").is_none(), "{source}");
+        }
     }
 
     #[tokio::test]

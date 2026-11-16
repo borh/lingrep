@@ -44,13 +44,13 @@ export function seedParams(seed:unknown,hash:string):URLSearchParams {
   const params=new URLSearchParams();
   if(seed!=null){
     if(!record(seed))throw new Error('The initial question could not be read.');
-    for(const key of ['source','corpus','analysis','raw','run','notice','lines','context'])if(seed[key]!=null){
+    for(const key of ['source','corpus','analysis','raw','run','notice','lines','context','pattern'])if(seed[key]!=null){
       if(typeof seed[key]!=='string'||key==='run'&&!['0','1'].includes(seed[key] as string))throw new Error('The initial question contains invalid settings.');
       params.set(key,seed[key] as string);
     }
   }
   const overrides=new URLSearchParams(hash.replace(/^#/,''));
-  if(overrides.has('evidence')||overrides.has('attempt'))for(const key of ['source','corpus','analysis','raw','run'])params.delete(key);
+  if(overrides.has('evidence')||overrides.has('attempt'))for(const key of ['source','corpus','analysis','raw','run','pattern'])params.delete(key);
   // An analysis identity describes one corpus, so a corpus chosen without one drops the seed's.
   if(overrides.has('corpus')&&!overrides.has('analysis')&&overrides.get('corpus')!==params.get('corpus'))params.delete('analysis');
   for(const [key,value] of overrides)params.set(key,value);

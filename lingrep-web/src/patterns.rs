@@ -49,6 +49,34 @@ pub fn compile_web_pattern(source: &str) -> Result<CompileOutput, CompileError> 
     compile_with(source, word_vectors())
 }
 
+/// The definition a question run of `source` searches when nobody chose one:
+/// the first published definition that is not count-only, when the catalog
+/// has both kinds; otherwise none, and the run searches every definition.
+///
+/// A count-only definition declares a `key:` and matches one word by itself,
+/// like `pos := [].`: what it is for is its counts, which a count table holds,
+/// and its concordance is too large for a run to retain on a real corpus.
+#[must_use]
+pub fn default_question_definition(source: &str) -> Option<String> {
+    let compiled = compile_web_pattern(source).ok()?;
+    let single_token = compiled.analysis.single_token_definitions();
+    let policy = compiled.matcher.catalog_policy();
+    let count_only = |name: &str| {
+        single_token.iter().any(|single| single == name)
+            && policy
+                .get(name)
+                .is_some_and(|policy| !policy.key.is_empty())
+    };
+    let published = crate::pattern_catalog::pattern_metadata_pairs(&compiled.matcher);
+    if !published.iter().any(|(name, _)| count_only(name)) {
+        return None;
+    }
+    published
+        .into_iter()
+        .map(|(name, _)| name)
+        .find(|name| !count_only(name))
+}
+
 /// Compiles `source` publishing only the definitions named `pattern`, as
 /// [`compile_catalog_pattern`] selects them; the word-vector table is not
 /// consulted, so a catalog with `near` tests does not compile.

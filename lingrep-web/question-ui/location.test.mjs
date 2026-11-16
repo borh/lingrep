@@ -107,6 +107,14 @@ test('a corpus chosen in the address drops the seed analysis that described anot
   assert.equal(seedParams(seed,'#corpus=natsume').get('analysis'),'natsume-analysis');
 });
 
+test('the seeded definition belongs to the seeded source, so a saved search drops it',async()=>{
+  const {seedParams}=await import('./location.js');
+  const seed={source:'key: [upos]\npos := [].\nnpv := [upos=NOUN] [upos=ADP].',run:'0',pattern:'npv'};
+  assert.equal(seedParams(seed,'').get('pattern'),'npv');
+  assert.equal(seedParams(seed,'#evidence=r1').get('pattern'),null);
+  assert.equal(seedParams(seed,'#pattern=pos').get('pattern'),'pos');
+});
+
 test('a stored run supplies the expected analysis only for its own corpus',async()=>{
   const {expectedAnalysis}=await import('./location.js');
   const run={dataset:'natsume',contract_run:{analysis_identity:'natsume-analysis'}};
