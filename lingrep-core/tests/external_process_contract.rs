@@ -614,6 +614,10 @@ fn locked_ginza_model_runs_through_rust_with_validated_identity_and_provenance()
         SchemaAttribute::new("norm", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("upos", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("xpos", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("dep.enhanced", AttributeKind::StringSet).unwrap(),
+        SchemaAttribute::new("dep.head", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("dep.rel", AttributeKind::Scalar).unwrap(),
+        SchemaAttribute::new("spacy.ginza.bunsetu", AttributeKind::Scalar).unwrap(),
         SchemaAttribute::new("spacy.morph.inflection", AttributeKind::StringSet).unwrap(),
         SchemaAttribute::new("spacy.morph.reading", AttributeKind::StringSet).unwrap(),
     ])

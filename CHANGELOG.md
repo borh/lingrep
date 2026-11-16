@@ -65,6 +65,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Workbench reports unavailable token attributes and catalog-binding
   failures with their reasons.
+- spaCy setup profiles run every pipeline component up to the last one that
+  produces a selected output, because components read earlier components'
+  output without declaring it. GiNZA's `morphology/input` profile was
+  tokenizer-only and its `morphology/analyzer` profile ran the parser without
+  its `tok2vec` or `transformer`, so `ja_ginza` emitted wrong dependencies and
+  UPOS, and `ja_ginza_electra` and `ja_ginza_bert_large` failed with
+  `unregistered extension trf_data`. Both GiNZA profiles now run the whole
+  pipeline and produce the dependencies, UPOS and `spacy.ginza.bunsetu` that
+  `ginza -f conllu` prints. `en_core_web_sm`'s `tokenize/analyzer` profile ran
+  its parser without `tok2vec` and did not split sentences; its morphology
+  profiles are unchanged. The changed profiles change analyzer identity, so
+  set existing spaCy analyzers up again.
 - `lingrep-spacy-setup` saves the transformer weights of `ja_ginza_electra` and
   `ja_ginza_bert_large` in the analyzer, downloaded once from the Hugging Face
   Hub at a pinned commit. Analyzers set up by earlier releases fetched the

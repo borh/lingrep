@@ -32,8 +32,6 @@ from lingrep_spacy_adapter.bundle import (
     BUNSETU_KEY,
     HUB_REVISIONS,
     MANIFEST_HASH_CHUNK_BYTES,
-    PORTABLE_SCHEMA,
-    _selection,
     prepare_model_bundle,
     resource_manifest_digest,
     save_model,
@@ -1095,65 +1093,91 @@ class ModelBundleTests(unittest.TestCase):
     "requires LINGREP_SPACY_GINZA_MODEL and the ginza uv extra",
 )
 class GiNzaModelTests(unittest.TestCase):
-    def test_python_projection_matches_ginza_cli_conllu_dependencies(self) -> None:
-        import spacy
-
-        text = "彼女は坂を一つ上った。"
+    def test_default_profiles_match_ginza_cli_conllu(self) -> None:
+        lines = [
+            "彼女は坂を一つ上った。",
+            "猫が走った。犬は庭で寝ている。",
+            "えたいの知れない不吉な塊が私の心を始終圧えつけていた。",
+            # bunsetu_recognizer reads the ner component's entity 一つ一つ.
+            "開いている窓を一つ一つ見ていると、僕はそのことを憶い出す。",
+        ]
         name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
-        pipeline = spacy.load(name)
-        doc = pipeline(text)
-        projection = [
-            ProjectionAttribute("text", "scalar"),
-            ProjectionAttribute("lemma", "scalar"),
-            ProjectionAttribute("upos", "scalar"),
-            ProjectionAttribute("xpos", "scalar"),
-            ProjectionAttribute("dep.enhanced", "string_set"),
-            ProjectionAttribute("dep.head", "scalar"),
-            ProjectionAttribute("dep.rel", "scalar"),
-            ProjectionAttribute(BUNSETU_KEY, "scalar"),
-        ]
-        direct = analyze_document(doc, projection, "input")[0]
-        schema = _selection(pipeline, pipeline.pipe_names, "input-v1", PORTABLE_SCHEMA)[
-            "schema"
-        ]
         process = subprocess.run(
             ["ginza", "-g", "-1", "-m", name, "-f", "conllu"],
-            input=text + "\n",
+            input="".join(line + "\n" for line in lines),
             text=True,
             capture_output=True,
             check=True,
         )
+        keys = ["text", "lemma", "upos", "xpos", "dep.head", "dep.rel", BUNSETU_KEY]
+        cli: list[list[list[str | None]]] = [[]]
+        for line in process.stdout.splitlines():
+            if not line:
+                if cli[-1]:
+                    cli.append([])
+                continue
+            columns = line.split("\t")
+            if line.startswith("#") or not columns[0].isdigit():
+                continue
+            misc = dict(
+                entry.split("=", 1) for entry in columns[9].split("|") if "=" in entry
+            )
+            cli[-1].append(
+                [
+                    columns[1],
+                    None if columns[2] == "_" else columns[2],
+                    None if columns[3] == "_" else columns[3],
+                    None if columns[4] == "_" else columns[4],
+                    columns[6],
+                    columns[7].lower(),
+                    misc["BunsetuBILabel"],
+                ]
+            )
+        cli = [sentence for sentence in cli if sentence]
 
-        cli_rows = [
-            line.split("\t")
-            for line in process.stdout.splitlines()
-            if line and not line.startswith("#") and line.split("\t", 1)[0].isdigit()
-        ]
-        cli = [
-            [
-                columns[1],
-                None if columns[2] == "_" else columns[2],
-                None if columns[3] == "_" else columns[3],
-                None if columns[4] == "_" else columns[4],
-                [] if columns[8] == "_" else columns[8].split("|"),
-                None if columns[6] == "_" else columns[6],
-                None if columns[7] == "_" else columns[7].lower(),
-                dict(
-                    entry.split("=", 1)
-                    for entry in columns[9].split("|")
-                    if "=" in entry
-                )["BunsetuBILabel"],
+        def rows(loaded, segmentation):
+            projection = [
+                ProjectionAttribute(key, "scalar")
+                for key in keys
+                if ProjectionAttribute(key, "scalar") in loaded.schema
             ]
-            for columns in cli_rows
+            self.assertEqual([attribute.key for attribute in projection], keys)
+            sentences = []
+            for doc in loaded.pipeline.pipe(lines, batch_size=1):
+                for sentence in analyze_document(doc, projection, segmentation):
+                    values = sentence["values"]
+                    sentences.append(
+                        [
+                            values[offset : offset + len(keys)]
+                            for offset in range(0, len(values), len(keys))
+                        ]
+                    )
+            return sentences
+
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model"
+            save_model(name, model)
+            prepare_model_bundle(model, probe_text="猫が走る。")
+            analyzer = rows(
+                load_spacy_pipeline(str(model), "cpu", "morphology", "analyzer"),
+                "analyzer",
+            )
+            unit = rows(
+                load_spacy_pipeline(str(model), "cpu", "morphology", "input"), "input"
+            )
+        self.assertEqual(analyzer, cli)
+        self.assertEqual({"B", "I"}, {row[-1] for sentence in cli for row in sentence})
+        # One input line holds two parser sentences, so its heads are numbered
+        # from the line's first token and it has two roots.
+        self.assertEqual(unit[0], cli[0])
+        self.assertEqual(unit[2:], cli[3:])
+        second = [
+            row[:4]
+            + [str(int(row[4]) + len(cli[1])) if row[4] != "0" else "0"]
+            + row[5:]
+            for row in cli[2]
         ]
-        width = len(projection)
-        projected = [
-            direct["values"][offset : offset + width]
-            for offset in range(0, len(direct["values"]), width)
-        ]
-        self.assertEqual(projected, cli)
-        self.assertEqual({"B", "I"}, {row[-1] for row in projected})
-        self.assertIn({"key": BUNSETU_KEY, "kind": "scalar"}, schema)
+        self.assertEqual(unit[1], cli[1] + second)
 
     def test_real_ginza_model_produces_source_aligned_portable_morphology(self) -> None:
         """The saved model analyzes offline, from its own files, like the original."""
@@ -1416,3 +1440,17 @@ class EnglishModelTests(unittest.TestCase):
         self.assertTrue(any(row[keys.index("lemma")] == "speak" for row in rows))
         self.assertTrue(any(row[keys.index("dep.rel")] == "nsubj" for row in rows))
         self.assertTrue(any(row[keys.index("feat.Number")] for row in rows))
+
+    def test_packaged_model_splits_sentences_like_its_full_pipeline(self):
+        import spacy
+
+        root = os.environ["LINGREP_SPACY_ENGLISH_MODEL"]
+        text = (
+            "I was speaking to the man who came yesterday. They listened "
+            "carefully and then they left the room. It rained."
+        )
+        loaded = load_spacy_pipeline(root, "cpu", "tokenize", "analyzer")
+        self.assertEqual(
+            [sentence.text for sentence in loaded.pipeline(text).sents],
+            [sentence.text for sentence in spacy.load(root)(text).sents],
+        )

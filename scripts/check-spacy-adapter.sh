@@ -49,7 +49,7 @@ case "$mode" in
       LINGREP_SPACY_GINZA_MODEL=$ginza_model \
         uv run --project "$project" --frozen --extra cpu --extra spacy \
         --extra "$model_extra" pytest "$project/tests" \
-        -k real_ginza_model
+        -k 'real_ginza_model or default_profiles_match_ginza_cli_conllu'
       adapter_python=$(uv run --project "$project" --frozen \
         --extra cpu --extra spacy --extra "$model_extra" \
         python -c 'import sys; print(sys.executable)')

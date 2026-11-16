@@ -1727,9 +1727,21 @@ again into a new directory.
 A GiNZA profile selection that runs GiNZA's `bunsetu_recognizer` adds the scalar
 `spacy.ginza.bunsetu`: `B` on the first token of each bunsetu (文節) and `I` on
 the others, the label `ginza -f conllu` prints as `BunsetuBILabel`. Write
-`[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens. Setup selects the
-fewest components that produce the portable attributes, so its `morphology/*`
-selections leave out `bunsetu_recognizer` and do not carry the key.
+`[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens.
+
+Setup records which pipeline components each profile selection runs: every
+component up to the last one that assigns lemma, UPOS, XPOS, morphological
+features or dependencies (`morphology/*`) or sentence boundaries
+(`*/analyzer`). Components can read earlier components' output without
+declaring it, so none before that point is left out. When the declared
+assignments do not cover lemma, UPOS and XPOS, as with `en_core_web_sm`, whose
+`attribute_ruler` declares none, `morphology/*` runs the whole pipeline.
+GiNZA's `morphology/*` selections run its whole pipeline and
+`tokenize/analyzer` runs `tok2vec` or `transformer` and `parser`. With `--segmentation analyzer`, the dependencies,
+UPOS and bunsetu labels equal `ginza -f conllu`. With `--segmentation input`,
+the parser runs over each input unit and still splits it where it would split
+a document, so a unit holding two parser sentences has two tokens with
+`dep.head` `0`, and its heads count from the unit's first token.
 
 The bundle hashes staged adapter/protocol code and model files. Its runtime
 receipt checks Python and installed package versions, without hashing third-party

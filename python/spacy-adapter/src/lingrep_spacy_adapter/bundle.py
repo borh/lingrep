@@ -33,6 +33,8 @@ MORPH_TARGETS = {
     "token.pos": lambda token: bool(token.pos_),
     "token.tag": lambda token: bool(token.tag_),
 }
+# Projected attributes that some pipelines do not assign.
+MORPH_OUTPUTS = {"token.morph", "token.dep", "token.head"}
 # GiNZA's `transformer_custom` component loads its transformer by Hugging Face
 # repository name, from whatever commit the repository's `main` names when the
 # model loads. Setup fetches the commit pinned here instead and saves the
@@ -256,8 +258,8 @@ def prepare_model_bundle(
         for attribute, available in MORPH_TARGETS.items()
         if all(available(token) for token in probe if not token.is_space)
     }
-    morphology_components = _minimal_components(
-        names, summary, set(MORPH_TARGETS).difference(base_assignments), None
+    morphology_components = _morphology_components(
+        names, summary, base_assignments, None
     )
     if morphology_components is None:
         try:
@@ -273,12 +275,9 @@ def prepare_model_bundle(
         full, [], "input-v1", [PORTABLE_SCHEMA[0]]
     )
     if boundary_component is not None:
-        boundary = _minimal_components(names, summary, set(), boundary_component)
-        if boundary is None:
-            raise ValueError("boundary component dependencies are unavailable")
         selections["tokenize/analyzer"] = _selection(
             full,
-            boundary,
+            _components_through(names, summary, set(), boundary_component),
             f"spacy:{boundary_component}:v1",
             [PORTABLE_SCHEMA[0]],
         )
@@ -293,11 +292,8 @@ def prepare_model_bundle(
             full, morphology_components, "input-v1", schema
         )
         if boundary_component is not None:
-            combined = _minimal_components(
-                names,
-                summary,
-                set(MORPH_TARGETS).difference(base_assignments),
-                boundary_component,
+            combined = _morphology_components(
+                names, summary, base_assignments, boundary_component
             )
             if combined is None:
                 combined = names
@@ -359,25 +355,36 @@ def resource_manifest_digest(resource_root: Path, manifest_root: Path) -> str:
     return _resource_manifest_digest(resource_root, manifest_root, provider="spaCy")
 
 
-def _minimal_components(
+def _morphology_components(
+    names: Sequence[str],
+    summary: Mapping[str, Mapping[str, Any]],
+    base_assignments: set[str],
+    boundary: str | None,
+) -> list[str] | None:
+    selected = _components_through(
+        names, summary, set(MORPH_TARGETS) | MORPH_OUTPUTS, boundary
+    )
+    assigned = set(base_assignments).union(
+        *(summary[name]["assigns"] for name in selected)
+    )
+    return selected if assigned.issuperset(MORPH_TARGETS) else None
+
+
+def _components_through(
     names: Sequence[str],
     summary: Mapping[str, Mapping[str, Any]],
     targets: set[str],
     boundary: str | None,
-) -> list[str] | None:
-    needed = set(targets)
-    selected = {boundary} if boundary is not None else set()
-    if boundary is not None:
-        needed.update(summary[boundary]["requires"])
-    for name in reversed(names):
-        assigns = set(summary[name]["assigns"])
-        if name in selected or assigns.intersection(needed):
-            selected.add(name)
-            needed.difference_update(assigns)
-            needed.update(summary[name]["requires"])
-    if needed:
-        return None
-    return [name for name in names if name in selected]
+) -> list[str]:
+    """Return the pipeline prefix through the last component that is ``boundary``
+    or assigns one of ``targets``. A component can read earlier components'
+    output without declaring it in ``requires``, so none of them is dropped."""
+
+    last = -1
+    for index, name in enumerate(names):
+        if name == boundary or targets.intersection(summary[name]["assigns"]):
+            last = index
+    return list(names[: last + 1])
 
 
 def _selection(
