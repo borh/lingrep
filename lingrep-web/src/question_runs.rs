@@ -361,6 +361,19 @@ async fn project_run(
     } else {
         Vec::new()
     };
+    // A run that overflowed the result budget published no snapshot, but the
+    // page still offers to search its definitions one at a time.
+    if definitions.is_empty()
+        && attempt
+            .failure
+            .as_ref()
+            .is_some_and(|failure| failure.category == ErrorCategory::ResultLimit)
+    {
+        let source = attempt.source.clone();
+        definitions = tokio::task::spawn_blocking(move || catalog_definitions(&source))
+            .await
+            .map_err(unavailable)?;
+    }
     Ok(RunSnapshot {
         id: id.into(),
         phase,
@@ -1024,4 +1037,31 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         axum::body::Body::from_stream(stream),
     )
         .into_response())
+}
+
+/// The published definition names of `source` in catalog order, or none when
+/// it does not compile.
+fn catalog_definitions(source: &str) -> Vec<String> {
+    crate::patterns::compile_web_pattern(source)
+        .map(|compiled| {
+            crate::pattern_catalog::pattern_metadata_pairs(&compiled.matcher)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_overflowed_run_lists_its_catalog_definitions_in_catalog_order() {
+        let source =
+            "key: [upos]\npos := [].\nkey: [lemma]\nnouns := [upos=NOUN].\nverbs := [upos=VERB].\n";
+        assert_eq!(
+            super::catalog_definitions(source),
+            ["pos", "nouns", "verbs"]
+        );
+        assert!(super::catalog_definitions("npv := [upos=VERB").is_empty());
+    }
 }

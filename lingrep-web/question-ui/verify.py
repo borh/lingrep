@@ -162,7 +162,7 @@ with (out / "browser-driver.log").open("w") as log:
         assert state["received"] > 0, state
         first_id = state["id"]
         wait("return document.querySelectorAll('.kwic-row').length===20")
-        assert js("return document.querySelector('#run').hidden")
+        assert not js("return document.querySelector('#run').hidden")
         js(
             "const transfer=new DataTransfer();transfer.items.add(new File(['{}'],'invalid.json',{type:'application/json'}));const input=document.querySelector('#open-question');input.files=transfer.files;input.dispatchEvent(new Event('change'))"
         )

@@ -137,3 +137,40 @@ export function parseStoredSentence(value:unknown):StoredSentence {
   if(!objectValue(value)||typeof value.analysis_identity!=='string'||!Number.isSafeInteger(value.sentence)||Number(value.sentence)<0||!Array.isArray(value.tokens)||!value.tokens.every(tokenValue))throw new Error('The stored token analysis could not be read.');
   return value as unknown as StoredSentence;
 }
+
+/** A search's restriction to one published definition, one corpus document, or both, as a run request's `pattern` and `document` fields carry it. */
+export interface SearchLimit { readonly pattern: string | null; readonly document: number | null; }
+
+/** The definitions holding at least half of the largest count: when a run overflows its result budget, these filled it. */
+export function overflowingDefinitions(counts: Readonly<Record<string, number>>): string[] {
+  const largest = Math.max(0, ...Object.values(counts));
+  return largest > 0 ? Object.keys(counts).filter(name => counts[name] * 2 >= largest) : [];
+}
+
+const shellWord = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+/** The `ling` command that repeats a search of `query.lx` over a local copy of its corpus, keeping its condition and limit. */
+export function cliCommand(where: string, limit: SearchLimit | null): string {
+  let command = 'ling --json matches --corpus CORPUS.lingcorpus --patterns query.lx --context 24';
+  if (where) command += ' --where ' + shellWord(where);
+  const tests = [
+    ...(limit?.pattern ? [`.data.pattern == ${JSON.stringify(limit.pattern)}`] : []),
+    ...(limit?.document != null ? [`.data.document_ordinal == ${limit.document}`] : []),
+  ];
+  if (tests.length) command += ' | jq -c ' + shellWord(`select(.type == "match" and ${tests.join(' and ')})`);
+  return command;
+}
+
+const diagnosticMessages: Readonly<Record<string, Readonly<Record<Locale, string>>>> = {
+  'invalid lingrep patterns syntax': {
+    en: 'The pattern is not written correctly. Check that every bracket is closed and every definition ends with a period.',
+    ja: 'パターンの書き方に誤りがあります。括弧が閉じているか、各定義がピリオドで終わっているかを確認してください。',
+  },
+};
+/** A catalog diagnostic as one located sentence in `locale`; messages without a translation stay as the compiler wrote them. */
+export function diagnosticText(diagnostic: Diagnostic, locale: Locale): string {
+  const {line, column} = diagnostic.data.location ?? {};
+  const message = diagnosticMessages[diagnostic.data.message]?.[locale] ?? diagnostic.data.message;
+  if (!line) return message;
+  const place = locale === 'ja' ? `${line} 行${column ? ` ${column} 文字目` : ''}` : `Line ${line}${column ? `, column ${column}` : ''}`;
+  return `${place}: ${message}`;
+}

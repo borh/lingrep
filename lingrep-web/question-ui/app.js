@@ -5,7 +5,7 @@ import { defaultView, parseView, locationHash, locationURL, savedQuestion, seedP
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs } from './dependency.js';
-import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection } from './model.js';
+import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
@@ -17,7 +17,8 @@ const ja = {
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { analysisChanged: 'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(ja, { skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときのコーパスは変更されています。現在のコーパスを選んで、もう一度検索してください。', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(extra, { noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
 extra.analysisChanged = 'The corpus saved with this question has changed. Choose the current corpus and search again.';
@@ -254,7 +255,13 @@ let viewEvidence = null;
 let navigationEpoch = 0;
 let pendingView = null;
 let pendingOccurrence = null;
-let handoffPattern = null;
+// The draft's definition and document limit; it applies while the pattern source is `source`.
+let searchLimit = null;
+const runLimits = new Map();
+const documentTitles = new Map();
+let preferredPattern = '';
+function activeLimit() { return searchLimit && searchLimit.source === $('#source').value && (searchLimit.pattern || searchLimit.document != null) ? searchLimit : null; }
+const documentName = (dataset, document) => documentTitles.get(`${dataset}:${document}`) ?? (locale === 'ja' ? `文書${document}` : `document ${document}`);
 let revealedFailure = null;
 const editError = document.createElement('button');
 editError.type = 'button';
@@ -278,6 +285,41 @@ function editFailedPattern(focus = true) {
     }
 }
 editError.addEventListener('click', () => editFailedPattern());
+const limitChoices = document.createElement('p');
+limitChoices.id = 'limit-choices';
+limitChoices.className = 'limit-choices';
+limitChoices.hidden = true;
+editError.after(limitChoices);
+const overflowed = (run) => run?.phase === 'failed' && run.error_code === 'result_limit';
+// After an overflow, each definition the overflow did not come from can be searched alone.
+function renderLimitChoices(run) {
+    const names = overflowed(run) && run.definitions.length > 1 ? run.definitions : [], full = new Set(overflowingDefinitions(run?.counts ?? {}));
+    const rest = names.filter(name => !full.has(name)), choices = rest.length ? rest : names;
+    limitChoices.hidden = !choices.length;
+    const signature = JSON.stringify([locale, choices]);
+    if (renderSignatures.get(limitChoices) === signature)
+        return;
+    renderSignatures.set(limitChoices, signature);
+    limitChoices.replaceChildren(document.createTextNode(t('limitChoice') + ' '), ...choices.map(name => { const button = document.createElement('button'); button.type = 'button'; button.dataset.limitPattern = name; button.textContent = name; return button; }));
+}
+limitChoices.addEventListener('click', event => {
+    const button = event.target.closest('[data-limit-pattern]'), run = state.current;
+    if (!button || !run)
+        return;
+    const pattern = button.dataset.limitPattern;
+    $('#source').value = run.source;
+    $('#corpus').value = run.dataset;
+    searchLimit = { source: run.source, pattern, document: searchLimit?.source === run.source ? searchLimit.document : null };
+    preferredPattern = pattern;
+    updateCorpus();
+    void search();
+});
+function overflowText(run) {
+    const names = overflowed(run) ? overflowingDefinitions(run.counts) : [];
+    if (!names.length || names.length >= Object.keys(run.counts).length)
+        return null;
+    return locale === 'ja' ? `結果が多すぎて保持できません。件数の大部分は ${names.map(name => `${name}（途中までで ${count(run.counts[name])} 件）`).join('、')}です。` : `Too many results to retain. Most of them come from ${names.map(name => `${name} (${count(run.counts[name])} so far)`).join(' and ')}.`;
+}
 const compactLayout = matchMedia('(max-width:480px)');
 function adaptControls() { for (const selector of ['#question-actions'])
     for (const details of document.querySelectorAll(selector))
@@ -307,6 +349,8 @@ function translate() {
     for (const button of document.querySelectorAll('[data-reader-document]'))
         button.textContent = Number(button.dataset.readerDocument) < 0 ? (locale === 'ja' ? '前の作品' : 'Previous document') : (locale === 'ja' ? '次の作品' : 'Next document');
     controls?.localize();
+    $('#metadata-query').placeholder = locale === 'ja' ? '値を検索…' : 'Find a value…';
+    $('#metadata-query').setAttribute('aria-label', locale === 'ja' ? 'メタデータの値を検索' : 'Find a metadata value');
     $('#where').placeholder = locale === 'ja' ? 'すべての文書 · 必要なら --where 条件を入力' : 'All documents · optional --where clause';
     $('#corpus').setAttribute('aria-label', locale === 'ja' ? 'コーパス' : 'Corpus');
     $('#metadata-field').setAttribute('aria-label', locale === 'ja' ? 'メタデータの項目' : 'Metadata field');
@@ -344,8 +388,12 @@ async function refreshConfiguration() {
 function updateDraft(commit = true) {
     const source = $('#source').value;
     const names = state.current?.source === source ? state.current.definitions : [];
-    $('#source-label').textContent = names?.length === 1 ? names[0] : (locale === 'ja' ? 'パターンのソース' : 'pattern source');
-    const dirty = state.current && (source !== state.current.source || (controls?.where() ?? $('#where').value) !== state.current.where || $('#corpus').value !== state.current.dataset);
+    if (searchLimit?.document != null && (controls?.where() ?? $('#where').value))
+        searchLimit = { ...searchLimit, document: null };
+    const limit = activeLimit(), ranLimit = state.current ? runLimits.get(state.current.id) : undefined;
+    $('#source-label').textContent = limit?.pattern ?? (names?.length === 1 ? names[0] : (locale === 'ja' ? 'パターンのソース' : 'pattern source'));
+    renderLimits(limit);
+    const dirty = state.current && (source !== state.current.source || (controls?.where() ?? $('#where').value) !== state.current.where || $('#corpus').value !== state.current.dataset || (limit?.pattern ?? null) !== (ranLimit?.pattern ?? null) || (limit?.document ?? null) !== (ranLimit?.document ?? null));
     $('#draft-badge').hidden = !dirty;
     if (!config || !controls)
         return;
@@ -372,6 +420,33 @@ function updateDraft(commit = true) {
     const url = locationURL(location.href, params, evidence?.id ?? null, viewLocation);
     if (commit)
         window.history.replaceState(null, '', url);
+}
+const limitChips = document.createElement('div');
+limitChips.className = 'scope-chips limit-chips';
+$('#scope-chips').after(limitChips);
+// The question sentence names a document limit in place of the document scope, and each limit can be removed.
+function renderLimits(limit) {
+    const label = $('#scope-label'), dataset = $('#corpus').value;
+    if (limit?.document != null) {
+        label.textContent = documentName(dataset, limit.document);
+        label.dataset.limited = '';
+    }
+    else if (label.dataset.limited !== undefined) {
+        delete label.dataset.limited;
+        label.textContent = locale === 'ja' ? 'すべての作品' : 'all documents';
+    }
+    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : [])];
+    const signature = JSON.stringify(chips);
+    if (renderSignatures.get(limitChips) === signature)
+        return;
+    renderSignatures.set(limitChips, signature);
+    limitChips.replaceChildren(...chips.map(([kind, text]) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'scope-chip'; button.dataset.clearLimit = kind; button.setAttribute('aria-label', locale === 'ja' ? `${text} の限定を外す` : `Remove the limit ${text}`); button.innerHTML = `${escape(text)}<span aria-hidden="true"> ×</span>`; return button; }));
+}
+limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (!button || !searchLimit)
+    return; searchLimit = button.dataset.clearLimit === 'pattern' ? { ...searchLimit, pattern: null } : { ...searchLimit, document: null }; updateDraft(); });
+function restoreLimit(params) {
+    const pattern = params.get('pattern') || null, document = params.get('document');
+    searchLimit = pattern || document ? { source: $('#source').value, pattern, document: document && /^\d+$/.test(document) ? Number(document) : null } : null;
 }
 function saveReplay(final) {
     const frames = history.map(({ id, phase, received, counts, elapsed, version, definitions }) => ({ id, phase, received, counts, elapsed, version, definitions }));
@@ -408,9 +483,13 @@ async function search(event, derivedFrom, occurrence) {
     ++navigationEpoch;
     const source = $('#source').value;
     if (occurrence)
-        handoffPattern = { pattern: occurrence.pattern, source };
-    const pattern = handoffPattern?.source === source ? handoffPattern.pattern : null;
-    const body = { source, dataset: $('#corpus').value, where: controls?.where() ?? $('#where').value, ...(analysisExpectation ? { expected_analysis_identity: analysisExpectation } : {}), ...(pattern ? { pattern } : {}), ...(occurrence ? { document: occurrence.document } : {}) };
+        searchLimit = { source, pattern: occurrence.pattern, document: occurrence.document };
+    const where = controls?.where() ?? $('#where').value;
+    // The server admits a document limit only without a document condition.
+    if (where && searchLimit?.document != null)
+        searchLimit = { ...searchLimit, document: null };
+    const limit = activeLimit();
+    const body = { source, dataset: $('#corpus').value, where, ...(analysisExpectation ? { expected_analysis_identity: analysisExpectation } : {}), ...(limit?.pattern ? { pattern: limit.pattern } : {}), ...(limit?.document != null ? { document: limit.document } : {}) };
     sourceAtFocus = body.source;
     ++replayEpoch;
     isReplay = false;
@@ -433,6 +512,7 @@ async function search(event, derivedFrom, occurrence) {
         }
         activeId = result.id;
         expectedAnalyses.set(result.id, analysisExpectation);
+        runLimits.set(result.id, { pattern: limit?.pattern ?? null, document: limit?.document ?? null });
         state = begin(state, runningSnapshot(result.id, body));
         if (origin && parent) {
             documentSections.set(result.id, { run: state.current, origin });
@@ -521,17 +601,19 @@ function render(force = false) {
     const current = state.current;
     if (current && documentSections.has(current.id))
         documentSections.get(current.id).run = current;
-    $('#run').hidden = !!current;
+    $('#run').hidden = current?.phase === 'running';
     $('#timeline').max = String(Math.max(0, recorded.length - 1));
     if (!isReplay)
         $('#timeline').value = String(Math.max(0, recorded.length - 1));
     $('#cancel').hidden = !activeId && !isReplay && !restoreController;
     $('#cancel').textContent = restoreController ? (locale === 'ja' ? '保存した検索の実行を停止' : 'Stop saved searches') : t(isReplay ? 'stopReplay' : 'stop');
-    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete';
+    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete' || overflowed(current);
     $('#replay').disabled = !recorded.length || !!activeId || isReplay;
     $('#error').hidden = !current?.error;
     const diagnostic = patternFailure(current), line = diagnostic?.data.location?.line;
-    $('#error').textContent = (line ? (locale === 'ja' ? `${line} 行目: ` : `Line ${line}: `) : '') + (current ? runError(current, t) ?? '' : '');
+    const located = current?.phase === 'failed' ? (current.diagnostics ?? []).filter(d => d.data.stage === 'catalog' && d.data.severity === 'error') : [];
+    $('#error').textContent = located.length ? located.map(d => diagnosticText(d, locale)).join('\n') : current ? overflowText(current) ?? runError(current, t) ?? '' : '';
+    renderLimitChoices(current);
     editError.hidden = !diagnostic;
     editError.textContent = line ? (locale === 'ja' ? `${line} 行目のパターンを修正` : `Edit pattern at line ${line}`) : (locale === 'ja' ? 'パターンを修正' : 'Edit pattern');
     if (diagnostic && current && revealedFailure !== current.id) {
@@ -542,7 +624,7 @@ function render(force = false) {
     if (current) {
         const prefix = isReplay ? t('replayed') : t('real');
         const elapsed = current.elapsed > 0 ? ` · ${Number(current.elapsed).toFixed(1)}s` : '';
-        $('#status').textContent = current.phase === 'running' ? `${prefix} · ${t('running')} · ${count(current.received)} ${t('soFar')}${elapsed}` : current.phase === 'complete' ? `${isReplay ? t('replayed') + ' · ' : ''}${t('completed')}` : current.phase === 'cancelled' ? t('stopped') : state.previous ? t('failedKeep') : t('errorRetry');
+        $('#status').textContent = current.phase === 'running' ? `${prefix} · ${t('running')} · ${count(current.received)} ${t('soFar')}${elapsed}` : current.phase === 'complete' ? `${isReplay ? t('replayed') + ' · ' : ''}${t('completed')}` : current.phase === 'cancelled' ? t('stopped') : overflowed(current) && !limitChoices.hidden ? t('chooseDefinition') : state.previous ? t('failedKeep') : t('errorRetry');
         $('#live-counts').hidden = current.phase !== 'running';
         $('#live-counts').innerHTML = Object.entries(current.counts).map(([name, total]) => `<span>${escape(name)} <strong>${count(total)}</strong>${current.phase === 'running' ? ` <span>${locale === 'ja' ? '件（途中）' : 'so far'}</span>` : ''}</span>`).join('');
     }
@@ -565,8 +647,9 @@ function render(force = false) {
     }
     if (current?.phase === 'complete')
         $('#show-latest').setAttribute('href', hrefFor(current, defaultView()));
-    const shown = [...new Map([...documentSections.values()].map(section => section.run).concat(visibleRuns.filter((run) => run != null)).map(run => [run.id, run])).values()];
-    $('#empty').hidden = shown.length > 0;
+    // A failed run without counts has nothing to read; its error and recovery are above.
+    const shown = [...new Map([...documentSections.values()].map(section => section.run).concat(visibleRuns.filter((run) => run != null && !(run.phase === 'failed' && !Object.keys(run.counts).length))).map(run => [run.id, run])).values()];
+    $('#empty').hidden = shown.length > 0 || !!current;
     $('#result-panels').className = compared ? 'comparing' : '';
     const ids = shown.map(run => run.id);
     for (const [id, panel] of panels) {
@@ -580,6 +663,9 @@ function render(force = false) {
         }
     }
     for (const run of shown) {
+        const limited = runLimits.get(run.id)?.document, titled = limited == null ? undefined : Object.values(run.rows).flat()[0];
+        if (titled && limited != null)
+            documentTitles.set(`${run.dataset}:${limited}`, titled.source_metadata?.document?.title ?? titled.source_name);
         let panel = panels.get(run.id);
         if (!panel) {
             panel = document.createElement('article');
@@ -590,10 +676,7 @@ function render(force = false) {
             $('.line-controls input', panel).addEventListener('input', e => { filters.set(run.id, e.target.value); viewLocation = concordanceFor(runFor(run.id)); renderLines(panel, runFor(run.id), true); updateDraft(); });
             $('[data-copy]', panel).addEventListener('click', async (e) => {
                 const model = runFor(run.id);
-                const shell = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-                let command = 'ling --json matches --corpus CORPUS.lingcorpus --patterns query.lx --context 24';
-                if (model.where)
-                    command += ' --where ' + shell(model.where);
+                const command = cliCommand(model.where, runLimits.get(model.id) ?? null);
                 try {
                     await navigator.clipboard.writeText(command);
                     e.target.textContent = t('copied');
@@ -631,7 +714,7 @@ function render(force = false) {
         const phase = run.phase === 'complete' ? t('completed') : run.phase === 'running' ? t('partial') : run.phase === 'cancelled' ? t('cancelled') : t('failed');
         const scope = `${config.datasets[run.dataset]?.label ?? ''} · ${run.where || t('all')}`;
         const identity = `${t('runNumber')} ${run.id} · ${phase} · ${scope}`;
-        const headerHTML = `${prior || compared ? `<span class="evidence-context">${title}${prior && current?.phase === 'running' ? ' · ' + t('keeping') : ''}</span>` : ''}${run.phase === 'complete' ? `<a href="api/questions/runs/${run.id}/export" aria-label="${locale === 'ja' ? '全結果を JSONL で保存' : 'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>` : ''}`;
+        const headerHTML = `${prior || compared ? `<span class="evidence-context">${title}${prior && current?.phase === 'running' ? ' · ' + t('keeping') : ''}</span>` : ''}${run.phase === 'complete' && Object.values(run.counts).some(total => total > 0) ? `<a href="api/questions/runs/${run.id}/export" aria-label="${locale === 'ja' ? '全結果を JSONL で保存' : 'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>` : ''}`;
         const header = $('.result-header', panel);
         header.hidden = !headerHTML;
         header.title = identity;
@@ -651,7 +734,7 @@ function render(force = false) {
         const definitionNames = run.definitions.length ? run.definitions : Object.keys(run.counts);
         let chosen = selection.get(run.id) ?? '';
         if (!definitionNames.includes(chosen))
-            chosen = definitionNames[0] ?? '';
+            chosen = definitionNames.includes(preferredPattern) ? preferredPattern : definitionNames[0] ?? '';
         selection.set(run.id, chosen);
         const rail = $('.pattern-list', panel);
         rail.hidden = definitionNames.length < 2;
@@ -659,11 +742,15 @@ function render(force = false) {
             rail.innerHTML = definitionNames.map(name => `<button class="pattern-button" type="button" data-pattern="${escape(name)}"><span>${escape(name)}</span><span class="count"></span></button>`).join('');
             renderSignatures.set(rail, JSON.stringify(definitionNames));
             for (const button of rail.querySelectorAll('button'))
-                button.addEventListener('click', () => { selection.set(run.id, button.dataset.pattern ?? ''); void navigateView(hrefFor(run, { ...defaultView(), pattern: button.dataset.pattern ?? '' }), true); });
+                button.addEventListener('click', () => { preferredPattern = button.dataset.pattern ?? ''; selection.set(run.id, preferredPattern); void navigateView(hrefFor(run, { ...defaultView(), pattern: button.dataset.pattern ?? '' }), true); });
         }
         for (const button of rail.querySelectorAll('button')) {
             button.setAttribute('aria-pressed', String(button.dataset.pattern === chosen));
-            $('.count', button).textContent = count(run.counts[button.dataset.pattern]);
+            const total = run.counts[button.dataset.pattern], partial = run.phase !== 'complete';
+            $('.count', button).textContent = total == null ? '–' : count(total) + (partial ? '+' : '');
+            button.classList.toggle('partial', partial);
+            button.setAttribute('aria-label', `${button.dataset.pattern} ${total == null ? '' : count(total)}${partial ? ' · ' + t('partialCount') : ''}`);
+            button.title = partial ? t('partialCount') : '';
         }
         $('.query-tools-detail summary', panel).textContent = t('source');
         $('.query-tools-detail pre', panel).textContent = run.source;
@@ -869,12 +956,12 @@ function renderLines(panel, run, _force = false) {
     const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0;
     $('.line-controls span', panel).textContent = run.phase === 'complete' && !isReplay
         ? filter ? (locale === 'ja' ? `このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件` : `${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
-            : (locale === 'ja' ? `${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)}.`)
+            : !rows.length ? '' : (locale === 'ja' ? `${count(view.start + 1)}–${count(view.start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)}.`)
         : locale === 'ja' ? `${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示` : `${count(rows.length)} shown · ${count(total)} found`;
     if (view.loading && !rows.length)
         $('.line-controls span', panel).textContent = locale === 'ja' ? `全 ${count(total)} 件` : `${count(total)} total matches`;
     const matchingDocuments = pageReady ? (view.scopeDocument != null ? (total ? 1 : 0) : view.query ? null : view.documentsTotal) : null;
-    $('.evidence-sentence', panel).textContent = locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 作品`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`;
+    $('.evidence-sentence', panel).textContent = run.phase !== 'complete' && !isReplay ? (locale === 'ja' ? `途中までに ${count(total)} 件。` : `${count(total)} ${total === 1 ? 'match' : 'matches'} so far.`) : locale === 'ja' ? `${count(total)} 件${matchingDocuments == null ? '' : ` · ${count(matchingDocuments)} 作品`}。` : `${count(total)} ${total === 1 ? 'match' : 'matches'}${matchingDocuments == null ? '' : ` in ${count(matchingDocuments)} ${matchingDocuments === 1 ? 'document' : 'documents'}`}.`;
     const scope = $('.document-scope', panel);
     scope.hidden = view.scopeDocument == null;
     if (!scope.hidden) {
@@ -886,7 +973,7 @@ function renderLines(panel, run, _force = false) {
     }
     const note = $('.line-note', panel);
     note.setAttribute('role', 'status');
-    note.textContent = view.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'complete' ? '' : t('notTotal');
+    note.textContent = view.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
     note.hidden = !note.textContent;
     const list = $('.kwic-list', panel);
     list.setAttribute('aria-busy', String(view.loading));
@@ -979,7 +1066,7 @@ function renderLines(panel, run, _force = false) {
     }
     if (!rows.length) {
         const empty = node('empty', 'p', 'line-note');
-        empty.textContent = t(filter ? 'noFilter' : 'noLines');
+        empty.textContent = t(filter ? 'noFilter' : run.phase === 'complete' ? 'noMatches' : 'noLines');
         desired.push(empty);
     }
     const desiredNodes = new Set(desired);
@@ -1213,8 +1300,9 @@ async function openOccurrence(run, target) {
         await navigateView(hrefFor(run, { kind: 'example', pattern: target.pattern, document: found.document, sequence: found.sequence, returnTo: { ...defaultView(), pattern: target.pattern } }), true, 'replace');
     }
     catch (error) {
+        const detail = error instanceof ServiceError && error.status === 404 ? t('occurrenceNotFound') : error instanceof ServiceError && error.status === 409 && /frequency table/.test(error.message) ? t('occurrenceChanged') : errorMessage(error);
         $('#error').hidden = false;
-        $('#error').textContent = `${t('occurrenceMissing')} ${errorMessage(error)}`;
+        $('#error').textContent = `${t('occurrenceMissing')} ${detail}`;
     }
 }
 let readerEpoch = 0;
@@ -1332,8 +1420,9 @@ async function replay() {
     render();
 }
 function questionDocument(overrides = {}) {
-    return { format: 'lingrep.question/v1', evidence: displayedEvidence()?.id ?? '', view: JSON.stringify(viewLocation), question: '', sections: JSON.stringify(sectionLinks()), ...(documentSections.size && state.current ? { attempt: state.current.id } : {}), source: $('#source').value, corpus: $('#corpus').value, analysis: analysisExpectation ?? config.datasets[$('#corpus').value].analysis_identity ?? '', where: controls.where(), ...controls.entries(), ...overrides };
+    return { format: 'lingrep.question/v1', evidence: displayedEvidence()?.id ?? '', view: JSON.stringify(viewLocation), question: '', sections: JSON.stringify(sectionLinks()), ...(documentSections.size && state.current ? { attempt: state.current.id } : {}), source: $('#source').value, ...limitFields(), corpus: $('#corpus').value, analysis: analysisExpectation ?? config.datasets[$('#corpus').value].analysis_identity ?? '', where: controls.where(), ...controls.entries(), ...overrides };
 }
+function limitFields() { const limit = activeLimit(); return { ...(limit?.pattern ? { pattern: limit.pattern } : {}), ...(limit?.document != null ? { document: limit.document } : {}) }; }
 function openQuestion(doc) {
     questionSettings(new URLSearchParams(Object.entries(doc).map(([key, value]) => [key, String(value)])));
     const links = parseSections(typeof doc.sections === 'string' ? doc.sections : null);
@@ -1651,6 +1740,7 @@ async function navigateView(href, preserveDraft = false, historyMode = 'push') {
             const question = questionParams(url, run);
             $('#source').value = question.get('source') ?? run.source;
             $('#corpus').value = question.get('corpus') ?? run.dataset;
+            restoreLimit(question);
             controls.restore(question);
             updateCorpus();
         }
@@ -1777,6 +1867,9 @@ async function init() {
         sessionStorage.setItem('ling-questions-sections', JSON.stringify(savedManifest));
     }
     catch { }
+    restoreLimit(params);
+    if (current && searchLimit?.source === current.source && !runLimits.has(current.id))
+        runLimits.set(current.id, { pattern: searchLimit.pattern, document: searchLimit.document });
     translate();
     renderSavedSearches();
     if (params.get('notice')) {
