@@ -256,6 +256,9 @@ with (out / "browser-driver.log").open("w") as log:
             assert js("return document.querySelector('#reading-validation').hidden && !document.querySelector(" + json.dumps(selector) + ").hasAttribute('aria-invalid')")
             js("const input=document.querySelector(" + json.dumps(selector) + ");input.value=" + str(previous) + ";input.dispatchEvent(new Event('input'))")
             assert js("return document.querySelector('#reading-validation').hidden")
+        js("window.__contextRow=document.querySelector('.kwic-row');window.__contextText=__contextRow.querySelector('.context-left>span').firstChild;window.__headingLink=document.querySelector('.document-heading a');document.querySelector('#context-size').value=4;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
+        assert js("return __contextRow===document.querySelector('.kwic-row') && __contextText===__contextRow.querySelector('.context-left>span').firstChild && __headingLink===document.querySelector('.document-heading a')")
+        js("document.querySelector('#context-size').value=12;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
         js("document.querySelector('#line-limit').value=20;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         wait("return document.querySelectorAll('.kwic-row').length===20 && document.querySelector('.kwic-list').getAttribute('aria-busy')==='false'")
         js("document.querySelector('#line-limit').value=5;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
@@ -1222,7 +1225,7 @@ with (out / "browser-driver.log").open("w") as log:
         wait("return __probe.state.current?.phase==='complete' && document.querySelector('#source-label').textContent===" + json.dumps(long_name))
         metrics["long-pattern"] = capture("long-pattern", 320, 844)
         assert js("return document.querySelector('#edit-source').getBoundingClientRect().width<=document.querySelector('main').getBoundingClientRect().width")
-        metrics["accessibility"] = {"file_focus_visible":True,"close_returns_focus":True,"committed_numeric_errors":True}
+        metrics["accessibility"] = {"file_focus_visible":True,"close_returns_focus":True,"committed_numeric_errors":True,"context_nodes_retained":True}
         (out / "browser-metrics.json").write_text(
             json.dumps(metrics, ensure_ascii=False, indent=2)
         )

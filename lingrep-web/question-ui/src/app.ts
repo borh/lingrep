@@ -3,7 +3,7 @@ import {parseSections,restoreSections} from './sections.js';
 import type {SectionOrigin,SectionLink,QueryRecipe} from './sections.js';
 import {addCondition,patternSource} from './composer.js';
 import type {TokenCondition} from './composer.js';
-import {defaultView,parseView,locationURL,savedQuestion,seedParams,parseOccurrence,frequencyReturn} from './location.js';
+import {defaultView,parseView,locationHash,locationURL,savedQuestion,seedParams,parseOccurrence,frequencyReturn} from './location.js';
 import type {ViewLocation,ConcordanceLocation,HitLocation,OccurrenceTarget} from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
@@ -564,6 +564,11 @@ function updateReaderNavigation() {
 
 const renderSignatures=new WeakMap<HTMLElement,string>();
 const concordanceNodes=new WeakMap<HTMLElement,Map<string,HTMLElement>>();
+const concordanceContent=new WeakMap<HTMLElement,{row:MatchRecord|null;ordinal:number;context:number;number:HTMLElement;left:HTMLElement;hit:HTMLElement;right:HTMLElement}>();
+const concordanceHeadings=new WeakMap<HTMLElement,{link:HTMLAnchorElement;author:HTMLElement;count:HTMLElement}>();
+function setConcordanceText(element:HTMLElement,text:string){
+  if(element.textContent!==text){if(element.firstChild)element.firstChild.nodeValue=text;else element.append(text);}
+}
 function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=false) {
   if (!run) return;
   const pattern=selection.get(run.id)??'',view=documentView(run,pattern);
@@ -574,6 +579,8 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   const allRows=pageReady?view.rows:prefixVisible?(run.rows[pattern]??[]):[];
   const filter=filters.get(run.id)??'',limit=controls.state.lines,context=controls.state.context;
   const rows=allRows.filter(row=>(words(row.left_context)+row.surface+words(row.right_context)).includes(filter)).slice(0,limit);
+  const shownCounts=new Map<number,number>(),landmarks=new Map(view.landmarks.map(document=>[document.ordinal,document]));
+  for(const row of rows)shownCounts.set(row.document_ordinal,(shownCounts.get(row.document_ordinal)??0)+1);
   const total=pageReady?view.matchesTotal:run.counts[pattern]??0;
   $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
     ? filter?(locale==='ja'?`このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
@@ -595,27 +602,43 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
   const desired:HTMLElement[]=[],used=new Set<string>();
   const node=(key:string,tag:'div'|'a'|'p',className:string)=>{used.add(key);let value=nodes!.get(key);if(!value){value=document.createElement(tag);value.className=className;nodes!.set(key,value);}return value;};
-  let previousDocument:number|undefined;
+  let previousDocument:number|undefined,sourceOffset=0;
   for(const row of rows){
     if(previousDocument!==row.document_ordinal){
       const heading=node(`document:${row.document_ordinal}`,'div','document-heading');
-      const landmark=view.landmarks.find(d=>d.ordinal===row.document_ordinal);
-      const shown=rows.filter(r=>r.document_ordinal===row.document_ordinal).length;
+      const landmark=landmarks.get(row.document_ordinal);
+      const shown=shownCounts.get(row.document_ordinal)??0;
       const href=hrefFor(run,{...concordanceFor(run),scopeDocument:row.document_ordinal,returnAfter:view.scopeDocument==null?view.after:view.returnAfter,document:row.document_ordinal,after:-1});
-      const markup=`<a data-view href="${escape(href)}">${escape(row.source_metadata?.document?.title??row.source_name)}</a>${row.source_metadata?.document?.author?`<span>${escape(row.source_metadata.document.author)}</span>`:''}<span class="document-match-count">${landmark?count(landmark.matches)+(locale==='ja'?' 件':landmark.matches===1?' match':' matches'):count(shown)+(locale==='ja'?' 件を表示':' shown')}</span>`;
-      if(renderSignatures.get(heading)!==markup){heading.innerHTML=markup;renderSignatures.set(heading,markup);}
+      let content=concordanceHeadings.get(heading);
+      if(!content){
+        heading.innerHTML='<a data-view></a><span></span><span class="document-match-count"></span>';
+        content={link:heading.children[0] as HTMLAnchorElement,author:heading.children[1] as HTMLElement,count:heading.children[2] as HTMLElement};
+        concordanceHeadings.set(heading,content);
+      }
+      if(content.link.getAttribute('href')!==href)content.link.setAttribute('href',href);
+      setConcordanceText(content.link,row.source_metadata?.document?.title??row.source_name);
+      const author=row.source_metadata?.document?.author??'';
+      if(content.author.hidden!==!author)content.author.hidden=!author;
+      setConcordanceText(content.author,author);
+      setConcordanceText(content.count,landmark?count(landmark.matches)+(locale==='ja'?' 件':landmark.matches===1?' match':' matches'):count(shown)+(locale==='ja'?' 件を表示':' shown'));
       desired.push(heading);previousDocument=row.document_ordinal;
     }
     const link=node(`match:${row.sequence}`,'a','kwic-row') as HTMLAnchorElement;
     if(!link.hasAttribute('data-sequence')){link.dataset.sequence=String(row.sequence);link.setAttribute('data-view','');}
     const href=hrefFor(run,hitLocation(run,row,'example'));if(link.getAttribute('href')!==href)link.setAttribute('href',href);
-    const ordinal=view.start+allRows.indexOf(row)+1;
+    const rowIndex=allRows.indexOf(row,sourceOffset),ordinal=view.start+rowIndex+1;sourceOffset=rowIndex+1;
     const label=(row.source_metadata?.document?.title??row.source_name)+', '+ordinal+': '+words(row.left_context)+row.surface+words(row.right_context);if(link.getAttribute('aria-label')!==label)link.setAttribute('aria-label',label);
     const expanded=String(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden);if(link.getAttribute('aria-expanded')!==expanded)link.setAttribute('aria-expanded',expanded);
-    const signature=`${ordinal}:${context}`;
-    if(renderSignatures.get(link)!==signature){
-    const content=`<span class="line-number">${ordinal}</span><span class="context-left" lang="ja"><span>${escape(words((row.left_context??[]).slice(-context||undefined)).slice(context?0:Infinity))}</span></span><mark lang="ja">${escape(row.surface)}</mark><span class="context-right" lang="ja">${escape(words((row.right_context??[]).slice(0,context)))}</span>`;
-      link.innerHTML=content;renderSignatures.set(link,signature);
+    let content=concordanceContent.get(link);
+    if(!content){
+      link.innerHTML='<span class="line-number"></span><span class="context-left" lang="ja"><span></span></span><mark lang="ja"></mark><span class="context-right" lang="ja"></span>';
+      content={row:null,ordinal:-1,context:-1,number:link.children[0] as HTMLElement,left:link.children[1].firstElementChild as HTMLElement,hit:link.children[2] as HTMLElement,right:link.children[3] as HTMLElement};
+      concordanceContent.set(link,content);
+    }
+    if(content.row!==row||content.ordinal!==ordinal||content.context!==context){
+      const left=context?words((row.left_context??[]).slice(-context)):'',right=words((row.right_context??[]).slice(0,context));
+      for(const [element,text] of [[content.number,String(ordinal)],[content.left,left],[content.hit,row.surface],[content.right,right]] as const)setConcordanceText(element,text);
+      content.row=row;content.ordinal=ordinal;content.context=context;
     }
     desired.push(link);
     if(inspectionFailure?.runId===run.id&&inspectionFailure.sequence===row.sequence){
@@ -627,7 +650,8 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     if(inspecting?.run.id===run.id&&inspecting.row.sequence===row.sequence&&!tokenLab.hidden){desired.push(tokenLab);if(readerPanel.open)desired.push(readerPanel);}
   }
   if(!rows.length){const empty=node('empty','p','line-note');empty.textContent=t(filter?'noFilter':'noLines');desired.push(empty);}
-  for(const child of [...list.children])if(!desired.includes(child as HTMLElement)){
+  const desiredNodes=new Set(desired);
+  for(const child of [...list.children])if(!desiredNodes.has(child as HTMLElement)){
     if(child===tokenLab||child===readerPanel)document.body.append(child);else child.remove();
   }
   desired.forEach((child,index)=>{if(list.children[index]!==child)list.insertBefore(child,list.children[index]??null);});
@@ -935,7 +959,7 @@ function hrefFor(run:RunSnapshot,view:ViewLocation):string {
   const params:Record<string,string|number>={...controls.entries(),behavior:$<HTMLSelectElement>('#behavior').value};
   if(controls.where()!==run.where){params.metadata='{}';params.raw=run.where;}
   for(const [key,value] of Object.entries({metadata:'{}',raw:'',context:12,lines:20,behavior:'keep'}))if(String(params[key])===String(value))delete params[key];
-  const url=locationURL(location.href,params,run.id,view);return url.slice(url.indexOf('#'));
+  return locationHash(params,run.id,view);
 }
 async function readRun(identifier:string):Promise<RunSnapshot> {
   const run=parseSnapshot(await request<unknown>(`api/questions/runs/${encodeURIComponent(identifier)}`));
