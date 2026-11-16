@@ -117,8 +117,8 @@ mod tests {
     fn the_header_routes_to_frequencies_and_compare_only_when_a_count_table_is_served() {
         let header = |frequency_view| {
             let html = page(serde_json::json!({}), frequency_view).0;
-            let start = html.find("<nav class=\"routes\"").unwrap();
-            html[start..start + html[start..].find("</nav>").unwrap()].to_owned()
+            let (_, routes) = html.split_once("<nav class=\"routes\"").unwrap();
+            routes.split_once("</nav>").unwrap().0.to_owned()
         };
         let served = header(true);
         assert!(served.contains(r#"<a href="frequencies" data-t="frequencyNav">"#));
