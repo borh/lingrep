@@ -17,9 +17,9 @@ let locale: Locale = localStorage.getItem('ling-questions-locale') === 'ja' ? 'j
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
   readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',emptyTitle:'調べたい表現から始める。',emptyBody:'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。',example:'このパターンを検索',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'作品を読む',
-  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',filter:'このページを絞り込む',noLines:'このパターンの用例はまだありません。',noFilter:'絞り込みに一致する用例はありません。',download:'全結果を JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',
+  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',filter:'このページを絞り込む',noLines:'このパターンの用例はまだありません。',noFilter:'絞り込みに一致する用例はありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',
 };
-const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',filter:'Filter this page',noLines:'No lines for this pattern yet.',noFilter:'No examples on this page contain this text.',download:'Download all results as JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable'};
+const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',filter:'Filter this page',noLines:'No lines for this pattern yet.',noFilter:'No examples on this page contain this text.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
 Object.assign(ja,{emptyBody:'パターンや文書の条件を変えて検索できます。',current:'用例',previous:'前回の完了した用例',boundaryBody:'検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。',return:'用例に戻る',during:'新しい検索の実行中は',keep:'前回の検索結果を表示'});
 extra.current='Results';extra.previous='Previous results';
@@ -161,7 +161,7 @@ editError.addEventListener('click',()=>editFailedPattern());
 
 
 const compactLayout=matchMedia('(max-width:480px)');
-function adaptControls(){for(const selector of ['#question-actions','.document-nav'])for(const details of document.querySelectorAll<HTMLDetailsElement>(selector))details.open=!compactLayout.matches;}
+function adaptControls(){for(const selector of ['#question-actions'])for(const details of document.querySelectorAll<HTMLDetailsElement>(selector))details.open=!compactLayout.matches;}
 adaptControls();compactLayout.addEventListener('change',adaptControls);
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -200,7 +200,8 @@ function updateCorpus() {
   if(dataset.documents!=null)facts.push(`${count(dataset.documents)} ${locale==='ja'?'作品':'documents'}`);
   if(dataset.sentences!=null)facts.push(`${count(dataset.sentences)} ${locale==='ja'?'文':'sentences'}`);
   if(dataset.readiness!=='ready')facts.push(locale==='ja'?(dataset.readiness==='failed'?'コーパスの準備に失敗しました。検索で再試行できます。':'コーパスを準備しています。検索すると準備の完了を待ちます。'):(dataset.readiness==='failed'?'Corpus preparation failed. Search to retry.':'Corpus preparing · searches wait until it is ready.'));
-  $('#corpus-meta').textContent=facts.join(' · ');
+  $('#corpus-meta').textContent=dataset.readiness==='ready'?'':facts.join(' · ');
+  $('#corpus').title=facts.join(' · ');
   $<HTMLAnchorElement>('#incumbent').href=serviceURL('workbench');
   clearTimeout(configRefresh);
   if(dataset.readiness!=='ready')configRefresh=setTimeout(()=>void refreshConfiguration(),1500);
@@ -370,8 +371,8 @@ function render(force=false) {
     if (!panel) {
       panel=document.createElement('article');
       panel.className='result-panel';panel.dataset.run=run.id;
-      panel.innerHTML='<header class="result-header"></header><p class="result-scope"></p><ul class="result-notices" hidden></ul><p class="document-scope" hidden></p><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><p class="evidence-sentence"></p><div class="line-controls"><span></span><input type="search"></div><details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><p class="line-note"></p></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
-      $<HTMLDetailsElement>('.document-nav',panel).open=!matchMedia('(max-width:480px)').matches;
+      panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav><p class="line-note"></p></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
+      $<HTMLDetailsElement>('.document-nav',panel).open=false;
       $<HTMLInputElement>('.line-controls input',panel).addEventListener('input',e=>{filters.set(run.id,(e.target as HTMLInputElement).value);viewLocation=concordanceFor(runFor(run.id));renderLines(panel!,runFor(run.id),true);updateDraft();});
       $('[data-copy]',panel).addEventListener('click',async e=>{
         const model=runFor(run.id);
@@ -401,7 +402,7 @@ function render(force=false) {
     const phase=run.phase==='complete'?t('completed'):run.phase==='running'?t('partial'):run.phase==='cancelled'?t('cancelled'):t('failed');
     const scope=`${config.datasets[run.dataset]?.label ?? ''} · ${run.where||t('all')}`;
     const identity=`${t('runNumber')} ${run.id} · ${phase} · ${scope}`;
-    const headerHTML=`${prior||compared?`<span class="evidence-context">${title}${prior&&current?.phase==='running'?' · '+t('keeping'):''}</span>`:''}${run.phase==='complete'?`<a href="api/questions/runs/${run.id}/export" title="${escape(identity)}">${t('download')}</a>`:''}`;
+    const headerHTML=`${prior||compared?`<span class="evidence-context">${title}${prior&&current?.phase==='running'?' · '+t('keeping'):''}</span>`:''}${run.phase==='complete'?`<a href="api/questions/runs/${run.id}/export" aria-label="${locale==='ja'?'全結果を JSONL で保存':'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>`:''}`;
     const header=$('.result-header',panel);
     header.hidden=!headerHTML;
     header.title=identity;
@@ -429,8 +430,6 @@ function render(force=false) {
       button.setAttribute('aria-pressed',String(button.dataset.pattern===chosen));
       $('.count',button).textContent=count(run.counts[button.dataset.pattern!]);
     }
-    const admitted=run.counters?.counters?.documents_admitted;
-    $('.evidence-sentence',panel).textContent=admitted!=null?(locale==='ja'?`${count(admitted)} 作品を調べ、${selection.get(run.id)??''} が ${count(run.counts[chosen])} 件見つかりました。`:`Across ${count(admitted)} documents, ${selection.get(run.id)??'this pattern'} occurs ${count(run.counts[chosen])} times.`):t('notTotal');
     $('.query-tools-detail summary',panel).textContent=t('source');
     $('.query-tools-detail pre',panel).textContent=run.source;
     $('[data-copy]',panel).textContent=t('copy');
@@ -476,8 +475,8 @@ function retryDocumentPage(panel:HTMLElement,run:RunSnapshot,pattern:string,view
 
 function renderDocumentNavigation(panel: HTMLElement,run: RunSnapshot,pattern: string,view: DocumentView) {
   const wrapper=$('.document-nav',panel),nav=$('.document-choice',wrapper),finder=$('.document-finder',wrapper),paging=$('.document-pages',panel);
-  wrapper.hidden=isReplay||run.phase!=='complete';paging.hidden=true;
-  if(wrapper.hidden)return;
+  wrapper.hidden=isReplay||run.phase!=='complete'||(view.documents!==null&&view.documentsTotal<=1&&!view.query&&!view.error);paging.hidden=true;
+  if(isReplay||run.phase!=='complete')return;
   if(!finder.children.length){
     finder.innerHTML='<input type="search"><button type="button" data-titles="-1"></button><button type="button" data-titles="1"></button><span></span>';
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -571,14 +570,15 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   const total=pageReady?view.matchesTotal:run.counts[pattern]??0;
   $('.line-controls span',panel).textContent=run.phase==='complete'&&!isReplay
     ? filter?(locale==='ja'?`このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件`:`${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
-    :(locale==='ja'?`全 ${count(total)} 件中 ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)} 件`:`Matches ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)} of ${count(total)}`)
+    :(locale==='ja'?`${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)} 件を表示。`:`Reading ${count(rows.length?view.start+1:0)}–${count(view.start+rows.length)}.`)
     : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
   if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
+  const matchingDocuments=pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
+  $('.evidence-sentence',panel).textContent=locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 作品`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
   const scope=$('.document-scope',panel);
   scope.hidden=view.scopeDocument==null;
   if(!scope.hidden){
-    const label=view.selectedDoc?.title??'';
-    const markup=`${locale==='ja'?'この作品の用例: ':'Showing only: '}${escape(label)} · <a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての作品に戻る':'Return to all documents'}</a>`;
+    const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての作品に戻る':'Return to all documents'}</a>`;
     if(renderSignatures.get(scope)!==markup){scope.innerHTML=markup;renderSignatures.set(scope,markup);}
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
