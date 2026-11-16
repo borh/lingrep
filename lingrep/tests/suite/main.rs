@@ -9,6 +9,7 @@ mod catalog_input;
 mod catalog_labels;
 mod cli;
 mod cli_shape;
+mod compare_occurrences_example;
 mod completions;
 mod contrast;
 mod corpus_mode;
