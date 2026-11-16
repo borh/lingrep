@@ -217,23 +217,25 @@ front of the unit as the corpora require.
 ## Caddy vhost
 
 ```caddyfile
-lingrep.example.com/v1 {
+lingrep.example.com {
   encode zstd gzip
-  reverse_proxy 127.0.0.1:3000 {
-    flush_interval -1
-    # lingrep-web accepts API request bodies up to 4 MiB.
-    max_request_body 4 * 1024 * 1024
+  request_body {
+    max_size 4194304
   }
-  basicauth {
-    alice $2a$14$…  # `caddy hash-password`
+  reverse_proxy 127.0.0.1:3000
+  basic_auth {
+    alice $2a$14$…  # Replace with the output of `caddy hash-password`.
   }
 }
 ```
 
-- `flush_interval -1` is required. lingrep-web publishes progress and exact
-  counts for the scanned prefix over Server-Sent Events; without it, Caddy
-  buffers 4 KiB before forwarding and the UI shows no progress until the
-  buffer fills.
+- Leave `flush_interval` unset. Caddy flushes `text/event-stream` responses
+  immediately; no extra flush setting is needed. See [Caddy's streaming documentation](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming).
+- A workbench with no open event stream is cancelled after a 30-second grace
+  period. Reconnecting and leaving starts a new grace period. Keep client-abort
+  propagation enabled through every proxy between the browser and lingrep-web,
+  and check cancellation after changing the deployed proxy configuration or version.
+- `request_body` limits requests to the server's 4 MiB API body cap.
 - Basic auth is the simplest access control. Caddy also supports OIDC through
   the `caddy-security` plugin.
 
@@ -241,10 +243,10 @@ lingrep.example.com/v1 {
 
 ```nginx
 server {
-  server_name lingrep.example.com/v1;
+  server_name lingrep.example.com;
   listen 443 ssl http2;
-  ssl_certificate /var/lib/acme/lingrep.example.com/v1/fullchain.pem;
-  ssl_certificate_key /var/lib/acme/lingrep.example.com/v1/key.pem;
+  ssl_certificate /var/lib/acme/lingrep.example.com/fullchain.pem;
+  ssl_certificate_key /var/lib/acme/lingrep.example.com/key.pem;
 
   location / {
     proxy_pass http://127.0.0.1:3000;
