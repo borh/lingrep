@@ -12,8 +12,8 @@ use super::markdown_dialect::{
     parse_div, parse_heading, row_cells, strip_attribute_spans,
 };
 
-/// Change this revision whenever rendered HTML, text runs or block boundaries change, including after dependency upgrades.
-pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/3";
+/// Change this revision whenever rendered HTML, text runs, block boundaries or reading alignment change, including after dependency upgrades.
+pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/4";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDocument {
