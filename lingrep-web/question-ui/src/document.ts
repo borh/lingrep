@@ -201,6 +201,16 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     }catch(error){if(epoch===requestId)$('#metadata-values').textContent=errorMessage(error);}
     finally{if(epoch===requestId){values.removeAttribute('aria-busy');values.inert=false;}}
   }
+  // A corpus whose documents carry no metadata has nothing to choose from, so its scope stays all documents.
+  let fieldsEpoch=0;
+  async function checkFields(){
+    const epoch=++fieldsEpoch,toggle=$<HTMLButtonElement>('#scope-toggle');toggle.disabled=false;toggle.removeAttribute('title');
+    try{
+      const data=await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata`);
+      if(epoch!==fieldsEpoch||data.fields.some(field=>!hiddenMetadataFields.has(field.key))||state.raw)return;
+      closePicker();toggle.disabled=true;toggle.title=text('This corpus has no document metadata to choose from.','このコーパスの作品には、絞り込みに使える情報（メタデータ）がありません。');
+    }catch{}
+  }
   function closePicker(){++pickerEpoch;pickerState='closed';$('#metadata-picker').hidden=true;$('#scope-toggle').setAttribute('aria-expanded','false');$('#scope-toggle').removeAttribute('aria-busy');}
   async function openPicker(){
     const epoch=++pickerEpoch;pickerState='opening';$('#scope-toggle').setAttribute('aria-busy','true');
@@ -216,7 +226,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   $<HTMLInputElement>('#metadata-exclude').addEventListener('change',()=>{const field=fields.find(f=>f.key===key);if(!field||field.numeric)return;const stored=state.metadata[key];state.metadata[key]={...(stored&&!stored.numeric?stored:{list:field.list,exclude:false,values:[]}),exclude:$<HTMLInputElement>('#metadata-exclude').checked};changedScope();});
   $<HTMLInputElement>('#where').addEventListener('input',()=>changedScope());
   $('#metadata-clear').addEventListener('click',()=>{state.metadata=Object.create(null);state.raw='';$<HTMLInputElement>('#where').value='';changedScope();loadValues();});
-  $<HTMLSelectElement>('#corpus').addEventListener('change',()=>{const reopen=pickerState!=='closed';closePicker();++requestId;state.metadata=Object.create(null);fields=[];$('#metadata-field').replaceChildren();$('#metadata-values').replaceChildren();renderChips();if(reopen)void openPicker();clearTimeout(searchTimer);changed();search();});
+  $<HTMLSelectElement>('#corpus').addEventListener('change',()=>{const reopen=pickerState!=='closed';closePicker();++requestId;state.metadata=Object.create(null);fields=[];$('#metadata-field').replaceChildren();$('#metadata-values').replaceChildren();renderChips();void checkFields();if(reopen)void openPicker();clearTimeout(searchTimer);changed();search();});
   function validateReadingNumbers(){
     const inputs=[$<HTMLInputElement>('#context-size'),$<HTMLInputElement>('#line-limit')],valid=inputs.every(input=>input.checkValidity());
     for(const input of inputs)input.setAttribute('aria-invalid',String(!input.checkValidity()));
@@ -224,12 +234,12 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   }
   scrubNumber($<HTMLInputElement>('#context-size'),()=>{if(!$<HTMLInputElement>('#context-size').checkValidity()||$<HTMLInputElement>('#context-size').value==='')return;state.context=Number($<HTMLInputElement>('#context-size').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
   scrubNumber($<HTMLInputElement>('#line-limit'),()=>{if(!$<HTMLInputElement>('#line-limit').checkValidity()||$<HTMLInputElement>('#line-limit').value==='')return;state.lines=Number($<HTMLInputElement>('#line-limit').value);validateReadingNumbers();viewChanged();changed();},validateReadingNumbers);
-  renderChips();
+  renderChips();void checkFields();
   return {state,boundExamples(maximum:number|null){const input=$<HTMLInputElement>('#line-limit');input.disabled=maximum===0;input.max=String(maximum==null||maximum===0?Number.MAX_SAFE_INTEGER:Math.max(1,Math.min(Number.MAX_SAFE_INTEGER,maximum)));state.lines=Math.min(state.lines,Number(input.max));if(input.validity.rangeOverflow&&!input.validity.stepMismatch&&!input.validity.badInput)clampNumber(input);if(input.value!==''&&input.checkValidity())state.lines=Number(input.value);},where:()=>scopeClause(state.metadata,$<HTMLInputElement>('#where').value),entries:()=>({metadata:JSON.stringify(state.metadata),raw:$<HTMLInputElement>('#where').value,context:state.context,lines:state.lines}),restore(params:URLSearchParams){
     clearTimeout(searchTimer);clearTimeout(valueTimer);++requestId;Object.assign(state,questionSettings(params));
     $<HTMLInputElement>('#where').value=state.raw;$<HTMLInputElement>('#context-size').value=String(state.context);$<HTMLInputElement>('#line-limit').value=String(state.lines);
     for(const input of document.querySelectorAll('.number-span'))input.removeAttribute('aria-invalid');
     $('#reading-validation').hidden=true;$('#metadata-validation').hidden=true;
-    fields=[];renderChips();if(!$('#metadata-picker').hidden)loadFields();
+    fields=[];renderChips();void checkFields();if(!$('#metadata-picker').hidden)loadFields();
   },localize(){localizeNumberErrors();for(const input of document.querySelectorAll<HTMLElement>('.number-span'))input.title=text('Drag horizontally or type a number. Hold Shift for precise dragging','左右にドラッグ、または数値を入力。Shift キーで細かく調整');$<HTMLInputElement>('#line-limit').setAttribute('aria-label',text('Number of examples','表示する用例数'));$<HTMLInputElement>('#context-size').setAttribute('aria-label',text('Context tokens','前後の文脈のトークン数'));renderChips();if(fields.length){const selected=$<HTMLSelectElement>('#metadata-field').value;$<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');$<HTMLSelectElement>('#metadata-field').value=selected;if(!$('#metadata-picker').hidden){after='';previous=[];loadValues();}}}};
 }

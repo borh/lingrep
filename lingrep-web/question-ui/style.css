@@ -86,3 +86,7 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .token-ribbon button.bound{font-weight:600;color:var(--green)}
 .token-ribbon button.bound::before{content:attr(data-roles);font:700 12px/1.4 var(--mono);color:var(--ground);background:var(--green);border-radius:2px;padding:0 3px;margin-right:3px;vertical-align:2px}
 .attribute-span{margin:4px 0;color:var(--soft)}
+.question-sentence .doc-blank:disabled{opacity:1;color:var(--ink);border-bottom-color:transparent;cursor:default;background:transparent}
+.search-status.has-update{background:var(--wash);padding:6px 10px}
+.search-status.has-update #show-latest{font-weight:600}
+#token-origin:focus{outline:none}

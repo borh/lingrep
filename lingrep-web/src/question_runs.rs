@@ -524,7 +524,25 @@ fn document_labels(provenance: Option<&SentenceProvenance>) -> (String, String) 
             .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
             .unwrap_or_default()
     };
-    (field("title"), field("author"))
+    let source_name = provenance.map_or("", |p| &*p.location.source_name);
+    (document_title(field("title"), source_name), field("author"))
+}
+
+/// `title`, or when it is empty the source file name without a corpus
+/// extension, as the question page's `documentTitle` names a row.
+fn document_title(title: String, source_name: &str) -> String {
+    if !title.is_empty() {
+        return title;
+    }
+    source_name
+        .rsplit_once('.')
+        .filter(|(_, extension)| {
+            ["conllu", "jsonl", "txt", "md", "xml"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
+        .map_or(source_name, |(stem, _)| stem)
+        .to_owned()
 }
 fn graph_node(node: lingrep_core::corpus::conllu::EnhancedNodeId) -> Value {
     match node {
@@ -1054,6 +1072,22 @@ fn catalog_definitions(source: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// A document without a title is named by its source file, as its
+    /// concordance heading names it, so the document list never offers a
+    /// nameless entry.
+    #[test]
+    fn an_untitled_document_is_named_by_its_source_file() {
+        assert_eq!(
+            super::document_title(String::new(), "Mori_O_Abeichizoku.conllu"),
+            "Mori_O_Abeichizoku"
+        );
+        assert_eq!(super::document_title(String::new(), "notes.MD"), "notes");
+        assert_eq!(super::document_title(String::new(), "a.b.tei"), "a.b.tei");
+        assert_eq!(
+            super::document_title("阿部一族".into(), "x.conllu"),
+            "阿部一族"
+        );
+    }
     #[test]
     fn an_overflowed_run_lists_its_catalog_definitions_in_catalog_order() {
         let source =

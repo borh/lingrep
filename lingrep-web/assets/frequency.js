@@ -613,7 +613,7 @@ export function mountFrequency(root) {
     plan = planOf(profile);
     const names = keyNames(profile.group);
     entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
-      <h2 class="fq-entry-name">${esc(groupText(profile.group))}${namesHtml(names)}</h2>
+      <h2 class="fq-entry-name" tabindex="-1">${esc(groupText(profile.group))}${namesHtml(names)}</h2>
       <p class="fq-entry-figures" data-e="figures">${esc(figuresText(profile))}</p>
       <div class="fq-profile" data-e="profile">${profile.charts.map(chartHtml).join("")}</div>
       <section class="fq-lines" data-e="lines">${linesHtml(lined, false)}</section>`;
@@ -628,7 +628,8 @@ export function mountFrequency(root) {
 
   async function loadEntry(mine, signal) {
     entryEl.setAttribute("aria-busy", "true");
-    if (profile?.entry !== s.entry) {
+    const arriving = profile?.entry !== s.entry;
+    if (arriving) {
       profile = null;
       lined = null;
       readout = null;
@@ -658,6 +659,7 @@ export function mountFrequency(root) {
       profile = { ...p, entry: s.entry };
       lined = { total: l.total, lines: l.lines, analysis_identity: l.analysis_identity, catalog_fingerprint: l.catalog_fingerprint };
       renderEntry();
+      if (arriving && !entryEl.contains(document.activeElement)) entryEl.querySelector(".fq-entry-name")?.focus();
     }
     renderClause();
     entryEl.removeAttribute("aria-busy");

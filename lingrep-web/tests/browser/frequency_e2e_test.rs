@@ -2555,3 +2555,50 @@ async fn unsupported_frequency_conditions_keep_their_explanation_after_a_locale_
     served.server.abort();
     result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
+
+/// Opening an entry, and arriving at an entry's address (as Back from the
+/// question page does), moves focus to the entry's name rather than leaving
+/// it on the page body.
+#[tokio::test]
+async fn an_opened_or_restored_entry_takes_focus_at_its_name() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        let focused = "return document.activeElement?.classList.contains('fq-entry-name') ?? false";
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute(
+                "document.querySelector('button.open-entry').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the opened entry").await?;
+        observed(
+            &driver,
+            focused,
+            json!(true),
+            "focus on the opened entry's name",
+        )
+        .await?;
+        let address: String = driver
+            .execute("return location.href", Vec::new())
+            .await?
+            .convert()?;
+        open(&driver, &address, ENTRY_READY).await?;
+        observed(
+            &driver,
+            focused,
+            json!(true),
+            "focus on the restored entry's name",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result?;
+    Ok(())
+}

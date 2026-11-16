@@ -302,6 +302,22 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             }
         }
     }
+    // A corpus whose documents carry no metadata has nothing to choose from, so its scope stays all documents.
+    let fieldsEpoch = 0;
+    async function checkFields() {
+        const epoch = ++fieldsEpoch, toggle = $('#scope-toggle');
+        toggle.disabled = false;
+        toggle.removeAttribute('title');
+        try {
+            const data = await api(`api/questions/data/${$('#corpus').value}/metadata`);
+            if (epoch !== fieldsEpoch || data.fields.some(field => !hiddenMetadataFields.has(field.key)) || state.raw)
+                return;
+            closePicker();
+            toggle.disabled = true;
+            toggle.title = text('This corpus has no document metadata to choose from.', 'このコーパスの作品には、絞り込みに使える情報（メタデータ）がありません。');
+        }
+        catch { }
+    }
     function closePicker() { ++pickerEpoch; pickerState = 'closed'; $('#metadata-picker').hidden = true; $('#scope-toggle').setAttribute('aria-expanded', 'false'); $('#scope-toggle').removeAttribute('aria-busy'); }
     async function openPicker() {
         const epoch = ++pickerEpoch;
@@ -328,7 +344,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
         return; const stored = state.metadata[key]; state.metadata[key] = { ...(stored && !stored.numeric ? stored : { list: field.list, exclude: false, values: [] }), exclude: $('#metadata-exclude').checked }; changedScope(); });
     $('#where').addEventListener('input', () => changedScope());
     $('#metadata-clear').addEventListener('click', () => { state.metadata = Object.create(null); state.raw = ''; $('#where').value = ''; changedScope(); loadValues(); });
-    $('#corpus').addEventListener('change', () => { const reopen = pickerState !== 'closed'; closePicker(); ++requestId; state.metadata = Object.create(null); fields = []; $('#metadata-field').replaceChildren(); $('#metadata-values').replaceChildren(); renderChips(); if (reopen)
+    $('#corpus').addEventListener('change', () => { const reopen = pickerState !== 'closed'; closePicker(); ++requestId; state.metadata = Object.create(null); fields = []; $('#metadata-field').replaceChildren(); $('#metadata-values').replaceChildren(); renderChips(); void checkFields(); if (reopen)
         void openPicker(); clearTimeout(searchTimer); changed(); search(); });
     function validateReadingNumbers() {
         const inputs = [$('#context-size'), $('#line-limit')], valid = inputs.every(input => input.checkValidity());
@@ -342,6 +358,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     scrubNumber($('#line-limit'), () => { if (!$('#line-limit').checkValidity() || $('#line-limit').value === '')
         return; state.lines = Number($('#line-limit').value); validateReadingNumbers(); viewChanged(); changed(); }, validateReadingNumbers);
     renderChips();
+    void checkFields();
     return { state, boundExamples(maximum) { const input = $('#line-limit'); input.disabled = maximum === 0; input.max = String(maximum == null || maximum === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, maximum))); state.lines = Math.min(state.lines, Number(input.max)); if (input.validity.rangeOverflow && !input.validity.stepMismatch && !input.validity.badInput)
             clampNumber(input); if (input.value !== '' && input.checkValidity())
             state.lines = Number(input.value); }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
@@ -358,6 +375,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             $('#metadata-validation').hidden = true;
             fields = [];
             renderChips();
+            void checkFields();
             if (!$('#metadata-picker').hidden)
                 loadFields();
         }, localize() { localizeNumberErrors(); for (const input of document.querySelectorAll('.number-span'))

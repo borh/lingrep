@@ -658,6 +658,12 @@ function render(force = false) {
     }
     if (current?.phase === 'complete')
         $('#show-latest').setAttribute('href', hrefFor(current, defaultView()));
+    // A search that finished under an open example from an earlier search says so, rather than leaving the earlier results under the new question.
+    $('.search-status').classList.toggle('has-update', !!pinned);
+    if (pinned && current) {
+        const shownRun = viewEvidence ?? inspecting?.run, label = config.datasets[current.dataset]?.label ?? current.dataset, other = shownRun && shownRun.dataset !== current.dataset ? config.datasets[shownRun.dataset]?.label ?? shownRun.dataset : null;
+        $('#status').textContent = locale === 'ja' ? `${other ? `${label} の` : '新しい'}検索が完了しました。開いている用例は${other ? ` ${other} の` : ''}前回の検索結果です。` : `The ${other ? `search of ${label}` : 'new search'} is complete. The open example is from the previous search${other ? ` of ${other}` : ''}.`;
+    }
     // A failed run without counts has nothing to read; its error and recovery are above.
     const shown = [...new Map([...documentSections.values()].map(section => section.run).concat(visibleRuns.filter((run) => run != null && !(run.phase === 'failed' && !Object.keys(run.counts).length))).map(run => [run.id, run])).values()];
     $('#empty').hidden = shown.length > 0 || !!current;
@@ -1326,6 +1332,12 @@ async function openOccurrence(run, target) {
         const query = new URLSearchParams({ pattern: target.pattern, sentence: String(target.sentence), roles: JSON.stringify(target.roles), analysis: target.analysis, fingerprint: target.fingerprint });
         const found = await request(`api/questions/runs/${run.id}/occurrence?${query}`);
         await navigateView(hrefFor(run, { kind: 'example', pattern: target.pattern, document: found.document, sequence: found.sequence, returnTo: { ...defaultView(), pattern: target.pattern } }), true, 'replace');
+        if (!tokenLab.hidden && !tokenLab.contains(document.activeElement)) {
+            const heading = $('#token-origin');
+            heading.tabIndex = -1;
+            heading.focus({ preventScroll: true });
+            tokenLab.scrollIntoView({ block: 'nearest' });
+        }
     }
     catch (error) {
         const detail = error instanceof ServiceError && error.status === 404 ? t('occurrenceNotFound') : error instanceof ServiceError && error.status === 409 && /frequency table/.test(error.message) ? t('occurrenceChanged') : errorMessage(error);
@@ -1353,7 +1365,7 @@ async function readDocument(scope, path = null) {
     }
     if (!readerContentKey) {
         $('#inspect-title').textContent = title;
-        $('#inspect-origin').textContent = `${t('runNumber')} ${run.id.slice(0, 6)} · ${row.pattern}`;
+        $('#inspect-origin').textContent = row.pattern;
         target.textContent = t('loadingRead');
     }
     try {
@@ -1375,7 +1387,7 @@ async function readDocument(scope, path = null) {
         target.replaceChildren(...parsed.body.childNodes);
         readerContentKey = `${run.id}:${row.corpus_sentence_ordinal}`;
         $('#inspect-title').textContent = title;
-        $('#inspect-origin').textContent = `${t('runNumber')} ${run.id.slice(0, 6)} · ${row.pattern}`;
+        $('#inspect-origin').textContent = row.pattern;
         readerStatus.replaceChildren();
         for (const button of target.querySelectorAll('[hx-get]')) {
             const href = button.getAttribute('hx-get');
