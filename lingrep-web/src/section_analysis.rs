@@ -253,7 +253,18 @@ pub(crate) fn render_metadata(
     let has_selection = !selected.is_empty();
     let comparison = has_selection
         .then(|| SectionComparison::projected(&snapshot.sections, Some(&selected), &projection))
-        .flatten();
+        .flatten()
+        .map(|mut comparison| {
+            if metadata.group_by.is_some() {
+                comparison.rows.sort_by(|left, right| {
+                    right
+                        .displayed_total
+                        .cmp(&left.displayed_total)
+                        .then_with(|| left.pattern_name.cmp(&right.pattern_name))
+                });
+            }
+            comparison
+        });
     let distance = cluster.distance;
     let clustered = comparison.as_ref().map(|comparison| {
         if cluster.minimum_occurrences > 1 {

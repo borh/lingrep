@@ -629,6 +629,7 @@ fn export_documents(
             emit(TableEvent::Document(TableDocument {
                 document_id: id,
                 data: DocumentData {
+                    grouping_coverage: None,
                     document: source.ordinal,
                     source_name: source.logical_name,
                     sentences_admitted: totals.sentences,

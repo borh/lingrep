@@ -3665,6 +3665,40 @@ fn pattern_metadata_section_groups_sum_members_without_deduplicating_cross_patte
         2
     );
     assert!(!records.iter().any(|record| record["type"] == "section"));
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--by-section",
+            "--grouping-coverage",
+            "--pattern-filter",
+            "aspect=perfect",
+            "--group-patterns-by",
+            "aspect",
+            "--corpus",
+        ])
+        .arg(&artifact)
+        .arg("--patterns")
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let records = parse_jsonl(&output.stdout);
+    let coverage = records.last().unwrap()["data"]["grouping_coverage"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        coverage
+            .iter()
+            .map(|entry| entry["pattern"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    for entry in coverage {
+        assert_eq!(entry["records_unkeyed"], 0);
+        assert_eq!(entry["records_presented"], entry["records_grouped"]);
+        assert!(entry["records_presented"].as_u64().unwrap() > 0);
+    }
 }
 
 #[test]

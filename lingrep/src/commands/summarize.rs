@@ -884,6 +884,12 @@ pub fn run(
                                     .sum(),
                             });
                         }
+                        groups.sort_by(|left, right| {
+                            right
+                                .pattern_sentences
+                                .cmp(&left.pattern_sentences)
+                                .then_with(|| left.value.cmp(&right.value))
+                        });
                         section.patterns.clear();
                     }
                     section.pattern_metadata =

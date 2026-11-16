@@ -504,18 +504,22 @@ collide with another pattern's complete key.
 record. Each entry names a published pattern and reports `records_presented`,
 `records_grouped` and `records_unkeyed`; presented equals grouped plus unkeyed.
 Counts describe records admitted to grouping after matcher selection and catalog
-publication policy, before unkeyed records are omitted or `--top` selects rows.
+publication policy and any pattern-metadata filter, before unkeyed records are
+omitted or `--top` selects rows.
 A missing projected attribute or capture increments unkeyed; a scalar or list
 key that is available increments grouped once per record. These are record
 counts, not distinct key counts or the raw `matches_found` counter.
 
-Every published pattern appears in catalog order, including patterns with zero
-records. With `--by-document`, each `document` record also carries a sparse
+Every eligible published pattern appears in catalog order, including patterns
+with zero records. With `--by-document`, each `document` record also carries a sparse
 `grouping_coverage` array: omitted patterns have zero presented records, and an
 empty array means no published record reached grouping in that document.
 The arrays are absent unless requested, so existing JSONL and keyed rows remain
 unchanged. Coverage counters spill under the shared `--max-temp-bytes` limit;
 a failed run never publishes successful completion coverage.
+
+With a pattern-metadata filter, coverage includes only eligible published names.
+Metadata category rows do not merge coverage records for their member patterns.
 
 ### Counting per document
 
@@ -577,8 +581,8 @@ record has an empty `patterns` array and a `pattern_metadata` object containing
 raw `value`, the member `patterns`, summed `matches`, and `pattern_sentences`:
 the sum of each member pattern's `sentences_matched`. Two distinct published pattern names in one sentence contribute two
 pattern–sentence occurrences, including when their spans coincide. This is not a count of distinct sentences. Rates use admitted sentences
-as the denominator and may exceed 100%. Missing/non-string grouping values are
-omitted and included in `omitted_patterns`; no replacement category is invented.
+as the denominator and may exceed 100%. Groups are ordered by descending pattern–sentence count, then value.
+Missing/non-string grouping values are omitted and included in `omitted_patterns`; no replacement category is invented.
 The ordinary keyed `summary` records remain per pattern within the selection.
 The `run` record also declares `pattern_metadata` with the filter, grouping key
 and omitted-pattern count, including when the admitted scope is empty.
@@ -595,7 +599,8 @@ ling --json summarize --by-section --corpus paper.lingcorpus \
 
 The section-analysis page offers the same metadata selection and row grouping.
 Distribution, rate contrast and both cluster trees use the selected category
-rows. Category labels are not links to an individual member pattern.
+rows, ordered by their total in the displayed sections. Category labels are not
+links to an individual member pattern.
 
 ### Counting per metadata value
 
