@@ -14,7 +14,7 @@ use rayon::ThreadPoolBuilder;
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
 use super::query_projection::token_evidence;
-use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
+use super::query_resolution::{QueryProjection, ResolvedMatchingQuery, resolve_matching_query};
 use super::query_scope::parse_scope;
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
@@ -146,6 +146,13 @@ pub fn run(
     if args.retain.is_some() && output != OutputMode::Jsonl {
         return Err(CliError::InvalidArgs("--retain requires --json".into()));
     }
+    if (args.publish_all_attributes || !args.publish_attribute.is_empty())
+        && output != OutputMode::Jsonl
+    {
+        return Err(CliError::InvalidArgs(
+            "--publish-attribute and --publish-all-attributes require --json".into(),
+        ));
+    }
     let context = resolve_match_context(output, args.context);
     let limit = if args.ending_report.is_some() {
         None
@@ -261,18 +268,6 @@ pub fn run(
                 message: format!("failed to create worker pool: {error}"),
             })?,
     );
-    // The one attribute set this run publishes. It is what a prepared source
-    // decodes, what the `run` record declares, and what publication filters
-    // every token by. One value rather than three, so a declaration cannot
-    // drift from the records it describes — and so a direct run and a prepared
-    // run over the same catalog publish *equal* evidence, which
-    // `assert_jsonl_evidence_parity` pins. A prepared token carries only the
-    // projection, so the filter is a no-op there; a direct token carries the
-    // whole schema, so the filter is what narrows it to the same set.
-    // Context rendering reads the same portable `text` values that
-    // `cached_run_attributes` always includes. Requiring a UniDic-specific
-    // raw-text field here would make an otherwise portable catalog impossible
-    // to bind to Sudachi or an external analyzer.
     let mut projected_attributes = cached_run_attributes(&compiled.matcher);
     if output == OutputMode::Human {
         projected_attributes.push(
@@ -288,11 +283,7 @@ pub fn run(
         projected_attributes.sort_unstable();
         projected_attributes.dedup();
     }
-    let published_projection = PublishedProjection::new(&projected_attributes);
-    // Evidence words read their values from the sentence rather than from
-    // `tokens`, so a prepared source must decode them without the run
-    // publishing them; the schema filter drops those the corpus lacks.
-    let graph_scalars = args.evidence.then(|| projected_attributes.clone());
+    let mut published_attributes = projected_attributes.clone();
     if args.evidence {
         projected_attributes.extend(EVIDENCE_ATTRIBUTES.iter().map(|key| {
             lingrep_core::token_match::AttributeKey::new(key).expect("canonical evidence key")
@@ -313,7 +304,11 @@ pub fn run(
         &args.input,
         selected_corpus,
         &compiled,
-        &projected_attributes,
+        QueryProjection {
+            selected: &projected_attributes,
+            additional: &args.publish_attribute,
+            all: args.publish_all_attributes,
+        },
         scope_clause.as_ref(),
         config,
         terminal,
@@ -327,6 +322,20 @@ pub fn run(
             && scope_clause.is_none(),
         false,
     )?;
+    if args.publish_all_attributes {
+        published_attributes.extend_from_slice(bound.projection().keys());
+    } else {
+        published_attributes.extend(
+            args.publish_attribute
+                .iter()
+                .filter(|key| bound.projection().keys().contains(key))
+                .cloned(),
+        );
+    }
+    let published_projection = PublishedProjection::new(&published_attributes);
+    let graph_scalars = args
+        .evidence
+        .then(|| published_projection.attributes().to_vec());
     let run_corpus = lifecycle.run_corpus();
     let run_inventory = lifecycle.run_inventory();
     let run_id = random_id();

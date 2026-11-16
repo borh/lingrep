@@ -131,12 +131,69 @@ impl QueryScope {
     }
 }
 
+pub(crate) struct QueryProjection<'a> {
+    pub(crate) selected: &'a [AttributeKey],
+    pub(crate) additional: &'a [AttributeKey],
+    pub(crate) all: bool,
+}
+
+impl QueryProjection<'_> {
+    fn bind(
+        &self,
+        compiled: &CompileOutput,
+        schema: &TokenSchema,
+        analyzer: &str,
+        config: &ExecutionCliConfig,
+    ) -> Result<BoundCatalog, CliError> {
+        let catalog_attributes = compiled.matcher.execution_attributes();
+        let mut attributes = self
+            .selected
+            .iter()
+            .filter(|key| catalog_attributes.contains(key) || schema.keys().contains(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        if self.all {
+            attributes.extend_from_slice(schema.keys());
+        }
+        for key in self.additional.iter().collect::<BTreeSet<_>>() {
+            if schema.keys().contains(key) {
+                attributes.push(key.clone());
+            } else if !catalog_attributes.contains(key) {
+                super::query_support::write_warning(
+                    &config.stderr,
+                    config.diagnostic_format,
+                    crate::protocol::diagnostic::DiagnosticStage::Catalog,
+                    "attribute_unavailable",
+                    format!(
+                        "--publish-attribute {key}: this corpus's token schema ({analyzer}) \
+                         does not carry `{key}`; it will be omitted from exported tokens"
+                    ),
+                    None,
+                    Vec::new(),
+                )
+                .map_err(CliError::Io)?;
+            }
+        }
+        let bound = compiled
+            .matcher
+            .bind_with_projection(schema, attributes)
+            .map_err(|error| crate::attribute_binding::bind_refusal(&error, analyzer))?;
+        crate::attribute_binding::write_unavailable_attribute_notices(
+            &bound,
+            &compiled.analysis,
+            analyzer,
+            config,
+        )?;
+        Ok(bound)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_matching_query(
     input: &QueryInputArgs,
     selected_corpus: Option<&Path>,
     compiled: &CompileOutput,
-    projected_attributes: &[AttributeKey],
+    projection: QueryProjection<'_>,
     scope_clause: Option<&ScopeClause>,
     config: &ExecutionCliConfig,
     terminal: &TerminalArbiter,
@@ -152,7 +209,6 @@ pub(crate) fn resolve_matching_query(
             "--sample-blocks requires --corpus".into(),
         ));
     }
-    let catalog_attributes = compiled.matcher.execution_attributes();
     let division_kinds = compiled.matcher.lookaround_division_kinds();
     let root = input.root.as_deref();
     let stdin = selected_corpus.is_none() && root.is_none_or(|path| path == Path::new("-"));
@@ -161,22 +217,7 @@ pub(crate) fn resolve_matching_query(
         let artifact = CorpusArtifact::open(path)?;
         let schema = artifact.token_schema()?;
         let analyzer_name = crate::attribute_binding::analyzer_name(artifact.analyzer());
-        let bound = compiled
-            .matcher
-            .bind_with_projection(
-                &schema,
-                projected_attributes
-                    .iter()
-                    .filter(|key| catalog_attributes.contains(key) || schema.keys().contains(key))
-                    .cloned(),
-            )
-            .map_err(|error| crate::attribute_binding::bind_refusal(&error, &analyzer_name))?;
-        crate::attribute_binding::write_unavailable_attribute_notices(
-            &bound,
-            &compiled.analysis,
-            &analyzer_name,
-            config,
-        )?;
+        let bound = projection.bind(compiled, &schema, &analyzer_name, config)?;
         let provenance = if needs_provenance
             || scope_clause.is_some()
             || metadata_projection.is_some()
@@ -341,22 +382,7 @@ pub(crate) fn resolve_matching_query(
         let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
         let analyzer_run = AnalyzerRun::new(&analyzer_record, "locally-executed", &schema);
         let analyzer_name = crate::attribute_binding::analyzer_name(&analyzer_record);
-        let bound = compiled
-            .matcher
-            .bind_with_projection(
-                &schema,
-                projected_attributes
-                    .iter()
-                    .filter(|key| catalog_attributes.contains(key) || schema.keys().contains(key))
-                    .cloned(),
-            )
-            .map_err(|error| crate::attribute_binding::bind_refusal(&error, &analyzer_name))?;
-        crate::attribute_binding::write_unavailable_attribute_notices(
-            &bound,
-            &compiled.analysis,
-            &analyzer_name,
-            config,
-        )?;
+        let bound = projection.bind(compiled, &schema, &analyzer_name, config)?;
         crate::cli::validate_format_root(format, root, stdin).map_err(CliError::InvalidArgs)?;
 
         if let Some(clause) = scope_clause {

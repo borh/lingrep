@@ -1521,6 +1521,113 @@ fn a_published_token_carries_exactly_the_declared_projection() {
     );
 }
 
+#[test]
+fn extra_published_attributes_preserve_direct_and_prepared_evidence() {
+    let fixture = JsonlEvidenceFixture::new();
+    for extra in [
+        vec![],
+        vec![
+            "--publish-attribute",
+            "unidic.cform",
+            "--publish-attribute",
+            "lemma",
+        ],
+        vec![
+            "--publish-attribute",
+            "unidic.cform",
+            "--publish-attribute",
+            "lemma",
+            "--evidence",
+        ],
+        vec!["--publish-all-attributes"],
+    ] {
+        let direct = fixture.query_direct(&fixture.matches, &extra);
+        let prepared = fixture.query_prepared(&fixture.artifact, &fixture.matches, &extra);
+        assert_jsonl_evidence_parity(&direct, &prepared, 2);
+        let events = parse_jsonl(&prepared.stdout);
+        let declared = events[0]["data"]["published_attributes"]
+            .as_array()
+            .unwrap();
+        let expected = if extra.is_empty() {
+            vec![Value::from("text")]
+        } else if extra[0] == "--publish-all-attributes" {
+            let mut keys = events[0]["data"]["analyzer"]["schema"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| field["key"].clone())
+                .collect::<Vec<_>>();
+            keys.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+            keys
+        } else {
+            vec![
+                Value::from("lemma"),
+                Value::from("text"),
+                Value::from("unidic.cform"),
+            ]
+        };
+        assert_eq!(*declared, expected, "{extra:?}");
+        for event in events.iter().filter(|event| event["type"] == "match") {
+            for token in event["data"]["tokens"].as_array().unwrap() {
+                let keys = token["attributes"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(|key| Value::from(key.clone()))
+                    .collect::<Vec<_>>();
+                if extra.first() == Some(&"--publish-all-attributes") {
+                    assert!(keys.iter().all(|key| expected.contains(key)), "{token}");
+                    assert!(keys.contains(&Value::from("unidic.pos1")), "{token}");
+                } else {
+                    assert_eq!(keys, expected, "{extra:?}: {token}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn extra_published_attributes_require_json_output() {
+    for option in ["--publish-attribute=lemma", "--publish-all-attributes"] {
+        let output = lingrep()
+            .args(["matches", "--pattern", "p := [text=猫].", option, "-"])
+            .write_stdin("猫。\n")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("require --json"));
+    }
+}
+
+#[test]
+fn extra_published_attributes_validate_keys_and_warn_when_unavailable() {
+    let fixture = JsonlEvidenceFixture::new();
+    for prepared in [false, true] {
+        let query = |keys: &[&str]| {
+            if prepared {
+                fixture.query_prepared(&fixture.artifact, &fixture.matches, keys)
+            } else {
+                fixture.query_direct(&fixture.matches, keys)
+            }
+        };
+        let missing = query(&["--publish-attribute", "dep.head"]);
+        assert_success(&missing);
+        let stderr = String::from_utf8_lossy(&missing.stderr);
+        assert!(stderr.contains("attribute_unavailable"), "{stderr}");
+        assert!(stderr.contains("--publish-attribute dep.head"), "{stderr}");
+        let events = parse_jsonl(&missing.stdout);
+        assert_eq!(
+            events[0]["data"]["published_attributes"],
+            serde_json::json!(["text"])
+        );
+        let invalid = query(&["--publish-attribute", "orth"]);
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(invalid.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains("--publish-attribute"));
+    }
+}
+
 /// The identity is a property of the run, not of each of its 12.2M tokens.
 #[test]
 fn a_published_token_does_not_repeat_the_schema_identity() {

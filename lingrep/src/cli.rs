@@ -607,6 +607,19 @@ pub struct MatchesArgs {
     #[arg(long, help_heading = "Output")]
     pub evidence: bool,
 
+    /// Include this token attribute in matches (repeatable; requires --json).
+    #[arg(
+        long,
+        value_name = "KEY",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub publish_attribute: Vec<lingrep_core::token_match::AttributeKey>,
+
+    /// Include every token-schema attribute in matches (requires --json).
+    #[arg(long, help_heading = "Output", hide_short_help = true)]
+    pub publish_all_attributes: bool,
+
     /// Color the nearest N context morphemes on each side of the hit.
     #[arg(
         long,

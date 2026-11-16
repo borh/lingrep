@@ -126,7 +126,12 @@ for a closed text-output pipe; an incomplete SVG write exits 1.
 
 `matches` emits canonical per-match evidence. A published token carries only the
 attributes the run projects: the catalog's own, plus `text`, plus those its
-policy projects. The `run` record lists them in `published_attributes`.
+policy projects. Add `--publish-attribute lemma` (repeatable) to include more
+attributes, or `--publish-all-attributes` for every attribute in the corpus's token
+schema. Both options require `--json`. Unavailable extra keys produce an
+`attribute_unavailable` warning and are omitted. The `run` record lists the
+published attributes in `published_attributes`; individual tokens omit values they
+do not carry.
 `--context N` projects at most `N` tokens to each side and never changes the
 matched span. `summarize` performs exact external aggregation before publishing
 rows. Use `--limit N` to publish only the first N matches.

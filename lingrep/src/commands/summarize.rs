@@ -17,7 +17,7 @@ use serde::ser::SerializeMap;
 
 use super::CommandOutcome;
 use super::query_completion::FilesystemCompletion;
-use super::query_resolution::{ResolvedMatchingQuery, resolve_matching_query};
+use super::query_resolution::{QueryProjection, ResolvedMatchingQuery, resolve_matching_query};
 use super::query_scope::{document_values, parse_scope};
 use super::query_support::{
     execution_output_error, execution_output_io, protocol_execution_limits, publish_query_jsonl,
@@ -347,7 +347,11 @@ pub fn run(
         &args.input,
         selected_corpus,
         &compiled,
-        &projected_attributes,
+        QueryProjection {
+            selected: &projected_attributes,
+            additional: &[],
+            all: false,
+        },
         scope_clause.as_ref(),
         config,
         terminal,
