@@ -4,6 +4,8 @@ export interface Question { readonly source: string; readonly dataset: string; r
 export type AttributeValue = string | readonly string[];
 export interface Token { readonly index: number; readonly attributes: Readonly<Record<string, AttributeValue>> & {readonly text:string}; }
 export const attributeMembers = (value:AttributeValue|undefined):readonly string[] => value===undefined?[]:typeof value==='string'?[value]:value;
+export interface GraphNode { readonly node_kind: string; readonly token_index?: number; }
+export type GraphBinding = { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
 export interface MatchRecord {
   readonly sequence: number;
   readonly pattern: string;
@@ -13,6 +15,8 @@ export interface MatchRecord {
   readonly source_name: string;
   readonly source_metadata?: { readonly document?: { readonly title?: string; readonly author?: string } };
   readonly surface: string;
+  readonly captures?: readonly { readonly name: string; readonly span: { readonly start: number; readonly end: number } }[];
+  readonly graph_bindings?: readonly GraphBinding[];
   readonly tokens: readonly Token[];
   readonly left_context?: readonly Token[];
   readonly right_context?: readonly Token[];

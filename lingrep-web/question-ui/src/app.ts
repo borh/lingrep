@@ -7,6 +7,8 @@ import {defaultView,parseView,locationURL,savedQuestion,seedParams} from './loca
 import type {ViewLocation,ConcordanceLocation,HitLocation} from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
+import {evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs} from './dependency.js';
+import type {Arc,EvidenceWord} from './dependency.js';
 
 import { element as $, errorMessage, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection } from './model.js';
 import type { Behavior, Locale, Configuration, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
@@ -17,7 +19,7 @@ let locale: Locale = localStorage.getItem('ling-questions-locale') === 'ja' ? 'j
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
   readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',emptyTitle:'調べたい表現から始める。',emptyBody:'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。',example:'このパターンを検索',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'作品を読む',
-  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',filter:'このページを絞り込む',noLines:'このパターンの用例はまだありません。',noFilter:'絞り込みに一致する用例はありません。',download:'全結果を JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',
+  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',filter:'このページを絞り込む',noLines:'このパターンの用例はまだありません。',noFilter:'絞り込みに一致する用例はありません。',download:'全結果を JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語',evidenceRoles:'役割',evidenceInSpan:'範囲内',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',filter:'Filter this page',noLines:'No lines for this pattern yet.',noFilter:'No examples on this page contain this text.',download:'Download all results as JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
@@ -31,8 +33,9 @@ const exampleSteps=document.createElement('nav');exampleSteps.className='example
 exampleSteps.innerHTML='<button type="button" data-example-step="-1"></button><button type="button" data-example-step="1"></button>';
 const tokenDetails=document.createElement('details');tokenDetails.id='token-details';tokenDetails.open=!matchMedia('(max-width:480px)').matches;
 const tokenSummary=document.createElement('summary');tokenDetails.append(tokenSummary);
-for(const element of [...tokenLab.children].slice(1))tokenDetails.append(element);
-tokenLab.append(focusedSentence,exampleSteps,tokenDetails);
+const dependencyPanel=$('#dependency-panel');
+for(const element of [...tokenLab.children].slice(1))if(element!==dependencyPanel)tokenDetails.append(element);
+tokenLab.append(focusedSentence,exampleSteps,dependencyPanel,tokenDetails);
 function localizeExample(){tokenSummary.textContent=locale==='ja'?'トークンを調べる':'Inspect tokens';$('[data-example-step="-1"]',exampleSteps).textContent=locale==='ja'?'前の用例':'Previous example';$('[data-example-step="1"]',exampleSteps).textContent=locale==='ja'?'次の用例':'Next example';}
 const readerPanel=$<HTMLDialogElement>('#inspector');
 const readerStatus=document.createElement('p');readerStatus.className='reader-status';readerStatus.setAttribute('role','status');$('#document-body').before(readerStatus);
@@ -174,7 +177,7 @@ const post = <T = {id: string}>(path:string,body:object={},signal?:AbortSignal) 
 
 function translate() {
   document.documentElement.lang = locale;
-  localizeExample();
+  localizeExample();renderDependencies();
   for (const element of document.querySelectorAll<HTMLElement>('[data-t]')) element.textContent = t(element.dataset.t??'');
   $('#language').textContent = locale === 'en' ? '日本語' : 'English';
   $('.sentence-period').textContent = locale === 'ja' ? 'を探す。' : '.';
@@ -650,6 +653,7 @@ async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
     for(const token of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button'))token.addEventListener('click',()=>selectToken(Number(token.dataset.token)));
     selectToken(tokenIndex);
     tokenLab.hidden=false;button.after(tokenLab);button.setAttribute('aria-expanded','true');
+    renderDependencies();
     $<HTMLAnchorElement>('#document').setAttribute('href',hrefFor(run,hitLocation(run,row,'reader')));
     $<HTMLAnchorElement>('#close-token').setAttribute('href',hrefFor(run,concordanceFor(run)));
     $<HTMLAnchorElement>('#close-inspector').setAttribute('href',hrefFor(run,viewLocation.kind==='reader'?viewLocation.returnTo:hitLocation(run,row,'example')));
@@ -697,6 +701,63 @@ function selectToken(index: number) {
   $<HTMLButtonElement>('#attribute-remix').disabled=attributeMember===undefined||conditions.some(condition=>condition.tokenIndex===tokenIndex&&condition.key===field&&condition.value===attributeMember);
   renderComposer();
 }
+
+type DependencyView='bunsetsu'|'words'|'vertical';
+let dependencyChoice:DependencyView|null=null;
+const ARC_STEP=24,ARC_LABEL=16,TREE_ROW=26,TREE_COLUMN=9;
+const arcLayouts=new WeakMap<HTMLElement,readonly Arc[]>();
+const svgNode=(name:string,attributes:Record<string,string|number>)=>{const node=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));return node;};
+// Chip positions come from layout, so arcs are redrawn whenever the chip row is laid out again (fonts, locale, printing).
+function drawArcs(chips:HTMLElement){
+  const arcs=arcLayouts.get(chips);if(!arcs)return;
+  chips.querySelector(':scope>svg')?.remove();
+  const items=[...chips.querySelectorAll<HTMLElement>(':scope>[data-item]')],top=parseFloat(chips.style.paddingTop);
+  const x=(position:number)=>items[position].offsetLeft+items[position].offsetWidth/2;
+  const svg=svgNode('svg',{width:chips.scrollWidth,height:top,'aria-hidden':'true'});
+  for(const arc of [...arcs].sort((a,b)=>Number(a.bound)-Number(b.bound))){
+    const x1=x(arc.from),x2=x(arc.to),offset=x1<x2?4:-4,y=top-1,h=arc.level*ARC_STEP,kind=arc.bound?'dependency-arc bound':'dependency-arc';
+    svg.append(svgNode('path',{class:kind,d:`M${x1+offset},${y} C${x1+offset},${y-h} ${x2-offset},${y-h} ${x2-offset},${y} M${x2-offset-4},${y-7} L${x2-offset},${y} L${x2-offset+4},${y-7}`}));
+    const label=svgNode('text',{class:kind,x:(x1+x2)/2,y:y-h*0.75-4,'text-anchor':'middle'});label.textContent=arc.rel;svg.append(label);
+  }
+  chips.prepend(svg);
+}
+const arcObserver=new ResizeObserver(entries=>{for(const entry of entries)drawArcs(entry.target as HTMLElement);});
+addEventListener('beforeprint',()=>{for(const chips of document.querySelectorAll<HTMLElement>('.dependency-chips'))drawArcs(chips);});
+function roleTags(roles:readonly string[]){return roles.map(role=>`<span class="dependency-role">${escape(role)}</span>`).join('');}
+function renderDependencies(){
+  const tokens=tokenData?.tokens,row=inspecting?.row;
+  dependencyPanel.hidden=!tokens||!row||!hasDependencies(tokens);
+  if(!tokens||!row||dependencyPanel.hidden)return;
+  const words=evidenceWords(row,tokens.length),byIndex=new Map(words.map(word=>[word.index,word])),starts=bunsetsuStarts(tokens);
+  const view:DependencyView=dependencyChoice==='bunsetsu'&&!starts||!dependencyChoice?starts?'bunsetsu':'words':dependencyChoice;
+  for(const button of dependencyPanel.querySelectorAll<HTMLButtonElement>('[data-dependency-view]')){button.hidden=button.dataset.dependencyView==='bunsetsu'&&!starts;button.setAttribute('aria-pressed',String(button.dataset.dependencyView===view));}
+  const diagram=$('#dependency-diagram'),value=(index:number,key:string)=>{const value=tokens[index].attributes[key];return typeof value==='string'?value:'';};
+  arcObserver.disconnect();
+  if(view==='vertical'){
+    const arcs=verticalArcs(tokens,words),gutter=Math.max(0,...arcs.map(arc=>arc.column))*TREE_COLUMN+14;
+    const svg=svgNode('svg',{width:gutter,height:tokens.length*TREE_ROW,'aria-hidden':'true'});
+    for(const arc of [...arcs].sort((a,b)=>Number(a.bound)-Number(b.bound))){
+      const y1=(arc.from+.5)*TREE_ROW,y2=(arc.to+.5)*TREE_ROW,x=gutter-6-arc.column*TREE_COLUMN;
+      svg.append(svgNode('path',{class:arc.bound?'dependency-arc bound':'dependency-arc',d:`M${gutter},${y1} H${x} V${y2} H${gutter-3} M${gutter-8},${y2-4} L${gutter-3},${y2} L${gutter-8},${y2+4}`}));
+    }
+    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}→${escape(value(index,'dep.head'))}</span>`;}).join('')}</div>`;
+    diagram.firstElementChild!.prepend(svg);
+  }else{
+    const units=dependencyUnits(tokens,view==='bunsetsu'?starts:null),{items,arcs}=focusLayout(units,words);
+    const gap=(count:number)=>locale==='ja'?`… ${count}${view==='bunsetsu'?'文節':'語'} …`:`… ${count} ${view==='bunsetsu'?'bunsetsu':count===1?'word':'words'} …`;
+    const chips=document.createElement('div');chips.className='dependency-chips';chips.style.paddingTop=`${Math.max(0,...arcs.map(arc=>arc.level))*ARC_STEP+ARC_LABEL}px`;
+    chips.innerHTML=items.map((item,position)=>{
+      if(item.kind==='gap')return `<span class="dependency-gap" data-item="${position}">${escape(gap(item.count))}</span>`;
+      const unit=units[item.unit],held:EvidenceWord[]=[];let text='';
+      for(let index=unit.first;index<=unit.last;index++){text+=tokens[index].attributes.text;const word=byIndex.get(index);if(word)held.push(word);}
+      const roles=held.flatMap(word=>word.roles);
+      return `<span class="dependency-chip${held.some(word=>word.inSpan)?' in-span':''}${roles.length?' bound':''}" data-item="${position}"><span>${roleTags(roles)}${escape(text)}</span><small>${escape([...new Set(held.map(word=>value(word.index,'upos')))].join(' '))}</small></span>`;
+    }).join('');
+    diagram.replaceChildren(chips);arcLayouts.set(chips,arcs);arcObserver.observe(chips);
+  }
+  $('#dependency-evidence').innerHTML=words.map(word=>`<tr><td>${word.index+1}</td><td>${escape(word.roles.join(', '))}</td><td>${locale==='ja'?word.inSpan?'はい':'いいえ':word.inSpan?'yes':'no'}</td>${['text','lemma','upos','dep.head','dep.rel'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}</tr>`).join('');
+}
+dependencyPanel.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-dependency-view]');if(!button)return;dependencyChoice=button.dataset.dependencyView as DependencyView;renderDependencies();});
 
 let readerEpoch=0;
 function openReader(){const reader=$<HTMLDialogElement>('#inspector');tokenLab.after(reader);reader.show();reader.setAttribute('aria-modal','false');reader.scrollIntoView({block:'nearest'});}

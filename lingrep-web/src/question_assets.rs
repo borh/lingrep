@@ -54,6 +54,10 @@ async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Response {
             "text/javascript; charset=utf-8",
             include_str!("../question-ui/composer.js"),
         ),
+        "dependency.js" => (
+            "text/javascript; charset=utf-8",
+            include_str!("../question-ui/dependency.js"),
+        ),
         "document.js" => (
             "text/javascript; charset=utf-8",
             include_str!("../question-ui/document.js"),
@@ -121,6 +125,7 @@ mod tests {
             "/research/tools/assets/questions/style.css",
             "/research/tools/assets/questions/app.js",
             "/research/tools/assets/questions/service.js",
+            "/research/tools/assets/questions/dependency.js",
             "/research/tools/assets/questions/state.mjs",
         ] {
             let response = app

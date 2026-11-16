@@ -1,0 +1,110 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs} from './dependency.js';
+
+// Rows are [text, upos, head (1-based, 0 = root), rel, bunsetsu begins].
+const conllu=rows=>rows.map(([text,upos,head,rel,begins],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel,'conllu.misc':[`BunsetuBILabel=${begins?'B':'I'}`,'SpaceAfter=No']}}));
+const ginza=rows=>rows.map(([text,upos,head,rel,begins],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel,'spacy.ginza.bunsetu':begins?'B':'I'}}));
+const unlabelled=rows=>rows.map(([text,upos,head,rel],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel}}));
+
+const KUSAMAKURA=[
+  ['滑か','ADJ',3,'acl',1],['なる','AUX',1,'cop',0],['坂','NOUN',11,'obj',1],['を','ADP',3,'case',0],['、','PUNCT',3,'punct',0],
+  ['護謨','NOUN',8,'nmod',1],['の','ADP',6,'case',0],['輪','NOUN',11,'nsubj',1],['が','ADP',8,'case',0],['緩々','ADV',11,'advmod',1],
+  ['練り上る','VERB',22,'advcl',1],['如く','AUX',11,'aux',0],['、','PUNCT',11,'punct',0],['車','NOUN',22,'nsubj',1],['は','ADP',14,'case',0],
+  ['静か','ADJ',22,'advcl',1],['に','AUX',16,'cop',0],['丘','NOUN',20,'nmod',1],['の','ADP',18,'case',0],['上','NOUN',22,'obl',1],['へ','ADP',20,'case',0],
+  ['登っ','VERB',0,'root',1],['て','SCONJ',22,'mark',0],['行っ','VERB',22,'aux',0],['た','AUX',22,'aux',0],['。','PUNCT',22,'punct',0],
+];
+// 坂を、 followed by eleven clauses that each modify the final verb: 105 words, verb at word 103.
+function longSentence(){
+  const rows=[['坂','NOUN',null,'obj',1],['を','ADP',1,'case',0],['、','PUNCT',1,'punct',0]];
+  for(let clause=0;clause<11;clause++){
+    const base=rows.length;
+    for(const [text,upos,offset,rel,begins] of [['護謨','NOUN',3,'nmod',1],['の','ADP',1,'case',0],['輪','NOUN',7,'nsubj',1],['が','ADP',3,'case',0],['緩々','ADV',7,'advmod',1],['と','ADP',5,'case',0],['練り上る','VERB',null,'advcl',1],['如く','AUX',7,'aux',0],['、','PUNCT',7,'punct',0]])
+      rows.push([text,upos,offset===null?null:base+offset,rel,begins]);
+  }
+  const root=rows.length+1;
+  rows.push(['上っ','VERB',0,'root',1],['た','AUX',root,'aux',0],['。','PUNCT',root,'punct',0]);
+  return rows.map(([text,upos,head,rel,begins])=>[text,upos,head??root,rel,begins]);
+}
+// The npv match: captures n and p form the span; the where clause binds v as a graph node.
+const npv=(n,v)=>({span:{start:n,end:n+2},captures:[{name:'n',span:{start:n,end:n+1}},{name:'p',span:{start:n+1,end:n+2}}],graph_bindings:[{binding_kind:'node',name:'v',node:{node_kind:'word',token_index:v},attributes:[]}]});
+const layout=(tokens,row,view)=>{const starts=view==='bunsetsu'?bunsetsuStarts(tokens):null;if(view==='bunsetsu')assert.ok(starts);return focusLayout(dependencyUnits(tokens,starts),evidenceWords(row,tokens.length));};
+
+test('evidence words are the span, every capture and every graph-bound word, as in ling matches --evidence',()=>{
+  const row={span:{start:2,end:4},captures:[{name:'n',span:{start:2,end:3}},{name:'n',span:{start:2,end:3}},{name:'p',span:{start:3,end:4}}],graph_bindings:[
+    {binding_kind:'node',name:'v',node:{node_kind:'word',token_index:10},attributes:[]},
+    {binding_kind:'edge',name:'e',head:{node_kind:'word',token_index:10},dependent:{node_kind:'word',token_index:2},relation:'obj'},
+    {binding_kind:'node',name:'x',node:{node_kind:'empty',boundary:3,subindex:1},attributes:[]},
+    {binding_kind:'node',name:'far',node:{node_kind:'word',token_index:99},attributes:[]},
+  ]};
+  assert.deepEqual(evidenceWords(row,26),[
+    {index:2,roles:['e.dependent','n'],inSpan:true},
+    {index:3,roles:['p'],inSpan:true},
+    {index:10,roles:['e.head','v'],inSpan:false},
+  ]);
+  assert.deepEqual(evidenceWords({span:{start:0,end:2}},4),[{index:0,roles:[],inSpan:true},{index:1,roles:[],inSpan:true}]);
+});
+
+test('文節 units fold GiNZA labels from conllu.misc and spacy.ginza.bunsetu identically, and need a label on every word',()=>{
+  const fromMisc=bunsetsuStarts(conllu(KUSAMAKURA)),fromSpacy=bunsetsuStarts(ginza(KUSAMAKURA));
+  assert.deepEqual(fromMisc,KUSAMAKURA.map(row=>row[4]===1));
+  assert.deepEqual(fromSpacy,fromMisc);
+  assert.deepEqual(dependencyUnits(conllu(KUSAMAKURA),fromMisc).map(unit=>[unit.first,unit.last,unit.head,unit.rel]),[
+    [0,1,1,'acl'],[2,4,5,'obj'],[5,6,3,'nmod'],[7,8,5,'nsubj'],[9,9,5,'advmod'],[10,12,10,'advcl'],
+    [13,14,10,'nsubj'],[15,16,10,'advcl'],[17,18,9,'nmod'],[19,20,10,'obl'],[21,25,null,'root'],
+  ]);
+  assert.equal(bunsetsuStarts(unlabelled(KUSAMAKURA)),null);
+  const partial=conllu(KUSAMAKURA);partial[4]={index:4,attributes:{...partial[4].attributes,'conllu.misc':['SpaceAfter=No']}};
+  assert.equal(bunsetsuStarts(partial),null);
+});
+
+test('focused 文節 view keeps the role 文節 and folds the rest into gap counts',()=>{
+  const expected={items:[{kind:'gap',count:1},{kind:'unit',unit:1},{kind:'gap',count:3},{kind:'unit',unit:5},{kind:'gap',count:5}],arcs:[{from:3,to:1,rel:'obj',level:1,bound:true}]};
+  assert.deepEqual(layout(conllu(KUSAMAKURA),npv(2,10),'bunsetsu'),expected);
+  assert.deepEqual(layout(ginza(KUSAMAKURA),npv(2,10),'bunsetsu'),expected);
+});
+
+test('focused 語 view draws arcs head to dependent, stacked by nesting depth',()=>{
+  assert.deepEqual(layout(conllu(KUSAMAKURA),npv(2,10),'words'),{
+    items:[{kind:'gap',count:2},{kind:'unit',unit:2},{kind:'unit',unit:3},{kind:'gap',count:6},{kind:'unit',unit:10},{kind:'gap',count:15}],
+    arcs:[{from:1,to:2,rel:'case',level:1,bound:true},{from:4,to:1,rel:'obj',level:2,bound:true}],
+  });
+  // Unlabelled tokens give the same 語 layout: there is no 文節 to fold.
+  assert.deepEqual(layout(unlabelled(KUSAMAKURA),npv(2,10),'words'),layout(conllu(KUSAMAKURA),npv(2,10),'words'));
+});
+
+test('a 105-word sentence keeps a verb 100 words beyond the context window',()=>{
+  const tokens=conllu(longSentence());
+  assert.equal(tokens.length,105);
+  assert.deepEqual(layout(tokens,npv(0,102),'words'),{
+    items:[{kind:'unit',unit:0},{kind:'unit',unit:1},{kind:'gap',count:100},{kind:'unit',unit:102},{kind:'gap',count:2}],
+    arcs:[{from:0,to:1,rel:'case',level:1,bound:true},{from:3,to:0,rel:'obj',level:2,bound:true}],
+  });
+  assert.deepEqual(layout(tokens,npv(0,102),'bunsetsu'),{
+    items:[{kind:'unit',unit:0},{kind:'gap',count:44},{kind:'unit',unit:45}],
+    arcs:[{from:2,to:0,rel:'obj',level:1,bound:true}],
+  });
+});
+
+test('an arc between span words without roles is shown but not bound',()=>{
+  assert.deepEqual(layout(unlabelled(KUSAMAKURA),{span:{start:2,end:4}},'words'),{
+    items:[{kind:'gap',count:2},{kind:'unit',unit:2},{kind:'unit',unit:3},{kind:'gap',count:22}],
+    arcs:[{from:1,to:2,rel:'case',level:1,bound:false}],
+  });
+});
+
+test('the vertical tree draws every arc and gives overlapping arcs separate gutter columns',()=>{
+  const tokens=unlabelled([['坂','NOUN',4,'obj'],['を','ADP',1,'case'],['一つ','NUM',4,'obl'],['上った','VERB',0,'root']]);
+  assert.deepEqual(verticalArcs(tokens,evidenceWords(npv(0,3),4)),[
+    {from:0,to:1,rel:'case',column:1,bound:true},
+    {from:3,to:2,rel:'obl',column:1,bound:false},
+    {from:3,to:0,rel:'obj',column:2,bound:true},
+  ]);
+});
+
+test('dependency views require a basic head on every word',()=>{
+  assert.equal(hasDependencies(conllu(KUSAMAKURA)),true);
+  assert.equal(hasDependencies([{index:0,attributes:{text:'猫',upos:'NOUN'}}]),false);
+  assert.equal(hasDependencies(unlabelled([['猫','NOUN',2,'nsubj']])),false);
+  assert.equal(hasDependencies([]),false);
+});
