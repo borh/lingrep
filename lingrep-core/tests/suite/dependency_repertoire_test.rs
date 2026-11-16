@@ -940,3 +940,107 @@ fn captured_relations_reject_missing_and_malformed_endpoint_observations() {
         );
     }
 }
+
+/// A word graph binding publishes every portable scalar the token carries,
+/// `norm` included, so `key: [$v.norm]` can be audited against the binding;
+/// a value the token lacks is omitted rather than published empty.
+#[test]
+fn word_graph_bindings_publish_norm_and_omit_absent_scalars() {
+    use lingrep_core::corpus::conllu::EnhancedNodeId;
+    use lingrep_core::fsm::{GraphBinding, GraphNodeAttribute};
+    use lingrep_core::token_match::{AttributeKey, BoundTokenSentence, TokenSchema};
+
+    let output = compile_catalog(
+        PatternSource::named(
+            "norm-binding.lx",
+            "key: [$v.norm]\nnp := (?<n> [upos=NOUN]) where (?<v> [upos=VERB]) -[obj]-> $n.",
+        ),
+        CompileLimits::default(),
+    )
+    .unwrap();
+    let schema = TokenSchema::from_keys([
+        "text", "lemma", "norm", "upos", "xpos", "dep.head", "dep.rel",
+    ])
+    .unwrap();
+    let bound = output
+        .matcher
+        .bind_with_projection(&schema, schema.keys().iter().cloned())
+        .unwrap();
+    // 坂 obj→2, 上った root; the second sentence's verb has no norm or xpos.
+    let sentence = |verb_norm: Option<&str>, verb_xpos: Option<&str>| {
+        let words: [[Option<&str>; 7]; 2] = [
+            [
+                Some("坂"),
+                Some("坂"),
+                Some("坂"),
+                Some("NOUN"),
+                Some("名詞"),
+                Some("2"),
+                Some("obj"),
+            ],
+            [
+                Some("上った"),
+                Some("上る"),
+                verb_norm,
+                Some("VERB"),
+                verb_xpos,
+                Some("0"),
+                Some("root"),
+            ],
+        ];
+        let order = [
+            "text", "lemma", "norm", "upos", "xpos", "dep.head", "dep.rel",
+        ];
+        let values = words
+            .iter()
+            .flat_map(|word| {
+                bound.projection().keys().iter().map(move |key| {
+                    let slot = order.iter().position(|name| *name == key.as_str()).unwrap();
+                    word[slot].map(Into::into)
+                })
+            })
+            .collect();
+        BoundTokenSentence::from_projected_values(bound.projection(), 2, values).unwrap()
+    };
+    let attribute = |name: &str, value: &str| GraphNodeAttribute {
+        name: AttributeKey::new(name).unwrap(),
+        value: value.into(),
+    };
+    let binding = |attributes: Vec<GraphNodeAttribute>| {
+        vec![GraphBinding::Node {
+            name: "v".into(),
+            node: EnhancedNodeId::Word { token_index: 1 },
+            attributes: attributes.into_boxed_slice(),
+        }]
+    };
+
+    let present = bound
+        .find_matches(&sentence(Some("上る"), Some("動詞")))
+        .unwrap();
+    assert_eq!(present.len(), 1);
+    assert_eq!(
+        present[0].graph_bindings.to_vec(),
+        binding(vec![
+            attribute("node.kind", "word"),
+            attribute("node.id", "2"),
+            attribute("text", "上った"),
+            attribute("lemma", "上る"),
+            attribute("norm", "上る"),
+            attribute("upos", "VERB"),
+            attribute("xpos", "動詞"),
+        ])
+    );
+
+    let absent = bound.find_matches(&sentence(None, None)).unwrap();
+    assert_eq!(absent.len(), 1);
+    assert_eq!(
+        absent[0].graph_bindings.to_vec(),
+        binding(vec![
+            attribute("node.kind", "word"),
+            attribute("node.id", "2"),
+            attribute("text", "上った"),
+            attribute("lemma", "上る"),
+            attribute("upos", "VERB"),
+        ])
+    );
+}
