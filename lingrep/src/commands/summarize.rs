@@ -1,6 +1,7 @@
 //! Exact bounded `summarize` orchestration and deferred publication.
 
-use std::collections::BTreeMap;
+use lingrep_core::fsm::metadata_projection::{MetadataPattern, PatternMetadataSelection};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -239,6 +240,33 @@ pub fn run(
         .map(|(name, ordinal)| (name.to_owned(), ordinal))
         .collect::<BTreeMap<_, _>>();
 
+    let pattern_metadata_selection = PatternMetadataSelection::parse(
+        args.pattern_filter.as_deref(),
+        args.group_patterns_by.as_deref(),
+    )
+    .map_err(CliError::InvalidArgs)?;
+    let metadata_patterns = lingrep_core::fsm::metadata_projection::coalesce_metadata(
+        descriptors.iter().map(|descriptor| MetadataPattern {
+            ordinal: descriptor.catalog_ordinal,
+            name: catalog_policy
+                .published_name(descriptor.name.as_str())
+                .to_owned(),
+            strings: descriptor
+                .metadata
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect(),
+            ambiguous: BTreeSet::new(),
+        }),
+    );
+    let pattern_projection = pattern_metadata_selection
+        .project(&metadata_patterns)
+        .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
+
     // Parsed before any input is opened: a clause is authored text, so a bad
     // one is a usage error rather than a run that reads a corpus and fails.
     let scope_clause = parse_scope(args.selection.clause.as_deref())?;
@@ -392,7 +420,16 @@ pub fn run(
         config,
         &run_id,
     )?;
+    let pattern_request =
+        (args.pattern_filter.is_some() || args.group_patterns_by.is_some()).then(|| {
+            crate::protocol::query::PatternMetadataRequest {
+                filter: args.pattern_filter.clone(),
+                group_by: args.group_patterns_by.clone(),
+                omitted_patterns: pattern_projection.omitted as u64,
+            }
+        });
     let run = QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
+        pattern_metadata: pattern_request.clone(),
         matcher_semantics_identity: lingrep_core::fsm::MATCHER_SEMANTICS_IDENTITY.to_owned(),
         run_id: run_id.clone(),
         mode: QueryMode::Summarize,
@@ -511,6 +548,8 @@ pub fn run(
             aggregation: Some(aggregation),
             aggregation_error: None,
             pattern_ordinals: &pattern_ordinals,
+            selected_patterns: (args.pattern_filter.is_some() || args.group_patterns_by.is_some())
+                .then_some(&pattern_projection.selected),
             policy: compiled.matcher.catalog_policy(),
             records_unkeyed: 0,
             documents: (args.by_document || args.write_table.is_some()).then(BTreeMap::new),
@@ -639,7 +678,11 @@ pub fn run(
                 None,
             )
         };
-        let published = pattern_ordinals.values().copied().collect::<Vec<_>>();
+        let published = pattern_projection
+            .selected
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
         let mut sections = sections
             .map(|sections| sections.into_records(&published, &pattern_names))
             .transpose()
@@ -778,7 +821,45 @@ pub fn run(
             )?;
         }
         if let Some(sections) = sections.as_mut() {
-            while let Some(section) = sections.next_record().map_err(CliError::Aggregation)? {
+            while let Some(mut section) = sections.next_record().map_err(CliError::Aggregation)? {
+                if args.pattern_filter.is_some() || args.group_patterns_by.is_some() {
+                    let mut groups = Vec::new();
+                    if args.group_patterns_by.is_some() {
+                        let by_name = section
+                            .patterns
+                            .iter()
+                            .map(|pattern| (pattern.pattern.as_str(), pattern))
+                            .collect::<BTreeMap<_, _>>();
+                        for row in &pattern_projection.rows {
+                            let names = row
+                                .members
+                                .iter()
+                                .map(|ordinal| pattern_names[*ordinal as usize])
+                                .collect::<BTreeSet<_>>();
+                            let members = names
+                                .iter()
+                                .filter_map(|name| by_name.get(name))
+                                .collect::<Vec<_>>();
+                            groups.push(crate::protocol::query::SectionPatternGroup {
+                                value: row.name.clone(),
+                                patterns: names.into_iter().map(str::to_owned).collect(),
+                                matches: members.iter().map(|pattern| pattern.matches).sum(),
+                                pattern_sentences: members
+                                    .iter()
+                                    .map(|pattern| pattern.sentences_matched)
+                                    .sum(),
+                            });
+                        }
+                        section.patterns.clear();
+                    }
+                    section.pattern_metadata =
+                        Some(crate::protocol::query::SectionPatternMetadata {
+                            selection: pattern_request
+                                .clone()
+                                .expect("requested metadata selection"),
+                            groups,
+                        });
+                }
                 publish_query_jsonl(
                     &mut writer,
                     &QueryEnvelope::new(QueryEvent::Section(section)),
@@ -841,6 +922,7 @@ struct SummarySink<'a> {
     aggregation: Option<SummaryAggregator>,
     aggregation_error: Option<io::Error>,
     pattern_ordinals: &'a BTreeMap<String, u64>,
+    selected_patterns: Option<&'a BTreeSet<u64>>,
     /// Consulted per record to decide what it groups by.
     policy: &'a CatalogPolicy,
     /// Records whose pattern declares a `key:` that this match could not
@@ -1213,6 +1295,14 @@ impl SummarySink<'_> {
     ) -> Result<Vec<(SummaryPartition, Option<(OwnedAggregationInput, u64)>)>, ExecutionError> {
         records
             .into_iter()
+            .filter(|record| {
+                self.pattern_ordinals
+                    .get(record.name.as_str())
+                    .is_none_or(|ordinal| {
+                        self.selected_patterns
+                            .is_none_or(|selected| selected.contains(ordinal))
+                    })
+            })
             .map(|record| {
                 let pattern_ordinal = self
                     .pattern_ordinals
@@ -1306,12 +1396,18 @@ impl SummarySink<'_> {
         let mut records_emitted = 0usize;
         let mut matched = Vec::new();
         for record in records {
-            records_emitted += 1;
             let pattern_ordinal = self
                 .pattern_ordinals
                 .get(record.pattern)
                 .copied()
                 .ok_or_else(|| ExecutionError::Sink("unknown summary pattern".into()))?;
+            if self
+                .selected_patterns
+                .is_some_and(|selected| !selected.contains(&pattern_ordinal))
+            {
+                continue;
+            }
+            records_emitted += 1;
             if self.sections.is_some() || self.metadata_values.is_some() {
                 matched.push(pattern_ordinal);
             }

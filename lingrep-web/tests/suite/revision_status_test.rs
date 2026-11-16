@@ -224,6 +224,7 @@ fn matched_pattern(exact_total: u64) -> lingrep_web::snapshot::PatternDescriptor
         key: lingrep_web::snapshot::PatternKey::new(0).expect("zero is a valid pattern key"),
         name: "p".into(),
         exact_total,
+        metadata_conflicts: Box::default(),
         metadata: Box::default(),
         origin: lingrep_web::snapshot::PatternOrigin::Authored { chained_total: 0 },
     }

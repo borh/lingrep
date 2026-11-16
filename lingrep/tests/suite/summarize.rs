@@ -1494,6 +1494,7 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
     assert!(spilled_temp_bytes > 0, "a one-key buffer writes runs");
     assert_eq!(spilled, resident);
     let section = |label: Option<&str>, sentences, tokens, counts: [(u64, u64); 3]| SectionData {
+        pattern_metadata: None,
         label: label.map(str::to_owned),
         sentences_admitted: sentences,
         tokens_admitted: tokens,
@@ -3558,4 +3559,135 @@ fn write_table_rejects_unusable_destinations_before_opening_the_corpus() {
     }
     assert_eq!(fs::read(existing.join("keep")).unwrap(), b"untouched");
     assert_eq!(fs::read(parent_file).unwrap(), b"untouched");
+}
+
+#[test]
+fn pattern_metadata_section_groups_sum_members_without_deduplicating_cross_pattern_hits() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = sectioned_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("metadata.lx");
+    fs::write(&catalog, "aspect: \"perfect\"\npattern a := [text=猫].\naspect: \"perfect\"\npattern b := [text=猫].\naspect: \"progressive\"\npattern c := [text=犬].\npattern missing := [text=鳥].\naspect: 42\npattern numeric := [text=鳥].\n").unwrap();
+    let run = |extra: &[&str]| {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "summarize", "--by-section", "--corpus"])
+            .arg(&artifact)
+            .arg("--patterns")
+            .arg(&catalog)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|record| record["type"] == "section")
+            .map(|record| record["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    let original = run(&[]);
+    let grouped = run(&["--group-patterns-by", "aspect"]);
+    assert_eq!(original.len(), grouped.len());
+    for (original, grouped) in original.iter().zip(&grouped) {
+        assert_eq!(original["label"], grouped["label"]);
+        assert_eq!(
+            original["sentences_admitted"],
+            grouped["sentences_admitted"]
+        );
+        assert!(grouped["patterns"].as_array().unwrap().is_empty());
+        let projection = &grouped["pattern_metadata"];
+        assert_eq!(projection["omitted_patterns"], 2);
+        for group in projection["groups"].as_array().unwrap() {
+            let members = group["patterns"].as_array().unwrap();
+            let counted = original["patterns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| members.contains(&row["pattern"]))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                group["matches"].as_u64().unwrap(),
+                counted
+                    .iter()
+                    .map(|row| row["matches"].as_u64().unwrap())
+                    .sum::<u64>()
+            );
+            assert_eq!(
+                group["pattern_sentences"].as_u64().unwrap(),
+                counted
+                    .iter()
+                    .map(|row| row["sentences_matched"].as_u64().unwrap())
+                    .sum::<u64>()
+            );
+        }
+    }
+    let filtered = run(&["--pattern-filter", "aspect=perfect"]);
+    for section in filtered {
+        assert_eq!(section["pattern_metadata"]["omitted_patterns"], 3);
+        assert_eq!(
+            section["patterns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["pattern"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+    }
+    let empty = run(&["--pattern-filter", "aspect=absent"]);
+    assert!(
+        empty
+            .iter()
+            .all(|section| section["patterns"].as_array().unwrap().is_empty()
+                && section["pattern_metadata"]["omitted_patterns"] == 5)
+    );
+    let output = lingrep_without_dictionary()
+        .args(["--json", "summarize", "--by-section", "--corpus"])
+        .arg(&artifact)
+        .arg("--patterns")
+        .arg(&catalog)
+        .args([
+            "--group-patterns-by",
+            "aspect",
+            "--where",
+            "@section = methods & @section = results",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let records = parse_jsonl(&output.stdout);
+    assert_eq!(records[0]["data"]["pattern_metadata"]["group_by"], "aspect");
+    assert_eq!(
+        records[0]["data"]["pattern_metadata"]["omitted_patterns"],
+        2
+    );
+    assert!(!records.iter().any(|record| record["type"] == "section"));
+}
+
+#[test]
+fn pattern_metadata_rejects_conflicting_alias_annotations_before_opening_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = directory.path().join("aliases.lx");
+    fs::write(&catalog, "aspect: \"perfect\"\noutput_name: \"shared\"\npattern a := [text=猫].\naspect: \"progressive\"\noutput_name: \"shared\"\npattern b := [text=犬].\n").unwrap();
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--by-section",
+            "--group-patterns-by",
+            "aspect",
+            "--corpus",
+            "missing-artifact",
+            "--patterns",
+        ])
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("differs between definitions published as") && stderr.contains("shared"),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
 }

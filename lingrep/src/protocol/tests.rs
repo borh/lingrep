@@ -1398,6 +1398,7 @@ fn resources() -> ResourceHighWater {
 }
 fn query_run() -> QueryEnvelope {
     QueryEnvelope::new(QueryEvent::Run(Box::new(QueryRun {
+        pattern_metadata: None,
         matcher_semantics_identity: String::new(),
         run_id: "run-1".into(),
         analyzer: fixture_analyzer_run(),

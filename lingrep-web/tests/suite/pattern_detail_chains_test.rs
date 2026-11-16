@@ -32,6 +32,7 @@ fn authored(index: usize, name: &str, total: u64, chained_total: u64) -> Pattern
         key: key(index),
         name: name.into(),
         exact_total: total,
+        metadata_conflicts: Box::default(),
         metadata: Box::default(),
         origin: PatternOrigin::Authored { chained_total },
     }
@@ -42,6 +43,7 @@ fn compound(index: usize, name: &str, components: &[usize], total: u64) -> Patte
         key: key(index),
         name: name.into(),
         exact_total: total,
+        metadata_conflicts: Box::default(),
         metadata: Box::default(),
         origin: PatternOrigin::Compound {
             components: components.iter().map(|index| key(*index)).collect(),

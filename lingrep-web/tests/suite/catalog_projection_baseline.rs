@@ -39,6 +39,7 @@ fn projection_for(source: &str) -> Projection {
             key: PatternKey::new(index).expect("catalog fits the pattern key space"),
             name,
             exact_total: 0,
+            metadata_conflicts: Box::default(),
             metadata,
             origin: PatternOrigin::Authored { chained_total: 0 },
         })

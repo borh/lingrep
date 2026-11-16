@@ -60,6 +60,7 @@ fn fixture(
             key,
             name: "eating".into(),
             exact_total: 1,
+            metadata_conflicts: Box::default(),
             metadata: Box::default(),
             origin: PatternOrigin::Authored { chained_total: 0 },
         }]

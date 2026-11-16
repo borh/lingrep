@@ -10,6 +10,14 @@
       <fieldset aria-describedby="analysis-scope-help">
         <legend data-i18n="results.analysis_scope_legend">Sections shown in comparisons</legend>
         <p class="scope-help" id="analysis-scope-help" data-i18n="results.analysis_scope_help">Choose sections for comparison and clustering within the current search scope.</p>
+        {% if !metadata_filters.is_empty() %}
+        <label><span data-i18n="results.pattern_filter">Patterns</span>
+          <select name="pattern_filter"><option value="" data-i18n="results.pattern_filter_all">All patterns</option>{% for option in metadata_filters %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select>
+        </label>
+        <label><span data-i18n="results.pattern_group">Rows</span>
+          <select name="group_patterns_by"><option value="" data-i18n="results.pattern_group_none">One per pattern</option>{% for option in metadata_groups %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select>
+        </label>
+        {% endif %}
         <div class="scope-presets">
           <button type="submit" name="selection_action" value="imrad" data-i18n="results.scope_imrad">IMRAD + related</button>
           <button type="submit" name="selection_action" value="all" data-i18n="results.scope_all">Select all</button>

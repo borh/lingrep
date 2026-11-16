@@ -106,6 +106,15 @@ static FORM: LazyLock<AttributeKey> =
     LazyLock::new(|| AttributeKey::new("text").expect("text is canonical"));
 
 impl SnapshotSink {
+    pub(crate) fn set_metadata_conflicts(
+        &mut self,
+        mut conflicts: std::collections::BTreeMap<String, Box<[String]>>,
+    ) {
+        for pattern in &mut self.patterns {
+            pattern.metadata_conflicts = conflicts.remove(&pattern.name).unwrap_or_default();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn new(
         max_refs: usize,
@@ -139,6 +148,7 @@ impl SnapshotSink {
                 key,
                 name,
                 exact_total: 0,
+                metadata_conflicts: Box::default(),
                 metadata,
                 origin: PatternOrigin::Authored { chained_total: 0 },
             });
@@ -235,6 +245,7 @@ impl SnapshotSink {
             key,
             name,
             exact_total: 0,
+            metadata_conflicts: Box::default(),
             metadata: metadata.into_boxed_slice(),
             origin: PatternOrigin::Compound {
                 components: components.into(),

@@ -1781,6 +1781,7 @@ impl SectionRecords<'_> {
                 sentences_admitted: totals.sentences,
                 tokens_admitted: totals.tokens,
                 patterns,
+                pattern_metadata: None,
             }))
     }
 }

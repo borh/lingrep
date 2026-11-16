@@ -111,6 +111,7 @@ pub(crate) fn imrad_section_labels(snapshot: &CompletedSnapshot) -> Vec<String> 
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn render_scope_control(
     snapshot: &CompletedSnapshot,
     workbench_id: &str,
@@ -118,6 +119,26 @@ pub(crate) fn render_scope_control(
     cluster: ClusterOptions,
     contrast: &ContrastSelection,
     oob: bool,
+) -> Option<TrustedFragmentHtml> {
+    render_metadata_scope_control(
+        snapshot,
+        workbench_id,
+        selected_labels,
+        cluster,
+        contrast,
+        oob,
+        &lingrep_core::fsm::metadata_projection::PatternMetadataSelection::default(),
+    )
+}
+
+fn render_metadata_scope_control(
+    snapshot: &CompletedSnapshot,
+    workbench_id: &str,
+    selected_labels: Option<&[String]>,
+    cluster: ClusterOptions,
+    contrast: &ContrastSelection,
+    oob: bool,
+    metadata: &lingrep_core::fsm::metadata_projection::PatternMetadataSelection,
 ) -> Option<TrustedFragmentHtml> {
     let selected = selected_section_labels(available_section_labels(snapshot), selected_labels);
     let options = available_options(snapshot, &selected);
@@ -135,7 +156,47 @@ pub(crate) fn render_scope_control(
         [first, second] => format!("{first}, {second}"),
         [first, second, rest @ ..] => format!("{first}, {second} +{}", rest.len()),
     };
+    let entries = crate::section_comparison::metadata_patterns(&snapshot.patterns);
+    let fields = entries
+        .iter()
+        .flat_map(|pattern| pattern.strings.keys().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    let values = entries
+        .iter()
+        .flat_map(|pattern| {
+            pattern
+                .strings
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let filter = metadata
+        .filter
+        .as_ref()
+        .map(|(key, value)| format!("{key}={value}"))
+        .unwrap_or_default();
+    let filters = values
+        .into_iter()
+        .map(|(key, value)| {
+            let value = format!("{key}={value}");
+            crate::templates::PatternMetadataOption {
+                selected: filter == value,
+                label: value.clone(),
+                value,
+            }
+        })
+        .collect::<Vec<_>>();
+    let groups = fields
+        .into_iter()
+        .map(|value| crate::templates::PatternMetadataOption {
+            selected: metadata.group_by.as_ref() == Some(&value),
+            label: value.clone(),
+            value,
+        })
+        .collect::<Vec<_>>();
     SectionScopeControl {
+        metadata_filters: filters,
+        metadata_groups: groups,
         workbench_id,
         revision: snapshot.revision.0,
         options: &options,
@@ -160,16 +221,38 @@ pub fn render(
     cluster: ClusterOptions,
     contrast_selection: &ContrastSelection,
 ) -> Option<TrustedFragmentHtml> {
+    render_metadata(
+        snapshot,
+        workbench_id,
+        selected_labels,
+        cluster,
+        contrast_selection,
+        &lingrep_core::fsm::metadata_projection::PatternMetadataSelection::default(),
+    )
+    .ok()
+    .flatten()
+}
+
+pub(crate) fn render_metadata(
+    snapshot: &CompletedSnapshot,
+    workbench_id: &str,
+    selected_labels: Option<&[String]>,
+    cluster: ClusterOptions,
+    contrast_selection: &ContrastSelection,
+    metadata: &lingrep_core::fsm::metadata_projection::PatternMetadataSelection,
+) -> Result<Option<TrustedFragmentHtml>, lingrep_core::fsm::metadata_projection::PatternMetadataError>
+{
+    let projection = metadata.project(&crate::section_comparison::metadata_patterns(
+        &snapshot.patterns,
+    ))?;
     let labels = available_section_labels(snapshot);
     if labels.is_empty() {
-        return None;
+        return Ok(None);
     }
     let selected = selected_section_labels(labels, selected_labels);
     let has_selection = !selected.is_empty();
     let comparison = has_selection
-        .then(|| {
-            SectionComparison::selected(&snapshot.sections, &snapshot.patterns, Some(&selected))
-        })
+        .then(|| SectionComparison::projected(&snapshot.sections, Some(&selected), &projection))
         .flatten();
     let distance = cluster.distance;
     let clustered = comparison.as_ref().map(|comparison| {
@@ -189,15 +272,24 @@ pub fn render(
     let contrast = comparison
         .as_ref()
         .and_then(|comparison| SectionContrast::new(comparison, contrast_selection));
-    SectionAnalysis {
-        comparison_control: render_scope_control(
+    Ok(SectionAnalysis {
+        comparison_control: render_metadata_scope_control(
             snapshot,
             workbench_id,
             selected_labels,
             cluster,
             contrast_selection,
             false,
+            metadata,
         ),
+        grouped: metadata.group_by.is_some(),
+        metadata_omitted: projection.omitted,
+        pattern_filter: metadata
+            .filter
+            .as_ref()
+            .map(|(key, value)| format!("{key}={value}"))
+            .unwrap_or_default(),
+        group_patterns_by: metadata.group_by.as_deref().unwrap_or(""),
         workbench_id,
         revision: snapshot.revision.0,
         selected_labels: &selected,
@@ -215,7 +307,41 @@ pub fn render(
     }
     .render()
     .ok()
-    .map(TrustedFragmentHtml::from_rendered)
+    .map(TrustedFragmentHtml::from_rendered))
+}
+
+pub(crate) fn render_metadata_error(
+    snapshot: &CompletedSnapshot,
+    workbench_id: &str,
+    selected_labels: Option<&[String]>,
+    cluster: ClusterOptions,
+    contrast: &ContrastSelection,
+    metadata: &lingrep_core::fsm::metadata_projection::PatternMetadataSelection,
+    error: &lingrep_core::fsm::metadata_projection::PatternMetadataError,
+) -> String {
+    use lingrep_core::fsm::metadata_projection::PatternMetadataError;
+    let (conflict, arguments) = match error {
+        PatternMetadataError::UnknownStringKey(key) => (false, serde_json::json!({"key": key})),
+        PatternMetadataError::ConflictingAlias { key, name } => {
+            (true, serde_json::json!({"key": key, "name": name}))
+        }
+    };
+    crate::templates::SectionMetadataError {
+        control: render_metadata_scope_control(
+            snapshot,
+            workbench_id,
+            selected_labels,
+            cluster,
+            contrast,
+            false,
+            metadata,
+        ),
+        conflict,
+        arguments: arguments.to_string(),
+        message: error.to_string(),
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -275,6 +401,7 @@ mod tests {
                     key: PatternKey::new(index).unwrap(),
                     name: format!("pattern-{index}"),
                     exact_total: 1,
+                    metadata_conflicts: Box::default(),
                     metadata: Box::default(),
                     origin: PatternOrigin::Authored { chained_total: 0 },
                 })
@@ -290,6 +417,116 @@ mod tests {
             unavailable_attributes: None,
             vectors_binding: None,
         }
+    }
+
+    #[test]
+    fn invalid_metadata_selection_renders_an_escaped_localizable_alert_without_counts() {
+        use lingrep_core::fsm::metadata_projection::{
+            PatternMetadataError, PatternMetadataSelection,
+        };
+        let snapshot = snapshot_with_sections();
+        let selection = PatternMetadataSelection::parse(None, Some("aspect")).unwrap();
+        for error in [
+            PatternMetadataError::UnknownStringKey("aspect".into()),
+            PatternMetadataError::ConflictingAlias {
+                key: "aspect".into(),
+                name: "<shared>".into(),
+            },
+        ] {
+            let html = super::render_metadata_error(
+                &snapshot,
+                "wb",
+                None,
+                ClusterOptions::default(),
+                &no_contrast(),
+                &selection,
+                &error,
+            );
+            assert!(html.contains("role=\"alert\""));
+            assert!(html.contains("data-i18n-args="));
+            assert!(!html.contains("<shared>"));
+            assert!(!html.contains("<table"));
+        }
+    }
+
+    #[test]
+    fn metadata_selection_projects_the_table_contrast_and_both_cluster_inputs() {
+        use crate::snapshot::PatternMetadataValue;
+        use lingrep_core::fsm::metadata_projection::PatternMetadataSelection;
+        let mut snapshot = snapshot_with_sections();
+        for (index, pattern) in snapshot.patterns.iter_mut().enumerate() {
+            pattern.metadata = vec![(
+                "aspect".to_owned(),
+                PatternMetadataValue::String(
+                    if index < 2 { "perfect" } else { "progressive" }.to_owned(),
+                ),
+            )]
+            .into_boxed_slice();
+        }
+        let selection = PatternMetadataSelection::parse(None, Some("aspect")).unwrap();
+        let projection = selection
+            .project(&crate::section_comparison::metadata_patterns(
+                &snapshot.patterns,
+            ))
+            .unwrap();
+        let original = crate::section_comparison::SectionComparison::selected(
+            &snapshot.sections,
+            &snapshot.patterns,
+            None,
+        )
+        .unwrap();
+        let grouped = crate::section_comparison::SectionComparison::projected(
+            &snapshot.sections,
+            None,
+            &projection,
+        )
+        .unwrap();
+        let perfect = grouped
+            .rows
+            .iter()
+            .find(|row| row.pattern_name == "perfect")
+            .unwrap();
+        for (index, cell) in perfect.cells.iter().enumerate() {
+            assert_eq!(
+                cell.count,
+                original
+                    .rows
+                    .iter()
+                    .filter(|row| row.pattern_key < 2)
+                    .map(|row| row.cells[index].count)
+                    .sum::<u64>()
+            );
+        }
+        let html = super::render_metadata(
+            &snapshot,
+            "wb",
+            None,
+            ClusterOptions::default(),
+            &no_contrast(),
+            &selection,
+        )
+        .unwrap()
+        .unwrap()
+        .to_string();
+        assert!(html.contains("pattern–sentence occurrences"));
+        assert!(html.contains("value=\"aspect\" selected"));
+        assert!(html.contains("name=\"group_patterns_by\" value=\"aspect\""));
+        assert!(!html.contains("data-select-pattern="));
+        let selection = PatternMetadataSelection::parse(Some("aspect=progressive"), None).unwrap();
+        let html = super::render_metadata(
+            &snapshot,
+            "wb",
+            None,
+            ClusterOptions::default(),
+            &no_contrast(),
+            &selection,
+        )
+        .unwrap()
+        .unwrap()
+        .to_string();
+        assert!(html.contains("data-pattern-metadata-omitted=\"2\""));
+        assert!(html.contains("pattern-2"));
+        assert!(!html.contains("data-select-pattern=\"0\""));
     }
 
     #[test]

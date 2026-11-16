@@ -266,6 +266,7 @@ mod tests {
                 key: PatternKey::new(0).unwrap(),
                 name: "p".into(),
                 exact_total: 4_689,
+                metadata_conflicts: Box::default(),
                 metadata: Box::default(),
                 origin: PatternOrigin::Authored { chained_total: 0 },
             }]
@@ -486,6 +487,7 @@ mod tests {
                 key: PatternKey::new(0).unwrap(),
                 name: "p".into(),
                 exact_total: 0,
+                metadata_conflicts: Box::default(),
                 metadata: Box::default(),
                 origin: PatternOrigin::Authored { chained_total: 0 },
             }]

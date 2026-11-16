@@ -499,6 +499,9 @@ fn run_scan_blocking_with_options(
     .map_err(|_| execution_failure())?;
     let mut progress = WatchProgress::new(progress_tx, LIVE_SUMMARY_INTERVAL);
     let mut sink = snapshot;
+    sink.set_metadata_conflicts(crate::pattern_catalog::pattern_metadata_conflicts(
+        &output.matcher,
+    ));
     let attributes: Arc<[AttributeKey]> =
         lingrep_core::execution::cached_run_attributes(&output.matcher).into();
     if index_results {
@@ -2565,6 +2568,7 @@ mod tests {
                 key: pattern_key,
                 name: "test".into(),
                 exact_total: 2,
+                metadata_conflicts: Box::default(),
                 metadata: Box::default(),
                 origin: PatternOrigin::Authored { chained_total: 0 },
             }]

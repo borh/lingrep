@@ -672,3 +672,46 @@ async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
     served.server.abort();
     result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
+
+#[tokio::test]
+async fn pattern_metadata_categories_preserve_controls_and_exact_section_counts()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_sectioned(true).await;
+    let result = std::panic::AssertUnwindSafe(async {
+        driver.goto(format!("{}workbench", served.base.trim_end_matches("sample"))).await?;
+        wait_for(&driver, "return document.readyState==='complete' && !!window.htmx && !document.querySelector('.htmx-settling') && !!document.querySelector('form[data-corpus-search]')", "the workbench search form").await?;
+        driver.execute("const editor=document.querySelector('#corpus-pattern');editor.value='aspect: \"perfect\"\\npattern a := [text=HIT].\\naspect: \"perfect\"\\npattern b := [text=HIT].\\naspect: \"progressive\"\\npattern c := [text=OTHER].\\npattern missing := [text=rare].';editor.dispatchEvent(new Event('input',{bubbles:true}));HTMLFormElement.prototype.requestSubmit.call(document.querySelector('form[data-corpus-search]'));", vec![]).await?;
+        wait_for(&driver, "return !document.querySelector('.htmx-settling') && !!document.querySelector('.section-scope-form select[name=group_patterns_by] option[value=aspect]')", "metadata controls after the search").await?;
+        driver.find(By::Css("[data-detail-tab=sections]")).await?.click().await?;
+        driver.execute("window.__oldMetadata=document.querySelector('#section-analysis');document.querySelector('.section-scope-form select[name=group_patterns_by]').value='aspect';HTMLFormElement.prototype.requestSubmit.call(document.querySelector('form.section-scope-form'));", vec![]).await?;
+        wait_for(&driver, "return !document.querySelector('.htmx-settling') && !!window.__oldMetadata && !window.__oldMetadata.isConnected && document.querySelector('.section-scope-form select[name=group_patterns_by]')?.value==='aspect'", "the category projection").await?;
+        let rows = driver.execute("return [...document.querySelectorAll('.section-comparison-band > .section-comparison-scroll tbody tr')].map(row=>[row.querySelector('th').textContent.trim(),[...row.querySelectorAll('td')].map(cell=>Number(cell.dataset.count))])", vec![]).await?.json().clone();
+        assert_eq!(rows, json!([["perfect",[4,4]],["progressive",[2,0]]]));
+        assert_eq!(driver.execute("return document.querySelector('[data-pattern-metadata-omitted]').dataset.patternMetadataOmitted",vec![]).await?.json(), &json!("1"));
+        driver.execute("window.__oldMetadata=document.querySelector('#section-analysis');document.querySelector('select[name=contrast_reference]').value='introduction';document.querySelector('select[name=contrast_comparison]').value='methods';document.querySelector('select[name=contrast_comparison]').dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
+        wait_for(&driver, "return !document.querySelector('.htmx-settling') && !!window.__oldMetadata && !window.__oldMetadata.isConnected && !!document.querySelector('[data-section-contrast] tbody tr')", "the category contrast").await?;
+        assert_eq!(driver.execute("return document.querySelector('.section-scope-form select[name=group_patterns_by]').value",vec![]).await?.json(), &json!("aspect"));
+        let leaves = driver.execute("return [...document.querySelectorAll('[data-section-dendrogram] .dendrogram-label title')].map(node=>node.textContent).sort()",vec![]).await?.json().clone();
+        assert_eq!(leaves,json!(["perfect","progressive"]));
+        driver.execute("window.__oldMetadata=document.querySelector('#section-analysis');document.querySelector('.section-scope-form select[name=pattern_filter]').value='aspect=perfect';HTMLFormElement.prototype.requestSubmit.call(document.querySelector('form.section-scope-form'));", vec![]).await?;
+        wait_for(&driver, "return !document.querySelector('.htmx-settling') && !!window.__oldMetadata && !window.__oldMetadata.isConnected && document.querySelector('.section-scope-form select[name=pattern_filter]')?.value==='aspect=perfect'", "the filtered category").await?;
+        assert_eq!(driver.execute("return document.querySelector('[data-pattern-metadata-omitted]').dataset.patternMetadataOmitted",vec![]).await?.json(), &json!("2"));
+        assert_eq!(driver.execute("return document.querySelectorAll('.section-comparison-band > .section-comparison-scroll tbody tr').length",vec![]).await?.json(), &json!(1));
+        driver.execute("document.querySelector('#section-analysis .corpus-analysis-scope').open=true",vec![]).await?;
+        for width in [1440,390] {
+            driver.set_window_rect(0,0,width,1000).await?;
+            let overflow=driver.execute("return document.documentElement.scrollWidth-innerWidth",vec![]).await?.json().as_i64().unwrap();
+            assert!(overflow<=1,"metadata controls overflow at {width}: {overflow}");
+        }
+        Ok::<(),thirtyfour::error::WebDriverError>(())
+    }).catch_unwind().await;
+    driver.quit().await?;
+    served.server.abort();
+    match result {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}

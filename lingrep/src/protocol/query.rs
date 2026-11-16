@@ -309,6 +309,8 @@ pub struct NearReport {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueryRun {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_metadata: Option<PatternMetadataRequest>,
     /// Result reuse requires this revision as well as the catalog and analysis identities.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub matcher_semantics_identity: String,
@@ -872,6 +874,30 @@ pub struct SectionData {
     /// Every published pattern, in catalog order, including those with no
     /// match in this section.
     pub patterns: Vec<PatternCount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_metadata: Option<SectionPatternMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionPatternMetadata {
+    #[serde(flatten)]
+    pub selection: PatternMetadataRequest,
+    pub groups: Vec<SectionPatternGroup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PatternMetadataRequest {
+    pub filter: Option<String>,
+    pub group_by: Option<String>,
+    pub omitted_patterns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionPatternGroup {
+    pub value: String,
+    pub patterns: Vec<String>,
+    pub matches: u64,
+    pub pattern_sentences: u64,
 }
 
 /// One value of the document metadata key in a `--by-metadata` summary,

@@ -545,6 +545,41 @@ ling --json summarize --by-section --corpus paper.lingcorpus \
 `--where` applies first, so `sentences_admitted` is the section's size within
 the scope. Like `--by-document`, `--by-section` reads every admitted sentence.
 
+`--pattern-filter KEY=VALUE` selects published definitions by an exact string
+metadata value for `--by-section`. For example, `--pattern-filter aspect=perfect`
+keeps patterns annotated `aspect: "perfect"`. Filtering happens after catalog
+publication policy; it does not change matching, policy resolution or the
+admitted-sentence denominator. Matcher counters still describe the full catalog.
+Missing and non-string values do not match. An unknown string metadata key is a
+usage error. Everything after the first `=` is the literal value.
+
+`--group-patterns-by KEY` aggregates the selected section rows by a string metadata
+key. Both options require `--by-section` and can be combined. A grouped `section`
+record has an empty `patterns` array and a `pattern_metadata` object containing
+`filter`, `group_by`, `omitted_patterns`, and `groups`. Each group contains its
+raw `value`, the member `patterns`, summed `matches`, and `pattern_sentences`:
+the sum of each member pattern's `sentences_matched`. Two distinct published pattern names in one sentence contribute two
+pattern–sentence occurrences, including when their spans coincide. This is not a count of distinct sentences. Rates use admitted sentences
+as the denominator and may exceed 100%. Missing/non-string grouping values are
+omitted and included in `omitted_patterns`; no replacement category is invented.
+The ordinary keyed `summary` records remain per pattern within the selection.
+The `run` record also declares `pattern_metadata` with the filter, grouping key
+and omitted-pattern count, including when the admitted scope is empty.
+Definitions sharing one published `output_name` form one member. A requested
+metadata key must have the same string value or absence across those definitions;
+conflicting values are rejected with the published name. Without these options,
+run and section records retain their existing shapes.
+
+```bash
+ling --json summarize --by-section --corpus paper.lingcorpus \
+  --patterns constructions.lx --pattern-filter tense=past \
+  --group-patterns-by aspect
+```
+
+The section-analysis page offers the same metadata selection and row grouping.
+Distribution, rate contrast and both cluster trees use the selected category
+rows. Category labels are not links to an individual member pattern.
+
 ### Counting per metadata value
 
 `--by-metadata @document.KEY` counts the same per-pattern `matches` and

@@ -801,6 +801,27 @@ pub struct SummarizeArgs {
     #[arg(long, conflicts_with = "by_document", help_heading = "Output")]
     pub by_section: bool,
 
+    /// Include only published patterns whose string metadata equals KEY=VALUE.
+    /// Applies after catalog policy; requires --by-section.
+    #[arg(
+        long,
+        value_name = "KEY=VALUE",
+        requires = "by_section",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub pattern_filter: Option<String>,
+
+    /// Aggregate section counts by a string metadata key, retaining each pattern's contribution.
+    #[arg(
+        long,
+        value_name = "KEY",
+        requires = "by_section",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub group_patterns_by: Option<String>,
+
     /// Count each pattern's matches and matched sentences, and the admitted
     /// documents, sentences and tokens, under every value of @document.KEY in a
     /// prepared corpus, and publish them as `metadata_value` records (requires
