@@ -315,6 +315,11 @@ subtree that is reached from one surface capture. The binders of basic edges bin
 distinct words, and none binds the token of a surface capture that a basic edge
 names.
 
+Graph enumeration has a [sentence-scoped resource budget](fsm-development.md#supported-architecture).
+A search that exceeds it fails with `graph_assignment_limit`; no truncated set
+of assignments is returned as a successful result. Narrow the token or graph
+predicates, or add ordering constraints between binders to reduce enumeration.
+
 The bracket is either `*`, meaning any present basic `dep.rel`, or one or more
 terms joined by `|`. The any-label form is written `-[*]->`, does not match a
 missing `dep.rel`, and cannot be combined with other terms.

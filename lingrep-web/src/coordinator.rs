@@ -142,6 +142,12 @@ fn scope_failure(error: crate::search_scope::ResolveError) -> AttemptFailure {
 fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
     tracing::warn!(%error, "corpus scan execution error");
     match error {
+        ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(error)) => {
+            AttemptFailure {
+                category: ErrorCategory::Execution,
+                message: error.to_string(),
+            }
+        }
         ExecutionError::TokenizedSentenceTooLarge { actual, limit, .. }
         | ExecutionError::LookaroundWindowTooLarge { actual, limit } => AttemptFailure {
             category: ErrorCategory::Execution,
@@ -1714,6 +1720,22 @@ mod tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    #[test]
+    fn graph_resource_failure_preserves_the_pattern_and_remedy() {
+        let failure = classify_execution_error(&ExecutionError::Matching(
+            lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError {
+                    pattern: "connected".into(),
+                    resource: "graph assignments",
+                    limit: 65_536,
+                },
+            ),
+        ));
+        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert!(failure.message.contains("connected"));
+        assert!(failure.message.contains("ordering constraint"));
     }
 
     #[test]

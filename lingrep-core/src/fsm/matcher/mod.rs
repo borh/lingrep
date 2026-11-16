@@ -17,6 +17,8 @@ mod pool;
 /// implementation of attribute comparison.
 pub(crate) mod predicate;
 mod program;
+mod resource;
+pub use resource::{EnhancedMatchError, MatchPublicationError, MatchResourceError};
 mod spawn;
 #[cfg(feature = "bench-instrumentation")]
 pub(crate) mod spawn_candidate_metrics;

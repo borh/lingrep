@@ -193,6 +193,49 @@ fn relation_evidence(records: &[Value]) -> Vec<Value> {
 }
 
 #[test]
+fn graph_assignment_exhaustion_reports_a_matching_error_without_complete_results() {
+    let directory = TempDir::new().unwrap();
+    let clauses = (0..5)
+        .map(|index| format!("$v -[*]-> (?<b{index}> [])"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let catalog = write(
+        directory.path(),
+        "wide.lx",
+        &format!("pattern connected := (?<v> [upos=VERB]) where {clauses}."),
+    );
+    let mut words = vec![("v", "v", "VERB", "_", 0, "root")];
+    words.extend((0..31).map(|_| ("n", "n", "NOUN", "_", 1, "obj")));
+    let input = write(
+        directory.path(),
+        "wide.conllu",
+        &conllu_sentence("wide", &words),
+    );
+    let output = lingrep()
+        .args(["--json", "matches", "--patterns"])
+        .arg(catalog)
+        .arg(input)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let diagnostics = parse_jsonl(&output.stderr);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|event| event["data"]["code"] == "graph_assignment_limit")
+        .expect("graph resource diagnostic");
+    assert_eq!(diagnostic["data"]["stage"], "matching");
+    let description = String::from_utf8(output.stderr.clone()).unwrap();
+    assert!(description.contains("connected"));
+    assert!(description.contains("ordering constraint"));
+    assert!(
+        !parse_jsonl(&output.stdout)
+            .iter()
+            .any(|event| event["type"] == "complete")
+    );
+    assert!(matches(&output).is_empty());
+}
+
+#[test]
 fn evidence_names_graph_bound_words_outside_the_span_direct_and_prepared() {
     let directory = TempDir::new().unwrap();
     let catalog = write(directory.path(), "class6.lx", CATALOG);

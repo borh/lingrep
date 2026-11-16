@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use lingrep_core::execution::SentenceAdmission;
 use lingrep_core::execution::{
     ExecutionBatch, ExecutionLimits, OversizedSentenceOmissions, SentenceBatchSource,
@@ -69,8 +69,13 @@ pub(super) async fn inspect(
                         Some(windows) => windows.explain(sentence_index)?,
                         None => compiled
                             .matcher
-                            .explain_sentence(tokens)
-                            .map_err(super::server_error)?,
+                            .try_explain_sentence(tokens)
+                            .map_err(|error| match error {
+                                lingrep_core::fsm::MatchPublicationError::Resource(error) => {
+                                    resource_error(error)
+                                }
+                                other => super::server_error(other),
+                            })?,
                     };
                     entry.insert(explanation);
                 }
@@ -166,11 +171,55 @@ impl ScanWindows {
                 range.start > 0,
                 range.end < count,
             )
-            .map_err(super::server_error)?;
+            .map_err(|error| match error {
+                lingrep_core::fsm::BoundExplanationError::Bound(
+                    lingrep_core::fsm::BoundExecutionError::Resource(error),
+                ) => resource_error(error),
+                other => super::server_error(other),
+            })?;
             if let Some(explanation) = explanation {
                 return Ok(explanation);
             }
             margin = margin.saturating_mul(2);
         }
+    }
+}
+
+fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
+    (
+        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        axum::Json(serde_json::json!({
+            "error": error.to_string(),
+            "code": "graph_assignment_limit",
+        })),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn graph_resource_response_preserves_the_pattern_and_remedy() {
+        let response = super::resource_error(lingrep_core::fsm::MatchResourceError {
+            pattern: "connected".into(),
+            resource: "graph assignments",
+            limit: 65_536,
+        });
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "graph_assignment_limit");
+        assert!(body["error"].as_str().unwrap().contains("connected"));
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("ordering constraint")
+        );
     }
 }
