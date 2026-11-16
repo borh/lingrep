@@ -48,6 +48,9 @@ HUB_REVISIONS = {
     ),
 }
 HUB_SOURCES_FILE = "lingrep-hub-sources.json"
+# GiNZA's bunsetu_recognizer labels each token B (first in its bunsetu) or I;
+# `ginza -f conllu` prints the same label as BunsetuBILabel in MISC.
+BUNSETU_KEY = "spacy.ginza.bunsetu"
 # The Electra repository's tokenizer_config.json names this class through an
 # `auto_map` entry whose modeling.py only imports it from sudachitra. Registering
 # the class from the locked sudachitra lets the tokenizer load without running
@@ -370,9 +373,14 @@ def _selection(
                 {"key": "dep.enhanced", "kind": "string_set"},
             ]
         )
-        from .adapter import _projection_order
+    if len(schema) > 1 and any(
+        pipeline.config["components"][name].get("factory") == "bunsetu_recognizer"
+        for name in components
+    ):
+        schema.append({"key": BUNSETU_KEY, "kind": "scalar"})
+    from .adapter import _projection_order
 
-        schema.sort(key=lambda attribute: _projection_order(attribute["key"]))
+    schema.sort(key=lambda attribute: _projection_order(attribute["key"]))
     configured = []
     for name in components:
         config = _plain(pipeline.config["components"][name])

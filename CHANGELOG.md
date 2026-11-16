@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The spaCy adapter publishes GiNZA's bunsetu (文節) segmentation as
+  `spacy.ginza.bunsetu`, `B` on each bunsetu-initial token and `I` on the
+  others, for a profile selection that runs GiNZA's `bunsetu_recognizer`.
+  The values equal `ginza -f conllu`'s `BunsetuBILabel`. Other spaCy pipelines
+  are unchanged.
 - `ling table --select PATTERN --key FIELD=VALUE` keeps the rows whose
   compound key has exactly the given field values, and reports their summed
   occurrences in a `subset` record and each row's share of them. The

@@ -28,8 +28,11 @@ from lingrep_spacy_adapter.adapter import (
     serve,
 )
 from lingrep_spacy_adapter.bundle import (
+    BUNSETU_KEY,
     HUB_REVISIONS,
     MANIFEST_HASH_CHUNK_BYTES,
+    PORTABLE_SCHEMA,
+    _selection,
     prepare_model_bundle,
     resource_manifest_digest,
     save_model,
@@ -1009,29 +1012,31 @@ class GiNzaModelTests(unittest.TestCase):
     def test_python_projection_matches_ginza_cli_conllu_dependencies(self) -> None:
         import spacy
 
-        text = "猫が走る。"
-        with tempfile.TemporaryDirectory() as directory:
-            model = Path(directory) / "model"
-            pipeline = spacy.load(os.environ["LINGREP_SPACY_GINZA_MODEL"])
-            pipeline.to_disk(model)
-            doc = pipeline(text)
-            projection = [
-                ProjectionAttribute("text", "scalar"),
-                ProjectionAttribute("lemma", "scalar"),
-                ProjectionAttribute("upos", "scalar"),
-                ProjectionAttribute("xpos", "scalar"),
-                ProjectionAttribute("dep.enhanced", "string_set"),
-                ProjectionAttribute("dep.head", "scalar"),
-                ProjectionAttribute("dep.rel", "scalar"),
-            ]
-            direct = analyze_document(doc, projection, "input")[0]
-            process = subprocess.run(
-                ["ginza", "-b", str(model), "-f", "conllu"],
-                input=text + "\n",
-                text=True,
-                capture_output=True,
-                check=True,
-            )
+        text = "彼女は坂を一つ上った。"
+        name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
+        pipeline = spacy.load(name)
+        doc = pipeline(text)
+        projection = [
+            ProjectionAttribute("text", "scalar"),
+            ProjectionAttribute("lemma", "scalar"),
+            ProjectionAttribute("upos", "scalar"),
+            ProjectionAttribute("xpos", "scalar"),
+            ProjectionAttribute("dep.enhanced", "string_set"),
+            ProjectionAttribute("dep.head", "scalar"),
+            ProjectionAttribute("dep.rel", "scalar"),
+            ProjectionAttribute(BUNSETU_KEY, "scalar"),
+        ]
+        direct = analyze_document(doc, projection, "input")[0]
+        schema = _selection(pipeline, pipeline.pipe_names, "input-v1", PORTABLE_SCHEMA)[
+            "schema"
+        ]
+        process = subprocess.run(
+            ["ginza", "-g", "-1", "-m", name, "-f", "conllu"],
+            input=text + "\n",
+            text=True,
+            capture_output=True,
+            check=True,
+        )
 
         cli_rows = [
             line.split("\t")
@@ -1047,6 +1052,11 @@ class GiNzaModelTests(unittest.TestCase):
                 [] if columns[8] == "_" else columns[8].split("|"),
                 None if columns[6] == "_" else columns[6],
                 None if columns[7] == "_" else columns[7].lower(),
+                dict(
+                    entry.split("=", 1)
+                    for entry in columns[9].split("|")
+                    if "=" in entry
+                )["BunsetuBILabel"],
             ]
             for columns in cli_rows
         ]
@@ -1056,6 +1066,8 @@ class GiNzaModelTests(unittest.TestCase):
             for offset in range(0, len(direct["values"]), width)
         ]
         self.assertEqual(projected, cli)
+        self.assertEqual({"B", "I"}, {row[-1] for row in projected})
+        self.assertIn({"key": BUNSETU_KEY, "kind": "scalar"}, schema)
 
     def test_real_ginza_model_produces_source_aligned_portable_morphology(self) -> None:
         """The saved model analyzes offline, from its own files, like the original."""
@@ -1304,6 +1316,7 @@ class EnglishModelTests(unittest.TestCase):
         keys = [attribute.key for attribute in loaded.schema]
         for key in ("text", "lemma", "upos", "feat.Number", "dep.head", "dep.rel"):
             self.assertIn(key, keys)
+        self.assertNotIn(BUNSETU_KEY, keys)
         text = "I was speaking. They listened."
         results = []
         for _ in range(2):

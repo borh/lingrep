@@ -67,6 +67,7 @@ from lingrep_adapter_protocol import (
 )
 
 from .bundle import (
+    BUNSETU_KEY,
     admit_saved_transformers,
     digest_json,
     load_profile,
@@ -617,7 +618,11 @@ def _validate_projection(projection: Sequence[ProjectionAttribute]) -> None:
             raise ValueError(f"duplicate projection key {attribute.key!r}")
         seen.add(attribute.key)
         expected: ValueKind
-        if attribute.key in PORTABLE_KEYS or attribute.key in ("dep.head", "dep.rel"):
+        if attribute.key in PORTABLE_KEYS or attribute.key in (
+            "dep.head",
+            "dep.rel",
+            BUNSETU_KEY,
+        ):
             expected = "scalar"
         elif attribute.key == "dep.enhanced" or attribute.key.startswith(
             ("feat.", "spacy.morph.")
@@ -679,6 +684,10 @@ def _project_token(
         )
         scalar["dep.rel"] = token.dep_.lower() or None
         morphology["dep.enhanced"] = []
+    if any(attribute.key == BUNSETU_KEY for attribute in projection):
+        from ginza import bunsetu_bi_label
+
+        scalar[BUNSETU_KEY] = bunsetu_bi_label(token)
     return [
         scalar[attribute.key]
         if attribute.kind == "scalar"

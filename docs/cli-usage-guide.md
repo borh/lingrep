@@ -1724,6 +1724,13 @@ Bundles that earlier releases set up from these models fetch the weights from
 the Hub, at whatever commit it serves, each time the analyzer starts; set them up
 again into a new directory.
 
+A GiNZA profile selection that runs GiNZA's `bunsetu_recognizer` adds the scalar
+`spacy.ginza.bunsetu`: `B` on the first token of each bunsetu (文節) and `I` on
+the others, the label `ginza -f conllu` prints as `BunsetuBILabel`. Write
+`[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens. Setup selects the
+fewest components that produce the portable attributes, so its `morphology/*`
+selections leave out `bunsetu_recognizer` and do not carry the key.
+
 The bundle hashes staged adapter/protocol code and model files. Its runtime
 receipt checks Python and installed package versions, without hashing third-party
 library binaries. Managed analyzer identity does not depend on the output
