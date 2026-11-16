@@ -40,9 +40,9 @@ case "$mode" in
     model_extra=${LINGREP_SPACY_MODEL_EXTRA:-ginza}
     if [[ -n $ginza_model ]]; then
       case "$model_extra" in
-        ginza|electra) ;;
+        ginza|electra|bert-large) ;;
         *)
-          echo "LINGREP_SPACY_MODEL_EXTRA must be ginza or electra" >&2
+          echo "LINGREP_SPACY_MODEL_EXTRA must be ginza, electra or bert-large" >&2
           exit 2
           ;;
       esac
