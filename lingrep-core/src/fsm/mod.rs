@@ -12,6 +12,7 @@ mod identity;
 pub mod inline;
 pub(crate) mod labels;
 pub mod matcher;
+pub mod metadata_projection;
 pub mod policy;
 /// Private: its only public surface is [`ProgramStats`] and
 /// [`OperationCounters`], re-exported below. `Candidate`, `Decision` and

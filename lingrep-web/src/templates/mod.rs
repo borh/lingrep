@@ -228,9 +228,17 @@ pub struct SectionOption {
     pub selected: bool,
 }
 
+pub struct PatternMetadataOption {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
+}
+
 #[derive(Template)]
 #[template(path = "fragments/section_scope_control.html")]
 pub struct SectionScopeControl<'a> {
+    pub metadata_filters: Vec<PatternMetadataOption>,
+    pub metadata_groups: Vec<PatternMetadataOption>,
     pub workbench_id: &'a str,
     pub revision: u64,
     pub options: &'a [SectionOption],
@@ -245,8 +253,21 @@ pub struct SectionScopeControl<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "fragments/section_metadata_error.html")]
+pub struct SectionMetadataError {
+    pub control: Option<TrustedFragmentHtml>,
+    pub conflict: bool,
+    pub arguments: String,
+    pub message: String,
+}
+
+#[derive(Template)]
 #[template(path = "fragments/section_analysis.html")]
 pub struct SectionAnalysis<'a> {
+    pub grouped: bool,
+    pub metadata_omitted: usize,
+    pub pattern_filter: String,
+    pub group_patterns_by: &'a str,
     pub comparison_control: Option<TrustedFragmentHtml>,
     pub workbench_id: &'a str,
     pub revision: u64,
@@ -479,6 +500,10 @@ mod tests {
         section_dendrogram: Option<&crate::section_dendrogram::SectionDendrogram>,
     ) -> TrustedFragmentHtml {
         let html = SectionAnalysis {
+            grouped: false,
+            metadata_omitted: 0,
+            pattern_filter: String::new(),
+            group_patterns_by: "",
             comparison_control: None,
             workbench_id: "wb",
             revision: 1,

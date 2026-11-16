@@ -795,11 +795,37 @@ pub struct SummarizeArgs {
     #[arg(long, help_heading = "Output")]
     pub by_document: bool,
 
+    /// Report per-pattern grouped and unkeyed records after publication policy
+    /// (requires --json). With --by-document, also report each document's coverage.
+    #[arg(long, help_heading = "Output", hide_short_help = true)]
+    pub grouping_coverage: bool,
+
     /// Count each pattern's matches and matched sentences under every section
     /// label of a prepared corpus, and publish them as `section` records
     /// (requires --json and --corpus or --cache).
     #[arg(long, conflicts_with = "by_document", help_heading = "Output")]
     pub by_section: bool,
+
+    /// Include only published patterns whose string metadata equals KEY=VALUE.
+    /// Applies after catalog policy; requires --by-section.
+    #[arg(
+        long,
+        value_name = "KEY=VALUE",
+        requires = "by_section",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub pattern_filter: Option<String>,
+
+    /// Aggregate section counts by a string metadata key, retaining each pattern's contribution.
+    #[arg(
+        long,
+        value_name = "KEY",
+        requires = "by_section",
+        help_heading = "Output",
+        hide_short_help = true
+    )]
+    pub group_patterns_by: Option<String>,
 
     /// Count each pattern's matches and matched sentences, and the admitted
     /// documents, sentences and tokens, under every value of @document.KEY in a
@@ -934,6 +960,19 @@ pub struct TableArgs {
     /// Default: 20 in terminal output, unlimited with --json.
     #[arg(long, value_name = "N|all", help_heading = "Output")]
     pub top: Option<ExplicitLimit<u64>>,
+
+    /// Export every document, typed entry and nonzero count cell (requires --json).
+    #[arg(long, conflicts_with_all = ["top", "select", "key", "entry", "by_metadata"], help_heading = "Output")]
+    pub by_document: bool,
+
+    /// Publish selected @document.KEY values on exported documents. Repeatable.
+    #[arg(
+        long,
+        value_name = "SELECTOR",
+        requires = "by_document",
+        help_heading = "Output"
+    )]
+    pub source_metadata: Vec<String>,
 
     /// Count one entry of one pattern under --by-metadata. KEY is the `group`
     /// of the entry's JSON row, or its key as human rows print it.

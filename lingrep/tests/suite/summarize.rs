@@ -398,6 +398,9 @@ fn token_window_counts_equal_the_matcher_rows_ranks_and_unkeyed_count() {
         assert!(!rows.is_empty());
         assert_eq!(rows, matched_rows, "top={top:?}");
         assert_eq!(counters, matched_counters, "top={top:?}");
+        let (covered_rows, covered_counters) = run(&[top, &["--grouping-coverage"]].concat());
+        assert_eq!(rows, covered_rows, "top={top:?}");
+        assert_eq!(counters, covered_counters, "top={top:?}");
         assert_eq!(
             counters["records_unkeyed"], 4,
             "windows over the token without a lemma"
@@ -1494,6 +1497,7 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
     assert!(spilled_temp_bytes > 0, "a one-key buffer writes runs");
     assert_eq!(spilled, resident);
     let section = |label: Option<&str>, sentences, tokens, counts: [(u64, u64); 3]| SectionData {
+        pattern_metadata: None,
         label: label.map(str::to_owned),
         sentences_admitted: sentences,
         tokens_admitted: tokens,
@@ -3558,4 +3562,345 @@ fn write_table_rejects_unusable_destinations_before_opening_the_corpus() {
     }
     assert_eq!(fs::read(existing.join("keep")).unwrap(), b"untouched");
     assert_eq!(fs::read(parent_file).unwrap(), b"untouched");
+}
+
+#[test]
+fn pattern_metadata_section_groups_sum_members_without_deduplicating_cross_pattern_hits() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = sectioned_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("metadata.lx");
+    fs::write(&catalog, "aspect: \"perfect\"\npattern a := [text=猫].\naspect: \"perfect\"\npattern b := [text=猫].\naspect: \"progressive\"\npattern c := [text=犬].\npattern missing := [text=鳥].\naspect: 42\npattern numeric := [text=鳥].\n").unwrap();
+    let run = |extra: &[&str]| {
+        let output = lingrep_without_dictionary()
+            .args(["--json", "summarize", "--by-section", "--corpus"])
+            .arg(&artifact)
+            .arg("--patterns")
+            .arg(&catalog)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|record| record["type"] == "section")
+            .map(|record| record["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    let original = run(&[]);
+    let grouped = run(&["--group-patterns-by", "aspect"]);
+    assert_eq!(original.len(), grouped.len());
+    for (original, grouped) in original.iter().zip(&grouped) {
+        assert_eq!(original["label"], grouped["label"]);
+        assert_eq!(
+            original["sentences_admitted"],
+            grouped["sentences_admitted"]
+        );
+        assert!(grouped["patterns"].as_array().unwrap().is_empty());
+        let projection = &grouped["pattern_metadata"];
+        assert_eq!(projection["omitted_patterns"], 2);
+        for group in projection["groups"].as_array().unwrap() {
+            let members = group["patterns"].as_array().unwrap();
+            let counted = original["patterns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| members.contains(&row["pattern"]))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                group["matches"].as_u64().unwrap(),
+                counted
+                    .iter()
+                    .map(|row| row["matches"].as_u64().unwrap())
+                    .sum::<u64>()
+            );
+            assert_eq!(
+                group["pattern_sentences"].as_u64().unwrap(),
+                counted
+                    .iter()
+                    .map(|row| row["sentences_matched"].as_u64().unwrap())
+                    .sum::<u64>()
+            );
+        }
+    }
+    let filtered = run(&["--pattern-filter", "aspect=perfect"]);
+    for section in filtered {
+        assert_eq!(section["pattern_metadata"]["omitted_patterns"], 3);
+        assert_eq!(
+            section["patterns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["pattern"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+    }
+    let empty = run(&["--pattern-filter", "aspect=absent"]);
+    assert!(
+        empty
+            .iter()
+            .all(|section| section["patterns"].as_array().unwrap().is_empty()
+                && section["pattern_metadata"]["omitted_patterns"] == 5)
+    );
+    let output = lingrep_without_dictionary()
+        .args(["--json", "summarize", "--by-section", "--corpus"])
+        .arg(&artifact)
+        .arg("--patterns")
+        .arg(&catalog)
+        .args([
+            "--group-patterns-by",
+            "aspect",
+            "--where",
+            "@section = methods & @section = results",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let records = parse_jsonl(&output.stdout);
+    assert_eq!(records[0]["data"]["pattern_metadata"]["group_by"], "aspect");
+    assert_eq!(
+        records[0]["data"]["pattern_metadata"]["omitted_patterns"],
+        2
+    );
+    assert!(!records.iter().any(|record| record["type"] == "section"));
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--by-section",
+            "--grouping-coverage",
+            "--pattern-filter",
+            "aspect=perfect",
+            "--group-patterns-by",
+            "aspect",
+            "--corpus",
+        ])
+        .arg(&artifact)
+        .arg("--patterns")
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let records = parse_jsonl(&output.stdout);
+    let coverage = records.last().unwrap()["data"]["grouping_coverage"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        coverage
+            .iter()
+            .map(|entry| entry["pattern"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    for entry in coverage {
+        assert_eq!(entry["records_unkeyed"], 0);
+        assert_eq!(entry["records_presented"], entry["records_grouped"]);
+        assert!(entry["records_presented"].as_u64().unwrap() > 0);
+    }
+}
+
+#[test]
+fn pattern_metadata_rejects_conflicting_alias_annotations_before_opening_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = directory.path().join("aliases.lx");
+    fs::write(&catalog, "aspect: \"perfect\"\noutput_name: \"shared\"\npattern a := [text=猫].\naspect: \"progressive\"\noutput_name: \"shared\"\npattern b := [text=犬].\n").unwrap();
+    let output = lingrep_without_dictionary()
+        .args([
+            "--json",
+            "summarize",
+            "--by-section",
+            "--group-patterns-by",
+            "aspect",
+            "--corpus",
+            "missing-artifact",
+            "--patterns",
+        ])
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("differs between definitions published as") && stderr.contains("shared"),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn grouping_coverage_distinguishes_unkeyed_and_zero_patterns_without_changing_summary_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("coverage.conllu");
+    let artifact = directory.path().join("coverage.lingcorpus");
+    let patterns = directory.path().join("coverage.lx");
+    fs::write(&input, "# newdoc id = first\n1\tword\tword\tNOUN\t_\t_\t0\troot\t_\t_\n2\t_\t_\tPUNCT\t_\t_\t1\tpunct\t_\t_\n\n# newdoc id = second\n1\t_\t_\tPUNCT\t_\t_\t0\troot\t_\t_\n\n# newdoc id = third\n1\tother\tother\tNOUN\t_\t_\t0\troot\t_\t_\n\n").unwrap();
+    fs::write(&patterns, "key: [lemma, upos]\npattern token := [].\nkey: [lemma]\npattern punctuation := [upos=PUNCT].\npattern absent := [text=never].\nkey: [term, segments(text)]\nlexicon listed by [text] := {\"word\", \"other\"}.\n").unwrap();
+    let built = lingrep_without_dictionary()
+        .args(["corpus", "build", "--input-format", "conllu", "--output"])
+        .arg(&artifact)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_success(&built);
+    let run = |prepared: bool, coverage: bool, top: &str, scope: Option<&str>| {
+        let mut command = lingrep_without_dictionary();
+        command
+            .args([
+                "--json",
+                "summarize",
+                "--by-document",
+                "--top",
+                top,
+                "--patterns",
+            ])
+            .arg(&patterns);
+        if coverage {
+            command.arg("--grouping-coverage");
+        }
+        if let Some(scope) = scope {
+            command.args(["--where", scope]);
+        }
+        if prepared {
+            command.arg("--corpus").arg(&artifact);
+        } else {
+            command.args(["--input-format", "conllu"]).arg(&input);
+        }
+        let output = command.output().unwrap();
+        assert_success(&output);
+        validate_query_jsonl(&output.stdout).unwrap();
+        parse_jsonl(&output.stdout)
+    };
+    let expected = serde_json::json!([
+        {"pattern":"token","records_presented":4,"records_grouped":2,"records_unkeyed":2},
+        {"pattern":"punctuation","records_presented":2,"records_grouped":0,"records_unkeyed":2},
+        {"pattern":"absent","records_presented":0,"records_grouped":0,"records_unkeyed":0},
+        {"pattern":"listed","records_presented":2,"records_grouped":2,"records_unkeyed":0}
+    ]);
+    for prepared in [false, true] {
+        let baseline = run(prepared, false, "all", None);
+        assert!(
+            event(&baseline, "complete")["data"]
+                .get("grouping_coverage")
+                .is_none()
+        );
+        for top in ["all", "1"] {
+            let covered = run(prepared, true, top, None);
+            assert_eq!(
+                event(&covered, "complete")["data"]["grouping_coverage"],
+                expected
+            );
+            let original = run(prepared, false, top, None);
+            assert_eq!(summary_events(&covered), summary_events(&original));
+            let documents = covered
+                .iter()
+                .filter(|event| event["type"] == "document")
+                .collect::<Vec<_>>();
+            assert_eq!(documents.len(), 3);
+            assert_eq!(
+                documents[0]["data"]["grouping_coverage"][0],
+                serde_json::json!({"pattern":"token","records_presented":2,"records_grouped":1,"records_unkeyed":1})
+            );
+            assert_eq!(documents[1]["data"]["tokens_admitted"], 1);
+            assert_eq!(
+                documents[1]["data"]["grouping_coverage"],
+                serde_json::json!([
+                    {"pattern":"token","records_presented":1,"records_grouped":0,"records_unkeyed":1},
+                    {"pattern":"punctuation","records_presented":1,"records_grouped":0,"records_unkeyed":1}
+                ])
+            );
+        }
+        let scoped = run(prepared, true, "all", Some("@document.newdoc_id = second"));
+        assert!(summary_events(&scoped).is_empty());
+        assert_eq!(
+            event(&scoped, "complete")["data"]["grouping_coverage"][0]["records_unkeyed"],
+            1
+        );
+        let empty = run(prepared, true, "all", Some("@document.newdoc_id = missing"));
+        assert_eq!(
+            event(&empty, "complete")["data"]["grouping_coverage"][0]["records_presented"],
+            0
+        );
+        assert!(!empty.iter().any(|event| event["type"] == "document"));
+    }
+}
+
+#[test]
+fn grouping_coverage_counts_post_policy_records_and_rejects_incomplete_runs() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("coverage.conllu");
+    fs::write(&input, "1\tword\tword\tNOUN\t_\t_\t0\troot\t_\t_\n\n").unwrap();
+    let policy = "pattern first := [].\npattern second := [].\npolicy\nresolve all rank: [longest, start, end, pattern].\nend\n";
+    let patterns = directory.path().join("policy.lx");
+    let run = |source: &str, extra: &[&str]| {
+        fs::write(&patterns, source).unwrap();
+        lingrep_without_dictionary()
+            .args([
+                "--json",
+                "summarize",
+                "--input-format",
+                "conllu",
+                "--grouping-coverage",
+                "--by-document",
+                "--patterns",
+            ])
+            .arg(&patterns)
+            .args(extra)
+            .arg(&input)
+            .output()
+            .unwrap()
+    };
+    let output = run(policy, &[]);
+    assert_success(&output);
+    let events = parse_jsonl(&output.stdout);
+    let complete = &event(&events, "complete")["data"];
+    assert_eq!(complete["counters"]["matches_found"], 2);
+    assert_eq!(
+        complete["grouping_coverage"],
+        serde_json::json!([
+            {"pattern":"first","records_presented":1,"records_grouped":1,"records_unkeyed":0},
+            {"pattern":"second","records_presented":0,"records_grouped":0,"records_unkeyed":0}
+        ])
+    );
+    let empty = run("pattern absent := [text=never].", &[]);
+    assert_success(&empty);
+    let events = parse_jsonl(&empty.stdout);
+    assert_eq!(
+        event(&events, "document")["data"]["grouping_coverage"],
+        serde_json::json!([])
+    );
+    fs::write(
+        &input,
+        "1\tword\tword\tNOUN\t_\t_\t0\troot\t_\t_\n2\t_\t_\tPUNCT\t_\t_\t1\tpunct\t_\t_\n\n",
+    )
+    .unwrap();
+    for extra in [
+        vec!["--max-temp-bytes", "1"],
+        vec!["--max-sentence-tokens", "1"],
+    ] {
+        let output = run(policy, &extra);
+        assert!(!output.status.success());
+        assert!(
+            !parse_jsonl(&output.stdout)
+                .iter()
+                .any(|event| event["type"] == "complete")
+        );
+    }
+    let output = lingrep_without_dictionary()
+        .args([
+            "summarize",
+            "--input-format",
+            "conllu",
+            "--grouping-coverage",
+            "--pattern",
+            "p := [].",
+        ])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--grouping-coverage requires --json")
+    );
 }

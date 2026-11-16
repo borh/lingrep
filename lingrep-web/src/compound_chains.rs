@@ -148,6 +148,7 @@ mod tests {
             key: key(index),
             name: name.into(),
             exact_total: total,
+            metadata_conflicts: Box::default(),
             metadata: Box::default(),
             origin: PatternOrigin::Authored { chained_total: 0 },
         }
@@ -158,6 +159,7 @@ mod tests {
             key: key(index),
             name: format!("c{index}"),
             exact_total: total,
+            metadata_conflicts: Box::default(),
             metadata: Box::default(),
             origin: PatternOrigin::Compound {
                 components: components.iter().map(|index| key(*index)).collect(),

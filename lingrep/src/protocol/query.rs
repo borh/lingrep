@@ -309,6 +309,8 @@ pub struct NearReport {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueryRun {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_metadata: Option<PatternMetadataRequest>,
     /// Result reuse requires this revision as well as the catalog and analysis identities.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub matcher_semantics_identity: String,
@@ -845,10 +847,21 @@ pub struct SummaryData {
     pub rank: u64,
 }
 
+/// Records admitted to grouping after catalog policy, before unkeyed omission or top selection.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PatternGroupingCoverage {
+    pub pattern: String,
+    pub records_presented: u64,
+    pub records_grouped: u64,
+    pub records_unkeyed: u64,
+}
+
 /// One document with at least one admitted sentence in a `--by-document`
 /// summary, published whether or not any pattern matched in it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DocumentData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grouping_coverage: Option<Vec<PatternGroupingCoverage>>,
     pub document: u64,
     pub source_name: String,
     pub sentences_admitted: u64,
@@ -872,6 +885,30 @@ pub struct SectionData {
     /// Every published pattern, in catalog order, including those with no
     /// match in this section.
     pub patterns: Vec<PatternCount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_metadata: Option<SectionPatternMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionPatternMetadata {
+    #[serde(flatten)]
+    pub selection: PatternMetadataRequest,
+    pub groups: Vec<SectionPatternGroup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PatternMetadataRequest {
+    pub filter: Option<String>,
+    pub group_by: Option<String>,
+    pub omitted_patterns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionPatternGroup {
+    pub value: String,
+    pub patterns: Vec<String>,
+    pub matches: u64,
+    pub pattern_sentences: u64,
 }
 
 /// One value of the document metadata key in a `--by-metadata` summary,
@@ -1032,6 +1069,8 @@ pub struct RetainedMatches {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueryComplete {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grouping_coverage: Option<Vec<PatternGroupingCoverage>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retained_matches: Option<RetainedMatches>,
     pub coverage: Coverage,

@@ -24,10 +24,10 @@ use crate::direct_source::encode_digest;
 use crate::error::CliError;
 use crate::output::sanitize_terminal;
 use crate::presentation::{OutputMode, resolve_summary_top};
-use crate::protocol::query::{ProtocolKeyField, SummaryGroupData};
+use crate::protocol::query::{DocumentData, ProtocolKeyField, SummaryGroupData};
 use crate::protocol::table::{
-    TableComplete, TableEntryCount, TableEnvelope, TableEvent, TableKeyEquals, TableMetadataValue,
-    TablePattern, TableRow, TableRun, TableSubset,
+    TableCell, TableComplete, TableDocument, TableEntry, TableEntryCount, TableEnvelope,
+    TableEvent, TableKeyEquals, TableMetadataValue, TablePattern, TableRow, TableRun, TableSubset,
 };
 use crate::protocol::write_jsonl;
 use crate::terminal::TerminalArbiter;
@@ -105,6 +105,24 @@ pub fn run(
         .or(args.table_option.as_deref())
         .ok_or_else(|| CliError::InvalidArgs("table requires TABLE or --table TABLE".into()))?;
     let started = Instant::now();
+    if args.by_document && output != OutputMode::Jsonl {
+        return Err(CliError::InvalidArgs(
+            "table --by-document requires --json".into(),
+        ));
+    }
+    if let Some(key) = args
+        .source_metadata
+        .iter()
+        .find(|key| !key.starts_with("@document."))
+    {
+        return Err(CliError::InvalidArgs(format!(
+            "table --source-metadata accepts only @document.KEY, not {key}"
+        )));
+    }
+    let metadata =
+        lingrep_core::corpus::SourceMetadataProjection::new(args.source_metadata.clone())
+            .map_err(|error| CliError::InvalidArgs(error.to_string()))?;
+
     let catalog = load_and_compile(&args.catalog.catalog_input()?)?;
     let clause = document_clause("table --where", args.clause.as_deref())?;
     if args.by_metadata.is_some() && output != OutputMode::Jsonl {
@@ -172,7 +190,7 @@ pub fn run(
         .map(|(pattern, entry_key)| find_entry(&table, pattern, entry_key))
         .transpose()?;
     let lookup = lookup.elapsed();
-    let provenance = (clause.is_some() || entry.is_some())
+    let provenance = (clause.is_some() || entry.is_some() || args.by_document)
         .then(|| artifact.provenance_reader())
         .transpose()?;
     let admitted = match (&clause, &provenance) {
@@ -184,6 +202,21 @@ pub fn run(
             .as_ref()
             .is_none_or(|admitted| admitted.contains(id))
     };
+    if args.by_document {
+        return export_documents(
+            args,
+            &artifact,
+            &table,
+            provenance
+                .as_deref()
+                .expect("document export opens provenance"),
+            &key,
+            &metadata,
+            admitted.as_ref(),
+            terminal,
+            started,
+        );
+    }
     if let (Some((pattern, entry)), Some(by), Some(reader)) =
         (entry, args.by_metadata.as_deref(), &provenance)
     {
@@ -211,6 +244,9 @@ pub fn run(
             matcher_revision: key.matcher_revision.clone(),
             clause: args.clause.clone(),
             requested_top: None,
+            by_document: false,
+            source_identity: None,
+            published_source_metadata: Vec::new(),
             entry: args.entry.clone(),
             by_metadata: args.by_metadata.clone(),
             select: None,
@@ -227,6 +263,7 @@ pub fn run(
             sentences_admitted: admission.sentences_admitted,
             tokens_admitted: admission.tokens_admitted,
             rows: 0,
+            entries: None,
             query_millis,
             elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         }))?;
@@ -310,6 +347,9 @@ pub fn run(
                 matcher_revision: key.matcher_revision.clone(),
                 clause: args.clause.clone(),
                 requested_top: top,
+                by_document: false,
+                source_identity: None,
+                published_source_metadata: Vec::new(),
                 entry: None,
                 by_metadata: None,
                 select: args.select.clone(),
@@ -449,6 +489,7 @@ pub fn run(
         sentences_admitted: admission.sentences_admitted,
         tokens_admitted: admission.tokens_admitted,
         rows: emitted,
+        entries: None,
         query_millis,
         elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
     };
@@ -465,6 +506,194 @@ pub fn run(
         )
         .map_err(|error| CliError::Execution(execution_output_io(error)))?;
     }
+    Ok(CommandOutcome::Success)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_documents(
+    args: &TableArgs,
+    artifact: &CorpusArtifact,
+    table: &CountTable,
+    reader: &BlockingProvenance,
+    key: &CountTableKey,
+    metadata: &lingrep_core::corpus::SourceMetadataProjection,
+    admitted: Option<&RoaringTreemap>,
+    terminal: &TerminalArbiter,
+    started: Instant,
+) -> Result<CommandOutcome, CliError> {
+    let queried = Instant::now();
+    let admits = |id| admitted.is_none_or(|admitted| admitted.contains(id));
+    let mut admission = Admission {
+        documents_admitted: 0,
+        sentences_admitted: 0,
+        tokens_admitted: 0,
+    };
+    for document in table
+        .documents()
+        .filter(|document| admits(document.document_id))
+    {
+        if terminal.cancellation().is_cancelled() {
+            return Ok(CommandOutcome::Cancelled);
+        }
+        admission.documents_admitted += 1;
+        admission.sentences_admitted = admission
+            .sentences_admitted
+            .checked_add(document.sentences)
+            .ok_or_else(|| CliError::Corpus("table sentence count exceeds u64".into()))?;
+        admission.tokens_admitted = admission
+            .tokens_admitted
+            .checked_add(document.tokens)
+            .ok_or_else(|| CliError::Corpus("table token count exceeds u64".into()))?;
+    }
+    if terminal.cancellation().is_cancelled() {
+        return Ok(CommandOutcome::Cancelled);
+    }
+    let stdout = io::stdout();
+    let mut writer = stdout.lock();
+    let mut emit = |event| {
+        write_jsonl(&mut writer, &TableEnvelope::new(event))
+            .map_err(|error| CliError::Execution(execution_output_error(error)))
+    };
+    emit(TableEvent::Run(TableRun {
+        table: args
+            .table
+            .as_deref()
+            .or(args.table_option.as_deref())
+            .expect("table path checked")
+            .display()
+            .to_string(),
+        analysis_identity: key.analysis_identity.clone(),
+        catalog_fingerprint: key.catalog_fingerprint.clone(),
+        matcher_revision: key.matcher_revision.clone(),
+        source_identity: Some(encode_digest(artifact.source_identity().as_bytes())),
+        clause: args.clause.clone(),
+        requested_top: None,
+        by_document: true,
+        published_source_metadata: metadata.keys().to_vec(),
+        entry: None,
+        by_metadata: None,
+        select: None,
+        key: Vec::new(),
+    }))?;
+    let mut documents = 0;
+    let mut next = 0;
+    loop {
+        if terminal.cancellation().is_cancelled() {
+            return Ok(CommandOutcome::Cancelled);
+        }
+        let page = reader.block_on(reader.view().document_metadata_page(next))?;
+        if page.is_empty() {
+            break;
+        }
+        for document in page {
+            if terminal.cancellation().is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            next = document
+                .first_sentence
+                .checked_add(document.sentence_count)
+                .filter(|end| *end > next)
+                .ok_or_else(|| {
+                    CliError::Corpus("table document metadata has an invalid sentence range".into())
+                })?;
+            let id = document.document_id.get();
+            if !admits(id) {
+                continue;
+            }
+            let Ok(index) = table.document_ids().binary_search(&id) else {
+                continue;
+            };
+            let totals = table
+                .documents()
+                .nth(index)
+                .ok_or_else(|| CliError::Corpus("table document index is missing".into()))?;
+            let source = artifact.document_by_id(document.document_id)?;
+            let source_metadata = if metadata.keys().is_empty() {
+                None
+            } else {
+                let values = lingrep_core::corpus::metadata_from_json(
+                    serde_json::from_str(document.metadata_json.as_deref().unwrap_or("{}"))?,
+                    "table document metadata",
+                )
+                .map_err(CliError::corpus)?;
+                Some(Arc::new(
+                    metadata
+                        .project(
+                            &values,
+                            &Default::default(),
+                            &lingrep_core::corpus::StructuralContext::default(),
+                        )
+                        .map_err(CliError::corpus)?,
+                ))
+            };
+            emit(TableEvent::Document(TableDocument {
+                document_id: id,
+                data: DocumentData {
+                    grouping_coverage: None,
+                    document: source.ordinal,
+                    source_name: source.logical_name,
+                    sentences_admitted: totals.sentences,
+                    tokens_admitted: totals.tokens,
+                    source_metadata,
+                },
+            }))?;
+            documents += 1;
+        }
+    }
+    if documents != admission.documents_admitted {
+        return Err(CliError::Corpus(
+            "count table documents are missing from the corpus metadata".into(),
+        ));
+    }
+    for (pattern, name) in table.pattern_names().enumerate() {
+        for entry in table.pattern_range(pattern).map_err(table_error)? {
+            if terminal.cancellation().is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            let entry = u32::try_from(entry)
+                .map_err(|_| CliError::Corpus("count table entry ID exceeds u32".into()))?;
+            emit(TableEvent::Entry(TableEntry {
+                entry,
+                pattern: name.to_owned(),
+                group: group_data(&table.group(entry).map_err(table_error)?),
+            }))?;
+        }
+    }
+    let mut cells = 0u64;
+    for entry in 0..table.entry_count() {
+        if terminal.cancellation().is_cancelled() {
+            return Ok(CommandOutcome::Cancelled);
+        }
+        let entry = u32::try_from(entry)
+            .map_err(|_| CliError::Corpus("count table entry ID exceeds u32".into()))?;
+        let (documents, counts) = table.entry_documents(entry).map_err(table_error)?;
+        for (document, count) in documents.iter().zip(counts) {
+            if terminal.cancellation().is_cancelled() {
+                return Ok(CommandOutcome::Cancelled);
+            }
+            let id = table.document_ids()[*document as usize];
+            if admits(id) {
+                emit(TableEvent::Cell(TableCell {
+                    document_id: id,
+                    entry,
+                    count: u64::from(*count),
+                }))?;
+                cells += 1;
+            }
+        }
+    }
+    if !terminal.try_claim_completion() {
+        return Ok(CommandOutcome::Cancelled);
+    }
+    emit(TableEvent::Complete(TableComplete {
+        documents_admitted: admission.documents_admitted,
+        sentences_admitted: admission.sentences_admitted,
+        tokens_admitted: admission.tokens_admitted,
+        rows: cells,
+        entries: Some(table.entry_count()),
+        query_millis: queried.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+        elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+    }))?;
     Ok(CommandOutcome::Success)
 }
 

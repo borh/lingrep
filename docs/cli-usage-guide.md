@@ -500,6 +500,27 @@ attribute) is dropped from keyed output and counted in
 `counters.records_unkeyed`. It is never grouped under a partial key that could
 collide with another pattern's complete key.
 
+`--grouping-coverage` adds a `grouping_coverage` array to the JSONL `complete`
+record. Each entry names a published pattern and reports `records_presented`,
+`records_grouped` and `records_unkeyed`; presented equals grouped plus unkeyed.
+Counts describe records admitted to grouping after matcher selection and catalog
+publication policy and any pattern-metadata filter, before unkeyed records are
+omitted or `--top` selects rows.
+A missing projected attribute or capture increments unkeyed; a scalar or list
+key that is available increments grouped once per record. These are record
+counts, not distinct key counts or the raw `matches_found` counter.
+
+Every eligible published pattern appears in catalog order, including patterns
+with zero records. With `--by-document`, each `document` record also carries a sparse
+`grouping_coverage` array: omitted patterns have zero presented records, and an
+empty array means no published record reached grouping in that document.
+The arrays are absent unless requested, so existing JSONL and keyed rows remain
+unchanged. Coverage counters spill under the shared `--max-temp-bytes` limit;
+a failed run never publishes successful completion coverage.
+
+With a pattern-metadata filter, coverage includes only eligible published names.
+Metadata category rows do not merge coverage records for their member patterns.
+
 ### Counting per document
 
 `--by-document` counts each group per admitted document, and `--top` ranks
@@ -544,6 +565,42 @@ ling --json summarize --by-section --corpus paper.lingcorpus \
 
 `--where` applies first, so `sentences_admitted` is the section's size within
 the scope. Like `--by-document`, `--by-section` reads every admitted sentence.
+
+`--pattern-filter KEY=VALUE` selects published definitions by an exact string
+metadata value for `--by-section`. For example, `--pattern-filter aspect=perfect`
+keeps patterns annotated `aspect: "perfect"`. Filtering happens after catalog
+publication policy; it does not change matching, policy resolution or the
+admitted-sentence denominator. Matcher counters still describe the full catalog.
+Missing and non-string values do not match. An unknown string metadata key is a
+usage error. Everything after the first `=` is the literal value.
+
+`--group-patterns-by KEY` aggregates the selected section rows by a string metadata
+key. Both options require `--by-section` and can be combined. A grouped `section`
+record has an empty `patterns` array and a `pattern_metadata` object containing
+`filter`, `group_by`, `omitted_patterns`, and `groups`. Each group contains its
+raw `value`, the member `patterns`, summed `matches`, and `pattern_sentences`:
+the sum of each member pattern's `sentences_matched`. Two distinct published pattern names in one sentence contribute two
+pattern–sentence occurrences, including when their spans coincide. This is not a count of distinct sentences. Rates use admitted sentences
+as the denominator and may exceed 100%. Groups are ordered by descending pattern–sentence count, then value.
+Missing/non-string grouping values are omitted and included in `omitted_patterns`; no replacement category is invented.
+The ordinary keyed `summary` records remain per pattern within the selection.
+The `run` record also declares `pattern_metadata` with the filter, grouping key
+and omitted-pattern count, including when the admitted scope is empty.
+Definitions sharing one published `output_name` form one member. A requested
+metadata key must have the same string value or absence across those definitions;
+conflicting values are rejected with the published name. Without these options,
+run and section records retain their existing shapes.
+
+```bash
+ling --json summarize --by-section --corpus paper.lingcorpus \
+  --patterns constructions.lx --pattern-filter tense=past \
+  --group-patterns-by aspect
+```
+
+The section-analysis page offers the same metadata selection and row grouping.
+Distribution, rate contrast and both cluster trees use the selected category
+rows, ordered by their total in the displayed sections. Category labels are not
+links to an individual member pattern.
 
 ### Counting per metadata value
 
@@ -677,6 +734,50 @@ As with `--by-metadata`, a document listing several values is counted once
 under each value, documents without a value are counted under `value: null`,
 and `--where` restricts the documents. It requires `--json` and cannot be
 combined with `--top`.
+
+### Exporting sparse document counts
+
+`table --by-document` exports the complete document-by-entry matrix from an
+existing table, without matching or tokenizing again. It requires `--json`:
+
+```bash
+ling --json table soranoha.collexeme.lingtable --by-document \
+  --corpus soranoha.lingcorpus --patterns patterns/collexeme.lx \
+  --source-metadata @document.identifier --source-metadata @document.ndc \
+  --where '@document.source_edition_year >= 1950'
+```
+
+The stream uses `lingrep.table/v1` with these records, in order:
+
+- `run`: `by_document: true`, the corpus's `source_identity`, the table's
+  checked analysis/catalog/matcher identities, the clause, and the selected
+  source-metadata fields.
+- `document`: each admitted table document, including works with no selected
+  occurrences. `document_id` is its stable corpus ID; `document` is its
+  zero-based corpus ordinal. Records include the source name, admitted
+  sentence/token counts and the requested typed `@document` metadata, in the
+  same shape as `summarize --by-document`.
+- `entry`: the entire table dictionary, including entries with zero occurrences
+  under the clause. `entry` is a table-local ID; `pattern` and `group` preserve
+  the typed grouping key, including segment lists.
+- `cell`: each nonzero count, identified by `document_id` and `entry`. Missing
+  cells are zero. Cells follow entry order, then ascending stable document ID.
+- `complete`: admitted documents/sentences/tokens, `entries` (dictionary size)
+  and `rows` (number of cells).
+
+Document records follow corpus sentence order; entry IDs retain table order
+and do not change with the scope. Keep the dictionary and run identities
+with the cells; resolve entry IDs through that dictionary before joining
+independently written tables. An empty scope still exports the full dictionary;
+its document and cell sets are empty. Only documents with at least one
+admitted sentence are in the table.
+
+`--top`, `--select`, `--key`, `--entry` and `--by-metadata` are rejected in this
+mode. `--source-metadata` is repeatable and accepts only `@document.KEY`.
+The export traverses existing sparse cells and bounded metadata pages; it
+neither sorts rows nor creates temporary ordering files. Consumers must reject
+streams without the final `complete` record or whose process exits with an
+error; a truncated stream is not a complete statistical family.
 
 ### Comparing two scopes: `ling contrast`
 

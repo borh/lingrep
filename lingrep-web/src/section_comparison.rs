@@ -113,6 +113,18 @@ impl SectionComparison {
         patterns: &[PatternDescriptor],
         selected_labels: Option<&[String]>,
     ) -> Option<Self> {
+        let selection = lingrep_core::fsm::metadata_projection::PatternMetadataSelection::default();
+        let projection = selection.project(&metadata_patterns(patterns)).ok()?;
+        Self::projected(sections, selected_labels, &projection)
+            .filter(|comparison| comparison.rows.len() >= 2)
+    }
+
+    #[must_use]
+    pub fn projected(
+        sections: &SectionAvailability,
+        selected_labels: Option<&[String]>,
+        projection: &lingrep_core::fsm::metadata_projection::MetadataProjection,
+    ) -> Option<Self> {
         let SectionAvailability::Available(tally) = sections else {
             return None;
         };
@@ -145,10 +157,21 @@ impl SectionComparison {
 
         let mut max_count = 0u64;
         let mut rows = Vec::new();
-        for pattern in patterns {
+        for row in &projection.rows {
             let counts = labelled
                 .iter()
-                .map(|(slot, _, _)| tally.count(pattern.key, *slot))
+                .map(|(slot, _, _)| {
+                    row.members
+                        .iter()
+                        .map(|member| {
+                            tally.count(
+                                crate::snapshot::PatternKey::new(*member as usize)
+                                    .expect("published pattern key"),
+                                *slot,
+                            )
+                        })
+                        .sum()
+                })
                 .collect::<Vec<_>>();
             let displayed_total = counts.iter().copied().fold(0u64, u64::saturating_add);
             // A pattern with no labelled occurrence contributes an empty row
@@ -157,9 +180,9 @@ impl SectionComparison {
                 continue;
             }
             max_count = max_count.max(counts.iter().copied().max().unwrap_or(0));
-            rows.push((pattern, counts, displayed_total));
+            rows.push((row, counts, displayed_total));
         }
-        if rows.len() < 2 {
+        if rows.is_empty() {
             return None;
         }
 
@@ -173,8 +196,8 @@ impl SectionComparison {
         let rows = rows
             .into_iter()
             .map(|(pattern, counts, displayed_total)| ComparisonRow {
-                pattern_key: pattern.key.index(),
-                pattern_name: pattern.name.to_string(),
+                pattern_key: pattern.members[0] as usize,
+                pattern_name: pattern.name.clone(),
                 cells: counts
                     .iter()
                     .zip(columns.iter())
@@ -201,6 +224,31 @@ impl SectionComparison {
     }
 }
 
+pub(crate) fn metadata_patterns(
+    patterns: &[PatternDescriptor],
+) -> Vec<lingrep_core::fsm::metadata_projection::MetadataPattern> {
+    patterns
+        .iter()
+        .map(
+            |pattern| lingrep_core::fsm::metadata_projection::MetadataPattern {
+                ordinal: pattern.key.index() as u64,
+                ambiguous: pattern.metadata_conflicts.iter().cloned().collect(),
+                name: pattern.name.clone(),
+                strings: pattern
+                    .metadata
+                    .iter()
+                    .filter_map(|(key, value)| match value {
+                        crate::snapshot::PatternMetadataValue::String(value) => {
+                            Some((key.clone(), value.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+            },
+        )
+        .collect()
+}
+
 /// `value / total * factor`, rounded to nearest, saturating, and `0` when
 /// there is no denominator. Kept in one place because the two callers differ
 /// only in `factor` and an inconsistency between them would be invisible.
@@ -223,6 +271,7 @@ mod tests {
             key: PatternKey::new(index).unwrap(),
             name: name.into(),
             exact_total: 0,
+            metadata_conflicts: Box::default(),
             metadata: Box::default(),
             origin: PatternOrigin::Authored { chained_total: 0 },
         }

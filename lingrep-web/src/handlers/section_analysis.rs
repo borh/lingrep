@@ -11,6 +11,8 @@ use crate::state::RequestStore;
 #[derive(Debug, Default, PartialEq, Eq)]
 struct SectionSelection {
     submitted: Option<String>,
+    pattern_filter: Option<String>,
+    group_patterns_by: Option<String>,
     section: Vec<String>,
     distance: Option<String>,
     cluster_minimum: Option<String>,
@@ -29,6 +31,8 @@ impl SectionSelection {
         let mut selection = Self::default();
         for (key, value) in pairs {
             match key.as_str() {
+                "pattern_filter" => selection.pattern_filter = Some(value),
+                "group_patterns_by" => selection.group_patterns_by = Some(value),
                 "submitted" => selection.submitted = Some(value),
                 "section" => selection.section.push(value),
                 "distance" => selection.distance = Some(value),
@@ -68,6 +72,19 @@ async fn section_analysis(
         Ok(snapshot) => snapshot,
         Err(error) => return super::inspection_response(error.into()),
     };
+    let metadata = match lingrep_core::fsm::metadata_projection::PatternMetadataSelection::parse(
+        selection
+            .pattern_filter
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+        selection
+            .group_patterns_by
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    ) {
+        Ok(metadata) => metadata,
+        Err(message) => return (axum::http::StatusCode::BAD_REQUEST, message).into_response(),
+    };
     let submitted = selection.submitted.as_deref() == Some("1");
     let selected = if submitted {
         match selection.selection_action.as_deref() {
@@ -92,13 +109,28 @@ async fn section_analysis(
         selection.contrast_comparison,
         selection.contrast_order.as_deref(),
     );
-    let analysis = crate::section_analysis::render(
+    let analysis = match crate::section_analysis::render_metadata(
         &snapshot,
         &workbench_id,
         selected.as_deref(),
         cluster,
         &contrast,
-    )
+        &metadata,
+    ) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return Html(crate::section_analysis::render_metadata_error(
+                &snapshot,
+                &workbench_id,
+                selected.as_deref(),
+                cluster,
+                &contrast,
+                &metadata,
+                &error,
+            ))
+            .into_response();
+        }
+    }
     .map_or_else(
         || "<div id=\"section-analysis\"></div>".to_owned(),
         |fragment| fragment.to_string(),
@@ -111,6 +143,19 @@ mod tests {
     use super::SectionSelection;
 
     #[test]
+    fn metadata_selection_decodes_exact_values_and_group_keys() {
+        let selection = SectionSelection::parse(
+            "submitted=1&pattern_filter=aspect%3Dperfect%3Dresult&group_patterns_by=aspect",
+        )
+        .unwrap();
+        assert_eq!(
+            selection.pattern_filter.as_deref(),
+            Some("aspect=perfect=result")
+        );
+        assert_eq!(selection.group_patterns_by.as_deref(), Some("aspect"));
+    }
+
+    #[test]
     fn a_repeated_section_field_is_read_as_the_checked_labels() {
         let selection = SectionSelection::parse(
             "submitted=1&section=methods&section=results&distance=cosine&contrast_reference=methods&contrast_comparison=results&contrast_order=name-asc",
@@ -120,6 +165,8 @@ mod tests {
             selection,
             SectionSelection {
                 submitted: Some("1".into()),
+                pattern_filter: None,
+                group_patterns_by: None,
                 section: vec!["methods".into(), "results".into()],
                 distance: Some("cosine".into()),
                 cluster_minimum: None,

@@ -511,6 +511,15 @@ Diagnostics about a metadata value point at the key that carried it. A defect in
 the definition — a fragment declaring publication policy at all — points at the
 definition.
 
+`ling summarize --by-section --pattern-filter KEY=VALUE` selects published
+patterns by an authored string metadata value. `--group-patterns-by KEY` sums
+section counts by that value. The section-analysis page uses the same selection.
+Missing or non-string values are omitted and reported. Aggregated sentence counts
+sum member pattern–sentence occurrences rather than distinct sentences: two
+patterns matching one sentence contribute two, even at the same span. These
+options operate after publication policy and do not infer metadata from referenced
+fragments. See [section summaries](cli-usage-guide.md#counting-per-section).
+
 ### `key:`
 
 `key:` takes a nonempty, ordered list of projections. A bare attribute projects

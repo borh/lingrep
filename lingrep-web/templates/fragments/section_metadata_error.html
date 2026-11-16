@@ -1,0 +1,4 @@
+<div id="section-analysis" data-section-analysis>
+  {% match control %}{% when Some with (control) %}{{ control|safe }}{% when None %}{% endmatch %}
+  {% if conflict %}<p role="alert" data-i18n="results.pattern_metadata_conflict" data-i18n-args="{{ arguments }}">{{ message }}</p>{% else %}<p role="alert" data-i18n="results.pattern_metadata_unknown" data-i18n-args="{{ arguments }}">{{ message }}</p>{% endif %}
+</div>

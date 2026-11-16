@@ -130,6 +130,42 @@ pub fn pattern_metadata_pairs(
         .collect()
 }
 
+pub(crate) fn pattern_metadata_conflicts(
+    matcher: &lingrep_core::fsm::CompiledCatalog,
+) -> std::collections::BTreeMap<String, Box<[String]>> {
+    use lingrep_core::fsm::metadata_projection::{MetadataPattern, coalesce_metadata};
+    let definitions = matcher
+        .patterns()
+        .iter()
+        .map(|(name, pattern)| (name.as_str(), &pattern.metadata))
+        .chain(
+            matcher
+                .lexicons()
+                .iter()
+                .map(|lexicon| (lexicon.name(), lexicon.metadata())),
+        );
+    let aliases = coalesce_metadata(definitions.enumerate().map(|(ordinal, (name, metadata))| {
+        MetadataPattern {
+            ordinal: ordinal as u64,
+            name: matcher.catalog_policy().published_name(name).to_owned(),
+            strings: metadata
+                .iter()
+                .filter_map(|(key, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (key.to_string(), value.to_owned()))
+                })
+                .collect(),
+            ambiguous: Default::default(),
+        }
+    }));
+    aliases
+        .into_iter()
+        .filter(|alias| !alias.ambiguous.is_empty())
+        .map(|alias| (alias.name, alias.ambiguous.into_iter().collect()))
+        .collect()
+}
+
 fn display(value: &PatternMetadataValue) -> (String, String) {
     match value {
         PatternMetadataValue::String(value) => (format!("s:{value}"), value.clone()),
@@ -235,6 +271,7 @@ mod tests {
             key: PatternKey::new(index).unwrap(),
             name: name.into(),
             exact_total: total,
+            metadata_conflicts: Box::default(),
             metadata: category
                 .map(|value| {
                     vec![(
@@ -247,6 +284,14 @@ mod tests {
             origin: PatternOrigin::Authored { chained_total: 0 },
         }
     }
+    #[test]
+    fn aliased_metadata_conflicts_are_retained_for_analytical_selection() {
+        use lingrep_core::fsm::{CompileLimits, PatternSource, compile_catalog};
+        let compiled = compile_catalog(PatternSource::named("aliases", "aspect: \"perfect\"\noutput_name: \"shared\"\npattern a := [text=猫].\naspect: \"progressive\"\noutput_name: \"shared\"\npattern b := [text=犬].\n"), CompileLimits::default()).unwrap();
+        let conflicts = super::pattern_metadata_conflicts(&compiled.matcher);
+        assert_eq!(conflicts["shared"].as_ref(), ["aspect"]);
+    }
+
     #[test]
     fn a_compound_is_badged_with_its_most_coincident_authored_pattern() {
         let mut compound = pattern(2, "複合項目〔こと ＋ できる〕", 412, None);
@@ -334,6 +379,7 @@ mod tests {
             key: PatternKey::new(index).unwrap(),
             name: format!("p{index}"),
             exact_total: 0,
+            metadata_conflicts: Box::default(),
             metadata: vec![
                 ("layer".into(), PatternMetadataValue::String(layer.into())),
                 (

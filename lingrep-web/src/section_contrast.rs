@@ -202,6 +202,7 @@ mod tests {
             key: PatternKey::new(index).unwrap(),
             name: name.into(),
             exact_total: 0,
+            metadata_conflicts: Box::default(),
             metadata: Box::default(),
             origin: PatternOrigin::Authored { chained_total: 0 },
         }

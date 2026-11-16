@@ -58,6 +58,7 @@ pub struct PatternDescriptor {
     pub name: String,
     pub exact_total: u64,
     pub metadata: Box<[(String, PatternMetadataValue)]>,
+    pub metadata_conflicts: Box<[String]>,
     pub origin: PatternOrigin,
 }
 

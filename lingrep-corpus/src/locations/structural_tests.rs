@@ -98,6 +98,13 @@ fn mapped_locations_provide_random_access_and_document_names() {
         mapped.document_name(DocumentId::new(10)).unwrap(),
         "first.md"
     );
+    let first = mapped.document_by_id(DocumentId::new(10)).unwrap();
+    assert_eq!(first.document_ordinal, 0);
+    assert_eq!(first.source_name, "first.md");
+    let second = mapped.document_by_id(DocumentId::new(20)).unwrap();
+    assert_eq!(second.document_ordinal, 1);
+    assert_eq!(second.source_name, "second.md");
+    assert!(mapped.document_by_id(DocumentId::new(1)).is_err());
     mapped.verify_integrity().unwrap();
 }
 

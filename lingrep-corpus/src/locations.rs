@@ -639,6 +639,10 @@ impl MappedLocations {
         std::str::from_utf8(bytes).map_err(|_| invalid("document name is not UTF-8"))
     }
 
+    pub(crate) fn document_by_id(&self, id: DocumentId) -> Result<LocationDocument, CorpusError> {
+        self.document(self.document_entry_for_id(id)?.document_ordinal)
+    }
+
     /// Returns one stored document by zero-based document ordinal.
     pub(crate) fn document(&self, ordinal: u64) -> Result<LocationDocument, CorpusError> {
         if ordinal >= self.document_count {
