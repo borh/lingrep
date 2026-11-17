@@ -37,11 +37,21 @@ function clampNumber(input: HTMLInputElement,commit=true){
   if(input.value!==''&&Number.isFinite(input.valueAsNumber))input.value=String(Math.max(commit&&input.min!==''?Number(input.min):-Number.MAX_SAFE_INTEGER,Math.min(input.max!==''?Number(input.max):Number.MAX_SAFE_INTEGER,input.valueAsNumber)));
   paintNumber(input);
 }
+/** Says in #reading-clamp when `input` no longer holds the number typed into it, `typed`, because that number lay outside its bounds; a number kept while `typing` clears the note. */
+function announceClamp(input: HTMLInputElement,typed: string,typing: boolean){
+  const note=document.querySelector('#reading-clamp');if(!note)return;
+  const ja=document.documentElement.lang==='ja',value=input.value,examples=input.id==='line-limit';
+  if(typed===value||typed===''){if(typing)note.textContent='';return;}
+  note.textContent=Number(typed)>Number(value)
+    ?(examples?(ja?`表示できる用例は最大 ${value} 件です。`:`At most ${value} examples can be shown.`):(ja?`前後の文脈は最大 ${value} トークンです。`:`Context is at most ${value} tokens.`))
+    :(examples?(ja?`表示する用例は ${value} 件以上です。`:`At least ${value} example is shown.`):(ja?`前後の文脈は ${value} トークン以上です。`:`Context is at least ${value} tokens.`));
+}
 function scrubNumber(input: HTMLInputElement, changed: (dragging: boolean)=>void, committed=()=>{}) {
   let drag: {id:number;x:number;lastX:number;value:number;moved:boolean;precise:boolean} | undefined;
   input.title=document.documentElement.lang==='ja'?'左右にドラッグ、または数値を入力。Shift キーで細かく調整':'Drag horizontally or type a number. Hold Shift for precise dragging';
-  input.addEventListener('input',()=>{clampNumber(input,false);if(input.checkValidity()){input.removeAttribute('aria-invalid');changed(false);}});
-  input.addEventListener('change',()=>{const previous=input.value;clampNumber(input);const valid=input.checkValidity();input.setAttribute('aria-invalid',String(!valid));if(valid&&input.value!==previous)changed(false);committed();});
+  const announced=(clamp:()=>void,typing:boolean)=>{const typed=input.value;clamp();announceClamp(input,typed,typing);};
+  input.addEventListener('input',()=>{announced(()=>clampNumber(input,false),true);if(input.checkValidity()){input.removeAttribute('aria-invalid');changed(false);}});
+  input.addEventListener('change',()=>{const previous=input.value;announced(()=>clampNumber(input),false);const valid=input.checkValidity();input.setAttribute('aria-invalid',String(!valid));if(valid&&input.value!==previous)changed(false);committed();});
   input.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;
     drag={id:event.pointerId,x:event.clientX,lastX:event.clientX,value:Number(input.value||input.placeholder),moved:false,precise:event.shiftKey};

@@ -3476,3 +3476,45 @@ async fn the_question_page_searches_only_when_asked() -> WebDriverResult<()> {
     served.server.abort();
     result
 }
+
+/// A reading option typed past its bound is set to the bound, and the page
+/// says so instead of changing the number unannounced.
+#[tokio::test]
+async fn a_clamped_reading_option_is_announced() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-row').length > 0", "the search's lines").await?;
+        driver
+            .execute(
+                "const input = document.querySelector('#context-size'); input.value = '40'; \
+                 input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change'));",
+                Vec::new(),
+            )
+            .await?;
+        observed(
+            &driver,
+            "const note = document.querySelector('#reading-clamp'); \
+             return [document.querySelector('#context-size').value, note?.getAttribute('role') ?? null, note?.textContent ?? null]",
+            json!(["24", "status", "Context is at most 24 tokens."]),
+            "the clamped context",
+        )
+        .await?;
+        driver
+            .execute(
+                "const input = document.querySelector('#context-size'); input.value = '8'; \
+                 input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change'));",
+                Vec::new(),
+            )
+            .await?;
+        observed(&driver, "return document.querySelector('#reading-clamp').textContent", json!(""), "an in-range context").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
