@@ -232,12 +232,13 @@ with (out / "browser-driver.log").open("w") as log:
             )
         js("document.querySelector('#line-limit').value=100;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
         wait("return document.querySelectorAll('.kwic-row').length===" + str(args.expected_matches))
-        assert js("return Number(document.querySelector('#line-limit').max)") == args.expected_matches
+        assert js("return document.querySelector('#line-limit').value") == "100"
         assert js("return __probe.state.current.id") == first_id
         js("document.querySelector('#context-size').value=9999999;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
         assert js("return document.querySelector('#context-size').value") == "24"
         js("document.querySelector('#line-limit').value=9999999;document.querySelector('#line-limit').dispatchEvent(new Event('input'))")
-        assert js("return Number(document.querySelector('#line-limit').value)") == args.expected_matches
+        assert js("return Number(document.querySelector('#line-limit').value)") == 9999999
+        wait("return document.querySelectorAll('.kwic-row').length===" + str(args.expected_matches))
         js("document.querySelector('#context-size').value=12;document.querySelector('#context-size').dispatchEvent(new Event('input'))")
         for selector, state_key in [("#context-size", "context"), ("#line-limit", "lines")]:
             previous = js("return __probe.controls.state." + state_key)

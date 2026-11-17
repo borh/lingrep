@@ -207,6 +207,7 @@
   padding: 0.7rem 0.5rem 0.3rem;
   border-bottom: 1px solid var(--fq-rule);
   z-index: 1;
+  overflow-wrap: normal;
 }
 .fq table.freq th.r, .fq table.freq td.r { text-align: right; }
 .fq table.freq td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--fq-rule); }

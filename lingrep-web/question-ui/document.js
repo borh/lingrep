@@ -375,9 +375,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
         return; state.lines = Number($('#line-limit').value); validateReadingNumbers(); viewChanged(); changed(); }, validateReadingNumbers);
     renderChips();
     void checkFields();
-    return { state, boundExamples(maximum) { const input = $('#line-limit'); input.disabled = maximum === 0; input.max = String(maximum == null || maximum === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, maximum))); state.lines = Math.min(state.lines, Number(input.max)); if (input.validity.rangeOverflow && !input.validity.stepMismatch && !input.validity.badInput)
-            clampNumber(input); if (input.value !== '' && input.checkValidity())
-            state.lines = Number(input.value); }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
+    return { state, examplesFound(found) { $('#line-limit').disabled = found === 0; }, where: () => scopeClause(state.metadata, $('#where').value), entries: () => ({ metadata: JSON.stringify(state.metadata), raw: $('#where').value, context: state.context, lines: state.lines }), restore(params) {
             clearTimeout(searchTimer);
             clearTimeout(valueTimer);
             ++requestId;
