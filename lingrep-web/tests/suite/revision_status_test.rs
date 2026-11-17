@@ -4,8 +4,8 @@ use lingrep_core::execution::ExecutionProgress;
 use lingrep_web::coordinator::CoordinatorView;
 use lingrep_web::corpus_runtime::CorpusIdentity;
 use lingrep_web::revision::{
-    AttemptFailure, CacheReadinessView, CoordinatorEvent, ErrorCategory, RevisionCoordinatorState,
-    RevisionId, WorkbenchId,
+    AttemptFailure, CacheReadinessView, CancelReason, CoordinatorEvent, ErrorCategory,
+    RevisionCoordinatorState, RevisionId, WorkbenchId,
 };
 use lingrep_web::revision_status::{RevisionStatusKind, project_revision_status};
 use lingrep_web::snapshot::CompletedSnapshot;
@@ -101,12 +101,37 @@ fn cancelled_is_superseded_not_failed() {
     assert!(state.apply_terminal(CoordinatorEvent::Cancelled {
         workbench,
         revision: RevisionId(1),
+        reason: CancelReason::Superseded,
     }));
 
     let status = project_revision_status(Some(&view(state)));
 
     assert_eq!(status.kind, RevisionStatusKind::Superseded);
     assert!(status.message.contains("Superseded"));
+}
+
+#[test]
+fn a_revision_cancelled_for_an_absent_page_is_not_reported_as_superseded() {
+    let workbench = WorkbenchId::new("status");
+    let mut state = state();
+    assert!(state.accept(
+        RevisionId(1),
+        "p := [upos=VERB].".into(),
+        CacheReadinessView::Ready
+    ));
+    assert!(state.apply_terminal(CoordinatorEvent::Cancelled {
+        workbench,
+        revision: RevisionId(1),
+        reason: CancelReason::Abandoned,
+    }));
+
+    let status = project_revision_status(Some(&view(state)));
+
+    assert_eq!(status.kind, RevisionStatusKind::Abandoned);
+    assert_eq!(status.message_key, Some("status.abandoned"));
+    assert!(status.terminal);
+    assert!(!status.busy);
+    assert!(status.message.contains("Run the search again"));
 }
 
 #[test]

@@ -1,11 +1,12 @@
 use crate::coordinator::CoordinatorView;
-use crate::revision::AttemptPhase;
+use crate::revision::{AttemptPhase, CancelReason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionStatusKind {
     Neutral,
     Success,
     Superseded,
+    Abandoned,
     Error,
 }
 
@@ -125,7 +126,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 true,
                 RevisionStatusKind::Success,
             ),
-            Some(AttemptPhase::Cancelled) => (
+            Some(AttemptPhase::Cancelled(CancelReason::Superseded)) => (
                 (
                     "Superseded by a newer edit.".into(),
                     Some("status.superseded"),
@@ -134,6 +135,16 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 false,
                 true,
                 RevisionStatusKind::Superseded,
+            ),
+            Some(AttemptPhase::Cancelled(CancelReason::Abandoned)) => (
+                (
+                    "This search was stopped because the page was closed or disconnected. Run the search again.".into(),
+                    Some("status.abandoned"),
+                    None,
+                ),
+                false,
+                true,
+                RevisionStatusKind::Abandoned,
             ),
             Some(AttemptPhase::Failed) => (
                 (

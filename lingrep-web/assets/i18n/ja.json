@@ -359,6 +359,7 @@
   "sample.summary": "{tokens} トークン中 {matches} 件。",
   "sample.title": "サンプルデバッガー",
   "sample.tokens_range": "トークン {start}..{end}",
+  "status.abandoned": "ページが閉じられたか接続が切れたため、この検索は停止されました。検索を再実行してください。",
   "status.current": "結果は最新です。",
   "status.detail_failed": "そのパターンを読み込めませんでした。前回の詳細を表示しています。",
   "status.idle": "パターンを入力してください。",

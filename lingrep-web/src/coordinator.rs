@@ -10,14 +10,14 @@ use lingrep_core::execution::{
     OversizedSentenceOmissions, PolicySelection, ProgressSink, RunOutcome, SentenceAdmission,
     TokenizedAdmission, execute_analyzed,
 };
-use tokio::sync::{Mutex, Semaphore, watch};
+use tokio::sync::{Mutex, Notify, Semaphore, watch};
 
 use crate::corpus_runtime::{CacheReadiness, CorpusIdentity, CorpusRuntime, ReadyCorpus};
 use crate::corpus_set::{CorpusName, CorpusSlot};
 use crate::patterns::{compile_web_pattern, format_pattern_compile_error};
 use crate::revision::{
-    AttemptFailure, CacheReadinessView, CoordinatorEvent, ErrorCategory, RevisionCoordinatorState,
-    RevisionId, WorkbenchId,
+    AttemptFailure, CacheReadinessView, CancelReason, CoordinatorEvent, ErrorCategory,
+    RevisionCoordinatorState, RevisionId, WorkbenchId,
 };
 use crate::section_tally::{self, SectionAvailability, SectionRefusal, spawn_span_producer};
 use crate::snapshot::{CompletedSnapshot, CompoundCategory};
@@ -27,6 +27,7 @@ use lingrep_core::token_match::AttributeKey;
 
 const DEFAULT_BATCH_SIZE: usize = 1_024;
 const LIVE_SUMMARY_INTERVAL: Duration = Duration::from_millis(100);
+const ABANDONED_SCAN_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct RevisionRequest {
@@ -124,6 +125,7 @@ fn resolve_scan(
     identity: CorpusIdentity,
     expected_sentence_count: Option<u64>,
     source: std::sync::Arc<str>,
+    cancel_reason: CancelReason,
 ) -> ScanResolution {
     match result {
         ScanTaskResult::Finished(Ok((RunOutcome::Completed(report), ref sink, ref omissions)))
@@ -218,6 +220,7 @@ fn resolve_scan(
             event: CoordinatorEvent::Cancelled {
                 workbench,
                 revision,
+                reason: cancel_reason,
             },
             invalidate_corrupt: false,
             progress: ExecutionProgress {
@@ -507,6 +510,7 @@ struct Entry {
     state: Mutex<RevisionCoordinatorState>,
     cancellation: StdMutex<Option<CancellationFlag>>,
     view_tx: watch::Sender<CoordinatorView>,
+    subscribed: Notify,
     handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     last_touch: AtomicU64,
 }
@@ -524,6 +528,7 @@ fn new_entry(workbench: &WorkbenchId, slot: &CorpusSlot, touch: u64) -> Entry {
         state: Mutex::new(state),
         cancellation: StdMutex::new(None),
         view_tx,
+        subscribed: Notify::new(),
         handle: StdMutex::new(None),
         last_touch: AtomicU64::new(touch),
     }
@@ -853,7 +858,9 @@ impl CoordinatorRegistry {
         let touch = self.next_touch();
         self.inner.entries.lock().await.get(workbench).map(|entry| {
             entry.last_touch.store(touch, Ordering::Relaxed);
-            entry.view_tx.subscribe()
+            let receiver = entry.view_tx.subscribe();
+            entry.subscribed.notify_waiters();
+            receiver
         })
     }
 
@@ -866,20 +873,39 @@ impl CoordinatorRegistry {
         options: ScanOptions,
         cancel: CancellationFlag,
     ) {
-        let Some(ready) = self
-            .wait_for_ready(&entry, &entry.runtime, &workbench, revision)
-            .await
-        else {
-            return;
+        let abandoned = entry.abandoned();
+        tokio::pin!(abandoned);
+        let admitted = async {
+            let ready = self
+                .wait_for_ready(&entry, &entry.runtime, &workbench, revision)
+                .await?;
+            {
+                let mut state = entry.state.lock().await;
+                if !state.mark_queued(revision) {
+                    return None;
+                }
+                entry.publish(&state, ExecutionProgress::default());
+            }
+            let permit = Arc::clone(&self.inner.permit).acquire_owned().await.ok()?;
+            Some((ready, permit))
         };
-        {
-            let mut state = entry.state.lock().await;
-            if !state.mark_queued(revision) {
+        let admitted = tokio::select! {
+            biased;
+            () = &mut abandoned => {
+                let mut state = entry.state.lock().await;
+                let event = CoordinatorEvent::Cancelled {
+                    workbench,
+                    revision,
+                    reason: CancelReason::Abandoned,
+                };
+                if state.apply_terminal(event) {
+                    entry.publish(&state, ExecutionProgress::default());
+                }
                 return;
             }
-            entry.publish(&state, ExecutionProgress::default());
-        }
-        let Ok(_permit) = Arc::clone(&self.inner.permit).acquire_owned().await else {
+            admitted = admitted => admitted,
+        };
+        let Some((ready, permit)) = admitted else {
             return;
         };
         {
@@ -918,55 +944,60 @@ impl CoordinatorRegistry {
         let expected_sentence_count = ready.sentence_count().ok();
         let source: std::sync::Arc<str> = source.into();
 
-        // Everything that can fail before the scan starts, with one exit.
-        // Nothing here may degrade to an empty vocabulary: publishing an
-        // exact-looking all-`None` distribution because a read failed is the
-        // one outcome this feature must not have.
-        let prepared = prepare_scan(&ready, &source, &options.search_scope).await;
+        let scan_cancel = cancel.clone();
+        let scan_source = Arc::clone(&source);
+        let scan = async {
+            let prepared = prepare_scan(&ready, &scan_source, &options.search_scope).await;
 
-        let scan = match prepared {
-            // No producer was started on this path, so there is nothing to join.
-            Prepared::Failed(failure) => {
-                forward.abort();
-                ScanTaskResult::Finished(Err(failure))
-            }
-            Prepared::Ready {
-                compiled,
-                producer,
-                sections,
-                provenance,
-            } => {
-                let scope = crate::search_scope::BoundScope::new(options.search_scope, provenance);
-                let result = tokio::task::spawn_blocking(move || {
-                    run_scan_blocking_with_options(
-                        &ready,
-                        *compiled,
-                        max_refs,
-                        sections,
-                        &cancel,
-                        progress_tx,
-                        options.derive_compounds,
-                        options.compound_category,
-                        options.document_reach,
-                        scope,
-                    )
-                })
-                .await;
-                forward.abort();
-
-                // `run_scan_blocking` owns the sink on every path, so the
-                // channel receiver is gone by the time it returns or unwinds —
-                // a producer parked on a full channel is already released.
-                // Dropping a `JoinHandle` detaches rather than joins, so the
-                // await is not optional.
-                if let Some(handle) = producer {
-                    let _ = handle.await;
+            match prepared {
+                Prepared::Failed(failure) => {
+                    forward.abort();
+                    ScanTaskResult::Finished(Err(failure))
                 }
-                match result {
-                    Ok(inner) => ScanTaskResult::Finished(inner),
-                    Err(_) => ScanTaskResult::Panicked,
+                Prepared::Ready {
+                    compiled,
+                    producer,
+                    sections,
+                    provenance,
+                } => {
+                    let scope =
+                        crate::search_scope::BoundScope::new(options.search_scope, provenance);
+                    let result = tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        run_scan_blocking_with_options(
+                            &ready,
+                            *compiled,
+                            max_refs,
+                            sections,
+                            &cancel,
+                            progress_tx,
+                            options.derive_compounds,
+                            options.compound_category,
+                            options.document_reach,
+                            scope,
+                        )
+                    })
+                    .await;
+                    forward.abort();
+
+                    if let Some(handle) = producer {
+                        let _ = handle.await;
+                    }
+                    match result {
+                        Ok(inner) => ScanTaskResult::Finished(inner),
+                        Err(_) => ScanTaskResult::Panicked,
+                    }
                 }
             }
+        };
+        tokio::pin!(scan);
+        let (scan, cancel_reason) = tokio::select! {
+            biased;
+            () = &mut abandoned => {
+                scan_cancel.cancel();
+                (scan.await, CancelReason::Abandoned)
+            }
+            scan = &mut scan => (scan, CancelReason::Superseded),
         };
         let resolution = resolve_scan(
             scan,
@@ -975,6 +1006,7 @@ impl CoordinatorRegistry {
             identity,
             expected_sentence_count,
             source,
+            cancel_reason,
         );
         if resolution.invalidate_corrupt {
             entry.runtime.invalidator().invalidate_corrupt().await;
@@ -1061,6 +1093,24 @@ fn readiness_view(readiness: &CacheReadiness) -> CacheReadinessView {
 }
 
 impl Entry {
+    async fn abandoned(&self) {
+        loop {
+            let subscribed = self.subscribed.notified();
+            tokio::pin!(subscribed);
+            subscribed.as_mut().enable();
+            self.view_tx.closed().await;
+            tokio::select! {
+                biased;
+                () = &mut subscribed => {}
+                () = tokio::time::sleep(ABANDONED_SCAN_GRACE) => {
+                    if self.view_tx.receiver_count() == 0 {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// Publish the current view to the watch channel.
     ///
     /// F6 invariant: every caller invokes this **while holding `self.state`'s
@@ -1290,6 +1340,7 @@ mod tests {
             ready.identity.clone(),
             None,
             std::sync::Arc::from("category: \"S1A\"\na := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         let CoordinatorEvent::Completed { snapshot, .. } = resolution.event else {
             panic!("completed options should publish");
@@ -1527,6 +1578,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(7),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(
             matches!(resolution.event, CoordinatorEvent::Completed { .. }),
@@ -1550,6 +1602,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(7),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
         assert!(resolution.invalidate_corrupt);
@@ -1634,6 +1687,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(
             resolution.event,
@@ -1661,6 +1715,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(
             matches!(resolution.event, CoordinatorEvent::Failed { .. }),
@@ -1684,6 +1739,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
     }
@@ -1703,6 +1759,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         assert!(matches!(resolution.event, CoordinatorEvent::Failed { .. }));
     }
@@ -1724,6 +1781,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from("p := [upos=VERB]."),
+            CancelReason::Superseded,
         );
         let CoordinatorEvent::Completed { snapshot, .. } = resolution.event else {
             panic!("expected Completed");
@@ -1898,6 +1956,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(3),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(!resolution.invalidate_corrupt);
         match resolution.event {
@@ -1927,6 +1986,7 @@ mod tests {
             identity,
             None,
             std::sync::Arc::clone(&source),
+            CancelReason::Superseded,
         );
         match resolution.event {
             CoordinatorEvent::Completed { snapshot, .. } => {
@@ -1949,6 +2009,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             Some(99),
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert!(resolution.invalidate_corrupt);
         assert_eq!(
@@ -1974,12 +2035,14 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from(""),
+            CancelReason::Abandoned,
         );
         assert_eq!(
             cancelled.event,
             CoordinatorEvent::Cancelled {
                 workbench: WorkbenchId::new("wb"),
-                revision: RevisionId(1)
+                revision: RevisionId(1),
+                reason: CancelReason::Abandoned,
             }
         );
         assert!(!cancelled.invalidate_corrupt);
@@ -2004,6 +2067,7 @@ mod tests {
             crate::corpus_runtime::CorpusIdentity::new("fixture"),
             None,
             std::sync::Arc::from(""),
+            CancelReason::Superseded,
         );
         assert_eq!(
             panicked.event,
@@ -2067,6 +2131,159 @@ mod tests {
             capture_catalog: Box::default(),
             oversized_omissions: None,
         })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_stream_departure_starts_a_full_abandonment_grace_period() {
+        use futures::poll;
+        let entry = new_entry(&WorkbenchId::new("reconnect"), &test_slot(), 0);
+        let abandoned = entry.abandoned();
+        tokio::pin!(abandoned);
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(25)).await;
+        let receiver = entry.view_tx.subscribe();
+        entry.subscribed.notify_waiters();
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(poll!(&mut abandoned).is_pending());
+        drop(receiver);
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(
+            ABANDONED_SCAN_GRACE
+                .checked_sub(Duration::from_secs(1))
+                .unwrap(),
+        )
+        .await;
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(poll!(&mut abandoned).is_ready());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires LINGREP_CADDY_BINARY; checks real HTTP disconnects and a 30-second grace period"]
+    async fn caddy_deployed_streaming_releases_the_abandonment_permit() {
+        use axum::{
+            Router,
+            response::sse::{Event, Sse},
+            routing::get,
+        };
+        use futures::{FutureExt, StreamExt};
+        use std::convert::Infallible;
+        use std::process::{Command, Stdio};
+        use std::time::Instant;
+        use tokio::net::TcpListener;
+        struct Proxy(std::process::Child);
+        impl Drop for Proxy {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let binary = std::env::var("LINGREP_CADDY_BINARY")
+            .expect("set LINGREP_CADDY_BINARY to a Caddy executable");
+        let entry = Arc::new(new_entry(&WorkbenchId::new("proxy"), &test_slot(), 0));
+        let handler_entry = Arc::clone(&entry);
+        let app = Router::new().route(
+            "/events",
+            get(move || {
+                let entry = Arc::clone(&handler_entry);
+                async move {
+                    let receiver = entry.view_tx.subscribe();
+                    entry.subscribed.notify_waiters();
+                    Sse::new(
+                        tokio_stream::wrappers::WatchStream::new(receiver)
+                            .map(|_| Ok::<_, Infallible>(Event::default().data("running"))),
+                    )
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("Caddyfile");
+        std::fs::write(&config, format!("{{\n admin off\n auto_https off\n persist_config off\n}}\nhttp://127.0.0.1:{port} {{\n bind 127.0.0.1\n encode zstd gzip\n reverse_proxy {upstream} {{\n flush_interval -1\n }}\n}}\n")).unwrap();
+        let log = std::fs::File::create(directory.path().join("caddy.log")).unwrap();
+        let proxy = Proxy(
+            Command::new(&binary)
+                .args(["run", "--adapter", "caddyfile", "--config"])
+                .arg(&config)
+                .stdout(Stdio::null())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        let result = std::panic::AssertUnwindSafe(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("Caddy must listen");
+            let permits = Arc::new(tokio::sync::Semaphore::new(1));
+            let held = Arc::clone(&permits).acquire_owned().await.unwrap();
+            let worker_entry = Arc::clone(&entry);
+            let worker = tokio::spawn(async move {
+                worker_entry.abandoned().await;
+                drop(held);
+            });
+            let mut response = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(format!("http://127.0.0.1:{port}/events"))
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success());
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), response.chunk())
+                    .await
+                    .expect("the initial SSE event must be flushed")
+                    .unwrap()
+                    .is_some()
+            );
+            assert_eq!(entry.view_tx.receiver_count(), 1);
+            let departure = Instant::now();
+            drop(response);
+            let next_session = tokio::time::timeout(
+                ABANDONED_SCAN_GRACE + Duration::from_secs(5),
+                Arc::clone(&permits).acquire_owned(),
+            )
+            .await
+            .expect("a second session must acquire the released permit")
+            .unwrap();
+            assert!(
+                departure.elapsed()
+                    >= ABANDONED_SCAN_GRACE
+                        .checked_sub(Duration::from_secs(1))
+                        .unwrap()
+            );
+            assert_eq!(entry.view_tx.receiver_count(), 0);
+            drop(next_session);
+            worker.await.unwrap();
+        })
+        .catch_unwind()
+        .await;
+        drop(proxy);
+        server.abort();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[tokio::test]

@@ -359,6 +359,7 @@
   "sample.summary": "{matches} match(es) in {tokens} tokens.",
   "sample.title": "Sample debugger",
   "sample.tokens_range": "Tokens {start}..{end}",
+  "status.abandoned": "This search was stopped because the page was closed or disconnected. Run the search again.",
   "status.current": "Results are current.",
   "status.detail_failed": "Could not load that pattern; the previous detail is still shown.",
   "status.idle": "Ready for a pattern.",

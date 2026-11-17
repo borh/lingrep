@@ -20,7 +20,7 @@ use lingrep_core::token_match::TokenInfo;
 use lingrep_web::coordinator::{AdmitError, CoordinatorRegistry};
 use lingrep_web::corpus_runtime::CorpusRuntime;
 use lingrep_web::corpus_set::{CorpusName, CorpusSlot};
-use lingrep_web::revision::AttemptPhase;
+use lingrep_web::revision::{AttemptPhase, CancelReason};
 use lingrep_web::revision::{ErrorCategory, RevisionId, WorkbenchId};
 use lingrep_web::state::{Config, DetailLimits, RequestStore};
 use tempfile::tempdir;
@@ -320,6 +320,352 @@ async fn latest_completed_revision_is_the_only_published_snapshot() {
     assert_eq!(snapshot.match_refs.len(), 5);
 }
 
+struct HeldPool {
+    run_one: std::sync::mpsc::Sender<()>,
+    ran: std::sync::mpsc::Receiver<()>,
+}
+
+impl HeldPool {
+    async fn run_one_queued_job(&self) {
+        self.run_one.send(()).unwrap();
+        let deadline = std::time::Instant::now() + WAIT;
+        while self.ran.try_recv().is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no job was queued on the held pool"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn occupy(pool: &rayon::ThreadPool) -> HeldPool {
+    let threads = pool.current_num_threads();
+    let (run_one, commands) = std::sync::mpsc::channel::<()>();
+    let commands = Arc::new(std::sync::Mutex::new(commands));
+    let (ran_tx, ran) = std::sync::mpsc::channel::<()>();
+    let started = Arc::new(std::sync::Barrier::new(threads + 1));
+    for _ in 0..threads {
+        let commands = Arc::clone(&commands);
+        let ran_tx = ran_tx.clone();
+        let started = Arc::clone(&started);
+        pool.spawn(move || {
+            started.wait();
+            loop {
+                let command = commands.lock().unwrap().recv();
+                if command.is_err() {
+                    break;
+                }
+                let deadline = std::time::Instant::now() + WAIT;
+                while rayon::yield_now() != Some(rayon::Yield::Executed) {
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::yield_now();
+                }
+                let _ = ran_tx.send(());
+            }
+        });
+    }
+    started.wait();
+    HeldPool { run_one, ran }
+}
+
+async fn phase_of(registry: &CoordinatorRegistry, workbench: &WorkbenchId) -> AttemptPhase {
+    let view = registry.snapshot(workbench).await.unwrap();
+    view.state.current_attempt().unwrap().phase
+}
+
+async fn run_ready_tasks() {
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+}
+
+fn multi_batch_registry() -> (
+    tempfile::TempDir,
+    Arc<CorpusRuntime>,
+    CorpusSlot,
+    CoordinatorRegistry,
+) {
+    let sentence = vec![TokenInfo::default().with_orth("食べる").with_pos("VERB")];
+    let (fixture, runtime) = runtime_fixture("multi-batch", vec![sentence; 8 * 1024]);
+    let slot = default_slot(Arc::clone(&runtime));
+    (
+        fixture.directory,
+        runtime,
+        slot,
+        CoordinatorRegistry::new(5),
+    )
+}
+
+#[tokio::test]
+async fn a_superseding_revision_starts_scanning_only_after_the_superseded_scan_ends() {
+    let (_directory, runtime, slot, registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let workbench = WorkbenchId::new("superseded-scan");
+    registry
+        .accept_next_revision(workbench.clone(), &slot, "first := [text=食べる].".into())
+        .await;
+    let mut views = registry.subscribe(&workbench).await.unwrap();
+    while views.borrow_and_update().live_summary.is_none() {
+        held.run_one_queued_job().await;
+        run_ready_tasks().await;
+    }
+
+    let second = registry
+        .accept_next_revision(workbench.clone(), &slot, "second := [text=食べる].".into())
+        .await;
+    views.borrow_and_update();
+    views.changed().await.unwrap();
+    run_ready_tasks().await;
+    assert_eq!(phase_of(&registry, &workbench).await, AttemptPhase::Queued);
+
+    drop(held);
+    let snapshot = wait_for_completed_snapshot(&registry, &workbench, second).await;
+    assert_eq!(snapshot.patterns[0].name, "second");
+}
+
+async fn wait_for_phase(
+    registry: &CoordinatorRegistry,
+    workbench: &WorkbenchId,
+    reached: impl Fn(AttemptPhase) -> bool,
+) -> AttemptPhase {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let phase = phase_of(registry, workbench).await;
+        if reached(phase) {
+            return phase;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the revision stayed {phase:?}"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
+fn is_terminal(phase: AttemptPhase) -> bool {
+    matches!(
+        phase,
+        AttemptPhase::Completed | AttemptPhase::Cancelled(_) | AttemptPhase::Failed
+    )
+}
+
+async fn advance(duration: std::time::Duration) {
+    let mut remaining = duration;
+    while !remaining.is_zero() {
+        let step = remaining.min(std::time::Duration::from_secs(1));
+        tokio::time::advance(step).await;
+        run_ready_tasks().await;
+        remaining -= step;
+    }
+}
+
+const GRACE_ELAPSED: std::time::Duration = std::time::Duration::from_millis(30_001);
+const WITHIN_GRACE: std::time::Duration = std::time::Duration::from_millis(29_999);
+
+#[tokio::test]
+async fn a_running_scan_without_a_subscriber_for_30_seconds_is_cancelled_and_frees_the_permit() {
+    let (_directory, runtime, slot, registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let closed = WorkbenchId::new("closed-page");
+    registry
+        .accept_next_revision(closed.clone(), &slot, "first := [text=食べる].".into())
+        .await;
+    let page = registry.subscribe(&closed).await.unwrap();
+    held.run_one_queued_job().await;
+    let waiting = WorkbenchId::new("waiting");
+    let second = registry
+        .accept_next_revision(waiting.clone(), &slot, "second := [text=食べる].".into())
+        .await;
+    let _waiting_page = registry.subscribe(&waiting).await.unwrap();
+
+    tokio::time::pause();
+    drop(page);
+    run_ready_tasks().await;
+    advance(GRACE_ELAPSED).await;
+    tokio::time::resume();
+    drop(held);
+
+    assert_eq!(
+        wait_for_phase(&registry, &closed, is_terminal).await,
+        AttemptPhase::Cancelled(CancelReason::Abandoned)
+    );
+    let snapshot = wait_for_completed_snapshot(&registry, &waiting, second).await;
+    assert_eq!(snapshot.patterns[0].name, "second");
+}
+
+#[tokio::test]
+async fn a_queued_revision_without_a_subscriber_for_30_seconds_is_cancelled_before_it_scans() {
+    let (_directory, runtime, slot, registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let scanning = WorkbenchId::new("scanning");
+    let first = registry
+        .accept_next_revision(scanning.clone(), &slot, "first := [text=食べる].".into())
+        .await;
+    let _page = registry.subscribe(&scanning).await.unwrap();
+    held.run_one_queued_job().await;
+    tokio::time::pause();
+    let closed = WorkbenchId::new("closed-page");
+    registry
+        .accept_next_revision(closed.clone(), &slot, "second := [text=食べる].".into())
+        .await;
+    run_ready_tasks().await;
+
+    advance(WITHIN_GRACE).await;
+    assert_eq!(phase_of(&registry, &closed).await, AttemptPhase::Queued);
+    advance(GRACE_ELAPSED - WITHIN_GRACE).await;
+    tokio::time::resume();
+
+    assert_eq!(
+        phase_of(&registry, &closed).await,
+        AttemptPhase::Cancelled(CancelReason::Abandoned)
+    );
+    assert_eq!(phase_of(&registry, &scanning).await, AttemptPhase::Running);
+    drop(held);
+    wait_for_completed_snapshot(&registry, &scanning, first).await;
+    let view = registry.snapshot(&closed).await.unwrap();
+    assert_eq!(
+        view.state.current_attempt().unwrap().phase,
+        AttemptPhase::Cancelled(CancelReason::Abandoned)
+    );
+    assert!(view.state.displayed_snapshot().is_none());
+}
+
+#[tokio::test]
+async fn a_subscriber_that_returns_within_30_seconds_keeps_the_scan() {
+    let (_directory, runtime, slot, registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let workbench = WorkbenchId::new("reconnected-page");
+    let revision = registry
+        .accept_next_revision(workbench.clone(), &slot, "verb := [text=食べる].".into())
+        .await;
+    let page = registry.subscribe(&workbench).await.unwrap();
+    held.run_one_queued_job().await;
+
+    tokio::time::pause();
+    drop(page);
+    run_ready_tasks().await;
+    advance(WITHIN_GRACE).await;
+    let _page = registry.subscribe(&workbench).await.unwrap();
+    advance(GRACE_ELAPSED).await;
+    tokio::time::resume();
+    drop(held);
+
+    assert_eq!(
+        wait_for_phase(&registry, &workbench, is_terminal).await,
+        AttemptPhase::Completed
+    );
+    assert!(
+        registry
+            .displayed_snapshot(&workbench, revision)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn a_closed_event_stream_connection_counts_as_no_subscriber() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (_directory, runtime, _slot, _registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let store = RequestStore::with_runtime(
+        Config {
+            dict_path: String::new(),
+            corpora: Vec::new(),
+            input_format: None,
+            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                lingrep_core::corpus::SectionPolicy::default(),
+            ),
+            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+            detail_limits: DetailLimits { max_kwic: 5 },
+        },
+        runtime,
+    );
+    let slot = store.corpora.resolve(None).unwrap();
+    let registry = &store.coordinators;
+    let scanning = WorkbenchId::new("scanning");
+    registry
+        .accept_next_revision(scanning.clone(), slot, "first := [text=食べる].".into())
+        .await;
+    let _page = registry.subscribe(&scanning).await.unwrap();
+    held.run_one_queued_job().await;
+    let closed = WorkbenchId::new("closed-page");
+    registry
+        .accept_next_revision(closed.clone(), slot, "second := [text=食べる].".into())
+        .await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .merge(lingrep_web::handlers::stream::routes())
+        .with_state(store.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut connection = tokio::net::TcpStream::connect(address).await.unwrap();
+    connection
+        .write_all(b"GET /stream/closed-page HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+    let mut status_line = [0_u8; 15];
+    connection.read_exact(&mut status_line).await.unwrap();
+    assert_eq!(&status_line, b"HTTP/1.1 200 OK");
+
+    tokio::time::pause();
+    advance(2 * GRACE_ELAPSED).await;
+    assert_eq!(phase_of(registry, &closed).await, AttemptPhase::Queued);
+
+    drop(connection);
+    let deadline = std::time::Instant::now() + WAIT;
+    while phase_of(registry, &closed).await != AttemptPhase::Cancelled(CancelReason::Abandoned) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server kept the subscriber of a closed connection"
+        );
+        advance(GRACE_ELAPSED).await;
+    }
+    tokio::time::resume();
+    server.abort();
+    drop(held);
+}
+
+#[tokio::test]
+async fn shutdown_cancels_a_running_scan() {
+    let (_directory, runtime, slot, registry) = ready_registry();
+    let held = occupy(&runtime.context().pool());
+    let workbench = WorkbenchId::new("shutdown");
+    registry
+        .accept_next_revision(workbench.clone(), &slot, "verb := [upos=VERB].".into())
+        .await;
+    let mut views = registry.subscribe(&workbench).await.unwrap();
+    views
+        .wait_for(|view| view.state.current_attempt().unwrap().phase == AttemptPhase::Running)
+        .await
+        .unwrap();
+
+    let mut shutdown = std::pin::pin!(registry.shutdown());
+    assert!(futures::poll!(shutdown.as_mut()).is_pending());
+    drop(held);
+    shutdown.await;
+
+    assert_eq!(
+        phase_of(&registry, &workbench).await,
+        AttemptPhase::Cancelled(CancelReason::Superseded)
+    );
+    assert!(
+        registry
+            .snapshot(&workbench)
+            .await
+            .unwrap()
+            .state
+            .displayed_snapshot()
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn coordinator_publishes_ordered_snapshot_from_parallel_cache_blocks() {
     let (_fixture, runtime) = runtime_fixture(
@@ -577,4 +923,43 @@ async fn the_entry_cap_is_global_across_corpora() {
         )
         .await;
     assert!(matches!(result, Err(AdmitError::RegistryFull)));
+}
+
+#[tokio::test]
+async fn reconnecting_resets_the_abandonment_grace() {
+    let (_directory, runtime, slot, registry) = multi_batch_registry();
+    let held = occupy(&runtime.context().pool());
+    let scanning = WorkbenchId::new("review-scanning");
+    let first = registry
+        .accept_next_revision(scanning.clone(), &slot, "first := [].".into())
+        .await;
+    let _scanning_page = registry.subscribe(&scanning).await.unwrap();
+    held.run_one_queued_job().await;
+    let target = WorkbenchId::new("review-reconnect");
+    registry
+        .accept_next_revision(target.clone(), &slot, "second := [].".into())
+        .await;
+    let page = registry.subscribe(&target).await.unwrap();
+    run_ready_tasks().await;
+    tokio::time::pause();
+    drop(page);
+    run_ready_tasks().await;
+    advance(std::time::Duration::from_secs(10)).await;
+    let reconnected = registry.subscribe(&target).await.unwrap();
+    advance(std::time::Duration::from_secs(10)).await;
+    drop(reconnected);
+    run_ready_tasks().await;
+    advance(std::time::Duration::from_millis(10_001)).await;
+    let actual = phase_of(&registry, &target).await;
+    advance(std::time::Duration::from_secs(20)).await;
+    let expired = phase_of(&registry, &target).await;
+    tokio::time::resume();
+    drop(held);
+    wait_for_completed_snapshot(&registry, &scanning, first).await;
+    assert_eq!(expired, AttemptPhase::Cancelled(CancelReason::Abandoned));
+    assert_eq!(
+        actual,
+        AttemptPhase::Queued,
+        "only 10 seconds since the latest disconnect"
+    );
 }
