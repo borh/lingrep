@@ -4,7 +4,7 @@
 //! Zero vectors never match a similarity query. For duplicate values, queries use
 //! the first row; candidate matching accepts any row for that value.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -21,6 +21,73 @@ use rayon::prelude::*;
 pub type Millionths = i32;
 
 const ONE: f64 = 1_000_000.0;
+const MAX_CACHED_QUERIES: usize = 64;
+const MAX_CACHED_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+struct CachedAnswer {
+    query: NearQuery,
+    values: Option<Arc<[CompactString]>>,
+    payload_bytes: usize,
+}
+
+struct AnswerCache {
+    entries: VecDeque<CachedAnswer>,
+    payload_bytes: usize,
+}
+
+impl AnswerCache {
+    fn new() -> Self {
+        Self {
+            entries: VecDeque::with_capacity(MAX_CACHED_QUERIES),
+            payload_bytes: 0,
+        }
+    }
+
+    fn get(&self, query: &NearQuery) -> Option<&Option<Arc<[CompactString]>>> {
+        self.entries
+            .iter()
+            .find(|entry| &entry.query == query)
+            .map(|entry| &entry.values)
+    }
+
+    fn insert(&mut self, query: NearQuery, values: Option<Arc<[CompactString]>>) {
+        if self.get(&query).is_some() {
+            return;
+        }
+        let heap_bytes = |value: &CompactString| {
+            if value.is_heap_allocated() {
+                value.capacity()
+            } else {
+                0
+            }
+        };
+        let mut payload_bytes = heap_bytes(&query.word);
+        if let Some(values) = &values {
+            payload_bytes = payload_bytes
+                .saturating_add(2 * std::mem::size_of::<usize>())
+                .saturating_add(std::mem::size_of_val(values.as_ref()));
+            for value in values.iter() {
+                payload_bytes = payload_bytes.saturating_add(heap_bytes(value));
+            }
+        }
+        if payload_bytes > MAX_CACHED_PAYLOAD_BYTES {
+            return;
+        }
+        while self.entries.len() == MAX_CACHED_QUERIES
+            || self.payload_bytes > MAX_CACHED_PAYLOAD_BYTES - payload_bytes
+        {
+            if let Some(entry) = self.entries.pop_front() {
+                self.payload_bytes -= entry.payload_bytes;
+            }
+        }
+        self.payload_bytes += payload_bytes;
+        self.entries.push_back(CachedAnswer {
+            query,
+            values,
+            payload_bytes,
+        });
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum VectorTableError {
@@ -54,7 +121,7 @@ pub struct VectorTable {
     path: PathBuf,
     map: Mmap,
     digest: OnceLock<blake3::Hash>,
-    answered: Mutex<HashMap<NearQuery, Option<Arc<[CompactString]>>>>,
+    answered: Mutex<AnswerCache>,
 }
 
 struct Malformed {
@@ -90,7 +157,7 @@ impl VectorTable {
             path: path.to_owned(),
             map,
             digest: OnceLock::new(),
-            answered: Mutex::new(HashMap::new()),
+            answered: Mutex::new(AnswerCache::new()),
         })
     }
 
@@ -306,7 +373,13 @@ impl WordVectors for VectorTable {
         &self,
         queries: &[NearQuery],
     ) -> Result<Vec<Option<Arc<[CompactString]>>>, String> {
-        let mut answered = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut answered: HashMap<&NearQuery, Option<Arc<[CompactString]>>> = {
+            let cache = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
+            queries
+                .iter()
+                .filter_map(|query| cache.get(query).map(|answer| (query, answer.clone())))
+                .collect()
+        };
         let unanswered: Vec<&NearQuery> = queries
             .iter()
             .filter(|query| !answered.contains_key(*query))
@@ -331,10 +404,12 @@ impl WordVectors for VectorTable {
                 .map_err(|error| error.to_string())?;
             for ((query, _), hits) in present.iter().zip(scan.hits) {
                 let values: Vec<CompactString> = hits.into_iter().map(|(value, _)| value).collect();
-                answered.insert((*query).clone(), Some(Arc::from(values)));
+                answered.insert(*query, Some(Arc::from(values)));
             }
+            let mut cache = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
             for query in unanswered {
-                answered.entry(query.clone()).or_insert(None);
+                let answer = answered.entry(query).or_insert(None);
+                cache.insert(query.clone(), answer.clone());
             }
         }
         Ok(queries
@@ -490,6 +565,111 @@ mod tests {
         std::fs::write(&path, rows).unwrap();
         let table = VectorTable::open(&path).unwrap();
         (directory, table)
+    }
+
+    #[test]
+    fn distinct_queries_do_not_accumulate_unbounded_cached_answers() {
+        let (_directory, table) = table("walk 1 0\nstroll 0.8 0.6\n");
+        for index in 0..65 {
+            let query = NearQuery {
+                word: format!("missing_{index}").into(),
+                threshold: lingrep_core::fsm::SimilarityThreshold::parse("0.6").unwrap(),
+            };
+            assert_eq!(table.similar_values(&[query]).unwrap(), vec![None]);
+        }
+        assert!(table.answered.lock().unwrap().entries.len() <= 64);
+        let queries: Vec<_> = (0..65)
+            .map(|index| NearQuery {
+                word: "walk".into(),
+                threshold: lingrep_core::fsm::SimilarityThreshold::parse(&format!("0.{index:06}"))
+                    .unwrap(),
+            })
+            .collect();
+        for answer in table.similar_values(&queries).unwrap() {
+            assert_eq!(
+                answer.as_deref().unwrap(),
+                &[CompactString::from("walk"), CompactString::from("stroll")]
+            );
+        }
+        assert!(table.answered.lock().unwrap().entries.len() <= 64);
+    }
+
+    #[test]
+    fn eviction_preserves_query_order_duplicates_and_complete_answers() {
+        let (_directory, table) = table("walk 1 0\nstroll 0.8 0.6\nwalk 0 1\nback -1 0\n");
+        let query = |word: &str, threshold: &str| NearQuery {
+            word: word.into(),
+            threshold: lingrep_core::fsm::SimilarityThreshold::parse(threshold).unwrap(),
+        };
+        let queries = [
+            query("walk", "0.6"),
+            query("missing", "0"),
+            query("walk", "0.6"),
+        ];
+        let before = table.similar_values(&queries).unwrap();
+        assert_eq!(
+            before[0].as_deref().unwrap(),
+            &[CompactString::from("walk"), CompactString::from("stroll")]
+        );
+        assert_eq!(before[1], None);
+        assert_eq!(before[0], before[2]);
+        let first = Arc::downgrade(before[0].as_ref().unwrap());
+        for index in 0..MAX_CACHED_QUERIES {
+            table
+                .similar_values(&[query(&format!("absent_{index}"), "0")])
+                .unwrap();
+        }
+        assert_eq!(Arc::strong_count(before[0].as_ref().unwrap()), 2);
+        assert_eq!(table.similar_values(&queries).unwrap(), before);
+        drop(before);
+        assert!(first.upgrade().is_none());
+    }
+
+    #[test]
+    fn cached_payload_accounts_for_query_and_value_allocations_and_evicts() {
+        let mut cache = AnswerCache::new();
+        let query = |word: CompactString| NearQuery {
+            word,
+            threshold: lingrep_core::fsm::SimilarityThreshold::parse("0").unwrap(),
+        };
+        let mut value = CompactString::with_capacity(MAX_CACHED_PAYLOAD_BYTES / 2);
+        value.push('v');
+        let values: Arc<[CompactString]> = Arc::from([value]);
+        let first = Arc::downgrade(&values);
+        cache.insert(query("first".into()), Some(values));
+        let mut word = CompactString::with_capacity(MAX_CACHED_PAYLOAD_BYTES / 2);
+        word.push('q');
+        cache.insert(query(word), None);
+        assert!(first.upgrade().is_none());
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.payload_bytes <= MAX_CACHED_PAYLOAD_BYTES);
+        cache.insert(
+            query(CompactString::from(
+                "x".repeat(MAX_CACHED_PAYLOAD_BYTES + 1),
+            )),
+            None,
+        );
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.entries.capacity() <= MAX_CACHED_QUERIES);
+    }
+
+    #[test]
+    fn oversized_answers_are_returned_completely_without_cache_retention() {
+        let large_word = "v".repeat(MAX_CACHED_PAYLOAD_BYTES + 1);
+        let (_directory, table) = table(&format!("walk 1 0\n{large_word} 1 0\n"));
+        let query = NearQuery {
+            word: "walk".into(),
+            threshold: lingrep_core::fsm::SimilarityThreshold::parse("1").unwrap(),
+        };
+        let answers = table.similar_values(&[query]).unwrap();
+        let values = answers[0].as_ref().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], "walk");
+        assert_eq!(values[1], large_word);
+        let weak = Arc::downgrade(values);
+        drop(answers);
+        assert!(weak.upgrade().is_none());
+        assert!(table.answered.lock().unwrap().entries.is_empty());
     }
 
     #[test]
