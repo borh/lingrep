@@ -115,11 +115,11 @@ export function verticalArcs(tokens, words) {
 export function boundOutside(row, length) {
     return new Map(evidenceWords(row, length).filter(word => !word.inSpan && word.roles.length).map(word => [word.index, word.roles]));
 }
-/** The reader's choice of view, else the whole sentence on a narrow screen, else 文節 when every word is labelled with one; a 文節 choice without labels shows words. */
+/** The reader's choice of view, else 文節 when every word is labelled with one, else the whole sentence on a narrow screen; a 文節 choice without labels shows words. */
 export function dependencyView(choice, bunsetsu, compact) {
     if (choice)
         return choice === 'bunsetsu' && !bunsetsu ? 'words' : choice;
-    return compact ? 'vertical' : bunsetsu ? 'bunsetsu' : 'words';
+    return bunsetsu ? 'bunsetsu' : compact ? 'vertical' : 'words';
 }
 /** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
 export function headLabel(tokens, index) {
