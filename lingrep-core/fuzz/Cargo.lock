@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "lingrep-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "aho-corasick",
  "blake3",
