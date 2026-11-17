@@ -2948,15 +2948,9 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
 
 const COUNT_FIRST_CATALOG: &str = "key: [upos]\npos := [].\nnoun := [upos=NOUN].\n";
 
-/// Without a pattern in its address, Frequencies opens on the catalog's
-/// first definition that is not a count of single tokens by a key, as the
-/// question page does; a pattern in the address still wins.
-#[tokio::test]
-async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> WebDriverResult<()> {
-    let Some(driver) = driver().await? else {
-        return Ok(());
-    };
-    let served = serve_artifact(
+/// A server for [`COUNT_FIRST_CATALOG`] with a count table of both its definitions.
+async fn serve_count_first(extra: &[&std::ffi::OsStr]) -> Served {
+    serve_artifact(
         support::build_artifact_with_metadata(
             (0..6u64)
                 .map(|index| {
@@ -3002,9 +2996,20 @@ async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> We
                 .publish()
                 .unwrap();
         },
-        &[],
+        extra,
     )
-    .await;
+    .await
+}
+
+/// Without a pattern in its address, Frequencies opens on the catalog's
+/// first definition that is not a count of single tokens by a key, as the
+/// question page does; a pattern in the address still wins.
+#[tokio::test]
+async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_count_first(&[]).await;
     let result: WebDriverResult<()> = async {
         let chosen = "return document.querySelector('[data-fq-sentence] select[data-b=pattern]')?.value ?? null";
         open(&driver, &served.base, ROWS).await?;
@@ -3335,6 +3340,70 @@ async fn the_first_tab_leads_to_the_question_sentence() -> WebDriverResult<()> {
             .perform()
             .await?;
         assert_eq!(driver.execute(active, Vec::new()).await?.json()[2], json!(true));
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// The question page's definition blank is a menu of the served catalog's
+/// definitions: a count-only one is listed apart and opens in Frequencies,
+/// editing the source is the menu's last action, and the 定義 chip's ×
+/// reopens the menu instead of searching every definition.
+#[tokio::test]
+async fn the_definition_blank_is_a_menu_of_the_catalogs_definitions() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let catalog = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(catalog.path(), COUNT_FIRST_CATALOG).unwrap();
+    let served = serve_count_first(&["--patterns".as_ref(), catalog.path().as_os_str()]).await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(served.base.trim_end_matches("frequencies")).await?;
+        let chip = "return document.querySelector('[data-clear-limit=pattern]')?.textContent ?? null";
+        wait_for(&driver, &format!("{chip} === 'Definition: noun ×'"), "the default definition").await?;
+        driver.execute("document.querySelector('#edit-source').click()", Vec::new()).await?;
+        let menu = "const menu = document.querySelector('#definition-menu'); \
+            return {open: !menu.hidden, expanded: document.querySelector('#edit-source').getAttribute('aria-expanded'), \
+              searched: [...menu.querySelectorAll('button[data-definition]')].map((b) => [b.dataset.definition, b.getAttribute('aria-pressed')]), \
+              counted: [...menu.querySelectorAll('li > a')].map((a) => [a.textContent, new URLSearchParams(a.getAttribute('href').split('#')[1]).get('pattern')]), \
+              heading: menu.querySelector('h3')?.textContent ?? null, last: menu.querySelector('.definition-actions > :last-child')?.hasAttribute('data-edit-source') ?? false, \
+              focused: document.activeElement?.dataset?.definition ?? null}";
+        wait_for(&driver, "return document.querySelectorAll('#definition-menu li > a').length === 1", "the count-only definition's Frequencies link").await?;
+        observed(
+            &driver,
+            menu,
+            json!({"open": true, "expanded": "true", "searched": [["noun", "true"]], "counted": [["pos", "pos"]],
+                "heading": "Counts only (see Frequencies)", "last": true, "focused": "noun"}),
+            "the definition menu",
+        )
+        .await?;
+        driver.find(By::Css("#definition-menu [data-definition='noun']")).await?.send_keys(Key::Escape).await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#definition-menu').hidden, document.activeElement.id]",
+            json!([true, "edit-source"]),
+            "Escape closes the menu",
+        )
+        .await?;
+        driver.execute("document.querySelector('[data-clear-limit=pattern]').click()", Vec::new()).await?;
+        observed(
+            &driver,
+            &format!("return [document.querySelector('#definition-menu').hidden, (() => {{ {chip} }})()]"),
+            json!([false, "Definition: noun ×"]),
+            "the chip's × reopens the menu and keeps the definition",
+        )
+        .await?;
+        driver.execute("document.querySelector('[data-edit-source]').click()", Vec::new()).await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#definition-menu').hidden, document.querySelector('#source-editor').hidden, document.activeElement.id]",
+            json!([true, false, "source"]),
+            "editing the source from the menu",
+        )
+        .await?;
         assert_no_page_errors(&driver).await
     }
     .await;

@@ -97,3 +97,14 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .entry-exit:hover:not(:disabled){background:none;text-decoration-thickness:2px}
 button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
 .entry-document{font-weight:600}
+.definition-menu{border-block:1px solid var(--rule);margin:10px 0;padding:10px 0}
+.definition-menu h2,.definition-menu h3{font-size:14px;font-weight:600;margin:0 0 4px}
+.definition-menu h3{margin-top:14px}
+.definition-menu p{margin:0 0 6px;color:var(--soft);font-size:14px}
+.definition-menu ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px 16px}
+.definition-menu li{display:flex;align-items:baseline;gap:6px}
+.definition-menu [data-definition]{font-weight:600;color:var(--green)}
+.definition-menu [aria-pressed=true]{background:var(--wash);border-color:var(--green)}
+.definition-menu li>a{font-weight:600}
+.definition-note{font-size:14px;color:var(--soft)}
+.definition-menu .definition-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}

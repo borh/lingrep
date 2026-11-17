@@ -11,7 +11,7 @@ import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts
 import type {Arc,DependencyView,EvidenceWord} from './dependency.js';
 
 import { element as $, basicAttributeKeys, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
-import type { SearchLimit, Behavior, Locale, Configuration, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
+import type { SearchLimit, Behavior, Locale, Configuration, CatalogDefinition, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));
 const words = (tokens: readonly Token[] | undefined) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
@@ -261,7 +261,8 @@ function updateDraft(commit: boolean | Event=true) {
   const names=state.current?.source===source?state.current.definitions:[];
   if(searchLimit?.document!=null&&(controls?.where()??$<HTMLInputElement>('#where').value))searchLimit={...searchLimit,document:null};
   const limit=activeLimit(),ranLimit=state.current?runLimits.get(state.current.id):undefined;
-  $('#source-label').textContent=limit?.pattern??(names?.length===1?names[0]:(locale==='ja'?'パターンのソース':'pattern source'));
+  $('#source-label').textContent=limit?.pattern??(names?.length===1?names[0]:menuDefinitions().length?(locale==='ja'?'すべての定義':'every definition'):(locale==='ja'?'パターンのソース':'pattern source'));
+  if(!definitionMenu.hidden)renderDefinitionMenu();
   renderLimits(limit);
   const dirty = state.current && (source !== state.current.source || (controls?.where()??$<HTMLInputElement>('#where').value) !== state.current.where || $<HTMLSelectElement>('#corpus').value !== state.current.dataset || (limit?.pattern??null)!==(ranLimit?.pattern??null) || (limit?.document??null)!==(ranLimit?.document??null));
   $('#draft-badge').hidden = !dirty;
@@ -286,9 +287,9 @@ function renderLimits(limit:SearchLimit|null){
   else if(label.dataset.limited!==undefined){delete label.dataset.limited;label.textContent=locale==='ja'?'すべての作品':'all documents';}
   const chips=[...(limit?.pattern?[['pattern',locale==='ja'?`定義: ${limit.pattern}`:`Definition: ${limit.pattern}`]]:[]),...(limit?.document!=null?[['document',locale==='ja'?`作品: ${documentName(dataset,limit.document)}`:`Document: ${documentName(dataset,limit.document)}`]]:[]),...(entryShown(displayedEvidence())?[['entry',locale==='ja'?`用例: ${entryLines!.words.join(' ')}`:`Examples: ${entryLines!.words.join(' ')}`]]:[])];
   const signature=JSON.stringify(chips);if(renderSignatures.get(limitChips)===signature)return;renderSignatures.set(limitChips,signature);
-  limitChips.replaceChildren(...chips.map(([kind,text])=>{const button=document.createElement('button');button.type='button';button.className='scope-chip';button.dataset.clearLimit=kind;button.setAttribute('aria-label',locale==='ja'?`${text} の限定を外す`:`Remove the limit ${text}`);button.innerHTML=`${escape(text)}<span aria-hidden="true"> ×</span>`;return button;}));
+  limitChips.replaceChildren(...chips.map(([kind,text])=>{const button=document.createElement('button');button.type='button';button.className='scope-chip';button.dataset.clearLimit=kind;button.setAttribute('aria-label',kind==='pattern'&&menuDefinitions().some(definition=>definition.count_only)?(locale==='ja'?`${text} を別の定義に変える`:`Choose another definition than ${text}`):locale==='ja'?`${text} の限定を外す`:`Remove the limit ${text}`);button.innerHTML=`${escape(text)}<span aria-hidden="true"> ×</span>`;return button;}));
 }
-limitChips.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-clear-limit]');if(button?.dataset.clearLimit==='entry'){leaveEntry();return;}if(!button||!searchLimit)return;searchLimit=button.dataset.clearLimit==='pattern'?{...searchLimit,pattern:null}:{...searchLimit,document:null};updateDraft();});
+limitChips.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-clear-limit]');if(button?.dataset.clearLimit==='entry'){leaveEntry();return;}if(!button||!searchLimit)return;if(button.dataset.clearLimit==='pattern'&&menuDefinitions().some(definition=>definition.count_only)){openDefinitionMenu();return;}searchLimit=button.dataset.clearLimit==='pattern'?{...searchLimit,pattern:null}:{...searchLimit,document:null};updateDraft();});
 function restoreLimit(params:URLSearchParams){
   const pattern=params.get('pattern')||null,document=params.get('document');
   searchLimit=pattern||document?{source:$<HTMLTextAreaElement>('#source').value,pattern,document:document&&/^\d+$/.test(document)?Number(document):null}:null;
@@ -822,10 +823,11 @@ function leaveEntry(){
 }
 
 // The Frequencies tables served, read once when a page filter first finds nothing.
-let frequencyPairs:readonly {corpus:string;catalog:string;patterns:readonly {name:string}[]}[]|null|undefined;
+let frequencyPairs:readonly {corpus:string;catalog:string;source:string;patterns:readonly {name:string}[]}[]|null|undefined;
+function loadFrequencyPairs(){frequencyPairs=null;return request<{pairs:typeof frequencyPairs}>('api/frequency/meta').then(meta=>{frequencyPairs=meta.pairs??[];},()=>{frequencyPairs=[];});}
 // A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
 function filterEmpty(element:HTMLElement,run:RunSnapshot,pattern:string,filter:string,shown:number){
-  if(frequencyPairs===undefined){frequencyPairs=null;void request<{pairs:typeof frequencyPairs}>('api/frequency/meta').then(meta=>{frequencyPairs=meta.pairs??[];render(true);},()=>{frequencyPairs=[];});}
+  if(frequencyPairs===undefined)void loadFrequencyPairs().then(()=>render(true));
   const pair=frequencyPairs?.find(pair=>pair.corpus===run.dataset&&pair.patterns.some(item=>item.name===pattern));
   const signature=JSON.stringify([locale,run.id,pattern,filter,shown,pair?.catalog??null]);if(renderSignatures.get(element)===signature)return;renderSignatures.set(element,signature);
   element.textContent=locale==='ja'?`表示中の${count(shown)}件に「${filter}」を含む用例はありません。`:`None of the ${count(shown)} lines shown contain “${filter}”.`;
@@ -1145,6 +1147,10 @@ $<HTMLButtonElement>('#cancel').addEventListener('click',async()=>{
 $<HTMLButtonElement>('#retry').addEventListener('click',search);
 $('#language').addEventListener('click',()=>{locale=locale==='en'?'ja':'en';try{localStorage.setItem(LOCALE_KEY,locale);}catch{}translate();});
 $('#edit-source').addEventListener('click',()=>{
+  if(menuDefinitions().length){if(definitionMenu.hidden)openDefinitionMenu();else closeDefinitionMenu();return;}
+  openSourceEditor();
+});
+function openSourceEditor(){
   const editor=$('#source-editor');editor.hidden=!editor.hidden;$('#edit-source').setAttribute('aria-expanded',String(!editor.hidden));
   if(editor.hidden)return;
   const input=$<HTMLTextAreaElement>('#source'),at=definitionOffset(input.value,$('#source-label').textContent??'');
@@ -1153,6 +1159,46 @@ $('#edit-source').addEventListener('click',()=>{
   input.setSelectionRange(at,at);
   const line=parseFloat(getComputedStyle(input).lineHeight)||20;
   input.scrollTop=Math.max(0,(input.value.slice(0,at).split('\n').length-2)*line);
+}
+// The definition blank offers the catalog's definitions; a count-only one is read in Frequencies when a table counts it, and editing the source is the menu's last action.
+const definitionMenu=$('#definition-menu');
+function menuDefinitions():readonly CatalogDefinition[]{
+  if(!config)return [];
+  const source=$<HTMLTextAreaElement>('#source').value,run=state.current;
+  if(source===config.source)return config.definitions??[];
+  return run?.source===source&&!runLimits.get(run.id)?.pattern?run.definitions.map(name=>({name,count_only:false})):[];
+}
+function renderDefinitionMenu(){
+  const definitions=menuDefinitions(),chosen=activeLimit()?.pattern??null,corpus=$<HTMLSelectElement>('#corpus').value,source=$<HTMLTextAreaElement>('#source').value;
+  const counted=definitions.filter(definition=>definition.count_only),ja=locale==='ja';
+  const table=(name:string)=>frequencyPairs?.find(pair=>pair.corpus===corpus&&pair.source===source&&pair.patterns.some(item=>item.name===name));
+  const item=(definition:CatalogDefinition)=>{
+    const pair=definition.count_only?table(definition.name):undefined;
+    if(pair)return `<li><a href="frequencies#${escape(new URLSearchParams({corpus,catalog:pair.catalog,pattern:definition.name}).toString())}">${escape(definition.name)}</a> <span class="definition-note">${ja?'頻度表で開く':'opens in Frequencies'}</span></li>`;
+    return `<li><button type="button" data-definition="${escape(definition.name)}" aria-pressed="${definition.name===chosen}">${escape(definition.name)}</button>${definition.count_only?` <span class="definition-note">${ja?'用例が多く、検索が途中で止まることがあります':'may stop: too many examples to keep'}</span>`:''}</li>`;
+  };
+  const markup=`<h2 id="definition-menu-title">${ja?'検索する定義':'Definition to search'}</h2><ul>${definitions.filter(definition=>!definition.count_only).map(item).join('')}</ul>${counted.length?`<h3>${ja?'頻度表のみ':'Counts only (see Frequencies)'}</h3><p>${ja?'語ごとの件数を数える定義です。用例を一覧するには数が多すぎます。':'These definitions count words; they have too many examples to list.'}</p><ul>${counted.map(item).join('')}</ul>`:''}<p class="definition-actions">${counted.length?'':`<button type="button" data-definition="" aria-pressed="${chosen===null}">${ja?'すべての定義を検索':'Search every definition'}</button>`}<button type="button" data-edit-source>${ja?'パターンのソースを編集':'Edit the pattern source'}</button></p>`;
+  definitionMenu.setAttribute('aria-labelledby','definition-menu-title');
+  if(renderSignatures.get(definitionMenu)===markup)return;
+  const focused=definitionMenu.contains(document.activeElement)?(document.activeElement as HTMLElement).textContent:null;
+  definitionMenu.innerHTML=markup;renderSignatures.set(definitionMenu,markup);
+  if(focused!=null)[...definitionMenu.querySelectorAll<HTMLElement>('button,a')].find(control=>control.textContent===focused)?.focus();
+}
+function openDefinitionMenu(){
+  $('#source-editor').hidden=true;definitionMenu.hidden=false;$('#edit-source').setAttribute('aria-expanded','true');
+  renderDefinitionMenu();
+  if(frequencyPairs===undefined)void loadFrequencyPairs().then(()=>{if(!definitionMenu.hidden)renderDefinitionMenu();});
+  (definitionMenu.querySelector<HTMLElement>('[aria-pressed=true]')??definitionMenu.querySelector<HTMLElement>('button,a'))?.focus();
+}
+function closeDefinitionMenu(focus=true){definitionMenu.hidden=true;$('#edit-source').setAttribute('aria-expanded','false');if(focus)$('#edit-source').focus();}
+definitionMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeDefinitionMenu();}});
+definitionMenu.addEventListener('click',event=>{
+  const target=event.target as Element;
+  if(target.closest('[data-edit-source]')){closeDefinitionMenu(false);openSourceEditor();return;}
+  const button=target.closest<HTMLButtonElement>('[data-definition]');if(!button)return;
+  const pattern=button.dataset.definition||null,source=$<HTMLTextAreaElement>('#source').value;
+  searchLimit={source,pattern,document:activeLimit()?.document??null};if(pattern)preferredPattern=pattern;
+  closeDefinitionMenu();updateDraft();void search();
 });
 $('#token-attributes').addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-attribute]');if(!button)return;attributeKey=button.dataset.attribute!;attributeMember=button.dataset.member;const all=!!button.closest('.attribute-all');selectToken(tokenIndex);[...$('#token-attributes').querySelectorAll<HTMLButtonElement>(all?'.attribute-all [data-attribute]':'.attribute-basics [data-attribute]')].find(item=>item.dataset.attribute===attributeKey&&item.dataset.member===attributeMember)?.focus({preventScroll:true});});
 $<HTMLDialogElement>('#inspector').addEventListener('close',()=>{++readerEpoch;if(viewLocation.kind==='reader'&&inspecting)void navigateView(hrefFor(inspecting.run,viewLocation.returnTo),true,'replace');if(document.activeElement===document.body)$('#results').focus({preventScroll:true});});

@@ -49,32 +49,50 @@ pub fn compile_web_pattern(source: &str) -> Result<CompileOutput, CompileError> 
     compile_with(source, word_vectors())
 }
 
+/// A published definition of a question catalog.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct QuestionDefinition {
+    pub name: String,
+    /// The definition declares a `key:` and matches one word by itself, like
+    /// `pos := [].`: what it is for is its counts, which a count table holds,
+    /// and its concordance is too large for a run to retain on a real corpus.
+    pub count_only: bool,
+}
+
+/// The published definitions of `source` in catalog order; empty when
+/// `source` does not compile.
+#[must_use]
+pub fn question_definitions(source: &str) -> Vec<QuestionDefinition> {
+    let Ok(compiled) = compile_web_pattern(source) else {
+        return Vec::new();
+    };
+    let single_token = compiled.analysis.single_token_definitions();
+    let policy = compiled.matcher.catalog_policy();
+    crate::pattern_catalog::pattern_metadata_pairs(&compiled.matcher)
+        .into_iter()
+        .map(|(name, _)| QuestionDefinition {
+            count_only: single_token.iter().any(|single| *single == name)
+                && policy
+                    .get(&name)
+                    .is_some_and(|policy| !policy.key.is_empty()),
+            name,
+        })
+        .collect()
+}
+
 /// The definition a question run of `source` searches when nobody chose one:
 /// the first published definition that is not count-only, when the catalog
 /// has both kinds; otherwise none, and the run searches every definition.
-///
-/// A count-only definition declares a `key:` and matches one word by itself,
-/// like `pos := [].`: what it is for is its counts, which a count table holds,
-/// and its concordance is too large for a run to retain on a real corpus.
 #[must_use]
 pub fn default_question_definition(source: &str) -> Option<String> {
-    let compiled = compile_web_pattern(source).ok()?;
-    let single_token = compiled.analysis.single_token_definitions();
-    let policy = compiled.matcher.catalog_policy();
-    let count_only = |name: &str| {
-        single_token.iter().any(|single| single == name)
-            && policy
-                .get(name)
-                .is_some_and(|policy| !policy.key.is_empty())
-    };
-    let published = crate::pattern_catalog::pattern_metadata_pairs(&compiled.matcher);
-    if !published.iter().any(|(name, _)| count_only(name)) {
+    let definitions = question_definitions(source);
+    if !definitions.iter().any(|definition| definition.count_only) {
         return None;
     }
-    published
+    definitions
         .into_iter()
-        .map(|(name, _)| name)
-        .find(|name| !count_only(name))
+        .find(|definition| !definition.count_only)
+        .map(|definition| definition.name)
 }
 
 /// Compiles `source` publishing only the definitions named `pattern`, as
