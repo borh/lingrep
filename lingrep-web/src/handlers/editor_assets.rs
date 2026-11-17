@@ -71,6 +71,11 @@ const ASSETS: &[AssetEntry] = &[
         "text/javascript; charset=utf-8",
     ),
     ("/pattern-editor.css", EDITOR_CSS, "text/css; charset=utf-8"),
+    (
+        "/label-names.json",
+        lingrep_core::fsm::LABEL_NAMES_JSON.as_bytes(),
+        "application/json",
+    ),
 ];
 
 pub fn routes() -> Router<RequestStore> {

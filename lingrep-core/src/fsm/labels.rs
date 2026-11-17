@@ -131,7 +131,8 @@ const PENN_XPOS: &[&str] = &[
 ];
 
 /// Japanese and English display names of the named label sets' values, as
-/// JSON: `sets.<label set>.<attribute>.<value>` is `{"en": …, "ja": …}`. A
+/// JSON: `sets.<label set>.<attribute>.<value>` is `{"en": …, "ja": …}`,
+/// with `"unidic"` naming the UniDic categories a `upos` tag covers. A
 /// value without an entry under its own set shares the same value's `ud-v2`
 /// entry, and a `ud-v2` relation subtype without an entry shares its base's.
 pub const LABEL_NAMES_JSON: &str = include_str!("label_names.json");

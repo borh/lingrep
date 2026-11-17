@@ -650,26 +650,34 @@ export const PATTERN_ATTRIBUTES = [
   ["unidic.lextype", "UniDic lexical type"],
 ];
 
-export const PATTERN_POS_TAGS = [
-  ["ADJ", "Adjective (形容詞, 形状詞)"],
-  ["ADP", "Adposition (格・係・副助詞)"],
-  ["ADV", "Adverb (副詞)"],
-  ["AUX", "Auxiliary (助動詞, 非自立)"],
-  ["CCONJ", "Coordinating conjunction (接続詞)"],
-  ["DET", "Determiner (連体詞)"],
-  ["INTJ", "Interjection (感動詞)"],
-  ["NOUN", "Noun (名詞, 接尾辞など)"],
-  ["NUM", "Numeral (数詞)"],
-  ["PART", "Particle (終助詞など)"],
-  ["PRON", "Pronoun (代名詞)"],
-  ["PROPN", "Proper noun (固有名詞, 外国語)"],
-  ["PUNCT", "Punctuation (句点, 読点, 括弧)"],
-  ["SCONJ", "Subordinating conjunction (接続・準体助詞)"],
-  ["SPACE", "Whitespace (空白)"],
-  ["SYM", "Symbol (補助記号, 絵文字)"],
-  ["VERB", "Verb (動詞)"],
-  ["X", "Other"],
-];
+// The label sets' value names (lingrep-core fsm/label_names.json, served
+// beside this module), which upos and dep.rel completions and hovers list.
+let valueNames = null;
+/** Sets the value names completions and hovers read: the `sets` object of label-names.json. */
+export function setValueNames(sets) {
+  valueNames = sets;
+}
+if (typeof document !== "undefined") {
+  fetch(assetUrl("./label-names.json"))
+    .then((response) => (response.ok ? response.json() : null))
+    .then((names) => names && setValueNames(names.sets))
+    .catch(() => {});
+}
+const VALUE_SETS = { upos: ["ud-v2", "spacy"], "dep.rel": ["ud-v2", "clearnlp"] };
+const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+/** The values of `attribute` the label sets name, as `[value, description]`: the English name, with the UniDic categories a upos tag covers, and the label set for a value only ClearNLP has. */
+export function attributeValueNames(attribute) {
+  const sets = VALUE_SETS[attribute] ?? [];
+  const seen = new Map();
+  for (const set of sets) {
+    for (const [value, name] of Object.entries(valueNames?.[set]?.[attribute] ?? {})) {
+      if (seen.has(value)) continue;
+      const described = capitalized(name.en) + (name.unidic ? ` (${name.unidic})` : "") + (set === "clearnlp" ? " · ClearNLP" : "");
+      seen.set(value, described);
+    }
+  }
+  return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
 
 export const PATTERN_BY_VALUES = PATTERN_ATTRIBUTES.map(([name]) => name);
 export const PATTERN_KEY_COMPONENTS = [
@@ -903,10 +911,11 @@ export function patternCompletionContext(source, pos) {
   }
 
   const segment = source.slice(lastBoundary + 1, from);
-  const assignment = segment.match(/^\s*([\p{L}\p{N}_]+)\s*=\s*$/u);
+  const assignment = segment.match(/^\s*([\p{L}\p{N}_.]+)\s*=\s*$/u);
   if (assignment && (bracketDepth > 0 || parenDepth > 0)) {
     const attribute = assignment[1].toLowerCase();
     if (attribute === "upos") return { kind: "pos-value", from, word };
+    if (attribute === "dep.rel") return { kind: "rel-value", from, word };
     if (attribute === "by") return { kind: "by-value", from, word };
     return { kind: "none", from, word };
   }
@@ -984,7 +993,8 @@ export function patternCompletionOptions(context, env = { definitions: [], captu
         apply: `${name}=`,
       }));
     case "pos-value":
-      return PATTERN_POS_TAGS.map(([tag, info]) => ({ label: tag, type: "enum", info }));
+    case "rel-value":
+      return attributeValueNames(context.kind === "pos-value" ? "upos" : "dep.rel").map(([value, info]) => ({ label: value, type: "enum", info }));
     case "by-value":
       return PATTERN_BY_VALUES.map((value) => ({
         label: value,
@@ -1077,12 +1087,12 @@ export function patternHoverInfo(source, pos) {
 
   // Attribute value: the word directly follows `attr=`.
   const before = source.slice(Math.max(0, from - 40), from);
-  const valueOf = before.match(/([\p{L}\p{N}_]+)\s*=$/u);
+  const valueOf = before.match(/([\p{L}\p{N}_.]+)\s*=$/u);
   if (valueOf) {
     const attribute = valueOf[1].toLowerCase();
-    if (attribute === "upos") {
-      const tag = PATTERN_POS_TAGS.find(([name]) => name === word);
-      return tag ? { from, to, title: `upos=${word}`, detail: tag[1] } : null;
+    if (attribute === "upos" || attribute === "dep.rel") {
+      const named = attributeValueNames(attribute).find(([name]) => name === word);
+      return named ? { from, to, title: `${attribute}=${word}`, detail: named[1] } : null;
     }
     if (attribute === "by") {
       const detail = PATTERN_BY_VALUE_DOCS[word];

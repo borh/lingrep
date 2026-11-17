@@ -19,6 +19,7 @@ import {
   patternCompletionOptions,
   patternDefinitions,
   patternHoverInfo,
+  setValueNames,
   patternNavigationIndex,
   patternSignatureContext,
   statsSummary,
@@ -121,11 +122,23 @@ test("attribute names complete at a token-clause start", () => {
   assert.ok(options.every((option) => option.apply?.endsWith("=")));
 });
 
-test("POS values complete after upos=", () => {
+test("upos and dep.rel values complete and hover with the names in the shared label-names file", async () => {
+  const { readFileSync } = await import("node:fs");
+  const names = JSON.parse(readFileSync(new URL("../../lingrep-core/src/fsm/label_names.json", import.meta.url), "utf8")).sets;
+  setValueNames(names);
   assert.equal(contextAt("verb := [upos=V|").kind, "pos-value");
   assert.equal(contextAt("verb := [lemma=猫 & upos=|").kind, "pos-value");
-  const options = patternCompletionOptions(contextAt("verb := [upos=|"));
-  assert.ok(options.some((option) => option.label === "VERB"));
+  const upos = patternCompletionOptions(contextAt("verb := [upos=|"));
+  assert.deepEqual(upos.map((option) => option.label), [...new Set([...Object.keys(names["ud-v2"].upos), ...Object.keys(names.spacy.upos)])].sort());
+  assert.equal(upos.find((option) => option.label === "ADP").info, "Adposition (格・係・副助詞)");
+  assert.equal(upos.find((option) => option.label === "SPACE").info, "Whitespace (空白)");
+  assert.equal(upos.find((option) => option.label === "X").info, "Other");
+  assert.equal(contextAt("verb := [dep.rel=n|").kind, "rel-value");
+  const relations = patternCompletionOptions(contextAt("verb := [dep.rel=|"));
+  assert.equal(relations.find((option) => option.label === "nsubj").info, "Subject");
+  assert.equal(relations.find((option) => option.label === "dobj").info, "Direct object · ClearNLP");
+  assert.equal(hoverAt("p := [upos=VE|RB].").detail, "Verb (動詞)");
+  assert.equal(hoverAt("p := [dep.rel=ob|j].").detail, "Object");
   // Other attributes are free-form: no completion noise.
   assert.equal(contextAt("verb := [lemma=食|").kind, "none");
 });

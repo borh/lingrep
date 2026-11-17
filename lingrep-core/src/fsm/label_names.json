@@ -2,26 +2,26 @@
  "vocabulary": "lingrep.label-names",
  "edition": "1",
  "licence": "MIT",
- "description": "Display names of token-attribute values, by label set (labels.rs NAMED_LABEL_SETS) and attribute. A spaCy upos and a clearnlp dep.rel without an entry here share the ud-v2 entry of the same value; a ud-v2 dep.rel subtype without an entry shares its base's.",
+ "description": "Display names of token-attribute values, by label set (labels.rs NAMED_LABEL_SETS) and attribute: `en` and `ja`, and for upos the UniDic categories the tag usually covers (`unidic`). A spaCy upos and a clearnlp dep.rel without an entry here share the ud-v2 entry of the same value; a ud-v2 dep.rel subtype without an entry shares its base's.",
  "sets": {
   "ud-v2": {
    "upos": {
-    "ADJ": { "en": "adjective", "ja": "形容詞" },
-    "ADP": { "en": "particle", "ja": "助詞" },
-    "ADV": { "en": "adverb", "ja": "副詞" },
-    "AUX": { "en": "auxiliary", "ja": "助動詞" },
-    "CCONJ": { "en": "conjunction", "ja": "接続詞" },
-    "DET": { "en": "determiner", "ja": "連体詞" },
-    "INTJ": { "en": "interjection", "ja": "感動詞" },
-    "NOUN": { "en": "noun", "ja": "名詞" },
-    "NUM": { "en": "numeral", "ja": "数詞" },
-    "PART": { "en": "particle", "ja": "助詞" },
-    "PRON": { "en": "pronoun", "ja": "代名詞" },
-    "PROPN": { "en": "proper noun", "ja": "固有名詞" },
-    "PUNCT": { "en": "punctuation", "ja": "記号" },
-    "SCONJ": { "en": "conjunctive particle", "ja": "接続助詞" },
-    "SYM": { "en": "symbol", "ja": "記号" },
-    "VERB": { "en": "verb", "ja": "動詞" },
+    "ADJ": { "en": "adjective", "ja": "形容詞", "unidic": "形容詞, 形状詞" },
+    "ADP": { "en": "adposition", "ja": "助詞", "unidic": "格・係・副助詞" },
+    "ADV": { "en": "adverb", "ja": "副詞", "unidic": "副詞" },
+    "AUX": { "en": "auxiliary", "ja": "助動詞", "unidic": "助動詞, 非自立" },
+    "CCONJ": { "en": "coordinating conjunction", "ja": "接続詞", "unidic": "接続詞" },
+    "DET": { "en": "determiner", "ja": "連体詞", "unidic": "連体詞" },
+    "INTJ": { "en": "interjection", "ja": "感動詞", "unidic": "感動詞" },
+    "NOUN": { "en": "noun", "ja": "名詞", "unidic": "名詞, 接尾辞など" },
+    "NUM": { "en": "numeral", "ja": "数詞", "unidic": "数詞" },
+    "PART": { "en": "particle", "ja": "助詞", "unidic": "終助詞など" },
+    "PRON": { "en": "pronoun", "ja": "代名詞", "unidic": "代名詞" },
+    "PROPN": { "en": "proper noun", "ja": "固有名詞", "unidic": "固有名詞, 外国語" },
+    "PUNCT": { "en": "punctuation", "ja": "記号", "unidic": "句点, 読点, 括弧" },
+    "SCONJ": { "en": "subordinating conjunction", "ja": "接続助詞", "unidic": "接続・準体助詞" },
+    "SYM": { "en": "symbol", "ja": "記号", "unidic": "補助記号, 絵文字" },
+    "VERB": { "en": "verb", "ja": "動詞", "unidic": "動詞" },
     "X": { "en": "other", "ja": "その他" }
    },
    "dep.rel": {
@@ -71,7 +71,7 @@
   },
   "spacy": {
    "upos": {
-    "SPACE": { "en": "whitespace", "ja": "空白" }
+    "SPACE": { "en": "whitespace", "ja": "空白", "unidic": "空白" }
    }
   },
   "clearnlp": {
