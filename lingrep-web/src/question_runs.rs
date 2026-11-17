@@ -433,24 +433,28 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         .ok_or_else(expired)?;
     let stream = futures::stream::unfold(
         (store, id, receiver, None::<Value>, false, false),
-        |(store, id, mut receiver, prior, wait, finished)| async move {
+        |(store, id, mut receiver, prior, mut wait, finished)| async move {
             if finished {
                 return None;
             }
-            if wait && receiver.changed().await.is_err() {
-                return None;
-            }
-            let view = receiver.borrow_and_update().clone();
-            let projected = match project_run(&store, &id, &view).await {
-                Ok(projected) => projected,
-                Err(error) => {
-                    let event = Event::default()
-                        .event("update")
-                        .data(json!({"id":id,"reset":false,"patch":{"phase":"failed","error":error.1,"version":VERSION.fetch_add(1,Ordering::Relaxed)},"append":{}}).to_string());
-                    return Some((
-                        Ok::<_, Infallible>(event),
-                        (store, id, receiver, prior, false, true),
-                    ));
+            let projected = loop {
+                if wait && receiver.changed().await.is_err() {
+                    return None;
+                }
+                wait = true;
+                let view = receiver.borrow_and_update().clone();
+                match project_run(&store, &id, &view).await {
+                    Ok(projected) => break projected,
+                    Err(_) if search_continues(&view) => {}
+                    Err(error) => {
+                        let event = Event::default()
+                            .event("update")
+                            .data(json!({"id":id,"reset":false,"patch":{"phase":"failed","error":error.1,"version":VERSION.fetch_add(1,Ordering::Relaxed)},"append":{}}).to_string());
+                        return Some((
+                            Ok::<_, Infallible>(event),
+                            (store, id, receiver, prior, false, true),
+                        ));
+                    }
                 }
             };
             let finished = projected.phase != "running";
@@ -502,6 +506,14 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
     Ok(Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::default())
         .into_response())
+}
+
+fn search_continues(view: &CoordinatorView) -> bool {
+    !view.state.is_terminal()
+        && view
+            .state
+            .current_attempt()
+            .is_some_and(|attempt| attempt.revision == REVISION)
 }
 
 async fn provenance(

@@ -1399,6 +1399,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         }
         Ok(())
     };
+    driver.action_chain().move_to(0, 0).perform().await?;
     driver
         .cdp()
         .send_raw(
