@@ -125,7 +125,7 @@
   "compare.scope_figures": "{documents} documents, {tokens} tokens; {occurrences} occurrences in {works} documents",
   "compare.relation_disjoint": "No document is in both scopes.",
   "compare.relation_overlapping": "The scopes share {documents} documents ({tokens} tokens), which count on both sides: G² compares the scopes as given, not as independent samples.",
-  "compare.relation_identical": "Both scopes contain the same documents, so every G² is 0.",
+  "compare.relation_identical": "Both scopes contain the same documents.",
   "compare.empty_scope": "{scope} contains no tokens, so its rates and every G² are blank.",
   "compare.caution": "G² is an exploratory score. It does not account for clustering within documents; compare each side’s document counts as well.",
   "compare.head_per_million": "Per million tokens",

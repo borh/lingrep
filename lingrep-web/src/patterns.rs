@@ -53,9 +53,7 @@ pub fn compile_web_pattern(source: &str) -> Result<CompileOutput, CompileError> 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct QuestionDefinition {
     pub name: String,
-    /// The definition declares a `key:` and matches one word by itself, like
-    /// `pos := [].`: what it is for is its counts, which a count table holds,
-    /// and its concordance is too large for a run to retain on a real corpus.
+    /// True for a keyed, single-token definition with no lookaround, graph, or ordering constraints.
     pub count_only: bool,
 }
 

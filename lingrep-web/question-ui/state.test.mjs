@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { begin, receive, receiveUpdate, visible } from './state.mjs';
+import { begin, exportable, receive, receiveUpdate, visible } from './state.mjs';
 import { runningSnapshot, parseUpdate } from './model.js';
 const attempt = id => runningSnapshot(id,{source:'pattern',dataset:'author',where:''});
 
@@ -84,4 +84,23 @@ test('changed-analysis and result-limit failures are shown in the page language 
   assert.equal(runError(runningSnapshot('r',{source:'',dataset:'d',where:''}),t),null);
   assert.equal(parseUpdate(JSON.stringify({id:'r',reset:false,patch:{phase:'failed',error:'x',error_code:'analysis_changed',version:1},append:{}})).patch.error_code,'analysis_changed');
   assert.throws(()=>parseUpdate(JSON.stringify({id:'r',reset:false,patch:{error_code:7,version:1},append:{}})),/error_code/);
+});
+
+test('a search that completed without displayable results ends failed with its counts, and can be exported when the server says so',()=>{
+  const running=begin({current:null,previous:null,completed:null},attempt('large'));
+  const counting=receiveUpdate(running,parseUpdate(JSON.stringify({id:'large',reset:false,patch:{counts:{p:12},received:12,version:4},append:{}})));
+  assert.equal(counting.current.phase,'running');
+  assert.deepEqual(counting.current.counts,{p:12});
+  const ended=receiveUpdate(counting,parseUpdate(JSON.stringify({id:'large',reset:false,patch:{phase:'failed',search_complete:true,exportable:true,error:'The result preview is too large to display. Search fewer patterns.',counts:{p:30},received:30,version:5},append:{}})));
+  assert.equal(ended.current.phase,'failed');
+  assert.deepEqual(ended.current.counts,{p:30});
+  assert.equal(ended.completed,null);
+  assert.equal(exportable(ended.current),true);
+  assert.equal(exportable({...ended.current,search_complete:undefined}),false);
+  assert.equal(exportable({...ended.current,exportable:false}),false);
+  assert.equal(exportable({...ended.current,exportable:undefined}),false);
+  assert.equal(exportable({...ended.current,counts:{p:0}}),false);
+  assert.equal(exportable({...ended.current,phase:'complete',search_complete:undefined}),true);
+  assert.throws(()=>parseUpdate(JSON.stringify({id:'large',reset:false,patch:{search_complete:'yes'},append:{}})),/search_complete/);
+  assert.throws(()=>parseUpdate(JSON.stringify({id:'large',reset:false,patch:{exportable:'yes'},append:{}})),/exportable/);
 });

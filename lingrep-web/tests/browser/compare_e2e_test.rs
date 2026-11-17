@@ -177,7 +177,7 @@ async fn driver(width: u32) -> WebDriverResult<Option<WebDriver>> {
     ] {
         capabilities.add_arg(arg)?;
     }
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver
         .cdp()
         .send_raw(
@@ -189,7 +189,7 @@ async fn driver(width: u32) -> WebDriverResult<Option<WebDriver>> {
                 new PerformanceObserver((list) => { for (const e of list.getEntries()) if (!e.hadRecentInput) { __shift += e.value; (window.__moved ||= []).push([Math.round(e.startTime), e.value, ...(e.sources || []).map((s) => [s.node?.nodeName, s.node?.className, Math.round(s.previousRect.y), Math.round(s.currentRect.y), Math.round(s.previousRect.height), Math.round(s.currentRect.height)])]); } }).observe({type: 'layout-shift', buffered: true});"}),
         )
         .await?;
-    driver.set_window_rect(0, 0, width, 900).await?;
+    crate::resize(&driver, width, 900).await?;
     Ok(Some(driver))
 }
 
@@ -433,7 +433,7 @@ async fn the_compare_page_states_identical_and_empty_scopes() -> WebDriverResult
             r#"{"tags":{"m":"in","v":["x"]}}"#,
             r#"{"tags":{"m":"in","v":["x"]}}"#,
             "identical",
-            "every G² is 0",
+            "Both scopes contain the same documents",
         ),
         (
             r#"{"genre":{"m":"in","v":["novel"]}}"#,

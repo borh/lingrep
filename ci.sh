@@ -137,7 +137,12 @@ run_full_tests_and_extras() {
 
     run_shared_tests
 
-    if ! command -v chromium >/dev/null || ! command -v chromedriver >/dev/null; then
+    if [[ $(uname -s) == Darwin ]]; then
+        if ! command -v chromedriver >/dev/null; then
+            echo "full CI requires chromedriver" >&2
+            exit 2
+        fi
+    elif ! command -v chromium >/dev/null || ! command -v chromedriver >/dev/null; then
         echo "full CI requires chromium and chromedriver" >&2
         exit 2
     fi

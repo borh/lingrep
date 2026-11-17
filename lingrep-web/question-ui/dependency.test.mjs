@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs} from './dependency.js';
 
-// Rows are [text, upos, head (1-based, 0 = root), rel, bunsetsu begins].
 const conllu=rows=>rows.map(([text,upos,head,rel,begins],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel,'conllu.misc':[`BunsetuBILabel=${begins?'B':'I'}`,'SpaceAfter=No']}}));
 const ginza=rows=>rows.map(([text,upos,head,rel,begins],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel,'spacy.ginza.bunsetu':begins?'B':'I'}}));
 const unlabelled=rows=>rows.map(([text,upos,head,rel],index)=>({index,attributes:{text,upos,'dep.head':String(head),'dep.rel':rel}}));
@@ -14,7 +13,6 @@ const KUSAMAKURA=[
   ['静か','ADJ',22,'advcl',1],['に','AUX',16,'cop',0],['丘','NOUN',20,'nmod',1],['の','ADP',18,'case',0],['上','NOUN',22,'obl',1],['へ','ADP',20,'case',0],
   ['登っ','VERB',0,'root',1],['て','SCONJ',22,'mark',0],['行っ','VERB',22,'aux',0],['た','AUX',22,'aux',0],['。','PUNCT',22,'punct',0],
 ];
-// 坂を、 followed by eleven clauses that each modify the final verb: 105 words, verb at word 103.
 function longSentence(){
   const rows=[['坂','NOUN',null,'obj',1],['を','ADP',1,'case',0],['、','PUNCT',1,'punct',0]];
   for(let clause=0;clause<11;clause++){
@@ -26,7 +24,6 @@ function longSentence(){
   rows.push(['上っ','VERB',0,'root',1],['た','AUX',root,'aux',0],['。','PUNCT',root,'punct',0]);
   return rows.map(([text,upos,head,rel,begins])=>[text,upos,head??root,rel,begins]);
 }
-// The npv match: captures n and p form the span; the where clause binds v as a graph node.
 const npv=(n,v)=>({span:{start:n,end:n+2},captures:[{name:'n',span:{start:n,end:n+1}},{name:'p',span:{start:n+1,end:n+2}}],graph_bindings:[{binding_kind:'node',name:'v',node:{node_kind:'word',token_index:v},attributes:[]}]});
 const layout=(tokens,row,view)=>{const starts=view==='bunsetsu'?bunsetsuStarts(tokens):null;if(view==='bunsetsu')assert.ok(starts);return focusLayout(dependencyUnits(tokens,starts),evidenceWords(row,tokens.length));};
 
@@ -69,7 +66,6 @@ test('focused 語 view draws arcs head to dependent, stacked by nesting depth',(
     items:[{kind:'gap',count:2},{kind:'unit',unit:2},{kind:'unit',unit:3},{kind:'gap',count:6},{kind:'unit',unit:10},{kind:'gap',count:15}],
     arcs:[{from:1,to:2,rel:'case',level:1,bound:true},{from:4,to:1,rel:'obj',level:2,bound:true}],
   });
-  // Unlabelled tokens give the same 語 layout: there is no 文節 to fold.
   assert.deepEqual(layout(unlabelled(KUSAMAKURA),npv(2,10),'words'),layout(conllu(KUSAMAKURA),npv(2,10),'words'));
 });
 

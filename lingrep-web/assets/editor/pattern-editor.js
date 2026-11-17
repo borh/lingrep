@@ -650,7 +650,6 @@ export const PATTERN_ATTRIBUTES = [
   ["unidic.lextype", "UniDic lexical type"],
 ];
 
-// Attributes a corpus may carry beyond the list above, described for completion.
 const SCHEMA_ATTRIBUTES = {
   "dep.head": "Number of the word this one attaches to (0 at the root)",
   "dep.rel": "Dependency relation to the head",
@@ -668,7 +667,6 @@ export function patternAttributes(tokenKeys) {
   return [...known, ...others];
 }
 
-// Japanese for the completion and hover help, keyed by the English text.
 const HELP_JA = {
   "Portable surface form as written": "表層形（書かれたとおりの形）",
   "Dictionary lemma": "辞書形（見出し語）",
@@ -782,8 +780,6 @@ const HELP_JA = {
 };
 const help = (text, locale) => (locale === "ja" ? HELP_JA[text] ?? text.replace(/^UD feature (.+)$/, "UD の素性 $1") : text);
 
-// The label sets' value names (lingrep-core fsm/label_names.json, served
-// beside this module), which upos and dep.rel completions and hovers list.
 let valueNames = null;
 /** Sets the value names completions and hovers read: the `sets` object of label-names.json. */
 export function setValueNames(sets) {
@@ -1827,8 +1823,6 @@ async function enhance(textarea, grammar, cm, options = {}) {
     relint: false,
     tokenKeys: null,
     source: () => state.view.state.doc.toString(),
-    // The corpus `api/pattern/check` binds the source to: the value of the
-    // element `data-pattern-corpus` selects, or the caller's `options.corpus`.
     corpus: options.corpus ?? (() => (textarea.dataset.patternCorpus ? document.querySelector(textarea.dataset.patternCorpus)?.value || null : null)),
   };
   if (textarea.id === "corpus-pattern") {
@@ -1901,7 +1895,6 @@ async function enhance(textarea, grammar, cm, options = {}) {
       cm.placeholder(textarea.getAttribute("placeholder") ?? ""),
       cm.keymap.of([
         { key: "Shift-F8", run: cm.previousDiagnostic, preventDefault: true },
-        // A page that searches on Mod-Enter keeps the key for itself.
         ...(options.formatOnBlur === false ? [{ key: "Mod-Enter", run: () => true }, { key: "Shift-Alt-f", run: () => { void formatCurrent(textarea); return true; } }] : []),
         // `run` returns true on every path, including the failures: a
         // "nowhere to go" message is a handled key, not a fall-through.
@@ -1946,8 +1939,6 @@ async function enhance(textarea, grammar, cm, options = {}) {
   }
 
   if (options.describedBy) view.contentDOM.setAttribute("aria-describedby", `${options.describedBy} ${statusNode.id} ${diagnosticNode.id}`);
-  // External writes (draft restore, tests, tooling) flow into the view;
-  // `pattern:sync` carries a write that is not an edit, without an `input`.
   const sync = () => {
     const value = textarea.value;
     if (value !== view.state.doc.toString()) {

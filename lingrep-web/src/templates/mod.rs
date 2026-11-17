@@ -57,7 +57,7 @@ pub fn overlaps_of_form(value: Option<&str>) -> Overlaps {
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
-            derive_compounds: true,
+            derive_compounds: false,
             compound_category: CompoundCategory::Compound,
             document_reach: true,
             overlaps: Overlaps::Catalog,
@@ -762,9 +762,8 @@ mod tests {
         assert!(form.contains("name=\"retained\""));
         assert!(form.contains("<option value=\"20\">20</option>"));
         assert!(form.contains("<option value=\"1000\" selected>1000</option>"));
-        for name in ["derive_compounds", "document_reach"] {
-            assert!(form.contains(&format!("name=\"{name}\" value=\"true\" checked")));
-        }
+        assert!(form.contains("name=\"document_reach\" value=\"true\" checked"));
+        assert!(form.contains("name=\"derive_compounds\" value=\"true\">"));
         assert!(form.contains("name=\"compound_category\""));
         assert!(form.contains("value=\"compound\""));
         assert!(form.contains("value=\"source\""));

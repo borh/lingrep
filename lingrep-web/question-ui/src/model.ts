@@ -36,6 +36,10 @@ export interface SnapshotFields extends Question {
   readonly started: number;
   readonly error: string | null;
   readonly error_code?: 'analysis_changed' | 'result_limit' | null;
+  /** Set on a failed run whose search completed although its results could not be displayed. */
+  readonly search_complete?: boolean;
+  /** Present with `search_complete`: whether the run's export holds every match. */
+  readonly exportable?: boolean;
   readonly counters: { readonly counters: { readonly documents_admitted: number } } | null;
   readonly contract_run: { readonly analysis_identity: string } | null;
 }
@@ -48,9 +52,8 @@ export interface SearchState {
   readonly previous: CompletedSnapshot | null;
 }
 export interface Dataset { label:string; documents:number|null; sentences:number|null; analysis_identity:string|null; readiness:'ready'|'checking'|'building'|'failed'; }
-/** A published definition of the served catalog; a count-only one is read through its counts, in Frequencies. */
 export interface CatalogDefinition { readonly name: string; readonly count_only: boolean; }
-export interface Configuration { datasets: Record<string, Dataset>; source: string; definitions?: readonly CatalogDefinition[]; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
+export interface Configuration { datasets: Record<string, Dataset>; source: string; /** The fingerprint of `source`, from servers that publish it. */ catalog_fingerprint?: string; definitions?: readonly CatalogDefinition[]; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }
@@ -111,7 +114,7 @@ export function parseUpdate(text: string): SearchUpdate {
     elapsed:finiteNumber,received:finiteNumber,version:finiteNumber,started:finiteNumber,
     diagnostics:v=>Array.isArray(v)&&v.every(diagnosticValue),
     notices:v=>Array.isArray(v)&&v.every(value=>typeof value==='string'),
-    error:v=>v===null||typeof v==='string',error_code:v=>v===null||v==='analysis_changed'||v==='result_limit',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
+    error:v=>v===null||typeof v==='string',search_complete:v=>typeof v==='boolean',exportable:v=>typeof v==='boolean',error_code:v=>v===null||v==='analysis_changed'||v==='result_limit',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
     bodies:stringMap, counts:v=>objectValue(v)&&Object.values(v).every(finiteNumber),
     contract_run:v=>v===null||objectValue(v)&&typeof v.analysis_identity==='string',
     counters:v=>v===null||objectValue(v)&&objectValue(v.counters)&&finiteNumber(v.counters.documents_admitted),
@@ -153,14 +156,14 @@ export function parseStoredSentence(value:unknown):StoredSentence {
 /** A search's restriction to one published definition, one corpus document, or both, as a run request's `pattern` and `document` fields carry it. */
 export interface SearchLimit { readonly pattern: string | null; readonly document: number | null; }
 
-/** The definitions holding at least half of the largest count: when a run overflows its result budget, these filled it. */
+/** Returns definitions with counts at least half the largest positive count. */
 export function overflowingDefinitions(counts: Readonly<Record<string, number>>): string[] {
   const largest = Math.max(0, ...Object.values(counts));
   return largest > 0 ? Object.keys(counts).filter(name => counts[name] * 2 >= largest) : [];
 }
 
 const shellWord = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-/** The `ling` command that repeats a search of `query.lx` over a local copy of its corpus, keeping its condition and limit. */
+/** Builds a command that applies the scope clause and filters JSONL records by definition and document. */
 export function cliCommand(where: string, limit: SearchLimit | null): string {
   let command = 'ling --json matches --corpus CORPUS.lingcorpus --patterns query.lx --context 24';
   if (where) command += ' --where ' + shellWord(where);

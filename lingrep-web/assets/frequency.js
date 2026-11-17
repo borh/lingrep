@@ -381,7 +381,6 @@ export function mountFrequency(root) {
       ? `<p class="fq-cli-label">${esc(t("frequency.cli"))}</p><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}<div class="clause">${actions}</div>`
       : `<div class="clause"><code data-c="code">${code}</code>${actions}</div>${source ? `<p>${esc(t("views.command_unavailable"))}</p>` : ""}`;
   }
-  // The pattern, command and Workbench link sit in one disclosure, closed until opened; a typed condition opens it, because the command shows that condition.
   const machineryEl = $("[data-fq-machinery]");
   const openMachinery = () => {
     if ((editing || s.where != null) && !machineryEl.open) machineryEl.open = true;
@@ -875,7 +874,6 @@ export function mountFrequency(root) {
     entryEl.querySelector(`.fq-kwic li[data-sentence="${sentence}"][data-start="${start}"][data-end="${end}"] .kn`)?.focus({ preventScroll: true });
   });
 
-  // The hand-off carries the entry's lines, which only the opened link needs; the address is completed when the link is pressed or activated.
   const withEntryLines = (e) => {
     const link = e.target.closest?.(".fq-inspect"), i = Number(link?.closest("li[data-i]")?.dataset.i);
     if (!link || !lined || entryEl.classList.contains("previewing") || !lined.lines[i]) return;

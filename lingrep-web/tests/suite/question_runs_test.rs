@@ -516,6 +516,7 @@ async fn a_replaced_revision_terminates_an_open_stream_with_a_failed_update() {
             .unwrap()
             .contains("replaced")
     );
+    assert_ne!(frames[0]["patch"]["search_complete"], true);
     assert!(frames[0]["append"].as_object().unwrap().is_empty());
     assert!(
         store
@@ -639,6 +640,23 @@ async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_p
     assert_eq!(failure["patch"]["phase"], "failed");
     let message = "The result preview is too large to display. Search fewer patterns.";
     assert_eq!(failure["patch"]["error"], message);
+    assert_eq!(
+        failure["patch"]["search_complete"], true,
+        "the final frame must say that the search completed although its preview failed: {failure}"
+    );
+    assert_eq!(
+        failure["patch"]["exportable"], true,
+        "export does not apply the aggregate preview budget: {failure}"
+    );
+    assert_eq!(failure["patch"]["counts"], json!({"first":30,"second":30}));
+    assert_eq!(failure["patch"]["received"], 60);
+    assert!(
+        frames[..frames.len() - 1]
+            .iter()
+            .any(|frame| frame["patch"].get("phase").is_none()
+                && frame["patch"]["counts"] == json!({"first":30,"second":30})),
+        "counts must keep arriving while the preview cannot be displayed: {frames:?}"
+    );
     assert!(failure["append"].as_object().unwrap().is_empty());
     let snapshot = json_response(
         request(
@@ -648,10 +666,32 @@ async fn oversized_aggregate_preview_terminates_with_a_failed_update_but_keeps_p
             None,
         )
         .await,
-        StatusCode::PAYLOAD_TOO_LARGE,
+        StatusCode::OK,
     )
     .await;
-    assert_eq!(snapshot["error"], message);
+    assert_eq!(
+        (
+            &snapshot["phase"],
+            &snapshot["search_complete"],
+            &snapshot["exportable"],
+            &snapshot["error"],
+            &snapshot["counts"],
+            &snapshot["received"],
+            &snapshot["rows"],
+            &snapshot["definitions"],
+        ),
+        (
+            &json!("failed"),
+            &json!(true),
+            &json!(true),
+            &json!(message),
+            &json!({"first":30,"second":30}),
+            &json!(60),
+            &json!({}),
+            &json!(["first", "second"]),
+        ),
+        "a reload reads the same terminal state the event stream ended with: {snapshot}"
+    );
     let inspected = json_response(
         request(
             &app,
@@ -783,22 +823,72 @@ async fn unreferenced_large_attributes_do_not_block_projected_pages_or_complete_
     assert_eq!(frames.last().unwrap()["patch"]["phase"], "failed");
     assert_eq!(
         frames.last().unwrap()["patch"]["error"],
-        "This example is too large to display. Choose another example."
+        "An example in these results is too large to display."
     );
+    assert_eq!(frames.last().unwrap()["patch"]["exportable"], true);
+    let records = export_records(&app, &selected).await;
+    let types = records
+        .iter()
+        .map(|record| record["type"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(types, ["run", "match", "complete"]);
+    assert_eq!(
+        records[1]["data"]["tokens"][0]["attributes"],
+        json!({"text":"cat","lemma":"x".repeat(1024 * 1024 + 1)}),
+        "export writes the oversized example in full"
+    );
+    store.coordinators.shutdown().await;
+}
+
+async fn export_records(app: &Router, id: &str) -> Vec<Value> {
     let response = request(
-        &app,
+        app,
         Method::GET,
-        &format!("/api/questions/runs/{selected}/export"),
+        &format!("/api/questions/runs/{id}/export"),
         None,
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.into_body().collect().await.is_err());
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_complete_run_exports_an_oversized_example_outside_its_preview() {
+    let mut sentences = vec![vec![TokenInfo::default().with_orth("cat").with_lemma("x")]; 30];
+    sentences.push(vec![
+        TokenInfo::default()
+            .with_orth("cat")
+            .with_lemma("x".repeat(3 * 1024 * 1024)),
+    ]);
+    let (fixture, runtime) = crate::v6_support::runtime_fixture("late-oversized", sentences);
+    let store = RequestStore::with_runtime(config(fixture.path.clone()), runtime);
+    let app = lingrep_web::app_router(store.clone());
+    let id = submit(&app, "p := [lemma~x].", "", None).await;
+    let frames = updates(&app, &id).await;
+    assert_eq!(frames.last().unwrap()["patch"]["phase"], "complete");
+    let records = export_records(&app, &id).await;
+    let matches = records
+        .iter()
+        .filter(|record| record["type"] == "match")
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 31);
+    assert_eq!(matches[30]["data"]["corpus_sentence_ordinal"], 30);
+    assert_eq!(
+        matches[30]["data"]["tokens"][0]["attributes"]["lemma"]
+            .as_str()
+            .unwrap()
+            .len(),
+        3 * 1024 * 1024
+    );
+    assert_eq!(records.last().unwrap()["type"], "complete");
     store.coordinators.shutdown().await;
 }
 
-/// The oversized example is the first match, so the first live preview fails
-/// to project while thousands of sentences remain to be scanned.
 #[tokio::test]
 async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_search_completes() {
     let mut sentences = vec![vec![
@@ -817,11 +907,28 @@ async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_searc
     let app = lingrep_web::app_router(store.clone());
     let id = submit(&app, "p := [lemma~x].", "", None).await;
     let frames = updates(&app, &id).await;
-    assert_eq!(frames.last().unwrap()["patch"]["phase"], "failed");
+    let (last, earlier) = frames.split_last().unwrap();
+    assert_eq!(last["patch"]["phase"], "failed");
     assert_eq!(
-        frames.last().unwrap()["patch"]["error"],
-        "This example is too large to display. Choose another example."
+        last["patch"]["error"],
+        "An example in these results is too large to display."
     );
+    assert_eq!(last["patch"]["search_complete"], true, "{last}");
+    assert_eq!(
+        last["patch"]["exportable"], true,
+        "export does not apply the per-example display limit: {last}"
+    );
+    assert_eq!(last["patch"]["counts"], json!({"p":1}));
+    for frame in earlier {
+        assert!(
+            frame["patch"]
+                .get("phase")
+                .is_none_or(|phase| phase == "running"),
+            "{frame}"
+        );
+        assert!(frame["patch"]["error"].is_null(), "{frame}");
+        assert!(frame["append"].as_object().unwrap().is_empty(), "{frame}");
+    }
     let view = store
         .coordinators
         .snapshot(&WorkbenchId::new(&id))
@@ -832,14 +939,43 @@ async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_searc
         AttemptPhase::Completed,
         "the stream ended before the search did"
     );
-    let response = request(
-        &app,
-        Method::GET,
-        &format!("/api/questions/runs/{id}/export"),
-        None,
+    let snapshot = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/questions/runs/{id}"),
+            None,
+        )
+        .await,
+        StatusCode::OK,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        (
+            &snapshot["phase"],
+            &snapshot["search_complete"],
+            &snapshot["exportable"],
+            &snapshot["error"],
+            &snapshot["counts"],
+        ),
+        (
+            &json!("failed"),
+            &json!(true),
+            &json!(true),
+            &json!("An example in these results is too large to display."),
+            &json!({"p":1}),
+        ),
+        "{snapshot}"
+    );
+    let records = export_records(&app, &id).await;
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["type"] == "match")
+            .count(),
+        1
+    );
+    assert_eq!(records.last().unwrap()["type"], "complete");
     store.coordinators.shutdown().await;
 }
 
@@ -916,8 +1052,6 @@ async fn a_frequency_occurrence_is_located_by_sentence_and_roles_only_under_the_
     .await;
 }
 
-/// The landing leaves a count-only definition out of its default selection,
-/// but a run that names one still searches it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_run_that_names_a_count_only_definition_searches_it() {
     let (_fixture, store, identity) = fixture(8);

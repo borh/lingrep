@@ -125,7 +125,7 @@
   "compare.scope_figures": "文書{documents}件、{tokens}語。文書{works}件に{occurrences}件",
   "compare.relation_disjoint": "両方に含まれる文書はありません。",
   "compare.relation_overlapping": "両方に文書{documents}件（{tokens}語）が含まれ、両側で数えています。G²は指定どおりの二つの範囲を比べるもので、独立な標本の比較ではありません。",
-  "compare.relation_identical": "二つの範囲は同じ文書からなるため、G²はすべて0です。",
+  "compare.relation_identical": "二つの範囲に含まれる文書は同じです。",
   "compare.empty_scope": "{scope}に含まれる語がないため、その頻度とG²は空欄です。",
   "compare.caution": "G²は探索のための指標です。文書内での用例の集中は計算に反映されません。両側の出現文書数もあわせて確認してください。",
   "compare.head_per_million": "100万語あたり",

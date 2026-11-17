@@ -84,7 +84,7 @@ async fn export_links_display_rejections_and_save_without_extra_tabs() -> WebDri
         }}),
         _ => panic!("unsupported local export test browser: {browser}"),
     };
-    let driver = WebDriver::new(&endpoint, caps.as_object().unwrap().clone()).await?;
+    let driver = crate::session(&endpoint, caps.as_object().unwrap().clone()).await?;
     driver.set_window_rect(0, 0, 1100, 800).await?;
     let app = Router::new()
         .route("/{status}", get(page))

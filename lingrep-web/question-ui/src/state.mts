@@ -7,6 +7,7 @@ export function receive(state: SearchState, snapshot: RunSnapshot): SearchState 
 export function begin(state: SearchState, snapshot: RunningSnapshot): SearchState {
   return { ...state, previous: state.completed, current: snapshot };
 }
+export const exportable = (run: RunSnapshot): boolean => (run.phase === 'complete' || run.phase === 'failed' && run.search_complete === true && run.exportable === true) && Object.values(run.counts).some(total => total > 0);
 export function visible(state: SearchState, behavior: Behavior): RunSnapshot | null {
   if (behavior === 'keep' && state.current?.phase !== 'complete' && state.previous) return state.previous;
   return state.current;

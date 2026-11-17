@@ -211,7 +211,6 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     }catch(error){if(epoch===requestId)$('#metadata-values').textContent=errorMessage(error);}
     finally{if(epoch===requestId){values.removeAttribute('aria-busy');values.inert=false;}}
   }
-  // A corpus whose documents carry no metadata has nothing to choose from, so its scope stays all documents.
   let fieldsEpoch=0;
   async function checkFields(){
     const epoch=++fieldsEpoch,toggle=$<HTMLButtonElement>('#scope-toggle');toggle.disabled=false;toggle.removeAttribute('title');

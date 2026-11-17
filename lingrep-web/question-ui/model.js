@@ -54,7 +54,7 @@ export function parseUpdate(text) {
         elapsed: finiteNumber, received: finiteNumber, version: finiteNumber, started: finiteNumber,
         diagnostics: v => Array.isArray(v) && v.every(diagnosticValue),
         notices: v => Array.isArray(v) && v.every(value => typeof value === 'string'),
-        error: v => v === null || typeof v === 'string', error_code: v => v === null || v === 'analysis_changed' || v === 'result_limit', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
+        error: v => v === null || typeof v === 'string', search_complete: v => typeof v === 'boolean', exportable: v => typeof v === 'boolean', error_code: v => v === null || v === 'analysis_changed' || v === 'result_limit', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
         bodies: stringMap, counts: v => objectValue(v) && Object.values(v).every(finiteNumber),
         contract_run: v => v === null || objectValue(v) && typeof v.analysis_identity === 'string',
         counters: v => v === null || objectValue(v) && objectValue(v.counters) && finiteNumber(v.counters.documents_admitted),
@@ -102,13 +102,13 @@ export function parseStoredSentence(value) {
         throw new Error('The stored token analysis could not be read.');
     return value;
 }
-/** The definitions holding at least half of the largest count: when a run overflows its result budget, these filled it. */
+/** Returns definitions with counts at least half the largest positive count. */
 export function overflowingDefinitions(counts) {
     const largest = Math.max(0, ...Object.values(counts));
     return largest > 0 ? Object.keys(counts).filter(name => counts[name] * 2 >= largest) : [];
 }
 const shellWord = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-/** The `ling` command that repeats a search of `query.lx` over a local copy of its corpus, keeping its condition and limit. */
+/** Builds a command that applies the scope clause and filters JSONL records by definition and document. */
 export function cliCommand(where, limit) {
     let command = 'ling --json matches --corpus CORPUS.lingcorpus --patterns query.lx --context 24';
     if (where)

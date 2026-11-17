@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {overflowingDefinitions,cliCommand,diagnosticText} from './model.js';
 
-test('an overflow is attributed to the definitions holding at least half of the largest count',()=>{
+test('overflow recovery selects definitions with counts at least half the maximum',()=>{
   assert.deepEqual(overflowingDefinitions({nouns:20228,npv:7257,npv_adjacent:4882,pos:85187,tags:85187}),['pos','tags']);
   assert.deepEqual(overflowingDefinitions({}),[]);
   assert.deepEqual(overflowingDefinitions({a:0,b:0}),[]);

@@ -238,7 +238,7 @@ pub(crate) async fn driver() -> WebDriverResult<Option<WebDriver>> {
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver
         .cdp()
         .send_raw(
@@ -393,6 +393,12 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
             key,
         )
         .await?;
+        wait_for(
+            &driver,
+            &format!("return document.querySelector('.role .n[data-share=\"{key}\"]:not(:empty)')"),
+            &format!("the {key} share"),
+        )
+        .await?;
         driver
             .find(By::Css("body"))
             .await?
@@ -443,7 +449,7 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     assert_eq!(reloaded, json!({"href": stated, "sentence": sentence}));
     assert_label_invariants(&driver.execute(LABELS, Vec::new()).await?.json().clone());
 
-    driver.set_window_rect(0, 0, 420, 900).await?;
+    crate::resize(&driver, 390, 900).await?;
     let labels = wait_for(
         &driver,
         &format!("const labels = (() => {{ {LABELS} }})(); return labels.some((l) => l.shown !== l.full || l.cut) ? labels : null"),
@@ -451,7 +457,7 @@ async fn frequency_view_round_trips_its_address_and_keeps_labels_distinct() -> W
     )
     .await?;
     assert_label_invariants(&labels);
-    driver.set_window_rect(0, 0, 1280, 900).await?;
+    crate::resize(&driver, 1280, 900).await?;
 
     let shared = driver
         .execute_async(
@@ -1209,8 +1215,11 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     driver.execute(COUNT_FETCHES, Vec::new()).await?;
     driver
         .execute(
-            "window.__shift = 0; window.__moved = []; window.__previews = 0; window.__requests = 0; \
-             const fetched = window.fetch; window.fetch = (...a) => { if (String(a[0]).includes('frequency/')) __requests++; return fetched(...a); }; \
+            "window.__shift = 0; window.__moved = []; window.__previews = 0; window.__sweep = []; window.__bar = null; \
+             const fetched = window.fetch; window.fetch = (...a) => { if (String(a[0]).includes('frequency/')) __sweep.push(['request', performance.now()]); return fetched(...a); }; \
+             document.querySelector('[data-fq-entry]').addEventListener('pointerover', (e) => { const b = e.target.closest?.('[data-bar], [data-col]'); \
+               const bar = b && `${b.closest('.fq-chart')?.dataset.key} ${b.dataset.v ?? b.dataset.lo}`; \
+               if (bar && bar !== __bar) { __bar = bar; __sweep.push(['bar', performance.now()]); } }, true); \
              new PerformanceObserver((list) => { for (const e of list.getEntries()) if (!e.hadRecentInput) { __shift += e.value; __moved.push([Math.round(e.startTime), ...(e.sources || []).map((s) => [s.node?.className, Math.round(s.previousRect.y), Math.round(s.currentRect.y)])]); } }).observe({type: 'layout-shift'}); \
              new MutationObserver(() => { if (document.querySelector('.fq-entry.previewing')) __previews++; }).observe(document.querySelector('[data-fq-entry]'), {attributes: true, subtree: true, childList: true});",
             Vec::new(),
@@ -1251,7 +1260,7 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
     }
     let swept = driver
         .execute(
-            "return {shift: __shift, moved: __moved, previews: __previews, requests: __requests}",
+            "return {shift: __shift, moved: __moved, previews: __previews, sweep: __sweep}",
             Vec::new(),
         )
         .await?
@@ -1259,11 +1268,23 @@ async fn an_entry_profile_previews_without_moving_the_page_and_names_every_value
         .clone();
     assert_eq!(swept["shift"], json!(0), "{swept}");
     assert!(swept["previews"].as_u64().unwrap() > 0, "{swept}");
-    let requests = swept["requests"].as_u64().unwrap();
+    const REST_MS: f64 = 120.0;
+    let mut reached = None;
+    let mut early = Vec::new();
+    for event in swept["sweep"].as_array().unwrap() {
+        let at = event[1].as_f64().unwrap();
+        if event[0] == "bar" {
+            reached = Some(at);
+            continue;
+        }
+        let rested = reached.map(|bar| at - bar);
+        if rested.is_none_or(|rested| rested < REST_MS - 1.0) {
+            early.push(rested);
+        }
+    }
     assert!(
-        requests <= 2 * (passes.len() as u64 + 2),
-        "{requests} requests over {} bars: {swept}",
-        2 * points.len()
+        early.is_empty(),
+        "requests after resting {early:?} ms on a bar: {swept}"
     );
     assert!(assert_bar_labels(&driver.execute(BAR_LABELS, Vec::new()).await?.json().clone()) > 0);
 
@@ -1888,7 +1909,6 @@ async fn every_restyled_button_shows_a_focus_ring_for_keyboard_focus() -> WebDri
             .send_keys(Key::Tab)
             .await?;
         let table = ["button.add", "[data-c=edit]", "button.open-entry"];
-        // The edit button sits in the folded pattern machinery.
         driver
             .execute(
                 "document.querySelector('[data-fq-machinery]').open = true",
@@ -2401,7 +2421,7 @@ async fn malformed_url_conditions_show_an_error_and_allow_reopening_the_view() -
     let Some(driver) = driver().await? else {
         return Ok(());
     };
-    driver.set_window_rect(0, 0, 390, 844).await?;
+    crate::resize(&driver, 390, 844).await?;
     let served = serve(&[]).await;
     for condition in [
         json!({"genre": {"m": "in", "v": "ab"}}),
@@ -2435,7 +2455,7 @@ async fn frequency_profiles_explain_overlapping_values_and_help_covers_analysis_
     };
     let served = serve_entries_with_tags(true).await;
     let result: WebDriverResult<()> = async {
-        driver.set_window_rect(0, 0, 390, 900).await?;
+        crate::resize(&driver, 390, 900).await?;
         driver.goto(format!("{}#pattern=noun", served.base)).await?;
         wait_for(
             &driver,
@@ -2564,9 +2584,6 @@ async fn unsupported_frequency_conditions_keep_their_explanation_after_a_locale_
     result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-/// Opening an entry, and arriving at an entry's address (as Back from the
-/// question page does), moves focus to the entry's name rather than leaving
-/// it on the page body.
 #[tokio::test]
 async fn an_opened_or_restored_entry_takes_focus_at_its_name() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -2611,8 +2628,6 @@ async fn an_opened_or_restored_entry_takes_focus_at_its_name() -> WebDriverResul
     Ok(())
 }
 
-/// The `noun` pattern counted as an `n · p · v` key, as the class's `npv`
-/// is, so its table gains the subset column once an exact field is set.
 fn write_key_table(artifact: &std::path::Path, destination: &std::path::Path) {
     let entries: [([&str; 3], &[(u32, u64)]); 4] = [
         (["坂", "を", "上る"], &[(0, 6), (1, 4)]),
@@ -2694,9 +2709,6 @@ async fn serve_key_table() -> Served {
     .await
 }
 
-/// Every visible header of the table and the first row's visible cells, as
-/// column extents, with the header over the per-million values and the
-/// entry cell's width in its own font size.
 const COLUMNS: &str = r"
 const shown = (e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0;
 const extent = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; };
@@ -2733,17 +2745,12 @@ return {
   })(),
 };";
 
-/// At phone width, in Japanese and English, the table hides the same columns
-/// from its header and its rows, so each visible header stays over its own
-/// values, with and without the subset column an exact-match field adds; the
-/// entry stays readable and wraps only between its words, and no header
-/// breaks inside a word.
 #[tokio::test]
 async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
         return Ok(());
     };
-    driver.set_window_rect(0, 0, 390, 844).await?;
+    crate::resize(&driver, 390, 844).await?;
     let served = serve_key_table().await;
     let result: WebDriverResult<()> = async {
         open(&driver, &served.base, ROWS).await?;
@@ -2799,12 +2806,6 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
     result
 }
 
-/// トークンを調べる from an entry's line opens that line on the question page
-/// with the entry as a removable context: the result lists the entry's lines
-/// with the opened one's example under it, the title names the entry and the
-/// line's position among its lines, the example steps and the listed lines go
-/// through those lines, within the searched document and into the next one,
-/// and removing the context lists the search's whole result again.
 #[tokio::test]
 async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -2904,9 +2905,6 @@ async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<(
     result
 }
 
-/// The question page's line filter names the lines it filters, counts
-/// within them, and when nothing matches, says so and links to the same
-/// pattern on Frequencies, filtered by the typed text.
 #[tokio::test]
 async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to_frequencies()
 -> WebDriverResult<()> {
@@ -2931,8 +2929,6 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
             "the opened line",
         )
         .await?;
-        // The hand-off lists the entry's lines, which have no page filter;
-        // removing the entry lists the search's lines the filter works on.
         driver.execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new()).await?;
         wait_for(
             &driver,
@@ -2987,7 +2983,6 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
 
 const COUNT_FIRST_CATALOG: &str = "key: [upos]\npos := [].\nnoun := [upos=NOUN].\n";
 
-/// A server for [`COUNT_FIRST_CATALOG`] with a count table of both its definitions.
 async fn serve_count_first(extra: &[&std::ffi::OsStr]) -> Served {
     serve_artifact(
         support::build_artifact_with_metadata(
@@ -3040,9 +3035,6 @@ async fn serve_count_first(extra: &[&std::ffi::OsStr]) -> Served {
     .await
 }
 
-/// Without a pattern in its address, Frequencies opens on the catalog's
-/// first definition that is not a count of single tokens by a key, as the
-/// question page does; a pattern in the address still wins.
 #[tokio::test]
 async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3063,10 +3055,6 @@ async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> We
     result
 }
 
-/// At 1280×800 the table starts in the first screen: the pattern source,
-/// the command and the Workbench link wait in one closed disclosure under
-/// the figures, and the exact-match fields are drawn as the sentence's
-/// blanks are, underlined without a box.
 #[tokio::test]
 async fn the_table_starts_above_the_fold_with_the_pattern_machinery_folded() -> WebDriverResult<()>
 {
@@ -3103,9 +3091,6 @@ async fn the_table_starts_above_the_fold_with_the_pattern_machinery_folded() -> 
     result
 }
 
-/// Each exact-match field is named for its role and attribute, and an exact
-/// value no entry has is answered with a way back: the hint names the filter
-/// for partial values and a button clears the exact values.
 #[tokio::test]
 async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3158,8 +3143,6 @@ async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> We
     result
 }
 
-/// Each トークンを調べる link in an entry's lines is named for its line and
-/// work, so a list of them reads as distinct links.
 #[tokio::test]
 async fn each_inspect_link_names_its_line_and_work() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3197,7 +3180,6 @@ async fn each_inspect_link_names_its_line_and_work() -> WebDriverResult<()> {
     result
 }
 
-/// The question page's address for `source` limited to its `noun` definition.
 fn limited_question(base: &str, source: &str, run: bool) -> String {
     let root = base.trim_end_matches("frequencies");
     let query = serde_urlencoded::to_string([
@@ -3210,9 +3192,6 @@ fn limited_question(base: &str, source: &str, run: bool) -> String {
     format!("{root}#{query}")
 }
 
-/// A search limited to one definition keeps its 定義 chip and the
-/// definition's name in the sentence when an edit breaks the source but
-/// keeps the definition, so the failed search still names what it limits.
 #[tokio::test]
 async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3252,8 +3231,6 @@ async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriv
     result
 }
 
-/// Opening the pattern source puts the caret on the selected definition and
-/// scrolls the editor to it, rather than to wherever the text ends.
 #[tokio::test]
 async fn the_source_editor_opens_on_the_selected_definition() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3300,9 +3277,6 @@ async fn the_source_editor_opens_on_the_selected_definition() -> WebDriverResult
     result
 }
 
-/// A printed question page keeps the sentence, the counts and the lines,
-/// and leaves out the site navigation, the search button, the page filter,
-/// the document jump, the download link and 条件を追加.
 #[tokio::test]
 async fn printing_the_question_page_leaves_out_its_controls() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3346,9 +3320,6 @@ async fn printing_the_question_page_leaves_out_its_controls() -> WebDriverResult
     result
 }
 
-/// The first Tab on a question page, restored or fresh, reaches a link to
-/// the question sentence, and following it puts the next Tab on the
-/// sentence's first control.
 #[tokio::test]
 async fn the_first_tab_leads_to_the_question_sentence() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3387,10 +3358,6 @@ async fn the_first_tab_leads_to_the_question_sentence() -> WebDriverResult<()> {
     result
 }
 
-/// The question page's definition blank is a menu of the served catalog's
-/// definitions: a count-only one is listed apart and opens in Frequencies,
-/// editing the source is the menu's last action, and the 定義 chip's ×
-/// reopens the menu instead of searching every definition.
 #[tokio::test]
 async fn the_definition_blank_is_a_menu_of_the_catalogs_definitions() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3457,9 +3424,6 @@ async fn the_definition_blank_is_a_menu_of_the_catalogs_definitions() -> WebDriv
     result
 }
 
-/// Escape closes an open example; leaving an edited source marks it as a
-/// draft instead of searching; a source that failed to compile offers its
-/// repair, not a rerun of the same source.
 #[tokio::test]
 async fn the_question_page_searches_only_when_asked() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3509,8 +3473,147 @@ async fn the_question_page_searches_only_when_asked() -> WebDriverResult<()> {
     result
 }
 
-/// A reading option typed past its bound is set to the bound, and the page
-/// says so instead of changing the number unannounced.
+#[tokio::test]
+async fn an_example_opened_during_the_initial_search_stays_open() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    driver
+        .cdp()
+        .send_raw(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": "window.__held = []; window.__hold = true; \
+                const Native = window.EventSource; \
+                window.EventSource = class extends Native { addEventListener(type, listener, options) { \
+                  if (type !== 'update') return super.addEventListener(type, listener, options); \
+                  return super.addEventListener(type, (event) => { \
+                    const phase = JSON.parse(event.data).patch.phase; \
+                    if (__hold && phase !== undefined && phase !== 'running') __held.push(() => listener.call(this, event)); \
+                    else listener.call(this, event); }, options); } }; \
+                window.__release = () => { __hold = false; for (const deliver of __held.splice(0)) deliver(); };"}),
+        )
+        .await?;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return __held.length > 0 && document.querySelectorAll('.kwic-row').length > 0", "the running search's lines").await?;
+        observed(&driver, "return window.__probe.state.current.phase", json!("running"), "the held search").await?;
+        driver.execute("document.querySelector('.kwic-row').click()", Vec::new()).await?;
+        wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the open example").await?;
+        driver.execute("__release()", Vec::new()).await?;
+        wait_for(&driver, "return window.__probe.state.current.phase === 'complete'", "the completed search").await?;
+        two_frames(&driver).await?;
+        observed(
+            &driver,
+            "return [!document.querySelector('#token-lab').hidden, JSON.parse(new URLSearchParams(location.hash.slice(1)).get('view')).kind]",
+            json!([true, "example"]),
+            "the example after the search completes",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn an_address_for_a_changed_catalog_searches_only_once_the_reader_chooses()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let catalog = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(catalog.path(), COUNT_FIRST_CATALOG).unwrap();
+    let served = serve_count_first(&["--patterns".as_ref(), catalog.path().as_os_str()]).await;
+    let changed = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        changed.path(),
+        format!("{COUNT_FIRST_CATALOG}verb := [upos=VERB].\n"),
+    )
+    .unwrap();
+    let other = serve_count_first(&["--patterns".as_ref(), changed.path().as_os_str()]).await;
+    let page = |served: &Served| served.base.trim_end_matches("frequencies").to_owned();
+    let address = "const params = new URLSearchParams(location.hash.slice(1)); \
+        return params.get('corpus') ? {source: params.get('source'), catalog: params.get('catalog'), run: params.get('run')} : null";
+    let state = "return {notice: !document.querySelector('#catalog-notice').hidden, \
+        searched: window.__probe?.state.current != null, \
+        source: document.querySelector('#source').value}";
+    let result: WebDriverResult<()> = async {
+        driver.goto(page(&served)).await?;
+        let linked = wait_for(&driver, address, "the question address").await?;
+        assert_eq!(linked["source"], Value::Null, "{linked}");
+        assert_eq!(linked["catalog"].as_str().unwrap().len(), 64, "{linked}");
+        let hash = driver.execute("return location.hash", Vec::new()).await?.json().as_str().unwrap().to_owned();
+
+        open(&driver, &format!("{}{hash}&run=1", page(&other)), "return window.__probe != null").await?;
+        observed(
+            &driver,
+            state,
+            json!({"notice": true, "searched": false, "source": format!("{COUNT_FIRST_CATALOG}verb := [upos=VERB].\n")}),
+            "the changed catalog's notice",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#catalog-notice').textContent, new URLSearchParams(location.hash.slice(1)).get('catalog')]",
+            json!([
+                "The server's patterns have changed since this link was made. A search with the current patterns may give different results.Search with the current patternsOpen the default question",
+                linked["catalog"]
+            ]),
+            "the notice and the address that keeps the linked fingerprint",
+        )
+        .await?;
+        driver.execute("document.querySelector('#language').click()", Vec::new()).await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('#catalog-notice p, #catalog-notice button')].map((node) => node.textContent)",
+            json!([
+                "このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。",
+                "今のパターンで検索既定の問いを開く",
+                "今のパターンで検索",
+                "既定の問いを開く"
+            ]),
+            "the notice in Japanese",
+        )
+        .await?;
+        driver.execute("document.querySelector('#language').click()", Vec::new()).await?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        observed(&driver, state, json!({"notice": true, "searched": false, "source": format!("{COUNT_FIRST_CATALOG}verb := [upos=VERB].\n")}), "no search while the notice waits").await?;
+
+        driver.find(By::Css("#catalog-search")).await?.click().await?;
+        wait_for(&driver, "return window.__probe.state.current != null", "the confirmed search").await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#catalog-notice').hidden, document.activeElement.id]",
+            json!([true, "question-sentence"]),
+            "the confirmed notice",
+        )
+        .await?;
+
+        open(&driver, &format!("{}{hash}&run=1", page(&other)), "return window.__probe != null").await?;
+        driver.find(By::Css("#catalog-default")).await?.click().await?;
+        wait_for(
+            &driver,
+            "return window.__probe != null && document.querySelector('#catalog-notice').hidden && new URLSearchParams(location.hash.slice(1)).get('corpus') != null",
+            "the default question",
+        )
+        .await?;
+        let default = driver.execute(address, Vec::new()).await?.json().clone();
+        assert_eq!(default["source"], Value::Null, "{default}");
+        assert_eq!(default["run"], Value::Null, "{default}");
+        assert_ne!(default["catalog"], linked["catalog"], "{default}");
+        observed(&driver, "return window.__probe.state.current != null", json!(false), "nothing searched").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    other.server.abort();
+    result
+}
+
 #[tokio::test]
 async fn a_clamped_reading_option_is_announced() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3551,9 +3654,6 @@ async fn a_clamped_reading_option_is_announced() -> WebDriverResult<()> {
     result
 }
 
-/// The question page's source editor is the pattern editor, loaded when the
-/// source editor opens: it highlights and completes the source, and with the
-/// selected corpus it marks an attribute that corpus's tokens lack.
 #[tokio::test]
 async fn the_question_source_editor_checks_the_source_against_the_selected_corpus()
 -> WebDriverResult<()> {
@@ -3593,7 +3693,7 @@ async fn the_question_source_editor_checks_the_source_against_the_selected_corpu
         .await?;
         let content = driver.find(By::Css("#source-editor .cm-content")).await?;
         content.click().await?;
-        content.send_keys(Key::Control + Key::End).await?;
+        content.send_keys(crate::MOD + Key::End).await?;
         content.send_keys("x := [up").await?;
         wait_for(
             &driver,
@@ -3609,9 +3709,6 @@ async fn the_question_source_editor_checks_the_source_against_the_selected_corpu
     result
 }
 
-/// The example count is the reader's request, not the last search's size: a
-/// search that finds one line shows it, and the next search that finds more
-/// shows the requested twenty again.
 #[tokio::test]
 async fn a_short_result_leaves_the_example_count_for_the_next_search() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -3642,6 +3739,303 @@ async fn a_short_result_leaves_the_example_count_for_the_next_search() -> WebDri
             .await?;
         wait_for(&driver, "return document.querySelectorAll('.kwic-row').length === 20", "twenty lines from the wider search").await?;
         observed(&driver, shown, json!([20, "20", "20", ""]), "the requested count after a wider search").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_completed_search_whose_results_cannot_be_displayed_offers_its_download()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let text = "猫".repeat(14 * 1024);
+    let artifact = support::build_artifact_with_metadata(
+        (0..30)
+            .map(|document| {
+                let sentence = vec![TokenInfo::default().with_orth(&text).with_lemma("cat")];
+                ("doc.md", document, false, vec![sentence])
+            })
+            .collect(),
+        Vec::new(),
+        (0..30).map(|_| Box::default()).collect(),
+    );
+    let served = serve_artifact(
+        artifact,
+        CATALOG,
+        |artifact, table| write_table(artifact, table, 30),
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        let root = served.base.trim_end_matches("frequencies");
+        let query = serde_urlencoded::to_string([
+            ("fresh", "1"),
+            ("run", "1"),
+            ("source", "first := [].\nsecond := [].\n"),
+        ])
+        .unwrap();
+        driver.goto(format!("{root}#{query}")).await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
+            "the undisplayable completed search",
+        )
+        .await?;
+        observed(
+            &driver,
+            "const link = document.querySelector('#export-run'); \
+             return {link: !link.hidden && link.getClientRects().length > 0, text: link.textContent, \
+               export: /\\/sub\\/api\\/questions\\/runs\\/[0-9a-f]+\\/export$/.test(link.href), \
+               retry: document.querySelector('#retry').hidden, \
+               error: document.querySelector('#error').textContent}",
+            json!({"link": true, "text": "Download all results as JSONL", "export": true, "retry": true,
+                "error": "The result preview is too large to display. Search fewer patterns."}),
+            "the status of a completed search without displayable results",
+        )
+        .await?;
+        let records = driver
+            .execute_async(
+                "const done = arguments[arguments.length - 1]; \
+                 fetch(document.querySelector('#export-run').href).then((r) => r.text()) \
+                   .then((body) => done(body.trim().split('\\n').map((line) => JSON.parse(line).type)));",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let types = records.as_array().unwrap();
+        assert_eq!(types.iter().filter(|kind| *kind == "match").count(), 60);
+        assert_eq!(types.last().unwrap(), "complete");
+        let export = driver
+            .execute("return document.querySelector('#export-run').href", Vec::new())
+            .await?
+            .json()
+            .clone();
+        driver.refresh().await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
+            "the undisplayable completed search after a reload",
+        )
+        .await?;
+        observed(
+            &driver,
+            "const link = document.querySelector('#export-run'); \
+             return {link: !link.hidden && link.getClientRects().length > 0, href: link.href, \
+               retry: document.querySelector('#retry').hidden, \
+               error: document.querySelector('#error').textContent}",
+            json!({"link": true, "href": export, "retry": true,
+                "error": "The result preview is too large to display. Search fewer patterns."}),
+            "the same run's status and download after a reload",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('#language').click()", Vec::new())
+            .await?;
+        observed(
+            &driver,
+            "return [document.querySelector('#status').textContent, document.querySelector('#export-run').textContent]",
+            json!(["検索は完了しましたが、結果をここに表示できません。", "全結果を JSONL で保存"]),
+            "the same status in Japanese",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_repeated_search_does_not_shift_the_page() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        for (width, height) in [(1280, 800), (390, 844)] {
+            driver.set_window_rect(0, 0, width, height).await?;
+            driver.goto("about:blank").await?;
+            driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+            let settled = "return /Complete/.test(document.querySelector('#status').textContent) && document.querySelector('.kwic-list')?.getAttribute('aria-busy') === 'false' && document.querySelectorAll('.kwic-row').length === 20";
+            wait_for(&driver, settled, "the first search").await?;
+            two_frames(&driver).await?;
+            driver
+                .execute(
+                    "window.__shift = 0; window.__moved = []; \
+                     new PerformanceObserver((list) => { for (const e of list.getEntries()) { __shift += e.value; __moved.push([Math.round(e.startTime), e.value, ...(e.sources || []).map((s) => [s.node?.id || s.node?.className, Math.round(s.previousRect.y), Math.round(s.currentRect.y), Math.round(s.previousRect.height), Math.round(s.currentRect.height)])]); } }).observe({type: 'layout-shift'}); \
+                     window.__ran = document.querySelector('.result-panel').dataset.run; document.querySelector('#run').click();",
+                    Vec::new(),
+                )
+                .await?;
+            wait_for(
+                &driver,
+                &format!("return document.querySelector('.result-panel').dataset.run !== window.__ran && (() => {{ {settled} }})()"),
+                "the repeated search",
+            )
+            .await?;
+            two_frames(&driver).await?;
+            let shift = driver.execute("return [__shift, __moved]", Vec::new()).await?.json().clone();
+            assert!(shift[0].as_f64().unwrap() < 0.1, "{width}px: {shift}");
+        }
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn the_result_list_is_one_tab_stop_crossed_with_arrow_keys() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return document.querySelector('.kwic-list').getAttribute('aria-busy') === 'false' && document.querySelectorAll('.kwic-row').length === 20", "twenty lines").await?;
+        let focused = "const a = document.activeElement, items = [...document.querySelectorAll('.kwic-list > .kwic-row, .kwic-list > .document-heading > a')]; \
+            return {at: items.indexOf(a), row: a.classList.contains('kwic-row'), last: items.length - 1, \
+              stops: items.filter((item) => item.tabIndex >= 0).length, inside: !!a.closest('.kwic-list')}";
+        let at = |driver: &WebDriver| {
+            let driver = driver.clone();
+            async move { WebDriverResult::Ok(driver.execute(focused, Vec::new()).await?.json().clone()) }
+        };
+        observed(
+            &driver,
+            "const rows = [...document.querySelectorAll('.kwic-row')]; \
+             return rows.every((row) => row.tagName === 'A' && row.hasAttribute('href') && !row.hasAttribute('role') && row.getAttribute('aria-label').length > 0 && row.getAttribute('aria-expanded') === 'false')",
+            json!(true),
+            "the lines are labelled links",
+        )
+        .await?;
+        let before = "const list = document.querySelector('.kwic-list'), all = [...document.querySelectorAll('a[href], button, input, select, summary, [tabindex]')] \
+            .filter((e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length && !list.contains(e) && (e.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)); \
+            all.at(-1).focus(); return document.activeElement === all.at(-1)";
+        observed(&driver, before, json!(true), "focus on the control before the list").await?;
+        driver.action_chain().send_keys(Key::Tab).perform().await?;
+        let entered = at(&driver).await?;
+        assert_eq!(entered["at"], 0, "{entered}");
+        assert_eq!(entered["stops"], 1, "{entered}");
+        driver.action_chain().send_keys(Key::Down).perform().await?;
+        assert_eq!(at(&driver).await?["at"], 1);
+        driver.action_chain().send_keys(Key::Down).send_keys(Key::Down).perform().await?;
+        assert_eq!(at(&driver).await?["at"], 3);
+        driver.action_chain().send_keys(Key::Up).perform().await?;
+        let moved = at(&driver).await?;
+        assert_eq!(moved["at"], 2, "{moved}");
+        assert_eq!(moved["stops"], 1, "{moved}");
+        driver.action_chain().send_keys(Key::End).perform().await?;
+        let end = at(&driver).await?;
+        assert_eq!(end["at"], end["last"], "{end}");
+        driver.action_chain().send_keys(Key::Down).perform().await?;
+        assert_eq!(at(&driver).await?["at"], end["last"], "Down stops at the last line");
+        driver.action_chain().send_keys(Key::Home).perform().await?;
+        assert_eq!(at(&driver).await?["at"], 0);
+        driver.action_chain().send_keys(Key::Up).perform().await?;
+        assert_eq!(at(&driver).await?["at"], 0, "Up stops at the first item");
+        driver.action_chain().send_keys(Key::Down).perform().await?;
+        let row = at(&driver).await?;
+        assert_eq!(row["row"], true, "{row}");
+        driver.action_chain().send_keys(Key::Tab).perform().await?;
+        let left = at(&driver).await?;
+        assert_eq!(left["inside"], false, "Tab leaves the list: {left}");
+        observed(
+            &driver,
+            "const list = document.querySelector('.kwic-list'); return !!(list.compareDocumentPosition(document.activeElement) & Node.DOCUMENT_POSITION_FOLLOWING)",
+            json!(true),
+            "Tab moves to the control after the list",
+        )
+        .await?;
+        driver.action_chain().key_down(Key::Shift).send_keys(Key::Tab).key_up(Key::Shift).perform().await?;
+        assert_eq!(at(&driver).await?["at"], 1, "Shift+Tab returns to the line last focused");
+        driver.action_chain().send_keys(Key::Enter).perform().await?;
+        wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the example opened with Enter").await?;
+        observed(
+            &driver,
+            "const rows = [...document.querySelectorAll('.kwic-row')]; return [rows[0].getAttribute('aria-expanded'), rows[0].tabIndex, rows.filter((row) => row.tabIndex >= 0).length]",
+            json!(["true", 0, 1]),
+            "the opened line keeps the list's one Tab stop",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+#[tokio::test]
+async fn a_completed_search_with_an_oversized_example_offers_its_download() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let lemma = "x".repeat(1024 * 1024 + 1);
+    let artifact = support::build_artifact_with_metadata(
+        (0..6)
+            .map(|document| {
+                let lemma = if document == 0 { lemma.as_str() } else { "cat" };
+                let sentence = vec![TokenInfo::default().with_orth("cat").with_lemma(lemma)];
+                ("doc.md", document, false, vec![sentence])
+            })
+            .collect(),
+        Vec::new(),
+        (0..6).map(|_| Box::default()).collect(),
+    );
+    let served = serve_artifact(
+        artifact,
+        CATALOG,
+        |artifact, table| write_table(artifact, table, 6),
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        let root = served.base.trim_end_matches("frequencies");
+        let query = serde_urlencoded::to_string([
+            ("fresh", "1"),
+            ("run", "1"),
+            ("source", "large := [lemma~x].\n"),
+        ])
+        .unwrap();
+        driver.goto(format!("{root}#{query}")).await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#status').textContent === 'The search is complete, but its results cannot be displayed here.'",
+            "the completed search with an oversized example",
+        )
+        .await?;
+        observed(
+            &driver,
+            "const link = document.querySelector('#export-run'); \
+             return {link: !link.hidden && link.getClientRects().length > 0, \
+               retry: document.querySelector('#retry').hidden, \
+               error: document.querySelector('#error').textContent}",
+            json!({"link": true, "retry": true,
+                "error": "An example in these results is too large to display."}),
+            "the download for a search with an oversized example",
+        )
+        .await?;
+        let lemmas = driver
+            .execute_async(
+                "const done = arguments[arguments.length - 1]; \
+                 fetch(document.querySelector('#export-run').href).then((r) => r.text()) \
+                   .then((body) => done(body.trim().split('\\n').map((line) => JSON.parse(line)) \
+                     .filter((record) => record.type === 'match') \
+                     .map((record) => record.data.tokens[0].attributes.lemma.length)));",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(lemmas, json!([lemma.len()]));
         assert_no_page_errors(&driver).await
     }
     .await;

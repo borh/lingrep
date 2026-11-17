@@ -24,6 +24,22 @@ pub(crate) fn compound_name(names: &[String], exists: impl Fn(&str) -> bool) -> 
     }
 }
 
+const MAX_SENTENCE_CHAIN_BYTES: usize = 128 * 1024 * 1024;
+
+pub(crate) const MAX_DERIVED_PATTERNS: usize = 4096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "Too many compound matches or patterns. Turn off \"Derive compounds\" (複合項目を生成) or search fewer definitions, then search again."
+)]
+pub(crate) struct CompoundLimitExceeded;
+
+fn chain_bytes(components: usize) -> usize {
+    std::mem::size_of::<DerivedMatch>()
+        + std::mem::size_of::<(Vec<PatternKey>, usize, usize)>()
+        + 2 * components * std::mem::size_of::<PatternKey>()
+}
+
 pub(crate) struct ContiguousChains {
     pub(crate) chains: Vec<DerivedMatch>,
     /// Per input match, whether it is a component of any chain.
@@ -32,12 +48,17 @@ pub(crate) struct ContiguousChains {
 
 /// Enumerates every contiguous path through the base matches in one sentence.
 /// A derived item is identified by its ordered component keys and full span.
-pub(crate) fn contiguous_chains(matches: &[(PatternKey, usize, usize)]) -> ContiguousChains {
+///
+/// Fails once the enumeration would hold more than its byte budget.
+pub(crate) fn contiguous_chains(
+    matches: &[(PatternKey, usize, usize)],
+) -> Result<ContiguousChains, CompoundLimitExceeded> {
     let mut output = ContiguousChains {
         chains: Vec::new(),
         in_chain: vec![false; matches.len()],
     };
     let mut seen = HashSet::new();
+    let mut budget = MAX_SENTENCE_CHAIN_BYTES;
     let mut starts = HashMap::<usize, Vec<usize>>::new();
     for (index, &(_, start, _)) in matches.iter().enumerate() {
         starts.entry(start).or_default().push(index);
@@ -51,10 +72,11 @@ pub(crate) fn contiguous_chains(matches: &[(PatternKey, usize, usize)]) -> Conti
             end,
             &mut path,
             &mut seen,
+            &mut budget,
             &mut output,
-        );
+        )?;
     }
-    output
+    Ok(output)
 }
 
 fn extend(
@@ -64,9 +86,13 @@ fn extend(
     end: usize,
     path: &mut Vec<(usize, PatternKey)>,
     seen: &mut HashSet<(Vec<PatternKey>, usize, usize)>,
+    budget: &mut usize,
     output: &mut ContiguousChains,
-) {
+) -> Result<(), CompoundLimitExceeded> {
     if path.len() >= 2 {
+        *budget = budget
+            .checked_sub(chain_bytes(path.len()))
+            .ok_or(CompoundLimitExceeded)?;
         let components = path.iter().map(|(_, key)| *key).collect::<Vec<_>>();
         if seen.insert((components.clone(), start, end)) {
             for (index, _) in path.iter() {
@@ -86,9 +112,10 @@ fn extend(
             continue;
         }
         path.push((index, key));
-        extend(matches, starts, start, next_end, path, seen, output);
+        extend(matches, starts, start, next_end, path, seen, budget, output)?;
         path.pop();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -106,7 +133,8 @@ mod tests {
             (key(1), 2, 3),
             (key(2), 3, 5),
             (key(3), 6, 7),
-        ]);
+        ])
+        .unwrap();
         assert_eq!(
             derived.in_chain,
             [true, true, true, false],
@@ -139,7 +167,9 @@ mod tests {
 
     #[test]
     fn overlapping_alternatives_produce_distinct_component_sequences() {
-        let chains = contiguous_chains(&[(key(0), 0, 1), (key(1), 0, 1), (key(2), 1, 2)]).chains;
+        let chains = contiguous_chains(&[(key(0), 0, 1), (key(1), 0, 1), (key(2), 1, 2)])
+            .unwrap()
+            .chains;
         assert_eq!(chains.len(), 2);
         assert!(chains.iter().any(|chain| {
             chain.components == [key(0), key(2)] && chain.start == 0 && chain.end == 2

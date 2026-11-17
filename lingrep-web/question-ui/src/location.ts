@@ -50,11 +50,27 @@ export function seedParams(seed:unknown,hash:string):URLSearchParams {
     }
   }
   const overrides=new URLSearchParams(hash.replace(/^#/,''));
+  if(overrides.has('catalog'))params.delete('source');
   if(overrides.has('evidence')||overrides.has('attempt'))for(const key of ['source','corpus','analysis','raw','run','pattern'])params.delete(key);
-  // An analysis identity describes one corpus, so a corpus chosen without one drops the seed's.
   if(overrides.has('corpus')&&!overrides.has('analysis')&&overrides.get('corpus')!==params.get('corpus'))params.delete('analysis');
   for(const [key,value] of overrides)params.set(key,value);
   return params;
+}
+
+export interface ServedCatalog { readonly source:string; readonly fingerprint?:string|undefined; }
+/** Replaces `source` with `catalog` only when the source matches the served catalog and its fingerprint is available. */
+export function catalogParams(params:Record<string,string|number>,served:ServedCatalog):Record<string,string|number> {
+  if(served.fingerprint===undefined||params.source!==served.source)return params;
+  const {source:_source,...rest}=params;
+  return {...rest,catalog:served.fingerprint};
+}
+/** Removes `catalog`, preserving an explicit `source`; otherwise expands the served source and reports a fingerprint mismatch in `changed`. */
+export function resolveCatalog(params:URLSearchParams,served:ServedCatalog):{changed:string|null} {
+  const linked=params.get('catalog');
+  params.delete('catalog');
+  if(linked===null||params.has('source'))return {changed:null};
+  params.set('source',served.source);
+  return {changed:linked===served.fingerprint?null:linked};
 }
 
 /** The analysis identity a search of `params`' corpus expects: the address's own, else `run`'s when `run` read that corpus. */

@@ -146,6 +146,48 @@ test("an entry line reads as a concordance line: its span, its context and the r
   assert.equal(read.hit,'坂を');
   assert.deepEqual(read.right.map(token=>[token.index,token.attributes.text]),[[4,'上る']]);
   assert.deepEqual([...read.bound],[[4,['v']]]);
-  // A line handed off without its span spans its role words.
   assert.equal(entryContext(texts,{...line,start:undefined,end:undefined},0).hit,'坂を上る');
+});
+
+test('an address names the served catalog by its fingerprint and carries any other source in full',async()=>{
+  const {catalogParams,resolveCatalog,locationURL,defaultView}=await import('./location.js');
+  const source='key: [lemma]\nかもしれない := [lemma=かも] [lemma=知れる] [lemma=ない].\n'.repeat(40);
+  const served={source,fingerprint:'f'.repeat(64)};
+  const address=(params)=>new URLSearchParams(new URL(locationURL('http://localhost/',params,null,defaultView())).hash.slice(1));
+  const unchanged=address(catalogParams({source,corpus:'natsume',pattern:'かもしれない'},served));
+  assert.equal(unchanged.get('source'),null);
+  assert.equal(unchanged.get('catalog'),served.fingerprint);
+  assert.ok(unchanged.toString().length<address({source}).toString().length/10);
+  assert.deepEqual(resolveCatalog(unchanged,served),{changed:null});
+  assert.equal(unchanged.get('source'),source);assert.equal(unchanged.get('catalog'),null);
+  assert.equal(unchanged.get('pattern'),'かもしれない');
+  const edited=address(catalogParams({source:source+'extra := [].\n',corpus:'natsume'},served));
+  assert.equal(edited.get('source'),source+'extra := [].\n');assert.equal(edited.get('catalog'),null);
+  assert.deepEqual(resolveCatalog(edited,served),{changed:null});
+  assert.equal(edited.get('source'),source+'extra := [].\n');
+  assert.equal(address(catalogParams({source},{source})).get('source'),source);
+});
+
+test('an address written before catalog fingerprints keeps its source',async()=>{
+  const {resolveCatalog}=await import('./location.js');
+  const params=new URLSearchParams({source:'old := [upos=NOUN].',run:'1'});
+  assert.deepEqual(resolveCatalog(params,{source:'served := [].',fingerprint:'f'.repeat(64)}),{changed:null});
+  assert.equal(params.get('source'),'old := [upos=NOUN].');assert.equal(params.get('run'),'1');
+});
+
+test('a fingerprint of another catalog reports the change and holds the served source for confirmation',async()=>{
+  const {resolveCatalog}=await import('./location.js');
+  const served={source:'served := [].',fingerprint:'f'.repeat(64)};
+  for(const [linked,catalog] of [['a'.repeat(64),served],['a'.repeat(64),{source:served.source}],['',served]]){
+    const params=new URLSearchParams({catalog:linked,run:'1',pattern:'かもしれない'});
+    assert.deepEqual(resolveCatalog(params,catalog),{changed:linked});
+    assert.equal(params.get('source'),served.source);assert.equal(params.get('catalog'),null);
+    assert.equal(params.get('run'),'1');assert.equal(params.get('pattern'),'かもしれない');
+  }
+});
+
+test('a fingerprint in the address replaces the seeded source',async()=>{
+  const {seedParams}=await import('./location.js');
+  const params=seedParams({source:'seed := [].',run:'0',pattern:'seed'},'#catalog='+'a'.repeat(64));
+  assert.equal(params.get('source'),null);assert.equal(params.get('catalog'),'a'.repeat(64));
 });

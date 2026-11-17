@@ -4,7 +4,12 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
-if ! command -v chromium >/dev/null || ! command -v chromedriver >/dev/null; then
+if [ "$(uname -s)" = Darwin ]; then
+    if ! command -v chromedriver >/dev/null; then
+        echo "browser checks on macOS require chromedriver; run them in \`nix develop\`, whose chromedriver brings its Chrome" >&2
+        exit 2
+    fi
+elif ! command -v chromium >/dev/null || ! command -v chromedriver >/dev/null; then
     echo "browser checks require chromium and chromedriver" >&2
     exit 2
 fi

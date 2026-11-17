@@ -8,6 +8,7 @@ export function receive(state, snapshot) {
 export function begin(state, snapshot) {
     return { ...state, previous: state.completed, current: snapshot };
 }
+export const exportable = (run) => (run.phase === 'complete' || run.phase === 'failed' && run.search_complete === true && run.exportable === true) && Object.values(run.counts).some(total => total > 0);
 export function visible(state, behavior) {
     if (behavior === 'keep' && state.current?.phase !== 'complete' && state.previous)
         return state.previous;

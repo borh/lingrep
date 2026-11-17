@@ -520,7 +520,8 @@ async fn a_line_opens_its_document_and_returning_restores_the_lines() -> WebDriv
     let deep = wait_for(
         &driver,
         "const marks = document.querySelectorAll('#document-reader-body [data-doc-reader][data-marked] mark'); \
-         return document.querySelector('[data-fq-reader]').open && marks.length > 0 && [...marks].map((m) => m.textContent).join('')",
+         return document.querySelector('[data-fq-reader]').open && marks.length > 0 && !document.querySelector('#document-reader-body .htmx-added') && \
+           [...marks].map((m) => m.textContent).join('')",
         "the reader the address names",
     )
     .await?;
@@ -614,4 +615,120 @@ async fn a_line_opens_its_document_and_returning_restores_the_lines() -> WebDriv
     driver.quit().await?;
     served.server.abort();
     Ok(())
+}
+
+const WORKBENCH: &str = "const p = document.querySelector('#corpus-pattern'), k = document.querySelector('[data-corpus-search] input[name=corpus]'), \
+    d = document.querySelector('[data-corpus-search] input[name=derive_compounds]'); \
+    return p && k && d && document.readyState === 'complete' && {pattern: p.value, corpus: k.value, compounds: d.checked}";
+
+async fn follow_analysis_tools(driver: &WebDriver) -> WebDriverResult<serde_json::Value> {
+    let original = driver.window().await?;
+    driver.find(By::Css("#incumbent")).await?.click().await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let tab = loop {
+        if let Some(tab) = driver
+            .windows()
+            .await?
+            .into_iter()
+            .find(|window| window != &original)
+        {
+            break tab;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(WebDriverError::Timeout("the Workbench tab".into()));
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    driver.switch_to_window(tab).await?;
+    let opened = wait_for(driver, WORKBENCH, "the Workbench").await?;
+    assert_no_page_errors(driver).await?;
+    driver.close_window().await?;
+    driver.switch_to_window(original).await?;
+    Ok(opened)
+}
+
+#[tokio::test]
+async fn analysis_tools_open_the_workbench_on_the_pattern_being_read() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let markdown = support::markdown_fixture(&[("a.md", "# 猫\n\n猫が鳴く。\n")]).await;
+    let plain = support::build_artifact(vec![(
+        "work.txt",
+        0,
+        false,
+        plain_words()[0]
+            .iter()
+            .map(|words| {
+                words
+                    .iter()
+                    .map(|word| TokenInfo::default().with_orth(word))
+                    .collect()
+            })
+            .collect(),
+    )]);
+    let served = serve(&markdown, &plain, false).await;
+    let result: WebDriverResult<()> = async {
+        let edited = "pattern dog := [text=犬] [text=が].\n";
+        driver.goto(served.base.trim_end_matches("frequencies")).await?;
+        wait_for(
+            &driver,
+            "return !!document.querySelector('#corpus option[value=plain]')",
+            "the question page",
+        )
+        .await?;
+        driver
+            .execute(
+                &format!(
+                    "return import(new URL('assets/editor/pattern-editor.js', document.baseURI).href).then((editor) => \
+                     localStorage.setItem('pattern-draft:corpus-pattern', editor.storedDraft({edited:?}, 'stale := [text=鳥].')))"
+                ),
+                Vec::new(),
+            )
+            .await?;
+        driver
+            .execute(
+                &format!(
+                    "const corpus = document.querySelector('#corpus'); corpus.value = 'plain'; corpus.dispatchEvent(new Event('change')); \
+                     const source = document.querySelector('#source'); source.value = {edited:?}; source.dispatchEvent(new Event('input', {{bubbles: true}}))"
+                ),
+                Vec::new(),
+            )
+            .await?;
+        driver.find(By::Css(".boundary summary")).await?.click().await?;
+        assert_eq!(
+            follow_analysis_tools(&driver).await?,
+            json!({"pattern": edited, "corpus": "plain", "compounds": false})
+        );
+        wait_for(
+            &driver,
+            "return document.querySelector('#incumbent').href.includes('/sub/workbench?v=1&')",
+            "the minted link",
+        )
+        .await?;
+        assert_eq!(
+            follow_analysis_tools(&driver).await?,
+            json!({"pattern": edited, "corpus": "plain", "compounds": false})
+        );
+
+        driver
+            .goto(format!("{}#corpus=plain&catalog=cat.lx&pattern=cat", served.base))
+            .await?;
+        let link = wait_for(
+            &driver,
+            "const a = document.querySelector('[data-fq-source] a'); return a && a.href",
+            "the Workbench link",
+        )
+        .await?;
+        driver.goto(link.as_str().unwrap()).await?;
+        assert_eq!(
+            wait_for(&driver, WORKBENCH, "the Workbench from Frequencies").await?,
+            json!({"pattern": CATALOG, "corpus": "plain", "compounds": false})
+        );
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
 }

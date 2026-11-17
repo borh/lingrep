@@ -374,7 +374,6 @@ async fn question_page(
     if let Some(ready) = ready {
         seed["analysis"] = ready.identity.as_str().into();
     }
-    // A link names what it runs; only the served catalog has a default selection.
     if !matches!(target, Target::Link(_)) {
         let source = landing.seed_pattern.clone();
         match store
@@ -590,9 +589,6 @@ mod tests {
         assert_eq!(seed["run"], "0");
     }
 
-    /// A keyed definition that matches one word by itself is a count: its
-    /// concordance is every such word, which no run can retain on a real
-    /// corpus. The landing selects the first other definition instead.
     #[tokio::test]
     async fn the_landing_selects_the_first_definition_that_is_not_count_only() {
         let (_directory, store, _digest) = ready_question_store().await;
@@ -607,7 +603,6 @@ mod tests {
         .await;
         assert_eq!(seed["pattern"], "real");
         assert_eq!(seed["run"], "0");
-        // Nothing to leave out: an unkeyed word, only counts, or no catalog.
         for source in [
             "every := [].\nreal := [upos=NOUN] [upos=ADP].\n",
             "key: [upos]\nevery := [].\n",

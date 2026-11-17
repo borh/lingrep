@@ -75,7 +75,7 @@ async fn preparing_strip_swaps_to_ready_and_stops_polling() -> WebDriverResult<(
     let address = fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
-    let driver = WebDriver::new(&driver_url, caps).await?;
+    let driver = crate::session(&driver_url, caps).await?;
 
     driver.goto(&address).await?;
 
@@ -299,7 +299,7 @@ async fn selecting_a_corpus_navigates_to_it_and_reruns_the_query() -> WebDriverR
     let address = selector_fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
-    let driver = WebDriver::new(&driver_url, caps).await?;
+    let driver = crate::session(&driver_url, caps).await?;
 
     let outcome = async {
         driver.goto(&address).await?;
@@ -443,7 +443,7 @@ async fn a_refused_switch_reports_and_the_message_survives_a_poll_swap() -> WebD
     let address = refusing_fixture().await;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
-    let driver = WebDriver::new(&driver_url, caps).await?;
+    let driver = crate::session(&driver_url, caps).await?;
 
     let outcome = async {
         driver.goto(&address).await?;

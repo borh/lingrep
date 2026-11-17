@@ -118,7 +118,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1_440, 900).await?;
     let query =
         lingrep_web::permalink::encode_query_only("hit := HIT.", "default", None, None).unwrap();
@@ -167,6 +167,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
         .await?
         .click()
         .await?;
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     driver.find(By::Css(".kwic-row")).await?.click().await?;
     wait_for_selector(&driver, ".hit-detail[data-reference-ordinal='0']").await?;
     let state_script = "return JSON.stringify([location.href,document.querySelector('#corpus-pattern').value,document.querySelector('[data-search-scope-value]').value,document.querySelector('.kwic-row[aria-selected=true]').dataset.hitOrdinal,document.querySelector('.hit-detail').dataset.referenceOrdinal]);";
@@ -302,6 +303,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
             .is_empty()
     );
     wait_for_selector(&driver, ".kwic-row").await?;
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     driver.find(By::Css(".kwic-row")).await?.click().await?;
     wait_for_selector(&driver, "[data-reading-open]").await?;
     driver
@@ -352,7 +354,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
         .await?;
     wait_for_selector(&driver, "[data-exact-total='1']").await?;
     for width in [320, 1_440] {
-        driver.set_window_rect(0, 0, width, 900).await?;
+        crate::resize(&driver, width, 900).await?;
         let contained: bool = driver
             .execute(
                 "return document.documentElement.scrollWidth<=innerWidth",
@@ -474,6 +476,7 @@ return rect.left>=0&&rect.right<=innerWidth&&rect.height>0&&[rect.top+4,(rect.to
         .await?
         .convert()?;
     assert_eq!(order, ["1", "0", "2"]);
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     driver
         .find(By::Css(".kwic-row[data-hit-ordinal='1']"))
         .await?
@@ -619,7 +622,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver
         .goto(format!("{}/reader-fixture", fixture.address))
         .await?;
@@ -699,7 +702,7 @@ async fn hit_context_opens_pages_and_closes_a_responsive_reading_dialog() -> Web
         .await?;
     wait_for_selector(&driver, "[data-reading-sentence='0'] mark").await?;
     for width in [320, 1_440] {
-        driver.set_window_rect(0, 0, width, 900).await?;
+        crate::resize(&driver, width, 900).await?;
         let contained: bool = driver.execute("const d=document.querySelector('.reading-dialog').getBoundingClientRect();return d.left>=0&&d.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth", vec![]).await?.convert()?;
         assert!(contained, "reading dialog overflows at {width}px");
         driver
@@ -842,7 +845,7 @@ async fn escape_closes_the_reader_while_a_hit_is_selected() -> WebDriverResult<(
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     let result: WebDriverResult<()> = async {
         driver
             .goto(format!("{}/reader-fixture", fixture.address))
@@ -1761,7 +1764,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
     eprintln!("layout-e2e: creating browser session");
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     eprintln!("layout-e2e: loading fixture");
     let mut initialization_samples = Vec::with_capacity(10);
     for _ in 0..10 {
@@ -1985,7 +1988,7 @@ async fn compact_workspace_never_scrolls_horizontally_and_discloses_in_place() -
     );
 
     for width in [320, 768, 1_440] {
-        driver.set_window_rect(0, 0, width, 900).await?;
+        crate::resize(&driver, width, 900).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let metrics: LayoutMetrics = driver
             .execute(
@@ -2272,8 +2275,10 @@ return {
     );
     // Wide viewports: the same inspector re-homes into the sticky dock
     // column, and rail/dock/pane-header all track while the table scrolls.
+    // The inspector moves on the width query's change event, which Chrome
+    // dispatches at the next rendering update.
     driver.set_window_rect(0, 0, 1_440, 900).await?;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     let dock_wide: (String, bool, bool) = driver
         .execute(
             r#"const dock=document.getElementById('inspector-dock');return [getComputedStyle(dock).position,document.querySelector('.results-explorer').classList.contains('inspector-open'),Boolean(dock.querySelector('.hit-detail[data-reference-ordinal="0"]'))];"#,
@@ -2329,7 +2334,7 @@ return {
     assert!(tracking.3 <= 1.0, "no horizontal overflow while docked");
     driver.execute("window.scrollTo(0,0)", vec![]).await?;
     driver.set_window_rect(0, 0, 768, 900).await?;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     // The remaining steps exercise sentence expansion; close the inspector.
     driver
         .find(By::Css("[data-inspector-close]"))
@@ -2570,7 +2575,7 @@ async fn editor_chrome_follows_light_and_dark_palette() -> WebDriverResult<()> {
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     let tools = driver.cdp();
 
     for scheme in ["dark", "light"] {
@@ -2588,7 +2593,7 @@ async fn editor_chrome_follows_light_and_dark_palette() -> WebDriverResult<()> {
         wait_for_selector(&driver, ".cm-pattern-signature").await?;
         eprintln!("editor-chrome-e2e: signature ready");
 
-        content.send_keys(Key::Control + "f").await?;
+        content.send_keys(crate::MOD + "f").await?;
         wait_for_selector(&driver, ".cm-panels").await?;
         eprintln!("editor-chrome-e2e: panel ready");
 
@@ -2947,7 +2952,7 @@ async fn section_and_surface_filters_compose_and_persist() -> WebDriverResult<()
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.goto(format!("{}/filter", fixture.address)).await?;
     for _ in 0..100 {
         if driver
@@ -3148,7 +3153,7 @@ async fn results_explorer_is_master_detail_and_discloses_honestly() -> WebDriver
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.goto(format!("{}/explorer", fixture.address)).await?;
 
     // --- Desktop (>= 64rem): two-column, sticky rail, heading shown, toggle hidden ---
@@ -3233,7 +3238,7 @@ async fn results_explorer_is_master_detail_and_discloses_honestly() -> WebDriver
     assert!(restored, "clearing the filter restores every pattern row");
 
     // --- Mobile (< 64rem): stacked, heading hidden, native operable disclosure ---
-    driver.set_window_rect(0, 0, 320, 780).await?;
+    crate::resize(&driver, 320, 780).await?;
     tokio::time::sleep(Duration::from_millis(50)).await;
     let (mobile_display, mobile_summary, mobile_heading): (String, String, String) = driver
         .execute(
@@ -3293,7 +3298,7 @@ async fn a_warning_on_a_valid_pattern_reaches_the_lint_gutter() -> WebDriverResu
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
 
     driver.goto(format!("{}/editor", fixture.address)).await?;
     wait_for_enhanced_editor(&driver).await?;
@@ -3348,7 +3353,7 @@ async fn editor_navigates_from_a_reference_to_its_definition_and_between_referen
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
 
     driver
         .goto(format!("{}/navigation", fixture.address))
@@ -3363,7 +3368,7 @@ async fn editor_navigates_from_a_reference_to_its_definition_and_between_referen
     content.click().await?;
     // Put the caret inside the first `@F` (document offset 32). Home then six
     // Rights on line 2 is stable in a way a click coordinate is not.
-    content.send_keys(Key::Control + Key::End).await?;
+    content.send_keys(crate::MOD + Key::End).await?;
     content.send_keys(Key::Home).await?;
     for _ in 0..6 {
         content.send_keys(Key::Right).await?;
@@ -3458,7 +3463,7 @@ async fn editor_formats_on_blur_and_keeps_large_sources_readable() -> WebDriverR
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
 
     driver.goto(format!("{}/editor", fixture.address)).await?;
     wait_for_enhanced_editor(&driver).await?;
@@ -3468,7 +3473,7 @@ async fn editor_formats_on_blur_and_keeps_large_sources_readable() -> WebDriverR
     // The fixture's button exists precisely so the blur has somewhere to go.
     let content = driver.find(By::Css(".cm-content")).await?;
     content.click().await?;
-    content.send_keys(Key::Control + "a").await?;
+    content.send_keys(crate::MOD + "a").await?;
     content.send_keys("x:=[upos=VERB].").await?;
     driver.find(By::Css("#blur-target")).await?.click().await?;
 
@@ -3534,7 +3539,7 @@ async fn the_query_band_stays_in_view_while_the_results_scroll() -> WebDriverRes
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1_440, 900).await?;
     driver.goto(format!("{}/band", fixture.address)).await?;
     wait_for_selector(&driver, "[data-query-band]").await?;
@@ -3648,7 +3653,7 @@ async fn the_concordance_controls_stick_to_the_concordance_and_nothing_above_it(
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1_440, 900).await?;
     driver.goto(fixture.address.clone()).await?;
     wait_for_selector(&driver, ".kwic-pane-header").await?;
@@ -3656,7 +3661,8 @@ async fn the_concordance_controls_stick_to_the_concordance_and_nothing_above_it(
 
     let reading: (String, f64, f64, f64, String, f64) = driver
         .execute(
-            r#"window.scrollTo(0, window.scrollY
+            r#"await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+               window.scrollTo(0, window.scrollY
                  + document.querySelector('.kwic-region').getBoundingClientRect().top + 800);
                const box = (sel) => document.querySelector(sel).getBoundingClientRect();
                const strip = box('.kwic-pane-header');
@@ -3722,7 +3728,7 @@ async fn detail_views_are_exclusive_and_surface_search_lives_with_the_definition
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1_440, 900).await?;
     driver.goto(format!("{}/tabs", fixture.address)).await?;
     wait_for_selector(&driver, ".definition-band [data-ranked-search=surface]").await?;
@@ -3975,7 +3981,7 @@ async fn detail_views_are_exclusive_and_surface_search_lives_with_the_definition
         vec![],
     ).await?;
     for width in [320, 1440] {
-        driver.set_window_rect(0, 0, width, 900).await?;
+        crate::resize(&driver, width, 900).await?;
         driver
             .find(By::Css("[data-detail-tab=concordance]"))
             .await?
@@ -4005,7 +4011,7 @@ async fn every_bar_in_a_ranked_list_shares_one_track() -> WebDriverResult<()> {
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1_440, 900).await?;
     driver.goto(format!("{}/filter", fixture.address)).await?;
     wait_for_selector(&driver, ".section-overview .surface-bar").await?;
@@ -4052,7 +4058,7 @@ async fn a_selected_surface_narrows_the_section_distribution() -> WebDriverResul
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
     capabilities.add_arg("--disable-gpu")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.goto(format!("{}/filter", fixture.address)).await?;
     for _ in 0..100 {
         if driver
@@ -4183,7 +4189,7 @@ async fn provenance_grains_render_separately_and_escape_metadata() -> WebDriverR
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver
         .goto(format!("{}/provenance", fixture.address))
         .await?;
@@ -4227,7 +4233,7 @@ async fn dendrogram_rotates_and_enters_and_leaves_fullscreen() -> WebDriverResul
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1100, 800).await?;
     driver
         .goto(format!("{}/dendrogram", fixture.address))
@@ -4289,6 +4295,7 @@ async fn dendrogram_rotates_and_enters_and_leaves_fullscreen() -> WebDriverResul
         .with_text("Full screen is unavailable in this browser.")
         .first()
         .await?;
+    crate::frequency_e2e_test::two_frames(&driver).await?;
     assert_eq!(
         fullscreen.attr("aria-pressed").await?.as_deref(),
         Some("false")
@@ -4307,7 +4314,7 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver
         .goto(format!("{}/header-help", fixture.address))
         .await?;
@@ -4339,7 +4346,7 @@ async fn header_help_preserves_navigation_and_dialog_access_at_narrow_widths() -
                 .await?;
         }
         for width in [320, 768, 1440] {
-            driver.set_window_rect(0, 0, width, 900).await?;
+            crate::resize(&driver, width, 900).await?;
             let clipped: Vec<String> = driver.execute(
                 "return [...document.querySelectorAll('.site-nav a, .site-nav button')].filter(el => {const r = el.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth + 1;}).map(el => el.textContent || el.getAttribute('aria-label'));",
                 vec![],
@@ -4453,7 +4460,7 @@ async fn kwic_sort_orders_all_retained_pages_and_keeps_filtered_hit_identity() -
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1440, 900).await?;
     driver.goto(&fixture.address).await?;
     wait_for_selector(&driver, ".results-enhanced").await?;
@@ -4483,7 +4490,7 @@ async fn kwic_sort_orders_all_retained_pages_and_keeps_filtered_hit_identity() -
     driver.execute("const direction=document.querySelector('[data-kwic-sort-direction]');direction.value='ascending';direction.dispatchEvent(new Event('change',{bubbles:true}));", vec![]).await?;
     assert_eq!(first_visible().await?, "2");
     for width in [320, 1440] {
-        driver.set_window_rect(0, 0, width, 900).await?;
+        crate::resize(&driver, width, 900).await?;
         assert!(
             driver
                 .execute(
@@ -4507,7 +4514,7 @@ async fn kwic_pending_requests_preserve_rollback_paging_and_pattern_restore() ->
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     driver.set_window_rect(0, 0, 1440, 900).await?;
     driver.goto(&fixture.address).await?;
     wait_for_selector(&driver, ".results-enhanced").await?;
@@ -4602,7 +4609,7 @@ async fn controls_display_focus_pressed_disabled_and_match_styles() -> WebDriver
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
     driver.goto(format!("{}/feedback", fixture.address)).await?;
     driver.action_chain().send_keys(Key::Tab).perform().await?;
@@ -4716,7 +4723,7 @@ async fn request_feedback_clears_after_swaps_and_errors_and_respects_reduced_mot
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
     capabilities.add_arg("--disable-dev-shm-usage")?;
-    let driver = WebDriver::new(&driver_url, capabilities).await?;
+    let driver = crate::session(&driver_url, capabilities).await?;
     let outcome = std::panic::AssertUnwindSafe(async {
     driver.goto(format!("{}/feedback", fixture.address)).await?;
     let cases = [
@@ -4817,7 +4824,7 @@ async fn compound_key_picker_switches_one_field_and_keeps_the_others() -> WebDri
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(driver_url, capabilities).await?;
+    let driver = crate::session(driver_url, capabilities).await?;
     driver
         .goto(format!("{}/capture-key-compound", fixture.address))
         .await?;
@@ -4877,7 +4884,7 @@ async fn capture_key_picker_preserves_source_and_disables_invalid_drafts() -> We
     let mut capabilities = DesiredCapabilities::chrome();
     capabilities.add_arg("--headless")?;
     capabilities.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(driver_url, capabilities).await?;
+    let driver = crate::session(driver_url, capabilities).await?;
     driver
         .goto(format!("{}/capture-key", fixture.address))
         .await?;

@@ -98,7 +98,19 @@
             mold
             stdenv.cc.cc.lib
           ];
-          darwinOnlyDevDeps = with pkgs; [ lldb ];
+          darwinOnlyDevDeps = with pkgs; [
+            lldb
+            browserChecksDriver
+          ];
+          browserChecksDriver =
+            assert lib.assertMsg
+              (lib.versions.major pkgs.chromedriver.version == lib.versions.major pkgs.google-chrome.version)
+              "chromedriver ${pkgs.chromedriver.version} cannot drive google-chrome ${pkgs.google-chrome.version}";
+            pkgs.runCommand "chromedriver-with-google-chrome-${pkgs.google-chrome.version}" { } ''
+              mkdir -p $out/bin
+              cp ${lib.getExe pkgs.chromedriver} $out/bin/chromedriver
+              ln -s "${pkgs.google-chrome}/Applications/Google Chrome.app" "$out/bin/Google Chrome.app"
+            '';
 
           devDeps =
             portableDevDeps
@@ -119,7 +131,6 @@
                 # lingrep-core compiles the checked-in NDC9 lookup table into the
                 # BCCWJ reader with include_str!.
                 isNdc9Data = toString path == toString ./lingrep-core/src/corpus/bccwj/data/ndc9.tsv;
-                # lingrep-core include_str!s the label sets' value names.
                 isLabelNames = toString path == toString ./lingrep-core/src/fsm/label_names.json;
                 # lingrep-web include_bytes!s assets under lingrep-web/assets (both the pattern
                 # subdir and top-level results-explorer.js / app.css), so keep the
@@ -784,6 +795,7 @@
           _module.args.pkgs = import inputs.nixpkgs {
             inherit system;
             overlays = [ (import inputs.rust-overlay) ];
+            config.allowUnfreePredicate = package: lib.getName package == "google-chrome";
           };
 
           apps.default = lingrepApp;

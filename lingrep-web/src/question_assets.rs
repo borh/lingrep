@@ -65,7 +65,6 @@ pub(crate) fn site_routes(current: &str, frequency_view: bool) -> String {
         );
         routes += &link("compare", "compare", "compareNav", "nav.compare", "Compare");
     }
-    // The workbench pages carry the `#site-help` dialog that this link opens.
     let help_dialog = if current == "question" {
         ""
     } else {

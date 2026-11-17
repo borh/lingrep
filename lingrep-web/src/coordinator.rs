@@ -147,7 +147,7 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
                 category: ErrorCategory::Execution,
                 message: match error {
                     lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => format!(
-                        "{error} Narrow the pattern or ask the server operator to use a smaller matching batch."
+                        "{error} Narrow the pattern to produce fewer matches in one sentence."
                     ),
                     lingrep_core::fsm::MatchResourceError::Sentence { .. } => error.to_string(),
                 },
@@ -167,7 +167,8 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
             ),
         },
         ExecutionError::Sink(message)
-            if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string() =>
+            if *message == crate::result_index::ResultIndexError::BudgetExceeded.to_string()
+                || *message == crate::derived_patterns::CompoundLimitExceeded.to_string() =>
         {
             AttemptFailure {
                 category: ErrorCategory::ResultLimit,
@@ -1845,7 +1846,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_output_failure_explains_the_server_batch_remedy() {
+    fn batch_output_failure_explains_the_pattern_remedy() {
         let failure = classify_execution_error(&ExecutionError::Matching(
             lingrep_core::fsm::BoundExecutionError::Resource(
                 lingrep_core::fsm::MatchResourceError::BatchOutput { limit: 1024 },
@@ -1853,7 +1854,7 @@ mod tests {
         ));
         assert_eq!(failure.category, ErrorCategory::Execution);
         assert!(failure.message.contains("1024"));
-        assert!(failure.message.contains("smaller matching batch"));
+        assert!(failure.message.contains("Narrow the pattern"));
         assert!(!failure.message.contains("ordering constraint"));
     }
 
@@ -1884,6 +1885,15 @@ mod tests {
                 .message
                 .contains("Narrow the pattern or document conditions")
         );
+    }
+
+    #[test]
+    fn compound_limit_failure_is_a_result_limit_naming_the_option() {
+        let error =
+            ExecutionError::Sink(crate::derived_patterns::CompoundLimitExceeded.to_string());
+        let failure = classify_execution_error(&error);
+        assert_eq!(failure.category, ErrorCategory::ResultLimit);
+        assert!(failure.message.contains("Derive compounds"));
     }
 
     #[test]

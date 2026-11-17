@@ -318,7 +318,6 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             }
         }
     }
-    // A corpus whose documents carry no metadata has nothing to choose from, so its scope stays all documents.
     let fieldsEpoch = 0;
     async function checkFields() {
         const epoch = ++fieldsEpoch, toggle = $('#scope-toggle');

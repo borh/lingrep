@@ -38,7 +38,6 @@ export function storedLocale(storage, language) {
       const stored = storage?.getItem(key);
       if (stored && supported(stored)) return stored;
     } catch (_error) {
-      // Fall through to the browser hint.
     }
   }
   return (language || "").toLowerCase().startsWith("ja") ? "ja" : "en";

@@ -914,7 +914,6 @@ code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; f
   line-height: 1.7;
 }
 
-/* ── The neighbors page ─────────────────────────────────────────────────── */
 .neighbors { max-inline-size: 52rem; }
 .neighbors h1 { margin: 0 0 var(--space-2); font-size: 1.4rem; }
 .neighbors-blurb { margin: 0 0 var(--space-4); max-inline-size: 70ch; }
@@ -2241,8 +2240,6 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
 .site-help-document { max-inline-size: 70rem; margin-inline: auto; }
 .site-help-document pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* The colour tokens and header of the question, Frequencies and Compare pages
-   (question-ui/site.css), applied to the workbench pages' own names. */
 :root {
   --surface: #fdfcf9;
   --nav-bg: #fdfcf9;

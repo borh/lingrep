@@ -1146,6 +1146,21 @@ fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
         ),
     );
     assert_eq!(reply["status"], "ok");
+
+    let meta = get_json(&sub, "/lingrep/api/frequency/meta");
+    let link = meta["pairs"][0]["workbench"].as_str().unwrap();
+    let target = link
+        .strip_prefix("./workbench?")
+        .unwrap_or_else(|| panic!("not a Workbench link: {link}"));
+    assert!(target.contains("&k=default"), "{link}");
+    let (status, workbench) = get(&sub, &format!("/lingrep/workbench?{target}"));
+    assert_eq!(status, 200);
+    assert!(workbench.contains("id=\"corpus-pattern\""), "{workbench}");
+    assert!(workbench.contains(CATALOG), "{workbench}");
+    assert!(
+        workbench.contains("name=\"derive_compounds\" value=\"true\">"),
+        "the link opens with compound derivation off: {workbench}"
+    );
 }
 
 #[test]
@@ -2144,10 +2159,6 @@ fn post_json(server: &Server, path: &str, body: &Value) -> (u16, Value) {
     )
 }
 
-/// `every` matches every token, as the class 6 catalog's `pos := []` does: a
-/// handoff that ran the whole catalog over the whole corpus retained a row per
-/// token and could exceed the server's result budget before the occurrence
-/// was located.
 #[test]
 fn a_frequency_line_opens_in_a_question_run_of_its_pattern_over_its_document() {
     let source = "every := [].\nkey: [$a.text]\npair := (?<a> [text=猫]) (?<b> []).\n";

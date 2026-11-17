@@ -160,6 +160,12 @@ struct RunSnapshot {
     version: u64,
     error: Option<String>,
     error_code: Option<&'static str>,
+    /// Set on a completed search whose preview cannot be projected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_complete: Option<bool>,
+    /// Whether the run's export can hold every match; present with `search_complete`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exportable: Option<bool>,
     diagnostics: Vec<Value>,
     notices: Vec<String>,
     counters: Option<Value>,
@@ -269,6 +275,8 @@ async fn project_run(
     let mut counters = None;
     let current_ready = runtime.ready().await;
     let mut condition = attempt.search_scope.clause.clone().unwrap_or_default();
+    let completed = attempt.phase == AttemptPhase::Completed;
+    let mut undisplayable: Option<String> = None;
     if let Some(snapshot) = snapshot.filter(|snapshot| snapshot.revision == attempt.revision) {
         condition = snapshot.search_scope.clause.clone().unwrap_or_default();
         for pattern in &snapshot.patterns {
@@ -281,22 +289,35 @@ async fn project_run(
                     .page(pattern.key, None, -1, 30)
                     .await
                     .map_err(unavailable)?;
-                let group = project_occurrences(
+                let group = match project_occurrences(
                     ready,
                     &page.rows,
                     &snapshot.capture_catalog,
                     &definitions,
                     index.publication_attributes(),
+                    INSPECTION_BYTES,
                     None,
                 )
-                .await?;
+                .await
+                {
+                    Ok(group) => group,
+                    Err(error) if completed && error.0 == StatusCode::PAYLOAD_TOO_LARGE => {
+                        undisplayable =
+                            Some("An example in these results is too large to display.".into());
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
                 preview_bytes = preview_bytes
                     .saturating_add(serde_json::to_vec(&group).map_err(unavailable)?.len());
                 if preview_bytes > PREVIEW_BYTES {
-                    return Err(ApiError(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "The result preview is too large to display. Search fewer patterns.".into(),
-                    ));
+                    let message =
+                        "The result preview is too large to display. Search fewer patterns.";
+                    if completed {
+                        undisplayable = Some(message.into());
+                        break;
+                    }
+                    return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, message.into()));
                 }
                 rows.insert(pattern.name.clone(), group);
             }
@@ -328,6 +349,7 @@ async fn project_run(
                     &summary.capture_catalog,
                     &definitions,
                     &summary.publication_attributes,
+                    INSPECTION_BYTES,
                     None,
                 )
                 .await?;
@@ -361,8 +383,6 @@ async fn project_run(
     } else {
         Vec::new()
     };
-    // A run that overflowed the result budget published no snapshot, but the
-    // page still offers to search its definitions one at a time.
     if definitions.is_empty()
         && attempt
             .failure
@@ -376,6 +396,18 @@ async fn project_run(
             .await
             .map_err(unavailable)?;
     }
+    let (phase, error, search_complete, exportable) = match undisplayable {
+        Some(message) => {
+            rows.clear();
+            ("failed", Some(message), Some(true), Some(true))
+        }
+        None => (
+            phase,
+            attempt.failure.as_ref().map(|e| e.message.clone()),
+            None,
+            None,
+        ),
+    };
     Ok(RunSnapshot {
         id: id.into(),
         phase,
@@ -390,12 +422,14 @@ async fn project_run(
         started: 0,
         elapsed: 0.0,
         version,
-        error: attempt.failure.as_ref().map(|e| e.message.clone()),
+        error,
         error_code: attempt.failure.as_ref().and_then(|e| match e.category {
             ErrorCategory::AnalysisChanged => Some("analysis_changed"),
             ErrorCategory::ResultLimit => Some("result_limit"),
             _ => None,
         }),
+        search_complete,
+        exportable,
         diagnostics,
         notices: crate::revision_status::project_revision_status(Some(view))
             .notices
@@ -433,31 +467,34 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         .ok_or_else(expired)?;
     let stream = futures::stream::unfold(
         (store, id, receiver, None::<Value>, false, false),
-        |(store, id, mut receiver, prior, mut wait, finished)| async move {
-            if finished {
+        |(store, id, mut receiver, prior, wait, finished)| async move {
+            if finished || wait && receiver.changed().await.is_err() {
                 return None;
             }
-            let projected = loop {
-                if wait && receiver.changed().await.is_err() {
-                    return None;
-                }
-                wait = true;
-                let view = receiver.borrow_and_update().clone();
-                match project_run(&store, &id, &view).await {
-                    Ok(projected) => break projected,
-                    Err(_) if search_continues(&view) => {}
-                    Err(error) => {
-                        let event = Event::default()
-                            .event("update")
-                            .data(json!({"id":id,"reset":false,"patch":{"phase":"failed","error":error.1,"version":VERSION.fetch_add(1,Ordering::Relaxed)},"append":{}}).to_string());
-                        return Some((
-                            Ok::<_, Infallible>(event),
-                            (store, id, receiver, prior, false, true),
-                        ));
-                    }
+            let view = receiver.borrow_and_update().clone();
+            let projected = match project_run(&store, &id, &view).await {
+                Ok(projected) => projected,
+                Err(error) => {
+                    let counts = run_counts(&view);
+                    let received = counts.values().sum::<u64>();
+                    let version = VERSION.fetch_add(1, Ordering::Relaxed);
+                    let continues = search_continues(&view);
+                    let patch = if continues {
+                        json!({"counts":counts,"received":received,"version":version})
+                    } else {
+                        json!({"phase":"failed","error":error.1,"version":version})
+                    };
+                    let event = Event::default()
+                        .event("update")
+                        .data(json!({"id":id,"reset":false,"patch":patch,"append":{}}).to_string());
+                    return Some((
+                        Ok::<_, Infallible>(event),
+                        (store, id, receiver, prior, true, !continues),
+                    ));
                 }
             };
             let finished = projected.phase != "running";
+            let undisplayable = projected.search_complete.is_some();
             let value = serde_json::to_value(projected).expect("question snapshots serialize");
             let mut patch = value.as_object().expect("snapshot object").clone();
             let all_rows = patch.remove("rows").unwrap_or_else(|| json!({}));
@@ -491,7 +528,7 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
                     append.insert(pattern.clone(), Value::Array(added));
                 }
             }
-            if let Some(old) = &prior {
+            if let Some(old) = prior.as_ref().filter(|_| !undisplayable) {
                 patch.retain(|key, value| key == "version" || old.get(key) != Some(value));
             }
             let event = Event::default()
@@ -506,6 +543,25 @@ async fn events(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
     Ok(Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::default())
         .into_response())
+}
+
+fn run_counts(view: &CoordinatorView) -> BTreeMap<String, u64> {
+    let published = view
+        .state
+        .displayed_snapshot()
+        .filter(|snapshot| snapshot.revision == REVISION);
+    if let Some(snapshot) = published {
+        return snapshot
+            .patterns
+            .iter()
+            .map(|pattern| (pattern.name.clone(), pattern.exact_total))
+            .collect();
+    }
+    view.live_summary
+        .iter()
+        .flat_map(|summary| summary.rows.iter())
+        .map(|pattern| (pattern.name.to_string(), pattern.total))
+        .collect()
 }
 
 fn search_continues(view: &CoordinatorView) -> bool {
@@ -593,6 +649,7 @@ async fn project_occurrences(
     captures: &[CaptureDescriptor],
     patterns: &[String],
     publication_attributes: &[lingrep_core::token_match::AttributeKey],
+    max_sentence_bytes: usize,
     max_response_bytes: Option<usize>,
 ) -> Result<Vec<Value>> {
     let reader = ready
@@ -621,7 +678,7 @@ async fn project_occurrences(
         let sentence = occurrence.reference.sentence_index;
         let attributes = Arc::clone(&attributes);
         let decoded = tokio::task::spawn_blocking(move || {
-            reader.sentence_projection_bounded(sentence, &attributes, INSPECTION_BYTES)
+            reader.sentence_projection_bounded(sentence, &attributes, max_sentence_bytes)
         })
         .await
         .map_err(unavailable)?
@@ -1009,6 +1066,7 @@ async fn documents(
         &snapshot.capture_catalog,
         &patterns,
         index.publication_attributes(),
+        INSPECTION_BYTES,
         Some(32 * 1024 * 1024),
     )
     .await?;
@@ -1052,7 +1110,7 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
             let page=index.export_page(cursor,16).await.map_err(std::io::Error::other)?;
             if page.is_empty(){(vec![json!({"schema":"lingrep.question-results/v1","type":"complete","data":{"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),"counters":{"matches_found":snapshot.patterns.iter().map(|p|p.exact_total).sum::<u64>()}}})],cursor,true)}else{
                 let next=page.last().expect("nonempty page").sequence as i64;
-                let values=project_occurrences(&ready,&page,&snapshot.capture_catalog,&patterns,index.publication_attributes(),None).await.map_err(|e|std::io::Error::other(e.1))?;
+                let values=project_occurrences(&ready,&page,&snapshot.capture_catalog,&patterns,index.publication_attributes(),usize::MAX,None).await.map_err(|e|std::io::Error::other(e.1))?;
                 (values.into_iter().map(|row|json!({"schema":"lingrep.question-results/v1","type":"match","data":row})).collect(),next,false)
             }
         };
@@ -1092,9 +1150,6 @@ fn catalog_definitions(source: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    /// A document without a title is named by its source file, as its
-    /// concordance heading names it, so the document list never offers a
-    /// nameless entry.
     #[test]
     fn an_untitled_document_is_named_by_its_source_file() {
         assert_eq!(

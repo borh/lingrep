@@ -343,8 +343,6 @@ struct LineContext {
 
 impl LineContext {
     fn new(texts: &[&str], start: usize, end: usize, roles: &[crate::occurrence::Role]) -> Self {
-        // Each token's character range in the joined text, spacing included
-        // before it rather than in it.
         let joined = |texts: &[&str]| {
             let mut text = String::new();
             let mut ranges = Vec::with_capacity(texts.len());
@@ -1051,9 +1049,6 @@ mod tests {
         }
     }
 
-    /// A word a `where` clause binds outside the span is located in the
-    /// context text by Unicode scalar offsets, after the context is cut to
-    /// its 40 characters; a role inside the span is the node's.
     #[test]
     fn bound_words_outside_the_span_are_located_in_the_cut_context() {
         let far = "あ".repeat(45);

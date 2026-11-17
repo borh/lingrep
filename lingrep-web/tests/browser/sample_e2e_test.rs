@@ -635,11 +635,11 @@ async fn command_summaries_keep_kwic_wide_and_cluster_controls_preserve_focus()
         assert!(inspector[0].as_f64().unwrap() > 400.0, "{inspector}");
         assert_eq!(inspector[1], true);
         driver.find(By::Css("#inspector-dock [data-inspector-close]")).await?.click().await?;
-        driver.set_window_rect(0, 0, 390, 900).await?;
+        crate::resize(&driver, 390, 900).await?;
         let mobile = driver.execute("return [document.querySelector('.detail-panel').getBoundingClientRect().width, document.documentElement.scrollWidth - innerWidth]", vec![]).await?.json().clone();
         assert!(mobile[0].as_f64().unwrap() > 300.0, "{mobile}");
         assert!(mobile[1].as_f64().unwrap() <= 1.0, "{mobile}");
-        driver.set_window_rect(0, 0, 1440, 1000).await?;
+        crate::resize(&driver, 1440, 1000).await?;
         driver.find(By::Css("[data-detail-tab=clusters]")).await?.click().await?;
         let url = driver.current_url().await?;
         driver.execute("window.__clusterPending = 0; document.body.addEventListener('htmx:beforeRequest', e => { if (e.detail.elt.id === 'section-cluster-distance') { __clusterPending++; e.detail.xhr.addEventListener('loadend', () => __clusterPending--, {once:true}); } });", vec![]).await?;
@@ -702,7 +702,7 @@ async fn pattern_metadata_categories_preserve_controls_and_exact_section_counts(
         assert_eq!(driver.execute("return document.querySelectorAll('.section-comparison-band > .section-comparison-scroll tbody tr').length",vec![]).await?.json(), &json!(1));
         driver.execute("document.querySelector('#section-analysis .corpus-analysis-scope').open=true",vec![]).await?;
         for width in [1440,390] {
-            driver.set_window_rect(0,0,width,1000).await?;
+            crate::resize(&driver, width, 1000).await?;
             let overflow=driver.execute("return document.documentElement.scrollWidth-innerWidth",vec![]).await?.json().as_i64().unwrap();
             assert!(overflow<=1,"metadata controls overflow at {width}: {overflow}");
         }

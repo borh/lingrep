@@ -48,6 +48,7 @@ struct Configuration {
     source: String,
     /// The published definitions of `source`, for the question page's definition menu.
     definitions: Vec<crate::patterns::QuestionDefinition>,
+    catalog_fingerprint: String,
     labels: Value,
     value_names: &'static Value,
 }
@@ -112,18 +113,24 @@ async fn config(State(store): State<RequestStore>) -> Response {
         }
     }
     let source = store.default_pattern.clone();
-    let definitions = match store
+    let (definitions, catalog_fingerprint) = match store
         .coordinators
-        .pattern_task(move || crate::patterns::question_definitions(&source))
+        .pattern_task(move || {
+            (
+                crate::patterns::question_definitions(&source),
+                crate::patterns::web_catalog_fingerprint(&source),
+            )
+        })
         .await
     {
-        Ok(definitions) => definitions,
+        Ok(published) => published,
         Err(error) => return crate::handlers::pattern_task_error(error),
     };
     Json(Configuration {
         datasets,
         source: store.default_pattern.to_string(),
         definitions,
+        catalog_fingerprint,
         labels,
         value_names: crate::metadata_labels::value_names(),
     })
@@ -654,6 +661,29 @@ mod tests {
                 {"name": "phrase", "count_only": false},
                 {"name": "word", "count_only": false},
             ])
+        );
+    }
+
+    #[tokio::test]
+    async fn question_configuration_publishes_the_served_catalogs_fingerprint() {
+        let source = "word := [upos=NOUN].\n";
+        let response = routes()
+            .with_state(RequestStore::default().with_default_pattern(source))
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/config")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["source"], source);
+        assert_eq!(
+            body["catalog_fingerprint"],
+            lingrep_core::fsm::catalog_fingerprint(source)
         );
     }
 

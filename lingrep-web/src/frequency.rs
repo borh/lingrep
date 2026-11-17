@@ -574,7 +574,7 @@ impl FrequencyViews {
                 });
             let workbench = crate::permalink::encode_query_only(source, name.as_str(), None, None)
                 .ok()
-                .map(|query| format!("./{query}"));
+                .map(|query| format!("./workbench{query}&d=0"));
             let command_inputs = command_paths([&path, corpus_path, &pattern_root.join(&catalog)]);
             views.pairs.push(FrequencyPair {
                 corpus: name.clone(),

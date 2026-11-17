@@ -44,7 +44,6 @@
   font-feature-settings: "palt";
 }
 :lang(ja) .fq-sentence { line-height: 2.7; letter-spacing: 0.02em; }
-/* Clears the role labels that sit above the first line's blanks. */
 .fq-head .fq-sentence { margin-top: 1rem; }
 .fq-sentence .tail { color: var(--fq-soft); }
 
@@ -425,7 +424,6 @@
   .fq-kwic .src { grid-column: 1 / -1; line-height: 1.6; }
   .fq-kwic .src > span { display: none; }
   .fq { --fq-size: 18px; --fq-lead: 24px; }
-  /* Room above each wrapped line for its blanks' role captions. */
   .fq-sentence, :lang(ja) .fq-sentence { line-height: 3.3; }
   .fq .spread { display: none; }
   .fq table.freq th:first-child { width: auto; }
@@ -457,8 +455,6 @@
 .fq-cli-label { margin: 0.6rem 0 0; font: 12.5px/1.5 var(--font-sans); color: var(--fq-soft); }
 .fq-clause p { margin: 0.3rem 0 0; font: 13px/1.5 var(--font-sans); color: var(--fq-soft); }
 
-/* The question page's palette (assets/questions/site.css), read through this
-   stylesheet's own names. */
 html:root {
   --surface: var(--ground);
   --text: var(--ink);

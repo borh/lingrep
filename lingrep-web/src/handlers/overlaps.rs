@@ -192,9 +192,7 @@ fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
         }
         lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => (
             "match_batch_too_large",
-            format!(
-                "{error} Narrow the pattern or ask the server operator to use a smaller matching batch."
-            ),
+            format!("{error} Narrow the pattern to produce fewer matches in one sentence."),
         ),
     };
     (
@@ -210,7 +208,7 @@ fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
-    async fn batch_output_response_has_a_distinct_code_and_batch_remedy() {
+    async fn batch_output_response_has_a_distinct_code_and_pattern_remedy() {
         let response = super::resource_error(lingrep_core::fsm::MatchResourceError::BatchOutput {
             limit: 1024,
         });
@@ -225,7 +223,7 @@ mod tests {
         assert_eq!(body["code"], "match_batch_too_large");
         let message = body["error"].as_str().unwrap();
         assert!(message.contains("1024"));
-        assert!(message.contains("smaller matching batch"));
+        assert!(message.contains("Narrow the pattern"));
         assert!(!message.contains("ordering constraint"));
     }
 

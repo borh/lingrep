@@ -300,7 +300,8 @@ async fn query_library_uses_real_indexeddb_and_enhanced_editor() -> WebDriverRes
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
     caps.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(&driver_url, caps).await?;
+    let driver = crate::session(&driver_url, caps).await?;
+    driver.set_window_rect(0, 0, 1280, 900).await?;
     driver.goto(&address).await?;
 
     eprintln!("query-library-e2e: wait for enhanced editor");
@@ -483,7 +484,7 @@ async fn query_library_uses_real_indexeddb_and_enhanced_editor() -> WebDriverRes
         .convert()?;
     assert_eq!(saved_selected, "true");
 
-    driver.set_window_rect(0, 0, 320, 780).await?;
+    crate::resize(&driver, 320, 780).await?;
     let overflow: i64 = driver
         .execute(
             "return document.documentElement.scrollWidth-window.innerWidth",
@@ -519,7 +520,7 @@ async fn open_fixture(driver_url: &str, address: &str) -> WebDriverResult<WebDri
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new")?;
     caps.add_arg("--no-sandbox")?;
-    let driver = WebDriver::new(driver_url, caps).await?;
+    let driver = crate::session(driver_url, caps).await?;
     driver.goto(address).await?;
     wait_for_count(&driver, ".pattern-editor .cm-editor", 1).await?;
     wait_for_count(&driver, "[data-query-list] p", 1).await?;
@@ -988,7 +989,7 @@ fn start_harness_with_catalogs() -> Option<Harness> {
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless=new").unwrap();
     caps.add_arg("--no-sandbox").unwrap();
-    let driver = runtime.block_on(WebDriver::new(&driver_url, caps)).unwrap();
+    let driver = runtime.block_on(crate::session(&driver_url, caps)).unwrap();
     runtime.block_on(driver.goto(&address)).unwrap();
     // `initCatalogTab` and the tab click listeners are only attached once
     // `initializeQueryLibrary`'s `await openQueryDatabase()` (and its first

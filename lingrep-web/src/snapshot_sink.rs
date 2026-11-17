@@ -7,7 +7,9 @@ use lingrep_core::token_match::AttributeKey;
 #[cfg(test)]
 use lingrep_core::token_match::TokenInfo;
 
-use crate::derived_patterns::{compound_name, contiguous_chains};
+use crate::derived_patterns::{
+    CompoundLimitExceeded, MAX_DERIVED_PATTERNS, compound_name, contiguous_chains,
+};
 use crate::revision::ErrorCategory;
 use crate::section_tally::{
     SectionAvailability, SectionRefusal, SectionTallyBuilder, SectionTallyError,
@@ -203,6 +205,9 @@ impl SnapshotSink {
     fn add_compound(&mut self, components: &[PatternKey]) -> Result<PatternKey, ExecutionError> {
         if let Some(key) = self.compound_ids.get(components) {
             return Ok(*key);
+        }
+        if self.compound_ids.len() >= MAX_DERIVED_PATTERNS {
+            return Err(compound_limit(CompoundLimitExceeded));
         }
         let component_names = components
             .iter()
@@ -409,7 +414,7 @@ impl SnapshotSink {
                 Ok((key, matched.start, matched.end))
             })
             .collect::<Result<Vec<_>, ExecutionError>>()?;
-        let derived = contiguous_chains(&component_matches);
+        let derived = contiguous_chains(&component_matches).map_err(compound_limit)?;
         let mut compounds = Vec::with_capacity(derived.chains.len());
         for chain in derived.chains {
             let key = self.add_compound(&chain.components)?;
@@ -662,6 +667,10 @@ impl SnapshotSink {
             .as_ref()
             .map(|tally| tally.summary(self.patterns.len()))
     }
+}
+
+fn compound_limit(error: CompoundLimitExceeded) -> ExecutionError {
+    ExecutionError::Sink(error.to_string())
 }
 
 fn sink_error(error: SectionTallyError) -> ExecutionError {
@@ -1559,7 +1568,7 @@ mod tests {
                         .iter()
                         .map(|m| (sink.pattern_ids[m.pattern.as_str()], m.start, m.end))
                         .collect::<Vec<_>>();
-                    for chain in contiguous_chains(&component_matches).chains {
+                    for chain in contiguous_chains(&component_matches).unwrap().chains {
                         let name = sink.patterns[sink.compound_ids[&chain.components].index()]
                             .name
                             .clone();
@@ -1825,6 +1834,64 @@ mod tests {
             Some(SectionAvailability::VocabularyTooLarge(refusal)),
             "finish resolves the refused branch too, so resolve_scan has a value"
         );
+    }
+
+    fn compound_sink(patterns: &[String]) -> SnapshotSink {
+        SnapshotSink::new_with_compounds(
+            10,
+            patterns
+                .iter()
+                .map(|name| (name.clone(), Box::default()))
+                .collect(),
+            SectionScanState::Refused(crate::section_tally::SectionRefusal {
+                labels: 0,
+                patterns: 0,
+            }),
+            true,
+            CompoundCategory::Compound,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn deriving_compounds_fails_a_sentence_whose_chains_exceed_the_budget() {
+        let mut sink = compound_sink(&["a".into(), "b".into()]);
+        let sentence = vec![TokenInfo::default().with_orth("語"); 19];
+        let matches = (0..sentence.len())
+            .flat_map(|token| {
+                [
+                    a_span_match("a", token..token + 1),
+                    a_span_match("b", token..token + 1),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let error = sink
+            .push(&location(0), &sentence, &matches)
+            .expect_err("2^19 chains in one sentence exceed the chain budget");
+        assert!(error.to_string().contains("Derive compounds"), "{error}");
+    }
+
+    #[test]
+    fn deriving_compounds_fails_a_run_registering_too_many_derived_patterns() {
+        let names = (0..65).map(|index| format!("p{index}")).collect::<Vec<_>>();
+        let mut sink = compound_sink(&names);
+        let sentence = vec![TokenInfo::default().with_orth("語"); 2];
+        let mut ordinal = 0;
+        let mut failure = None;
+        'pairs: for first in &names {
+            for second in &names {
+                let matches = [a_span_match(first, 0..1), a_span_match(second, 1..2)];
+                if let Err(error) = sink.push(&location(ordinal), &sentence, &matches) {
+                    failure = Some(error);
+                    break 'pairs;
+                }
+                ordinal += 1;
+            }
+        }
+        let error = failure.expect("65 × 65 distinct pairs exceed the derived-pattern limit");
+        assert!(error.to_string().contains("Derive compounds"), "{error}");
+        assert_eq!(sink.patterns.len(), names.len() + MAX_DERIVED_PATTERNS);
     }
 
     #[test]

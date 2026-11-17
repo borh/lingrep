@@ -122,7 +122,10 @@ impl MatchSink for ExportSink {
                     Ok((key, matched.start, matched.end))
                 })
                 .collect::<Result<Vec<_>, ExecutionError>>()?;
-            for chain in contiguous_chains(&components).chains {
+            let chains = contiguous_chains(&components)
+                .map_err(|error| ExecutionError::Sink(error.to_string()))?
+                .chains;
+            for chain in chains {
                 let index = if let Some(index) = self.compound_ids.get(&chain.components) {
                     *index
                 } else {

@@ -1,8 +1,8 @@
-import { serviceURL, ServiceError, expiredSearch } from './service.js';
+import { serviceURL, ServiceError, expiredSearch, workbenchLinkRequest, workbenchHref } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn, entryContext } from './location.js';
-import { begin, receive, receiveUpdate, visible } from './state.mjs';
+import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, catalogParams, resolveCatalog, parseOccurrence, parseEntryLines, frequencyReturn, entryContext } from './location.js';
+import { begin, exportable, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName, tokenDetails as detailsOf } from './dependency.js';
 import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
@@ -17,8 +17,8 @@ const ja = {
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', noLines: 'No lines for this pattern yet.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { skipQuestion: '問いへ移動', skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
-Object.assign(extra, { root: 'heads the sentence', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
+Object.assign(ja, { catalogChanged: 'このリンクを作ったときから、サーバーのパターンが変わっています。今のパターンで検索すると、リンクを作ったときと結果が異なることがあります。', catalogSearch: '今のパターンで検索', catalogDefault: '既定の問いを開く', exportRun: '全結果を JSONL で保存', completeUndisplayed: '検索は完了しましたが、結果をここに表示できません。', completeUnexportable: '検索は完了しましたが、結果をここで表示することも保存することもできません。パターンを絞り込むか、コマンドラインの ling matches で全件を保存してください。', skipQuestion: '問いへ移動', skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(extra, { completeUndisplayed: 'The search is complete, but its results cannot be displayed here.', completeUnexportable: 'The search is complete, but its results can be neither displayed nor downloaded here. Narrow the pattern, or save every match with ling matches on the command line.', root: 'heads the sentence', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
 extra.analysisChanged = 'The corpus has changed since this question was saved. You can search the current corpus instead.';
@@ -257,19 +257,15 @@ let viewEvidence = null;
 let navigationEpoch = 0;
 let pendingView = null;
 let pendingOccurrence = null;
-// The frequency entry a hand-off came from: example steps go through its lines while the open example is the line at `at`.
 let entryLines = null;
 const entryLine = (at) => ({ ...entryLines.lines[at], pattern: entryLines.pattern, analysis: entryLines.analysis, fingerprint: entryLines.fingerprint });
 function entryActive() { return !!entryLines && !!inspecting && !tokenLab.hidden && inspecting.row.pattern === entryLines.pattern && inspecting.row.corpus_sentence_ordinal === entryLines.lines[entryLines.at].sentence; }
-// The searches a hand-off ran; while the entry context holds, their results list the entry's lines.
 const entryRuns = new Set();
 const entryShown = (run) => !!entryLines && !!run && entryRuns.has(run.id);
-// The draft's definition and document limit; it applies while the pattern source is `source`.
 let searchLimit = null;
 const runLimits = new Map();
 const documentTitles = new Map();
 let preferredPattern = '';
-// A limit to a definition holds through edits that keep that definition; a document limit alone holds for the source it was set on.
 function activeLimit() { const source = $('#source').value; return searchLimit && (searchLimit.source === source || !!searchLimit.pattern && definitionOffset(source, searchLimit.pattern) >= 0) && (searchLimit.pattern || searchLimit.document != null) ? searchLimit : null; }
 const documentName = (dataset, document) => documentTitles.get(`${dataset}:${document}`) ?? (locale === 'ja' ? `文書${document}` : `document ${document}`);
 let revealedFailure = null;
@@ -301,9 +297,7 @@ function loadPatternEditor() {
     })();
     return patternEditor;
 }
-/** Writes the pattern source, and the editor showing it. */
 function setSource(value) { const input = $('#source'); input.value = value; input.dispatchEvent(new Event('pattern:sync')); }
-/** Focuses the pattern source with `from`–`to` selected, in the editor once it has loaded. */
 function focusSource(from, to = from) {
     const input = $('#source');
     input.focus();
@@ -339,7 +333,6 @@ currentCorpus.hidden = true;
 limitChoices.after(currentCorpus);
 currentCorpus.addEventListener('click', () => { analysisExpectation = null; void search(); });
 const overflowed = (run) => run?.phase === 'failed' && run.error_code === 'result_limit';
-// After an overflow, each definition the overflow did not come from can be searched alone.
 function renderLimitChoices(run) {
     const names = overflowed(run) && run.definitions.length > 1 ? run.definitions : [], full = new Set(overflowingDefinitions(run?.counts ?? {}));
     const rest = names.filter(name => !full.has(name)), choices = rest.length ? rest : names;
@@ -366,7 +359,7 @@ function overflowText(run) {
     const names = overflowed(run) ? overflowingDefinitions(run.counts) : [];
     if (!names.length || names.length >= Object.keys(run.counts).length)
         return null;
-    return locale === 'ja' ? `結果が多すぎて保持できません。件数の大部分は ${names.map(name => `${name}（途中までで ${count(run.counts[name])} 件）`).join('、')}です。` : `Too many results to retain. Most of them come from ${names.map(name => `${name} (${count(run.counts[name])} so far)`).join(' and ')}.`;
+    return locale === 'ja' ? `結果が多すぎて保持できません。途中までの件数が多い定義: ${names.map(name => `${name}（${count(run.counts[name])} 件）`).join('、')}。` : `Too many results to retain. Highest counts so far: ${names.map(name => `${name} (${count(run.counts[name])})`).join(', ')}.`;
 }
 const compactLayout = matchMedia('(max-width:480px)');
 function adaptControls() { for (const selector of ['#question-actions'])
@@ -424,11 +417,42 @@ function updateCorpus() {
         facts.push(locale === 'ja' ? (dataset.readiness === 'failed' ? 'コーパスの準備に失敗しました。検索で再試行できます。' : 'コーパスを準備しています。検索すると準備の完了を待ちます。') : (dataset.readiness === 'failed' ? 'Corpus preparation failed. Search to retry.' : 'Corpus preparing · searches wait until it is ready.'));
     $('#corpus-meta').textContent = dataset.readiness === 'ready' ? '' : facts.join(' · ');
     $('#corpus').title = facts.join(' · ');
-    $('#incumbent').href = serviceURL('workbench');
+    scheduleWorkbenchLink();
     clearTimeout(configRefresh);
     if (dataset.readiness !== 'ready')
         configRefresh = setTimeout(() => void refreshConfiguration(), 1500);
 }
+let workbenchMinted = null, workbenchShown = '', workbenchTimer;
+const workbenchBody = () => workbenchLinkRequest($('#source').value, $('#corpus').value);
+function mintWorkbenchLink() {
+    clearTimeout(workbenchTimer);
+    const body = workbenchBody();
+    if (workbenchMinted?.body === body)
+        return workbenchMinted.href;
+    const href = fetch(serviceURL('api/permalink'), { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }).then(response => response.json()).then(payload => workbenchHref(payload)).catch(() => null).then(href => href ?? serviceURL('workbench'));
+    const minted = workbenchMinted = { body, href };
+    void href.then(value => { if (workbenchMinted === minted) {
+        $('#incumbent').href = value;
+        workbenchShown = body;
+    } });
+    return href;
+}
+function scheduleWorkbenchLink() { clearTimeout(workbenchTimer); workbenchTimer = setTimeout(() => void mintWorkbenchLink(), 250); }
+$('#incumbent').addEventListener('click', event => {
+    if (workbenchShown === workbenchBody() || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+        return;
+    event.preventDefault();
+    const tab = window.open('about:blank', '_blank');
+    if (tab)
+        tab.opener = null;
+    void mintWorkbenchLink().then(href => { if (tab)
+        tab.location.href = href; });
+});
+const servedCatalog = () => ({ source: config.source, fingerprint: config.catalog_fingerprint });
+let changedCatalog = null;
+function settleCatalog() { changedCatalog = null; $('#catalog-notice').hidden = true; }
+$('#catalog-search').addEventListener('click', () => { settleCatalog(); $('#question-sentence').focus(); void search(); });
+$('#catalog-default').addEventListener('click', () => { window.history.replaceState(null, '', location.pathname + '#fresh=1'); location.reload(); });
 async function refreshConfiguration() {
     try {
         config = await request('api/questions/config');
@@ -438,6 +462,7 @@ async function refreshConfiguration() {
 }
 function updateDraft(commit = true) {
     const source = $('#source').value;
+    scheduleWorkbenchLink();
     const names = state.current?.source === source ? state.current.definitions : [];
     if (searchLimit?.document != null && (controls?.where() ?? $('#where').value))
         searchLimit = { ...searchLimit, document: null };
@@ -470,14 +495,16 @@ function updateDraft(commit = true) {
         if (state.completed)
             params.completed = state.completed.id;
     }
-    const url = locationURL(location.href, params, evidence?.id ?? null, viewLocation);
+    const linked = catalogParams(params, servedCatalog());
+    if (changedCatalog !== null && 'catalog' in linked)
+        linked.catalog = changedCatalog;
+    const url = locationURL(location.href, linked, evidence?.id ?? null, viewLocation);
     if (commit)
         window.history.replaceState(null, '', url);
 }
 const limitChips = document.createElement('div');
 limitChips.className = 'scope-chips limit-chips';
 $('#scope-chips').after(limitChips);
-// The question sentence names a document limit in place of the document scope, and each limit can be removed.
 function renderLimits(limit) {
     const label = $('#scope-label'), dataset = $('#corpus').value;
     if (limit?.document != null) {
@@ -529,6 +556,8 @@ async function search(event, derivedFrom, occurrence) {
     event?.preventDefault();
     if (restoreController)
         return;
+    if (changedCatalog !== null)
+        settleCatalog();
     const parent = displayedEvidence();
     const origin = derivedFrom ?? (documentSections.size && parent ? { parent: parent.id, view: viewLocation, label: locale === 'ja' ? '前の検索' : 'previous search' } : undefined);
     if (origin && parent && !documentSections.has(parent.id)) {
@@ -543,7 +572,6 @@ async function search(event, derivedFrom, occurrence) {
     if (occurrence)
         searchLimit = { source, pattern: occurrence.pattern, document: occurrence.document };
     const where = controls?.where() ?? $('#where').value;
-    // The server admits a document limit only without a document condition.
     if (where && searchLimit?.document != null)
         searchLimit = { ...searchLimit, document: null };
     const limit = activeLimit();
@@ -623,16 +651,13 @@ function connect(id) {
             if (snapshot.phase === 'complete') {
                 recorded = history;
                 saveReplay(snapshot);
-                if (pendingView) {
-                    const target = pendingView;
-                    pendingView = null;
-                    void navigateView(hrefFor(snapshot, target), true, 'replace');
-                }
-                if (pendingOccurrence) {
-                    const target = pendingOccurrence;
-                    pendingOccurrence = null;
-                    void openOccurrence(snapshot, target);
-                }
+                const view = pendingView, occurrence = pendingOccurrence;
+                pendingView = null;
+                pendingOccurrence = null;
+                if (view)
+                    void navigateView(hrefFor(snapshot, view), true, 'replace');
+                if (occurrence)
+                    void openOccurrence(snapshot, occurrence);
                 if (!state.previous && !$('#source-editor').contains(document.activeElement)) {
                     $('#source-editor').hidden = true;
                     $('#edit-source').setAttribute('aria-expanded', 'false');
@@ -666,7 +691,7 @@ function render(force = false) {
         $('#timeline').value = String(Math.max(0, recorded.length - 1));
     $('#cancel').hidden = !activeId && !isReplay && !restoreController;
     $('#cancel').textContent = restoreController ? (locale === 'ja' ? '保存した検索の実行を停止' : 'Stop saved searches') : t(isReplay ? 'stopReplay' : 'stop');
-    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete' || overflowed(current) || current.error_code === 'analysis_changed' || !!patternFailure(current);
+    $('#retry').hidden = !current || current.phase === 'running' || current.phase === 'complete' || !!current.search_complete || overflowed(current) || current.error_code === 'analysis_changed' || !!patternFailure(current);
     $('#replay').disabled = !recorded.length || !!activeId || isReplay;
     $('#error').hidden = !current?.error;
     const diagnostic = patternFailure(current), line = diagnostic?.data.location?.line;
@@ -685,12 +710,16 @@ function render(force = false) {
     if (current) {
         const prefix = isReplay ? t('replayed') : t('real');
         const elapsed = current.elapsed > 0 ? ` · ${Number(current.elapsed).toFixed(1)}s` : '';
-        $('#status').textContent = current.phase === 'running' ? `${prefix} · ${t('running')} · ${count(current.received)} ${t('soFar')}${elapsed}` : current.phase === 'complete' ? `${isReplay ? t('replayed') + ' · ' : ''}${t('completed')}` : current.phase === 'cancelled' ? t('stopped') : overflowed(current) && !limitChoices.hidden ? t('chooseDefinition') : state.previous ? t('failedKeep') : t('errorRetry');
-        $('#live-counts').hidden = current.phase !== 'running';
-        $('#live-counts').innerHTML = Object.entries(current.counts).map(([name, total]) => `<span>${escape(name)} <strong>${count(total)}</strong>${current.phase === 'running' ? ` <span>${locale === 'ja' ? '件（途中）' : 'so far'}</span>` : ''}</span>`).join('');
+        const keeping = current.phase === 'running' && !isReplay && $('#behavior').value === 'keep' && !!state.completed && state.completed.id !== current.id;
+        $('#status').textContent = current.phase === 'running' ? `${prefix} · ${t('running')} · ${count(current.received)} ${t('soFar')}${elapsed}${keeping ? ' · ' + t('keeping') : ''}` : current.phase === 'complete' ? `${isReplay ? t('replayed') + ' · ' : ''}${t('completed')}` : current.phase === 'cancelled' ? t('stopped') : current.search_complete ? t(exportable(current) ? 'completeUndisplayed' : 'completeUnexportable') : overflowed(current) && !limitChoices.hidden ? t('chooseDefinition') : state.previous ? t('failedKeep') : t('errorRetry');
+        $('#live-counts').innerHTML = Object.entries(current.counts).map(([name, total]) => `<span>${escape(name)} <strong>${count(total)}</strong>${current.phase === 'running' ? ` <span>${locale === 'ja' ? '件（途中）' : 'so far'}</span>` : locale === 'ja' ? ' 件' : ''}</span>`).join('');
     }
     else
         $('#status').textContent = t('ready');
+    const exportRun = $('#export-run');
+    exportRun.hidden = !(current?.phase === 'failed' && exportable(current));
+    if (current && !exportRun.hidden)
+        exportRun.href = `api/questions/runs/${current.id}/export`;
     const behavior = $('#behavior').value;
     const pinned = !documentSections.size && (!!viewEvidence && current?.phase === 'complete' && viewEvidence.id !== current.id || behavior === 'keep' && inspecting && tokenLab.isConnected && !tokenLab.hidden && state.current?.phase === 'complete' && inspecting.run.id !== state.current.id);
     $('#show-latest').hidden = !pinned;
@@ -708,13 +737,11 @@ function render(force = false) {
     }
     if (current?.phase === 'complete')
         $('#show-latest').setAttribute('href', hrefFor(current, defaultView()));
-    // A search that finished under an open example from an earlier search says so, rather than leaving the earlier results under the new question.
     $('.search-status').classList.toggle('has-update', !!pinned);
     if (pinned && current) {
         const shownRun = viewEvidence ?? inspecting?.run, label = config.datasets[current.dataset]?.label ?? current.dataset, other = shownRun && shownRun.dataset !== current.dataset ? config.datasets[shownRun.dataset]?.label ?? shownRun.dataset : null;
         $('#status').textContent = locale === 'ja' ? `${other ? `${label} の` : '新しい'}検索が完了しました。開いている用例は${other ? ` ${other} の` : ''}前回の検索結果です。` : `The ${other ? `search of ${label}` : 'new search'} is complete. The open example is from the previous search${other ? ` of ${other}` : ''}.`;
     }
-    // A failed run without counts has nothing to read; its error and recovery are above.
     const shown = [...new Map([...documentSections.values()].map(section => section.run).concat(visibleRuns.filter((run) => run != null && !(run.phase === 'failed' && !Object.keys(run.counts).length))).map(run => [run.id, run])).values()];
     $('#result-panels').className = compared ? 'comparing' : '';
     const ids = shown.map(run => run.id);
@@ -773,6 +800,7 @@ function render(force = false) {
                 renderSignatures.set(landmark, markup);
             }
         }
+        panel.classList.toggle('is-running', run.phase === 'running');
         const root = $('#result-panels');
         const index = shown.indexOf(run);
         if (root.children[index] !== panel)
@@ -782,7 +810,7 @@ function render(force = false) {
         const phase = run.phase === 'complete' ? t('completed') : run.phase === 'running' ? t('partial') : run.phase === 'cancelled' ? t('cancelled') : t('failed');
         const scope = `${config.datasets[run.dataset]?.label ?? ''} · ${run.where || t('all')}`;
         const identity = `${t('runNumber')} ${run.id} · ${phase} · ${scope}`;
-        const headerHTML = `${prior || compared ? `<span class="evidence-context">${title}${prior && current?.phase === 'running' ? ' · ' + t('keeping') : ''}</span>` : ''}${run.phase === 'complete' && Object.values(run.counts).some(total => total > 0) ? `<a href="api/questions/runs/${run.id}/export" aria-label="${locale === 'ja' ? '全結果を JSONL で保存' : 'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>` : ''}`;
+        const headerHTML = `${compared || prior && current?.phase !== 'running' && current?.phase !== 'complete' ? `<span class="evidence-context">${title}</span>` : ''}${run.phase === 'complete' && Object.values(run.counts).some(total => total > 0) ? `<a href="api/questions/runs/${run.id}/export" aria-label="${locale === 'ja' ? '全結果を JSONL で保存' : 'Download all results as JSONL'}" title="${escape(identity)}">${t('download')}</a>` : ''}`;
         const header = $('.result-header', panel);
         header.hidden = !headerHTML;
         header.title = identity;
@@ -826,12 +854,6 @@ function render(force = false) {
         $('[data-source]', panel).textContent = t('savedQuery');
         renderLines(panel, run, force);
     }
-    compactCompletedStatus();
-}
-function compactCompletedStatus() {
-    const current = state.current, pattern = current ? (selection.get(current.id) ?? current.definitions[0] ?? '') : '';
-    const ready = current?.phase === 'complete' && documentView(current, pattern).documents !== null;
-    $('.search-status').classList.toggle('is-idle', !!ready && !activeId && !isReplay && $('#show-latest').hidden === true && $('#frequency-return').hidden === true);
 }
 const runFor = (id) => { const run = [state.current, state.previous, state.completed, inspecting?.run, viewEvidence, documentSections.get(id)?.run].find(run => run?.id === id); if (!run)
     throw new Error('Search is no longer displayed.'); return run; };
@@ -868,7 +890,6 @@ async function loadDocumentPage(panel, run, pattern, document = null, after = -1
     }
     if (panel?.isConnected) {
         renderLines(panel, runFor(run.id));
-        compactCompletedStatus();
     }
     else
         render();
@@ -1002,7 +1023,6 @@ function setConcordanceText(element, text) {
     else
         element.replaceChildren(text);
 }
-// Context words a `where` clause binds outside the span (the verb of n–p–v) are marked like the span.
 function setContext(element, tokens, bound) {
     if (!tokens.some(token => bound.has(token.index))) {
         setConcordanceText(element, words(tokens));
@@ -1056,7 +1076,7 @@ function renderLines(panel, run, _force = false) {
     }
     const note = $('.line-note', panel);
     note.setAttribute('role', 'status');
-    note.textContent = view.loading ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
+    note.textContent = view.loading && (!rows.length || view.documents !== null) ? (locale === 'ja' ? '用例を読み込んでいます…' : 'Loading examples…') : view.loading ? '' : view.error ? (locale === 'ja' ? `用例を読み込めませんでした。${view.error}` : `Examples could not be loaded. ${view.error}`) : run.phase === 'running' ? t('notTotal') : '';
     note.hidden = !note.textContent;
     const list = $('.kwic-list', panel);
     list.setAttribute('aria-busy', String(view.loading));
@@ -1169,11 +1189,36 @@ function renderLines(panel, run, _force = false) {
         }
     desired.forEach((child, index) => { if (list.children[index] !== child)
         list.insertBefore(child, list.children[index] ?? null); });
+    roveList(list);
     for (const key of nodes.keys())
         if (!used.has(key))
             nodes.delete(key);
 }
-// Each listed line's sentence as token texts, or the reason it could not be read, by corpus and sentence.
+const listStops = new WeakMap();
+const listItems = (list) => [...list.querySelectorAll(':scope>.kwic-row,:scope>.document-heading>a')];
+function roveList(list) {
+    const items = listItems(list), remembered = listStops.get(list);
+    const stop = remembered && items.includes(remembered) ? remembered : items.find(item => item.getAttribute('aria-expanded') === 'true') ?? items[0];
+    for (const item of items) {
+        const index = item === stop ? '0' : '-1';
+        if (item.getAttribute('tabindex') !== index)
+            item.setAttribute('tabindex', index);
+    }
+}
+$('#result-panels').addEventListener('focusin', event => { const list = event.target.closest('.kwic-list'); if (list && listItems(list).includes(event.target)) {
+    listStops.set(list, event.target);
+    roveList(list);
+} });
+$('#result-panels').addEventListener('keydown', event => {
+    const list = event.target.closest('.kwic-list');
+    if (!list || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key))
+        return;
+    const items = listItems(list), at = items.indexOf(event.target);
+    if (at < 0)
+        return;
+    event.preventDefault();
+    items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : Math.max(0, Math.min(items.length - 1, at + (event.key === 'ArrowDown' ? 1 : -1)))].focus();
+});
 const entryTexts = new Map();
 let entryReading = false;
 async function readEntryTexts(run) {
@@ -1201,7 +1246,6 @@ async function readEntryTexts(run) {
     }
     render(true);
 }
-// From a frequency entry, the result lists the entry's lines, with the open one's example under it; the search's whole result is a step away.
 function renderEntryList(panel, run) {
     const entry = entryLines, pattern = entry.pattern, context = controls.state.context, list = $('.kwic-list', panel);
     void readEntryTexts(run);
@@ -1283,12 +1327,12 @@ function renderEntryList(panel, run) {
         }
     desired.forEach((child, index) => { if (list.children[index] !== child)
         list.insertBefore(child, list.children[index] ?? null); });
+    roveList(list);
     for (const key of nodes.keys())
         if (!used.has(key))
             nodes.delete(key);
     list.setAttribute('aria-busy', 'false');
 }
-// Leaving the entry context lists the search's whole result again, around the open example.
 function leaveEntry() {
     entryLines = null;
     for (const exit of document.querySelectorAll('.entry-exit'))
@@ -1306,10 +1350,8 @@ function leaveEntry() {
         void loadDocumentPage(panel, open.run, open.row.pattern, open.row.document_ordinal, open.row.sequence - 1);
     $('#token-origin').focus({ preventScroll: true });
 }
-// The Frequencies tables served, read once when a page filter first finds nothing.
 let frequencyPairs;
 function loadFrequencyPairs() { frequencyPairs = null; return request('api/frequency/meta').then(meta => { frequencyPairs = meta.pairs ?? []; }, () => { frequencyPairs = []; }); }
-// A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
 function filterEmpty(element, run, pattern, filter, shown) {
     if (frequencyPairs === undefined)
         void loadFrequencyPairs().then(() => render(true));
@@ -1389,7 +1431,6 @@ async function inspect(run, row, button) {
         button.removeAttribute('aria-busy');
     }
 }
-// The example's position, among the run's examples or, from a frequency entry, among the entry's lines.
 function renderExampleSteps() {
     if (!inspecting)
         return;
@@ -1406,7 +1447,6 @@ function renderExampleSteps() {
     next.disabled = position === page.rows.length - 1 && page.next == null;
     $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
 }
-// An entry's line opens in this search when the search covers its document, else in a search of that document.
 async function openEntryLine(run, at) {
     const from = entryLines.at, target = entryLine(at), limited = runLimits.get(run.id)?.document;
     entryLines = { ...entryLines, at };
@@ -1505,7 +1545,6 @@ const ARC_STEP = 26, ARC_LABEL = 18, TREE_ROW = 26, TREE_COLUMN = 9;
 const arcLayouts = new WeakMap();
 const svgNode = (name, attributes) => { const node = document.createElementNS('http://www.w3.org/2000/svg', name); for (const [key, value] of Object.entries(attributes))
     node.setAttribute(key, String(value)); return node; };
-// Chip positions come from layout, so arcs are redrawn whenever the chip row is laid out again (fonts, locale, printing).
 function drawArcs(chips) {
     const arcs = arcLayouts.get(chips);
     if (!arcs)
@@ -1533,7 +1572,6 @@ const arcObserver = new ResizeObserver(entries => { for (const entry of entries)
     drawArcs(entry.target); });
 addEventListener('beforeprint', () => { for (const chips of document.querySelectorAll('.dependency-chips'))
     drawArcs(chips); });
-// A relation in plain words with its code beside it, or the code alone when no label set names it.
 function relationCell(rel) { const gloss = named('dep.rel', rel); return gloss ? `${escape(gloss)} <code>${escape(rel)}</code>` : escape(rel); }
 function relationGloss(rel) { const gloss = named('dep.rel', rel); return gloss ? ` <span class="dependency-gloss">${escape(gloss)}</span>` : ''; }
 function roleTags(roles) { return roles.map(role => `<span class="dependency-role">${escape(role)}</span>`).join(''); }
@@ -1589,14 +1627,12 @@ function renderDependencies() {
 }
 compactLayout.addEventListener('change', () => { if (!dependencyChoice)
     renderDependencies(); });
-// The evidence table fades at an edge it can scroll past.
 const evidenceScroll = $('.dependency-evidence-scroll');
 function scrollCue() { const { scrollLeft, scrollWidth, clientWidth } = evidenceScroll, left = scrollLeft > 1, right = scrollLeft + clientWidth < scrollWidth - 1; evidenceScroll.dataset.more = left && right ? 'both' : left ? 'left' : right ? 'right' : ''; }
 evidenceScroll.addEventListener('scroll', scrollCue, { passive: true });
 new ResizeObserver(scrollCue).observe(evidenceScroll);
 dependencyPanel.addEventListener('click', event => { const button = event.target.closest('[data-dependency-view]'); if (!button)
     return; dependencyChoice = button.dataset.dependencyView; renderDependencies(); });
-// A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.
 async function openOccurrence(run, target) {
     try {
         const query = new URLSearchParams({ pattern: target.pattern, sentence: String(target.sentence), roles: JSON.stringify(target.roles), analysis: target.analysis, fingerprint: target.fingerprint });
@@ -1872,7 +1908,6 @@ function openSourceEditor() {
     const line = parseFloat(getComputedStyle(input).lineHeight) || 20;
     input.scrollTop = Math.max(0, (input.value.slice(0, at).split('\n').length - 2) * line);
 }
-// The definition blank offers the catalog's definitions; a count-only one is read in Frequencies when a table counts it, and editing the source is the menu's last action.
 const definitionMenu = $('#definition-menu');
 function menuDefinitions() {
     if (!config)
@@ -1991,6 +2026,7 @@ async function readRun(identifier) {
 }
 function questionParams(url, run) {
     const params = new URLSearchParams(url.hash.slice(1));
+    resolveCatalog(params, servedCatalog());
     if (!params.has('source'))
         params.set('source', run.source);
     if (!params.has('corpus'))
@@ -2117,6 +2153,8 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
 }
 async function navigateView(href, preserveDraft = false, historyMode = 'push') {
     const epoch = ++navigationEpoch;
+    pendingView = null;
+    pendingOccurrence = null;
     if (isReplay) {
         ++replayEpoch;
         isReplay = false;
@@ -2180,6 +2218,8 @@ async function init() {
     config = await request('api/questions/config');
     const seed = document.querySelector('#question-seed');
     let params = seedParams(seed ? JSON.parse(seed.textContent ?? 'null') : null, location.hash);
+    changedCatalog = resolveCatalog(params, servedCatalog()).changed;
+    $('#catalog-notice').hidden = changedCatalog === null;
     const initialView = parseView(params.get('view'));
     viewLocation = initialView;
     const seededQuestion = !!seed && !params.has('evidence') && !params.has('attempt') && !params.has('sections');
@@ -2282,7 +2322,7 @@ async function init() {
     window.__probe = { get state() { return state; }, get recorded() { return recorded; }, get controls() { return controls; }, get view() { return viewLocation; }, search, questionDocument };
     if (current)
         await applyView(follow && current.phase === 'complete' && initialView.kind === 'concordance' ? current : evidence ?? current, follow && current.phase === 'complete' && initialView.kind === 'concordance' ? defaultView() : initialView, !follow);
-    if (!expired && !savedManifest.some(link => !availableRun(link.id)) && params.get('run') === '1' && (!current || current.source !== $('#source').value || current.dataset !== $('#corpus').value || current.where !== controls.where())) {
+    if (changedCatalog === null && !expired && !savedManifest.some(link => !availableRun(link.id)) && params.get('run') === '1' && (!current || current.source !== $('#source').value || current.dataset !== $('#corpus').value || current.where !== controls.where())) {
         await search(undefined, undefined, occurrence ?? undefined);
         pendingView = current ? defaultView() : initialView;
         if (occurrence) {

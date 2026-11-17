@@ -408,9 +408,6 @@ mod tests {
             .expect_err("a reservation above the budget")
     }
 
-    /// Frequencies and the question page show one header: the same route
-    /// links, with the current page marked, and the same colour tokens; on
-    /// Frequencies the Help link opens the site help dialog.
     #[test]
     fn frequencies_and_the_question_page_share_one_header() {
         let routes = |html: &str| {

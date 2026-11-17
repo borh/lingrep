@@ -220,7 +220,7 @@ done
 unset LINGREP_CI_FAIL_STEP
 
 rm "$temporary/bin/chromedriver"
-for command_name in bash cat dirname tee; do
+for command_name in bash cat dirname tee uname; do
     ln -s "$(type -P "$command_name")" "$temporary/bin/$command_name"
 done
 original_path=$PATH
@@ -230,7 +230,7 @@ if run_mode --full; then
     exit 1
 fi
 export PATH=$original_path
-grep -F "full CI requires chromium and chromedriver" "$temporary/stderr.log" >/dev/null
+grep -E "full CI requires (chromium and )?chromedriver" "$temporary/stderr.log" >/dev/null
 
 rm "$temporary/bin/python3"
 export PATH="$temporary/bin"
