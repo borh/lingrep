@@ -32,6 +32,10 @@ struct Prepared {
     semantic_identity: [u8; 32],
 }
 
+/// The exact interpreter release, which the bundle's runtime identity records.
+/// A bare `3.14` resolves to the newest release the host's uv lists.
+const MANAGED_PYTHON: &str = "3.14.9";
+
 fn failed(message: impl Into<String>) -> CliError {
     CliError::CommandFailure {
         code: FailureCode::Io,
@@ -181,10 +185,10 @@ fn provision(
 ) -> Result<(), CliError> {
     fs::write(root.join(".gitignore"), "*\n")?;
     let wheels = acquire_wheels(root, args)?;
-    checked(uv(root).args(["python", "install", "--no-bin", "3.14"]))?;
+    checked(uv(root).args(["python", "install", "--no-bin", MANAGED_PYTHON]))?;
     checked(
         uv(root)
-            .args(["venv", "--managed-python", "--python", "3.14"])
+            .args(["venv", "--managed-python", "--python", MANAGED_PYTHON])
             .arg(root.join("runtime")),
     )?;
     let locked = match args.provider {
