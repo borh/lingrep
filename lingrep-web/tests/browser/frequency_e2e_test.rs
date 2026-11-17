@@ -3589,3 +3589,44 @@ async fn the_question_source_editor_checks_the_source_against_the_selected_corpu
     served.server.abort();
     result
 }
+
+/// The example count is the reader's request, not the last search's size: a
+/// search that finds one line shows it, and the next search that finds more
+/// shows the requested twenty again.
+#[tokio::test]
+async fn a_short_result_leaves_the_example_count_for_the_next_search() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        let root = served.base.trim_end_matches("frequencies");
+        let query = serde_urlencoded::to_string([
+            ("fresh", "1"),
+            ("run", "1"),
+            ("source", "bird := [text=鳥].\n"),
+            ("raw", "@document.year <= 1953"),
+        ])
+        .unwrap();
+        driver.goto(format!("{root}#{query}")).await?;
+        let shown = "return [document.querySelectorAll('.kwic-row').length, document.querySelector('#line-limit').value, \
+                     new URLSearchParams(location.hash.slice(1)).get('lines') ?? '20', document.querySelector('#reading-clamp').textContent]";
+        wait_for(&driver, "return document.querySelector('#status').textContent.length > 0 && document.querySelectorAll('.kwic-row').length === 1", "the one-line search").await?;
+        two_frames(&driver).await?;
+        observed(&driver, shown, json!([1, "20", "20", ""]), "the requested count after a short result").await?;
+        driver
+            .execute(
+                "const where = document.querySelector('#where'); where.value = ''; where.dispatchEvent(new Event('input')); \
+                 document.querySelector('#run').click();",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-row').length === 20", "twenty lines from the wider search").await?;
+        observed(&driver, shown, json!([20, "20", "20", ""]), "the requested count after a wider search").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
