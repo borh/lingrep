@@ -10,7 +10,7 @@ import { initQuestion, questionSettings } from './document.js';
 import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName} from './dependency.js';
 import type {Arc,DependencyView,EvidenceWord} from './dependency.js';
 
-import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { element as $, basicAttributeKeys, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 import type { SearchLimit, Behavior, Locale, Configuration, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));
 const words = (tokens: readonly Token[] | undefined) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
@@ -836,8 +836,7 @@ function selectToken(index: number) {
   const token=tokenData.tokens[index],field=attributeKey,members=attributeMembers(token.attributes[field]);
   attributeMember=attributeMember!==undefined&&members.includes(attributeMember)?attributeMember:members[0];
   for(const button of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button')){const token=tokenData.tokens[Number(button.dataset.token)];button.classList.toggle('selected',token.index===index);button.setAttribute('aria-pressed',String(token.index===index));}
-  const entries=Object.entries(token.attributes);const common=['text','lemma','norm','upos','xpos','unidic.cform','unidic.ctype','unidic.kana','unidic.pron','unidic.orthbase','unidic.lform','unidic.goshu','unidic.pos1','unidic.pos2','unidic.pos3','unidic.pos4','unidic.pronbase','unidic.kanabase'];
-  const basics=[...common.filter(key=>key in token.attributes),...entries.map(([key])=>key).filter(key=>!common.includes(key))].slice(0,18).map(key=>[key,token.attributes[key]] as [string,AttributeValue]);
+  const entries=Object.entries(token.attributes);const basics=basicAttributeKeys(token.attributes).map(key=>[key,token.attributes[key]] as [string,AttributeValue]);
   const row=([key,value]:[string,AttributeValue])=>{
     const values=attributeMembers(value);
     const name=ATTRIBUTE_NAMES[key]?.[locale],label=name?`${escape(name)} <code>${escape(key)}</code>`:escape(key);

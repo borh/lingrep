@@ -5,7 +5,7 @@ import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, sa
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName } from './dependency.js';
-import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { element as $, basicAttributeKeys, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
@@ -1309,8 +1309,7 @@ function selectToken(index) {
         button.setAttribute('aria-pressed', String(token.index === index));
     }
     const entries = Object.entries(token.attributes);
-    const common = ['text', 'lemma', 'norm', 'upos', 'xpos', 'unidic.cform', 'unidic.ctype', 'unidic.kana', 'unidic.pron', 'unidic.orthbase', 'unidic.lform', 'unidic.goshu', 'unidic.pos1', 'unidic.pos2', 'unidic.pos3', 'unidic.pos4', 'unidic.pronbase', 'unidic.kanabase'];
-    const basics = [...common.filter(key => key in token.attributes), ...entries.map(([key]) => key).filter(key => !common.includes(key))].slice(0, 18).map(key => [key, token.attributes[key]]);
+    const basics = basicAttributeKeys(token.attributes).map(key => [key, token.attributes[key]]);
     const row = ([key, value]) => {
         const values = attributeMembers(value);
         const name = ATTRIBUTE_NAMES[key]?.[locale], label = name ? `${escape(name)} <code>${escape(key)}</code>` : escape(key);

@@ -133,6 +133,11 @@ export function sourceSelection(source:string, span:{readonly start:number;reado
   try{return [decoder.decode(bytes.subarray(0,span.start)).length,decoder.decode(bytes.subarray(0,span.end)).length];}catch{return null;}
 }
 
+const BASIC_ATTRIBUTES=['text','lemma','norm','upos','xpos','dep.head','dep.rel','unidic.cform','unidic.ctype','unidic.kana','unidic.pron','unidic.orthbase','unidic.lform','unidic.goshu','unidic.pos1','unidic.pos2','unidic.pos3','unidic.pos4','unidic.pronbase','unidic.kanabase'];
+/** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others. A narrow panel shows the first rows only. */
+export function basicAttributeKeys(attributes:Readonly<Record<string,unknown>>):string[] {
+  return [...BASIC_ATTRIBUTES.filter(key=>key in attributes),...Object.keys(attributes).filter(key=>!BASIC_ATTRIBUTES.includes(key))].slice(0,18);
+}
 /** The offset of the line defining `name` in a catalog source (`name :=`, after an optional definition keyword), or -1. */
 export function definitionOffset(source:string, name:string):number {
   const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
