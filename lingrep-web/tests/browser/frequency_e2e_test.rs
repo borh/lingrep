@@ -3212,3 +3212,49 @@ async fn the_source_editor_opens_on_the_selected_definition() -> WebDriverResult
     served.server.abort();
     result
 }
+
+/// A printed question page keeps the sentence, the counts and the lines,
+/// and leaves out the site navigation, the search button, the page filter,
+/// the document jump, the download link and 条件を追加.
+#[tokio::test]
+async fn printing_the_question_page_leaves_out_its_controls() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.result-header a[href$=\"/export\"]') && document.querySelector('.line-controls input') ? true : null",
+            "the results",
+        )
+        .await?;
+        let printed = driver
+            .execute(
+                "const hidden = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]) \
+                   .filter((rule) => rule.media?.mediaText === 'print').flatMap((rule) => [...rule.cssRules]) \
+                   .filter((rule) => rule.style?.display === 'none').map((rule) => rule.selectorText); \
+                 const dropped = (selector) => { const e = document.querySelector(selector); return !!e && hidden.some((s) => e.closest(s)); }; \
+                 return Object.fromEntries(['header.site', '#run', '.line-controls input', '.document-nav', '.result-header a[href$=\"/export\"]', '#attribute-remix', \
+                   '.question-sentence', '.line-controls span', '.kwic-list'].map((s) => [s, dropped(s)]))",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(
+            printed,
+            json!({"header.site": true, "#run": true, ".line-controls input": true, ".document-nav": true,
+                   ".result-header a[href$=\"/export\"]": true, "#attribute-remix": true,
+                   ".question-sentence": false, ".line-controls span": false, ".kwic-list": false})
+        );
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
