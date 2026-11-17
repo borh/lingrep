@@ -477,3 +477,5 @@ html:root {
 .fq .fq-legend dt { color: var(--text); font-weight: 600; }
 .fq .fq-legend dd { margin: 0; }
 @media (max-width: 480px) { .fq .fq-legend dl { grid-template-columns: minmax(0, 1fr); } .fq .fq-legend dd { margin-bottom: 4px; } }
+.fq .freq th .entry-names { white-space: nowrap; }
+@media (max-width: 480px) { .fq .freq th .entry-names { display: block; margin-left: 0; } }
