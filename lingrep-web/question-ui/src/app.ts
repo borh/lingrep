@@ -892,7 +892,7 @@ function renderDependencies(){
       const y1=(arc.from+.5)*TREE_ROW,y2=(arc.to+.5)*TREE_ROW,x=gutter-6-arc.column*TREE_COLUMN;
       svg.append(svgNode('path',{class:arc.bound?'dependency-arc bound':'dependency-arc',d:`M${gutter},${y1} H${x} V${y2} H${gutter-3} M${gutter-8},${y2-4} L${gutter-3},${y2} L${gutter-8},${y2+4}`}));
     }
-    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
+    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel',value(index,'dep.rel'))??'')}">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
     diagram.firstElementChild!.prepend(svg);
   }else{
     const units=dependencyUnits(tokens,view==='bunsetsu'?starts:null),{items,arcs}=focusLayout(units,words);

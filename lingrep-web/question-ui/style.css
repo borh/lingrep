@@ -91,4 +91,4 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 .search-status.has-update #show-latest{font-weight:600}
 #token-origin:focus{outline:none}
 .line-controls input{width:auto;field-sizing:content;min-width:14ch;max-width:100%}
-.dependency-evidence td code,.attribute-row>span code{font:13px var(--mono);color:var(--soft)}.dependency-gloss{font:13px var(--font);color:var(--soft)}text.dependency-arc{pointer-events:auto;cursor:help}
+.dependency-evidence td code,.attribute-row>span code{font:13px var(--mono);color:var(--soft)}.dependency-gloss{font:13px var(--font);color:var(--soft)}.dependency-tree .dependency-meta{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}text.dependency-arc{pointer-events:auto;cursor:help}
