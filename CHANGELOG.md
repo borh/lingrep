@@ -10,19 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The spaCy adapter publishes GiNZA's bunsetu (文節) segmentation as
-  `spacy.ginza.bunsetu`, `B` on each bunsetu-initial token and `I` on the
-  others, for a profile selection that runs GiNZA's `bunsetu_recognizer`.
-  The values equal `ginza -f conllu`'s `BunsetuBILabel`. Other spaCy pipelines
-  are unchanged.
+  `spacy.ginza.bunsetu` when the selected profile runs `bunsetu_recognizer`.
+  Each bunsetu starts with a token labeled `B`; subsequent tokens are labeled
+  `I`. These values match `BunsetuBILabel` in `ginza -f conllu` output.
+  Other spaCy pipelines are unchanged.
 - `ling table --select PATTERN --key FIELD=VALUE` keeps the rows whose
-  compound key has exactly the given field values, and reports their summed
-  occurrences in a `subset` record and each row's share of them. The
-  Frequencies view offers the same exact-match inputs per key field.
+  compound key exactly matches the specified field values. A `subset` record reports
+  the selected rows' total occurrences, and each row includes its share of
+  that total. The Frequencies view offers the same exact-match inputs per key field.
 - `ling serve` and `lingrep-web` accept `--vectors FILE`. With a word-vector
-  file, the Workbench reports a file that the catalog's `vectors:` lines do not
-  name, its Definition tab lists the values each `near` test selects, and a
-  Similar Words page ranks the values near one word. `--vectors` on `ling matches`
-  and `ling summarize` applies to `--serve` and `--link` too.
+  file, the Workbench reports when that file is absent from the catalog's
+  `vectors:` declarations. The Definition tab lists the values selected by each `near`
+  test, and the Similar Words page ranks values by similarity to a word.
+  The `--vectors` option also applies when `ling matches` or `ling summarize`
+  uses `--serve` or `--link`.
 - The Workbench accepts a `--where` clause in its search scope and shows
   equivalent `ling summarize` and `ling matches` commands.
 - `ling matches --link NAME=URL` and `ling summarize --link NAME=URL` print
@@ -30,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scope clause and overlap setting; `NAME` identifies the server's corpus.
 - `ling matches --serve` and `ling summarize --serve` start the Workbench on
   a free loopback port and open the query in `BROWSER` or the default browser.
-  `--serve=HOST:PORT` sets the address. `ling serve --port 0` prints its bound port.
+  `--serve=HOST:PORT` sets the address. `ling serve --port 0` prints the port
+  assigned by the operating system.
 - `matches`, `summarize` and the Workbench accept overlap modes `catalog`,
   `keep` and `longest`. `keep` skips `resolve` statements; other policy statements
   still apply. `longest` adds longest-match resolution when the catalog declares
@@ -39,21 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Frequencies and Compare pages identify their corpus. The Sample Debugger
   states that it reads only the sample text.
 - Cluster analysis accepts a minimum occurrence count for patterns in both
-  trees. Section distributions and rate contrasts retain every pattern.
+  trees. This filter does not apply to section distributions or rate contrasts.
 - `ling analyzer prepare` accepts `--download-base` and `LING_DOWNLOAD_BASE`
   for adapter wheels, alongside the installer and dictionary mirror support.
   CLI archives and wheels use `v<version>/`; dictionaries use `unidic-202512/`.
-  The installer and adapter downloads require HTTPS; dictionary digests remain
-  checked against the values built into `ling`.
+  The installer and adapter downloads require HTTPS. Dictionary downloads are
+  verified against the digests built into `ling`.
 
 ### Changed
 
-- The Workbench key picker can switch one `text`, `lemma` or `norm` field of a
-  key with several fields, including a field read from a `where` graph node
-  that binds only words, such as `$v` in `key: [$n.lemma, $p.lemma, $v.lemma]`.
-  The other fields and the rest of the source are unchanged.
-  `check --json` reports one `capture_key_edits` descriptor per eligible field
-  and adds its `field` position.
+- The Workbench key picker can change an individual field in a compound key
+  between `text`, `lemma` and `norm`. This includes fields from `where` graph
+  nodes that bind only words, such as `$v` in
+  `key: [$n.lemma, $p.lemma, $v.lemma]`. Other fields and the rest of the source
+  remain unchanged. `check --json` reports one `capture_key_edits` descriptor
+  per eligible field, including its position in `field`.
 - Prepared artifacts use generation 3 and provenance schema 5. Rebuild
   generation 2 artifacts with `ling corpus build`.
 - The spaCy adapter installs GiNZA 5.3.1 with `ja_ginza` 5.3.0 and spaCy
@@ -63,34 +65,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `ling analyzer prepare ginza` prepares the same analysis identity on macOS
-  and Linux. The hashed model directory no longer holds the interpreter's build
-  string, its path, or `thinc-apple-ops`, which only arm64 macOS installs.
-  Bundles prepared before this change keep their identity; a bundle prepared
-  after it has a new one. Stanza identities still differ between macOS and
-  Linux, whose locked torch versions are `2.13.0` and `2.13.0+cpu`.
+- `ling analyzer prepare ginza` produces the same analysis identity on macOS
+  and Linux. Identity metadata in the hashed model directory excludes the
+  interpreter's build string and path, and the record for `thinc-apple-ops`,
+  which is installed only on arm64 macOS.
+  Existing bundles retain their identities; newly prepared bundles have new
+  identities. Stanza identities still differ between macOS and Linux because
+  their locked torch versions are `2.13.0` and `2.13.0+cpu`, respectively.
 - The Workbench reports unavailable token attributes and catalog-binding
   failures with their reasons.
-- spaCy setup profiles run every pipeline component up to the last one that
-  produces a selected output, because components read earlier components'
-  output without declaring it. GiNZA's `morphology/input` profile was
-  tokenizer-only and its `morphology/analyzer` profile ran the parser without
-  its `tok2vec` or `transformer`, so `ja_ginza` emitted wrong dependencies and
-  UPOS, and `ja_ginza_electra` and `ja_ginza_bert_large` failed with
-  `unregistered extension trf_data`. Both GiNZA profiles now run the whole
-  pipeline and produce the dependencies, UPOS and `spacy.ginza.bunsetu` that
-  `ginza -f conllu` prints. `en_core_web_sm`'s `tokenize/analyzer` profile ran
-  its parser without `tok2vec` and did not split sentences; its morphology
-  profiles are unchanged. The changed profiles change analyzer identity, so
-  set existing spaCy analyzers up again.
-- `lingrep-spacy-setup` saves the transformer weights of `ja_ginza_electra` and
-  `ja_ginza_bert_large` in the analyzer, downloaded once from the Hugging Face
-  Hub at a pinned commit. Analyzers set up by earlier releases fetched the
-  weights from the Hub, at whatever commit it served, each time they started,
-  so their output could change without a change to the analyzer files.
-  Analysis now runs with Hugging Face Hub access disabled, and the Electra
-  tokenizer loads from the locked `sudachitra` without running repository
-  code. Set up existing transformer analyzers again into a new directory.
+- spaCy setup profiles run all pipeline components through the last component
+  that produces a selected output, including earlier components whose output
+  is required but not declared as a dependency. Both GiNZA morphology profiles
+  run the complete pipeline and produce dependencies, UPOS and
+  `spacy.ginza.bunsetu` matching `ginza -f conllu`. The `morphology/input`
+  profile previously ran only the tokenizer; `morphology/analyzer` ran the
+  parser without `tok2vec` or `transformer`. The incomplete pipeline caused
+  incorrect dependencies and UPOS in `ja_ginza`, and
+  `unregistered extension trf_data` errors in `ja_ginza_electra` and
+  `ja_ginza_bert_large`. Sentence splitting also works in `en_core_web_sm`'s
+  `tokenize/analyzer` profile, which previously omitted `tok2vec`; its
+  morphology profiles are unchanged. Set up existing spaCy analyzers again:
+  the corrected profiles change analyzer identity.
+- `lingrep-spacy-setup` downloads transformer weights for `ja_ginza_electra`
+  and `ja_ginza_bert_large` once, from a pinned Hugging Face Hub commit, and
+  stores them in the analyzer directory. Earlier analyzers fetched unpinned
+  weights at every startup, so output could change without changes to the
+  analyzer files. Analysis runs with Hub access disabled. The Electra tokenizer
+  loads from the locked `sudachitra` package without executing code from the
+  model repository. Set up existing transformer analyzers again in a new directory.
 - Searches cancel after 30 seconds without an open progress stream. A
   replacement scan waits for the superseded scan to stop and displays only
   its own progress. Failed searches no longer also report a lost connection.
@@ -101,13 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corpus, count-table and reading-sidecar builds reclaim staging directories
   from terminated builds of the same artifact on the same host. Directories
   without lock files require manual cleanup; see the deployment guide.
-- The server rebuilds corrupt artifacts beside declared sources once per
-  corpus per process after opening them successfully. Reports from
-  a replaced artifact do not invalidate its replacement. Declared artifacts
-  and artifacts with non-corruption errors remain on disk.
+- If corruption is detected in an artifact beside a declared source after a
+  successful open, the server rebuilds it at most once per corpus per process. Error
+  reports from a replaced artifact do not invalidate the replacement. Declared
+  artifacts and artifacts with errors unrelated to corruption remain on disk.
 - Unsupported manifest, graph and normalization versions and SQLite
   environment failures are distinguished from corruption.
-- Corpus opening checks finish and cache their results after client disconnection.
+- Corpus validation on opening continues after a client disconnects, and its
+  results are cached.
 - Results downloads are disabled during a newer query and restored if it fails.
   Rejected downloads report the reason and recovery step. Exports skip the same
   oversized sentences as the displayed run and report the count in the About sheet.
@@ -116,8 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remain readable after their paths are removed by temporary-file cleanup.
 - Shared links preserve changed compound and document-reach options. Editor
   drafts survive reloads without replacing a followed link's pattern.
-- Empty patterns are rejected before submission. Edits made during submission
-  remain reported until resubmission, and draft changes are stored once.
+- Empty patterns are rejected before submission. Patterns edited during
+  submission remain marked as edited until resubmission. Draft changes are
+  stored once.
 - Escape closes only the open modal. Condition controls support keyboard use
   and retain focus, filter text and caret position across redraws.
 - Frequencies and Compare report failed loads, retain rejected clause edits,
@@ -125,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Value searches report both listed and total counts.
 - The Sample Debugger runs once on arrival, reports rejected runs and updates
   after edits when the pattern editor cannot load.
-- Query-library undo reports a conflicting re-added query and remains available.
+- If a query is re-added before its deletion is undone, the query library
+  reports the conflict and keeps Undo available.
 - Japanese translations cover dynamic results, editor diagnostics, accessible
   labels and server errors, and update when the language changes. Compiler and
   binder diagnostics remain in English. Counts retain thousands separators in
