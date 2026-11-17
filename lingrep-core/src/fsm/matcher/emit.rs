@@ -1,5 +1,8 @@
 //! Match emission: construction, dedup, and the terminal overlap filter.
 
+use super::resource::{MatchResourceError, OutputBudget, compact_heap_bytes, match_heap_bytes};
+use std::sync::Arc;
+
 use super::pool::FastBuild;
 use crate::fsm::Match;
 use compact_str::CompactString;
@@ -11,43 +14,64 @@ type MatchKey = (CompactString, usize, usize);
 pub(crate) struct MatchSink {
     dedup: HashSet<MatchKey, FastBuild>,
     out: Vec<Match>,
+    output: Arc<OutputBudget>,
 }
 
 impl MatchSink {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::with_output(&Arc::new(OutputBudget::default()))
+    }
+
+    pub(crate) fn with_output(output: &Arc<OutputBudget>) -> Self {
         Self {
             dedup: HashSet::default(),
-            out: Vec::with_capacity(32),
+            out: Vec::new(),
+            output: Arc::clone(output),
         }
     }
 
     /// Inserts the first match for each `(pattern, start, end)` tuple.
     /// Captures are populated by a later pass; callers validate the span.
     #[inline]
-    pub(crate) fn emit(&mut self, pattern: &CompactString, start: usize, end: usize) {
-        let m = Match {
+    pub(crate) fn emit(
+        &mut self,
+        pattern: &CompactString,
+        start: usize,
+        end: usize,
+    ) -> Result<(), MatchResourceError> {
+        self.output.reserve(compact_heap_bytes(pattern))?;
+        let key = (pattern.clone(), start, end);
+        if self.dedup.contains(&key) {
+            return Ok(());
+        }
+        self.output.reserve_vec(&mut self.out, 1)?;
+        self.output.reserve(compact_heap_bytes(pattern))?;
+        self.dedup.insert(key);
+        self.out.push(Match {
             pattern: pattern.clone(),
             start,
             end,
             captures: Box::default(),
             graph_bindings: Box::default(),
             lexical: None,
-        };
-        if self.dedup.insert((pattern.clone(), start, end)) {
-            self.out.push(m);
-        }
+        });
+        Ok(())
     }
 
-    pub(crate) fn finish(self) -> Vec<Match> {
-        filter_and_collect_matches(&self.out)
+    pub(crate) fn finish(self) -> Result<Vec<Match>, MatchResourceError> {
+        filter_and_collect_matches(&self.out, &self.output)
     }
 }
 
 /// For each pattern, discard zero-width matches and matches contained by a
 /// longer match. Overlaps between different patterns remain independent.
-pub(crate) fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
+pub(crate) fn filter_and_collect_matches(
+    matches: &[Match],
+    output: &OutputBudget,
+) -> Result<Vec<Match>, MatchResourceError> {
     if matches.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     #[cfg(test)]
@@ -63,6 +87,7 @@ pub(crate) fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
     #[cfg(test)]
     log::trace!("Grouped by pattern: {pattern_matches:?}");
 
+    output.reserve_buffer::<Match>(matches.len())?;
     let mut all_matches: Vec<Match> = Vec::with_capacity(matches.len());
 
     let mut pattern_names: Vec<_> = pattern_matches.keys().copied().collect();
@@ -79,13 +104,6 @@ pub(crate) fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
             continue;
         }
 
-        // The previous implementation checked every retained interval for
-        // every candidate. Dense single-token patterns therefore turned a
-        // linear stream of matches into quadratic work. The same rule has
-        // a linear scan after grouping by start: retain the longest end at
-        // each start, then reject only when an earlier retained start has
-        // a strictly greater end. Equal end positions remain distinct,
-        // preserving the established overlap policy.
         let mut longest_by_start = std::collections::BTreeMap::<usize, &Match>::new();
         for candidate in pattern_group {
             // Public matches always identify at least one consumed token.
@@ -104,12 +122,14 @@ pub(crate) fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
                 .or_insert(candidate);
         }
 
+        output.reserve_buffer::<Match>(longest_by_start.len())?;
         let mut filtered_matches = Vec::with_capacity(longest_by_start.len());
         let mut longest_earlier_end: Option<usize> = None;
         for candidate in longest_by_start.into_values() {
             if longest_earlier_end.is_none_or(|end| end <= candidate.end) {
                 longest_earlier_end =
                     Some(longest_earlier_end.map_or(candidate.end, |end| end.max(candidate.end)));
+                output.reserve(match_heap_bytes(candidate))?;
                 filtered_matches.push(candidate.clone());
             }
         }
@@ -125,7 +145,7 @@ pub(crate) fn filter_and_collect_matches(matches: &[Match]) -> Vec<Match> {
     #[cfg(test)]
     log::trace!("Final matches: {all_matches:?}");
 
-    all_matches
+    Ok(all_matches)
 }
 
 #[cfg(test)]
@@ -140,18 +160,18 @@ mod tests {
     #[test]
     fn emit_dedups_identical_pattern_span_and_pushes_once() {
         let mut sink = MatchSink::new();
-        sink.emit(&key("p"), 2, 4);
-        sink.emit(&key("p"), 2, 4); // duplicate key — dropped
-        sink.emit(&key("p"), 3, 5); // distinct — kept
-        let out = sink.finish();
+        sink.emit(&key("p"), 2, 4).unwrap();
+        sink.emit(&key("p"), 2, 4).unwrap();
+        sink.emit(&key("p"), 3, 5).unwrap();
+        let out = sink.finish().unwrap();
         assert_eq!(out.len(), 2);
     }
 
     #[test]
     fn emit_produces_a_capture_free_match() {
         let mut sink = MatchSink::new();
-        sink.emit(&key("p"), 0, 1);
-        let out = sink.finish();
+        sink.emit(&key("p"), 0, 1).unwrap();
+        let out = sink.finish().unwrap();
         assert_eq!((out[0].start, out[0].end), (0, 1));
         assert!(out[0].captures.is_empty());
     }
@@ -160,9 +180,9 @@ mod tests {
     fn finish_applies_the_longest_per_start_overlap_policy() {
         // Two matches at start 0 with ends 1 and 2: only the longer survives.
         let mut sink = MatchSink::new();
-        sink.emit(&key("p"), 0, 1);
-        sink.emit(&key("p"), 0, 2);
-        let out = sink.finish();
+        sink.emit(&key("p"), 0, 1).unwrap();
+        sink.emit(&key("p"), 0, 2).unwrap();
+        let out = sink.finish().unwrap();
         assert_eq!(
             out.iter().map(|m| (m.start, m.end)).collect::<Vec<_>>(),
             vec![(0, 2)]
@@ -179,6 +199,10 @@ mod tests {
             graph_bindings: Box::default(),
             lexical: None,
         };
-        assert!(filter_and_collect_matches(&[zero]).is_empty());
+        assert!(
+            filter_and_collect_matches(&[zero], &super::OutputBudget::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 }
