@@ -413,6 +413,29 @@ mod tests {
         }
     }
 
+    /// A name stands for one value of its attribute, so a list of values
+    /// named in words (Frequencies' rows by `upos`) has no two alike.
+    #[test]
+    fn no_two_values_of_an_attribute_share_a_name() {
+        let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();
+        for (set, attributes) in names["sets"].as_object().unwrap() {
+            for (attribute, values) in attributes.as_object().unwrap() {
+                for locale in ["en", "ja"] {
+                    let mut seen = std::collections::BTreeMap::new();
+                    for (value, name) in values.as_object().unwrap() {
+                        if let Some(name) = name[locale].as_str()
+                            && let Some(other) = seen.insert(name, value)
+                        {
+                            panic!(
+                                "{set} {attribute} {locale}: {other} and {value} are both {name}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn named_values_belong_to_their_label_set() {
         let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();

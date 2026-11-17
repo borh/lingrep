@@ -134,7 +134,7 @@ test('a value reads in plain words from the bundled names, a relation subtype fr
   const {readFileSync}=await import('node:fs');
   const names=JSON.parse(readFileSync(new URL('../../lingrep-core/src/fsm/label_names.json',import.meta.url),'utf8')).sets;
   for(const [attribute,value,locale,name] of [
-    ['upos','NOUN','ja','名詞'],['upos','ADP','ja','助詞'],['upos','VERB','en','verb'],['upos','SPACE','ja','空白'],
+    ['upos','NOUN','ja','名詞'],['upos','ADP','ja','格助詞など'],['upos','VERB','en','verb'],['upos','SPACE','ja','空白'],
     ['dep.rel','nsubj','ja','主語'],['dep.rel','nsubj:pass','ja','受け身の主語'],['dep.rel','obl:poss','en','oblique nominal'],['dep.rel','dobj','en','direct object'],
     ['xpos','NN','en','singular noun'],
     ['upos','名詞-普通名詞-一般','ja',null],['dep.rel','','en',null],['lemma','NOUN','en',null],
