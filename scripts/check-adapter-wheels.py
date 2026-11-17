@@ -130,6 +130,58 @@ def check_wheel(directory, project):
     return wheel
 
 
+def check_extras_resolve(wheels, directory):
+    """Resolve each [tool.uv].conflicts extra with every non-conflicting extra.
+
+    Resolution reads only the wheel metadata, as an install outside the source
+    project does, so project-level overrides do not apply.
+    """
+    protocol = wheels["adapter-protocol"]
+    for project, wheel in wheels.items():
+        if project == "adapter-protocol":
+            continue
+        with zipfile.ZipFile(wheel) as archive:
+            dist_info = wheel.name.removesuffix("-py3-none-any.whl") + ".dist-info"
+            packaged = email.parser.Parser().parsestr(
+                archive.read(f"{dist_info}/METADATA").decode()
+            )
+        extras = packaged.get_all("Provides-Extra") or []
+        uv = tomllib.loads((ROOT / "python" / project / "pyproject.toml").read_text())[
+            "tool"
+        ]["uv"]
+        exclusive = {
+            entry["extra"] for group in uv.get("conflicts", []) for entry in group
+        }
+        indexes = {index["name"]: index["url"] for index in uv.get("index", [])}
+        extra_indexes = {}
+        for sources in uv.get("sources", {}).values():
+            for source in sources if isinstance(sources, list) else [sources]:
+                if "extra" in source:
+                    extra_indexes[source["extra"]] = indexes[source["index"]]
+        shared = [extra for extra in extras if extra not in exclusive]
+        choices = [extra for extra in extras if extra in exclusive]
+        selections = [[*shared, extra] for extra in choices] or [shared]
+        for selection in selections:
+            requested = f"{wheel.name.split('-')[0]}[{','.join(selection)}]"
+            requirements = directory / f"{project}-resolve.in"
+            requirements.write_text(
+                f"{protocol.name.split('-')[0]} @ {protocol.as_uri()}\n"
+                f"{requested} @ {wheel.as_uri()}\n"
+            )
+            command = ["uv", "pip", "compile", "--quiet", "--universal"]
+            for extra in selection:
+                if extra in extra_indexes:
+                    command.extend(("--extra-index-url", extra_indexes[extra]))
+            if any(extra in extra_indexes for extra in selection):
+                command.extend(("--index-strategy", "unsafe-best-match"))
+            command.extend(("--python-version", "3.14", str(requirements)))
+            result = subprocess.run(command, capture_output=True, text=True)
+            require(
+                result.returncode == 0,
+                f"{requested} from {wheel.name} does not resolve:\n{result.stderr}",
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
@@ -157,6 +209,7 @@ def main():
                 check=True,
             )
         wheels = {project: check_wheel(directory, project) for project in PROJECTS}
+        check_extras_resolve(wheels, Path(temporary))
         environment = Path(temporary) / "environment"
         subprocess.run(
             ["uv", "venv", "--python", "3.14", str(environment)],

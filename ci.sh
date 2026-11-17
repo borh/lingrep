@@ -89,7 +89,8 @@ run_common_checks() {
     scripts/test/test_install.sh
 
     echo "Building and checking release adapter wheels"
-    UV_EXCLUDE_NEWER=P3D python scripts/check-adapter-wheels.py
+    UV_OFFLINE=1 UV_EXCLUDE_NEWER=P3D python scripts/check-adapter-wheels.py >/dev/null 2>&1 ||
+        UV_EXCLUDE_NEWER=P3D python scripts/check-adapter-wheels.py
 
     echo "Checking formatting"
     cargo fmt --check --all 2>&1 | tee "${TMPDIR:-/tmp}/cargo-fmt.log"

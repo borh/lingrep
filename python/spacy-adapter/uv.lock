@@ -597,8 +597,6 @@ dependencies = [
 [package.optional-dependencies]
 bert-large = [
     { name = "ja-ginza-bert-large" },
-    { name = "tokenizers" },
-    { name = "transformers" },
 ]
 cpu = [
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-21-lingrep-spacy-adapter-cpu') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-cuda') or (extra == 'extra-21-lingrep-spacy-adapter-cpu' and extra == 'extra-21-lingrep-spacy-adapter-rocm') or (extra == 'extra-21-lingrep-spacy-adapter-cuda' and extra == 'extra-21-lingrep-spacy-adapter-rocm')" },
@@ -610,8 +608,6 @@ cuda = [
 ]
 electra = [
     { name = "ja-ginza-electra" },
-    { name = "tokenizers" },
-    { name = "transformers" },
 ]
 ginza = [
     { name = "ginza" },
@@ -646,14 +642,10 @@ requires-dist = [
     { name = "lingrep-adapter-protocol", editable = "../adapter-protocol" },
     { name = "numpy", marker = "extra == 'spacy'", specifier = ">=2,<3" },
     { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.8.18,<3.8.19" },
-    { name = "tokenizers", marker = "extra == 'bert-large'", specifier = "==0.22.2" },
-    { name = "tokenizers", marker = "extra == 'electra'", specifier = "==0.22.2" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'cpu'", specifier = "==2.13.0" },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'cpu'", specifier = "==2.13.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "lingrep-spacy-adapter", extra = "cpu" } },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = "==2.13.0+cu126", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "lingrep-spacy-adapter", extra = "cuda" } },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==2.13.0+rocm7.2", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "lingrep-spacy-adapter", extra = "rocm" } },
-    { name = "transformers", marker = "extra == 'bert-large'", specifier = "==4.57.6" },
-    { name = "transformers", marker = "extra == 'electra'", specifier = "==4.57.6" },
     { name = "triton-rocm", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm'", specifier = "==3.7.1", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "lingrep-spacy-adapter", extra = "rocm" } },
 ]
 provides-extras = ["spacy", "ginza", "electra", "bert-large", "cpu", "cuda", "rocm"]
