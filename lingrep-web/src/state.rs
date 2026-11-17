@@ -16,7 +16,9 @@ pub use crate::server_context::TokenizerUnavailable;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub dict_path: String,
+    /// `None` when no dictionary resolved, which [`Config::validate`] accepts
+    /// only when every declared corpus is a prepared artifact.
+    pub dict_path: Option<String>,
     /// Declared corpora, in declaration order, `--input` first. Each entry is
     /// `(key, path, display_name)` — see `cli::declared_corpora`. All declared
     /// corpora share `input_format`, `markdown` and `max_record_bytes` below.
@@ -73,6 +75,11 @@ pub fn link_retention(offers: &[usize], requested: Option<usize>) -> usize {
 pub enum ConfigError {
     #[error("dictionary path must not be empty")]
     EmptyDictionaryPath,
+    #[error(
+        "no dictionary: corpus {name:?} requires tokenization before it can be served; {}",
+        lingrep_cli_common::MISSING_DICTIONARY_HINT
+    )]
+    SourceWithoutDictionary { name: String },
     #[error("no corpus is declared; --input is required")]
     EmptyCorpusPath,
     #[error("corpus {name:?} has an empty path")]
@@ -94,11 +101,13 @@ pub enum ConfigError {
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        validate_readable_file(
-            &self.dict_path,
-            "dictionary".to_owned(),
-            ConfigError::EmptyDictionaryPath,
-        )?;
+        if let Some(dict_path) = &self.dict_path {
+            validate_readable_file(
+                dict_path,
+                "dictionary".to_owned(),
+                ConfigError::EmptyDictionaryPath,
+            )?;
+        }
         if self.corpora.is_empty() {
             return Err(ConfigError::EmptyCorpusPath);
         }
@@ -120,6 +129,11 @@ impl Config {
                     }
                 })?;
                 continue;
+            }
+            if self.dict_path.is_none() {
+                return Err(ConfigError::SourceWithoutDictionary {
+                    name: name.as_str().to_owned(),
+                });
             }
             let read_config =
                 crate::corpus_runtime::read_config(path, self.input_format, self.markdown.clone());
@@ -304,7 +318,7 @@ fn single_slot_corpus_set(config: &Config, corpus_runtime: Arc<CorpusRuntime>) -
 impl RequestStore {
     pub fn new(config: Config) -> Self {
         let context = Arc::new(
-            ServerContext::new(&config.dict_path)
+            ServerContext::with_dictionary(config.dict_path.as_ref().map(PathBuf::from))
                 .expect("the shared scan pool must be constructible"),
         );
         let corpora = Arc::new(build_corpus_set(&config, &context));
@@ -416,7 +430,7 @@ impl RequestStore {
 impl Default for RequestStore {
     fn default() -> Self {
         Self::new(Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: vec![(CorpusName::default_key(), PathBuf::new(), String::new())],
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

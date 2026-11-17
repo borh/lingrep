@@ -76,7 +76,7 @@ async fn stale_detail_revision_never_reinterprets_pattern_key() {
     let ready = runtime.ready().await.unwrap();
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
@@ -139,7 +139,7 @@ async fn store_with_three_distinct_verbs(max_kwic: usize) -> (RequestStore, temp
     );
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

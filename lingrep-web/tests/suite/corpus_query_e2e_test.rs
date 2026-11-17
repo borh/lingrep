@@ -314,7 +314,7 @@ async fn kwic_views_surface_section_and_document_provenance() {
     runtime.start_or_observe().await;
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

@@ -110,7 +110,7 @@ async fn two_corpus_server() -> TwoCorpusServer {
 
     let store = RequestStore::with_corpus_set_capacity(
         Config {
-            dict_path: "/unused/unidic-cwj-202512.dic".into(),
+            dict_path: Some("/unused/unidic-cwj-202512.dic".into()),
             corpora: declared,
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

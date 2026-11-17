@@ -227,7 +227,7 @@ async fn fixture(words: Vec<String>, paragraphs: Vec<Range<usize>>) -> Fixture {
 async fn bind_runtime(runtime: Arc<CorpusRuntime>, source: &str) -> (RequestStore, Router) {
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

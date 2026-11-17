@@ -56,7 +56,7 @@ async fn store_with_sentences(
     let dict_path = directory.path().join("unidic-cwj-202512.dic");
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: dict_path.display().to_string(),
+            dict_path: Some(dict_path.display().to_string()),
             corpora: vec![(
                 CorpusName::default_key(),
                 corpus_path.clone(),
@@ -420,7 +420,7 @@ async fn results_of_a_corpus_that_became_unavailable_are_a_conflict_with_a_next_
     let cache_path = fixture.path.join("tokens.v1.zst");
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

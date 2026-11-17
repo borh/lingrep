@@ -4,6 +4,7 @@
 use std::future::{Future, IntoFuture};
 use std::io::IsTerminal as _;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,9 +75,11 @@ fn run_with(
         .init();
     let config = config(args)?;
     crate::patterns::open_word_vectors(args.vectors.as_deref()).map_err(ServeError::Runtime)?;
-    let context = Arc::new(ServerContext::new(&config.dict_path).map_err(|error| {
-        ServeError::Runtime(format!("cannot create server scan pool: {error}"))
-    })?);
+    let context = Arc::new(
+        ServerContext::with_dictionary(config.dict_path.as_ref().map(PathBuf::from)).map_err(
+            |error| ServeError::Runtime(format!("cannot create server scan pool: {error}")),
+        )?,
+    );
     block_on(async move {
         let signals = signals();
         let result = serve(args, config, Arc::clone(&context), signals.clone(), query).await;
@@ -118,17 +121,7 @@ fn block_on<F: Future>(future: F) -> std::io::Result<F::Output> {
 /// Invalid declarations or unreadable configured inputs.
 pub fn config(args: &Args) -> Result<Config, ServeError> {
     let config = Config {
-        dict_path: args
-            .dict
-            .resolve()
-            .ok_or_else(|| {
-                ServeError::InvalidArguments(format!(
-                    "no dictionary: {}",
-                    lingrep_cli_common::MISSING_DICTIONARY_HINT
-                ))
-            })?
-            .display()
-            .to_string(),
+        dict_path: args.dict.resolve().map(|path| path.display().to_string()),
         corpora: crate::cli::declared_corpora(args).map_err(ServeError::InvalidArguments)?,
         input_format: args.input.input_format,
         markdown: args
@@ -146,6 +139,7 @@ pub fn config(args: &Args) -> Result<Config, ServeError> {
             ServeError::Runtime(error.to_string())
         }
         crate::state::ConfigError::EmptyDictionaryPath
+        | crate::state::ConfigError::SourceWithoutDictionary { .. }
         | crate::state::ConfigError::EmptyCorpusPath
         | crate::state::ConfigError::EmptyDeclaredCorpusPath { .. }
         | crate::state::ConfigError::ZeroDetailLimit
@@ -317,7 +311,7 @@ fn os_signal_count() -> watch::Receiver<u32> {
 /// that stops startup.
 pub async fn store(args: &Args, config: Config) -> Result<RequestStore, String> {
     let context = Arc::new(
-        ServerContext::new(&config.dict_path)
+        ServerContext::with_dictionary(config.dict_path.as_ref().map(PathBuf::from))
             .map_err(|error| format!("cannot create server scan pool: {error}"))?,
     );
     store_in(args, config, context).await

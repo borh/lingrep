@@ -790,7 +790,7 @@ mod tests {
 
         let science_path = "/private/corpora/science-b.jsonl";
         RequestStore::new(Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: vec![
                 (
                     CorpusName::default_key(),

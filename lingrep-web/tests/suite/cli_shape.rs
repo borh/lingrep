@@ -77,7 +77,7 @@ fn startup_validation_accepts_a_markdown_directory_without_input_format() {
 
     let input_path = args.input.input.clone().expect("--input directory");
     let config = Config {
-        dict_path: dictionary.display().to_string(),
+        dict_path: Some(dictionary.display().to_string()),
         corpora: vec![(CorpusName::default_key(), input_path, "d".to_owned())],
         max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
         detail_limits: DetailLimits { max_kwic: 1_000 },

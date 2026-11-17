@@ -32,7 +32,7 @@ pattern copula := [text=is].
 
 fn config(path: std::path::PathBuf) -> Config {
     Config {
-        dict_path: "/unused/question-test.dic".into(),
+        dict_path: Some("/unused/question-test.dic".into()),
         corpora: vec![(CorpusName::default_key(), path, "fixture".into())],
         input_format: None,
         markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

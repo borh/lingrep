@@ -42,7 +42,7 @@ use crate::v6_support::{ArtifactFixture, ready_fixture};
 
 fn config(dict_path: String, corpora: Vec<(CorpusName, std::path::PathBuf, String)>) -> Config {
     Config {
-        dict_path,
+        dict_path: Some(dict_path),
         corpora,
         input_format: None,
         markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

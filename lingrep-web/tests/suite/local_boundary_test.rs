@@ -18,7 +18,7 @@ fn config_rejects_empty_or_missing_paths() {
     fs::write(&corpus, "{\"text\":\"test\"}\n").unwrap();
 
     let valid = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: vec![(CorpusName::default_key(), corpus.clone(), "corpus".into())],
         input_format: None,
         markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
@@ -39,7 +39,11 @@ fn config_rejects_empty_or_missing_paths() {
 
     for config in [
         Config {
-            dict_path: String::new(),
+            dict_path: Some(String::new()),
+            ..valid.clone()
+        },
+        Config {
+            dict_path: None,
             ..valid.clone()
         },
         Config {
@@ -51,7 +55,7 @@ fn config_rejects_empty_or_missing_paths() {
             ..valid.clone()
         },
         Config {
-            dict_path: directory.to_string_lossy().into_owned(),
+            dict_path: Some(directory.to_string_lossy().into_owned()),
             ..valid.clone()
         },
         Config {
@@ -77,7 +81,7 @@ fn config_rejects_empty_or_missing_paths() {
         fs::write(&unreadable_dictionary, "dictionary").unwrap();
         fs::set_permissions(&unreadable_dictionary, fs::Permissions::from_mode(0o000)).unwrap();
         let unreadable = Config {
-            dict_path: unreadable_dictionary.to_string_lossy().into_owned(),
+            dict_path: Some(unreadable_dictionary.to_string_lossy().into_owned()),
             ..valid.clone()
         };
         assert!(unreadable.validate().is_err());
@@ -100,7 +104,7 @@ fn empty_input_and_an_empty_declared_corpus_path_report_differently() {
     fs::write(&dictionary, "dictionary").unwrap();
 
     let base = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: Vec::new(),
         input_format: None,
         markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
@@ -142,7 +146,7 @@ fn config_accepts_a_markdown_corpus_directory() {
     fs::write(corpus.join("paper.md"), "本文。\n").unwrap();
 
     let config = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: vec![(CorpusName::default_key(), corpus, "papers".into())],
         input_format: None,
         markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

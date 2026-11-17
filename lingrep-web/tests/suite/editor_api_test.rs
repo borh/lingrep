@@ -175,8 +175,6 @@ npv := (?<n> [dep.rel in @ROLE]) (?<p> [dep.rel=case])\n\
     );
 }
 
-/// A store serving one ready morphology corpus under the default key, whose
-/// token schema carries the UniDic keys and no dependency keys.
 fn morphology_store() -> (crate::v6_support::ArtifactFixture, RequestStore) {
     let (fixture, runtime) = crate::v6_support::runtime_fixture(
         "editor-check",
@@ -188,7 +186,7 @@ fn morphology_store() -> (crate::v6_support::ArtifactFixture, RequestStore) {
     );
     let store = RequestStore::with_runtime(
         lingrep_web::state::Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

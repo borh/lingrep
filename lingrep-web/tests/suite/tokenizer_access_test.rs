@@ -15,7 +15,7 @@ fn tokenizer_access_fails_cleanly_for_an_empty_dict_path() {
 fn tokenizer_access_memoizes_a_real_dictionary() {
     let dict = lingrep_core::testing::dictionary_path();
     let store = RequestStore::new(Config {
-        dict_path: dict,
+        dict_path: Some(dict),
         // new() builds a runtime; if that requires a real corpus,
         corpora: vec![(CorpusName::default_key(), "unused".into(), "unused".into())],
         input_format: None,

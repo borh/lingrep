@@ -74,7 +74,7 @@ async fn missing_dictionary_yields_503_not_panic() {
 async fn real_dictionary_returns_a_rendered_match() {
     let dict_path = lingrep_core::testing::dictionary_path();
     let store = RequestStore::new(Config {
-        dict_path,
+        dict_path: Some(dict_path),
         corpora: vec![(
             CorpusName::default_key(),
             std::path::PathBuf::new(),

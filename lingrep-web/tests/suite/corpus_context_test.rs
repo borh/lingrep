@@ -29,7 +29,7 @@ fn store_with_corpus_path(path: &str) -> RequestStore {
     // A never-discovered path leaves the runtime not-ready (state 4). The pool
     // constructs without touching the path, so this is cheap and deterministic.
     RequestStore::new(Config {
-        dict_path: "/nonexistent/dict".into(),
+        dict_path: Some("/nonexistent/dict".into()),
         corpora: vec![(
             CorpusName::default_key(),
             path.into(),

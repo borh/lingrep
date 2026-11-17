@@ -59,7 +59,7 @@ async fn search_scope_reruns_matching_and_keeps_comparison_selection_local() -> 
     ));
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
@@ -536,7 +536,7 @@ async fn reader_fixture() -> (reading_support::ArtifactFixture, FixtureServer) {
     let (artifact, runtime) = reading_support::runtime_fixture("reading-browser", words);
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

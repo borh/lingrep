@@ -11,7 +11,7 @@
     clippy::unwrap_used
 )]
 
-use std::io::{BufRead, BufReader, Cursor, Read};
+use std::io::{BufRead, BufReader, Cursor, Read, Write as _};
 use std::path::Path;
 use std::process::{Child, Output, Stdio};
 
@@ -1558,6 +1558,53 @@ fn serve_dictionary_falls_back_to_the_environment_then_the_installed_default() {
         serve(None)
             .unwrap_or_else(|(code, stderr)| panic!("installed default: exit {code:?}: {stderr}")),
     );
+}
+
+#[test]
+fn serve_starts_over_prepared_corpora_without_a_dictionary() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("one.txt");
+    std::fs::write(&source, "猫。\n").unwrap();
+    let artifact = directory.path().join("one.lingcorpus");
+    let dictionary = MiniDictionary::new();
+    let build = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&source)
+        .output()
+        .unwrap();
+    crate::support::assert_success(&build);
+
+    let mut command = std::process::Command::new(crate::support::lingrep_binary_path());
+    command
+        .arg("serve")
+        .env_remove("LINGREP_DICTIONARY_PATH")
+        .env("XDG_DATA_HOME", directory.path().join("data"));
+    let mut corpus = std::ffi::OsString::from("one=");
+    corpus.push(&artifact);
+    let server =
+        crate::support::serve_command(directory.path(), command, &["--corpus".into(), corpus])
+            .unwrap_or_else(|(code, stderr)| panic!("exit {code:?}: {stderr}"));
+
+    let (status, body) = crate::support::get(&server, "/");
+    assert_eq!(status, 200, "{body}");
+
+    let mut stream = std::net::TcpStream::connect(&server.address).unwrap();
+    let form = "pattern=p+%3A%3D+%5B%5D.&sample=%E7%8C%AB";
+    write!(
+        stream,
+        "POST /api/sample HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
+        server.address,
+        form.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    assert!(response.contains("ling dictionary install"), "{response}");
 }
 
 #[test]

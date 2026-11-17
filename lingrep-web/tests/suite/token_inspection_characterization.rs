@@ -26,7 +26,7 @@ async fn compact_kwic_defers_token_inspection_and_decodes_retained_rows() {
     );
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

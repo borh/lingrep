@@ -204,7 +204,7 @@ fn a_bccwj_corpus_declaration_is_refused_at_validation() {
     let dictionary = directory.path().join("dict.zst");
     fs::write(&dictionary, b"").unwrap();
     let config = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: vec![(
             CorpusName::parse("bcc").unwrap(),
             directory.path().join("dist").to_path_buf(),
@@ -250,7 +250,7 @@ fn a_prepared_artifact_is_admitted_as_a_declared_corpus() {
     fs::write(&dictionary, b"").unwrap();
 
     let config = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: vec![(
             CorpusName::parse("bccwj").unwrap(),
             fixture.path.clone(),
@@ -286,7 +286,7 @@ fn a_malformed_prepared_artifact_names_the_reason_it_was_refused() {
     fs::write(artifact.join("manifest.json"), "not json at all").unwrap();
 
     let config = Config {
-        dict_path: dictionary.to_string_lossy().into_owned(),
+        dict_path: Some(dictionary.to_string_lossy().into_owned()),
         corpora: vec![(
             CorpusName::parse("bccwj").unwrap(),
             artifact.clone(),

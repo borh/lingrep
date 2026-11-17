@@ -395,7 +395,11 @@ async fn export(
         overlaps: crate::templates::overlaps_value(snapshot.overlaps).unwrap_or("catalog"),
         corpus: corpus_name,
         corpus_id: identity_digest(&snapshot.corpus_identity),
-        dictionary: corpus_display_name(&store.config.dict_path),
+        dictionary: store
+            .config
+            .dict_path
+            .as_deref()
+            .map_or_else(String::new, corpus_display_name),
         revision,
         exact_matches: data.exact_matches,
         exported_rows: data.exported_rows as u64,

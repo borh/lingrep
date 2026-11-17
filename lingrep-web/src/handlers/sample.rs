@@ -136,7 +136,13 @@ pub async fn run_sample(
             },
             IntoResponse::into_response,
         ),
-        Ok(Err(TokenizerUnavailable)) => fragment(
+        Ok(Err(TokenizerUnavailable::NoDictionary)) => fragment(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sample.unavailable",
+            "Sample analysis requires a dictionary. Run `ling dictionary install` or pass \
+             --dict-path, then restart the server.",
+        ),
+        Ok(Err(TokenizerUnavailable::LoadFailed)) => fragment(
             StatusCode::SERVICE_UNAVAILABLE,
             "sample.unavailable",
             "Sample analysis is unavailable because the tokenizer dictionary could not be loaded.",

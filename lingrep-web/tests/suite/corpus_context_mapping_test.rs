@@ -86,7 +86,7 @@ async fn corpus_context_view_maps_ready_corpus_to_state_one() {
 
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: dictionary.path().to_string_lossy().into_owned(),
+            dict_path: Some(dictionary.path().to_string_lossy().into_owned()),
             corpora: vec![(
                 CorpusName::default_key(),
                 corpus.clone(),
@@ -158,7 +158,7 @@ async fn corpus_context_counts_admitted_jsonl_documents_not_physical_sources() {
     wait_ready(&runtime).await;
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: dictionary.path().to_string_lossy().into_owned(),
+            dict_path: Some(dictionary.path().to_string_lossy().into_owned()),
             corpora: vec![(
                 CorpusName::default_key(),
                 corpus.clone(),

@@ -1,18 +1,4 @@
-//! Resources shared by every corpus this server serves.
-//!
-//! Each of these is expensive and identical across corpora, so each is
-//! constructed once for the process. While there was exactly one corpus the
-//! distinction was invisible and free; plural, constructing them per corpus
-//! would multiply an 8-thread pool by the number of declared corpora.
-//!
-//! The dictionary itself is not shared as decoded bytes:
-//! [`lingrep_core::dictionary::create_tokenizer`] parses into anonymous heap,
-//! and holding that buffer for the process lifetime multiplies resident
-//! memory about twelvefold. What is process-wide and cheap to keep is the
-//! dictionary's identity — its blake3 fingerprint, `[u8; 32]` — not its bytes. The tokenizer is
-//! rebuilt from [`lingrep_core::dictionary::create_tokenizer_from_path`], which
-//! memory-maps a globally-cached decompressed copy instead of holding a
-//! second anonymous-heap copy live alongside it.
+//! Shared scan pool, dictionary identity, and sample tokenizer for all served corpora.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,20 +11,12 @@ use vibrato_rkyv::Tokenizer;
 use lingrep_core::PipelineError;
 use lingrep_core::dictionary::{create_tokenizer_from_path, dictionary_identity};
 
-/// Threads in the shared corpus pool. One in-flight scan owns the whole pool
-/// (see the scan permit in `coordinator.rs`), so this is sized for one scan.
 const POOL_THREADS: usize = 8;
 
-/// Artifact builds admitted at once.
-///
-/// One, because a build owns a full tokenizer over the shared dictionary and
-/// saturates I/O. While there was one corpus this bound was structural — a
-/// single lifecycle mutex made a second concurrent build impossible — and
-/// lazily-built plural corpora would otherwise remove it silently.
 const MAX_CONCURRENT_BUILDS: usize = 1;
 
 pub struct ServerContext {
-    dict_path: PathBuf,
+    dict_path: Option<PathBuf>,
     pool: Arc<ThreadPool>,
     fingerprint: Mutex<Option<[u8; 32]>>,
     build_permit: Arc<tokio::sync::Semaphore>,
@@ -46,9 +24,11 @@ pub struct ServerContext {
     tokenizer: OnceLock<Arc<Tokenizer>>,
 }
 
-/// The sample-analysis dictionary could not be loaded.
 #[derive(Debug, Clone, Copy)]
-pub struct TokenizerUnavailable;
+pub enum TokenizerUnavailable {
+    NoDictionary,
+    LoadFailed,
+}
 
 impl std::fmt::Debug for ServerContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -61,8 +41,13 @@ impl std::fmt::Debug for ServerContext {
 
 impl ServerContext {
     pub fn new(dict_path: impl Into<PathBuf>) -> io::Result<Self> {
+        Self::with_dictionary(Some(dict_path.into()))
+    }
+
+    /// When `dict_path` is `None`, [`Self::dictionary_fingerprint`] and [`Self::tokenizer`] return errors.
+    pub fn with_dictionary(dict_path: Option<PathBuf>) -> io::Result<Self> {
         Ok(Self {
-            dict_path: dict_path.into(),
+            dict_path,
             pool: fixed_pool()?,
             fingerprint: Mutex::new(None),
             build_permit: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BUILDS)),
@@ -71,10 +56,10 @@ impl ServerContext {
         })
     }
 
-    /// The `--dict-path` this server was started with.
+    /// The dictionary this server was started with, if any.
     #[must_use]
-    pub fn dict_path(&self) -> &Path {
-        &self.dict_path
+    pub fn dict_path(&self) -> Option<&Path> {
+        self.dict_path.as_deref()
     }
 
     /// The one scan pool. Cloning shares it; it is never rebuilt.
@@ -119,7 +104,11 @@ impl ServerContext {
         if let Some(existing) = *guard {
             return Ok(existing);
         }
-        let fingerprint = dictionary_identity(&self.dict_path.to_string_lossy())?;
+        let path = self
+            .dict_path
+            .as_ref()
+            .ok_or_else(|| PipelineError::Dictionary("no dictionary is configured".to_owned()))?;
+        let fingerprint = dictionary_identity(&path.to_string_lossy())?;
         *guard = Some(fingerprint);
         Ok(fingerprint)
     }
@@ -136,9 +125,13 @@ impl ServerContext {
         if let Some(existing) = self.tokenizer.get() {
             return Ok(Arc::clone(existing));
         }
+        let path = self
+            .dict_path
+            .as_ref()
+            .ok_or(TokenizerUnavailable::NoDictionary)?;
         let built = Arc::new(
-            create_tokenizer_from_path(&self.dict_path.to_string_lossy())
-                .map_err(|_| TokenizerUnavailable)?,
+            create_tokenizer_from_path(&path.to_string_lossy())
+                .map_err(|_| TokenizerUnavailable::LoadFailed)?,
         );
         // First writer wins; a lost race discards an equivalent tokenizer.
         let _ = self.tokenizer.set(Arc::clone(&built));

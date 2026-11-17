@@ -738,7 +738,7 @@ async fn a_closed_event_stream_connection_counts_as_no_subscriber() {
     let held = occupy(&runtime.context().pool());
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
@@ -868,7 +868,7 @@ async fn completed_snapshot_resolves_surface_and_kwic_lazily() {
     let (_directory, runtime, _slot, _registry) = ready_registry();
     let store = RequestStore::with_runtime(
         Config {
-            dict_path: String::new(),
+            dict_path: None,
             corpora: Vec::new(),
             input_format: None,
             markdown: lingrep_core::corpus::MarkdownReaderConfig::new(

@@ -1019,10 +1019,15 @@ fn build_artifact(
     expected_analysis: AnalysisIdentity,
     fingerprint: [u8; 32],
 ) -> Result<CorpusArtifact, CacheFailureCategory> {
-    let tokenizer =
-        create_tokenizer_from_path(&inner.context.dict_path().to_string_lossy()).map_err(
-            classify(CacheFailureCategory::Dictionary, "create tokenizer"),
-        )?;
+    let dict_path = inner.context.dict_path().ok_or_else(|| {
+        classify(CacheFailureCategory::Dictionary, "create tokenizer")(
+            "no dictionary is configured",
+        )
+    })?;
+    let tokenizer = create_tokenizer_from_path(&dict_path.to_string_lossy()).map_err(classify(
+        CacheFailureCategory::Dictionary,
+        "create tokenizer",
+    ))?;
     let plan = VibratoPlan::configured(
         tokenizer,
         fingerprint,
