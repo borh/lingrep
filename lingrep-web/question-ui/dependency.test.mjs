@@ -116,9 +116,9 @@ test('context words bound only by a where clause are reported with their roles, 
   assert.deepEqual([...boundOutside({span:{start:0,end:1}},5)],[]);
 });
 
-test('the dependency view is the reader\'s choice, else the whole sentence on a narrow screen, else bunsetsu when labelled',async()=>{
+test('the dependency view is the reader\'s choice, else bunsetsu when labelled, else the whole sentence on a narrow screen',async()=>{
   const {dependencyView}=await import('./dependency.js');
-  for(const [choice,bunsetsu,compact,view] of [[null,true,false,'bunsetsu'],[null,false,false,'words'],[null,true,true,'vertical'],['words',true,true,'words'],['bunsetsu',false,false,'words'],['bunsetsu',false,true,'words']])
+  for(const [choice,bunsetsu,compact,view] of [[null,true,false,'bunsetsu'],[null,false,false,'words'],[null,true,true,'bunsetsu'],[null,false,true,'vertical'],['words',true,true,'words'],['bunsetsu',false,false,'words'],['bunsetsu',false,true,'words']])
     assert.equal(dependencyView(choice,bunsetsu,compact),view,JSON.stringify([choice,bunsetsu,compact]));
 });
 
@@ -134,10 +134,32 @@ test('a value reads in plain words from the bundled names, a relation subtype fr
   const {readFileSync}=await import('node:fs');
   const names=JSON.parse(readFileSync(new URL('../../lingrep-core/src/fsm/label_names.json',import.meta.url),'utf8')).sets;
   for(const [attribute,value,locale,name] of [
-    ['upos','NOUN','ja','名詞'],['upos','ADP','ja','助詞'],['upos','VERB','en','verb'],['upos','SPACE','ja','空白'],
+    ['upos','NOUN','ja','名詞'],['upos','ADP','ja','格助詞など'],['upos','VERB','en','verb'],['upos','SPACE','ja','空白'],
     ['dep.rel','nsubj','ja','主語'],['dep.rel','nsubj:pass','ja','受け身の主語'],['dep.rel','obl:poss','en','oblique nominal'],['dep.rel','dobj','en','direct object'],
     ['xpos','NN','en','singular noun'],
     ['upos','名詞-普通名詞-一般','ja',null],['dep.rel','','en',null],['lemma','NOUN','en',null],
   ])assert.equal(valueName(names,attribute,value,locale),name,`${attribute} ${value} ${locale}`);
   assert.equal(valueName(undefined,'upos','NOUN','ja'),null);
+});
+
+test('token details gloss values as the evidence table does, say how a word outside the span is bound, and list all attributes only when there are more',async()=>{
+  const {tokenDetails}=await import('./dependency.js');
+  const {readFileSync}=await import('node:fs');
+  const names=JSON.parse(readFileSync(new URL('../../lingrep-core/src/fsm/label_names.json',import.meta.url),'utf8')).sets;
+  const token=(index,text,upos,head,rel,extra={})=>({index,attributes:{text,lemma:text,upos,'dep.head':String(head),'dep.rel':rel,...extra}});
+  const tokens=[token(0,'坂','NOUN',3,'obj'),token(1,'を','ADP',1,'case'),token(2,'上る','VERB',0,'root',{'conllu.misc':'SpaceAfter=No'})];
+  const row={span:{start:0,end:2},captures:[{name:'n',span:{start:0,end:1}},{name:'p',span:{start:1,end:2}}],graph_bindings:[{binding_kind:'node',name:'v',node:{node_kind:'word',token_index:2}}]};
+  const verb=tokenDetails(tokens,2,row,names,'ja','文の中心');
+  assert.deepEqual([verb.place,verb.roles],['bound',['v']]);
+  const {valueName}=await import('./dependency.js');
+  assert.deepEqual(verb.basics.map(({key,name,values})=>[key,name,values.map(({value,gloss})=>[value,gloss])]),[
+    ['text','表層形',[['上る',null]]],['lemma','辞書形',[['上る',null]]],['upos','品詞',[['VERB','動詞']]],['dep.head','係り先',[['0','文の中心']]],['dep.rel','関係',[['root',valueName(names,'dep.rel','root','ja')]]],
+  ]);
+  assert.deepEqual(verb.all.map(item=>item.key),['text','lemma','upos','dep.head','dep.rel','conllu.misc']);
+  const noun=tokenDetails(tokens,0,row,names,'en','heads the sentence');
+  assert.deepEqual([noun.place,noun.roles],['span',['n']]);
+  assert.deepEqual(noun.basics.find(item=>item.key==='dep.head').values,[{value:'3',gloss:'上る·3'}]);
+  assert.deepEqual(noun.basics.find(item=>item.key==='dep.rel').values,[{value:'obj',gloss:'object'}]);
+  assert.equal(noun.all,null);
+  assert.equal(tokenDetails(tokens,2,{span:{start:0,end:2}},names,'ja','文の中心').place,'outside');
 });

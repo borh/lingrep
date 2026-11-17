@@ -60,6 +60,10 @@ test("a frequency entry's lines name each occurrence and the position of the ope
   const entry={words:['坂','を','上る'],total:12,at:1,lines};
   assert.deepEqual(parseEntryLines(JSON.stringify({...entry,extra:1})),entry);
   assert.equal(parseEntryLines(null),null);
+  const located={...entry,works:2,names:{5:'Natsume_S_Meian'},lines:[{...lines[0],start:0,end:2},lines[1]]};
+  assert.deepEqual(parseEntryLines(JSON.stringify(located)),located);
+  for(const bad of [{...located,works:-1},{...located,names:{5:3}},{...located,lines:[{...lines[0],start:2,end:1},lines[1]]}])
+    assert.throws(()=>parseEntryLines(JSON.stringify(bad)),/frequency entry/);
   for(const bad of ['[',JSON.stringify({...entry,at:2}),JSON.stringify({...entry,at:-1}),JSON.stringify({...entry,words:[1]}),JSON.stringify({...entry,total:1}),JSON.stringify({...entry,lines:[{sentence:-1,document:1,roles:[]}]})])
     assert.throws(()=>parseEntryLines(bad),/frequency entry/);
 });
@@ -131,4 +135,17 @@ test('a stored run supplies the expected analysis only for its own corpus',async
   assert.equal(expectedAnalysis(new URLSearchParams('corpus=sample'),run),null);
   assert.equal(expectedAnalysis(new URLSearchParams('corpus=sample&analysis=saved'),run),'saved');
   assert.equal(expectedAnalysis(new URLSearchParams('corpus=natsume'),null),null);
+});
+
+test("an entry line reads as a concordance line: its span, its context and the role words outside the span",async()=>{
+  const {entryContext}=await import('./location.js');
+  const texts=['肥っ','て','坂','を','上る','とき','。'];
+  const line={sentence:1,document:0,start:2,end:4,roles:[{name:'n',start:2,end:3},{name:'p',start:3,end:4},{name:'v',start:4,end:5}]};
+  const read=entryContext(texts,line,1);
+  assert.deepEqual(read.left.map(token=>[token.index,token.attributes.text]),[[1,'て']]);
+  assert.equal(read.hit,'坂を');
+  assert.deepEqual(read.right.map(token=>[token.index,token.attributes.text]),[[4,'上る']]);
+  assert.deepEqual([...read.bound],[[4,['v']]]);
+  // A line handed off without its span spans its role words.
+  assert.equal(entryContext(texts,{...line,start:undefined,end:undefined},0).hit,'坂を上る');
 });

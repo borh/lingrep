@@ -7,7 +7,7 @@
   "ud-v2": {
    "upos": {
     "ADJ": { "en": "adjective", "ja": "形容詞", "unidic": "形容詞, 形状詞" },
-    "ADP": { "en": "adposition", "ja": "助詞", "unidic": "格・係・副助詞" },
+    "ADP": { "en": "adposition", "ja": "格助詞など", "unidic": "格・係・副助詞" },
     "ADV": { "en": "adverb", "ja": "副詞", "unidic": "副詞" },
     "AUX": { "en": "auxiliary", "ja": "助動詞", "unidic": "助動詞, 非自立" },
     "CCONJ": { "en": "coordinating conjunction", "ja": "接続詞", "unidic": "接続詞" },
@@ -15,10 +15,10 @@
     "INTJ": { "en": "interjection", "ja": "感動詞", "unidic": "感動詞" },
     "NOUN": { "en": "noun", "ja": "名詞", "unidic": "名詞, 接尾辞など" },
     "NUM": { "en": "numeral", "ja": "数詞", "unidic": "数詞" },
-    "PART": { "en": "particle", "ja": "助詞", "unidic": "終助詞など" },
+    "PART": { "en": "particle", "ja": "終助詞など", "unidic": "終助詞など" },
     "PRON": { "en": "pronoun", "ja": "代名詞", "unidic": "代名詞" },
     "PROPN": { "en": "proper noun", "ja": "固有名詞", "unidic": "固有名詞, 外国語" },
-    "PUNCT": { "en": "punctuation", "ja": "記号", "unidic": "句点, 読点, 括弧" },
+    "PUNCT": { "en": "punctuation", "ja": "句読点・括弧", "unidic": "句点, 読点, 括弧" },
     "SCONJ": { "en": "subordinating conjunction", "ja": "接続助詞", "unidic": "接続・準体助詞" },
     "SYM": { "en": "symbol", "ja": "記号", "unidic": "補助記号, 絵文字" },
     "VERB": { "en": "verb", "ja": "動詞", "unidic": "動詞" },

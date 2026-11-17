@@ -1,4 +1,4 @@
-import { attributeMembers } from './model.js';
+import { attributeMembers, basicAttributeKeys } from './model.js';
 const scalar = (token, key) => { const value = token.attributes[key]; return typeof value === 'string' ? value : undefined; };
 /** The 0-based head index, or null at the root. */
 export function headIndex(token) {
@@ -115,11 +115,11 @@ export function verticalArcs(tokens, words) {
 export function boundOutside(row, length) {
     return new Map(evidenceWords(row, length).filter(word => !word.inSpan && word.roles.length).map(word => [word.index, word.roles]));
 }
-/** The reader's choice of view, else the whole sentence on a narrow screen, else 文節 when every word is labelled with one; a 文節 choice without labels shows words. */
+/** The reader's choice of view, else 文節 when every word is labelled with one, else the whole sentence on a narrow screen; a 文節 choice without labels shows words. */
 export function dependencyView(choice, bunsetsu, compact) {
     if (choice)
         return choice === 'bunsetsu' && !bunsetsu ? 'words' : choice;
-    return compact ? 'vertical' : bunsetsu ? 'bunsetsu' : 'words';
+    return bunsetsu ? 'bunsetsu' : compact ? 'vertical' : 'words';
 }
 /** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
 export function headLabel(tokens, index) {
@@ -132,4 +132,12 @@ export function valueName(names, attribute, value, locale) {
     const entry = (value) => LABEL_SETS.map(set => names?.[set]?.[attribute]?.[value]).find(Boolean);
     const found = entry(value) ?? (attribute === 'dep.rel' && value.includes(':') ? entry(value.slice(0, value.indexOf(':'))) : undefined);
     return found?.[locale] ?? found?.en ?? null;
+}
+const KEY_NAMES = { text: { ja: '表層形', en: 'surface' }, lemma: { ja: '辞書形', en: 'dictionary form' }, upos: { ja: '品詞', en: 'part of speech' }, 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
+/** Token `index`'s details as the evidence table words them: `dep.head` as the head's word and number (`root` at the root) and other values by their names in `names`. */
+export function tokenDetails(tokens, index, row, names, locale, root) {
+    const attributes = tokens[index].attributes, word = evidenceWords(row, tokens.length).find(word => word.index === index);
+    const detail = (key) => ({ key, name: KEY_NAMES[key]?.[locale] ?? null, values: attributeMembers(attributes[key]).map(value => ({ value, gloss: key === 'dep.head' ? (value === '0' ? root : headLabel(tokens, index)) : valueName(names, key, value, locale) })) });
+    const basics = basicAttributeKeys(attributes).map(detail), keys = Object.keys(attributes);
+    return { place: word?.inSpan ? 'span' : word?.roles.length ? 'bound' : 'outside', roles: word?.roles ?? [], basics, all: keys.length > basics.length ? keys.map(detail) : null };
 }

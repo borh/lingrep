@@ -93,10 +93,23 @@ export function parseEntryLines(text) {
         value = null;
     }
     const role = (item) => record(item) && typeof item.name === 'string' && ordinal(item.start) && ordinal(item.end) && item.end >= item.start;
-    const line = (item) => record(item) && ordinal(item.sentence) && ordinal(item.document) && Array.isArray(item.roles) && item.roles.every(role);
-    if (!record(value) || !Array.isArray(value.words) || !value.words.every(word => typeof word === 'string') || !Array.isArray(value.lines) || !value.lines.length || !value.lines.every(line) || !ordinal(value.total) || value.total < value.lines.length || !ordinal(value.at) || value.at >= value.lines.length)
+    const span = (item) => item.start === undefined && item.end === undefined || ordinal(item.start) && ordinal(item.end) && item.end > item.start;
+    const line = (item) => record(item) && ordinal(item.sentence) && ordinal(item.document) && span(item) && Array.isArray(item.roles) && item.roles.every(role);
+    const names = (item) => item === undefined || record(item) && Object.values(item).every(name => typeof name === 'string');
+    if (!record(value) || !Array.isArray(value.words) || !value.words.every(word => typeof word === 'string') || !Array.isArray(value.lines) || !value.lines.length || !value.lines.every(line) || !ordinal(value.total) || value.total < value.lines.length || value.works !== undefined && !ordinal(value.works) || !names(value.names) || !ordinal(value.at) || value.at >= value.lines.length)
         throw new Error('The frequency entry in this address is invalid. Open it again from the frequency view.');
-    return { words: value.words, total: value.total, at: value.at, lines: value.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles: roles.map(({ name, start, end }) => ({ name, start, end })) })) };
+    return { words: value.words, total: value.total, ...(value.works !== undefined ? { works: value.works } : {}), at: value.at, ...(value.names !== undefined ? { names: value.names } : {}), lines: value.lines.map(({ sentence, document, start, end, roles }) => ({ sentence, document, ...(start !== undefined ? { start, end } : {}), roles: roles.map(({ name, start, end }) => ({ name, start, end })) })) };
+}
+/** A listed line read as a concordance line from its sentence's token `texts`: up to `context` tokens on each side of its span, the span's text, and the role words outside the span by token index. A line without a span spans its role words. */
+export function entryContext(texts, line, context) {
+    const start = line.start ?? Math.min(...line.roles.map(role => role.start)), end = line.end ?? Math.max(...line.roles.map(role => role.end));
+    const tokens = (from, to) => texts.slice(Math.max(0, from), to).map((text, offset) => ({ index: Math.max(0, from) + offset, attributes: { text } }));
+    const bound = new Map();
+    for (const role of line.roles)
+        for (let index = role.start; index < role.end; index++)
+            if (index < start || index >= end)
+                bound.set(index, [...(bound.get(index) ?? []), role.name]);
+    return { left: context ? tokens(start - context, start) : [], hit: texts.slice(start, end).join(''), right: tokens(end, end + context), bound };
 }
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn = (value) => value !== null && /^frequencies(#|$)/.test(value) ? value : null;

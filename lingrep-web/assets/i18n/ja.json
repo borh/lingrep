@@ -718,5 +718,12 @@
   "frequency.clear_keys": "完全一致の指定を外す",
   "frequency.no_key_match_hint": "値の一部だけを探すときは、上の「絞り込み」に入力してください。",
   "frequency.no_key_match": "このキーの値に完全に一致する項目はありません。",
-  "views.reason_key_field": "{message}"
+  "views.reason_key_field": "{message}",
+  "frequency.legend": "この表の見方",
+  "frequency.legend_exact": "欄に値を入れると、その欄がその値の項目だけを数えます。",
+  "frequency.legend_names": "パターンが (?<n> …) などで名付けた語です。項目はこの順に並びます。",
+  "frequency.legend_share": "検索した文書のうち、その項目が 1 回以上現れる文書の割合です。",
+  "frequency.legend_per_million": "出現数を、検索した文書の 100 万トークンあたりに換算した値です。大きさの違うコーパスを比べられます。",
+  "editor.diag_attribute_unavailable": "このコーパスのトークン属性（{schema}）には `{attribute}` がありません（参照する定義: {definitions}）。この属性を使う条件はどのトークンにも一致せず、`!(…)` の否定だけが成り立ちます。",
+  "editor.diag_schema_bind": "このパターンはコーパスのトークン属性（{schema}）に結び付けられません: {error}。"
 }

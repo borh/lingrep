@@ -213,7 +213,7 @@
 .fq table.freq tbody tr:hover { background: var(--fq-accent-wash); }
 .fq table.freq .fig { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fq table.freq b { font-weight: 600; }
-.fq .entry-cell { font-family: var(--font-cjk); overflow-wrap: anywhere; }
+.fq .entry-cell { font-family: var(--font-cjk); word-break: keep-all; overflow-wrap: break-word; }
 .fq .entry-cell small { display: block; color: var(--fq-soft); font-size: 13px; }
 .fq .spread { width: 9rem; }
 .fq .spread span { display: block; height: 7px; background: var(--fq-bar-off); }
@@ -470,3 +470,12 @@ html:root {
 @media (max-width: 40rem) { .site + main { margin-inline: 0.5rem; } }
 .fq-kwic mark.kb { background: none; color: inherit; padding: 0; font-weight: 600; text-decoration: underline; text-decoration-color: var(--fq-accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .fq-entry-name:focus { outline: none; }
+.fq .freq th .entry-names { font-weight: 400; color: var(--fq-soft); margin-left: 0.4em; }
+.fq .fq-legend { margin: 10px 0 0; font-size: 14px; color: var(--fq-soft); }
+.fq .fq-legend summary { cursor: pointer; }
+.fq .fq-legend dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; margin: 6px 0 0; }
+.fq .fq-legend dt { color: var(--text); font-weight: 600; }
+.fq .fq-legend dd { margin: 0; }
+@media (max-width: 480px) { .fq .fq-legend dl { grid-template-columns: minmax(0, 1fr); } .fq .fq-legend dd { margin-bottom: 4px; } }
+.fq .freq th .entry-names { white-space: nowrap; }
+@media (max-width: 480px) { .fq .freq th .entry-names { display: block; margin-left: 0; } }

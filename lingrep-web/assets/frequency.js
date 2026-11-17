@@ -107,10 +107,12 @@ export function contextHtml(text, bound, side) {
   }
   return html + esc(chars.slice(at).join(""));
 }
-/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words` and `total` and its listed `lines`, `at` the index of `line`, so the question page steps through those lines. */
+/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words`, `total` and `works`, its listed `lines` with their spans and their documents' `names`, and `at`, the index of `line`, so the question page lists those lines and steps through them. */
 export function inspectHref(s, line, { source, analysis, fingerprint }, back, entry = null) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
-  const lines = entry && { words: entry.words, total: entry.total, at: entry.at, lines: entry.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles })) };
+  const named = entry && documentNames(entry.lines), generic = (l) => named(l) === t("frequency.document", { id: l.document });
+  const names = entry && Object.fromEntries(entry.lines.filter((l) => !generic(l)).map((l) => [l.document, named(l)]));
+  const lines = entry && { words: entry.words, total: entry.total, ...(entry.works != null ? { works: entry.works } : {}), at: entry.at, ...(Object.keys(names).length ? { names } : {}), lines: entry.lines.map(({ sentence, document, start, end, roles }) => ({ sentence, document, start, end, roles })) };
   return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), ...(lines ? { entry: JSON.stringify(lines) } : {}), return: back })}`;
 }
 
@@ -428,9 +430,21 @@ export function mountFrequency(root) {
     const docs = answer.documents_admitted, tokens = answer.tokens_admitted;
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
-    const names = keyNames(r.group);
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+  }
+  /** The table's terms, explained in a disclosure under it: the exact-value fields when the key has them, the field names `names`, and the two rate columns. */
+  function legend(names) {
+    const details = document.createElement("details");
+    details.className = "fq-legend";
+    const terms = [
+      ...(keyFields().length > 1 ? [[t("frequency.key_equals"), "frequency.legend_exact"]] : []),
+      ...(names ? [[entryFieldNames(names), "frequency.legend_names"]] : []),
+      [t("frequency.head_share"), "frequency.legend_share"],
+      [t("frequency.head_per_million"), "frequency.legend_per_million"],
+    ];
+    details.innerHTML = `<summary>${esc(t("frequency.legend"))}</summary><dl>${terms.map(([term, key]) => `<dt>${esc(term)}</dt><dd>${esc(t(key))}</dd>`).join("")}</dl>`;
+    return details;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -450,7 +464,10 @@ export function mountFrequency(root) {
       return;
     }
     const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    const names = keyNames(answer.rows[0].group);
+    const entryNames = names ? ` <small class="entry-names" title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "";
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}${h === "views.head_entry" ? entryNames : ""}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    tableEl.querySelector("table.freq").after(legend(names));
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);
@@ -863,7 +880,7 @@ export function mountFrequency(root) {
     const link = e.target.closest?.(".fq-inspect"), i = Number(link?.closest("li[data-i]")?.dataset.i);
     if (!link || !lined || entryEl.classList.contains("previewing") || !lined.lines[i]) return;
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
-    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, lines: lined.lines, at: i });
+    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, works: profile.works, lines: lined.lines, at: i });
   };
   entryEl.addEventListener("pointerdown", withEntryLines);
   entryEl.addEventListener("click", withEntryLines, true);

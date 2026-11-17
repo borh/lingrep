@@ -3,23 +3,23 @@ import {parseSections,restoreSections} from './sections.js';
 import type {SectionOrigin,SectionLink,QueryRecipe} from './sections.js';
 import {addCondition,patternSource} from './composer.js';
 import type {TokenCondition} from './composer.js';
-import {expectedAnalysis,defaultView,parseView,locationHash,locationURL,savedQuestion,seedParams,parseOccurrence,parseEntryLines,frequencyReturn} from './location.js';
+import {expectedAnalysis,defaultView,parseView,locationHash,locationURL,savedQuestion,seedParams,parseOccurrence,parseEntryLines,frequencyReturn,entryContext} from './location.js';
 import type {ViewLocation,ConcordanceLocation,HitLocation,OccurrenceTarget,EntryLines} from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName} from './dependency.js';
-import type {Arc,DependencyView,EvidenceWord} from './dependency.js';
+import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName,tokenDetails as detailsOf} from './dependency.js';
+import type {Arc,DependencyView,EvidenceWord,DetailRow} from './dependency.js';
 
-import { element as $, basicAttributeKeys, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
-import type { SearchLimit, Behavior, Locale, Configuration, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, AttributeValue, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
+import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import type { SearchLimit, Behavior, Locale, Configuration, CatalogDefinition, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));
 const words = (tokens: readonly Token[] | undefined) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
 let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
-  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'作品を読む',
-  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
+  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter または「検索する」で検索します。',formatSource:'パターンを整形',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
+  current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語番号',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',noLines:'No lines for this pattern yet.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
 const t = (key: string) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
@@ -106,7 +106,7 @@ async function executeSavedSection(link:SectionLink&{recipe:QueryRecipe},signal:
   if(signal.aborted)throw new Error('Saved-search restore stopped. Run saved searches to continue.');
   const recipe=link.recipe;
   if(!Object.hasOwn(config.datasets,recipe.dataset))throw new Error(`The corpus for this saved query is unavailable: ${recipe.dataset}.`);
-  $<HTMLTextAreaElement>('#source').value=recipe.source;$<HTMLSelectElement>('#corpus').value=recipe.dataset;
+  setSource(recipe.source);$<HTMLSelectElement>('#corpus').value=recipe.dataset;
   analysisExpectation=recipe.analysis;controls.restore(new URLSearchParams({...controls.entries(),metadata:'{}',raw:recipe.where}));updateCorpus();
   const body={source:recipe.source,dataset:recipe.dataset,where:recipe.where,...(recipe.analysis?{expected_analysis_identity:recipe.analysis}:{})};
   const {id}=await post('api/questions/runs',body,signal);expectedAnalyses.set(id,recipe.analysis);
@@ -157,6 +157,9 @@ let pendingOccurrence: OccurrenceTarget | null=null;
 let entryLines:(EntryLines&Pick<OccurrenceTarget,'pattern'|'analysis'|'fingerprint'>)|null=null;
 const entryLine=(at:number):OccurrenceTarget=>({...entryLines!.lines[at],pattern:entryLines!.pattern,analysis:entryLines!.analysis,fingerprint:entryLines!.fingerprint});
 function entryActive():boolean{return !!entryLines&&!!inspecting&&!tokenLab.hidden&&inspecting.row.pattern===entryLines.pattern&&inspecting.row.corpus_sentence_ordinal===entryLines.lines[entryLines.at].sentence;}
+// The searches a hand-off ran; while the entry context holds, their results list the entry's lines.
+const entryRuns=new Set<string>();
+const entryShown=(run:RunSnapshot|null|undefined)=>!!entryLines&&!!run&&entryRuns.has(run.id);
 // The draft's definition and document limit; it applies while the pattern source is `source`.
 let searchLimit:(SearchLimit&{readonly source:string})|null=null;
 const runLimits=new Map<string,SearchLimit>();
@@ -168,11 +171,36 @@ const documentName=(dataset:string,document:number)=>documentTitles.get(`${datas
 let revealedFailure:string|null=null;
 const editError=document.createElement('button');editError.type='button';editError.id='edit-pattern-error';editError.hidden=true;$('#error').after(editError);
 const patternFailure=(run:RunSnapshot|null)=>run?.phase==='failed'?run.diagnostics?.find(d=>d.data.stage==='catalog'&&d.data.severity==='error'):undefined;
+// The pattern editor (CodeMirror and the tree-sitter grammar), loaded the
+// first time the source editor opens; until then, and if it cannot load,
+// #source is a plain textarea.
+type PatternEditor={mountPatternEditor(textarea:HTMLTextAreaElement,options:object):Promise<boolean>;selectSource(textarea:HTMLTextAreaElement,from:number,to?:number):void;recheck(textarea:HTMLTextAreaElement):void;formatCurrent(textarea:HTMLTextAreaElement):Promise<unknown>};
+let patternEditor:Promise<PatternEditor|null>|null=null,editorLocale:((locale:string)=>Promise<void>)|null=null;
+function loadPatternEditor():Promise<PatternEditor|null>{
+  patternEditor??=(async()=>{
+    const stylesheet=document.createElement('link');stylesheet.rel='stylesheet';stylesheet.href=new URL('../editor/pattern-editor.css',import.meta.url).href;document.head.append(stylesheet);
+    try{
+      const [editor,i18n]=await Promise.all([import(new URL('../editor/pattern-editor.js',import.meta.url).href),import(new URL('../i18n.js',import.meta.url).href)]);
+      editorLocale=i18n.useLocale;await i18n.useLocale(locale);
+      const mounted=await editor.mountPatternEditor($<HTMLTextAreaElement>('#source'),{corpus:()=>$<HTMLSelectElement>('#corpus').value||null,formatOnBlur:false,describedBy:'draft-note'});
+      if(mounted)$('#format-source').hidden=false;
+      return mounted?editor as PatternEditor:null;
+    }catch{return null;}
+  })();
+  return patternEditor;
+}
+/** Writes the pattern source, and the editor showing it. */
+function setSource(value:string){const input=$<HTMLTextAreaElement>('#source');input.value=value;input.dispatchEvent(new Event('pattern:sync'));}
+/** Focuses the pattern source with `from`–`to` selected, in the editor once it has loaded. */
+function focusSource(from:number|null,to=from){
+  const input=$<HTMLTextAreaElement>('#source');input.focus();if(from!=null)input.setSelectionRange(from,to??from);
+  void loadPatternEditor().then(editor=>{if(editor&&!$('#source-editor').hidden)editor.selectSource(input,from??0,to??from??0);});
+}
 function editFailedPattern(focus=true){
   const run=state.current,diagnostic=patternFailure(run);if(!run||!diagnostic)return;
-  $('#source-editor').hidden=false;$('#edit-source').setAttribute('aria-expanded','true');
+  $('#source-editor').hidden=false;$('#edit-source').setAttribute('aria-expanded','true');void loadPatternEditor();
   const input=$<HTMLTextAreaElement>('#source');
-  if(focus){input.focus();const span=diagnostic.data.location?.source_span;const range=span&&input.value===run.source?sourceSelection(run.source,span):null;if(range)input.setSelectionRange(...range);}
+  if(focus){const span=diagnostic.data.location?.source_span;const range=span&&input.value===run.source?sourceSelection(run.source,span):null;focusSource(range?.[0]??null,range?.[1]);}
 }
 editError.addEventListener('click',()=>editFailedPattern());
 const limitChoices=document.createElement('p');limitChoices.id='limit-choices';limitChoices.className='limit-choices';limitChoices.hidden=true;editError.after(limitChoices);
@@ -190,7 +218,7 @@ function renderLimitChoices(run:RunSnapshot|null){
 limitChoices.addEventListener('click',event=>{
   const button=(event.target as Element).closest<HTMLButtonElement>('[data-limit-pattern]'),run=state.current;if(!button||!run)return;
   const pattern=button.dataset.limitPattern!;
-  $<HTMLTextAreaElement>('#source').value=run.source;$<HTMLSelectElement>('#corpus').value=run.dataset;
+  setSource(run.source);$<HTMLSelectElement>('#corpus').value=run.dataset;
   searchLimit={source:run.source,pattern,document:searchLimit?.source===run.source?searchLimit.document:null};preferredPattern=pattern;
   updateCorpus();void search();
 });
@@ -214,7 +242,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 const post = <T = {id: string}>(path:string,body:object={},signal?:AbortSignal) => request<T>(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});
 
 function translate() {
-  document.documentElement.lang = locale;
+  document.documentElement.lang = locale;void editorLocale?.(locale);
   localizeExample();renderDependencies();if(tokenData&&inspecting)selectToken(tokenIndex);
   for (const element of document.querySelectorAll<HTMLElement>('[data-t]')) element.textContent = t(element.dataset.t??'');
   $('#language').textContent = locale === 'en' ? '日本語' : 'English';
@@ -223,7 +251,7 @@ function translate() {
   $('#corpus-comma').textContent='';
   $('#scope-end').textContent=locale==='ja'?'から ':'';
   $('.question-sentence').insertBefore($('#edit-source'),locale==='ja'?$('.sentence-period'):$('#corpus-join'));
-  for(const button of document.querySelectorAll<HTMLButtonElement>('[data-reader-document]'))button.textContent=Number(button.dataset.readerDocument)<0?(locale==='ja'?'前の作品':'Previous document'):(locale==='ja'?'次の作品':'Next document');
+  for(const button of document.querySelectorAll<HTMLButtonElement>('[data-reader-document]'))button.textContent=Number(button.dataset.readerDocument)<0?(locale==='ja'?'前の文書':'Previous document'):(locale==='ja'?'次の文書':'Next document');
   controls?.localize();
   $<HTMLInputElement>('#metadata-query').placeholder=locale==='ja'?'値を検索…':'Find a value…';$<HTMLInputElement>('#metadata-query').setAttribute('aria-label',locale==='ja'?'メタデータの値を検索':'Find a metadata value');
   $<HTMLInputElement>('#where').placeholder = locale === 'ja' ? 'すべての文書 · 必要なら --where 条件を入力' : 'All documents · optional --where clause';
@@ -239,7 +267,7 @@ function translate() {
 function updateCorpus() {
   const dataset=config?.datasets[$<HTMLSelectElement>('#corpus').value];if(!dataset)return;
   const facts:string[]=[];
-  if(dataset.documents!=null)facts.push(`${count(dataset.documents)} ${locale==='ja'?'作品':'documents'}`);
+  if(dataset.documents!=null)facts.push(`${count(dataset.documents)} ${locale==='ja'?'文書':'documents'}`);
   if(dataset.sentences!=null)facts.push(`${count(dataset.sentences)} ${locale==='ja'?'文':'sentences'}`);
   if(dataset.readiness!=='ready')facts.push(locale==='ja'?(dataset.readiness==='failed'?'コーパスの準備に失敗しました。検索で再試行できます。':'コーパスを準備しています。検索すると準備の完了を待ちます。'):(dataset.readiness==='failed'?'Corpus preparation failed. Search to retry.':'Corpus preparing · searches wait until it is ready.'));
   $('#corpus-meta').textContent=dataset.readiness==='ready'?'':facts.join(' · ');
@@ -258,7 +286,8 @@ function updateDraft(commit: boolean | Event=true) {
   const names=state.current?.source===source?state.current.definitions:[];
   if(searchLimit?.document!=null&&(controls?.where()??$<HTMLInputElement>('#where').value))searchLimit={...searchLimit,document:null};
   const limit=activeLimit(),ranLimit=state.current?runLimits.get(state.current.id):undefined;
-  $('#source-label').textContent=limit?.pattern??(names?.length===1?names[0]:(locale==='ja'?'パターンのソース':'pattern source'));
+  $('#source-label').textContent=limit?.pattern??(names?.length===1?names[0]:menuDefinitions().length?(locale==='ja'?'すべての定義':'every definition'):(locale==='ja'?'パターンのソース':'pattern source'));
+  if(!definitionMenu.hidden)renderDefinitionMenu();
   renderLimits(limit);
   const dirty = state.current && (source !== state.current.source || (controls?.where()??$<HTMLInputElement>('#where').value) !== state.current.where || $<HTMLSelectElement>('#corpus').value !== state.current.dataset || (limit?.pattern??null)!==(ranLimit?.pattern??null) || (limit?.document??null)!==(ranLimit?.document??null));
   $('#draft-badge').hidden = !dirty;
@@ -280,12 +309,12 @@ const limitChips=document.createElement('div');limitChips.className='scope-chips
 function renderLimits(limit:SearchLimit|null){
   const label=$('#scope-label'),dataset=$<HTMLSelectElement>('#corpus').value;
   if(limit?.document!=null){label.textContent=documentName(dataset,limit.document);label.dataset.limited='';}
-  else if(label.dataset.limited!==undefined){delete label.dataset.limited;label.textContent=locale==='ja'?'すべての作品':'all documents';}
-  const chips=[...(limit?.pattern?[['pattern',locale==='ja'?`定義: ${limit.pattern}`:`Definition: ${limit.pattern}`]]:[]),...(limit?.document!=null?[['document',locale==='ja'?`作品: ${documentName(dataset,limit.document)}`:`Document: ${documentName(dataset,limit.document)}`]]:[]),...(entryActive()?[['entry',locale==='ja'?`用例: ${entryLines!.words.join(' ')}`:`Examples: ${entryLines!.words.join(' ')}`]]:[])];
+  else if(label.dataset.limited!==undefined){delete label.dataset.limited;label.textContent=locale==='ja'?'すべての文書':'all documents';}
+  const chips=[...(limit?.pattern?[['pattern',locale==='ja'?`定義: ${limit.pattern}`:`Definition: ${limit.pattern}`]]:[]),...(limit?.document!=null?[['document',locale==='ja'?`文書: ${documentName(dataset,limit.document)}`:`Document: ${documentName(dataset,limit.document)}`]]:[]),...(entryShown(displayedEvidence())?[['entry',locale==='ja'?`用例: ${entryLines!.words.join(' ')}`:`Examples: ${entryLines!.words.join(' ')}`]]:[])];
   const signature=JSON.stringify(chips);if(renderSignatures.get(limitChips)===signature)return;renderSignatures.set(limitChips,signature);
-  limitChips.replaceChildren(...chips.map(([kind,text])=>{const button=document.createElement('button');button.type='button';button.className='scope-chip';button.dataset.clearLimit=kind;button.setAttribute('aria-label',locale==='ja'?`${text} の限定を外す`:`Remove the limit ${text}`);button.innerHTML=`${escape(text)}<span aria-hidden="true"> ×</span>`;return button;}));
+  limitChips.replaceChildren(...chips.map(([kind,text])=>{const button=document.createElement('button');button.type='button';button.className='scope-chip';button.dataset.clearLimit=kind;button.setAttribute('aria-label',kind==='pattern'&&menuDefinitions().some(definition=>definition.count_only)?(locale==='ja'?`${text} を別の定義に変える`:`Choose another definition than ${text}`):locale==='ja'?`${text} の限定を外す`:`Remove the limit ${text}`);button.innerHTML=`${escape(text)}<span aria-hidden="true"> ×</span>`;return button;}));
 }
-limitChips.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-clear-limit]');if(button?.dataset.clearLimit==='entry'){entryLines=null;renderExampleSteps();updateDraft();return;}if(!button||!searchLimit)return;searchLimit=button.dataset.clearLimit==='pattern'?{...searchLimit,pattern:null}:{...searchLimit,document:null};updateDraft();});
+limitChips.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-clear-limit]');if(button?.dataset.clearLimit==='entry'){leaveEntry();return;}if(!button||!searchLimit)return;if(button.dataset.clearLimit==='pattern'&&menuDefinitions().some(definition=>definition.count_only)){openDefinitionMenu();return;}searchLimit=button.dataset.clearLimit==='pattern'?{...searchLimit,pattern:null}:{...searchLimit,document:null};updateDraft();});
 function restoreLimit(params:URLSearchParams){
   const pattern=params.get('pattern')||null,document=params.get('document');
   searchLimit=pattern||document?{source:$<HTMLTextAreaElement>('#source').value,pattern,document:document&&/^\d+$/.test(document)?Number(document):null}:null;
@@ -303,7 +332,6 @@ function restoreReplay(final: CompletedSnapshot): RunSnapshot[] {
   } catch {return [];}
 }
 
-let sourceAtFocus='';
 async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:OccurrenceTarget) {
   event?.preventDefault();
   if(restoreController)return;
@@ -319,7 +347,6 @@ async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:Occur
   if(where&&searchLimit?.document!=null)searchLimit={...searchLimit,document:null};
   const limit=activeLimit();
   const body={source,dataset:$<HTMLSelectElement>('#corpus').value,where,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{}),...(limit?.pattern?{pattern:limit.pattern}:{}),...(limit?.document!=null?{document:limit.document}:{})};
-  sourceAtFocus=body.source;
   ++replayEpoch;
   isReplay = false;
   $('#replay-note').hidden = true;
@@ -334,7 +361,7 @@ async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:Occur
       await post(`api/questions/runs/${result.id}/cancel`);
       return;
     }
-    activeId = result.id;expectedAnalyses.set(result.id,analysisExpectation);runLimits.set(result.id,{pattern:limit?.pattern??null,document:limit?.document??null});
+    activeId = result.id;if(occurrence)entryRuns.add(result.id);expectedAnalyses.set(result.id,analysisExpectation);runLimits.set(result.id,{pattern:limit?.pattern??null,document:limit?.document??null});
     state = begin(state,runningSnapshot(result.id,body));
     if(origin&&parent){documentSections.set(result.id,{run:state.current!,origin});saveSections();}
     history = [];
@@ -398,7 +425,7 @@ function render(force=false) {
   if(!isReplay)$<HTMLInputElement>('#timeline').value=String(Math.max(0,recorded.length-1));
   $<HTMLButtonElement>('#cancel').hidden=!activeId&&!isReplay&&!restoreController;
   $<HTMLButtonElement>('#cancel').textContent=restoreController?(locale==='ja'?'保存した検索の実行を停止':'Stop saved searches'):t(isReplay?'stopReplay':'stop');
-  $<HTMLButtonElement>('#retry').hidden=!current || current.phase==='running' || current.phase==='complete' || overflowed(current) || current.error_code==='analysis_changed';
+  $<HTMLButtonElement>('#retry').hidden=!current || current.phase==='running' || current.phase==='complete' || overflowed(current) || current.error_code==='analysis_changed' || !!patternFailure(current);
   $<HTMLButtonElement>('#replay').disabled=!recorded.length || !!activeId || isReplay;
   $('#error').hidden=!current?.error;
   const diagnostic=patternFailure(current),line=diagnostic?.data.location?.line;
@@ -454,6 +481,7 @@ function render(force=false) {
       panel.className='result-panel';panel.dataset.run=run.id;
       panel.innerHTML='<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
       $<HTMLDetailsElement>('.document-nav',panel).open=false;
+      $('.kwic-list',panel).addEventListener('click',event=>{const row=(event.target as Element).closest<HTMLElement>('[data-entry-line]');if(row)void openEntryLine(runFor(run.id),Number(row.dataset.entryLine));});
       $<HTMLInputElement>('.line-controls input',panel).addEventListener('input',e=>{filters.set(run.id,(e.target as HTMLInputElement).value);viewLocation=concordanceFor(runFor(run.id));renderLines(panel!,runFor(run.id),true);updateDraft();});
       $('[data-copy]',panel).addEventListener('click',async e=>{
         const model=runFor(run.id);
@@ -566,13 +594,13 @@ function renderDocumentNavigation(panel: HTMLElement,run: RunSnapshot,pattern: s
   }
   finder.hidden=view.documentsTotal<=100&&!view.query;
   const searchInput=$<HTMLInputElement>('input',finder);
-  searchInput.placeholder=locale==='ja'?'作品名・著者を検索':'Find a document or author';searchInput.setAttribute('aria-label',searchInput.placeholder);
-  $('[data-titles="-1"]',finder).textContent=locale==='ja'?'前の作品一覧':'Previous titles';
-  $('[data-titles="1"]',finder).textContent=locale==='ja'?'次の作品一覧':'Next titles';
+  searchInput.placeholder=locale==='ja'?'題名・著者を検索':'Find a document or author';searchInput.setAttribute('aria-label',searchInput.placeholder);
+  $('[data-titles="-1"]',finder).textContent=locale==='ja'?'前の文書一覧':'Previous titles';
+  $('[data-titles="1"]',finder).textContent=locale==='ja'?'次の文書一覧':'Next titles';
   $<HTMLButtonElement>('[data-titles="-1"]',finder).disabled=view.documentsOffset===0||view.loading;
   $<HTMLButtonElement>('[data-titles="1"]',finder).disabled=view.documentsOffset+100>=view.documentsTotal||view.loading;
   $('span',finder).textContent=`${count(view.documentsTotal?view.documentsOffset+1:0)}–${count(Math.min(view.documentsOffset+100,view.documentsTotal))} / ${count(view.documentsTotal)}`;
-  $('.document-jump',wrapper).textContent=locale==='ja'?`作品へ移動 · ${count(view.documentsTotal)} 作品`:`Jump to document · ${count(view.documentsTotal)} works`;
+  $('.document-jump',wrapper).textContent=locale==='ja'?`文書へ移動 · ${count(view.documentsTotal)} 文書`:`Jump to document · ${count(view.documentsTotal)} documents`;
   const documents=view.documents??[];
   const options=view.selectedDoc&&!documents.some(d=>d.ordinal===view.selectedDoc!.ordinal)?[view.selectedDoc,...documents]:documents;
   if(!nav.children.length){
@@ -585,17 +613,17 @@ function renderDocumentNavigation(panel: HTMLElement,run: RunSnapshot,pattern: s
   }
   const select=$<HTMLSelectElement>('select',nav),optionSignature=JSON.stringify([options,locale]);
   if(renderSignatures.get(select)!==optionSignature){
-    select.innerHTML=`<option value="">${locale==='ja'?'すべての作品':'All documents'}</option>${options.map(d=>`<option value="${d.ordinal}">${escape(d.title)}${d.author?' · '+escape(d.author):''} (${count(d.matches)})</option>`).join('')}`;
+    select.innerHTML=`<option value="">${locale==='ja'?'すべての文書':'All documents'}</option>${options.map(d=>`<option value="${d.ordinal}">${escape(d.title)}${d.author?' · '+escape(d.author):''} (${count(d.matches)})</option>`).join('')}`;
     renderSignatures.set(select,optionSignature);
   }
-  select.setAttribute('aria-label',locale==='ja'?'作品へ移動':'Jump to document');select.value=String(view.document??'');
+  select.setAttribute('aria-label',locale==='ja'?'文書へ移動':'Jump to document');select.value=String(view.document??'');
   for(const link of nav.querySelectorAll<HTMLAnchorElement>('[data-document-step]')){
     const direction=Number(link.dataset.documentStep),target=direction<0?view.previousDoc:view.nextDoc;
     link.hidden=view.scopeDocument==null;
-    link.textContent=locale==='ja'?(direction<0?'前の作品':'次の作品'):(direction<0?'Previous document':'Next document');
+    link.textContent=locale==='ja'?(direction<0?'前の文書':'次の文書'):(direction<0?'Previous document':'Next document');
     updateNavigationLink(link,target==null?null:hrefFor(run,{...concordanceFor(run),scopeDocument:target,document:target,after:-1}),view.loading);
   }
-  $('span',nav).textContent=view.error??(view.loading?(locale==='ja'?'読み込み中…':'Loading…'):view.position!=null?`${view.position+1} / ${count(view.documentsTotal)}`:`${count(view.documentsTotal)} ${locale==='ja'?'作品に用例':'matching documents'}`);
+  $('span',nav).textContent=view.error??(view.loading?(locale==='ja'?'読み込み中…':'Loading…'):view.position!=null?`${view.position+1} / ${count(view.documentsTotal)}`:`${count(view.documentsTotal)} ${locale==='ja'?'文書に用例':'matching documents'}`);
   const retry=$<HTMLButtonElement>('[data-document-retry]',nav);retry.hidden=!view.error;retry.textContent=locale==='ja'?'もう一度読み込む':'Retry loading documents';
   if(!paging.children.length){paging.innerHTML='<a data-view data-page-step="-1"></a><a data-view data-page-step="1"></a><button type="button" data-page-retry hidden></button>'; $('[data-page-retry]',paging).addEventListener('click',()=>retryDocumentPage(panel,run,pattern,view));}
   paging.hidden=!view.error&&view.previousAfter==null&&view.next==null;
@@ -632,7 +660,7 @@ function updateReaderNavigation() {
   }).catch(error=>{
     if((readerTarget??inspecting)!==inspection||epoch!==readerNavigationEpoch)return;
     nav.setAttribute('aria-busy','false');
-    const retry=document.createElement('button');retry.type='button';retry.dataset.readerRetry='';retry.textContent=locale==='ja'?'作品の移動を再読み込み':'Retry document navigation';retry.title=errorMessage(error);retry.addEventListener('click',updateReaderNavigation);nav.append(retry);
+    const retry=document.createElement('button');retry.type='button';retry.dataset.readerRetry='';retry.textContent=locale==='ja'?'文書の移動を再読み込み':'Retry document navigation';retry.title=errorMessage(error);retry.addEventListener('click',updateReaderNavigation);nav.append(retry);
   });
 }
 
@@ -651,6 +679,8 @@ function setContext(element:HTMLElement,tokens:readonly Token[],bound:ReadonlyMa
 }
 function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=false) {
   if (!run) return;
+  panel.classList.toggle('listing-entry',entryShown(run));
+  if(entryShown(run)){renderEntryList(panel,run);return;}
   const pattern=selection.get(run.id)??'',view=documentView(run,pattern);
   if(!isReplay&&run.phase==='complete'&&!view.loading&&(!view.error&&(view.documents===null||view.limit!==controls.state.lines)||view.error&&view.request?.limit!==controls.state.lines)){void loadDocumentPage(panel,run,pattern,view.document,view.after);return;}
   renderDocumentNavigation(panel,run,pattern,view);
@@ -670,11 +700,11 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
   if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
   const matchingDocuments=pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
-  $('.evidence-sentence',panel).textContent=run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 作品`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
+  $('.evidence-sentence',panel).textContent=run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 文書`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
   const scope=$('.document-scope',panel);
   scope.hidden=view.scopeDocument==null;
   if(!scope.hidden){
-    const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての作品に戻る':'Return to all documents'}</a>`;
+    const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての文書に戻る':'Return to all documents'}</a>`;
     if(renderSignatures.get(scope)!==markup){scope.innerHTML=markup;renderSignatures.set(scope,markup);}
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
@@ -741,11 +771,86 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
   for(const key of nodes.keys())if(!used.has(key))nodes.delete(key);
 }
 
+// Each listed line's sentence as token texts, or the reason it could not be read, by corpus and sentence.
+const entryTexts=new Map<string,readonly string[]|{error:string}>();
+let entryReading=false;
+async function readEntryTexts(run:RunSnapshot){
+  if(entryReading||!entryLines)return;
+  const keys=[...new Set(entryLines.lines.map(line=>`${run.dataset}:${line.sentence}`))].filter(key=>!entryTexts.has(key));
+  if(!keys.length)return;
+  entryReading=true;
+  try{
+    for(let at=0;at<keys.length;at+=6)await Promise.all(keys.slice(at,at+6).map(async key=>{
+      const sentence=key.slice(key.lastIndexOf(':')+1);
+      try{const data=tokenCache.get(key)??parseStoredSentence(await request<unknown>(`api/questions/data/${encodeURIComponent(run.dataset)}/tokens?sentence=${sentence}`));
+        entryTexts.set(key,entryLines&&data.analysis_identity!==entryLines.analysis?{error:t('occurrenceChanged')}:data.tokens.map(token=>token.attributes.text));}
+      catch(error){entryTexts.set(key,{error:errorMessage(error)});}
+    }));
+  }finally{entryReading=false;}
+  render(true);
+}
+// From a frequency entry, the result lists the entry's lines, with the open one's example under it; the search's whole result is a step away.
+function renderEntryList(panel:HTMLElement,run:RunSnapshot){
+  const entry=entryLines!,pattern=entry.pattern,context=controls.state.context,list=$('.kwic-list',panel);
+  void readEntryTexts(run);
+  const works=entry.works??new Set(entry.lines.map(line=>line.document)).size,name=entry.words.join('');
+  $('.evidence-sentence',panel).textContent=locale==='ja'?`${name} · ${count(entry.total)} 件 · ${count(works)} 文書。`:`${name} · ${count(entry.total)} ${entry.total===1?'match':'matches'} in ${count(works)} ${works===1?'document':'documents'}.`;
+  const note=$('.line-note',panel);
+  note.textContent=entry.lines.length<entry.total?(locale==='ja'?`頻度表に並んだ最初の ${count(entry.lines.length)} 件です。`:`The first ${count(entry.lines.length)} lines listed in Frequencies.`):'';note.hidden=!note.textContent;
+  let exit=panel.querySelector<HTMLButtonElement>('.entry-exit');
+  if(!exit){exit=document.createElement('button');exit.type='button';exit.className='entry-exit';exit.addEventListener('click',leaveEntry);$('.evidence-sentence',panel).after(exit);}
+  const limited=runLimits.get(run.id)?.document,total=count(run.counts[pattern]??0);
+  exit.hidden=run.phase!=='complete';
+  exit.textContent=limited!=null?(locale==='ja'?`${documentName(run.dataset,limited)}の${pattern}をすべて表示（${total} 件）`:`Show all ${total} ${pattern} matches in ${documentName(run.dataset,limited)}`):(locale==='ja'?`${pattern}の結果をすべて表示（${total} 件）`:`Show all ${total} ${pattern} matches`);
+  let nodes=concordanceNodes.get(list);if(!nodes){nodes=new Map();concordanceNodes.set(list,nodes);}
+  const desired:HTMLElement[]=[],used=new Set<string>();
+  const node=(key:string,tag:'div'|'button',className:string)=>{used.add(key);let value=nodes!.get(key);if(!value){value=document.createElement(tag);value.className=className;nodes!.set(key,value);}return value;};
+  const open=entryActive();
+  entry.lines.forEach((line,index)=>{
+    const title=entry.names?.[line.document]??documentName(run.dataset,line.document);
+    if(index===0||entry.lines[index-1].document!==line.document){
+      const heading=node(`entry-document:${index}`,'div','document-heading'),signature=title;
+      if(renderSignatures.get(heading)!==signature){heading.replaceChildren(Object.assign(document.createElement('span'),{className:'entry-document',textContent:title}));renderSignatures.set(heading,signature);}
+      desired.push(heading);
+    }
+    const row=node(`entry:${index}`,'button','kwic-row entry-row') as HTMLButtonElement;row.type='button';row.dataset.entryLine=String(index);
+    const texts=entryTexts.get(`${run.dataset}:${line.sentence}`),expanded=String(open&&index===entry.at);
+    if(row.getAttribute('aria-expanded')!==expanded)row.setAttribute('aria-expanded',expanded);
+    const failure=texts&&'error' in texts?texts.error:null,read=texts&&!('error' in texts)?entryContext(texts,line,context):null,signature=JSON.stringify([locale,context,read?0:failure??null,title]);
+    if(renderSignatures.get(row)!==signature){
+      row.innerHTML='<span class="line-number"></span><span class="context-left" lang="ja"><span></span></span><mark lang="ja"></mark><span class="context-right" lang="ja"></span>';
+      const [number,left,hit,right]=[row.children[0] as HTMLElement,row.children[1].firstElementChild as HTMLElement,row.children[2] as HTMLElement,row.children[3] as HTMLElement];
+      number.textContent=String(index+1);
+      if(read){setContext(left,read.left,read.bound);hit.textContent=read.hit;setContext(right,read.right,read.bound);row.setAttribute('aria-label',`${title}, ${index+1}: ${words(read.left)}${read.hit}${words(read.right)}`);}
+      else{right.textContent=failure!=null?(locale==='ja'?`文を読み込めませんでした。${failure}`:`Could not load the sentence. ${failure}`):(locale==='ja'?'読み込んでいます…':'Loading…');row.setAttribute('aria-label',`${title}, ${index+1}`);}
+      renderSignatures.set(row,signature);
+    }
+    desired.push(row);
+    if(open&&index===entry.at){desired.push(tokenLab);if(readerPanel.open)desired.push(readerPanel);}
+  });
+  const desiredNodes=new Set(desired);
+  for(const child of [...list.children])if(!desiredNodes.has(child as HTMLElement)){if(child===tokenLab||child===readerPanel)document.body.append(child);else child.remove();}
+  desired.forEach((child,index)=>{if(list.children[index]!==child)list.insertBefore(child,list.children[index]??null);});
+  for(const key of nodes.keys())if(!used.has(key))nodes.delete(key);
+  list.setAttribute('aria-busy','false');
+}
+// Leaving the entry context lists the search's whole result again, around the open example.
+function leaveEntry(){
+  entryLines=null;
+  for(const exit of document.querySelectorAll<HTMLElement>('.entry-exit'))exit.remove();
+  renderExampleSteps();updateDraft();render(true);
+  const open=inspecting;if(!open||tokenLab.hidden){$('#results').focus({preventScroll:true});return;}
+  const panel=panels.get(open.run.id),view=documentView(open.run,open.row.pattern);
+  if(panel&&!view.rows.some(row=>row.sequence===open.row.sequence))void loadDocumentPage(panel,open.run,open.row.pattern,open.row.document_ordinal,open.row.sequence-1);
+  $('#token-origin').focus({preventScroll:true});
+}
+
 // The Frequencies tables served, read once when a page filter first finds nothing.
-let frequencyPairs:readonly {corpus:string;catalog:string;patterns:readonly {name:string}[]}[]|null|undefined;
+let frequencyPairs:readonly {corpus:string;catalog:string;source:string;patterns:readonly {name:string}[]}[]|null|undefined;
+function loadFrequencyPairs(){frequencyPairs=null;return request<{pairs:typeof frequencyPairs}>('api/frequency/meta').then(meta=>{frequencyPairs=meta.pairs??[];},()=>{frequencyPairs=[];});}
 // A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
 function filterEmpty(element:HTMLElement,run:RunSnapshot,pattern:string,filter:string,shown:number){
-  if(frequencyPairs===undefined){frequencyPairs=null;void request<{pairs:typeof frequencyPairs}>('api/frequency/meta').then(meta=>{frequencyPairs=meta.pairs??[];render(true);},()=>{frequencyPairs=[];});}
+  if(frequencyPairs===undefined)void loadFrequencyPairs().then(()=>render(true));
   const pair=frequencyPairs?.find(pair=>pair.corpus===run.dataset&&pair.patterns.some(item=>item.name===pattern));
   const signature=JSON.stringify([locale,run.id,pattern,filter,shown,pair?.catalog??null]);if(renderSignatures.get(element)===signature)return;renderSignatures.set(element,signature);
   element.textContent=locale==='ja'?`表示中の${count(shown)}件に「${filter}」を含む用例はありません。`:`None of the ${count(shown)} lines shown contain “${filter}”.`;
@@ -800,16 +905,16 @@ function renderExampleSteps(){
   next.disabled=position===page.rows.length-1&&page.next==null;
   $('#token-origin').textContent=`${documentTitle(row)} · ${count(position<0?row.sequence+1:page.start+position+1)}`;
 }
-// A step from an entry's line opens the next line in this search when the search covers its document, else searches that document.
-async function stepEntry(step:number){
-  const from=entryLines!.at,at=from+step,target=entryLine(at),run=inspecting!.run,limited=runLimits.get(run.id)?.document;
+// An entry's line opens in this search when the search covers its document, else in a search of that document.
+async function openEntryLine(run:RunSnapshot,at:number){
+  const from=entryLines!.at,target=entryLine(at),limited=runLimits.get(run.id)?.document;
   entryLines={...entryLines!,at};
-  if(limited==null||limited===target.document){if(!await openOccurrence(run,target))entryLines={...entryLines,at:from};return;}
+  if(limited==null||limited===target.document){if(!await openOccurrence(run,target)&&entryLines)entryLines={...entryLines,at:from};return;}
   await search(undefined,undefined,target);pendingView=null;pendingOccurrence=target;
 }
 for(const control of exampleSteps.querySelectorAll<HTMLButtonElement>('button'))control.addEventListener('click',async()=>{
   const origin=inspecting;if(!origin)return;
-  if(entryActive()){control.disabled=true;try{await stepEntry(Number(control.dataset.exampleStep));}finally{if(inspecting===origin)renderExampleSteps();}return;}
+  if(entryActive()){control.disabled=true;try{await openEntryLine(origin.run,entryLines!.at+Number(control.dataset.exampleStep));}finally{if(inspecting===origin)renderExampleSteps();}return;}
   const {run,row}=origin,step=Number(control.dataset.exampleStep),view=documentView(run,row.pattern),position=view.rows.findIndex(value=>value.sequence===row.sequence);
   const top=tokenLab.getBoundingClientRect().top,epoch=navigationEpoch,hadFocus=document.activeElement===control;let successor:number|null=null;control.disabled=true;
   try{
@@ -829,23 +934,21 @@ for(const control of exampleSteps.querySelectorAll<HTMLButtonElement>('button'))
     if(hadFocus&&document.activeElement===document.body&&(inspecting===origin||inspecting?.run.id===run.id&&inspecting.row.sequence===successor)){const target=control.disabled?exampleSteps.querySelector<HTMLButtonElement>('button:not(:disabled)'):control;(target??focusedSentence).focus({preventScroll:true});}
   }
 });
-// Token details name the dependency keys in words, as the evidence table's headings do.
-const ATTRIBUTE_NAMES:Record<string,Record<Locale,string>>={'dep.head':{ja:'係り先',en:'attaches to'},'dep.rel':{ja:'関係',en:'relation'}};
 function selectToken(index: number) {
   if(!tokenData)return;tokenIndex=index;
   const token=tokenData.tokens[index],field=attributeKey,members=attributeMembers(token.attributes[field]);
   attributeMember=attributeMember!==undefined&&members.includes(attributeMember)?attributeMember:members[0];
   for(const button of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button')){const token=tokenData.tokens[Number(button.dataset.token)];button.classList.toggle('selected',token.index===index);button.setAttribute('aria-pressed',String(token.index===index));}
-  const entries=Object.entries(token.attributes);const basics=basicAttributeKeys(token.attributes).map(key=>[key,token.attributes[key]] as [string,AttributeValue]);
-  const row=([key,value]:[string,AttributeValue])=>{
-    const values=attributeMembers(value);
-    const name=ATTRIBUTE_NAMES[key]?.[locale],label=name?`${escape(name)} <code>${escape(key)}</code>`:escape(key);
-    return values.length?values.map(member=>{const selected=field===key&&attributeMember===member,gloss=named(key,member);return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected?'selected':''}" aria-pressed="${selected}"><span>${label}</span><strong${gloss?` title="${escape(gloss)}"`:''}>${escape(member)}</strong></button>`;}).join(''):`<div class="attribute-row"><span>${label}</span><span>${locale==='ja'?'値なし':'No values'}</span></div>`;
+  const details=detailsOf(tokenData.tokens,index,inspecting?.row??{span:{start:0,end:0}},config?.value_names,locale,t('root'));
+  const row=({key,name,values}:DetailRow)=>{
+    const label=name?`${escape(name)} <code>${escape(key)}</code>`:escape(key);
+    return values.length?values.map(({value,gloss})=>{const selected=field===key&&attributeMember===value;return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(value)}" class="attribute-row ${selected?'selected':''}" aria-pressed="${selected}"><span>${label}</span><strong>${escape(gloss??value)}${gloss&&gloss!==value?` <code>${escape(value)}</code>`:''}</strong></button>`;}).join(''):`<div class="attribute-row"><span>${label}</span><span>${locale==='ja'?'値なし':'No values'}</span></div>`;
   };
   const attributes=$('#token-attributes'),more=attributes.querySelector<HTMLDetailsElement>(':scope>details')?.open??false,expanded=attributes.querySelector<HTMLDetailsElement>('.attribute-more')?.open??false;
-  const span=inspecting?.row.span,inSpan=!!span&&index>=span.start&&index<span.end;
-  attributes.innerHTML=`<details><summary>${locale==='ja'?'詳しく':'Details'}</summary><p class="attribute-span">${locale==='ja'?(inSpan?'一致範囲の語です。':'一致範囲の外の語です。'):(inSpan?'This word is inside the match.':'This word is outside the match.')}</p><div class="attribute-basics">${basics.map(row).join('')}</div><details class="attribute-more"><summary>${locale==='ja'?'全属性':'All attributes'} (${entries.length})</summary><div class="attribute-all">${entries.map(row).join('')}</div></details></details>`;
-  attributes.querySelector<HTMLDetailsElement>(':scope>details')!.open=more;attributes.querySelector<HTMLDetailsElement>('.attribute-more')!.open=expanded;
+  const roles=details.roles.join(', ');
+  const place=locale==='ja'?{span:'一致範囲の語です。',bound:`パターンの条件で結び付いた語（${roles}）です。一致範囲の外にあります。`,outside:'一致範囲の外の語です。'}[details.place]:{span:'This word is inside the match.',bound:`The pattern's condition binds this word as ${roles}; it lies outside the match.`,outside:'This word is outside the match.'}[details.place];
+  attributes.innerHTML=`<details><summary>${locale==='ja'?'詳しく':'Details'}</summary><p class="attribute-span">${escape(place)}</p><div class="attribute-basics">${details.basics.map(row).join('')}</div>${details.all?`<details class="attribute-more"><summary>${locale==='ja'?'全属性':'All attributes'} (${details.all.length})</summary><div class="attribute-all">${details.all.map(row).join('')}</div></details>`:''}</details>`;
+  attributes.querySelector<HTMLDetailsElement>(':scope>details')!.open=more;const all=attributes.querySelector<HTMLDetailsElement>('.attribute-more');if(all)all.open=expanded;
   $<HTMLButtonElement>('#attribute-remix').disabled=attributeMember===undefined||conditions.some(condition=>condition.tokenIndex===tokenIndex&&condition.key===field&&condition.value===attributeMember);
   renderComposer();
 }
@@ -892,7 +995,7 @@ function renderDependencies(){
       const y1=(arc.from+.5)*TREE_ROW,y2=(arc.to+.5)*TREE_ROW,x=gutter-6-arc.column*TREE_COLUMN;
       svg.append(svgNode('path',{class:arc.bound?'dependency-arc bound':'dependency-arc',d:`M${gutter},${y1} H${x} V${y2} H${gutter-3} M${gutter-8},${y2-4} L${gutter-3},${y2} L${gutter-8},${y2+4}`}));
     }
-    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel',value(index,'dep.rel'))??'')}">${index+1} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
+    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel',value(index,'dep.rel'))??'')}">${index+1}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
     diagram.firstElementChild!.prepend(svg);
   }else{
     const units=dependencyUnits(tokens,view==='bunsetsu'?starts:null),{items,arcs}=focusLayout(units,words);
@@ -908,8 +1011,13 @@ function renderDependencies(){
     diagram.replaceChildren(chips);arcLayouts.set(chips,arcs);arcObserver.observe(chips);
   }
   $('#dependency-evidence').innerHTML=words.map(word=>`<tr${word.inSpan?' class="in-span"':''}><td>${word.index+1}</td><td>${escape(named('upos',value(word.index,'upos'))??value(word.index,'upos'))}${word.roles.length?` <small class="role-names">${escape(word.roles.join(', '))}</small>`:''}</td>${['text','lemma','upos'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}<td>${escape(headLabel(tokens,word.index)??t('root'))}</td><td>${relationCell(value(word.index,'dep.rel'))}</td></tr>`).join('');
+  scrollCue();
 }
 compactLayout.addEventListener('change',()=>{if(!dependencyChoice)renderDependencies();});
+// The evidence table fades at an edge it can scroll past.
+const evidenceScroll=$('.dependency-evidence-scroll');
+function scrollCue(){const {scrollLeft,scrollWidth,clientWidth}=evidenceScroll,left=scrollLeft>1,right=scrollLeft+clientWidth<scrollWidth-1;evidenceScroll.dataset.more=left&&right?'both':left?'left':right?'right':'';}
+evidenceScroll.addEventListener('scroll',scrollCue,{passive:true});new ResizeObserver(scrollCue).observe(evidenceScroll);
 dependencyPanel.addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-dependency-view]');if(!button)return;dependencyChoice=button.dataset.dependencyView as DependencyView;renderDependencies();});
 
 // A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.
@@ -1033,7 +1141,7 @@ $('#use-pattern').addEventListener('click',()=>{
   if(!inspecting||!conditions.length)return;
   const run=inspecting.run;analysisExpectation=run.contract_run?.analysis_identity??null;
   const origin:SectionOrigin={parent:run.id,view:hitLocation(run,inspecting.row,'example'),label:`${documentTitle(inspecting.row)} · ${inspecting.row.surface}`};
-  $<HTMLTextAreaElement>('#source').value=patternSource(conditions);$<HTMLSelectElement>('#corpus').value=run.dataset;
+  setSource(patternSource(conditions));$<HTMLSelectElement>('#corpus').value=run.dataset;
   controls.restore(new URLSearchParams({...controls.entries(),metadata:'{}',raw:run.where}));updateCorpus();updateDraft();
   const pending=search(undefined,origin),navigation=navigationEpoch;
   void pending.then(()=>{const current=state.current;if(navigation===navigationEpoch&&current&&documentSections.get(current.id)?.origin===origin){viewEvidence=current;viewLocation=defaultView();window.history.pushState(null,'',hrefFor(current,viewLocation));updateDraft();const panel=panels.get(current.id);panel?.scrollIntoView({block:'start'});panel?.querySelector<HTMLAnchorElement>('.section-origin a')?.focus({preventScroll:true});}});
@@ -1044,14 +1152,9 @@ $<HTMLInputElement>('#timeline').addEventListener('input',()=>{if(activeId||!rec
 $('#reading-options').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey&&!event.altKey)event.preventDefault();});
 $('#query-form').addEventListener('submit',search);
 $<HTMLTextAreaElement>('#source').addEventListener('input',updateDraft);
-$<HTMLTextAreaElement>('#source').addEventListener('focus',()=>{sourceAtFocus=$<HTMLTextAreaElement>('#source').value;});
-$<HTMLTextAreaElement>('#source').addEventListener('blur',event=>{
-  if($<HTMLTextAreaElement>('#source').value===sourceAtFocus)return;
-  if(event.relatedTarget instanceof Element&&event.relatedTarget.closest('#run,#retry'))return;
-  void search();
-});
 
-$<HTMLSelectElement>('#corpus').addEventListener('change',()=>{analysisExpectation=null;updateCorpus();updateDraft();});
+$<HTMLSelectElement>('#corpus').addEventListener('change',()=>{analysisExpectation=null;updateCorpus();updateDraft();void patternEditor?.then(editor=>editor?.recheck($<HTMLTextAreaElement>('#source')));});
+$('#format-source').addEventListener('click',()=>{void patternEditor?.then(editor=>editor?.formatCurrent($<HTMLTextAreaElement>('#source')));});
 $<HTMLSelectElement>('#behavior').addEventListener('change',()=>{updateDraft();render(true);});
 $<HTMLButtonElement>('#cancel').addEventListener('click',async()=>{
   if(restoreController){restoreController.abort();return;}
@@ -1065,19 +1168,63 @@ $<HTMLButtonElement>('#cancel').addEventListener('click',async()=>{
 $<HTMLButtonElement>('#retry').addEventListener('click',search);
 $('#language').addEventListener('click',()=>{locale=locale==='en'?'ja':'en';try{localStorage.setItem(LOCALE_KEY,locale);}catch{}translate();});
 $('#edit-source').addEventListener('click',()=>{
+  if(menuDefinitions().length){if(definitionMenu.hidden)openDefinitionMenu();else closeDefinitionMenu();return;}
+  openSourceEditor();
+});
+function openSourceEditor(){
   const editor=$('#source-editor');editor.hidden=!editor.hidden;$('#edit-source').setAttribute('aria-expanded',String(!editor.hidden));
   if(editor.hidden)return;
   const input=$<HTMLTextAreaElement>('#source'),at=definitionOffset(input.value,$('#source-label').textContent??'');
-  input.focus();
+  focusSource(at<0?null:at);
   if(at<0)return;
-  input.setSelectionRange(at,at);
   const line=parseFloat(getComputedStyle(input).lineHeight)||20;
   input.scrollTop=Math.max(0,(input.value.slice(0,at).split('\n').length-2)*line);
+}
+// The definition blank offers the catalog's definitions; a count-only one is read in Frequencies when a table counts it, and editing the source is the menu's last action.
+const definitionMenu=$('#definition-menu');
+function menuDefinitions():readonly CatalogDefinition[]{
+  if(!config)return [];
+  const source=$<HTMLTextAreaElement>('#source').value,run=state.current;
+  if(source===config.source)return config.definitions??[];
+  return run?.source===source&&!runLimits.get(run.id)?.pattern?run.definitions.map(name=>({name,count_only:false})):[];
+}
+function renderDefinitionMenu(){
+  const definitions=menuDefinitions(),chosen=activeLimit()?.pattern??null,corpus=$<HTMLSelectElement>('#corpus').value,source=$<HTMLTextAreaElement>('#source').value;
+  const counted=definitions.filter(definition=>definition.count_only),ja=locale==='ja';
+  const table=(name:string)=>frequencyPairs?.find(pair=>pair.corpus===corpus&&pair.source===source&&pair.patterns.some(item=>item.name===name));
+  const item=(definition:CatalogDefinition)=>{
+    const pair=definition.count_only?table(definition.name):undefined;
+    if(pair)return `<li><a href="frequencies#${escape(new URLSearchParams({corpus,catalog:pair.catalog,pattern:definition.name}).toString())}">${escape(definition.name)}</a> <span class="definition-note">${ja?'頻度表で開く':'opens in Frequencies'}</span></li>`;
+    return `<li><button type="button" data-definition="${escape(definition.name)}" aria-pressed="${definition.name===chosen}">${escape(definition.name)}</button>${definition.count_only?` <span class="definition-note">${ja?'用例が多く、検索が途中で止まることがあります':'may stop: too many examples to keep'}</span>`:''}</li>`;
+  };
+  const markup=`<h2 id="definition-menu-title">${ja?'検索する定義':'Definition to search'}</h2><ul>${definitions.filter(definition=>!definition.count_only).map(item).join('')}</ul>${counted.length?`<h3>${ja?'頻度表のみ':'Counts only (see Frequencies)'}</h3><p>${ja?'語ごとの件数を数える定義です。用例を一覧するには数が多すぎます。':'These definitions count words; they have too many examples to list.'}</p><ul>${counted.map(item).join('')}</ul>`:''}<p class="definition-actions">${counted.length?'':`<button type="button" data-definition="" aria-pressed="${chosen===null}">${ja?'すべての定義を検索':'Search every definition'}</button>`}<button type="button" data-edit-source>${ja?'パターンのソースを編集':'Edit the pattern source'}</button></p>`;
+  definitionMenu.setAttribute('aria-labelledby','definition-menu-title');
+  if(renderSignatures.get(definitionMenu)===markup)return;
+  const focused=definitionMenu.contains(document.activeElement)?(document.activeElement as HTMLElement).textContent:null;
+  definitionMenu.innerHTML=markup;renderSignatures.set(definitionMenu,markup);
+  if(focused!=null)[...definitionMenu.querySelectorAll<HTMLElement>('button,a')].find(control=>control.textContent===focused)?.focus();
+}
+function openDefinitionMenu(){
+  $('#source-editor').hidden=true;definitionMenu.hidden=false;$('#edit-source').setAttribute('aria-expanded','true');
+  renderDefinitionMenu();
+  if(frequencyPairs===undefined)void loadFrequencyPairs().then(()=>{if(!definitionMenu.hidden)renderDefinitionMenu();});
+  (definitionMenu.querySelector<HTMLElement>('[aria-pressed=true]')??definitionMenu.querySelector<HTMLElement>('button,a'))?.focus();
+}
+function closeDefinitionMenu(focus=true){definitionMenu.hidden=true;$('#edit-source').setAttribute('aria-expanded','false');if(focus)$('#edit-source').focus();}
+definitionMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeDefinitionMenu();}});
+definitionMenu.addEventListener('click',event=>{
+  const target=event.target as Element;
+  if(target.closest('[data-edit-source]')){closeDefinitionMenu(false);openSourceEditor();return;}
+  const button=target.closest<HTMLButtonElement>('[data-definition]');if(!button)return;
+  const pattern=button.dataset.definition||null,source=$<HTMLTextAreaElement>('#source').value;
+  searchLimit={source,pattern,document:activeLimit()?.document??null};if(pattern)preferredPattern=pattern;
+  closeDefinitionMenu();updateDraft();void search();
 });
 $('#token-attributes').addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-attribute]');if(!button)return;attributeKey=button.dataset.attribute!;attributeMember=button.dataset.member;const all=!!button.closest('.attribute-all');selectToken(tokenIndex);[...$('#token-attributes').querySelectorAll<HTMLButtonElement>(all?'.attribute-all [data-attribute]':'.attribute-basics [data-attribute]')].find(item=>item.dataset.attribute===attributeKey&&item.dataset.member===attributeMember)?.focus({preventScroll:true});});
 $<HTMLDialogElement>('#inspector').addEventListener('close',()=>{++readerEpoch;if(viewLocation.kind==='reader'&&inspecting)void navigateView(hrefFor(inspecting.run,viewLocation.returnTo),true,'replace');if(document.activeElement===document.body)$('#results').focus({preventScroll:true});});
 $<HTMLButtonElement>('#replay').addEventListener('click',replay);
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$<HTMLDialogElement>('#inspector').open){$<HTMLDialogElement>('#inspector').close();event.preventDefault();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$<HTMLDialogElement>('#inspector').open){$<HTMLDialogElement>('#inspector').close();event.preventDefault();}
+  else if(event.key==='Escape'&&!event.defaultPrevented&&!tokenLab.hidden&&tokenLab.contains(document.activeElement)){event.preventDefault();$<HTMLAnchorElement>('#close-token').click();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
 
 function displayedEvidence(): RunSnapshot | null {
   if(viewEvidence)return viewEvidence;
@@ -1158,7 +1305,8 @@ async function applyView(run:RunSnapshot,target:ViewLocation,pin=true,epoch=++na
     }
     if(epoch!==navigationEpoch)return;
     if(!row)throw new Error('This saved location has no matching example. Choose another document.');
-    let link=panel.querySelector<HTMLElement>(`[data-sequence="${row.sequence}"]`);
+    const entryRow=entryShown(run)&&entryLines!.lines[entryLines!.at].sentence===row.corpus_sentence_ordinal?panel.querySelector<HTMLElement>(`[data-entry-line="${entryLines!.at}"]`):null;
+    let link=entryRow??panel.querySelector<HTMLElement>(`[data-sequence="${row.sequence}"]`);
     if(!link){filters.set(run.id,'');await loadDocumentPage(panel,run,pattern,row.document_ordinal,row.sequence-1);link=panel.querySelector<HTMLElement>(`[data-sequence="${row.sequence}"]`);}
     if(epoch!==navigationEpoch||!link)return;
     viewLocation=target.kind==='reader'&&target.returnTo.kind==='example'&&target.returnTo.sequence==null?{...target,sequence:row.sequence,returnTo:{...target.returnTo,sequence:row.sequence}}:{...target,sequence:row.sequence};
@@ -1177,7 +1325,7 @@ async function navigateView(href:string,preserveDraft=false,historyMode:'push'|'
     const target=parseView(params.get('view'));
     const run=[viewEvidence,state.current,state.previous,state.completed,inspecting?.run,documentSections.get(identifier)?.run].find(run=>run?.id===identifier)??await readRun(identifier);
     if(epoch!==navigationEpoch)return;
-    if(!preserveDraft){analysisExpectation=run.contract_run?.analysis_identity??null;const question=questionParams(url,run);$<HTMLTextAreaElement>('#source').value=question.get('source')??run.source;$<HTMLSelectElement>('#corpus').value=question.get('corpus')??run.dataset;restoreLimit(question);controls.restore(question);updateCorpus();}
+    if(!preserveDraft){analysisExpectation=run.contract_run?.analysis_identity??null;const question=questionParams(url,run);setSource(question.get('source')??run.source);$<HTMLSelectElement>('#corpus').value=question.get('corpus')??run.dataset;restoreLimit(question);controls.restore(question);updateCorpus();}
     if(historyMode!=='none')window.history[historyMode==='push'?'pushState':'replaceState'](null,'',url.href);
     await applyView(run,target,true,epoch);
   }catch(error){if(epoch!==navigationEpoch)return;$('#error').hidden=false;$('#error').textContent=errorMessage(error);}
@@ -1210,7 +1358,7 @@ async function init() {
   const corpus=params.get('corpus')??Object.keys(config.datasets)[0];
   if(!corpus||!Object.hasOwn(config.datasets,corpus))throw new Error('The corpus for this question is not registered.');
   $<HTMLSelectElement>('#corpus').value=corpus;analysisExpectation=params.get('analysis')||null;
-  $<HTMLTextAreaElement>('#source').value=params.get('source')??config.source;
+  setSource(params.get('source')??config.source);
   controls=initQuestion(config,{changed:updateDraft,viewChanged:()=>render(true),search:()=>search(),getLocale:()=>locale},params);
   if(['keep','live','compare'].includes(params.get('behavior')??''))$<HTMLSelectElement>('#behavior').value=params.get('behavior')!;
   const explicit=params.get('evidence'),attemptId=params.get('attempt')??(!explicit&&!seededQuestion?sessionStorage.getItem('ling-questions-run'):null),completedId=params.get('completed')??(!explicit&&!seededQuestion?sessionStorage.getItem('ling-questions-completed'):null);
@@ -1228,7 +1376,7 @@ async function init() {
   if(current){
     for(const [key,value] of new URLSearchParams({source:current.source,corpus:current.dataset,raw:current.where}))if(!params.has(key)&&(key!=='raw'||!params.has('metadata')))params.set(key,value);
     analysisExpectation=expectedAnalysis(params,current);
-    $<HTMLSelectElement>('#corpus').value=params.get('corpus')!;$<HTMLTextAreaElement>('#source').value=params.get('source')!;controls.restore(params);
+    $<HTMLSelectElement>('#corpus').value=params.get('corpus')!;setSource(params.get('source')!);controls.restore(params);
   }
   state={current:null,previous:null,completed:previous?.phase==='complete'?previous:evidence?.phase==='complete'?evidence:null};
   if(current){if(savedManifest.length>1)documentSections.set(current.id,{run:current,origin:savedManifest.find(link=>link.id===current.id)?.origin??null});state=receive(begin(state,runningSnapshot(current.id,current)),current);if(current.phase==='running'){activeId=current.id;connect(current.id);}else if(current.phase==='complete')recorded=restoreReplay(current);}

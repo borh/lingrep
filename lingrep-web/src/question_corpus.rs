@@ -46,6 +46,8 @@ struct Dataset {
 struct Configuration {
     datasets: BTreeMap<String, Dataset>,
     source: String,
+    /// The published definitions of `source`, for the question page's definition menu.
+    definitions: Vec<crate::patterns::QuestionDefinition>,
     labels: Value,
     value_names: &'static Value,
 }
@@ -112,6 +114,7 @@ async fn config(State(store): State<RequestStore>) -> Response {
     Json(Configuration {
         datasets,
         source: store.default_pattern.to_string(),
+        definitions: crate::patterns::question_definitions(&store.default_pattern),
         labels,
         value_names: crate::metadata_labels::value_names(),
     })
@@ -613,6 +616,35 @@ mod tests {
         assert_eq!(
             body["value_names"]["ud-v2"]["dep.rel"]["nsubj"]["ja"],
             "主語"
+        );
+    }
+
+    #[tokio::test]
+    async fn question_configuration_lists_the_served_catalogs_definitions_marking_count_only_ones()
+    {
+        let store = RequestStore::default().with_default_pattern(
+            "key: [upos]\npos := [].\nphrase := [lemma=cat] [text=is].\nset S := {a}.\nword := [upos=NOUN].\n",
+        );
+        let response = routes()
+            .with_state(store)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/config")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(
+            body["definitions"],
+            serde_json::json!([
+                {"name": "pos", "count_only": true},
+                {"name": "phrase", "count_only": false},
+                {"name": "word", "count_only": false},
+            ])
         );
     }
 

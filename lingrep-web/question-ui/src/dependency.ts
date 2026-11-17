@@ -1,4 +1,4 @@
-import {attributeMembers} from './model.js';
+import {attributeMembers,basicAttributeKeys} from './model.js';
 import type {Token,MatchRecord,Locale} from './model.js';
 
 /** A word the match binds: the span, every capture, and every word a `where` clause binds, as `ling matches --evidence` lists them. */
@@ -104,10 +104,10 @@ export function boundOutside(row:Row,length:number):ReadonlyMap<number,readonly 
 }
 
 export type DependencyView='bunsetsu'|'words'|'vertical';
-/** The reader's choice of view, else the whole sentence on a narrow screen, else 文節 when every word is labelled with one; a 文節 choice without labels shows words. */
+/** The reader's choice of view, else 文節 when every word is labelled with one, else the whole sentence on a narrow screen; a 文節 choice without labels shows words. */
 export function dependencyView(choice:DependencyView|null,bunsetsu:boolean,compact:boolean):DependencyView {
   if(choice)return choice==='bunsetsu'&&!bunsetsu?'words':choice;
-  return compact?'vertical':bunsetsu?'bunsetsu':'words';
+  return bunsetsu?'bunsetsu':compact?'vertical':'words';
 }
 
 /** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
@@ -124,4 +124,19 @@ export function valueName(names:ValueNames|undefined,attribute:string,value:stri
   const entry=(value:string)=>LABEL_SETS.map(set=>names?.[set]?.[attribute]?.[value]).find(Boolean);
   const found=entry(value)??(attribute==='dep.rel'&&value.includes(':')?entry(value.slice(0,value.indexOf(':'))):undefined);
   return found?.[locale]??found?.en??null;
+}
+
+/** A token attribute's value with its plain-word name, when one is known. */
+export interface DetailValue { readonly value:string; readonly gloss:string|null; }
+/** A token attribute in the details: its key, the key's plain-word name when it has one, and its values. */
+export interface DetailRow { readonly key:string; readonly name:string|null; readonly values:readonly DetailValue[]; }
+/** Whether a token lies in the match span, is bound by the pattern's condition outside it (with `roles`), or neither; its basic attributes; and all of them when there are more than the basics. */
+export interface TokenDetails { readonly place:'span'|'bound'|'outside'; readonly roles:readonly string[]; readonly basics:readonly DetailRow[]; readonly all:readonly DetailRow[]|null; }
+const KEY_NAMES:Readonly<Record<string,Readonly<Record<Locale,string>>>>={text:{ja:'表層形',en:'surface'},lemma:{ja:'辞書形',en:'dictionary form'},upos:{ja:'品詞',en:'part of speech'},'dep.head':{ja:'係り先',en:'attaches to'},'dep.rel':{ja:'関係',en:'relation'}};
+/** Token `index`'s details as the evidence table words them: `dep.head` as the head's word and number (`root` at the root) and other values by their names in `names`. */
+export function tokenDetails(tokens:readonly Token[],index:number,row:Row,names:ValueNames|undefined,locale:Locale,root:string):TokenDetails {
+  const attributes=tokens[index].attributes,word=evidenceWords(row,tokens.length).find(word=>word.index===index);
+  const detail=(key:string):DetailRow=>({key,name:KEY_NAMES[key]?.[locale]??null,values:attributeMembers(attributes[key]).map(value=>({value,gloss:key==='dep.head'?(value==='0'?root:headLabel(tokens,index)):valueName(names,key,value,locale)}))});
+  const basics=basicAttributeKeys(attributes).map(detail),keys=Object.keys(attributes);
+  return {place:word?.inSpan?'span':word?.roles.length?'bound':'outside',roles:word?.roles??[],basics,all:keys.length>basics.length?keys.map(detail):null};
 }

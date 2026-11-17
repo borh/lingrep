@@ -26,7 +26,7 @@
     <div>
         <label class="visually-hidden" for="corpus-pattern"><span data-i18n="editor.pattern_label">Pattern</span></label>
         <div id="corpus-editor" class="corpus-pattern-editor" data-editor-size>
-            <textarea id="corpus-pattern" name="pattern" rows="4" data-pattern-editor
+            <textarea id="corpus-pattern" name="pattern" rows="4" data-pattern-editor data-pattern-corpus="[data-corpus-search] input[name=corpus]"
                       spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
                       placeholder="test := [upos=VERB]." required>{{ seed_pattern }}</textarea>
         </div>

@@ -2240,3 +2240,33 @@ html { scroll-padding-block-start: calc(var(--sticky-top) + var(--space-2)); }
 .site-help-content { min-inline-size: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); }
 .site-help-document { max-inline-size: 70rem; margin-inline: auto; }
 .site-help-document pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The colour tokens and header of the question, Frequencies and Compare pages
+   (question-ui/site.css), applied to the workbench pages' own names. */
+:root {
+  --surface: #fdfcf9;
+  --nav-bg: #fdfcf9;
+  --link-color: #1f6a4a;
+  --nav-link-color: #1f6a4a;
+  --focus-ring: #1f6a4a;
+  --selected-bg: #e5efe9;
+  --btn-primary-bg: #1f6a4a;
+  --btn-primary-bg-hover: #185a3d;
+  --btn-primary-bg-active: #124530;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #15171b;
+    --nav-bg: #15171b;
+    --link-color: #8fc9d9;
+    --nav-link-color: #8fc9d9;
+    --focus-ring: #8fc9d9;
+    --selected-bg: #213441;
+  }
+}
+.site-nav { min-height: 48px; padding-block: 0; border-bottom: 0; gap: 2px; font-size: 14px; }
+.site-nav-sep { display: none; }
+.site-nav-brand { font-family: inherit; font-size: 19px; letter-spacing: 0; margin-inline-end: 12px; }
+.site-nav-link { font-size: 14px; font-weight: 400; padding: 3px 8px; }
+.site-nav .locale-toggle { border: 0; background: transparent; color: var(--text); font-size: 14px; min-height: 30px; padding: 3px 9px; }
+.site-nav .locale-toggle:hover { background: var(--selected-bg); }

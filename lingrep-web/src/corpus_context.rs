@@ -96,6 +96,9 @@ pub struct CorpusContextView {
     /// row scrolls horizontally, so an overflow disclosure hid labels behind a
     /// click that the reader could already have reached by scrolling.
     pub sections: Vec<SectionRow>,
+    /// The token attribute keys the corpus carries, which the pattern editor
+    /// completes; empty until the corpus is ready.
+    pub token_keys: Vec<String>,
 }
 
 impl CorpusContextView {
@@ -128,6 +131,7 @@ impl CorpusContextView {
             sentence_count: Some(sentence_count),
             document_count: Some(document_count),
             sections: rows,
+            token_keys: Vec::new(),
         }
     }
 
@@ -146,6 +150,7 @@ impl CorpusContextView {
             sentence_count: Some(sentence_count),
             document_count: None,
             sections: Vec::new(),
+            token_keys: Vec::new(),
         }
     }
 
@@ -164,6 +169,7 @@ impl CorpusContextView {
             sentence_count: Some(sentence_count),
             document_count: None,
             sections: Vec::new(),
+            token_keys: Vec::new(),
         }
     }
 
@@ -192,6 +198,7 @@ impl CorpusContextView {
             sentence_count: None,
             document_count: None,
             sections: Vec::new(),
+            token_keys: Vec::new(),
         }
     }
 
@@ -210,6 +217,7 @@ impl CorpusContextView {
             sentence_count: None,
             document_count: None,
             sections: Vec::new(),
+            token_keys: Vec::new(),
         }
     }
 }
@@ -351,8 +359,22 @@ pub async fn corpus_context_view(
 pub async fn slot_context_view(slot: &CorpusSlot) -> CorpusContextView {
     // The key is a property of the slot, not of any readiness state, so it is
     // stamped once onto whichever of the six views the runtime produced.
+    let token_keys = match slot.runtime.ready().await {
+        Some(ready) => ready.artifact.token_schema().map_or_else(
+            |_| Vec::new(),
+            |schema| {
+                schema
+                    .keys()
+                    .iter()
+                    .map(|key| key.as_str().to_owned())
+                    .collect()
+            },
+        ),
+        None => Vec::new(),
+    };
     CorpusContextView {
         corpus_key: slot.name.as_str().to_owned(),
+        token_keys,
         ..slot_readiness_view(slot).await
     }
 }

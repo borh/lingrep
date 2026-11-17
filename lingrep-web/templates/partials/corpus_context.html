@@ -1,5 +1,5 @@
 {% import "macros.html" as macros -%}
-<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label"{% match corpus_context.identity_digest %}{% when Some with (digest) %} data-corpus-digest="{{ digest }}"{% when None %}{% endmatch %}{% if corpus_context.polling %} hx-get="api/corpus-context?k={{ corpus_context.corpus_key }}" hx-trigger="load delay:2s, every 3s" hx-swap="outerHTML"{% endif %}>
+<section class="corpus-context" aria-label="Corpus context" data-i18n-aria-label="corpus.section_label"{% match corpus_context.identity_digest %}{% when Some with (digest) %} data-corpus-digest="{{ digest }}"{% when None %}{% endmatch %}{% if !corpus_context.token_keys.is_empty() %} data-token-keys="{{ corpus_context.token_keys.join(" ") }}"{% endif %}{% if corpus_context.polling %} hx-get="api/corpus-context?k={{ corpus_context.corpus_key }}" hx-trigger="load delay:2s, every 3s" hx-swap="outerHTML"{% endif %}>
   {% call macros::corpus_name(corpus_context.name, corpus_context.identity_digest.as_deref().unwrap_or(""), "") %}{% endcall %}
   {% if corpora.len() > 1 %}
   <label class="corpus-select-label" for="corpus-select">
