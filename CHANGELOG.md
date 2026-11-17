@@ -14,14 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each bunsetu starts with a token labeled `B`; subsequent tokens are labeled
   `I`. These values match `BunsetuBILabel` in `ginza -f conllu` output.
   Other spaCy pipelines are unchanged.
-- `ling table --select PATTERN --key FIELD=VALUE` keeps the rows whose
-  compound key exactly matches the specified field values. A `subset` record reports
-  the selected rows' total occurrences, and each row includes its share of
-  that total. The Frequencies view offers the same exact-match inputs per key field.
-- `ling serve` and `lingrep-web` accept `--vectors FILE`. With a word-vector
-  file, the Workbench reports when that file is absent from the catalog's
-  `vectors:` declarations. The Definition tab lists the values selected by each `near`
-  test, and the Similar Words page ranks values by similarity to a word.
+- `ling table --select PATTERN --key FIELD=VALUE` filters rows by exact values
+  in a compound key. A `subset` record reports the selected rows' total
+  occurrences, and each row includes its share of that total. The Frequencies
+  view provides the same exact-match filters for each key field.
+- `ling serve` and `lingrep-web` load word-vector files with `--vectors FILE`.
+  For catalogs using `near`, the Workbench displays a notice if the catalog
+  has no `vectors:` declaration or declares a different file digest.
+  The Definition tab lists the values matched by each `near` test. The Similar
+  Words page ranks values by similarity to a word.
   The `--vectors` option also applies when `ling matches` or `ling summarize`
   uses `--serve` or `--link`.
 - The Workbench accepts a `--where` clause in its search scope and shows
@@ -36,10 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `matches`, `summarize` and the Workbench accept overlap modes `catalog`,
   `keep` and `longest`. `keep` skips `resolve` statements; other policy statements
   still apply. `longest` adds longest-match resolution when the catalog declares
-  no `resolve`. Workbench links, exports, inspection and live summaries retain
-  the setting. Frequencies and Compare use the catalog's policy.
-- The Frequencies and Compare pages identify their corpus. The Sample Debugger
-  states that it reads only the sample text.
+  no `resolve`. The selected mode also applies to Workbench links, exports,
+  inspection and live summaries. Frequencies and Compare use the catalog's policy.
+- The Frequencies and Compare pages display the corpus being analyzed. The
+  Sample Debugger explains that analysis is limited to the sample text.
 - Cluster analysis accepts a minimum occurrence count for patterns in both
   trees. This filter does not apply to section distributions or rate contrasts.
 - `ling analyzer prepare` accepts `--download-base` and `LING_DOWNLOAD_BASE`
@@ -69,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Linux. Identity metadata in the hashed model directory excludes the
   interpreter's build string and path, and the record for `thinc-apple-ops`,
   which is installed only on arm64 macOS.
-  Existing bundles retain their identities; newly prepared bundles have new
+  Existing bundle identities are unchanged; newly prepared bundles have new
   identities. Stanza identities still differ between macOS and Linux because
   their locked torch versions are `2.13.0` and `2.13.0+cpu`, respectively.
 - The Workbench reports unavailable token attributes and catalog-binding
@@ -125,13 +126,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored once.
 - Escape closes only the open modal. Condition controls support keyboard use
   and retain focus, filter text and caret position across redraws.
-- Frequencies and Compare report failed loads, retain rejected clause edits,
-  abort superseded requests and restore paging controls after cancellation.
+- Frequencies and Compare display loading errors without discarding invalid
+  clause edits, cancel superseded requests and restore paging controls after cancellation.
   Value searches report both listed and total counts.
 - The Sample Debugger runs once on arrival, reports rejected runs and updates
   after edits when the pattern editor cannot load.
 - If a query is re-added before its deletion is undone, the query library
-  reports the conflict and keeps Undo available.
+  reports the conflict. Undo remains available.
 - Japanese translations cover dynamic results, editor diagnostics, accessible
   labels and server errors, and update when the language changes. Compiler and
   binder diagnostics remain in English. Counts retain thousands separators in
