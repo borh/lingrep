@@ -1313,6 +1313,12 @@ have different failure behavior for three cases:
   oversized sentence would make an already-built artifact unqueryable at that
   limit.
 
+If a matching batch exceeds its [output allocation budget](fsm-development.md#supported-architecture),
+the run fails with `match_batch_too_large` and publishes no `complete` record.
+Retry with `--batch-sentences 1` to reduce the number of sentences retained
+together. If one sentence still exceeds the budget, narrow the pattern. Results
+are not silently truncated to fit the budget.
+
 With the default `--progress auto`, deferred human output, such as a
 `summarize` table, can show one status line on stderr at the next count update
 after one second. Both stdout and stderr must be terminals, and `TERM` must

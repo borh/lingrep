@@ -382,6 +382,11 @@ impl CliError {
                 ],
                 _ => Vec::new(),
             },
+            Self::Execution(ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError::BatchOutput { .. },
+            ))) => vec![
+                "Rerun with --batch-sentences 1 or narrow the pattern to produce fewer matches.".into()
+            ],
             Self::Execution(ExecutionError::SentenceTooLarge { actual, .. }) => raise("--max-sentence-bytes", *actual),
             Self::Execution(ExecutionError::SentenceTooLargeAtLeast { minimum, .. }) => raise("--max-sentence-bytes", *minimum),
             Self::Execution(ExecutionError::InputRecordTooLarge { actual_at_least, .. }) => raise("--max-record-bytes", *actual_at_least),
@@ -623,9 +628,12 @@ fn execution_classification(
     use lingrep_core::execution::ExecutionError as E;
     let failure = ErrorClassification::failure;
     match error {
-        E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(_)) => {
-            failure("graph_assignment_limit", Matching, AfterChange)
-        }
+        E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
+            lingrep_core::fsm::MatchResourceError::BatchOutput { .. },
+        )) => failure("match_batch_too_large", Matching, AfterChange),
+        E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
+            lingrep_core::fsm::MatchResourceError::Sentence { .. },
+        )) => failure("graph_assignment_limit", Matching, AfterChange),
         E::Matching(_) => failure("matching", Matching, AfterChange),
         E::Analysis {
             ordinal,
@@ -748,10 +756,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn batch_output_error_has_a_distinct_code_and_batch_remedy() {
+        let error = CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
+            lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError::BatchOutput { limit: 1024 },
+            ),
+        ));
+        assert_eq!(error.code(), "match_batch_too_large");
+        assert_eq!(error.classification().stage, DiagnosticStage::Matching);
+        assert_eq!(error.retry_policy(), RetryPolicy::AfterChange);
+        assert!(error.to_string().contains("1024"));
+        assert!(!error.to_string().contains("ordering constraint"));
+        assert!(
+            error
+                .suggestions()
+                .iter()
+                .any(|suggestion| suggestion.contains("--batch-sentences 1"))
+        );
+    }
+
+    #[test]
     fn graph_resource_error_has_a_matching_code_and_pattern_remedy() {
         let error = CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
             lingrep_core::fsm::BoundExecutionError::Resource(
-                lingrep_core::fsm::MatchResourceError {
+                lingrep_core::fsm::MatchResourceError::Sentence {
                     pattern: "connected".into(),
                     resource: "graph assignments",
                     limit: 65_536,

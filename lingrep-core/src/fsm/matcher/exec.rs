@@ -13,11 +13,13 @@ use super::predicate::{
     CompiledPositionAssertion, PREDICATE_SITE_DENSE_ADVANCE, PREDICATE_SITE_DENSE_MAIN,
     PREDICATE_SITE_DENSE_MATCH_CLOSURE, PredicateSession,
 };
+use super::resource::{MatchResourceError, OutputBudget};
 use super::spawn;
 use crate::fsm::types::*;
 use crate::token_match::{AttributeKey, SequenceToken, TokenInfoTrait, TokenSequence};
 use compact_str::CompactString;
 use log::{debug, trace};
+use std::sync::Arc;
 
 pub(crate) struct Matcher;
 
@@ -214,11 +216,27 @@ impl Matcher {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn find_matches_dense<S: TokenSequence + ?Sized>(
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Vec<Match> {
+        Self::try_find_matches_dense(
+            &Arc::new(OutputBudget::default()),
+            dense,
+            predicates,
+            tokens,
+        )
+        .expect("matching exceeded its resource budget")
+    }
+
+    pub(crate) fn try_find_matches_dense<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
+        dense: &DenseMachine,
+        predicates: &PredicateSession<'_>,
+        tokens: &S,
+    ) -> Result<Vec<Match>, MatchResourceError> {
         trace!(
             "=== NFA Matcher::find_matches called with {} tokens ===",
             tokens.len()
@@ -226,15 +244,23 @@ impl Matcher {
         let mut assertion_holds = |assertion: &CompiledPositionAssertion, position| {
             Self::assertion_holds_at(assertion, predicates, tokens, position)
         };
-        Self::find_matches_internal(dense, predicates, tokens, None, &mut assertion_holds)
+        Self::find_matches_internal(
+            output,
+            dense,
+            predicates,
+            tokens,
+            None,
+            &mut assertion_holds,
+        )
     }
 
-    pub(crate) fn find_matches_dense_with_assertions<S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_dense_with_assertions<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut super::assertion::AssertionSession<'_, '_, S>,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
         let mut assertion_holds = |assertion: &CompiledPositionAssertion, position| match assertion
         {
             CompiledPositionAssertion::Lookaround(occurrence) => {
@@ -242,26 +268,56 @@ impl Matcher {
             }
             _ => Self::assertion_holds_at(assertion, predicates, tokens, position),
         };
-        Self::find_matches_internal(dense, predicates, tokens, None, &mut assertion_holds)
+        Self::find_matches_internal(
+            output,
+            dense,
+            predicates,
+            tokens,
+            None,
+            &mut assertion_holds,
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn find_matches_with_trace_dense<S: TokenSequence + ?Sized>(
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Trace {
+        Self::try_find_matches_with_trace_dense(
+            &Arc::new(OutputBudget::default()),
+            dense,
+            predicates,
+            tokens,
+        )
+        .expect("matching exceeded its resource budget")
+    }
+
+    pub(crate) fn try_find_matches_with_trace_dense<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
+        dense: &DenseMachine,
+        predicates: &PredicateSession<'_>,
+        tokens: &S,
+    ) -> Result<Trace, MatchResourceError> {
         let mut assertion_holds = |assertion: &CompiledPositionAssertion, position| {
             Self::assertion_holds_at(assertion, predicates, tokens, position)
         };
-        Self::find_matches_with_trace_dense_by(dense, predicates, tokens, &mut assertion_holds)
+        Self::try_find_matches_with_trace_dense_by(
+            output,
+            dense,
+            predicates,
+            tokens,
+            &mut assertion_holds,
+        )
     }
 
-    pub(crate) fn find_matches_with_trace_dense_with_assertions<S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_with_trace_dense_with_assertions<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut super::assertion::AssertionSession<'_, '_, S>,
-    ) -> Trace {
+    ) -> Result<Trace, MatchResourceError> {
         let mut assertion_holds = |assertion: &CompiledPositionAssertion, position| match assertion
         {
             CompiledPositionAssertion::Lookaround(occurrence) => {
@@ -269,15 +325,22 @@ impl Matcher {
             }
             _ => Self::assertion_holds_at(assertion, predicates, tokens, position),
         };
-        Self::find_matches_with_trace_dense_by(dense, predicates, tokens, &mut assertion_holds)
+        Self::try_find_matches_with_trace_dense_by(
+            output,
+            dense,
+            predicates,
+            tokens,
+            &mut assertion_holds,
+        )
     }
 
-    fn find_matches_with_trace_dense_by<S: TokenSequence + ?Sized>(
+    fn try_find_matches_with_trace_dense_by<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
-    ) -> Trace {
+    ) -> Result<Trace, MatchResourceError> {
         let mut trace = Trace {
             input: (0..tokens.len())
                 .map(|index| {
@@ -312,30 +375,33 @@ impl Matcher {
         };
 
         trace.matches = Self::find_matches_internal(
+            output,
             dense,
             predicates,
             tokens,
             Some(&mut trace_collector),
             assertion_holds,
-        );
-        trace
+        )?;
+        Ok(trace)
     }
 
     fn find_matches_internal<S: TokenSequence + ?Sized>(
+        output: &Arc<OutputBudget>,
         dense: &DenseMachine,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         mut trace_collector: Option<&mut dyn FnMut(usize, usize, bool, usize, &[CompactString])>,
         assertion_holds: &mut dyn FnMut(&CompiledPositionAssertion, usize) -> bool,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
         let start_time = std::time::Instant::now();
 
         // Skip empty token sets
         if tokens.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
-        let mut sink = super::emit::MatchSink::new();
+        output.check()?;
+        let mut sink = super::emit::MatchSink::with_output(output);
 
         let mut scratch = ExecScratch::take_for_call(dense);
 
@@ -426,7 +492,7 @@ impl Matcher {
                 if let Some(fs_name) = dense.final_pattern(current_state.state)
                     && index > current_state.start_token
                 {
-                    sink.emit(fs_name, current_state.start_token, index);
+                    sink.emit(fs_name, current_state.start_token, index)?;
                 }
 
                 {
@@ -492,7 +558,7 @@ impl Matcher {
                             predicates,
                             tokens,
                             &mut scratch,
-                        );
+                        )?;
                     }
                 }
             }
@@ -530,7 +596,7 @@ impl Matcher {
             for current_state in closed {
                 if let Some(fs_name) = dense.final_pattern(current_state.state) {
                     let end_pos = index + 1;
-                    sink.emit(fs_name, current_state.start_token, end_pos);
+                    sink.emit(fs_name, current_state.start_token, end_pos)?;
                 }
             }
 
@@ -544,7 +610,7 @@ impl Matcher {
 
         scratch.recycle();
 
-        let filtered = sink.finish();
+        let filtered = sink.finish()?;
 
         #[cfg(test)]
         trace!("Filtered matches: {filtered:?}");
@@ -560,7 +626,7 @@ impl Matcher {
         }
 
         debug!("Filtered matches: {filtered:?}");
-        filtered
+        Ok(filtered)
     }
 
     /// Zero-width position assertion, evaluated identically by the spawn
@@ -616,7 +682,7 @@ impl Matcher {
         predicates: &PredicateSession<'_>,
         tokens: &S,
         scratch: &mut ExecScratch,
-    ) {
+    ) -> Result<(), MatchResourceError> {
         #[cfg(test)]
         trace!(
             "    handle_state_transition: matched={}, op={:?}, count={}, is_final={}",
@@ -638,7 +704,7 @@ impl Matcher {
         if !matched && !token_spec.attrs.is_empty() {
             #[cfg(test)]
             trace!("    Rejecting transition - token doesn't match pattern");
-            return;
+            return Ok(());
         }
 
         let action = Self::get_action(matched, token_spec, current_state, dense);
@@ -657,7 +723,7 @@ impl Matcher {
                     } else {
                         token_index + 1
                     };
-                    sink.emit(fs_name, current_state.start_token, end_pos);
+                    sink.emit(fs_name, current_state.start_token, end_pos)?;
                 }
 
                 let start_token = if current_state.state == 0 {
@@ -709,7 +775,7 @@ impl Matcher {
                         trace!(
                             "      Skipping next state {next_state} - cannot match current token"
                         );
-                        return;
+                        return Ok(());
                     }
                 }
 
@@ -788,7 +854,7 @@ impl Matcher {
                         trace!(
                             "      Skipping next state {next_state} - cannot match current token"
                         );
-                        return;
+                        return Ok(());
                     }
                 }
 
@@ -802,6 +868,7 @@ impl Matcher {
             }
             Action::Reject => {}
         }
+        Ok(())
     }
 
     /// Epsilon closure of `states`, appended to `closure`.
@@ -1158,7 +1225,11 @@ mod filter_tests {
                 .map(|(_, candidate)| candidate.clone())
                 .collect::<Vec<_>>();
             assert_eq!(
-                super::super::emit::filter_and_collect_matches(&input),
+                super::super::emit::filter_and_collect_matches(
+                    &input,
+                    &super::OutputBudget::default()
+                )
+                .unwrap(),
                 quadratic_reference(input),
                 "subset {subset:#x}"
             );

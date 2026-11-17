@@ -1,7 +1,7 @@
 use super::assertion::AssertionSession;
 use super::predicate::PredicateSession;
 use super::program::{Program, ProgramMatch};
-use super::resource::{MatchBudget, MatchResourceError};
+use super::resource::{MatchBudget, MatchResourceError, OutputBudget, compact_heap_bytes};
 use crate::corpus::conllu::EnhancedGraph;
 use crate::fsm::Match;
 use crate::token_match::TokenSequence;
@@ -33,10 +33,10 @@ impl EvaluatedPlan {
         predicates: &PredicateSession<'_>,
         tokens: &S,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        Ok(self.to_matches(
-            self.0
-                .matches_without_assertions(budget, predicates, tokens)?,
-        ))
+        let matches = self
+            .0
+            .matches_without_assertions(budget, predicates, tokens)?;
+        self.to_matches(&budget.output, matches)
     }
 
     pub(crate) fn try_find_matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
@@ -46,10 +46,10 @@ impl EvaluatedPlan {
         tokens: &S,
         graph: &EnhancedGraph,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        Ok(self.to_matches(
-            self.0
-                .matches_without_assertions_with_graph(budget, predicates, tokens, graph)?,
-        ))
+        let matches = self
+            .0
+            .matches_without_assertions_with_graph(budget, predicates, tokens, graph)?;
+        self.to_matches(&budget.output, matches)
     }
 
     pub(crate) fn try_find_matches<S: TokenSequence + ?Sized>(
@@ -60,7 +60,7 @@ impl EvaluatedPlan {
         session: &mut AssertionSession<'_, '_, S>,
     ) -> Result<Vec<Match>, MatchResourceError> {
         let matches = self.0.matches(budget, predicates, tokens, session)?;
-        Ok(self.to_matches(matches))
+        self.to_matches(&budget.output, matches)
     }
 
     pub(crate) fn try_find_matches_with_graph<S: TokenSequence + ?Sized>(
@@ -74,20 +74,27 @@ impl EvaluatedPlan {
         let matches = self
             .0
             .matches_with_graph(budget, predicates, tokens, session, graph)?;
-        Ok(self.to_matches(matches))
+        self.to_matches(&budget.output, matches)
     }
 
-    fn to_matches(&self, matches: Vec<ProgramMatch>) -> Vec<Match> {
-        matches
-            .into_iter()
-            .map(|matched| Match {
+    fn to_matches(
+        &self,
+        output: &OutputBudget,
+        matches: Vec<ProgramMatch>,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        output.reserve_buffer::<Match>(matches.len())?;
+        let mut result = Vec::with_capacity(matches.len());
+        for matched in matches {
+            output.reserve(compact_heap_bytes(&self.0.definition().name))?;
+            result.push(Match {
                 pattern: self.0.definition().name.clone(),
                 start: matched.start,
                 end: matched.end,
                 captures: matched.captures,
                 graph_bindings: matched.graph_bindings,
                 lexical: None,
-            })
-            .collect()
+            });
+        }
+        Ok(result)
     }
 }

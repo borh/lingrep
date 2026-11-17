@@ -40,6 +40,14 @@ let matches = matcher.try_find_matches(&tokens)?;
 
 Graph assignment enumeration has sentence-scoped limits: 65,536 completed assignments, 1,000,000 graph work steps (edge visits and bound-node inspection), 64 MiB of cumulative estimated assignment allocation, and 128 relation clauses on a recursive path. The fallible `try_*` APIs return an error and no matches for that sentence when a limit is exceeded. Narrow token or graph predicates, or add ordering constraints between binders to reduce the enumeration. The older `find_matches` conveniences panic on exhaustion.
 
+Matching output has a separate 64 MiB budget for cumulative estimated allocation
+across a scheduled batch, shared by its sentence workers. A standalone matching
+call uses this budget for its one sentence. Output buffers and owned match payloads are charged before allocation; charges are not refunded
+within the batch. Exhaustion returns `MatchResourceError::BatchOutput` and no
+batch results. This bounds the charged output allocation, not process RSS or
+all matcher scratch storage. Successful complete matches and their ordering are
+unchanged.
+
 For a body supplied through an inline CLI option, call `normalize_inline_pattern`
 and compile the resulting document with `compile_catalog`. Supply the caller's real
 source label to `PatternSource::named` so diagnostics identify the input boundary.

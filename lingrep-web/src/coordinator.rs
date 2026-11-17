@@ -145,7 +145,12 @@ fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
         ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(error)) => {
             AttemptFailure {
                 category: ErrorCategory::Execution,
-                message: error.to_string(),
+                message: match error {
+                    lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => format!(
+                        "{error} Narrow the pattern or ask the server operator to use a smaller matching batch."
+                    ),
+                    lingrep_core::fsm::MatchResourceError::Sentence { .. } => error.to_string(),
+                },
             }
         }
         ExecutionError::TokenizedSentenceTooLarge { actual, limit, .. }
@@ -1733,10 +1738,23 @@ mod tests {
     }
 
     #[test]
+    fn batch_output_failure_explains_the_server_batch_remedy() {
+        let failure = classify_execution_error(&ExecutionError::Matching(
+            lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError::BatchOutput { limit: 1024 },
+            ),
+        ));
+        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert!(failure.message.contains("1024"));
+        assert!(failure.message.contains("smaller matching batch"));
+        assert!(!failure.message.contains("ordering constraint"));
+    }
+
+    #[test]
     fn graph_resource_failure_preserves_the_pattern_and_remedy() {
         let failure = classify_execution_error(&ExecutionError::Matching(
             lingrep_core::fsm::BoundExecutionError::Resource(
-                lingrep_core::fsm::MatchResourceError {
+                lingrep_core::fsm::MatchResourceError::Sentence {
                     pattern: "connected".into(),
                     resource: "graph assignments",
                     limit: 65_536,
