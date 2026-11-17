@@ -4,7 +4,7 @@ use super::predicate::{
     PREDICATE_SITE_CAPTURE_TOKEN, PREDICATE_SITE_EVALUATED_PREVIOUS_TOKEN,
     PREDICATE_SITE_EVALUATED_TOKEN, PredicateCatalog, PredicateId, PredicateSession,
 };
-use super::resource::{MAX_RELATION_DEPTH, MatchBudget, MatchResourceError};
+use super::resource::{MAX_RELATION_DEPTH, MatchBudget, MatchResourceError, OutputBudget};
 use crate::corpus::conllu::{EnhancedGraph, EnhancedHead, EnhancedNodeId};
 use crate::fsm::compiler::model::{
     CaptureId, CaptureProjection, DependencyLayer, ExecutionDefinition, ExecutionEnhancedEndpoint,
@@ -384,23 +384,25 @@ impl Program {
 
     pub(crate) fn extract<S: TokenSequence + ?Sized>(
         &self,
+        output: &OutputBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         start: usize,
         end: usize,
         session: &mut AssertionSession<'_, '_, S>,
-    ) -> Option<Box<[Capture]>> {
-        self.extract_with(predicates, tokens, start, end, session)
+    ) -> Result<Option<Box<[Capture]>>, MatchResourceError> {
+        self.extract_with(output, predicates, tokens, start, end, session)
     }
 
     fn extract_with<S: TokenSequence + ?Sized, A: AssertionLookup>(
         &self,
+        output: &OutputBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         start: usize,
         end: usize,
         assertions: &mut A,
-    ) -> Option<Box<[Capture]>> {
+    ) -> Result<Option<Box<[Capture]>>, MatchResourceError> {
         self.candidates::<
             PREDICATE_SITE_CAPTURE_TOKEN,
             PREDICATE_SITE_CAPTURE_PREVIOUS_TOKEN,
@@ -409,17 +411,18 @@ impl Program {
         >(predicates, tokens, start, assertions)
             .into_iter()
             .find(|candidate| candidate.position == end)
-            .map(|candidate| self.public_captures(&candidate))
+            .map(|candidate| self.public_captures(&candidate, output)).transpose()
     }
 
     pub(crate) fn extract_without_assertions<S: TokenSequence + ?Sized>(
         &self,
+        output: &OutputBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         start: usize,
         end: usize,
-    ) -> Option<Box<[Capture]>> {
-        self.extract_with(predicates, tokens, start, end, &mut NoAssertions)
+    ) -> Result<Option<Box<[Capture]>>, MatchResourceError> {
+        self.extract_with(output, predicates, tokens, start, end, &mut NoAssertions)
     }
 
     pub(crate) fn matches<S: TokenSequence + ?Sized>(
@@ -451,6 +454,7 @@ impl Program {
         assertions: &mut A,
         enhanced_graph: Option<&EnhancedGraph>,
     ) -> Result<Vec<ProgramMatch>, MatchResourceError> {
+        budget.output.check()?;
         let mut matches = Vec::new();
         let mut captured_negative_observation = None;
         for start in 0..tokens.len() {
@@ -493,9 +497,12 @@ impl Program {
                 .filter(|(candidate, _)| seen_branches.insert(candidate.any_order_branches.clone()))
             {
                 for assignment in assignments {
+                    let graph_bytes = if self.enhanced_relations.is_empty() {
+                        0
+                    } else {
+                        self.public_graph_bytes(budget, &assignment, tokens, enhanced_graph)?
+                    };
                     if !self.enhanced_relations.is_empty() {
-                        let graph_bytes =
-                            self.public_graph_bytes(budget, &assignment, tokens, enhanced_graph)?;
                         budget.allocate(
                             self.definition.name.as_str(),
                             graph_bytes
@@ -510,10 +517,14 @@ impl Program {
                                 ),
                         )?;
                     }
+                    budget.output.reserve_vec(&mut matches, 1)?;
+                    if !assignment.nodes.is_empty() || !assignment.edges.is_empty() {
+                        budget.output.reserve(graph_bytes)?;
+                    }
                     matches.push(ProgramMatch {
                         start,
                         end: candidate.position,
-                        captures: self.public_captures(&candidate),
+                        captures: self.public_captures(&candidate, &budget.output)?,
                         graph_bindings: self.public_graph_bindings(
                             &assignment,
                             tokens,
@@ -831,21 +842,40 @@ impl Program {
         )
     }
 
-    fn public_captures(&self, candidate: &Candidate) -> Box<[Capture]> {
-        let mut captures = self
+    fn public_captures(
+        &self,
+        candidate: &Candidate,
+        output: &OutputBudget,
+    ) -> Result<Box<[Capture]>, MatchResourceError> {
+        let count = self
             .captures
             .iter()
-            .filter_map(|descriptor| {
-                candidate.slots[descriptor.id.index()].map(|(start, end)| Capture {
+            .filter(|descriptor| candidate.slots[descriptor.id.index()].is_some())
+            .count();
+        output.reserve_buffer::<Capture>(count.saturating_mul(2))?;
+        let heap_bytes = self
+            .captures
+            .iter()
+            .filter(|descriptor| candidate.slots[descriptor.id.index()].is_some())
+            .fold(0usize, |bytes, descriptor| {
+                bytes
+                    .saturating_add(compact_string_heap_bytes(&descriptor.name))
+                    .saturating_add(compact_string_heap_bytes(&descriptor.path))
+            });
+        output.reserve(heap_bytes)?;
+        let mut captures = Vec::with_capacity(count);
+        for descriptor in &self.captures {
+            if let Some((start, end)) = candidate.slots[descriptor.id.index()] {
+                captures.push(Capture {
                     name: descriptor.name.clone(),
                     path: descriptor.path.clone(),
                     start,
                     end,
-                })
-            })
-            .collect::<Vec<_>>();
+                });
+            }
+        }
         captures.sort_by_key(|capture| (capture.start, capture.end));
-        captures.into_boxed_slice()
+        Ok(captures.into_boxed_slice())
     }
 
     fn public_graph_bytes<S: TokenSequence + ?Sized>(
@@ -1037,8 +1067,9 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
     assignment: &GraphAssignment,
     admissible: &dyn Fn(&GraphAssignment) -> bool,
 ) -> Result<Vec<GraphAssignment>, MatchResourceError> {
+    budget.output.check()?;
     if index > MAX_RELATION_DEPTH {
-        return Err(MatchResourceError {
+        return Err(MatchResourceError::Sentence {
             pattern: pattern.into(),
             resource: "graph relation depth",
             limit: MAX_RELATION_DEPTH,
@@ -2133,7 +2164,7 @@ fn first_same_as(expr: &ExecutionExpr) -> Option<(CaptureId, CaptureProjection)>
 #[cfg(test)]
 mod tests {
     use crate::execution::{BoundSentenceInput, EnhancedGraphInput};
-    use crate::fsm::{CompileLimits, PatternSource, compile_catalog};
+    use crate::fsm::{CompileLimits, MatchResourceError, PatternSource, compile_catalog};
     use hegel::generators;
     use std::cell::Cell;
     use std::fmt::Write as _;
@@ -2327,6 +2358,47 @@ mod tests {
     }
 
     #[test]
+    fn matching_batch_rejects_aggregate_output_from_individually_admitted_sentences() {
+        let mut clauses = (0..7)
+            .map(|index| format!("$v -[obj]-> (?<b{index}> [])"))
+            .collect::<Vec<_>>();
+        clauses.push(
+            (0..7)
+                .map(|index| format!("$b{index}"))
+                .collect::<Vec<_>>()
+                .join(" < "),
+        );
+        let (bound, input) = graph_fixture_with_clauses(13, &clauses.join(", "));
+        let expected = bound.find_matches_input(&input).unwrap();
+        assert_eq!(expected.len(), 792);
+        for threads in [1, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let small = crate::fsm::BoundSentenceMatcher::new(&bound)
+                .match_all(&pool, &[input.clone(), input.clone()])
+                .unwrap();
+            assert_eq!(small, vec![expected.clone(), expected.clone()]);
+            let large = crate::fsm::BoundSentenceMatcher::new(&bound)
+                .match_all(&pool, &vec![input.clone(); 32]);
+            assert!(
+                matches!(
+                    large,
+                    Err(crate::fsm::BoundExecutionError::Resource(
+                        MatchResourceError::BatchOutput { .. }
+                    ))
+                ),
+                "aggregate output must exceed the matching batch budget"
+            );
+            let fresh = crate::fsm::BoundSentenceMatcher::new(&bound)
+                .match_all(&pool, std::slice::from_ref(&input))
+                .unwrap();
+            assert_eq!(fresh, vec![expected.clone()]);
+        }
+    }
+
+    #[test]
     fn unordered_graph_binders_return_a_resource_error() {
         let (bound, input) = graph_fixture(32, 5);
         let error = bound.find_matches_input(&input).unwrap_err();
@@ -2467,8 +2539,14 @@ mod tests {
             else {
                 panic!("graph work error expected");
             };
-            assert_eq!(error.resource, "graph work steps");
-            assert_eq!(error.limit, 1_000_000);
+            let MatchResourceError::Sentence {
+                resource, limit, ..
+            } = error
+            else {
+                panic!("sentence graph error expected");
+            };
+            assert_eq!(resource, "graph work steps");
+            assert_eq!(limit, 1_000_000);
         }
     }
 

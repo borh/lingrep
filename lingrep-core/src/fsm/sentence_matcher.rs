@@ -1,10 +1,12 @@
 use crate::execution::{BoundSentenceInput, window_at};
 use crate::fsm::matcher::CompiledCatalog;
+use crate::fsm::matcher::resource::OutputBudget;
 use crate::fsm::types::Match;
 use crate::fsm::{BoundCatalog, BoundExecutionError};
 use crate::token_match::TokenInfoTrait;
 use rayon::prelude::*;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// Schedules independent sentence matches on a caller-owned Rayon pool.
 ///
@@ -29,12 +31,23 @@ impl<'a> BoundSentenceMatcher<'a> {
         pool: &rayon::ThreadPool,
         sentences: &[BoundSentenceInput],
     ) -> Result<Vec<Vec<Match>>, BoundExecutionError> {
-        pool.install(|| {
+        let output = Arc::new(OutputBudget::default());
+        output
+            .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
+                sentences.len().saturating_mul(4),
+            )
+            .map_err(BoundExecutionError::Resource)?;
+        let rows: Result<Vec<_>, _> = pool.install(|| {
             sentences
                 .par_iter()
-                .map(|sentence| self.matcher.find_matches_input(sentence))
+                .map(|sentence| {
+                    self.matcher
+                        .find_matches_input_with_output(sentence, &output)
+                })
                 .collect()
-        })
+        });
+        output.check().map_err(BoundExecutionError::Resource)?;
+        rows
     }
 
     /// Matches `sentences[targets]` in order. A `within=` lookaround may
@@ -62,7 +75,13 @@ impl<'a> BoundSentenceMatcher<'a> {
         }
         let stride = reach.len();
         debug_assert_eq!(links.len(), sentences.len() * stride);
-        pool.install(|| {
+        let output = Arc::new(OutputBudget::default());
+        output
+            .reserve_buffer::<Result<Vec<Match>, BoundExecutionError>>(
+                targets.len().saturating_mul(4),
+            )
+            .map_err(BoundExecutionError::Resource)?;
+        let rows: Result<Vec<_>, _> = pool.install(|| {
             targets
                 .into_par_iter()
                 .map(|index| {
@@ -74,11 +93,16 @@ impl<'a> BoundSentenceMatcher<'a> {
                             (name, &sentences[window.before], &sentences[window.after])
                         })
                         .collect();
-                    self.matcher
-                        .find_matches_input_in_windows(&sentences[index], &windows)
+                    self.matcher.find_matches_input_in_windows_with_output(
+                        &sentences[index],
+                        &windows,
+                        &output,
+                    )
                 })
                 .collect()
-        })
+        });
+        output.check().map_err(BoundExecutionError::Resource)?;
+        rows
     }
 }
 
@@ -89,28 +113,37 @@ impl<'a> SentenceMatcher<'a> {
 
     /// Matches every sentence in its input order using the supplied pool.
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_match_all`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_match_all`] to handle this error.
     pub fn match_all<T: TokenInfoTrait + Send + Sync>(
         &self,
         pool: &rayon::ThreadPool,
         sentences: &[Vec<T>],
     ) -> Vec<Vec<Match>> {
         self.try_match_all(pool, sentences)
-            .expect("graph matching exceeded its sentence budget")
+            .expect("matching exceeded its resource budget")
     }
 
-    /// Preserves sentence order and returns no batch results if any sentence exceeds its graph budget.
+    /// Preserves sentence order and returns no batch results if matching exceeds a resource budget.
     pub fn try_match_all<T: TokenInfoTrait + Send + Sync>(
         &self,
         pool: &rayon::ThreadPool,
         sentences: &[Vec<T>],
     ) -> Result<Vec<Vec<Match>>, crate::fsm::MatchResourceError> {
-        pool.install(|| {
+        let output = Arc::new(OutputBudget::default());
+        output.reserve_buffer::<Result<Vec<Match>, crate::fsm::MatchResourceError>>(
+            sentences.len().saturating_mul(4),
+        )?;
+        let rows: Result<Vec<_>, _> = pool.install(|| {
             sentences
                 .par_iter()
-                .map(|sentence| self.matcher.try_find_matches(sentence))
+                .map(|sentence| {
+                    self.matcher
+                        .try_find_matches_with_context_and_output(sentence, None, &output)
+                })
                 .collect()
-        })
+        });
+        output.check()?;
+        rows
     }
 }
 
