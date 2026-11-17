@@ -38,3 +38,20 @@ test('a document is named by its metadata title, else by its source name without
   assert.equal(documentTitle({source_name:'a.conllu',source_metadata:{document:{title:'坊っちゃん'}}}),'坊っちゃん');
   assert.equal(documentTitle({source_name:'notes.v2'}),'notes.v2');
 });
+
+test('a definition is found on its own line, after an optional keyword, and not inside another name or a body',async()=>{
+  const {definitionOffset}=await import('./model.js');
+  const source='# npv := comment\nkey: [upos]\npattern npv_adjacent := [].\n  npv := [upos=NOUN] @npv_adjacent.\n';
+  assert.equal(definitionOffset(source,'npv'),source.indexOf('  npv :='));
+  assert.equal(definitionOffset(source,'npv_adjacent'),source.indexOf('pattern npv_adjacent'));
+  assert.equal(definitionOffset(source,'upos'),-1);
+  assert.equal(definitionOffset('a.b := [].','a.b'),0);
+  assert.equal(definitionOffset('axb := [].','a.b'),-1);
+});
+
+test('token details list the dependency right after the portable keys, ahead of raw CoNLL-U fields',async()=>{
+  const {basicAttributeKeys}=await import('./model.js');
+  const token={text:'滑か',lemma:'滑らか',upos:'ADJ',xpos:'形状詞','conllu.misc':['BunsetuBILabel=B','SpaceAfter=No'],'dep.head':'3','dep.rel':'acl'};
+  assert.deepEqual(basicAttributeKeys(token),['text','lemma','upos','xpos','dep.head','dep.rel','conllu.misc']);
+  assert.equal(basicAttributeKeys(Object.fromEntries(Array.from({length:30},(_,i)=>[`k${i}`,'v']))).length,18);
+});

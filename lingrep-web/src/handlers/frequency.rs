@@ -55,6 +55,7 @@ struct PairMeta<'a> {
     catalog: &'a str,
     source: &'a str,
     patterns: &'a [crate::frequency::PatternSource],
+    default_pattern: Option<&'a str>,
     workbench: Option<&'a str>,
 }
 
@@ -63,6 +64,7 @@ struct Meta<'a> {
     pairs: Vec<PairMeta<'a>>,
     dimensions: BTreeMap<&'a str, &'a [Dimension]>,
     labels: &'a crate::metadata_labels::KeyLabels,
+    value_names: &'static serde_json::Value,
 }
 
 async fn meta(State(store): State<RequestStore>) -> Response {
@@ -76,6 +78,7 @@ async fn meta(State(store): State<RequestStore>) -> Response {
                 catalog: &pair.catalog,
                 source: &pair.source,
                 patterns: pair.patterns(),
+                default_pattern: pair.default_pattern(),
                 workbench: pair.workbench(),
             })
             .collect(),
@@ -84,6 +87,7 @@ async fn meta(State(store): State<RequestStore>) -> Response {
             .map(|pair| (pair.corpus.as_str(), views.dimensions(&pair.corpus)))
             .collect(),
         labels: views.labels(),
+        value_names: crate::metadata_labels::value_names(),
     })
     .into_response()
 }

@@ -129,11 +129,15 @@ test('a head is named by its word and its 1-based number, and the root has none'
   assert.equal(headLabel(tokens,21),null);
 });
 
-test('a part of speech reads as a plain word, and an unknown tag stays as written',async()=>{
-  const {partOfSpeech}=await import('./dependency.js');
-  assert.equal(partOfSpeech('NOUN','ja'),'名詞');
-  assert.equal(partOfSpeech('ADP','ja'),'助詞');
-  assert.equal(partOfSpeech('VERB','en'),'verb');
-  assert.equal(partOfSpeech('名詞-普通名詞-一般','ja'),'名詞-普通名詞-一般');
-  assert.equal(partOfSpeech('','en'),'');
+test('a value reads in plain words from the bundled names, a relation subtype from its base, and an unnamed value has none',async()=>{
+  const {valueName}=await import('./dependency.js');
+  const {readFileSync}=await import('node:fs');
+  const names=JSON.parse(readFileSync(new URL('../../lingrep-core/src/fsm/label_names.json',import.meta.url),'utf8')).sets;
+  for(const [attribute,value,locale,name] of [
+    ['upos','NOUN','ja','名詞'],['upos','ADP','ja','助詞'],['upos','VERB','en','verb'],['upos','SPACE','ja','空白'],
+    ['dep.rel','nsubj','ja','主語'],['dep.rel','nsubj:pass','ja','受け身の主語'],['dep.rel','obl:poss','en','oblique nominal'],['dep.rel','dobj','en','direct object'],
+    ['xpos','NN','en','singular noun'],
+    ['upos','名詞-普通名詞-一般','ja',null],['dep.rel','','en',null],['lemma','NOUN','en',null],
+  ])assert.equal(valueName(names,attribute,value,locale),name,`${attribute} ${value} ${locale}`);
+  assert.equal(valueName(undefined,'upos','NOUN','ja'),null);
 });

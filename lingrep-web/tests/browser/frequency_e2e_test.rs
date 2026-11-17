@@ -1887,6 +1887,13 @@ async fn every_restyled_button_shows_a_focus_ring_for_keyboard_focus() -> WebDri
             .send_keys(Key::Tab)
             .await?;
         let table = ["button.add", "[data-c=edit]", "button.open-entry"];
+        // The edit button sits in the folded pattern machinery.
+        driver
+            .execute(
+                "document.querySelector('[data-fq-machinery]').open = true",
+                Vec::new(),
+            )
+            .await?;
         observed(&driver, &rings(&table), ringed(&table), "table view").await?;
         driver
             .execute("document.querySelector('button.add').click()", Vec::new())
@@ -2601,4 +2608,694 @@ async fn an_opened_or_restored_entry_takes_focus_at_its_name() -> WebDriverResul
     served.server.abort();
     result?;
     Ok(())
+}
+
+/// The `noun` pattern counted as an `n · p · v` key, as the class's `npv`
+/// is, so its table gains the subset column once an exact field is set.
+fn write_key_table(artifact: &std::path::Path, destination: &std::path::Path) {
+    let entries: [([&str; 3], &[(u32, u64)]); 4] = [
+        (["坂", "を", "上る"], &[(0, 6), (1, 4)]),
+        (["坂", "を", "下りる"], &[(1, 4)]),
+        (["坂", "が", "ある"], &[(0, 3)]),
+        (["山", "を", "上る"], &[(1, 2)]),
+    ];
+    let mut values = entries
+        .iter()
+        .flat_map(|(key, _)| key.iter().copied())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    let rank = |value: &str| values.binary_search(&value).unwrap() as u32;
+    let mut sorted = entries.to_vec();
+    sorted.sort_by_key(|(key, _)| key.map(rank));
+    let documents = (0..6u64)
+        .map(|document_id| DocumentTotals {
+            document_id,
+            sentences: 1,
+            tokens: 10,
+        })
+        .collect::<Vec<_>>();
+    let mut writer = CountTableWriter::create(
+        destination,
+        table_key(artifact, CATALOG),
+        vec!["noun".into(), "verb".into()],
+        vec![
+            GroupSchema {
+                kind: GroupKind::Key,
+                names: vec!["$n.lemma".into(), "$p.lemma".into(), "$v.lemma".into()],
+            },
+            GroupSchema {
+                kind: GroupKind::Surface,
+                names: Vec::new(),
+            },
+        ],
+        &values,
+        &documents,
+    )
+    .unwrap();
+    for (key, pairs) in &sorted {
+        writer.begin_entry(0, 0, &key.map(rank)).unwrap();
+        for (document, count) in *pairs {
+            writer
+                .add_sentence(*document, u64::from(*document), *count)
+                .unwrap();
+        }
+    }
+    writer.begin_entry(1, 1, &[rank("上る")]).unwrap();
+    writer.add_sentence(0, 0, 1).unwrap();
+    writer
+        .finish(&CancellationFlag::new())
+        .unwrap()
+        .publish()
+        .unwrap();
+}
+
+async fn serve_key_table() -> Served {
+    serve_artifact(
+        support::build_artifact_with_metadata(
+            (0..6u64)
+                .map(|index| {
+                    (
+                        "doc.md",
+                        index,
+                        false,
+                        vec![vec![TokenInfo::default().with_orth("x")]],
+                    )
+                })
+                .collect(),
+            Vec::new(),
+            metadata(),
+        ),
+        CATALOG,
+        write_key_table,
+        &[],
+    )
+    .await
+}
+
+/// Every visible header of the table and the first row's visible cells, as
+/// column extents, with the header over the per-million values and the
+/// entry cell's width in its own font size.
+const COLUMNS: &str = r"
+const shown = (e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0;
+const extent = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; };
+const heads = [...document.querySelectorAll('table.freq thead th')].filter(shown);
+const cells = [...document.querySelectorAll('table.freq tbody tr:first-child td')].filter(shown);
+const pm = document.querySelector('table.freq tbody tr:first-child td.pm');
+const entry = document.querySelector('table.freq tbody tr:first-child td.entry-cell');
+const over = heads.find((h) => { const [l, r] = extent(h), [a, b] = extent(pm); return l === a && r === b; });
+return {
+  heads: heads.map((h) => [h.textContent, ...extent(h)]),
+  cells: cells.map((c) => [c.textContent, ...extent(c)]),
+  perMillion: over ? over.textContent : null,
+  entryEms: entry.getBoundingClientRect().width / parseFloat(getComputedStyle(entry).fontSize),
+  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+};";
+
+/// At phone width the table hides the same columns from its header and its
+/// rows, so each visible header stays over its own values, with and without
+/// the subset column an exact-match field adds; the entry stays readable.
+#[tokio::test]
+async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    driver.set_window_rect(0, 0, 390, 844).await?;
+    let served = serve_key_table().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &served.base, ROWS).await?;
+        driver
+            .execute("localStorage.setItem('lingrep-web:locale:v1', 'ja')", Vec::new())
+            .await?;
+        let exact = serde_urlencoded::to_string([("k", json!({"$n.lemma": "坂"}).to_string())]).unwrap();
+        for (address, subset) in [
+            (format!("{}#pattern=noun&{exact}", served.base), true),
+            (format!("{}#pattern=noun", served.base), false),
+        ] {
+            open(&driver, &address, ROWS).await?;
+            let subset_head = "return [...document.querySelectorAll('table.freq thead th')].some((h) => h.textContent === '絞り込み内の割合')";
+            if subset {
+                wait_for(&driver, subset_head, "the subset column").await?;
+            }
+            let columns = driver.execute(COLUMNS, Vec::new()).await?.json().clone();
+            let heads = columns["heads"].as_array().unwrap();
+            let cells = columns["cells"].as_array().unwrap();
+            assert_eq!(heads.len(), cells.len(), "{subset}: {columns}");
+            for (head, cell) in heads.iter().zip(cells) {
+                assert_eq!(
+                    (&head[1], &head[2]),
+                    (&cell[1], &cell[2]),
+                    "{subset}: {head} over {cell}"
+                );
+            }
+            assert_eq!(columns["perMillion"], json!("100万語あたり"), "{subset}: {columns}");
+            assert!(columns["entryEms"].as_f64().unwrap() >= 4.0, "{subset}: {columns}");
+            assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
+        }
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// トークンを調べる from an entry's line opens that line on the question page
+/// with the entry as a removable context: the title names the entry and the
+/// line's position among its lines, and the example steps go through those
+/// lines, within the searched document and into the next one, until the
+/// context is removed.
+#[tokio::test]
+async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let cats = (0..WORKS.len())
+        .map(|document| work_sentences(document).len())
+        .sum::<usize>();
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        driver
+            .find(By::Css(".fq-kwic li[data-i='1'] .fq-inspect"))
+            .await?
+            .click()
+            .await?;
+        let title = "const lab = document.querySelector('#token-lab'); \
+            return lab && !lab.hidden ? document.querySelector('#token-origin').textContent : null";
+        let at = |n: usize| {
+            format!(
+                "const lab = document.querySelector('#token-lab'), t = document.querySelector('#token-origin')?.textContent ?? ''; \
+                 return !!lab && !lab.hidden && t.startsWith('猫 · {n} / {cats} · ') && t"
+            )
+        };
+        wait_for(&driver, &at(2), "the second line").await?;
+        let chip = "return document.querySelector('[data-clear-limit=entry]')?.textContent ?? null";
+        observed(&driver, chip, json!("Examples: 猫 ×"), "the entry chip").await?;
+        let step = |direction: &'static str| {
+            format!("document.querySelector('[data-example-step=\"{direction}\"]').click()")
+        };
+        for (direction, n) in [("1", 3), ("1", 4), ("-1", 3), ("-1", 2), ("-1", 1)] {
+            driver.execute(&step(direction), Vec::new()).await?;
+            wait_for(&driver, &at(n), &format!("line {n}")).await?;
+        }
+        observed(
+            &driver,
+            "return document.querySelector('[data-example-step=\"-1\"]').disabled",
+            json!(true),
+            "no step before the first line",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new())
+            .await?;
+        observed(&driver, chip, Value::Null, "the removed chip").await?;
+        let plain = driver.execute(title, Vec::new()).await?.json().clone();
+        assert!(!plain.as_str().unwrap().contains(" / "), "{plain}");
+        observed(
+            &driver,
+            "const a = document.querySelector('#frequency-return'); return !a.hidden && a.getAttribute('href').startsWith('frequencies#')",
+            json!(true),
+            "the return link",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// The question page's line filter names the lines it filters, counts
+/// within them, and when nothing matches, says so and links to the same
+/// pattern on Frequencies, filtered by the typed text.
+#[tokio::test]
+async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to_frequencies()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        driver
+            .find(By::Css(".fq-kwic li[data-i='0'] .fq-inspect"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "const lab = document.querySelector('#token-lab'); return !!lab && !lab.hidden",
+            "the opened line",
+        )
+        .await?;
+        let filter = "const input = document.querySelector('.line-controls input'); \
+            const r = {placeholder: input.placeholder, label: input.getAttribute('aria-label'), \
+              count: document.querySelector('.line-controls span').textContent, \
+              empty: document.querySelector('.kwic-list > p.line-note')?.textContent ?? null, \
+              link: document.querySelector('.kwic-list > p.line-note a')?.getAttribute('href') ?? null};";
+        let before = driver
+            .execute(&format!("{filter} return r;"), Vec::new()).await?.json().clone();
+        let shown = before["placeholder"].as_str().unwrap().to_owned();
+        assert!(shown.starts_with("Filter the ") && shown.ends_with(" lines shown"), "{before}");
+        assert_eq!(before["label"], before["placeholder"]);
+        driver
+            .execute(
+                "const input = document.querySelector('.line-controls input'); input.value = '犬'; \
+                 input.dispatchEvent(new Event('input', {bubbles: true}))",
+                Vec::new(),
+            )
+            .await?;
+        let after = wait_for(
+            &driver,
+            &format!("{filter} return r.link ? r : false;"),
+            "the Frequencies link",
+        )
+        .await?;
+        let n = shown.trim_start_matches("Filter the ").trim_end_matches(" lines shown");
+        assert!(
+            after["count"].as_str().unwrap().starts_with(&format!("0 of the {n} lines shown · ")),
+            "{after}"
+        );
+        assert!(
+            after["empty"].as_str().unwrap().starts_with(&format!("None of the {n} lines shown contain “犬”.")),
+            "{after}"
+        );
+        let link = after["link"].as_str().unwrap();
+        let params: std::collections::BTreeMap<String, String> =
+            serde_urlencoded::from_str(link.strip_prefix("frequencies#").unwrap()).unwrap();
+        assert_eq!(params.get("pattern").map(String::as_str), Some("noun"), "{link}");
+        assert_eq!(params.get("q").map(String::as_str), Some("犬"), "{link}");
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+const COUNT_FIRST_CATALOG: &str = "key: [upos]\npos := [].\nnoun := [upos=NOUN].\n";
+
+/// Without a pattern in its address, Frequencies opens on the catalog's
+/// first definition that is not a count of single tokens by a key, as the
+/// question page does; a pattern in the address still wins.
+#[tokio::test]
+async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_artifact(
+        support::build_artifact_with_metadata(
+            (0..6u64)
+                .map(|index| {
+                    (
+                        "doc.md",
+                        index,
+                        false,
+                        vec![vec![TokenInfo::default().with_orth("x")]],
+                    )
+                })
+                .collect(),
+            Vec::new(),
+            metadata(),
+        ),
+        COUNT_FIRST_CATALOG,
+        |artifact, destination| {
+            let documents = (0..6u64)
+                .map(|document_id| DocumentTotals {
+                    document_id,
+                    sentences: 1,
+                    tokens: 10,
+                })
+                .collect::<Vec<_>>();
+            let mut writer = CountTableWriter::create(
+                destination,
+                table_key(artifact, COUNT_FIRST_CATALOG),
+                vec!["pos".into(), "noun".into()],
+                vec![GroupSchema {
+                    kind: GroupKind::Surface,
+                    names: Vec::new(),
+                }],
+                &["NOUN", "本"],
+                &documents,
+            )
+            .unwrap();
+            for (pattern, value) in [(0, 0), (1, 1)] {
+                writer.begin_entry(pattern, 0, &[value]).unwrap();
+                writer.add_sentence(0, 0, 1).unwrap();
+            }
+            writer
+                .finish(&CancellationFlag::new())
+                .unwrap()
+                .publish()
+                .unwrap();
+        },
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        let chosen = "return document.querySelector('[data-fq-sentence] select[data-b=pattern]')?.value ?? null";
+        open(&driver, &served.base, ROWS).await?;
+        observed(&driver, chosen, json!("noun"), "the default definition").await?;
+        open(&driver, &format!("{}#pattern=pos", served.base), ROWS).await?;
+        observed(&driver, chosen, json!("pos"), "the addressed definition").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// At 1280×800 the table starts in the first screen: the pattern source,
+/// the command and the Workbench link wait in one closed disclosure under
+/// the figures, and the exact-match fields are drawn as the sentence's
+/// blanks are, underlined without a box.
+#[tokio::test]
+async fn the_table_starts_above_the_fold_with_the_pattern_machinery_folded() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    driver.set_window_rect(0, 0, 1280, 800).await?;
+    let served = serve_key_table().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        let shown = driver
+            .execute(
+                "const folded = document.querySelector('[data-fq-machinery]'), row = document.querySelector('table.freq tbody tr'); \
+                 const field = getComputedStyle(document.querySelector('.fq-key input')), blank = getComputedStyle(document.querySelector('select[data-b=pattern]')); \
+                 return {open: folded.open, holds: [!!folded.querySelector('[data-fq-source] pre'), !!folded.querySelector('[data-fq-source] a'), !!folded.querySelector('[data-c=code]')], \
+                   underFigures: folded.compareDocumentPosition(document.querySelector('[data-fq-figures]')) === Node.DOCUMENT_POSITION_PRECEDING, \
+                   rowBottom: row.getBoundingClientRect().bottom, viewport: innerHeight, \
+                   field: [field.borderTopWidth, field.color === blank.color, field.backgroundColor]}",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(shown["open"], json!(false), "{shown}");
+        assert_eq!(shown["holds"], json!([true, true, true]), "{shown}");
+        assert_eq!(shown["underFigures"], json!(true), "{shown}");
+        assert!(shown["rowBottom"].as_f64().unwrap() <= shown["viewport"].as_f64().unwrap(), "{shown}");
+        assert_eq!(shown["field"], json!(["0px", true, "rgba(0, 0, 0, 0)"]), "{shown}");
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// Each exact-match field is named for its role and attribute, and an exact
+/// value no entry has is answered with a way back: the hint names the filter
+/// for partial values and a button clears the exact values.
+#[tokio::test]
+async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_key_table().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        let names = driver
+            .execute(
+                "return [...document.querySelectorAll('.fq-key input')].map((i) => i.getAttribute('aria-label'))",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let names = names.as_array().unwrap();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(
+            names.iter().all(|name| name.as_str().is_some_and(|name| name.ends_with(", exact value"))),
+            "{names:?}"
+        );
+        driver
+            .find(By::Css(".fq-key input"))
+            .await?
+            .send_keys("坂坂")
+            .await?;
+        let empty = "const p = document.querySelector('[data-fq-table]'); \
+            return p.querySelector('.fq-empty') && p.querySelector('[data-clear-keys]') ? p.textContent : null";
+        let text = wait_for(&driver, empty, "the empty exact result").await?;
+        assert!(text.as_str().unwrap().contains("filter above"), "{text}");
+        driver
+            .find(By::Css("[data-clear-keys]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(&driver, ROWS, "the entries again").await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('.fq-key input')].map((i) => i.value).join('')",
+            json!(""),
+            "the cleared fields",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// Each トークンを調べる link in an entry's lines is named for its line and
+/// work, so a list of them reads as distinct links.
+#[tokio::test]
+async fn each_inspect_link_names_its_line_and_work() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        let names = driver
+            .execute(
+                "return [...document.querySelectorAll('.fq-kwic li')].map((li) => [li.querySelector('.src span').textContent, li.querySelector('.fq-inspect')?.getAttribute('aria-label')])",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let names = names.as_array().unwrap();
+        assert!(names.len() > 1, "{names:?}");
+        for (line, pair) in names.iter().enumerate() {
+            assert_eq!(
+                pair[1],
+                json!(format!("Inspect tokens: line {}, {}", line + 1, pair[0].as_str().unwrap())),
+                "{names:?}"
+            );
+        }
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// The question page's address for `source` limited to its `noun` definition.
+fn limited_question(base: &str, source: &str, run: bool) -> String {
+    let root = base.trim_end_matches("frequencies");
+    let query = serde_urlencoded::to_string([
+        ("fresh", "1"),
+        ("run", if run { "1" } else { "0" }),
+        ("source", source),
+        ("pattern", "noun"),
+    ])
+    .unwrap();
+    format!("{root}#{query}")
+}
+
+/// A search limited to one definition keeps its 定義 chip and the
+/// definition's name in the sentence when an edit breaks the source but
+/// keeps the definition, so the failed search still names what it limits.
+#[tokio::test]
+async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        let chip = "return [document.querySelector('[data-clear-limit=pattern]')?.textContent ?? null, document.querySelector('#source-label').textContent]";
+        observed(&driver, chip, json!(["Definition: noun ×", "noun"]), "the limit").await?;
+        assert_eq!(
+            driver.execute("return document.querySelector('#example')", Vec::new()).await?.json(),
+            &Value::Null,
+            "one search button"
+        );
+        driver
+            .execute(
+                "const t = document.querySelector('#source'); t.value = t.value.replace('noun :=', 'noun :=='); \
+                 t.dispatchEvent(new Event('input', {bubbles: true})); document.querySelector('#run').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "const e = document.querySelector('#edit-pattern-error'); return e && !e.hidden",
+            "the pattern error",
+        )
+        .await?;
+        observed(&driver, chip, json!(["Definition: noun ×", "noun"]), "the limit after the error").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// Opening the pattern source puts the caret on the selected definition and
+/// scrolls the editor to it, rather than to wherever the text ends.
+#[tokio::test]
+async fn the_source_editor_opens_on_the_selected_definition() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let filler = (0..40).map(|n| format!("# note {n}\n")).collect::<String>();
+    let source = format!(
+        "{filler}{ENTRY_CATALOG}\n{}",
+        (0..40)
+            .map(|n| format!("pattern other{n} := [text=本].\n"))
+            .collect::<String>()
+    );
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, &source, false))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#source-label').textContent === 'noun' || null",
+            "the limited definition",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('#edit-source').click()", Vec::new())
+            .await?;
+        let shown = driver
+            .execute(
+                "const t = document.querySelector('#source'), at = t.value.indexOf('pattern noun'); \
+                 const line = parseFloat(getComputedStyle(t).lineHeight), top = t.value.slice(0, at).split('\\n').length - 1; \
+                 return {caret: t.selectionStart === at, focused: document.activeElement === t, \
+                   visible: top * line >= t.scrollTop && (top + 1) * line <= t.scrollTop + t.clientHeight}",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(shown, json!({"caret": true, "focused": true, "visible": true}));
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// A printed question page keeps the sentence, the counts and the lines,
+/// and leaves out the site navigation, the search button, the page filter,
+/// the document jump, the download link and 条件を追加.
+#[tokio::test]
+async fn printing_the_question_page_leaves_out_its_controls() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.result-header a[href$=\"/export\"]') && document.querySelector('.line-controls input') ? true : null",
+            "the results",
+        )
+        .await?;
+        let printed = driver
+            .execute(
+                "const hidden = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]) \
+                   .filter((rule) => rule.media?.mediaText === 'print').flatMap((rule) => [...rule.cssRules]) \
+                   .filter((rule) => rule.style?.display === 'none').map((rule) => rule.selectorText); \
+                 const dropped = (selector) => { const e = document.querySelector(selector); return !!e && hidden.some((s) => e.closest(s)); }; \
+                 return Object.fromEntries(['header.site', '#run', '.line-controls input', '.document-nav', '.result-header a[href$=\"/export\"]', '#attribute-remix', \
+                   '.question-sentence', '.line-controls span', '.kwic-list'].map((s) => [s, dropped(s)]))",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(
+            printed,
+            json!({"header.site": true, "#run": true, ".line-controls input": true, ".document-nav": true,
+                   ".result-header a[href$=\"/export\"]": true, "#attribute-remix": true,
+                   ".question-sentence": false, ".line-controls span": false, ".kwic-list": false})
+        );
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// The first Tab on a question page, restored or fresh, reaches a link to
+/// the question sentence, and following it puts the next Tab on the
+/// sentence's first control.
+#[tokio::test]
+async fn the_first_tab_leads_to_the_question_sentence() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.line-controls input') ? true : null",
+            "the results",
+        )
+        .await?;
+        let body = driver.find(By::Css("body")).await?;
+        body.send_keys(Key::Tab).await?;
+        let active = "const a = document.activeElement; return [a.getAttribute('href'), a.textContent, !!a.closest('.question-sentence')]";
+        assert_eq!(
+            driver.execute(active, Vec::new()).await?.json(),
+            &json!(["#question-sentence", "Skip to the question", false])
+        );
+        driver
+            .action_chain()
+            .send_keys(Key::Enter)
+            .send_keys(Key::Tab)
+            .perform()
+            .await?;
+        assert_eq!(driver.execute(active, Vec::new()).await?.json()[2], json!(true));
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
 }

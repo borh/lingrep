@@ -73,5 +73,16 @@ export function parseOccurrence(text:string|null):OccurrenceTarget|null {
   if(!record(value)||typeof value.pattern!=='string'||!value.pattern||!ordinal(value.sentence)||!ordinal(value.document)||!Array.isArray(value.roles)||!value.roles.every(role)||typeof value.analysis!=='string'||typeof value.fingerprint!=='string')throw new Error('The frequency occurrence in this address is invalid. Open it again from the frequency view.');
   return {pattern:value.pattern,sentence:value.sentence,document:value.document,roles:value.roles.map(({name,start,end}:{name:string;start:number;end:number})=>({name,start,end})),analysis:value.analysis,fingerprint:value.fingerprint};
 }
+/** A frequency entry's words, its occurrence count, the lines the frequency view listed for it, and the index among them of the line opened. */
+export interface EntryLines { readonly words:readonly string[]; readonly total:number; readonly at:number; readonly lines:readonly Pick<OccurrenceTarget,'sentence'|'document'|'roles'>[]; }
+export function parseEntryLines(text:string|null):EntryLines|null {
+  if(!text)return null;
+  let value:unknown;
+  try{value=JSON.parse(text);}catch{value=null;}
+  const role=(item:unknown)=>record(item)&&typeof item.name==='string'&&ordinal(item.start)&&ordinal(item.end)&&item.end>=item.start;
+  const line=(item:unknown)=>record(item)&&ordinal(item.sentence)&&ordinal(item.document)&&Array.isArray(item.roles)&&item.roles.every(role);
+  if(!record(value)||!Array.isArray(value.words)||!value.words.every(word=>typeof word==='string')||!Array.isArray(value.lines)||!value.lines.length||!value.lines.every(line)||!ordinal(value.total)||value.total<value.lines.length||!ordinal(value.at)||value.at>=value.lines.length)throw new Error('The frequency entry in this address is invalid. Open it again from the frequency view.');
+  return {words:value.words,total:value.total,at:value.at,lines:value.lines.map(({sentence,document,roles}:{sentence:number;document:number;roles:{name:string;start:number;end:number}[]})=>({sentence,document,roles:roles.map(({name,start,end})=>({name,start,end}))}))};
+}
 /** The frequency view address to return to, or null unless `value` is a relative `frequencies` address. */
 export const frequencyReturn=(value:string|null):string|null=>value!==null&&/^frequencies(#|$)/.test(value)?value:null;

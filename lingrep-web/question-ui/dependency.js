@@ -126,10 +126,10 @@ export function headLabel(tokens, index) {
     const head = headIndex(tokens[index]);
     return head === null || !tokens[head] ? null : `${scalar(tokens[head], 'text') ?? ''}·${head + 1}`;
 }
-// The Universal Dependencies part-of-speech tags.
-const UPOS = {
-    ja: { ADJ: '形容詞', ADP: '助詞', ADV: '副詞', AUX: '助動詞', CCONJ: '接続詞', DET: '連体詞', INTJ: '感動詞', NOUN: '名詞', NUM: '数詞', PART: '助詞', PRON: '代名詞', PROPN: '固有名詞', PUNCT: '記号', SCONJ: '接続助詞', SYM: '記号', VERB: '動詞', X: 'その他' },
-    en: { ADJ: 'adjective', ADP: 'particle', ADV: 'adverb', AUX: 'auxiliary', CCONJ: 'conjunction', DET: 'determiner', INTJ: 'interjection', NOUN: 'noun', NUM: 'numeral', PART: 'particle', PRON: 'pronoun', PROPN: 'proper noun', PUNCT: 'punctuation', SCONJ: 'conjunctive particle', SYM: 'symbol', VERB: 'verb', X: 'other' },
-};
-/** A UPOS tag in plain words; any other value as written. */
-export const partOfSpeech = (code, locale) => UPOS[locale][code] ?? code;
+const LABEL_SETS = ['ud-v2', 'spacy', 'clearnlp', 'penn'];
+/** `value` of `attribute` in plain words, from the first label set that names it, or its base relation's name for a `dep.rel` subtype; English where a name has no Japanese; null when no set names it. */
+export function valueName(names, attribute, value, locale) {
+    const entry = (value) => LABEL_SETS.map(set => names?.[set]?.[attribute]?.[value]).find(Boolean);
+    const found = entry(value) ?? (attribute === 'dep.rel' && value.includes(':') ? entry(value.slice(0, value.indexOf(':'))) : undefined);
+    return found?.[locale] ?? found?.en ?? null;
+}

@@ -55,7 +55,7 @@ pub use identity::{
     POLICY_SEMANTICS_IDENTITY, catalog_fingerprint, catalog_fingerprint_with_vectors,
 };
 pub use inline::normalize_inline_pattern;
-pub use labels::{LabelDeclaration, OutOfSetValues};
+pub use labels::{LABEL_NAMES_JSON, LabelDeclaration, OutOfSetValues};
 pub use matcher::{
     AnalyzerCompatibility, AnchorEvaluator, CatalogAnalyzerConstraint, CompiledCatalog,
     CompiledLexiconDefinition, ContextSegment, ContextWindow, EnhancedMatchError, FsmBuilder,

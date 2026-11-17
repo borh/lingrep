@@ -544,6 +544,7 @@ fn frequency_rows_equal_summarize_where_for_every_condition_set() {
                 {"name": "word", "source": "key: [text]\npattern word := [].", "key_fields": ["text"]},
                 {"name": "pair", "source": "pattern pair := [] [].", "key_fields": []},
             ],
+            "default_pattern": "cat",
             "workbench": meta["pairs"][0]["workbench"],
         }])
     );
@@ -1106,10 +1107,10 @@ fn the_view_appears_only_with_tables_and_answers_under_a_subpath() {
     let (status, index) = get(&plain, "/");
     assert_eq!(status, 200);
     assert!(!index.contains("href=\"frequencies\""));
-    assert_eq!(
-        get_json(&plain, "/api/frequency/meta"),
-        json!({"pairs": [], "dimensions": {}, "labels": {}})
-    );
+    let mut meta = get_json(&plain, "/api/frequency/meta");
+    let value_names = meta.as_object_mut().unwrap().remove("value_names").unwrap();
+    assert_eq!(meta, json!({"pairs": [], "dimensions": {}, "labels": {}}));
+    assert_eq!(value_names["ud-v2"]["dep.rel"]["nsubj"]["ja"], "主語");
     drop(plain);
 
     let sub = served(

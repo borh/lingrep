@@ -1,23 +1,23 @@
 import { serviceURL, ServiceError, expiredSearch } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, frequencyReturn } from './location.js';
+import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
-import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, partOfSpeech } from './dependency.js';
-import { element as $, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName } from './dependency.js';
+import { element as $, basicAttributeKeys, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
 const words = (tokens) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
 const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
 let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
-    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', emptyTitle: '調べたい表現から始める。', emptyBody: 'パターンや文書の条件を変えて検索できます。新しい検索の間も、完了した結果を保持します。', example: 'このパターンを検索', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
-    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', filter: 'このページを絞り込む', noLines: 'このパターンの用例はまだありません。', noFilter: '絞り込みに一致する用例はありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceText: '表層形', evidenceLemma: '辞書形', evidencePos: '品詞', evidenceHead: '係り先', evidenceRel: '関係', root: '文の中心', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
+    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter、または欄から移動して検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '作品を読む',
+    current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', noLines: 'このパターンの用例はまだありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語', evidenceRoles: '役割', evidenceText: '表層形', evidenceLemma: '辞書形', evidencePos: '品詞', evidenceHead: '係り先', evidenceRel: '関係', root: '文の中心', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
-const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', filter: 'Filter this page', noLines: 'No lines for this pattern yet.', noFilter: 'No examples on this page contain this text.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
+const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', noLines: 'No lines for this pattern yet.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
 const t = (key) => (locale === 'ja' ? ja[key] : null) ?? en[key] ?? extra[key] ?? key;
-Object.assign(ja, { skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', emptyBody: 'パターンや文書の条件を変えて検索できます。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
+Object.assign(ja, { skipQuestion: '問いへ移動', skip: '検索結果へ移動', readingEnd: '。', noMatches: 'このパターンに一致する用例はありません。', partialCount: '途中までの件数', limitChoice: '定義を 1 つだけ検索:', chooseDefinition: '検索する定義を 1 つ選んでください。', occurrenceNotFound: 'この検索には、その文で同じ語が同じ役割に入る用例がありません。', occurrenceChanged: '頻度表を作ったときとコーパスまたはパターンが異なるため、用例を特定できません。', analysisChanged: 'この問いを保存したときから、コーパスの内容が変わっています。現在のコーパスで検索し直せます。', searchCurrentCorpus: '現在のコーパスで検索', resultLimit: '結果が多すぎて保持できません。パターンや文書の条件を絞り込んで、もう一度検索してください。', current: '用例', previous: '前回の完了した用例', boundaryBody: '検索中の件数は途中経過です。ダウンロードには全件を含みます。原文は文書の条件で絞り込まずに表示します。', return: '用例に戻る', during: '新しい検索の実行中は', keep: '前回の検索結果を表示' });
 Object.assign(extra, { root: 'heads the sentence', noMatches: 'No examples match this pattern.', partialCount: 'Count so far', limitChoice: 'Search one definition only:', chooseDefinition: 'Choose one definition to search.', occurrenceNotFound: 'This search has no example in that sentence with the same words in the same roles.', occurrenceChanged: 'The corpus or pattern differs from the one the frequency table counted, so the example cannot be located.' });
 extra.current = 'Results';
 extra.resultLimit = 'Too many results to retain. Narrow the pattern or document conditions and search again.';
@@ -25,6 +25,7 @@ extra.analysisChanged = 'The corpus has changed since this question was saved. Y
 extra.searchCurrentCorpus = 'Search the current corpus';
 extra.previous = 'Previous results';
 let config;
+const named = (attribute, value) => valueName(config?.value_names, attribute, value, locale);
 let controls;
 const tokenLab = $('#token-lab');
 const focusedSentence = document.createElement('p');
@@ -256,12 +257,17 @@ let viewEvidence = null;
 let navigationEpoch = 0;
 let pendingView = null;
 let pendingOccurrence = null;
+// The frequency entry a hand-off came from: example steps go through its lines while the open example is the line at `at`.
+let entryLines = null;
+const entryLine = (at) => ({ ...entryLines.lines[at], pattern: entryLines.pattern, analysis: entryLines.analysis, fingerprint: entryLines.fingerprint });
+function entryActive() { return !!entryLines && !!inspecting && !tokenLab.hidden && inspecting.row.pattern === entryLines.pattern && inspecting.row.corpus_sentence_ordinal === entryLines.lines[entryLines.at].sentence; }
 // The draft's definition and document limit; it applies while the pattern source is `source`.
 let searchLimit = null;
 const runLimits = new Map();
 const documentTitles = new Map();
 let preferredPattern = '';
-function activeLimit() { return searchLimit && searchLimit.source === $('#source').value && (searchLimit.pattern || searchLimit.document != null) ? searchLimit : null; }
+// A limit to a definition holds through edits that keep that definition; a document limit alone holds for the source it was set on.
+function activeLimit() { const source = $('#source').value; return searchLimit && (searchLimit.source === source || !!searchLimit.pattern && definitionOffset(source, searchLimit.pattern) >= 0) && (searchLimit.pattern || searchLimit.document != null) ? searchLimit : null; }
 const documentName = (dataset, document) => documentTitles.get(`${dataset}:${document}`) ?? (locale === 'ja' ? `文書${document}` : `document ${document}`);
 let revealedFailure = null;
 const editError = document.createElement('button');
@@ -444,14 +450,19 @@ function renderLimits(limit) {
         delete label.dataset.limited;
         label.textContent = locale === 'ja' ? 'すべての作品' : 'all documents';
     }
-    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : [])];
+    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : []), ...(entryActive() ? [['entry', locale === 'ja' ? `用例: ${entryLines.words.join(' ')}` : `Examples: ${entryLines.words.join(' ')}`]] : [])];
     const signature = JSON.stringify(chips);
     if (renderSignatures.get(limitChips) === signature)
         return;
     renderSignatures.set(limitChips, signature);
     limitChips.replaceChildren(...chips.map(([kind, text]) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'scope-chip'; button.dataset.clearLimit = kind; button.setAttribute('aria-label', locale === 'ja' ? `${text} の限定を外す` : `Remove the limit ${text}`); button.innerHTML = `${escape(text)}<span aria-hidden="true"> ×</span>`; return button; }));
 }
-limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (!button || !searchLimit)
+limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (button?.dataset.clearLimit === 'entry') {
+    entryLines = null;
+    renderExampleSteps();
+    updateDraft();
+    return;
+} if (!button || !searchLimit)
     return; searchLimit = button.dataset.clearLimit === 'pattern' ? { ...searchLimit, pattern: null } : { ...searchLimit, document: null }; updateDraft(); });
 function restoreLimit(params) {
     const pattern = params.get('pattern') || null, document = params.get('document');
@@ -666,7 +677,6 @@ function render(force = false) {
     }
     // A failed run without counts has nothing to read; its error and recovery are above.
     const shown = [...new Map([...documentSections.values()].map(section => section.run).concat(visibleRuns.filter((run) => run != null && !(run.phase === 'failed' && !Object.keys(run.counts).length))).map(run => [run.id, run])).values()];
-    $('#empty').hidden = shown.length > 0 || !!current;
     $('#result-panels').className = compared ? 'comparing' : '';
     const ids = shown.map(run => run.id);
     for (const [id, panel] of panels) {
@@ -773,9 +783,6 @@ function render(force = false) {
         $('.query-tools-detail pre', panel).textContent = run.source;
         $('[data-copy]', panel).textContent = t('copy');
         $('[data-source]', panel).textContent = t('savedQuery');
-        const input = $('.line-controls input', panel);
-        input.placeholder = t('filter');
-        input.setAttribute('aria-label', t('filter'));
         renderLines(panel, run, force);
     }
     compactCompletedStatus();
@@ -980,9 +987,12 @@ function renderLines(panel, run, _force = false) {
     const shownCounts = new Map(), landmarks = new Map(view.landmarks.map(document => [document.ordinal, document]));
     for (const row of rows)
         shownCounts.set(row.document_ordinal, (shownCounts.get(row.document_ordinal) ?? 0) + 1);
-    const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0;
+    const total = pageReady ? view.matchesTotal : run.counts[pattern] ?? 0, shownLines = Math.min(allRows.length, limit);
+    const input = $('.line-controls input', panel), hint = locale === 'ja' ? `表示中の${count(shownLines)}件から絞り込む` : `Filter the ${count(shownLines)} lines shown`;
+    input.placeholder = hint;
+    input.setAttribute('aria-label', hint);
     $('.line-controls span', panel).textContent = run.phase === 'complete' && !isReplay
-        ? filter ? (locale === 'ja' ? `このページで ${count(rows.length)} / ${count(allRows.length)} 件 · 全 ${count(total)} 件` : `${count(rows.length)} of ${count(allRows.length)} on this page · ${count(total)} total matches`)
+        ? filter ? (locale === 'ja' ? `表示中の ${count(shownLines)} 件のうち ${count(rows.length)} 件 · 全 ${count(total)} 件` : `${count(rows.length)} of the ${count(shownLines)} lines shown · ${count(total)} total matches`)
             : !rows.length ? '' : (locale === 'ja' ? `${count(view.start + 1)}–${count(view.start + rows.length)} 件を表示。` : `Reading ${count(rows.length ? view.start + 1 : 0)}–${count(view.start + rows.length)}.`)
         : locale === 'ja' ? `${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示` : `${count(rows.length)} shown · ${count(total)} found`;
     if (view.loading && !rows.length)
@@ -1095,7 +1105,12 @@ function renderLines(panel, run, _force = false) {
     }
     if (!rows.length) {
         const empty = node('empty', 'p', 'line-note');
-        empty.textContent = t(filter ? 'noFilter' : run.phase === 'complete' ? 'noMatches' : 'noLines');
+        if (filter)
+            filterEmpty(empty, run, pattern, filter, shownLines);
+        else {
+            renderSignatures.delete(empty);
+            empty.textContent = t(run.phase === 'complete' ? 'noMatches' : 'noLines');
+        }
         desired.push(empty);
     }
     const desiredNodes = new Set(desired);
@@ -1111,6 +1126,29 @@ function renderLines(panel, run, _force = false) {
     for (const key of nodes.keys())
         if (!used.has(key))
             nodes.delete(key);
+}
+// The Frequencies tables served, read once when a page filter first finds nothing.
+let frequencyPairs;
+// A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
+function filterEmpty(element, run, pattern, filter, shown) {
+    if (frequencyPairs === undefined) {
+        frequencyPairs = null;
+        void request('api/frequency/meta').then(meta => { frequencyPairs = meta.pairs ?? []; render(true); }, () => { frequencyPairs = []; });
+    }
+    const pair = frequencyPairs?.find(pair => pair.corpus === run.dataset && pair.patterns.some(item => item.name === pattern));
+    const signature = JSON.stringify([locale, run.id, pattern, filter, shown, pair?.catalog ?? null]);
+    if (renderSignatures.get(element) === signature)
+        return;
+    renderSignatures.set(element, signature);
+    element.textContent = locale === 'ja' ? `表示中の${count(shown)}件に「${filter}」を含む用例はありません。` : `None of the ${count(shown)} lines shown contain “${filter}”.`;
+    if (pair) {
+        const link = document.createElement('a');
+        link.href = `frequencies#${new URLSearchParams({ corpus: pair.corpus, catalog: pair.catalog, pattern, q: filter })}`;
+        link.textContent = locale === 'ja' ? `頻度表で「${filter}」を含む${pattern}を数える` : `Count ${pattern} entries containing “${filter}” in Frequencies`;
+        element.append(' ', link);
+    }
+    else
+        element.append(locale === 'ja' ? ' 絞り込みは表示中の用例だけを対象にします。コーパス全体で探すには、パターンを変えて検索してください。' : ' The filter searches only these lines. To search the whole corpus, change the pattern and search again.');
 }
 async function inspect(run, row, button) {
     const epoch = ++inspectionEpoch;
@@ -1139,10 +1177,6 @@ async function inspect(run, row, button) {
         tokenData = data;
         tokenIndex = row.span.start;
         focusedSentence.innerHTML = escape(words(data.tokens.slice(0, row.span.start))) + '<mark>' + escape(words(data.tokens.slice(row.span.start, row.span.end))) + '</mark>' + escape(words(data.tokens.slice(row.span.end)));
-        const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
-        $('[data-example-step="-1"]', exampleSteps).disabled = position <= 0 && page.previousAfter == null;
-        $('[data-example-step="1"]', exampleSteps).disabled = position === page.rows.length - 1 && page.next == null;
-        $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
         const roles = new Map(evidenceWords(row, data.tokens.length).filter(word => word.roles.length).map(word => [word.index, word.roles.join(' ')]));
         $('#token-ribbon').innerHTML = data.tokens.map(token => { const bound = roles.get(token.index); return `<button type="button" data-token="${token.index}" class="${token.index >= row.span.start && token.index < row.span.end ? 'is-hit' : ''}${bound ? ' bound' : ''}"${bound ? ` data-roles="${escape(bound)}"` : ''}>${escape(token.attributes.text)}</button>`; }).join('');
         const keys = Object.keys(data.tokens[tokenIndex].attributes);
@@ -1154,6 +1188,7 @@ async function inspect(run, row, button) {
         tokenLab.hidden = false;
         button.after(tokenLab);
         button.setAttribute('aria-expanded', 'true');
+        renderExampleSteps();
         renderDependencies();
         $('#document').setAttribute('href', hrefFor(run, hitLocation(run, row, 'reader')));
         $('#close-token').setAttribute('href', hrefFor(run, concordanceFor(run)));
@@ -1176,11 +1211,52 @@ async function inspect(run, row, button) {
         button.removeAttribute('aria-busy');
     }
 }
+// The example's position, among the run's examples or, from a frequency entry, among the entry's lines.
+function renderExampleSteps() {
+    if (!inspecting)
+        return;
+    const { run, row } = inspecting, previous = $('[data-example-step="-1"]', exampleSteps), next = $('[data-example-step="1"]', exampleSteps);
+    if (entryActive()) {
+        const { at, lines, total, words } = entryLines;
+        previous.disabled = at <= 0;
+        next.disabled = at >= lines.length - 1;
+        $('#token-origin').textContent = `${words.join('')} · ${count(at + 1)} / ${count(total)} · ${documentTitle(row)}`;
+        return;
+    }
+    const page = documentView(run, row.pattern), position = page.rows.findIndex(value => value.sequence === row.sequence);
+    previous.disabled = position <= 0 && page.previousAfter == null;
+    next.disabled = position === page.rows.length - 1 && page.next == null;
+    $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
+}
+// A step from an entry's line opens the next line in this search when the search covers its document, else searches that document.
+async function stepEntry(step) {
+    const from = entryLines.at, at = from + step, target = entryLine(at), run = inspecting.run, limited = runLimits.get(run.id)?.document;
+    entryLines = { ...entryLines, at };
+    if (limited == null || limited === target.document) {
+        if (!await openOccurrence(run, target))
+            entryLines = { ...entryLines, at: from };
+        return;
+    }
+    await search(undefined, undefined, target);
+    pendingView = null;
+    pendingOccurrence = target;
+}
 for (const control of exampleSteps.querySelectorAll('button'))
     control.addEventListener('click', async () => {
         const origin = inspecting;
         if (!origin)
             return;
+        if (entryActive()) {
+            control.disabled = true;
+            try {
+                await stepEntry(Number(control.dataset.exampleStep));
+            }
+            finally {
+                if (inspecting === origin)
+                    renderExampleSteps();
+            }
+            return;
+        }
         const { run, row } = origin, step = Number(control.dataset.exampleStep), view = documentView(run, row.pattern), position = view.rows.findIndex(value => value.sequence === row.sequence);
         const top = tokenLab.getBoundingClientRect().top, epoch = navigationEpoch, hadFocus = document.activeElement === control;
         let successor = null;
@@ -1219,6 +1295,8 @@ for (const control of exampleSteps.querySelectorAll('button'))
             }
         }
     });
+// Token details name the dependency keys in words, as the evidence table's headings do.
+const ATTRIBUTE_NAMES = { 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
 function selectToken(index) {
     if (!tokenData)
         return;
@@ -1231,11 +1309,11 @@ function selectToken(index) {
         button.setAttribute('aria-pressed', String(token.index === index));
     }
     const entries = Object.entries(token.attributes);
-    const common = ['text', 'lemma', 'norm', 'upos', 'xpos', 'unidic.cform', 'unidic.ctype', 'unidic.kana', 'unidic.pron', 'unidic.orthbase', 'unidic.lform', 'unidic.goshu', 'unidic.pos1', 'unidic.pos2', 'unidic.pos3', 'unidic.pos4', 'unidic.pronbase', 'unidic.kanabase'];
-    const basics = [...common.filter(key => key in token.attributes), ...entries.map(([key]) => key).filter(key => !common.includes(key))].slice(0, 18).map(key => [key, token.attributes[key]]);
+    const basics = basicAttributeKeys(token.attributes).map(key => [key, token.attributes[key]]);
     const row = ([key, value]) => {
         const values = attributeMembers(value);
-        return values.length ? values.map(member => { const selected = field === key && attributeMember === member; return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${escape(key)}</span><strong>${escape(member)}</strong></button>`; }).join('') : `<div class="attribute-row"><span>${escape(key)}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
+        const name = ATTRIBUTE_NAMES[key]?.[locale], label = name ? `${escape(name)} <code>${escape(key)}</code>` : escape(key);
+        return values.length ? values.map(member => { const selected = field === key && attributeMember === member, gloss = named(key, member); return `<button type="button" data-attribute="${escape(key)}" data-member="${escape(member)}" class="attribute-row ${selected ? 'selected' : ''}" aria-pressed="${selected}"><span>${label}</span><strong${gloss ? ` title="${escape(gloss)}"` : ''}>${escape(member)}</strong></button>`; }).join('') : `<div class="attribute-row"><span>${label}</span><span>${locale === 'ja' ? '値なし' : 'No values'}</span></div>`;
     };
     const attributes = $('#token-attributes'), more = attributes.querySelector(':scope>details')?.open ?? false, expanded = attributes.querySelector('.attribute-more')?.open ?? false;
     const span = inspecting?.row.span, inSpan = !!span && index >= span.start && index < span.end;
@@ -1264,6 +1342,12 @@ function drawArcs(chips) {
         svg.append(svgNode('path', { class: kind, d: `M${x1 + offset},${y} C${x1 + offset},${y - h} ${x2 - offset},${y - h} ${x2 - offset},${y} M${x2 - offset - 4},${y - 7} L${x2 - offset},${y} L${x2 - offset + 4},${y - 7}` }));
         const label = svgNode('text', { class: kind, x: (x1 + x2) / 2, y: y - h * 0.75 - 4, 'text-anchor': 'middle' });
         label.textContent = arc.rel;
+        const gloss = named('dep.rel', arc.rel);
+        if (gloss) {
+            const title = svgNode('title', {});
+            title.textContent = gloss;
+            label.append(title);
+        }
         svg.append(label);
     }
     chips.prepend(svg);
@@ -1272,6 +1356,9 @@ const arcObserver = new ResizeObserver(entries => { for (const entry of entries)
     drawArcs(entry.target); });
 addEventListener('beforeprint', () => { for (const chips of document.querySelectorAll('.dependency-chips'))
     drawArcs(chips); });
+// A relation in plain words with its code beside it, or the code alone when no label set names it.
+function relationCell(rel) { const gloss = named('dep.rel', rel); return gloss ? `${escape(gloss)} <code>${escape(rel)}</code>` : escape(rel); }
+function relationGloss(rel) { const gloss = named('dep.rel', rel); return gloss ? ` <span class="dependency-gloss">${escape(gloss)}</span>` : ''; }
 function roleTags(roles) { return roles.map(role => `<span class="dependency-role">${escape(role)}</span>`).join(''); }
 function renderDependencies() {
     const tokens = tokenData?.tokens, row = inspecting?.row;
@@ -1293,7 +1380,7 @@ function renderDependencies() {
             const y1 = (arc.from + .5) * TREE_ROW, y2 = (arc.to + .5) * TREE_ROW, x = gutter - 6 - arc.column * TREE_COLUMN;
             svg.append(svgNode('path', { class: arc.bound ? 'dependency-arc bound' : 'dependency-arc', d: `M${gutter},${y1} H${x} V${y2} H${gutter - 3} M${gutter - 8},${y2 - 4} L${gutter - 3},${y2} L${gutter - 8},${y2 + 4}` }));
         }
-        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}</span>`; }).join('')}</div>`;
+        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel', value(index, 'dep.rel')) ?? '')}">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}${relationGloss(value(index, 'dep.rel'))}</span>`; }).join('')}</div>`;
         diagram.firstElementChild.prepend(svg);
     }
     else {
@@ -1320,7 +1407,7 @@ function renderDependencies() {
         arcLayouts.set(chips, arcs);
         arcObserver.observe(chips);
     }
-    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(partOfSpeech(value(word.index, 'upos'), locale))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td>${['text', 'lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${escape(value(word.index, 'dep.rel'))}</td></tr>`).join('');
+    $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(named('upos', value(word.index, 'upos')) ?? value(word.index, 'upos'))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td>${['text', 'lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${relationCell(value(word.index, 'dep.rel'))}</td></tr>`).join('');
 }
 compactLayout.addEventListener('change', () => { if (!dependencyChoice)
     renderDependencies(); });
@@ -1338,11 +1425,13 @@ async function openOccurrence(run, target) {
             heading.focus({ preventScroll: true });
             tokenLab.scrollIntoView({ block: 'nearest' });
         }
+        return true;
     }
     catch (error) {
         const detail = error instanceof ServiceError && error.status === 404 ? t('occurrenceNotFound') : error instanceof ServiceError && error.status === 409 && /frequency table/.test(error.message) ? t('occurrenceChanged') : errorMessage(error);
         $('#error').hidden = false;
         $('#error').textContent = `${t('occurrenceMissing')} ${detail}`;
+        return false;
     }
 }
 let readerEpoch = 0;
@@ -1541,13 +1630,12 @@ $('#timeline').addEventListener('input', () => { if (activeId || !recorded.lengt
 $('#reading-options').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey)
     event.preventDefault(); });
 $('#query-form').addEventListener('submit', search);
-$('#example').addEventListener('click', search);
 $('#source').addEventListener('input', updateDraft);
 $('#source').addEventListener('focus', () => { sourceAtFocus = $('#source').value; });
 $('#source').addEventListener('blur', event => {
     if ($('#source').value === sourceAtFocus)
         return;
-    if (event.relatedTarget instanceof Element && event.relatedTarget.closest('#run,#example,#retry'))
+    if (event.relatedTarget instanceof Element && event.relatedTarget.closest('#run,#retry'))
         return;
     void search();
 });
@@ -1589,8 +1677,15 @@ $('#edit-source').addEventListener('click', () => {
     const editor = $('#source-editor');
     editor.hidden = !editor.hidden;
     $('#edit-source').setAttribute('aria-expanded', String(!editor.hidden));
-    if (!editor.hidden)
-        $('#source').focus();
+    if (editor.hidden)
+        return;
+    const input = $('#source'), at = definitionOffset(input.value, $('#source-label').textContent ?? '');
+    input.focus();
+    if (at < 0)
+        return;
+    input.setSelectionRange(at, at);
+    const line = parseFloat(getComputedStyle(input).lineHeight) || 20;
+    input.scrollTop = Math.max(0, (input.value.slice(0, at).split('\n').length - 2) * line);
 });
 $('#token-attributes').addEventListener('click', event => { const button = event.target.closest('[data-attribute]'); if (!button)
     return; attributeKey = button.dataset.attribute; attributeMember = button.dataset.member; const all = !!button.closest('.attribute-all'); selectToken(tokenIndex); [...$('#token-attributes').querySelectorAll(all ? '.attribute-all [data-attribute]' : '.attribute-basics [data-attribute]')].find(item => item.dataset.attribute === attributeKey && item.dataset.member === attributeMember)?.focus({ preventScroll: true }); });
@@ -1923,7 +2018,9 @@ async function init() {
         $('#frequency-return').href = returnHref;
         $('#frequency-return').hidden = false;
     }
-    const occurrence = parseOccurrence(params.get('occurrence'));
+    const occurrence = parseOccurrence(params.get('occurrence')), entry = parseEntryLines(params.get('entry'));
+    if (occurrence && entry)
+        entryLines = { ...entry, pattern: occurrence.pattern, analysis: occurrence.analysis, fingerprint: occurrence.fingerprint };
     window.__probe = { get state() { return state; }, get recorded() { return recorded; }, get controls() { return controls; }, get view() { return viewLocation; }, search, questionDocument };
     if (current)
         await applyView(follow && current.phase === 'complete' && initialView.kind === 'concordance' ? current : evidence ?? current, follow && current.phase === 'complete' && initialView.kind === 'concordance' ? defaultView() : initialView, !follow);
@@ -1938,4 +2035,4 @@ async function init() {
     else if (occurrence && current?.phase === 'complete')
         await openOccurrence(current, occurrence);
 }
-init().catch(error => { $('#status').textContent = errorMessage(error); $('#run').disabled = true; $('#example').disabled = true; $('#retry').hidden = true; });
+init().catch(error => { $('#status').textContent = errorMessage(error); $('#run').disabled = true; $('#retry').hidden = true; });

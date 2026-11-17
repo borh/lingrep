@@ -536,13 +536,15 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
             let note = driver
                 .execute(
                     "const note = document.querySelector('[data-overlaps-note]'); \
+                     const folded = note.closest('details'); if (folded) folded.open = true; \
                      return note.offsetParent !== null && note.textContent",
                     Vec::new(),
                 )
                 .await?;
             assert!(
-                note.json().as_str().is_some_and(|text| text
-                    .starts_with("Overlapping matches are counted using the catalog's policy.")),
+                note.json().as_str().is_some_and(
+                    |text| text.starts_with("Overlapping matches follow the catalog's policy")
+                ),
                 "{page} states how overlaps are counted: {:?}",
                 note.json()
             );

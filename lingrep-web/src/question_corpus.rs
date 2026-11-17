@@ -47,6 +47,7 @@ struct Configuration {
     datasets: BTreeMap<String, Dataset>,
     source: String,
     labels: Value,
+    value_names: &'static Value,
 }
 
 async fn config(State(store): State<RequestStore>) -> Response {
@@ -112,6 +113,7 @@ async fn config(State(store): State<RequestStore>) -> Response {
         datasets,
         source: store.default_pattern.to_string(),
         labels,
+        value_names: crate::metadata_labels::value_names(),
     })
     .into_response()
 }
@@ -607,6 +609,10 @@ mod tests {
         assert_eq!(
             body["labels"]["@document.ndc"]["labels"]["en"],
             "NDC classification"
+        );
+        assert_eq!(
+            body["value_names"]["ud-v2"]["dep.rel"]["nsubj"]["ja"],
+            "主語"
         );
     }
 

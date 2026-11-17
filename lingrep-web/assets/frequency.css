@@ -45,7 +45,7 @@
 }
 :lang(ja) .fq-sentence { line-height: 2.7; letter-spacing: 0.02em; }
 /* Clears the role labels that sit above the first line's blanks. */
-.comparison-note:not([hidden]) + .fq-head .fq-sentence { margin-top: 1rem; }
+.fq-head .fq-sentence { margin-top: 1rem; }
 .fq-sentence .tail { color: var(--fq-soft); }
 
 .fq .blank {
@@ -218,7 +218,8 @@
 .fq .spread { width: 9rem; }
 .fq .spread span { display: block; height: 7px; background: var(--fq-bar-off); }
 .fq .spread i { display: block; height: 100%; background: var(--fq-accent); }
-.fq .more {
+.fq .more,
+.fq .fq-clear-keys {
   all: unset;
   cursor: pointer;
   margin: 0.8rem 0 0;
@@ -425,16 +426,34 @@
   .fq { --fq-size: 18px; --fq-lead: 24px; }
   /* Room above each wrapped line for its blanks' role captions. */
   .fq-sentence, :lang(ja) .fq-sentence { line-height: 3.3; }
-  .fq .spread, .fq table.freq th:nth-child(5), .fq table.freq td:nth-child(5) { display: none; }
+  .fq .spread { display: none; }
+  .fq table.freq th:first-child { width: auto; }
+  .fq .entry-cell { min-width: 5em; }
 }
 
 .fq-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1rem; margin-top: 0.6rem; font-size: 0.95rem; }
 .fq-key-label { color: var(--fq-soft); }
 .fq-key label { display: inline-flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
-.fq-key input { font: inherit; width: 7em; }
-.fq-cli { margin: 0.6rem 0 0; }
-.fq-cli > summary { cursor: pointer; width: fit-content; font: 14px/1.6 var(--font-sans); color: var(--fq-soft); }
-.fq-cli > summary:hover { color: var(--text); }
+.fq-key input {
+  font-family: var(--font-cjk);
+  font-weight: 600;
+  line-height: 1.3;
+  width: 7em;
+  min-height: 0;
+  color: var(--fq-accent);
+  background: transparent linear-gradient(var(--fq-accent), var(--fq-accent)) 0 100% / 100% 1.5px no-repeat;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0.15rem 0.1rem;
+}
+.fq-key input::placeholder { color: var(--fq-soft); font-weight: 400; }
+.fq-key input:hover { background-color: var(--fq-accent-wash); }
+.fq-machinery { margin: 0.5rem 0 0; }
+.fq-machinery > summary { cursor: pointer; width: fit-content; font: 14px/1.6 var(--font-sans); color: var(--fq-soft); }
+.fq-machinery > summary:hover { color: var(--text); }
+.fq-machinery[open] > summary { margin-bottom: 0.3rem; }
+.fq-machinery .comparison-note { margin: 0.6rem 0 0; }
+.fq-cli-label { margin: 0.6rem 0 0; font: 12.5px/1.5 var(--font-sans); color: var(--fq-soft); }
 .fq-clause p { margin: 0.3rem 0 0; font: 13px/1.5 var(--font-sans); color: var(--fq-soft); }
 
 /* The question page's palette (assets/questions/site.css), read through this
@@ -448,5 +467,6 @@ html:root {
   --fq-accent-wash: var(--wash);
 }
 .site + main { margin: 1rem 2rem 2rem; }
+@media (max-width: 40rem) { .site + main { margin-inline: 0.5rem; } }
 .fq-kwic mark.kb { background: none; color: inherit; padding: 0; font-weight: 600; text-decoration: underline; text-decoration-color: var(--fq-accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .fq-entry-name:focus { outline: none; }

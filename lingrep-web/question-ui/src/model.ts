@@ -48,7 +48,7 @@ export interface SearchState {
   readonly previous: CompletedSnapshot | null;
 }
 export interface Dataset { label:string; documents:number|null; sentences:number|null; analysis_identity:string|null; readiness:'ready'|'checking'|'building'|'failed'; }
-export interface Configuration { datasets: Record<string, Dataset>; source: string; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; }
+export interface Configuration { datasets: Record<string, Dataset>; source: string; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }
@@ -133,6 +133,16 @@ export function sourceSelection(source:string, span:{readonly start:number;reado
   try{return [decoder.decode(bytes.subarray(0,span.start)).length,decoder.decode(bytes.subarray(0,span.end)).length];}catch{return null;}
 }
 
+const BASIC_ATTRIBUTES=['text','lemma','norm','upos','xpos','dep.head','dep.rel','unidic.cform','unidic.ctype','unidic.kana','unidic.pron','unidic.orthbase','unidic.lform','unidic.goshu','unidic.pos1','unidic.pos2','unidic.pos3','unidic.pos4','unidic.pronbase','unidic.kanabase'];
+/** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others. A narrow panel shows the first rows only. */
+export function basicAttributeKeys(attributes:Readonly<Record<string,unknown>>):string[] {
+  return [...BASIC_ATTRIBUTES.filter(key=>key in attributes),...Object.keys(attributes).filter(key=>!BASIC_ATTRIBUTES.includes(key))].slice(0,18);
+}
+/** The offset of the line defining `name` in a catalog source (`name :=`, after an optional definition keyword), or -1. */
+export function definitionOffset(source:string, name:string):number {
+  const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return source.search(new RegExp(`^[ \\t]*(?:(?:pattern|fragment|lexicon|set)[ \\t]+)?${escaped}[ \\t]*:=`,'m'));
+}
 export function parseStoredSentence(value:unknown):StoredSentence {
   if(!objectValue(value)||typeof value.analysis_identity!=='string'||!Number.isSafeInteger(value.sentence)||Number(value.sentence)<0||!Array.isArray(value.tokens)||!value.tokens.every(tokenValue))throw new Error('The stored token analysis could not be read.');
   return value as unknown as StoredSentence;

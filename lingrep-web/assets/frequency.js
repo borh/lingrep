@@ -13,6 +13,8 @@ export const pctOf = (x, y) =>
 
 const SORTS = [["count", "frequency.sort_count"], ["works", "frequency.sort_works"], ["key", "frequency.sort_key"]];
 const HEADS = ["views.head_rank", "views.head_entry", "views.head_occurrences", "views.head_documents", "frequency.head_share", "frequency.head_per_million"];
+/** A header's class where it is not a right-aligned figure; the narrow layout hides `spread` from the header and the rows alike. */
+const HEAD_CLASS = { "views.head_entry": "", "frequency.head_share": "spread" };
 const TABLE_HEADS = ["frequency.head_value", "views.head_occurrences", "views.head_documents"];
 
 
@@ -74,13 +76,26 @@ export function keyFieldLabel(field) {
   return capture ? t("frequency.capture_field", { capture, field: word }) : word;
 }
 
+const LABEL_SETS = ["ud-v2", "spacy", "clearnlp", "penn"];
+/** `value` of `attribute` in plain words from `names`, the frequency meta's `value_names`, by the question page's rule (question-ui dependency.ts `valueName`); null when no label set names it. */
+export function valueName(names, attribute, value, locale) {
+  const entry = (v) => LABEL_SETS.map((set) => names?.[set]?.[attribute]?.[v]).find(Boolean);
+  const found = entry(value) ?? (attribute === "dep.rel" && value.includes(":") ? entry(value.slice(0, value.indexOf(":"))) : undefined);
+  return found?.[locale] ?? found?.en ?? null;
+}
+
+/** The plain-word names of a key entry's scalar fields whose values a label set names, such as 名詞 for `upos` NOUN. */
+export function entryGlosses(group, names, locale) {
+  if (group.kind !== "key") return [];
+  return group.fields.flatMap((f) => (f.kind === "scalar" ? [valueName(names, f.name.replace(/^\$[^.]+\./, ""), f.value, locale)] : [])).filter(Boolean);
+}
+
 /** The fields under a multi-field entry: their capture names when every field is a capture's attribute, else their labels. */
 export function entryFieldNames(fields) {
   const captures = fields.map((f) => /^\$([^.]+)\./.exec(f)?.[1]);
   return captures.every(Boolean) ? captures.join(" · ") : fields.map(keyFieldLabel).join(" · ");
 }
 
-/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. */
 /** A line's `left` or `right` text as HTML, with the role words its `bound` places on that side marked. Offsets count code points. */
 export function contextHtml(text, bound, side) {
   const chars = Array.from(text), marks = (bound ?? []).filter((b) => b.side === side).sort((a, b) => a.start - b.start);
@@ -92,9 +107,11 @@ export function contextHtml(text, bound, side) {
   }
   return html + esc(chars.slice(at).join(""));
 }
-export function inspectHref(s, line, { source, analysis, fingerprint }, back) {
+/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words` and `total` and its listed `lines`, `at` the index of `line`, so the question page steps through those lines. */
+export function inspectHref(s, line, { source, analysis, fingerprint }, back, entry = null) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
-  return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), return: back })}`;
+  const lines = entry && { words: entry.words, total: entry.total, at: entry.at, lines: entry.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles })) };
+  return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), ...(lines ? { entry: JSON.stringify(lines) } : {}), return: back })}`;
 }
 
 export const hashHolds = (hash, entries) => {
@@ -216,7 +233,7 @@ export function mountFrequency(root) {
       const name = meta.pairs.find((x) => x.corpus === s.corpus)?.corpus_name ?? s.corpus;
       return { state: t("views.unavailable", { catalog: s.catalog, corpus: name }) };
     }
-    s.pattern ??= p.patterns[0]?.name ?? null;
+    s.pattern ??= p.default_pattern ?? p.patterns[0]?.name ?? null;
     if (!p.patterns.some((x) => x.name === s.pattern)) return { state: t("views.unknown_pattern", { pattern: s.pattern, catalog: s.catalog }), sentence: true };
     return { sentence: true, query: true };
   }
@@ -271,7 +288,7 @@ export function mountFrequency(root) {
     const fields = keyFields();
     if (fields.length < 2) return "";
     const label = t("frequency.key_equals");
-    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
+    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" aria-label="${esc(t("frequency.key_field", { field: keyFieldLabel(f) }))}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
   }
 
   function renderSentence() {
@@ -358,13 +375,15 @@ export function mountFrequency(root) {
         })()
       : esc(where);
     const actions = `<button data-c="edit">${esc(t("frequency.edit"))}</button>${s.where != null ? `<button data-c="blanks">${esc(t("views.use_controls"))}</button>` : ""}`;
-    // The command sits in a disclosure; a typed condition keeps it open, because the command shows that condition.
     clauseEl.innerHTML = command
-      ? `<details class="fq-cli"${cliOpen || s.where != null ? " open" : ""}><summary>${esc(t("frequency.cli"))}</summary><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}</details><div class="clause">${actions}</div>`
+      ? `<p class="fq-cli-label">${esc(t("frequency.cli"))}</p><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}<div class="clause">${actions}</div>`
       : `<div class="clause"><code data-c="code">${code}</code>${actions}</div>${source ? `<p>${esc(t("views.command_unavailable"))}</p>` : ""}`;
   }
-  let cliOpen = false;
-  clauseEl.addEventListener("toggle", (e) => { if (e.target.matches(".fq-cli")) cliOpen = e.target.open; }, true);
+  // The pattern, command and Workbench link sit in one disclosure, closed until opened; a typed condition opens it, because the command shows that condition.
+  const machineryEl = $("[data-fq-machinery]");
+  const openMachinery = () => {
+    if ((editing || s.where != null) && !machineryEl.open) machineryEl.open = true;
+  };
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
     if (c === "copy") {
@@ -378,6 +397,7 @@ export function mountFrequency(root) {
     } else if (c === "edit") {
       editing = true;
       renderClause();
+      openMachinery();
       clauseEl.querySelector("textarea").focus();
     } else if (c === "cancel") {
       editing = false;
@@ -400,13 +420,17 @@ export function mountFrequency(root) {
 
   const keyNames = (group) => (group.kind === "key" && group.fields.length > 1 ? group.fields.map((f) => f.name) : null);
   const namesHtml = (names) => (names ? `<small title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "");
+  const glossHtml = (group) => {
+    const glosses = entryGlosses(group, meta.value_names, currentLocale());
+    return glosses.length ? `<small class="gloss">${esc(glosses.join(" · "))}</small>` : "";
+  };
   function rowHtml(r, i) {
     const docs = answer.documents_admitted, tokens = answer.tokens_admitted;
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
     const names = keyNames(r.group);
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -419,11 +443,14 @@ export function mountFrequency(root) {
       return;
     }
     if (!answer.rows.length) {
-      tableEl.innerHTML = `<p class="fq-empty">${esc(answer.subset && answer.occurrences ? t("frequency.no_key_match") : s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
+      tableEl.innerHTML =
+        answer.subset && answer.occurrences
+          ? `<p class="fq-empty">${esc(t("frequency.no_key_match"))}</p><p class="fq-empty">${esc(t("frequency.no_key_match_hint"))}</p><p><button type="button" class="fq-clear-keys" data-clear-keys>${esc(t("frequency.clear_keys"))}</button></p>`
+          : `<p class="fq-empty">${esc(s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
       return;
     }
     const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${h === "views.head_entry" || h === "frequency.head_share" ? "" : "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);
@@ -432,6 +459,10 @@ export function mountFrequency(root) {
     }
   }
   tableEl.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-clear-keys]")) {
+      set({ k: {}, entry: null });
+      return;
+    }
     const row = e.target.closest("tr[data-i]");
     if (row && answer) {
       depth = shown;
@@ -495,7 +526,8 @@ export function mountFrequency(root) {
   });
 
   const entering = () => s.entry != null && s.where == null;
-  const groupText = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)).join(" ") : g.value);
+  const groupWords = (g) => (g.kind === "key" ? g.fields.map((f) => (f.kind === "list" ? f.values.join(",") : f.value)) : [g.value]);
+  const groupText = (g) => groupWords(g).join(" ");
   const valueName = (v) => v ?? t("frequency.no_value");
   const ems = (text) => [...text].reduce((w, c) => w + (c.charCodeAt(0) > 0x2e7f ? 1 : 0.6), 0);
   const barsOf = (c) => [...c.bars, ...(c.none ? [{ ...c.none, value: null }] : [])];
@@ -553,7 +585,7 @@ export function mountFrequency(root) {
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
     const identity = { source, analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
     return (l, i) =>
-      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${contextHtml(l.left, l.bound, "left")}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${contextHtml(l.right, l.bound, "right")}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
+      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${contextHtml(l.left, l.bound, "left")}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${contextHtml(l.right, l.bound, "right")}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}" aria-label="${esc(t("frequency.inspect_line", { n: i + 1, work: named(l) }))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
   };
   function linesHtml(st, previewing) {
     return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml(st)).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;
@@ -613,7 +645,7 @@ export function mountFrequency(root) {
     plan = planOf(profile);
     const names = keyNames(profile.group);
     entryEl.innerHTML = `<a class="fq-back" href="#${esc(back)}" data-e="back"><span aria-hidden="true">← </span>${phrase("frequency.back", { pattern: `<b>${esc(s.pattern)}</b>`, catalog: esc(s.catalog) })}</a>
-      <h2 class="fq-entry-name" tabindex="-1">${esc(groupText(profile.group))}${namesHtml(names)}</h2>
+      <h2 class="fq-entry-name" tabindex="-1">${esc(groupText(profile.group))}${glossHtml(profile.group)}${namesHtml(names)}</h2>
       <p class="fq-entry-figures" data-e="figures">${esc(figuresText(profile))}</p>
       <div class="fq-profile" data-e="profile">${profile.charts.map(chartHtml).join("")}</div>
       <section class="fq-lines" data-e="lines">${linesHtml(lined, false)}</section>`;
@@ -826,6 +858,15 @@ export function mountFrequency(root) {
     entryEl.querySelector(`.fq-kwic li[data-sentence="${sentence}"][data-start="${start}"][data-end="${end}"] .kn`)?.focus({ preventScroll: true });
   });
 
+  // The hand-off carries the entry's lines, which only the opened link needs; the address is completed when the link is pressed or activated.
+  const withEntryLines = (e) => {
+    const link = e.target.closest?.(".fq-inspect"), i = Number(link?.closest("li[data-i]")?.dataset.i);
+    if (!link || !lined || entryEl.classList.contains("previewing") || !lined.lines[i]) return;
+    const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
+    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, lines: lined.lines, at: i });
+  };
+  entryEl.addEventListener("pointerdown", withEntryLines);
+  entryEl.addEventListener("click", withEntryLines, true);
   function leaveEntry() {
     lastEntry = s.entry;
     set({ entry: null });
@@ -882,6 +923,7 @@ export function mountFrequency(root) {
 
   function renderAll() {
     const r = resolve();
+    openMachinery();
     stateEl.textContent = r.state ?? queryMessage?.() ?? "";
     if (r.sentence) renderSentence();
     else sentenceEl.innerHTML = r.state && meta.pairs.length && !s.bad ? sentenceFallback() : "";
