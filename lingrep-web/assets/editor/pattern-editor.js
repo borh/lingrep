@@ -1,4 +1,4 @@
-import { t, onLocaleChange } from "../i18n.js";
+import { t, onLocaleChange, currentLocale } from "../i18n.js";
 
 const MAX_HIGHLIGHT_BYTES = 65_536;
 const SUBMIT_WAIT_MS = 3000;
@@ -650,6 +650,138 @@ export const PATTERN_ATTRIBUTES = [
   ["unidic.lextype", "UniDic lexical type"],
 ];
 
+// Attributes a corpus may carry beyond the list above, described for completion.
+const SCHEMA_ATTRIBUTES = {
+  "dep.head": "Number of the word this one attaches to (0 at the root)",
+  "dep.rel": "Dependency relation to the head",
+  "dep.enhanced": "Enhanced dependencies",
+  "conllu.feats": "CoNLL-U FEATS column as written",
+  "conllu.misc": "CoNLL-U MISC column as written",
+};
+/** The attributes to complete, as `[name, description]`: the bound corpus's `tokenKeys` when the page names them, known ones first, else every attribute the list above describes. */
+export function patternAttributes(tokenKeys) {
+  if (!tokenKeys?.length) return PATTERN_ATTRIBUTES;
+  const known = PATTERN_ATTRIBUTES.filter(([name]) => tokenKeys.includes(name));
+  const others = tokenKeys
+    .filter((key) => !known.some(([name]) => name === key))
+    .map((key) => [key, SCHEMA_ATTRIBUTES[key] ?? (key.startsWith("feat.") ? `UD feature ${key.slice(5)}` : "Attribute of this corpus")]);
+  return [...known, ...others];
+}
+
+// Japanese for the completion and hover help, keyed by the English text.
+const HELP_JA = {
+  "Portable surface form as written": "表層形（書かれたとおりの形）",
+  "Dictionary lemma": "辞書形（見出し語）",
+  "Normalized form": "正規化した形",
+  "Portable coarse POS tag (VERB, NOUN, …)": "共通の品詞タグ（VERB, NOUN, …）",
+  "Provider-native POS tag": "解析器固有の品詞タグ",
+  "UniDic POS level 1 (major category)": "UniDic 品詞 大分類",
+  "UniDic POS level 2": "UniDic 品詞 中分類",
+  "UniDic POS level 3": "UniDic 品詞 小分類",
+  "UniDic POS level 4": "UniDic 品詞 細分類",
+  "UniDic conjugation type (カ変, 五段, …)": "UniDic 活用型（カ変, 五段, …）",
+  "UniDic conjugation form (終止形, 連用形-一般, …)": "UniDic 活用形（終止形, 連用形-一般, …）",
+  "UniDic lemma form": "UniDic 語彙素読み",
+  "UniDic pronunciation": "UniDic 発音形出現形",
+  "UniDic base surface form": "UniDic 書字形基本形",
+  "UniDic base pronunciation": "UniDic 発音形基本形",
+  "UniDic word origin class (和, 漢, 洋, …)": "UniDic 語種（和, 漢, 洋, …）",
+  "UniDic initial inflection type": "UniDic 語頭変化化型",
+  "UniDic initial inflection form": "UniDic 語頭変化形",
+  "UniDic final inflection type": "UniDic 語末変化化型",
+  "UniDic final inflection form": "UniDic 語末変化形",
+  "UniDic initial connection type": "UniDic 語頭変化結合型",
+  "UniDic final connection type": "UniDic 語末変化結合型",
+  "UniDic token type": "UniDic 語彙素類",
+  "UniDic reading in kana": "UniDic 仮名形出現形",
+  "UniDic base reading in kana": "UniDic 仮名形基本形",
+  "UniDic form field": "UniDic 語形出現形",
+  "UniDic base form": "UniDic 語形基本形",
+  "UniDic accent type": "UniDic アクセント型",
+  "UniDic accent connection type": "UniDic アクセント結合型",
+  "UniDic accent modification type": "UniDic アクセント修飾型",
+  "UniDic lexical type": "UniDic 辞書の種別",
+  "Number of the word this one attaches to (0 at the root)": "係り先の語番号（文の中心は 0）",
+  "Dependency relation to the head": "係り先との関係",
+  "Enhanced dependencies": "拡張係り受け",
+  "CoNLL-U FEATS column as written": "CoNLL-U の FEATS 欄そのまま",
+  "CoNLL-U MISC column as written": "CoNLL-U の MISC 欄そのまま",
+  "Attribute of this corpus": "このコーパスの属性",
+  "Read the first token of a capture span": "キャプチャ範囲の最初のトークンの値",
+  "Read the last token of a capture span": "キャプチャ範囲の最後のトークンの値",
+  "Concatenate the attribute across the complete capture span": "キャプチャ範囲全体の値をつなげる",
+  "Declared role (e.g. helper, research)": "定義の役割（helper, research など）",
+  "Research category for the declaration": "定義の研究上の分類",
+  "Provenance of the declaration": "定義の出典",
+  "Example sentences, as a JSON-style list": "例文（JSON 形式のリスト）",
+  "Sentences the declaration must NOT match": "一致してはならない文",
+  "Analysis layer (e.g. S0, S1, S2, S3)": "分析の層（S0, S1, S2, S3 など）",
+  "Pattern type (e.g. 文末尾から)": "パターンの種類（文末尾から など）",
+  "命題: the propositional form covered": "命題: 対象とする命題の形",
+  "Authoring status (TODO, FIXME, …)": "作成の状況（TODO, FIXME, …）",
+  "How this maps to its upstream source": "元の資料との対応",
+  "Compiler-owned: published name for this definition": "コンパイラが扱うキー: この定義の公開名",
+  "Compiler-owned: %group membership, as a list": "コンパイラが扱うキー: 所属する %group のリスト",
+  "Compiler-owned: rank used by `resolve … priority_order`": "コンパイラが扱うキー: `resolve … priority_order` の順位",
+  "Compiler-owned: publication key": "コンパイラが扱うキー: 集計のキー",
+  "Compiler-owned: published-value transform": "コンパイラが扱うキー: 公開する値の変換",
+  "Compiler-owned: publication tags": "コンパイラが扱うキー: 公開のタグ",
+  "Compiler-owned: rendering selector": "コンパイラが扱うキー: 表示の指定",
+  "Compiler-owned: dictionary the catalog expects": "コンパイラが扱うキー: カタログが想定する辞書",
+  "Compiler-owned: anchor an `admit` measures against": "コンパイラが扱うキー: `admit` が基準にする位置",
+  "Compiler-owned: nesting ceiling for this catalog": "コンパイラが扱うキー: カタログの入れ子の上限",
+  "Emitting pattern declaration": "一致を出力するパターンの定義",
+  "Reusable definition; emits no matches": "再利用する部品の定義（一致は出力しない）",
+  "Inline authored-term inventory": "語の一覧（レキシコン）の定義",
+  "Named value list for `in` / `not in`": "`in` / `not in` で使う値の一覧",
+  "File-level metadata values; precedes every declaration": "ファイル全体のメタデータの既定値（どの定義よりも前に書く）",
+  "Closes the catalog's descriptive key set": "カタログで使う説明キーを宣言して閉じる",
+  "Ordered publication program; one per catalog": "公開の手順（カタログに一つ）",
+  "Zero-width: expression ends here": "直前にあることを確かめる（幅ゼロ）",
+  "Zero-width: expression starts here": "直後に続くことを確かめる（幅ゼロ）",
+  "Zero-width negated lookbehind": "直前にないことを確かめる（幅ゼロ）",
+  "Zero-width negated lookahead": "直後に続かないことを確かめる（幅ゼロ）",
+  "Repeat a captured span, compared by a canonical schema key": "キャプチャした範囲の繰り返し（スキーマのキーで比べる）",
+  "Named capture group": "名前付きキャプチャ",
+  "Emitting pattern declaration: pattern NAME := expression.": "一致を出力するパターンの定義: pattern 名前 := 式.",
+  "Reusable definition; reference it with @NAME. Emits no matches of its own.": "再利用する部品の定義。@名前 で参照します。それ自体は一致を出力しません。",
+  "Authored-term inventory; use matches or summarize to inspect occurrences.": "語の一覧（レキシコン）。出現は matches か summarize で確かめます。",
+  "Names a value list: set NAME := {a, b}. Reference it as [attr in @NAME].": "値の一覧に名前を付けます: set 名前 := {a, b}. [属性 in @名前] で参照します。",
+  "File-level metadata values. Precedes the first annotation or declaration.": "ファイル全体のメタデータの既定値。最初の注記や定義より前に書きます。",
+  "Declares — and closes — the catalog's descriptive key set.": "カタログで使う説明キーを宣言し、それ以外を使えなくします。",
+  "Ordered publication program. Order is semantic.": "公開の手順。書いた順に意味があります。",
+  "Closes a `defaults`, `schema`, or `policy` block.": "`defaults`、`schema`、`policy` のブロックを閉じます。",
+  "Membership test: [text in {ある, 有る}]. Negate with `not in`.": "値の一覧に含まれるか: [text in {ある, 有る}]。否定は `not in`。",
+  "Repeats a captured span: same_as($name, by=text). The projection is any canonical schema key.": "キャプチャした範囲を繰り返します: same_as($名前, by=text)。比べる属性はスキーマの任意のキーです。",
+  "Zero-width lookbehind: the expression must end at this boundary without consuming input.": "後読み（幅ゼロ）: 式がこの位置で終わること。トークンは消費しません。",
+  "Zero-width lookahead: the expression must start at this boundary without consuming input.": "先読み（幅ゼロ）: 式がこの位置から始まること。トークンは消費しません。",
+  "Negated zero-width lookbehind: the expression must NOT end here.": "否定の後読み（幅ゼロ）: 式がここで終わらないこと。",
+  "Negated zero-width lookahead: the expression must NOT start here.": "否定の先読み（幅ゼロ）: 式がここから始まらないこと。",
+  "Compare portable surface forms, exactly as written.": "表層形を書かれたとおりに比べます。",
+  "Compare dictionary lemmas (inflection-insensitive).": "辞書形を比べます（活用の違いを無視）。",
+  "Compare normalized forms.": "正規化した形を比べます。",
+  "Compare portable coarse POS tags.": "共通の品詞タグを比べます。",
+  "Compare provider-native POS tags.": "解析器固有の品詞タグを比べます。",
+  "Compare UniDic kana readings.": "UniDic の仮名の読みを比べます。",
+  "Compare UniDic pronunciations.": "UniDic の発音を比べます。",
+  "same_as comparison attribute": "same_as で比べる属性",
+  "same_as comparison projection: any canonical schema key.": "same_as で比べる属性。スキーマの任意のキーを使えます。",
+  "named capture": "名前付きキャプチャ",
+  "captured span to repeat": "繰り返すキャプチャ範囲",
+  "named capture, defined by (?<name> …)": "名前付きキャプチャ（(?<name> …) で定義）",
+  "no capture with this name in this document": "この文書にその名前のキャプチャはありません",
+  "no such definition in this document": "この文書にその定義はありません",
+  "fragment (reusable; emits no matches)": "部品（再利用する定義。一致は出力しない）",
+  "fragment (emits nothing)": "部品（一致を出力しない）",
+  "lexicon (authored-term inventory; emits occurrences)": "レキシコン（語の一覧。出現を出力する）",
+  "lexicon": "レキシコン",
+  "set (named values; emits no matches)": "値の一覧（一致は出力しない）",
+  "set (named values)": "値の一覧",
+  "pattern (emits matches)": "パターン（一致を出力する）",
+  "pattern": "パターン",
+};
+const help = (text, locale) => (locale === "ja" ? HELP_JA[text] ?? text.replace(/^UD feature (.+)$/, "UD の素性 $1") : text);
+
 // The label sets' value names (lingrep-core fsm/label_names.json, served
 // beside this module), which upos and dep.rel completions and hovers list.
 let valueNames = null;
@@ -665,14 +797,16 @@ if (typeof document !== "undefined") {
 }
 const VALUE_SETS = { upos: ["ud-v2", "spacy"], "dep.rel": ["ud-v2", "clearnlp"] };
 const capitalized = (text) => text.charAt(0).toUpperCase() + text.slice(1);
-/** The values of `attribute` the label sets name, as `[value, description]`: the English name, with the UniDic categories a upos tag covers, and the label set for a value only ClearNLP has. */
-export function attributeValueNames(attribute) {
+/** The values of `attribute` the label sets name, as `[value, description]`: the name in `locale` (English where a value has no Japanese name), with the UniDic categories a upos tag covers, and the label set for a value only ClearNLP has. */
+export function attributeValueNames(attribute, locale = "en") {
   const sets = VALUE_SETS[attribute] ?? [];
   const seen = new Map();
   for (const set of sets) {
     for (const [value, name] of Object.entries(valueNames?.[set]?.[attribute] ?? {})) {
       if (seen.has(value)) continue;
-      const described = capitalized(name.en) + (name.unidic ? ` (${name.unidic})` : "") + (set === "clearnlp" ? " · ClearNLP" : "");
+      const ja = locale === "ja" && name.ja;
+      const unidic = name.unidic && name.unidic !== (ja ? name.ja : name.en) ? (ja ? `（${name.unidic}）` : ` (${name.unidic})`) : "";
+      const described = (ja ? name.ja : capitalized(name.en)) + unidic + (set === "clearnlp" ? " · ClearNLP" : "");
       seen.set(value, described);
     }
   }
@@ -949,7 +1083,10 @@ export function patternCompletionContext(source, pos) {
 // test called a set a pattern that emits matches, which is the opposite of what
 // a set does — so name the kind rather than inferring it from not being a
 // fragment. `verbose` picks the hover phrasing over the completion one.
-function describeKind(kind, verbose) {
+function describeKind(kind, verbose, locale = "en") {
+  return help(describeKindText(kind, verbose), locale);
+}
+function describeKindText(kind, verbose) {
   switch (kind) {
     case "fragment":
       return verbose ? "fragment (reusable; emits no matches)" : "fragment (emits nothing)";
@@ -963,71 +1100,74 @@ function describeKind(kind, verbose) {
 }
 
 export function patternCompletionOptions(context, env = { definitions: [], captures: [] }) {
+  const locale = env.locale ?? currentLocale(), attributes = patternAttributes(env.tokenKeys);
+  const say = (text) => help(text, locale);
+  const projection = locale === "ja" ? "キーの値: " : "key projection: ";
   switch (context.kind) {
     case "key-match-attribute":
     case "key-capture-attribute":
-      return PATTERN_ATTRIBUTES.map(([name, info]) => ({
+      return attributes.map(([name, info]) => ({
         label: name,
         type: "property",
-        info: `key projection: ${info}`,
+        info: `${projection}${say(info)}`,
       }));
     case "key-capture-segment":
       return [
-        ...PATTERN_ATTRIBUTES.map(([name, info]) => ({
+        ...attributes.map(([name, info]) => ({
           label: name,
           type: "property",
-          info: `capture key projection: ${info}`,
+          info: `${locale === "ja" ? "キャプチャのキーの値: " : "capture key projection: "}${say(info)}`,
         })),
         ...PATTERN_KEY_COMPONENTS.map(([name, info]) => ({
           label: name,
           type: "enum",
-          info,
+          info: say(info),
           apply: `${name}.`,
         })),
       ];
     case "attribute":
-      return PATTERN_ATTRIBUTES.map(([name, info]) => ({
+      return attributes.map(([name, info]) => ({
         label: name,
         type: "property",
-        info,
+        info: say(info),
         apply: `${name}=`,
       }));
     case "pos-value":
     case "rel-value":
-      return attributeValueNames(context.kind === "pos-value" ? "upos" : "dep.rel").map(([value, info]) => ({ label: value, type: "enum", info }));
+      return attributeValueNames(context.kind === "pos-value" ? "upos" : "dep.rel", locale).map(([value, info]) => ({ label: value, type: "enum", info }));
     case "by-value":
-      return PATTERN_BY_VALUES.map((value) => ({
+      return attributes.map(([value]) => ({
         label: value,
         type: "enum",
-        info: "same_as comparison attribute",
+        info: say("same_as comparison attribute"),
       }));
     case "reference":
       return env.definitions.map((definition) => ({
         label: definition.name,
         type: "variable",
-        info: describeKind(definition.kind, false),
+        info: describeKind(definition.kind, false, locale),
       }));
     case "capture":
       return env.captures.map((name) => ({
         label: name,
         type: "variable",
-        info: "named capture",
+        info: say("named capture"),
       }));
     case "same-as-arg":
       return env.captures.map((name) => ({
         label: `$${name}`,
         type: "variable",
-        info: "captured span to repeat",
+        info: say("captured span to repeat"),
       }));
     case "metadata-key":
       return PATTERN_METADATA_KEYS.map(([name, info]) => ({
         label: name,
         type: "property",
-        info,
+        info: say(info),
         apply: `${name}: `,
       }));
     case "top-level":
-      return PATTERN_TOP_LEVEL.map((entry) => ({ ...entry }));
+      return PATTERN_TOP_LEVEL.map((entry) => ({ ...entry, info: say(entry.info) }));
     default:
       return [];
   }
@@ -1036,7 +1176,8 @@ export function patternCompletionOptions(context, env = { definitions: [], captu
 // Documentation for the token under `pos`, for hover tooltips. Pure textual
 // analysis like patternCompletionContext: tolerant of incomplete input, and
 // returns null inside `#` comments where no documentation applies.
-export function patternHoverInfo(source, pos) {
+export function patternHoverInfo(source, pos, locale = currentLocale()) {
+  const say = (text) => help(text, locale);
   if (pos < 0 || pos > source.length) return null;
   const lineStart = source.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
   if (source.slice(lineStart, pos).includes("#")) return null;
@@ -1060,8 +1201,8 @@ export function patternHoverInfo(source, pos) {
       to,
       title: `@${word}`,
       detail: definition
-        ? describeKind(definition.kind, true)
-        : "no such definition in this document",
+        ? describeKind(definition.kind, true, locale)
+        : say("no such definition in this document"),
     };
   }
   if (marker === "$") {
@@ -1071,17 +1212,17 @@ export function patternHoverInfo(source, pos) {
       to,
       title: `$${word}`,
       detail: defined
-        ? "named capture, defined by (?<name> …)"
-        : "no capture with this name in this document",
+        ? say("named capture, defined by (?<name> …)")
+        : say("no capture with this name in this document"),
     };
   }
 
   if (inKeyProjection) {
     const component = PATTERN_KEY_COMPONENTS.find(([name]) => name === word);
-    if (component) return { from, to, title: word, detail: component[1] };
+    if (component) return { from, to, title: word, detail: say(component[1]) };
     const attribute = PATTERN_ATTRIBUTES.find(([name]) => name === word);
     if (attribute) {
-      return { from, to, title: word, detail: `Key projection: ${attribute[1]}` };
+      return { from, to, title: word, detail: `${locale === "ja" ? "キーの値: " : "Key projection: "}${say(attribute[1])}` };
     }
   }
 
@@ -1091,12 +1232,12 @@ export function patternHoverInfo(source, pos) {
   if (valueOf) {
     const attribute = valueOf[1].toLowerCase();
     if (attribute === "upos" || attribute === "dep.rel") {
-      const named = attributeValueNames(attribute).find(([name]) => name === word);
+      const named = attributeValueNames(attribute, locale).find(([name]) => name === word);
       return named ? { from, to, title: `${attribute}=${word}`, detail: named[1] } : null;
     }
     if (attribute === "by") {
       const detail = PATTERN_BY_VALUE_DOCS[word];
-      return detail ? { from, to, title: `by=${word}`, detail } : null;
+      return detail ? { from, to, title: `by=${word}`, detail: say(detail) } : null;
     }
     return null;
   }
@@ -1104,7 +1245,7 @@ export function patternHoverInfo(source, pos) {
   // Attribute name: the word is directly followed by `=`.
   if (/^\s*=/.test(source.slice(to, to + 4))) {
     if (word === "by") {
-      return { from, to, title: "by=", detail: "same_as comparison projection: any canonical schema key." };
+      return { from, to, title: "by=", detail: say("same_as comparison projection: any canonical schema key.") };
     }
     const attribute = PATTERN_ATTRIBUTES.find(([name]) => name === word);
     if (!attribute) return null;
@@ -1113,14 +1254,14 @@ export function patternHoverInfo(source, pos) {
       from,
       to,
       title: word,
-      detail: example ? `${attribute[1]} — e.g. ${example}` : attribute[1],
+      detail: example ? `${say(attribute[1])} — ${locale === "ja" ? "例" : "e.g."} ${example}` : say(attribute[1]),
     };
   }
 
   // Keywords and call names, but not definition names (`name :=`).
   if (!/^\s*:=/.test(source.slice(to, to + 4))) {
     const keyword = PATTERN_KEYWORD_DOCS.find(([name]) => name === word);
-    if (keyword) return { from, to, title: word, detail: keyword[1] };
+    if (keyword) return { from, to, title: word, detail: say(keyword[1]) };
   }
   return null;
 }
@@ -1479,6 +1620,7 @@ function patternCompletionSource(state) {
     const options = patternCompletionOptions(completionContext, {
       definitions: patternDefinitions(source),
       captures: patternCaptures(source),
+      tokenKeys: document.querySelector("[data-token-keys]")?.dataset.tokenKeys.split(" "),
     }).map((option) =>
       option.template ? state.cm.snippetCompletion(option.template, option) : option,
     );

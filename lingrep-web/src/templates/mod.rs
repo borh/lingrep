@@ -1524,6 +1524,24 @@ message_args: None,
     }
 
     #[test]
+    fn corpus_context_names_the_token_keys_the_pattern_editor_completes() {
+        use crate::corpus_context::CorpusContextView;
+        let html = CorpusContextPartial {
+            corpora: vec![],
+            corpus_context: CorpusContextView {
+                token_keys: vec!["text".into(), "upos".into(), "dep.rel".into()],
+                ..CorpusContextView::sentence_only("c".into(), "abc123abc123".into(), 1)
+            },
+        }
+        .render()
+        .unwrap();
+        assert!(
+            html.contains("data-token-keys=\"text upos dep.rel\""),
+            "{html}"
+        );
+    }
+
+    #[test]
     fn corpus_context_failed_and_unavailable_are_terminal_notes() {
         use crate::corpus_context::CorpusContextView;
         let failed = CorpusContextPartial {

@@ -626,3 +626,31 @@ test("a draft is restored only over the seed it was edited from", () => {
     assert.equal(draftToRestore(input), expected, name);
   }
 });
+
+test("attribute completions offer the bound corpus's token keys, and every key when no corpus is bound", () => {
+  const conllu = ["text", "lemma", "upos", "xpos", "dep.head", "dep.rel", "feat.Polarity", "conllu.misc"];
+  for (const context of ["verb := [|", "key: [|", "key: [$n.|"]) {
+    const labels = patternCompletionOptions(contextAt(context), { definitions: [], captures: [], tokenKeys: conllu }).map((option) => option.label);
+    assert.ok(!labels.some((label) => label.startsWith("unidic.")), `${context}: ${labels}`);
+    for (const key of conllu) assert.ok(labels.includes(key), `${context}: ${key}`);
+  }
+  const attributes = patternCompletionOptions(contextAt("verb := [|"), { definitions: [], captures: [], tokenKeys: conllu });
+  assert.equal(attributes.find((option) => option.label === "dep.rel").info, "Dependency relation to the head");
+  assert.equal(attributes.find((option) => option.label === "feat.Polarity").info, "UD feature Polarity");
+  assert.ok(patternCompletionOptions(contextAt("verb := [|")).some((option) => option.label === "unidic.cform"));
+});
+
+test("completion and hover help reads in Japanese when the page is in Japanese", async () => {
+  const { readFileSync } = await import("node:fs");
+  setValueNames(JSON.parse(readFileSync(new URL("../../lingrep-core/src/fsm/label_names.json", import.meta.url), "utf8")).sets);
+  const ja = { definitions: [], captures: [], locale: "ja" };
+  const info = (context, label) => patternCompletionOptions(contextAt(context), ja).find((option) => option.label === label).info;
+  assert.equal(info("verb := [|", "lemma"), "辞書形（見出し語）");
+  assert.equal(info("verb := [|", "unidic.cform"), "UniDic 活用形（終止形, 連用形-一般, …）");
+  assert.equal(info("verb := [upos=|", "ADP"), "格助詞など（格・係・副助詞）");
+  assert.equal(info("verb := [dep.rel=|", "nsubj"), "主語");
+  assert.equal(info("p|", "not_followed_by"), "直後に続かないことを確かめる（幅ゼロ）");
+  assert.equal(patternHoverInfo("p := [upos=VE|RB].".replace("|", ""), "p := [upos=VE".length, "ja").detail, "動詞");
+  assert.equal(patternHoverInfo("p := not_followed_by([]).", 7, "ja").detail, "否定の先読み（幅ゼロ）: 式がここから始まらないこと。");
+  assert.equal(info("verb := [|", "lemma") !== patternCompletionOptions(contextAt("verb := [|")).find((option) => option.label === "lemma").info, true);
+});
