@@ -360,7 +360,7 @@ fn execute_playground(
     // as a compile error, rather than as an empty preview: this function's
     // whole contract is that an empty result means "matched nothing".
     Ok(matcher
-        .find_published_matches(&tokens)
+        .try_find_published_matches(&tokens)
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(|matched| PlaygroundMatch {

@@ -551,7 +551,19 @@ fn verify_examples(
             }
         }
     };
-    let report = lingrep_core::fsm::verify_examples(matcher, &tokenize);
+    let report =
+        lingrep_core::fsm::try_verify_examples(matcher, &tokenize).map_err(
+            |error| match error {
+                lingrep_core::fsm::MatchPublicationError::Resource(error) => {
+                    CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
+                        lingrep_core::fsm::BoundExecutionError::Resource(error),
+                    ))
+                }
+                lingrep_core::fsm::MatchPublicationError::Policy(error) => CliError::Execution(
+                    lingrep_core::execution::ExecutionError::PolicyAnchor(error),
+                ),
+            },
+        )?;
     if let Some(error) = failure.into_inner() {
         return Err(CliError::Corpus(format!(
             "example analysis failed: {error}"

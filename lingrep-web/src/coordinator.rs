@@ -142,6 +142,12 @@ fn scope_failure(error: crate::search_scope::ResolveError) -> AttemptFailure {
 fn classify_execution_error(error: &ExecutionError) -> AttemptFailure {
     tracing::warn!(%error, "corpus scan execution error");
     match error {
+        ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(error)) => {
+            AttemptFailure {
+                category: ErrorCategory::Execution,
+                message: error.to_string(),
+            }
+        }
         ExecutionError::TokenizedSentenceTooLarge { actual, limit, .. }
         | ExecutionError::LookaroundWindowTooLarge { actual, limit } => AttemptFailure {
             category: ErrorCategory::Execution,
@@ -1571,6 +1577,175 @@ mod tests {
             revision: RevisionId(2),
             snapshot: retained
         }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_stream_departure_starts_a_full_abandonment_grace_period() {
+        use futures::poll;
+        let entry = new_entry(&WorkbenchId::new("reconnect"), &test_slot(), 0);
+        let abandoned = entry.abandoned();
+        tokio::pin!(abandoned);
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(25)).await;
+        let receiver = entry.view_tx.subscribe();
+        entry.subscribed.notify_waiters();
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(poll!(&mut abandoned).is_pending());
+        drop(receiver);
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(
+            ABANDONED_SCAN_GRACE
+                .checked_sub(Duration::from_secs(1))
+                .unwrap(),
+        )
+        .await;
+        assert!(poll!(&mut abandoned).is_pending());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(poll!(&mut abandoned).is_ready());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires LINGREP_CADDY_BINARY; checks real HTTP disconnects and a 30-second grace period"]
+    async fn caddy_default_streaming_releases_the_abandonment_permit() {
+        use axum::{
+            Router,
+            response::sse::{Event, Sse},
+            routing::get,
+        };
+        use futures::{FutureExt, StreamExt};
+        use std::convert::Infallible;
+        use std::process::{Command, Stdio};
+        use std::time::Instant;
+        use tokio::net::TcpListener;
+        struct Proxy(std::process::Child);
+        impl Drop for Proxy {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let binary = std::env::var("LINGREP_CADDY_BINARY")
+            .expect("set LINGREP_CADDY_BINARY to a Caddy executable");
+        let entry = Arc::new(new_entry(&WorkbenchId::new("proxy"), &test_slot(), 0));
+        let handler_entry = Arc::clone(&entry);
+        let app = Router::new().route(
+            "/events",
+            get(move || {
+                let entry = Arc::clone(&handler_entry);
+                async move {
+                    let receiver = entry.view_tx.subscribe();
+                    entry.subscribed.notify_waiters();
+                    Sse::new(
+                        tokio_stream::wrappers::WatchStream::new(receiver)
+                            .map(|_| Ok::<_, Infallible>(Event::default().data("running"))),
+                    )
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("Caddyfile");
+        std::fs::write(&config, format!("{{\n admin off\n auto_https off\n persist_config off\n}}\nhttp://127.0.0.1:{port} {{\n bind 127.0.0.1\n reverse_proxy {upstream} {{\n }}\n}}\n")).unwrap();
+        let log = std::fs::File::create(directory.path().join("caddy.log")).unwrap();
+        let proxy = Proxy(
+            Command::new(&binary)
+                .args(["run", "--adapter", "caddyfile", "--config"])
+                .arg(&config)
+                .stdout(Stdio::null())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        let result = std::panic::AssertUnwindSafe(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("Caddy must listen");
+            let permits = Arc::new(tokio::sync::Semaphore::new(1));
+            let held = Arc::clone(&permits).acquire_owned().await.unwrap();
+            let worker_entry = Arc::clone(&entry);
+            let worker = tokio::spawn(async move {
+                worker_entry.abandoned().await;
+                drop(held);
+            });
+            let mut response = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(format!("http://127.0.0.1:{port}/events"))
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success());
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), response.chunk())
+                    .await
+                    .expect("the initial SSE event must be flushed")
+                    .unwrap()
+                    .is_some()
+            );
+            assert_eq!(entry.view_tx.receiver_count(), 1);
+            let departure = Instant::now();
+            drop(response);
+            let next_session = tokio::time::timeout(
+                ABANDONED_SCAN_GRACE + Duration::from_secs(5),
+                Arc::clone(&permits).acquire_owned(),
+            )
+            .await
+            .expect("a second session must acquire the released permit")
+            .unwrap();
+            assert!(
+                departure.elapsed()
+                    >= ABANDONED_SCAN_GRACE
+                        .checked_sub(Duration::from_secs(1))
+                        .unwrap()
+            );
+            assert_eq!(entry.view_tx.receiver_count(), 0);
+            drop(next_session);
+            worker.await.unwrap();
+        })
+        .catch_unwind()
+        .await;
+        drop(proxy);
+        server.abort();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn graph_resource_failure_preserves_the_pattern_and_remedy() {
+        let failure = classify_execution_error(&ExecutionError::Matching(
+            lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError {
+                    pattern: "connected".into(),
+                    resource: "graph assignments",
+                    limit: 65_536,
+                },
+            ),
+        ));
+        assert_eq!(failure.category, ErrorCategory::Execution);
+        assert!(failure.message.contains("connected"));
+        assert!(failure.message.contains("ordering constraint"));
     }
 
     #[test]

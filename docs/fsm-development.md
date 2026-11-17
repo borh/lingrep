@@ -34,9 +34,11 @@ let output = compile_catalog(
 )?;
 let matcher = output.matcher;
 
-let matches = matcher.find_matches(&tokens);
+let matches = matcher.try_find_matches(&tokens)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+Graph assignment enumeration has sentence-scoped limits: 65,536 completed assignments, 1,000,000 graph work steps (edge visits and bound-node inspection), 64 MiB of cumulative estimated assignment allocation, and 128 relation clauses on a recursive path. The fallible `try_*` APIs return an error and no matches for that sentence when a limit is exceeded. Narrow token or graph predicates, or add ordering constraints between binders to reduce the enumeration. The older `find_matches` conveniences panic on exhaustion.
 
 For a body supplied through an inline CLI option, call `normalize_inline_pattern`
 and compile the resulting document with `compile_catalog`. Supply the caller's real

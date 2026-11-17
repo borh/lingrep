@@ -1,6 +1,7 @@
 use super::assertion::AssertionSession;
 use super::predicate::PredicateSession;
 use super::program::{Program, ProgramMatch};
+use super::resource::{MatchBudget, MatchResourceError};
 use crate::corpus::conllu::EnhancedGraph;
 use crate::fsm::Match;
 use crate::token_match::TokenSequence;
@@ -26,47 +27,54 @@ use crate::token_match::TokenSequence;
 pub(crate) struct EvaluatedPlan(pub(crate) Program);
 
 impl EvaluatedPlan {
-    pub(crate) fn find_matches_without_assertions<S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_without_assertions<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
-    ) -> Vec<Match> {
-        self.to_matches(self.0.matches_without_assertions(predicates, tokens))
-    }
-
-    pub(crate) fn find_matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
-        &self,
-        predicates: &PredicateSession<'_>,
-        tokens: &S,
-        graph: &EnhancedGraph,
-    ) -> Vec<Match> {
-        self.to_matches(
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        Ok(self.to_matches(
             self.0
-                .matches_without_assertions_with_graph(predicates, tokens, graph),
-        )
+                .matches_without_assertions(budget, predicates, tokens)?,
+        ))
     }
 
-    pub(crate) fn find_matches<S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_without_assertions_with_graph<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
+        predicates: &PredicateSession<'_>,
+        tokens: &S,
+        graph: &EnhancedGraph,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        Ok(self.to_matches(
+            self.0
+                .matches_without_assertions_with_graph(budget, predicates, tokens, graph)?,
+        ))
+    }
+
+    pub(crate) fn try_find_matches<S: TokenSequence + ?Sized>(
+        &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
-    ) -> Vec<Match> {
-        let matches = self.0.matches(predicates, tokens, session);
-        self.to_matches(matches)
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        let matches = self.0.matches(budget, predicates, tokens, session)?;
+        Ok(self.to_matches(matches))
     }
 
-    pub(crate) fn find_matches_with_graph<S: TokenSequence + ?Sized>(
+    pub(crate) fn try_find_matches_with_graph<S: TokenSequence + ?Sized>(
         &self,
+        budget: &mut MatchBudget,
         predicates: &PredicateSession<'_>,
         tokens: &S,
         session: &mut AssertionSession<'_, '_, S>,
         graph: &EnhancedGraph,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
         let matches = self
             .0
-            .matches_with_graph(predicates, tokens, session, graph);
-        self.to_matches(matches)
+            .matches_with_graph(budget, predicates, tokens, session, graph)?;
+        Ok(self.to_matches(matches))
     }
 
     fn to_matches(&self, matches: Vec<ProgramMatch>) -> Vec<Match> {

@@ -623,6 +623,10 @@ fn execution_classification(
     use lingrep_core::execution::ExecutionError as E;
     let failure = ErrorClassification::failure;
     match error {
+        E::Matching(lingrep_core::fsm::BoundExecutionError::Resource(_)) => {
+            failure("graph_assignment_limit", Matching, AfterChange)
+        }
+        E::Matching(_) => failure("matching", Matching, AfterChange),
         E::Analysis {
             ordinal,
             source_name,
@@ -742,6 +746,25 @@ impl From<String> for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_resource_error_has_a_matching_code_and_pattern_remedy() {
+        let error = CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
+            lingrep_core::fsm::BoundExecutionError::Resource(
+                lingrep_core::fsm::MatchResourceError {
+                    pattern: "connected".into(),
+                    resource: "graph assignments",
+                    limit: 65_536,
+                },
+            ),
+        ));
+        assert_eq!(error.code(), "graph_assignment_limit");
+        assert_eq!(error.retry_policy(), RetryPolicy::AfterChange);
+        let description = error.to_string();
+        assert!(description.contains("connected"));
+        assert!(description.contains("one sentence"));
+        assert!(description.contains("ordering constraint"));
+    }
 
     #[test]
     fn descriptions_explain_resource_limits_and_saved_output_without_wrapper_labels() {
