@@ -1242,7 +1242,7 @@ $('#token-attributes').addEventListener('click',event=>{const button=(event.targ
 $<HTMLDialogElement>('#inspector').addEventListener('close',()=>{++readerEpoch;if(viewLocation.kind==='reader'&&inspecting)void navigateView(hrefFor(inspecting.run,viewLocation.returnTo),true,'replace');if(document.activeElement===document.body)$('#results').focus({preventScroll:true});});
 $<HTMLButtonElement>('#replay').addEventListener('click',replay);
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$<HTMLDialogElement>('#inspector').open){$<HTMLDialogElement>('#inspector').close();event.preventDefault();}
-  else if(event.key==='Escape'&&!event.defaultPrevented&&!tokenLab.hidden&&tokenLab.contains(document.activeElement)){event.preventDefault();$<HTMLAnchorElement>('#close-token').click();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
+  else if(event.key==='Escape'&&!event.defaultPrevented&&!tokenLab.hidden&&(tokenLab.contains(document.activeElement)||!document.activeElement?.closest('input,textarea,select,[contenteditable]:not([contenteditable=false]),dialog'))){event.preventDefault();const close=$<HTMLAnchorElement>('#close-token');close.focus({preventScroll:true});close.click();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
 
 function displayedEvidence(): RunSnapshot | null {
   if(viewEvidence)return viewEvidence;

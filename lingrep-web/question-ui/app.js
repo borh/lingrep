@@ -1983,9 +1983,11 @@ document.addEventListener('keydown', event => {
         $('#inspector').close();
         event.preventDefault();
     }
-    else if (event.key === 'Escape' && !event.defaultPrevented && !tokenLab.hidden && tokenLab.contains(document.activeElement)) {
+    else if (event.key === 'Escape' && !event.defaultPrevented && !tokenLab.hidden && (tokenLab.contains(document.activeElement) || !document.activeElement?.closest('input,textarea,select,[contenteditable]:not([contenteditable=false]),dialog'))) {
         event.preventDefault();
-        $('#close-token').click();
+        const close = $('#close-token');
+        close.focus({ preventScroll: true });
+        close.click();
     }
     if (!event.isComposing && (event.ctrlKey || event.metaKey || event.altKey) && event.key === 'Enter') {
         event.preventDefault();

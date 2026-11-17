@@ -3473,6 +3473,52 @@ async fn the_question_page_searches_only_when_asked() -> WebDriverResult<()> {
     result
 }
 
+/// Safari does not focus a button on mouse click, so after a token click focus
+/// is on `#results`; the test focuses `#results` to reproduce that in Chromium.
+#[tokio::test]
+async fn escape_closes_the_example_when_a_token_click_leaves_focus_on_the_results()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-row').length > 1", "the default search's lines").await?;
+        driver.find_all(By::Css(".kwic-row")).await?[1].click().await?;
+        wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the open example").await?;
+        let opened: String = driver
+            .execute("return document.querySelector('.kwic-row[aria-expanded=true]').dataset.sequence", Vec::new())
+            .await?
+            .convert()?;
+        driver.find(By::Css("#token-ribbon button")).await?.click().await?;
+        driver.find(By::Css("#line-limit")).await?.focus().await?;
+        driver.action_chain().send_keys(Key::Escape).perform().await?;
+        observed(
+            &driver,
+            "return document.querySelector('#token-lab').hidden",
+            json!(false),
+            "Escape in a number field leaves the example open",
+        )
+        .await?;
+        driver.execute("document.querySelector('#results').focus()", Vec::new()).await?;
+        driver.action_chain().send_keys(Key::Escape).perform().await?;
+        wait_for(&driver, "return document.querySelector('#token-lab').hidden", "Escape closing the example").await?;
+        observed(
+            &driver,
+            "return [document.activeElement.classList.contains('kwic-row'), document.activeElement.dataset.sequence]",
+            json!([true, opened]),
+            "focus on the line that opened the example",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
 #[tokio::test]
 async fn an_example_opened_during_the_initial_search_stays_open() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
