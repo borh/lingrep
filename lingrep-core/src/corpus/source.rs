@@ -44,39 +44,12 @@ const BCCWJ_CONFIG_TAG: u64 = 0x7d1c_9e4a_b3f2_8c6eu64;
 /// only — the catalog policy is the format's, with no tunable knob.
 const SORANOHA_CONFIG_TAG: u64 = 0xf9f6_6393_1f58_6929u64;
 
-/// Resolve the corpus format tag for a CLI input path, purely from the
-/// extension and an explicit override — never opening or stat-ing the path.
+/// Uses `override_format` when supplied; otherwise infers from the path extension without filesystem access.
 ///
-/// This is the shared inference rule for every front end's `--input` /
-/// `--input-format` pair. It returns only a [`CorpusFormat`] tag (never a
-/// `Result`): a caller converts the tag into a policy-bearing
-/// [`CorpusReadConfig`] via [`CorpusReadConfig::new`] before
-/// [`CorpusSource::discover`] opens anything.
-///
-/// # Rules
-/// - `override_format` wins if `Some` — an explicit `--input-format` always
-///   takes precedence. Directory admission is validated later by
-///   [`CorpusSource::discover`].
-/// - `None` path (stdin) → [`CorpusFormat::Plain`].
-/// - `.md` / `.markdown` extension (case-insensitive) →
-///   [`CorpusFormat::Markdown`].
-/// - `.jsonl` extension (case-insensitive) → [`CorpusFormat::Jsonl`].
-/// - A path with **no** file extension → [`CorpusFormat::Markdown`]: by spec a
-///   directory means sorted top-level regular `.md` files only, and the
-///   resolver is pure, so it infers "no extension" as "directory-ish" rather
-///   than calling `is_dir()`. Any *other* extension falls through to
-///   [`CorpusFormat::Plain`].
-///
-/// A `.zip` is **not** inferred as [`CorpusFormat::Soranoha`]: a ZIP is a
-/// container other formats also use, and a catalog-bearing archive is the
-/// caller's claim about what is inside, not something an extension proves.
-/// An archive is declared with `--input-format soranoha`.
-///
-/// # Non-fallibility
-/// The resolver inspects only the extension and the override — it never opens
-/// the path, never stats it, and never returns an error. A mismatched
-/// directory + override is reported later by [`CorpusSource::discover`], not
-/// here.
+/// With no path, selects [`CorpusFormat::Plain`]; `.md`, `.markdown`, or no extension select
+/// [`CorpusFormat::Markdown`], `.jsonl` selects [`CorpusFormat::Jsonl`], `.conllu` selects
+/// [`CorpusFormat::Conllu`], and other extensions select [`CorpusFormat::Plain`], case-insensitively.
+/// Archive formats require an explicit override, and [`CorpusSource::discover`] validates directory admission.
 #[must_use]
 pub fn resolve_input_format(
     path: Option<&Path>,
@@ -259,7 +232,8 @@ impl CorpusReadConfig {
             Self::Markdown(_) => Some(CorpusFileKind::Markdown),
             Self::Conllu => Some(CorpusFileKind::Conllu),
             Self::Tei => Some(CorpusFileKind::Xml),
-            Self::Plain | Self::Jsonl | Self::Bccwj | Self::Soranoha | Self::SoranohaTei => None,
+            Self::Plain => Some(CorpusFileKind::Plaintext),
+            Self::Jsonl | Self::Bccwj | Self::Soranoha | Self::SoranohaTei => None,
         }
     }
 }
@@ -309,7 +283,7 @@ impl CorpusSource {
             let Some(file_kind) = config.directory_file_kind() else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires a Markdown, CoNLL-U, or TEI read config",
+                    "a directory corpus requires a Markdown, plain-text, CoNLL-U, or TEI read config",
                 ));
             };
             let mut discovery =

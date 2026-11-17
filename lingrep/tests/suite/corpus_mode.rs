@@ -236,6 +236,85 @@ fn cache_rejects_stdin_before_reading_it() {
     );
 }
 
+#[test]
+fn a_declared_plain_text_directory_builds_one_document_per_txt_file() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("works");
+    fs::create_dir_all(root.join("b")).unwrap();
+    fs::write(root.join("a.txt"), "猫。\n").unwrap();
+    fs::write(root.join("b/c.TXT"), "犬。\n").unwrap();
+    fs::write(root.join("notes.md"), "猫と犬。\n").unwrap();
+    let artifact = directory.path().join("works.lingcorpus");
+
+    let build = lingrep()
+        .args(["corpus", "build", "--input-format", "plain", "--dict-path"])
+        .arg(dictionary.path())
+        .arg("--output")
+        .arg(&artifact)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_success(&build);
+
+    let matches = |input: &[&std::ffi::OsStr]| {
+        let output = lingrep()
+            .args(["matches", "--json", "--limit", "all"])
+            .args(["--pattern", "animal := [text in {猫, 犬}]."])
+            .args(input)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        crate::support::parse_jsonl(&output.stdout)
+            .into_iter()
+            .filter(|event| event["type"] == "match")
+            .collect::<Vec<_>>()
+    };
+    let prepared = matches(&["--corpus".as_ref(), artifact.as_os_str()]);
+    let sources = prepared
+        .iter()
+        .map(|record| record["data"]["source_name"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(sources, ["a.txt", "b/c.TXT"]);
+
+    let direct = matches(&[
+        "--input-format".as_ref(),
+        "plain".as_ref(),
+        "--dict-path".as_ref(),
+        dictionary.path().as_os_str(),
+        root.as_os_str(),
+    ]);
+    assert_eq!(
+        direct
+            .iter()
+            .map(|record| &record["data"]["surface"])
+            .collect::<Vec<_>>(),
+        prepared
+            .iter()
+            .map(|record| &record["data"]["surface"])
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn an_inferred_markdown_directory_without_md_files_names_the_plain_text_flag() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("works");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("a.txt"), "猫。\n").unwrap();
+
+    let output = lingrep()
+        .args(["corpus", "build", "--dict-path"])
+        .arg(dictionary.path())
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--input-format plain"), "{stderr}");
+}
+
 fn artifacts_beside(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = fs::read_dir(root.parent().unwrap())
         .unwrap()

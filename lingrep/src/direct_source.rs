@@ -1156,6 +1156,7 @@ impl FilesystemCorpusEvents {
             && !matches!(
                 config,
                 CorpusReadConfig::Markdown(_)
+                    | CorpusReadConfig::Plain
                     | CorpusReadConfig::Conllu
                     | CorpusReadConfig::Bccwj
                     | CorpusReadConfig::Tei
@@ -1165,7 +1166,7 @@ impl FilesystemCorpusEvents {
                 logical_path: PathBuf::from("."),
                 source: io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires the Markdown, CoNLL-U, TEI, or BCCWJ reader",
+                    "a directory corpus requires the Markdown, plain-text, CoNLL-U, TEI, or BCCWJ reader",
                 ),
             };
             return Err(execution_discovery_error(&error));

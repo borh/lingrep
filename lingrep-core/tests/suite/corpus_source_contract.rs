@@ -183,14 +183,8 @@ fn directory_with_unsupported_config_is_rejected() {
     let directory = tempdir().unwrap();
     fs::write(directory.path().join("a.md"), "一。\n").unwrap();
 
-    for config in [CorpusReadConfig::Plain, CorpusReadConfig::Jsonl] {
-        let error = CorpusSource::discover(directory.path(), config.clone()).unwrap_err();
-        assert_eq!(
-            error.kind(),
-            io::ErrorKind::InvalidInput,
-            "directory + unsupported config must be rejected"
-        );
-    }
+    let error = CorpusSource::discover(directory.path(), CorpusReadConfig::Jsonl).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
 }
 
 /// Fresh streams from one source are independent — consuming one does not

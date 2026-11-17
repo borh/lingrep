@@ -105,6 +105,7 @@ impl PreparedBuildEvents {
             && !matches!(
                 config,
                 CorpusReadConfig::Markdown(_)
+                    | CorpusReadConfig::Plain
                     | CorpusReadConfig::Conllu
                     | CorpusReadConfig::Bccwj
                     | CorpusReadConfig::Tei
@@ -114,7 +115,7 @@ impl PreparedBuildEvents {
                 logical_path: ".".into(),
                 source: io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "a directory corpus requires the Markdown, CoNLL-U, TEI, or BCCWJ reader",
+                    "a directory corpus requires the Markdown, plain-text, CoNLL-U, TEI, or BCCWJ reader",
                 ),
             });
         }

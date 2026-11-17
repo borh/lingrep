@@ -140,6 +140,7 @@ enum EntryKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorpusFileKind {
     Markdown,
+    Plaintext,
     Conllu,
     Xml,
 }
@@ -153,6 +154,7 @@ impl CorpusFileKind {
             // Preserve the established directory contract: `.markdown` is a
             // single-file inference only; directory discovery selects `.md`.
             Self::Markdown => extension.eq_ignore_ascii_case("md"),
+            Self::Plaintext => extension.eq_ignore_ascii_case("txt"),
             Self::Conllu => extension.eq_ignore_ascii_case("conllu"),
             Self::Xml => extension.eq_ignore_ascii_case("xml"),
         }
@@ -161,6 +163,7 @@ impl CorpusFileKind {
     const fn description(self) -> &'static str {
         match self {
             Self::Markdown => "Markdown",
+            Self::Plaintext => "plain text",
             Self::Conllu => "CoNLL-U",
             Self::Xml => "TEI XML",
         }
@@ -431,11 +434,16 @@ impl CorpusDiscovery {
                 Path::new("."),
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "{} corpus directory contains no {} files",
-                        self.file_kind.description(),
-                        self.file_kind.description()
-                    ),
+                    match self.file_kind {
+                        CorpusFileKind::Markdown => "Markdown corpus directory contains no .md \
+                            files; to read .txt files as plain text, pass --input-format plain"
+                            .to_owned(),
+                        kind => format!(
+                            "{} corpus directory contains no {} files",
+                            kind.description(),
+                            kind.description()
+                        ),
+                    },
                 ),
             ));
         }
