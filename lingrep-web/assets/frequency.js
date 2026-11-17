@@ -375,13 +375,15 @@ export function mountFrequency(root) {
         })()
       : esc(where);
     const actions = `<button data-c="edit">${esc(t("frequency.edit"))}</button>${s.where != null ? `<button data-c="blanks">${esc(t("views.use_controls"))}</button>` : ""}`;
-    // The command sits in a disclosure; a typed condition keeps it open, because the command shows that condition.
     clauseEl.innerHTML = command
-      ? `<details class="fq-cli"${cliOpen || s.where != null ? " open" : ""}><summary>${esc(t("frequency.cli"))}</summary><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}</details><div class="clause">${actions}</div>`
+      ? `<p class="fq-cli-label">${esc(t("frequency.cli"))}</p><div class="clause"><code data-c="code">${code}</code><button data-c="copy">${esc(t("views.copy"))}</button></div>${source ? `<p>${esc(t("views.command_context"))}</p>` : ""}<div class="clause">${actions}</div>`
       : `<div class="clause"><code data-c="code">${code}</code>${actions}</div>${source ? `<p>${esc(t("views.command_unavailable"))}</p>` : ""}`;
   }
-  let cliOpen = false;
-  clauseEl.addEventListener("toggle", (e) => { if (e.target.matches(".fq-cli")) cliOpen = e.target.open; }, true);
+  // The pattern, command and Workbench link sit in one disclosure, closed until opened; a typed condition opens it, because the command shows that condition.
+  const machineryEl = $("[data-fq-machinery]");
+  const openMachinery = () => {
+    if ((editing || s.where != null) && !machineryEl.open) machineryEl.open = true;
+  };
   clauseEl.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
     if (c === "copy") {
@@ -395,6 +397,7 @@ export function mountFrequency(root) {
     } else if (c === "edit") {
       editing = true;
       renderClause();
+      openMachinery();
       clauseEl.querySelector("textarea").focus();
     } else if (c === "cancel") {
       editing = false;
@@ -913,6 +916,7 @@ export function mountFrequency(root) {
 
   function renderAll() {
     const r = resolve();
+    openMachinery();
     stateEl.textContent = r.state ?? queryMessage?.() ?? "";
     if (r.sentence) renderSentence();
     else sentenceEl.innerHTML = r.state && meta.pairs.length && !s.bad ? sentenceFallback() : "";

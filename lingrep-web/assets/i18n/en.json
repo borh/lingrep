@@ -703,6 +703,7 @@
   "frequency.multivalue_note": "A document with several values contributes to each corresponding bar. The bars overlap, so their sum can exceed the entry total.",
   "frequency.key_equals": "exactly",
   "frequency.key_any": "any",
+  "frequency.machinery": "Pattern, command line and Workbench",
   "frequency.cli": "Run this in the command line",
   "frequency.capture_field": "{capture}: {field}",
   "frequency.attribute_text": "text (surface form)",

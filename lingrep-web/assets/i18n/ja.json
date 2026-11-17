@@ -703,6 +703,7 @@
   "frequency.multivalue_note": "一つの文書に複数の値がある場合は、それぞれの棒に数えます。棒どうしで文書が重複するため、合計がこの項目の総数を超えることがあります。",
   "frequency.key_equals": "完全一致",
   "frequency.key_any": "指定なし",
+  "frequency.machinery": "パターン・コマンド・ワークベンチ",
   "frequency.cli": "コマンドラインで実行する",
   "frequency.capture_field": "{capture} の {field}",
   "frequency.attribute_text": "text（表層形）",

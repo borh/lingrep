@@ -9,12 +9,15 @@
 {% block content %}
 <section class="fq" data-frequency>
   {% call macros::corpus_line("", "", true) %}{% endcall %}
-  <p class="comparison-note" data-overlaps-note hidden data-i18n="views.overlaps_catalog">Overlapping matches follow the catalog's policy, not the Workbench setting.</p>
   <div class="fq-head">
     <p class="fq-sentence" data-fq-sentence></p>
     <p class="fq-under"><span class="fq-figures" data-fq-figures></span></p>
-    <div class="fq-clause" data-fq-clause></div>
-    <div class="fq-source" data-fq-source></div>
+    <details class="fq-machinery" data-fq-machinery>
+      <summary data-i18n="frequency.machinery">Pattern, command line and Workbench</summary>
+      <div class="fq-source" data-fq-source></div>
+      <div class="fq-clause" data-fq-clause></div>
+      <p class="comparison-note" data-overlaps-note hidden data-i18n="views.overlaps_catalog">Overlapping matches follow the catalog's policy, not the Workbench setting.</p>
+    </details>
   </div>
   <p class="fq-state" data-fq-state role="status"></p>
   <div data-fq-table></div>

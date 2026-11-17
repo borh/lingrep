@@ -1887,6 +1887,13 @@ async fn every_restyled_button_shows_a_focus_ring_for_keyboard_focus() -> WebDri
             .send_keys(Key::Tab)
             .await?;
         let table = ["button.add", "[data-c=edit]", "button.open-entry"];
+        // The edit button sits in the folded pattern machinery.
+        driver
+            .execute(
+                "document.querySelector('[data-fq-machinery]').open = true",
+                Vec::new(),
+            )
+            .await?;
         observed(&driver, &rings(&table), ringed(&table), "table view").await?;
         driver
             .execute("document.querySelector('button.add').click()", Vec::new())
@@ -2663,6 +2670,29 @@ fn write_key_table(artifact: &std::path::Path, destination: &std::path::Path) {
         .unwrap();
 }
 
+async fn serve_key_table() -> Served {
+    serve_artifact(
+        support::build_artifact_with_metadata(
+            (0..6u64)
+                .map(|index| {
+                    (
+                        "doc.md",
+                        index,
+                        false,
+                        vec![vec![TokenInfo::default().with_orth("x")]],
+                    )
+                })
+                .collect(),
+            Vec::new(),
+            metadata(),
+        ),
+        CATALOG,
+        write_key_table,
+        &[],
+    )
+    .await
+}
+
 /// Every visible header of the table and the first row's visible cells, as
 /// column extents, with the header over the per-million values and the
 /// entry cell's width in its own font size.
@@ -2691,26 +2721,7 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
         return Ok(());
     };
     driver.set_window_rect(0, 0, 390, 844).await?;
-    let served = serve_artifact(
-        support::build_artifact_with_metadata(
-            (0..6u64)
-                .map(|index| {
-                    (
-                        "doc.md",
-                        index,
-                        false,
-                        vec![vec![TokenInfo::default().with_orth("x")]],
-                    )
-                })
-                .collect(),
-            Vec::new(),
-            metadata(),
-        ),
-        CATALOG,
-        write_key_table,
-        &[],
-    )
-    .await;
+    let served = serve_key_table().await;
     let result: WebDriverResult<()> = async {
         open(&driver, &served.base, ROWS).await?;
         driver
@@ -2957,6 +2968,46 @@ async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> We
         observed(&driver, chosen, json!("noun"), "the default definition").await?;
         open(&driver, &format!("{}#pattern=pos", served.base), ROWS).await?;
         observed(&driver, chosen, json!("pos"), "the addressed definition").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// At 1280×800 the table starts in the first screen: the pattern source,
+/// the command and the Workbench link wait in one closed disclosure under
+/// the figures, and the exact-match fields are drawn as the sentence's
+/// blanks are, underlined without a box.
+#[tokio::test]
+async fn the_table_starts_above_the_fold_with_the_pattern_machinery_folded() -> WebDriverResult<()>
+{
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    driver.set_window_rect(0, 0, 1280, 800).await?;
+    let served = serve_key_table().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        let shown = driver
+            .execute(
+                "const folded = document.querySelector('[data-fq-machinery]'), row = document.querySelector('table.freq tbody tr'); \
+                 const field = getComputedStyle(document.querySelector('.fq-key input')), blank = getComputedStyle(document.querySelector('select[data-b=pattern]')); \
+                 return {open: folded.open, holds: [!!folded.querySelector('[data-fq-source] pre'), !!folded.querySelector('[data-fq-source] a'), !!folded.querySelector('[data-c=code]')], \
+                   underFigures: folded.compareDocumentPosition(document.querySelector('[data-fq-figures]')) === Node.DOCUMENT_POSITION_PRECEDING, \
+                   rowBottom: row.getBoundingClientRect().bottom, viewport: innerHeight, \
+                   field: [field.borderTopWidth, field.color === blank.color, field.backgroundColor]}",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(shown["open"], json!(false), "{shown}");
+        assert_eq!(shown["holds"], json!([true, true, true]), "{shown}");
+        assert_eq!(shown["underFigures"], json!(true), "{shown}");
+        assert!(shown["rowBottom"].as_f64().unwrap() <= shown["viewport"].as_f64().unwrap(), "{shown}");
+        assert_eq!(shown["field"], json!(["0px", true, "rgba(0, 0, 0, 0)"]), "{shown}");
         assert_no_page_errors(&driver).await
     }
     .await;

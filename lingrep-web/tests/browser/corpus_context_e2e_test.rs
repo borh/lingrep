@@ -536,6 +536,7 @@ async fn every_page_names_its_corpus_in_the_same_words() -> WebDriverResult<()> 
             let note = driver
                 .execute(
                     "const note = document.querySelector('[data-overlaps-note]'); \
+                     const folded = note.closest('details'); if (folded) folded.open = true; \
                      return note.offsetParent !== null && note.textContent",
                     Vec::new(),
                 )
