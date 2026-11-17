@@ -2710,6 +2710,7 @@ return {
   perMillion: over ? over.textContent : null,
   entryEms: entry.getBoundingClientRect().width / parseFloat(getComputedStyle(entry).fontSize),
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  fieldNames: [document.querySelector('table.freq thead .entry-names')?.textContent ?? null, document.querySelectorAll('table.freq tbody .entry-cell small:not(.gloss)').length],
   wholeWords: (() => {
     const text = entry.querySelector('.open-entry').firstChild;
     let at = 0;
@@ -2762,6 +2763,7 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
             assert!(columns["entryEms"].as_f64().unwrap() >= 4.0, "{subset}: {columns}");
             assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
             assert_eq!(columns["wholeWords"], json!(true), "{subset}: {columns}");
+            assert_eq!(columns["fieldNames"], json!(["n · p · v", 0]), "named once, over the entries: {columns}");
         }
         assert_no_page_errors(&driver).await
     }

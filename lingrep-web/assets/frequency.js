@@ -430,9 +430,8 @@ export function mountFrequency(root) {
     const docs = answer.documents_admitted, tokens = answer.tokens_admitted;
     const share = docs ? r.works / docs : 0;
     const pm = tokens ? (r.count * 1e6) / tokens : 0;
-    const names = keyNames(r.group);
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
-    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}${namesHtml(names)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
+    return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
@@ -452,7 +451,9 @@ export function mountFrequency(root) {
       return;
     }
     const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
-    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    const names = keyNames(answer.rows[0].group);
+    const entryNames = names ? ` <small class="entry-names" title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "";
+    tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}${h === "views.head_entry" ? entryNames : ""}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);

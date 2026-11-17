@@ -470,3 +470,4 @@ html:root {
 @media (max-width: 40rem) { .site + main { margin-inline: 0.5rem; } }
 .fq-kwic mark.kb { background: none; color: inherit; padding: 0; font-weight: 600; text-decoration: underline; text-decoration-color: var(--fq-accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .fq-entry-name:focus { outline: none; }
+.fq .freq th .entry-names { font-weight: 400; color: var(--fq-soft); margin-left: 0.4em; }
