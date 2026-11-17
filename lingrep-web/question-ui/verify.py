@@ -1053,6 +1053,9 @@ with (out / "browser-driver.log").open("w") as log:
         js(
             "document.querySelector('#source').focus();document.querySelector('#source').value='かもしれない := か も しれ ない.';document.querySelector('#source').dispatchEvent(new Event('input'));document.querySelector('#source').blur()"
         )
+        assert js("return __submitRequests.length") == 1
+        assert js("return !document.querySelector('#draft-badge').hidden")
+        js("document.querySelector('#run').click()")
         restored = wait(
             "return __probe.state.current?.id!=="
             + json.dumps(changed["id"])

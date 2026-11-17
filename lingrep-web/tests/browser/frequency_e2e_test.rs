@@ -3422,3 +3422,55 @@ async fn the_definition_blank_is_a_menu_of_the_catalogs_definitions() -> WebDriv
     served.server.abort();
     result
 }
+
+/// Escape closes an open example; leaving an edited source marks it as a
+/// draft instead of searching; a source that failed to compile offers its
+/// repair, not a rerun of the same source.
+#[tokio::test]
+async fn the_question_page_searches_only_when_asked() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-row').length > 0", "the default search's lines").await?;
+        driver.execute("document.querySelector('.kwic-row').click()", Vec::new()).await?;
+        wait_for(&driver, "return !document.querySelector('#token-lab').hidden", "the open example").await?;
+        driver.find(By::Css("#token-ribbon button")).await?.send_keys(Key::Escape).await?;
+        wait_for(&driver, "return document.querySelector('#token-lab').hidden", "Escape closing the example").await?;
+        driver
+            .execute(
+                "window.__posts = 0; const fetched = window.fetch; \
+                 window.fetch = (url, options) => { if (options?.method === 'POST' && String(url).endsWith('api/questions/runs')) window.__posts++; return fetched(url, options); }; \
+                 document.querySelector('#source-editor').hidden = false;",
+                Vec::new(),
+            )
+            .await?;
+        let source = driver.find(By::Css("#source")).await?;
+        source.click().await?;
+        source.send_keys(" ").await?;
+        driver.find(By::Css("#corpus")).await?.focus().await?;
+        observed(
+            &driver,
+            "return [window.__posts, !document.querySelector('#draft-badge').hidden]",
+            json!([0, true]),
+            "leaving the edited source",
+        )
+        .await?;
+        driver
+            .execute(
+                "const source = document.querySelector('#source'); source.value = 'broken := ['; \
+                 source.dispatchEvent(new Event('input')); document.querySelector('#query-form').requestSubmit();",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(&driver, "return !document.querySelector('#edit-pattern-error').hidden", "the compile failure").await?;
+        observed(&driver, "return document.querySelector('#retry').hidden", json!(true), "no rerun of the broken source").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

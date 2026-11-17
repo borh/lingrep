@@ -18,7 +18,7 @@ const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(l
 let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
-  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
+  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter または「検索する」で検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
   current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語番号',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',noLines:'No lines for this pattern yet.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
@@ -307,7 +307,6 @@ function restoreReplay(final: CompletedSnapshot): RunSnapshot[] {
   } catch {return [];}
 }
 
-let sourceAtFocus='';
 async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:OccurrenceTarget) {
   event?.preventDefault();
   if(restoreController)return;
@@ -323,7 +322,6 @@ async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:Occur
   if(where&&searchLimit?.document!=null)searchLimit={...searchLimit,document:null};
   const limit=activeLimit();
   const body={source,dataset:$<HTMLSelectElement>('#corpus').value,where,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{}),...(limit?.pattern?{pattern:limit.pattern}:{}),...(limit?.document!=null?{document:limit.document}:{})};
-  sourceAtFocus=body.source;
   ++replayEpoch;
   isReplay = false;
   $('#replay-note').hidden = true;
@@ -402,7 +400,7 @@ function render(force=false) {
   if(!isReplay)$<HTMLInputElement>('#timeline').value=String(Math.max(0,recorded.length-1));
   $<HTMLButtonElement>('#cancel').hidden=!activeId&&!isReplay&&!restoreController;
   $<HTMLButtonElement>('#cancel').textContent=restoreController?(locale==='ja'?'保存した検索の実行を停止':'Stop saved searches'):t(isReplay?'stopReplay':'stop');
-  $<HTMLButtonElement>('#retry').hidden=!current || current.phase==='running' || current.phase==='complete' || overflowed(current) || current.error_code==='analysis_changed';
+  $<HTMLButtonElement>('#retry').hidden=!current || current.phase==='running' || current.phase==='complete' || overflowed(current) || current.error_code==='analysis_changed' || !!patternFailure(current);
   $<HTMLButtonElement>('#replay').disabled=!recorded.length || !!activeId || isReplay;
   $('#error').hidden=!current?.error;
   const diagnostic=patternFailure(current),line=diagnostic?.data.location?.line;
@@ -1129,12 +1127,6 @@ $<HTMLInputElement>('#timeline').addEventListener('input',()=>{if(activeId||!rec
 $('#reading-options').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey&&!event.altKey)event.preventDefault();});
 $('#query-form').addEventListener('submit',search);
 $<HTMLTextAreaElement>('#source').addEventListener('input',updateDraft);
-$<HTMLTextAreaElement>('#source').addEventListener('focus',()=>{sourceAtFocus=$<HTMLTextAreaElement>('#source').value;});
-$<HTMLTextAreaElement>('#source').addEventListener('blur',event=>{
-  if($<HTMLTextAreaElement>('#source').value===sourceAtFocus)return;
-  if(event.relatedTarget instanceof Element&&event.relatedTarget.closest('#run,#retry'))return;
-  void search();
-});
 
 $<HTMLSelectElement>('#corpus').addEventListener('change',()=>{analysisExpectation=null;updateCorpus();updateDraft();});
 $<HTMLSelectElement>('#behavior').addEventListener('change',()=>{updateDraft();render(true);});
@@ -1206,7 +1198,8 @@ definitionMenu.addEventListener('click',event=>{
 $('#token-attributes').addEventListener('click',event=>{const button=(event.target as Element).closest<HTMLButtonElement>('[data-attribute]');if(!button)return;attributeKey=button.dataset.attribute!;attributeMember=button.dataset.member;const all=!!button.closest('.attribute-all');selectToken(tokenIndex);[...$('#token-attributes').querySelectorAll<HTMLButtonElement>(all?'.attribute-all [data-attribute]':'.attribute-basics [data-attribute]')].find(item=>item.dataset.attribute===attributeKey&&item.dataset.member===attributeMember)?.focus({preventScroll:true});});
 $<HTMLDialogElement>('#inspector').addEventListener('close',()=>{++readerEpoch;if(viewLocation.kind==='reader'&&inspecting)void navigateView(hrefFor(inspecting.run,viewLocation.returnTo),true,'replace');if(document.activeElement===document.body)$('#results').focus({preventScroll:true});});
 $<HTMLButtonElement>('#replay').addEventListener('click',replay);
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$<HTMLDialogElement>('#inspector').open){$<HTMLDialogElement>('#inspector').close();event.preventDefault();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$<HTMLDialogElement>('#inspector').open){$<HTMLDialogElement>('#inspector').close();event.preventDefault();}
+  else if(event.key==='Escape'&&!event.defaultPrevented&&!tokenLab.hidden&&tokenLab.contains(document.activeElement)){event.preventDefault();$<HTMLAnchorElement>('#close-token').click();}if(!event.isComposing&&(event.ctrlKey||event.metaKey||event.altKey)&&event.key==='Enter'){event.preventDefault();search();}});
 
 function displayedEvidence(): RunSnapshot | null {
   if(viewEvidence)return viewEvidence;
