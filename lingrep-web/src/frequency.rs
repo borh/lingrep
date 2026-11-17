@@ -62,6 +62,7 @@ pub struct FrequencyPair {
     documents: Arc<documents::Documents>,
     table_documents: documents::TableDocuments,
     patterns: Vec<PatternSource>,
+    default_pattern: Option<String>,
     workbench: Option<String>,
     matcher: Option<entry::EntryMatcher>,
 }
@@ -563,8 +564,14 @@ impl FrequencyViews {
                         key_fields: table.pattern_key_fields(pattern)?,
                     })
                 })
-                .collect::<Result<_, CountTableError>>()
+                .collect::<Result<Vec<_>, CountTableError>>()
                 .map_err(|error| format!("catalog {catalog}: {error}"))?;
+            let default_pattern =
+                crate::patterns::default_question_definition(source).filter(|name| {
+                    patterns
+                        .iter()
+                        .any(|pattern: &PatternSource| pattern.name == *name)
+                });
             let workbench = crate::permalink::encode_query_only(source, name.as_str(), None, None)
                 .ok()
                 .map(|query| format!("./{query}"));
@@ -579,6 +586,7 @@ impl FrequencyViews {
                 documents: Arc::clone(&documents.store),
                 table_documents,
                 patterns,
+                default_pattern,
                 workbench,
                 matcher: Some(matcher),
             });
@@ -1024,6 +1032,14 @@ impl FrequencyPair {
     #[must_use]
     pub fn patterns(&self) -> &[PatternSource] {
         &self.patterns
+    }
+
+    /// The definition the view opens on when the address names none: the
+    /// question page's default, the catalog's first definition that is not
+    /// a count of single tokens by a key, when the table counts it.
+    #[must_use]
+    pub fn default_pattern(&self) -> Option<&str> {
+        self.default_pattern.as_deref()
     }
 
     #[must_use]
@@ -1636,6 +1652,7 @@ pub(crate) mod tests {
                     source: None,
                     key_fields: Vec::new(),
                 }],
+                default_pattern: None,
                 workbench: None,
                 matcher: None,
             },

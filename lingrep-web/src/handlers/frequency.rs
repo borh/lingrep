@@ -55,6 +55,7 @@ struct PairMeta<'a> {
     catalog: &'a str,
     source: &'a str,
     patterns: &'a [crate::frequency::PatternSource],
+    default_pattern: Option<&'a str>,
     workbench: Option<&'a str>,
 }
 
@@ -77,6 +78,7 @@ async fn meta(State(store): State<RequestStore>) -> Response {
                 catalog: &pair.catalog,
                 source: &pair.source,
                 patterns: pair.patterns(),
+                default_pattern: pair.default_pattern(),
                 workbench: pair.workbench(),
             })
             .collect(),

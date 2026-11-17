@@ -2891,3 +2891,76 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
     served.server.abort();
     result
 }
+
+const COUNT_FIRST_CATALOG: &str = "key: [upos]\npos := [].\nnoun := [upos=NOUN].\n";
+
+/// Without a pattern in its address, Frequencies opens on the catalog's
+/// first definition that is not a count of single tokens by a key, as the
+/// question page does; a pattern in the address still wins.
+#[tokio::test]
+async fn frequencies_open_on_the_first_definition_that_is_not_count_only() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_artifact(
+        support::build_artifact_with_metadata(
+            (0..6u64)
+                .map(|index| {
+                    (
+                        "doc.md",
+                        index,
+                        false,
+                        vec![vec![TokenInfo::default().with_orth("x")]],
+                    )
+                })
+                .collect(),
+            Vec::new(),
+            metadata(),
+        ),
+        COUNT_FIRST_CATALOG,
+        |artifact, destination| {
+            let documents = (0..6u64)
+                .map(|document_id| DocumentTotals {
+                    document_id,
+                    sentences: 1,
+                    tokens: 10,
+                })
+                .collect::<Vec<_>>();
+            let mut writer = CountTableWriter::create(
+                destination,
+                table_key(artifact, COUNT_FIRST_CATALOG),
+                vec!["pos".into(), "noun".into()],
+                vec![GroupSchema {
+                    kind: GroupKind::Surface,
+                    names: Vec::new(),
+                }],
+                &["NOUN", "本"],
+                &documents,
+            )
+            .unwrap();
+            for (pattern, value) in [(0, 0), (1, 1)] {
+                writer.begin_entry(pattern, 0, &[value]).unwrap();
+                writer.add_sentence(0, 0, 1).unwrap();
+            }
+            writer
+                .finish(&CancellationFlag::new())
+                .unwrap()
+                .publish()
+                .unwrap();
+        },
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        let chosen = "return document.querySelector('[data-fq-sentence] select[data-b=pattern]')?.value ?? null";
+        open(&driver, &served.base, ROWS).await?;
+        observed(&driver, chosen, json!("noun"), "the default definition").await?;
+        open(&driver, &format!("{}#pattern=pos", served.base), ROWS).await?;
+        observed(&driver, chosen, json!("pos"), "the addressed definition").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

@@ -233,7 +233,7 @@ export function mountFrequency(root) {
       const name = meta.pairs.find((x) => x.corpus === s.corpus)?.corpus_name ?? s.corpus;
       return { state: t("views.unavailable", { catalog: s.catalog, corpus: name }) };
     }
-    s.pattern ??= p.patterns[0]?.name ?? null;
+    s.pattern ??= p.default_pattern ?? p.patterns[0]?.name ?? null;
     if (!p.patterns.some((x) => x.name === s.pattern)) return { state: t("views.unknown_pattern", { pattern: s.pattern, catalog: s.catalog }), sentence: true };
     return { sentence: true, query: true };
   }
