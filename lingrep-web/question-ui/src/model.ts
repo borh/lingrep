@@ -133,6 +133,11 @@ export function sourceSelection(source:string, span:{readonly start:number;reado
   try{return [decoder.decode(bytes.subarray(0,span.start)).length,decoder.decode(bytes.subarray(0,span.end)).length];}catch{return null;}
 }
 
+/** The offset of the line defining `name` in a catalog source (`name :=`, after an optional definition keyword), or -1. */
+export function definitionOffset(source:string, name:string):number {
+  const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return source.search(new RegExp(`^[ \\t]*(?:(?:pattern|fragment|lexicon|set)[ \\t]+)?${escaped}[ \\t]*:=`,'m'));
+}
 export function parseStoredSentence(value:unknown):StoredSentence {
   if(!objectValue(value)||typeof value.analysis_identity!=='string'||!Number.isSafeInteger(value.sentence)||Number(value.sentence)<0||!Array.isArray(value.tokens)||!value.tokens.every(tokenValue))throw new Error('The stored token analysis could not be read.');
   return value as unknown as StoredSentence;

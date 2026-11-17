@@ -87,6 +87,11 @@ export function sourceSelection(source, span) {
         return null;
     }
 }
+/** The offset of the line defining `name` in a catalog source (`name :=`, after an optional definition keyword), or -1. */
+export function definitionOffset(source, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return source.search(new RegExp(`^[ \\t]*(?:(?:pattern|fragment|lexicon|set)[ \\t]+)?${escaped}[ \\t]*:=`, 'm'));
+}
 export function parseStoredSentence(value) {
     if (!objectValue(value) || typeof value.analysis_identity !== 'string' || !Number.isSafeInteger(value.sentence) || Number(value.sentence) < 0 || !Array.isArray(value.tokens) || !value.tokens.every(tokenValue))
         throw new Error('The stored token analysis could not be read.');

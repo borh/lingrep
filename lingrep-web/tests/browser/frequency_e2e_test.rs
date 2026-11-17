@@ -3109,3 +3109,106 @@ async fn each_inspect_link_names_its_line_and_work() -> WebDriverResult<()> {
     served.server.abort();
     result
 }
+
+/// The question page's address for `source` limited to its `noun` definition.
+fn limited_question(base: &str, source: &str, run: bool) -> String {
+    let root = base.trim_end_matches("frequencies");
+    let query = serde_urlencoded::to_string([
+        ("fresh", "1"),
+        ("run", if run { "1" } else { "0" }),
+        ("source", source),
+        ("pattern", "noun"),
+    ])
+    .unwrap();
+    format!("{root}#{query}")
+}
+
+/// A search limited to one definition keeps its 定義 chip and the
+/// definition's name in the sentence when an edit breaks the source but
+/// keeps the definition, so the failed search still names what it limits.
+#[tokio::test]
+async fn a_definition_limit_survives_an_edit_that_breaks_the_source() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        let chip = "return [document.querySelector('[data-clear-limit=pattern]')?.textContent ?? null, document.querySelector('#source-label').textContent]";
+        observed(&driver, chip, json!(["Definition: noun ×", "noun"]), "the limit").await?;
+        assert_eq!(
+            driver.execute("return document.querySelector('#example')", Vec::new()).await?.json(),
+            &Value::Null,
+            "one search button"
+        );
+        driver
+            .execute(
+                "const t = document.querySelector('#source'); t.value = t.value.replace('noun :=', 'noun :=='); \
+                 t.dispatchEvent(new Event('input', {bubbles: true})); document.querySelector('#run').click()",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "const e = document.querySelector('#edit-pattern-error'); return e && !e.hidden",
+            "the pattern error",
+        )
+        .await?;
+        observed(&driver, chip, json!(["Definition: noun ×", "noun"]), "the limit after the error").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// Opening the pattern source puts the caret on the selected definition and
+/// scrolls the editor to it, rather than to wherever the text ends.
+#[tokio::test]
+async fn the_source_editor_opens_on_the_selected_definition() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let filler = (0..40).map(|n| format!("# note {n}\n")).collect::<String>();
+    let source = format!(
+        "{filler}{ENTRY_CATALOG}\n{}",
+        (0..40)
+            .map(|n| format!("pattern other{n} := [text=本].\n"))
+            .collect::<String>()
+    );
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, &source, false))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('#source-label').textContent === 'noun' || null",
+            "the limited definition",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('#edit-source').click()", Vec::new())
+            .await?;
+        let shown = driver
+            .execute(
+                "const t = document.querySelector('#source'), at = t.value.indexOf('pattern noun'); \
+                 const line = parseFloat(getComputedStyle(t).lineHeight), top = t.value.slice(0, at).split('\\n').length - 1; \
+                 return {caret: t.selectionStart === at, focused: document.activeElement === t, \
+                   visible: top * line >= t.scrollTop && (top + 1) * line <= t.scrollTop + t.clientHeight}",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert_eq!(shown, json!({"caret": true, "focused": true, "visible": true}));
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
