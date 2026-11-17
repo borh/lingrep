@@ -1,9 +1,4 @@
-//! Crash-safe publication of one immutable artifact directory.
-//!
-//! The no-replace rename is the commit point. The staging owner remains armed
-//! until that syscall succeeds, so every earlier error removes only the
-//! builder's private staging directory. Every later error leaves the visible
-//! artifact untouched.
+//! Publishes immutable artifact directories from private staging directories.
 
 use std::{
     fs::{self, File},
@@ -93,9 +88,6 @@ fn publish_guarded_with_ops(
     }
     ops.fsync(completed.path())?;
 
-    // The caller's atomic claim is the final cooperative-cancellation
-    // boundary. Once it succeeds, publication must run through the no-replace
-    // rename and parent durability result without reporting cancellation.
     if !claim_commit() {
         return Ok(false);
     }
@@ -114,15 +106,6 @@ fn publish_guarded_with_ops(
     Ok(true)
 }
 
-/// Errno values meaning "no-replace rename is unavailable here", as opposed to
-/// "the destination is already taken".
-///
-/// Linux reports an unimplemented `renameat2` as `ENOSYS` and a filesystem
-/// driver without `RENAME_NOREPLACE` as `EINVAL` or `EOPNOTSUPP`. macOS reports
-/// a volume without `VOL_CAP_INT_RENAME_EXCL` as `ENOTSUP`, which is a
-/// **different value there** — 45 against `EOPNOTSUPP`'s 102. On Linux the two
-/// names are one value, so a single list naming both would be an unreachable
-/// pattern; hence the split rather than one longer array.
 #[cfg(target_os = "macos")]
 const UNSUPPORTED_RENAME_ERRNOS: &[i32] =
     &[libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP, libc::ENOTSUP];
@@ -352,11 +335,39 @@ impl Drop for StagingDirectory {
     }
 }
 
-/// Renames `from` to `to` in one step, failing with `EEXIST` or `ENOTEMPTY`
-/// instead of replacing an existing `to`. Where no no-replace rename exists,
-/// the error is `ENOSYS`, `EINVAL` or `EOPNOTSUPP` and nothing is renamed.
-#[cfg(target_os = "linux")]
+/// Renames `from` to `to`, rejecting an existing destination when no-replace rename is supported.
+///
+/// Without filesystem support, directories use a checked rename that can replace an empty
+/// destination created concurrently; non-directory sources return the unsupported-operation error.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    rename_noreplace_with(from, to, rename_noreplace_syscall)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_noreplace_with(
+    from: &Path,
+    to: &Path,
+    rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let error = match rename(from, to) {
+        Err(error) if UNSUPPORTED_RENAME_ERRNOS.contains(&error.raw_os_error().unwrap_or(0)) => {
+            error
+        }
+        result => return result,
+    };
+    if !fs::symlink_metadata(from)?.is_dir() {
+        return Err(error);
+    }
+    match fs::symlink_metadata(to) {
+        Ok(_) => Err(io::Error::from_raw_os_error(libc::EEXIST)),
+        Err(absent) if absent.kind() == io::ErrorKind::NotFound => fs::rename(from, to),
+        Err(other) => Err(other),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_noreplace_syscall(from: &Path, to: &Path) -> io::Result<()> {
     let from = path_argument(from, "staging path contains a NUL byte")?;
     let to = path_argument(to, "destination path contains a NUL byte")?;
     // SAFETY: both pointers are valid NUL-terminated path strings for the
@@ -377,14 +388,8 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// macOS spells the same commit point `renamex_np` with `RENAME_EXCL`.
-///
-/// It is the exact counterpart, not an approximation: the rename is atomic and
-/// fails with `EEXIST` when the destination is taken, which is the one property
-/// publication depends on. Staging is always a sibling of the destination, so
-/// the absence of a directory-relative form here costs nothing.
 #[cfg(target_os = "macos")]
-pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+fn rename_noreplace_syscall(from: &Path, to: &Path) -> io::Result<()> {
     let from = path_argument(from, "staging path contains a NUL byte")?;
     let to = path_argument(to, "destination path contains a NUL byte")?;
     // SAFETY: both pointers are valid NUL-terminated path strings for the
@@ -731,6 +736,99 @@ mod tests {
             drop(completed);
             assert!(!staging.exists());
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn unsupported_rename(errno: i32) -> impl FnOnce(&Path, &Path) -> std::io::Result<()> {
+        move |_, _| Err(std::io::Error::from_raw_os_error(errno))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn staged_component(parent: &Path) -> PathBuf {
+        let staging = parent.join(".output.staging");
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("component"), b"data").unwrap();
+        staging
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn without_no_replace_rename_a_directory_is_published_to_an_absent_destination() {
+        for &errno in super::UNSUPPORTED_RENAME_ERRNOS {
+            let directory = tempfile::tempdir().unwrap();
+            let staging = staged_component(directory.path());
+            let destination = directory.path().join("output");
+
+            super::rename_noreplace_with(&staging, &destination, unsupported_rename(errno))
+                .unwrap();
+
+            assert!(!staging.exists());
+            assert_eq!(
+                std::fs::read(destination.join("component")).unwrap(),
+                b"data"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn without_no_replace_rename_an_existing_destination_is_left_unchanged() {
+        let occupy: [fn(&Path); 3] = [
+            |path| {
+                std::fs::create_dir(path).unwrap();
+                std::fs::write(path.join("existing"), b"kept").unwrap();
+            },
+            |path| std::fs::create_dir(path).unwrap(),
+            |path| std::fs::write(path, b"kept").unwrap(),
+        ];
+        for &errno in super::UNSUPPORTED_RENAME_ERRNOS {
+            for occupy in occupy {
+                let directory = tempfile::tempdir().unwrap();
+                let staging = staged_component(directory.path());
+                let destination = directory.path().join("output");
+                occupy(&destination);
+                let before = snapshot(&destination);
+
+                let error =
+                    super::rename_noreplace_with(&staging, &destination, unsupported_rename(errno))
+                        .unwrap_err();
+
+                assert_eq!(error.raw_os_error(), Some(libc::EEXIST));
+                assert_eq!(snapshot(&destination), before);
+                assert_eq!(std::fs::read(staging.join("component")).unwrap(), b"data");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn without_no_replace_rename_a_file_is_not_renamed() {
+        let directory = tempfile::tempdir().unwrap();
+        let staging = directory.path().join(".output.staging");
+        std::fs::write(&staging, b"data").unwrap();
+        let destination = directory.path().join("output");
+
+        let error =
+            super::rename_noreplace_with(&staging, &destination, unsupported_rename(libc::EINVAL))
+                .unwrap_err();
+
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read(&staging).unwrap(), b"data");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn snapshot(path: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+        if path.is_file() {
+            return vec![(path.to_path_buf(), Some(std::fs::read(path).unwrap()))];
+        }
+        let mut entries = vec![(path.to_path_buf(), None)];
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap().path();
+            entries.push((entry.clone(), Some(std::fs::read(&entry).unwrap())));
+        }
+        entries.sort();
+        entries
     }
 
     fn killed_builder_leftovers(parent: &Path, suffix: &str, host: &[u8]) -> (PathBuf, PathBuf) {

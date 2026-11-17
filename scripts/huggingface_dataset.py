@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import sys
@@ -338,6 +339,25 @@ def inspect_dataset(
     return result
 
 
+def require_hard_links(directory: Path) -> None:
+    if not directory.is_dir():
+        return
+    with tempfile.TemporaryDirectory(prefix=".link-probe-", dir=directory) as probe:
+        source = Path(probe) / "source"
+        source.touch()
+        try:
+            os.link(source, Path(probe) / "link")
+        except OSError as error:
+            if error.errno in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+                raise OSError(
+                    error.errno,
+                    f"cannot create hard links in {directory}: {error.strerror}. "
+                    "Choose an --output directory that permits hard links; "
+                    "move the completed file afterwards if needed",
+                ) from error
+            raise
+
+
 def write_new_file(
     destination: Path,
     rows: Iterable[Mapping[str, Any]],
@@ -390,6 +410,8 @@ def run(arguments: argparse.Namespace) -> int:
     if arguments.split is None:
         raise ProjectionError("--split is required unless --inspect is used")
     validate_projection_options(arguments)
+    if arguments.output is not None:
+        require_hard_links(arguments.output.absolute().parent)
     rows = dataset_rows(arguments)
     if arguments.output is None:
         count = write_selected_rows(rows, sys.stdout, arguments)

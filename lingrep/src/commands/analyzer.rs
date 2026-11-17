@@ -177,6 +177,27 @@ fn setup_command(root: &Path, args: &AnalyzerPrepareArgs, request: &Request) -> 
     command
 }
 
+#[cfg(unix)]
+fn require_symbolic_links(root: &Path) -> Result<(), CliError> {
+    let probe = root.join(".symlink-probe");
+    match std::os::unix::fs::symlink(".gitignore", &probe) {
+        Ok(()) => Ok(fs::remove_file(&probe)?),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+            ) =>
+        {
+            Err(failed(format!(
+                "cannot create symbolic links in {}: {error}. Analyzer setup requires symbolic \
+                 links; choose an --output directory that permits them",
+                root.display()
+            )))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn provision(
     root: &Path,
     args: &AnalyzerPrepareArgs,
@@ -184,6 +205,8 @@ fn provision(
     config: &ExecutionCliConfig,
 ) -> Result<(), CliError> {
     fs::write(root.join(".gitignore"), "*\n")?;
+    #[cfg(unix)]
+    require_symbolic_links(root)?;
     let wheels = acquire_wheels(root, args)?;
     checked(uv(root).args(["python", "install", "--no-bin", MANAGED_PYTHON]))?;
     checked(

@@ -229,6 +229,32 @@ class HuggingFaceDatasetAdapterTests(unittest.TestCase):
             self.assertFalse(failed_destination.exists())
             self.assertEqual(list(Path(directory).glob("*.partial")), [])
 
+    def test_hard_link_probe_failure_stops_before_opening_the_dataset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = HF.parser().parse_args(
+                [
+                    "owner/dataset",
+                    "--split",
+                    "train",
+                    "--output",
+                    f"{directory}/corpus.jsonl",
+                ]
+            )
+            with (
+                mock.patch.object(
+                    HF.os,
+                    "link",
+                    side_effect=PermissionError(1, "Operation not permitted"),
+                ),
+                mock.patch.object(HF, "dataset_rows") as dataset_rows,
+                self.assertRaisesRegex(OSError, "cannot create hard links") as failure,
+            ):
+                HF.run(arguments)
+            self.assertEqual(failure.exception.errno, HF.errno.EPERM)
+            self.assertIn("Operation not permitted", str(failure.exception))
+            dataset_rows.assert_not_called()
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_missing_or_non_string_text_names_the_row_and_field(self):
         for row, message in [
             ({}, "row 3: field 'text' is missing"),

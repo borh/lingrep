@@ -390,8 +390,8 @@ pub struct CountTableWriter {
 }
 
 impl CountTableWriter {
-    /// Checks that the destination is absent and its parent permits creating output.
-    /// Publication still checks for a competing destination atomically.
+    /// Checks that the destination is absent and its parent permits creating output;
+    /// publication uses [`crate::rename_noreplace`].
     pub fn check_destination(destination: &Path) -> Result<(), CountTableError> {
         match fs::symlink_metadata(destination) {
             Ok(_) => {
@@ -904,8 +904,7 @@ pub struct StagedCountTable {
 }
 
 impl StagedCountTable {
-    /// Renames the staged table to its destination without replacing
-    /// anything there.
+    /// Publishes the staged table using [`crate::rename_noreplace`]'s destination checks and filesystem fallback.
     pub fn publish(mut self) -> Result<CountTableStats, CountTableError> {
         self.stats.bytes =
             self.staging

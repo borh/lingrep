@@ -238,6 +238,19 @@ async fn characterize_storage(shape: StorageShape) {
 }
 
 #[tokio::test]
+async fn writer_creates_no_shared_memory_index_while_building() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("building.sqlite");
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    writer
+        .push_sentence(&location(0, "first.md", 0, 0), &rich())
+        .await
+        .unwrap();
+    assert!(!PathBuf::from(format!("{}-shm", path.display())).exists());
+    writer.finish(analysis_identity()).await.unwrap();
+}
+
+#[tokio::test]
 async fn immutable_view_opens_literal_sqlite_path_and_returns_only_rich_metadata() {
     // Would fail if the reader builds a SQLite URL instead of passing the literal
     // path to SqliteConnectOptions: `?` and `#` would then alter its meaning.
