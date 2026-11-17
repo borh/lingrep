@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::{NamedTempFile, TempDir, TempPath};
 
 use crate::execution::CancellationFlag;
 
@@ -677,7 +677,7 @@ pub struct SpillPolicy {
 #[derive(Debug)]
 struct RunFile {
     id: u64,
-    file: NamedTempFile,
+    path: TempPath,
     reservation: TempReservation,
     level: u32,
     bytes: u64,
@@ -721,7 +721,7 @@ struct RunReader {
 impl RunReader {
     fn open(run: &RunFile) -> io::Result<Self> {
         Ok(Self {
-            reader: BufReader::new(zstd::stream::read::Decoder::new(run.file.reopen()?)?),
+            reader: BufReader::new(zstd::stream::read::Decoder::new(File::open(&run.path)?)?),
             id: run.id,
             level: run.level,
             byte_offset: 0,
@@ -881,7 +881,7 @@ impl RunWriter {
         let id = metrics.completed_run_id(level);
         Ok(RunFile {
             id,
-            file,
+            path: file.into_temp_path(),
             reservation,
             level,
             bytes,
@@ -1266,36 +1266,37 @@ where
     }
 
     fn finalize_runs(&mut self, operation: SpillOperation) -> io::Result<()> {
-        if self.runs.len() <= 1 {
-            return Ok(());
-        }
-        let level = self
-            .runs
-            .iter()
-            .map(|run| run.level)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1);
-        let merged = Self::merge_runs(
-            operation,
-            std::mem::take(&mut self.runs),
-            0,
-            &self.directory,
-            &self.budget,
-            &mut self.metrics,
-            level,
-            self.cancellation.as_ref(),
-        )?;
-        if let Err(source) = add_total_run_bytes(&mut self.metrics, merged.bytes) {
-            return Err(operation_io_error(
+        while self.runs.len() > 1 {
+            self.runs.sort_by_key(|run| run.level);
+            let take = self.runs.len().min(self.policy.merge_fan_in);
+            let retained = self.runs.split_off(take);
+            let selected = std::mem::replace(&mut self.runs, retained);
+            let level = selected
+                .iter()
+                .map(|run| run.level)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1);
+            let merged = Self::merge_runs(
                 operation,
-                self.metrics.snapshot(0, 1),
-                self.budget.snapshot(),
-                source,
-            ));
+                selected,
+                self.runs.len(),
+                &self.directory,
+                &self.budget,
+                &mut self.metrics,
+                level,
+                self.cancellation.as_ref(),
+            )?;
+            if let Err(source) = add_total_run_bytes(&mut self.metrics, merged.bytes) {
+                return Err(operation_io_error(
+                    operation,
+                    self.metrics.snapshot(0, self.runs.len() + 1),
+                    self.budget.snapshot(),
+                    source,
+                ));
+            }
+            self.runs.push(merged);
         }
-        self.runs.push(merged);
-        self.metrics.peak_run_count = self.metrics.peak_run_count.max(self.runs.len());
         Ok(())
     }
 
@@ -1746,5 +1747,109 @@ mod tests {
     fn defensive_record_too_large_type_has_structured_identity() {
         let error = SpillRecordTooLarge::new(usize::MAX);
         assert_eq!(error.record_bytes(), usize::MAX);
+    }
+
+    #[cfg(target_os = "linux")]
+    std::thread_local! {
+        static RUN_DIRECTORY: std::cell::RefCell<Option<(Vec<std::path::PathBuf>, usize)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    struct FdSamplingKey(u32);
+
+    #[cfg(target_os = "linux")]
+    impl Ord for FdSamplingKey {
+        fn cmp(&self, other: &Self) -> CmpOrdering {
+            RUN_DIRECTORY.with_borrow_mut(|probe| {
+                if let Some((directories, peak)) = probe {
+                    let open = std::fs::read_dir("/proc/self/fd")
+                        .unwrap()
+                        .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+                        .filter(|target| {
+                            directories
+                                .iter()
+                                .any(|directory| target.starts_with(directory))
+                        })
+                        .count();
+                    *peak = (*peak).max(open);
+                }
+            });
+            self.0.cmp(&other.0)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl PartialOrd for FdSamplingKey {
+        fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_run_files_never_exceed_fan_in_plus_one() {
+        const FAN_IN: usize = 4;
+        let mut counts = SortedRunCounts::<FdSamplingKey>::with_policy(
+            SpillPolicy {
+                max_pending_bytes: usize::MAX,
+                max_pending_keys: 1,
+                merge_fan_in: FAN_IN,
+            },
+            Arc::new(TempBudget::new(u64::MAX)),
+        )
+        .unwrap();
+        RUN_DIRECTORY.set(Some((vec![counts.directory.path().to_path_buf()], 0)));
+        for _ in 0..2 {
+            for key in 0..63 {
+                counts.add(FdSamplingKey(key), 1).unwrap();
+            }
+        }
+        let mut drain = counts.into_sorted_drain().unwrap();
+        let mut drained = Vec::new();
+        while let Some((key, count)) = drain.next_entry().unwrap() {
+            drained.push((key.0, count));
+        }
+        let peak = RUN_DIRECTORY.take().map(|(_, peak)| peak).unwrap();
+        assert_eq!(drained, (0..63).map(|key| (key, 2)).collect::<Vec<_>>());
+        assert!(
+            peak <= FAN_IN + 1,
+            "{peak} run files open at once, more than fan-in {FAN_IN} plus one output"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn draining_into_a_second_container_holds_fan_in_plus_two_run_files() {
+        const FAN_IN: usize = 4;
+        let policy = SpillPolicy {
+            max_pending_bytes: usize::MAX,
+            max_pending_keys: 1,
+            merge_fan_in: FAN_IN,
+        };
+        let budget = Arc::new(TempBudget::new(u64::MAX));
+        let mut counts =
+            SortedRunCounts::<FdSamplingKey>::with_policy(policy, Arc::clone(&budget)).unwrap();
+        let mut ordered = SortedRunCounts::<FdSamplingKey>::with_policy(policy, budget).unwrap();
+        RUN_DIRECTORY.set(Some((
+            vec![
+                counts.directory.path().to_path_buf(),
+                ordered.directory.path().to_path_buf(),
+            ],
+            0,
+        )));
+        for _ in 0..2 {
+            for key in 0..63 {
+                counts.add(FdSamplingKey(key), 1).unwrap();
+            }
+        }
+        let mut drain = counts.into_sorted_drain().unwrap();
+        while let Some((key, count)) = drain.next_entry().unwrap() {
+            ordered.add(FdSamplingKey(1000 - key.0), count).unwrap();
+        }
+        ordered.finalize().unwrap();
+        let peak = RUN_DIRECTORY.take().map(|(_, peak)| peak).unwrap();
+        assert_eq!(peak, FAN_IN + 2);
     }
 }

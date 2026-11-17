@@ -33,6 +33,7 @@ use crate::protocol::query::{
 /// less.
 const DEFAULT_RESIDENT_KEYS: usize = 65_536;
 const DEFAULT_MERGE_FAN_IN: usize = 16;
+const MIN_MERGE_FAN_IN: usize = 2;
 
 /// Keys carried per message from the scan to a counting shard.
 ///
@@ -962,6 +963,51 @@ fn shard_thread(
     Err(io::Error::other("summary scan ended without ordering"))
 }
 
+/// The counting shards a summary spills from and the runs each spill merge
+/// combines. Neither changes the published rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpillLayout {
+    pub shards: usize,
+    pub merge_fan_in: usize,
+}
+
+impl SpillLayout {
+    /// One shard merging two runs at a time: the narrowest layout.
+    pub const MINIMUM: Self = Self {
+        shards: 1,
+        merge_fan_in: MIN_MERGE_FAN_IN,
+    };
+
+    /// `shards` shards, at least one, at the default merge fan-in.
+    pub fn new(shards: usize) -> Self {
+        Self {
+            shards: shards.max(1),
+            merge_fan_in: DEFAULT_MERGE_FAN_IN,
+        }
+    }
+
+    /// Includes concurrent merges for `tallies` additional aggregation containers and one open drain per shard.
+    pub fn files_open_at_once(self, tallies: usize) -> usize {
+        self.shards * (self.merge_fan_in + 2) + tallies * (self.merge_fan_in + 1)
+    }
+
+    /// Reduces shards before merge fan-in, returning `None` if [`Self::MINIMUM`] with `tallies` cannot fit `available`.
+    pub fn fit(self, tallies: usize, available: usize) -> Option<Self> {
+        let narrower_shards = (1..=self.shards)
+            .rev()
+            .map(|shards| Self { shards, ..self });
+        let narrower_merges = (MIN_MERGE_FAN_IN..self.merge_fan_in)
+            .rev()
+            .map(|merge_fan_in| Self {
+                shards: 1,
+                merge_fan_in,
+            });
+        narrower_shards
+            .chain(narrower_merges)
+            .find(|layout| layout.files_open_at_once(tallies) <= available)
+    }
+}
+
 /// How the scan is currently counting.
 ///
 /// Every run starts [`ScanMode::Inline`]: a bounded in-memory tally with no
@@ -1002,12 +1048,12 @@ pub struct SummaryAggregator {
 }
 
 impl SummaryAggregator {
-    pub fn new(max_temp_bytes: u64, shards: usize) -> io::Result<Self> {
+    pub fn new(max_temp_bytes: u64, layout: SpillLayout) -> io::Result<Self> {
         Self::with_limits(
             DEFAULT_RESIDENT_KEYS,
-            DEFAULT_MERGE_FAN_IN,
+            layout.merge_fan_in,
             max_temp_bytes,
-            shards,
+            layout.shards,
         )
     }
 
@@ -1711,13 +1757,14 @@ impl GroupingTally {
     pub(crate) fn new(
         published: impl Iterator<Item = u64>,
         by_document: bool,
+        merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
         let mut counts = SortedRunCounts::with_policy(
             SpillPolicy {
                 max_pending_bytes: usize::MAX,
                 max_pending_keys: DEFAULT_RESIDENT_KEYS,
-                merge_fan_in: DEFAULT_MERGE_FAN_IN,
+                merge_fan_in,
             },
             budget,
         )?;
@@ -1823,9 +1870,10 @@ impl SectionTally {
     /// covers; spilled runs reserve from `budget`.
     pub fn new(
         labels: Vec<(String, roaring::RoaringTreemap)>,
+        merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        Self::with_limits(labels, DEFAULT_RESIDENT_KEYS, DEFAULT_MERGE_FAN_IN, budget)
+        Self::with_limits(labels, DEFAULT_RESIDENT_KEYS, merge_fan_in, budget)
     }
 
     pub fn with_limits(
@@ -1915,15 +1963,10 @@ impl MetadataValueTally {
     pub fn new(
         key: String,
         documents: impl IntoIterator<Item = (std::ops::Range<u64>, Vec<String>)>,
+        merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        Self::with_limits(
-            key,
-            documents,
-            DEFAULT_RESIDENT_KEYS,
-            DEFAULT_MERGE_FAN_IN,
-            budget,
-        )
+        Self::with_limits(key, documents, DEFAULT_RESIDENT_KEYS, merge_fan_in, budget)
     }
 
     pub fn with_limits(

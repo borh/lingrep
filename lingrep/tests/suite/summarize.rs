@@ -22,8 +22,8 @@ use lingrep::direct_source::matched_surface;
 use lingrep::protocol::query::{MetadataValueData, PatternCount, SectionData};
 use lingrep::protocol::validate_query_jsonl;
 use lingrep::summary::{
-    AggregationGroup, AggregationInput, MetadataValueTally, SectionTally, SummaryAggregator,
-    SummaryPartition, SummaryRow,
+    AggregationGroup, AggregationInput, MetadataValueTally, SectionTally, SpillLayout,
+    SummaryAggregator, SummaryPartition, SummaryRow,
 };
 use lingrep_core::analysis::{InputUnitId, NormalizationPolicy, TextUnit};
 use lingrep_core::corpus::DocumentId;
@@ -439,6 +439,45 @@ fn cross_variant_groups_merge_into_one_row_across_shards() {
             })
             .unwrap();
         assert_eq!(rows, [(7, 5)], "shards={shards}");
+    }
+}
+
+#[test]
+fn a_spill_layout_counts_each_shard_at_fan_in_plus_two_and_each_tally_at_fan_in_plus_one() {
+    assert_eq!(SpillLayout::new(8).files_open_at_once(0), 8 * 18);
+    assert_eq!(SpillLayout::new(8).files_open_at_once(3), 8 * 18 + 3 * 17);
+    assert_eq!(SpillLayout::MINIMUM.files_open_at_once(0), 4);
+    assert_eq!(SpillLayout::MINIMUM.files_open_at_once(1), 4 + 3);
+}
+
+#[test]
+fn a_spill_layout_fits_fewer_shards_then_a_narrower_merge() {
+    let layout = |shards, merge_fan_in| SpillLayout {
+        shards,
+        merge_fan_in,
+    };
+    for (requested, tallies, available, expected) in [
+        (8, 0, 10_000, Some(layout(8, 16))),
+        (8, 0, 144, Some(layout(8, 16))),
+        (8, 0, 143, Some(layout(7, 16))),
+        (8, 0, 36, Some(layout(2, 16))),
+        (8, 0, 35, Some(layout(1, 16))),
+        (8, 0, 18, Some(layout(1, 16))),
+        (8, 0, 17, Some(layout(1, 15))),
+        (8, 0, 6, Some(layout(1, 4))),
+        (8, 0, 4, Some(layout(1, 2))),
+        (8, 0, 3, None),
+        (2, 0, 10_000, Some(layout(2, 16))),
+        (1, 1, 35, Some(layout(1, 16))),
+        (1, 1, 34, Some(layout(1, 15))),
+        (1, 1, 7, Some(layout(1, 2))),
+        (1, 1, 6, None),
+    ] {
+        assert_eq!(
+            SpillLayout::new(requested).fit(tallies, available),
+            expected,
+            "requested={requested} tallies={tallies} available={available}"
+        );
     }
 }
 
@@ -1476,7 +1515,7 @@ fn spilled_section_counts_publish_the_same_records_as_resident_counts() {
         let budget = Arc::new(TempBudget::new(u64::MAX));
         let mut tally = match resident_key_limit {
             Some(limit) => SectionTally::with_limits(labels(), limit, 2, Arc::clone(&budget)),
-            None => SectionTally::new(labels(), Arc::clone(&budget)),
+            None => SectionTally::new(labels(), 16, Arc::clone(&budget)),
         }
         .unwrap();
         for (sentence, tokens, patterns) in sentences {
@@ -1765,7 +1804,7 @@ fn spilled_metadata_value_counts_publish_the_same_records_as_resident_counts() {
             Some(limit) => {
                 MetadataValueTally::with_limits(key, documents(), limit, 2, Arc::clone(&budget))
             }
-            None => MetadataValueTally::new(key, documents(), Arc::clone(&budget)),
+            None => MetadataValueTally::new(key, documents(), 16, Arc::clone(&budget)),
         }
         .unwrap();
         for (sentence, tokens, patterns) in sentences {
@@ -2739,8 +2778,6 @@ const KEYED_TABLE_CATALOG: &str = "key: [$a.text, $b.text, $c.text]\n\
     key: [text]\n\
     pattern word := [].\n";
 
-/// Rows of `summarize` (`--by-document` when `by_document`) for `tri` whose
-/// key fields equal `fields`.
 fn keyed_summary(
     artifact: &std::path::Path,
     catalog: &std::path::Path,
@@ -3424,6 +3461,101 @@ fn write_table_and_table_reject_what_a_per_document_table_cannot_answer() {
         &["--where", "@section = methods"],
     );
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[cfg(unix)]
+fn write_table_under_open_file_limit(
+    soft: u64,
+    hard: u64,
+) -> (std::process::Output, Option<BTreeMap<String, Vec<u8>>>) {
+    use std::os::unix::process::CommandExt;
+
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let artifact = tagged_artifact(&directory, &dictionary);
+    let catalog = directory.path().join("table.lx");
+    fs::write(&catalog, TABLE_CATALOG).unwrap();
+    let table = directory.path().join("t.lingtable");
+    let mut command = lingrep_std();
+    command
+        .args(["summarize", "--workers", "8", "--patterns"])
+        .arg(&catalog)
+        .arg("--corpus")
+        .arg(&artifact)
+        .arg("--write-table")
+        .arg(&table);
+    let limit = libc::rlimit {
+        rlim_cur: soft,
+        rlim_max: hard,
+    };
+    // SAFETY: `setrlimit` is async-signal-safe and `limit` is a valid `rlimit`.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    let output = command.output().unwrap();
+    let files = table.exists().then(|| {
+        fs::read_dir(&table)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, fs::read(&path).unwrap())
+            })
+            .collect()
+    });
+    (output, files)
+}
+
+#[cfg(unix)]
+#[test]
+fn write_table_narrows_its_spill_layout_under_a_low_hard_limit() {
+    let (output, table) = write_table_under_open_file_limit(64, 64);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_success(&output);
+    assert!(
+        stderr.contains("warning[open_file_limit]") && stderr.contains("limit is 64"),
+        "{stderr}"
+    );
+    let (unlimited, expected) = write_table_under_open_file_limit(4096, 4096);
+    assert_success(&unlimited);
+    assert!(expected.as_ref().is_some_and(|files| !files.is_empty()));
+    assert!(
+        !String::from_utf8_lossy(&unlimited.stderr).contains("open_file_limit"),
+        "no warning at a sufficient limit"
+    );
+    assert_eq!(table, expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_table_fails_before_opening_files_below_its_narrowest_layout() {
+    let (output, table) = write_table_under_open_file_limit(24, 24);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("summarize needs at least 24 more open files")
+            && stderr.contains("the open-file limit is 24"),
+        "{stderr}"
+    );
+    assert!(table.is_none(), "no table is published");
+}
+
+#[cfg(unix)]
+#[test]
+fn write_table_raises_a_low_soft_open_file_limit_to_the_hard_limit() {
+    let (output, table) = write_table_under_open_file_limit(64, 4096);
+    assert_success(&output);
+    assert!(table.is_some());
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("open_file_limit"),
+        "no warning after the raise"
+    );
 }
 
 #[cfg(all(unix, debug_assertions))]

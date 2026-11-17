@@ -40,7 +40,8 @@ use crate::protocol::query::{
 use crate::protocol::write_jsonl;
 use crate::summary::{
     AggregationGroup, AggregationInput, GroupingTally, MetadataValueTally, OwnedAggregationInput,
-    SectionTally, SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows, shard_hash,
+    SectionTally, SpillLayout, SummaryAggregator, SummaryPartition, SummaryRow, SummaryRows,
+    shard_hash,
 };
 use crate::terminal::PresentationProgress;
 use crate::terminal::TerminalArbiter;
@@ -517,10 +518,20 @@ pub fn run(
                 message: format!("failed to create worker pool: {error}"),
             })?;
         let limits = config.limits;
-        let aggregation = SummaryAggregator::new(config.max_temp_bytes, config.workers.clamp(1, 8))
-            .map_err(CliError::Aggregation)?;
+        let tallies = usize::from(sections.is_some())
+            + usize::from(metadata_values.is_some())
+            + usize::from(args.grouping_coverage);
+        let layout = fit_spill_layout(
+            SpillLayout::new(config.workers.clamp(1, 8)),
+            tallies,
+            args.write_table.is_some(),
+            config,
+            &run_id,
+        )?;
+        let aggregation =
+            SummaryAggregator::new(config.max_temp_bytes, layout).map_err(CliError::Aggregation)?;
         let sections = sections
-            .map(|labels| SectionTally::new(labels, aggregation.temp_budget()))
+            .map(|labels| SectionTally::new(labels, layout.merge_fan_in, aggregation.temp_budget()))
             .transpose()
             .map_err(CliError::Aggregation)?;
         let metadata_values = metadata_values
@@ -530,6 +541,7 @@ pub fn run(
                     documents
                         .into_iter()
                         .map(|(_, range, values)| (range, values)),
+                    layout.merge_fan_in,
                     aggregation.temp_budget(),
                 )
             })
@@ -541,6 +553,7 @@ pub fn run(
                 GroupingTally::new(
                     pattern_projection.selected.iter().copied(),
                     args.by_document,
+                    layout.merge_fan_in,
                     aggregation.temp_budget(),
                 )
             })
@@ -555,8 +568,12 @@ pub fn run(
         {
             None
         } else if let Some(windows) = compiled.matcher.token_windows() {
-            WindowTally::new(&windows, &pattern_ordinals, aggregation.temp_budget())
-                .map_err(CliError::Aggregation)?
+            WindowTally::new(
+                &windows,
+                &pattern_ordinals,
+                aggregation.temp_budget(),
+                layout.merge_fan_in,
+            )
         } else {
             None
         };
@@ -1026,6 +1043,77 @@ struct DocumentTally {
     sentences: u64,
     tokens: u64,
     source_metadata: Option<std::sync::Arc<serde_json::Map<String, serde_json::Value>>>,
+}
+
+const COUNT_TABLE_WRITER_FILES: usize = 16;
+
+const RESERVED_FILES: usize = 4;
+
+fn fit_spill_layout(
+    requested: SpillLayout,
+    tallies: usize,
+    writes_table: bool,
+    config: &ExecutionCliConfig,
+    run_id: &str,
+) -> Result<SpillLayout, CliError> {
+    let Some(files) = crate::open_files::OpenFiles::current() else {
+        return Ok(requested);
+    };
+    let other_files = RESERVED_FILES
+        + if writes_table {
+            COUNT_TABLE_WRITER_FILES
+        } else {
+            0
+        };
+    let available = files.available().saturating_sub(other_files);
+    let Some(layout) = requested.fit(tallies, available) else {
+        return Err(CliError::CommandFailure {
+            code: FailureCode::Io,
+            message: format!(
+                "summarize needs at least {} more open files, but the open-file limit is {} \
+                 and {} are open; raise the open-file limit",
+                SpillLayout::MINIMUM.files_open_at_once(tallies) + other_files,
+                files.limit,
+                files.open,
+            ),
+        });
+    };
+    if layout != requested {
+        let plural = |count: usize, noun: &str| {
+            format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+        };
+        let mut changes = Vec::new();
+        if layout.shards != requested.shards {
+            changes.push(format!(
+                "spills from {} instead of {}",
+                plural(layout.shards, "shard"),
+                requested.shards
+            ));
+        }
+        if layout.merge_fan_in != requested.merge_fan_in {
+            changes.push(format!(
+                "merges {} runs at a time instead of {}",
+                layout.merge_fan_in, requested.merge_fan_in
+            ));
+        }
+        write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Aggregation,
+            "open_file_limit",
+            format!(
+                "the open-file limit is {} and {} files are open, so summarize {}, which may be \
+                 slower; raise the open-file limit to restore the defaults",
+                files.limit,
+                files.open,
+                changes.join(" and "),
+            ),
+            Some(run_id),
+            Vec::new(),
+        )
+        .map_err(CliError::Io)?;
+    }
+    Ok(layout)
 }
 
 fn write_count_table(

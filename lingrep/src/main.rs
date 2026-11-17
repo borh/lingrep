@@ -26,6 +26,7 @@ fn main() {
 }
 
 fn run_process() -> i32 {
+    lingrep::open_files::raise_soft_limit();
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let json_diagnostics = json_requested_from(&raw_args);
     let cli = match Cli::try_parse_from(&raw_args) {

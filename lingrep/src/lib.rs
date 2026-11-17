@@ -13,6 +13,7 @@ pub mod error;
 pub mod examples;
 mod interactive_execution;
 pub mod manpages;
+pub mod open_files;
 pub mod output;
 pub mod packaged_dictionaries;
 pub mod pattern_reference;

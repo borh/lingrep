@@ -3,7 +3,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 
 use compact_str::CompactString;
@@ -12,12 +12,17 @@ use lingrep_core::spill::{TempBudget, TempReservation};
 use lingrep_core::token_match::{AttributeKey, TokenSequence};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
+use tempfile::TempPath;
 
 use crate::summary::{AggregationGroup, SummaryPartition, SummaryRow, SummaryRows};
 
 const MAX_WIDTH: usize = 8;
 const ORDER_WORDS: usize = 3 + MAX_WIDTH;
+#[cfg(not(test))]
 const RUN_RECORDS: usize = 1 << 22;
+#[cfg(test)]
+const RUN_RECORDS: usize = 8;
+const RUN_PREFIX: &str = ".lingrep-window-run";
 
 const PAD: u32 = 0;
 const ABSENT: u32 = 1;
@@ -32,17 +37,25 @@ struct Pattern {
 
 struct Runs<const N: usize> {
     buffer: Vec<[u32; N]>,
-    files: Vec<File>,
-    reservation: TempReservation,
+    runs: Vec<Run>,
+    merge_fan_in: usize,
+    budget: Arc<TempBudget>,
+}
+
+struct Run {
+    path: TempPath,
+    records: usize,
+    _reservation: TempReservation,
 }
 
 impl<const N: usize> Runs<N> {
-    fn new(budget: &Arc<TempBudget>) -> io::Result<Self> {
-        Ok(Self {
+    fn new(budget: &Arc<TempBudget>, merge_fan_in: usize) -> Self {
+        Self {
             buffer: Vec::new(),
-            files: Vec::new(),
-            reservation: budget.reserve(0)?,
-        })
+            runs: Vec::new(),
+            merge_fan_in,
+            budget: Arc::clone(budget),
+        }
     }
 
     fn push(&mut self, pool: &rayon::ThreadPool, record: [u32; N]) -> io::Result<()> {
@@ -55,42 +68,48 @@ impl<const N: usize> Runs<N> {
 
     fn spill(&mut self, pool: &rayon::ThreadPool) -> io::Result<()> {
         pool.install(|| self.buffer.par_sort_unstable());
-        self.reservation.grow((self.buffer.len() * N * 4) as u64)?;
-        let mut writer = BufWriter::with_capacity(1 << 20, tempfile::tempfile()?);
-        for record in &self.buffer {
-            for word in record {
-                writer.write_all(&word.to_le_bytes())?;
-            }
-        }
-        let mut file = writer
-            .into_inner()
-            .map_err(io::IntoInnerError::into_error)?;
-        file.seek(SeekFrom::Start(0))?;
-        self.files.push(file);
-        self.buffer.clear();
+        let mut records = self.buffer.drain(..);
+        let run = write_run(&self.budget, records.len(), || Ok(records.next()))?;
+        drop(records);
+        self.runs.push(run);
         Ok(())
     }
 
     fn into_sorted(mut self, pool: &rayon::ThreadPool) -> io::Result<Sorted<N>> {
         pool.install(|| self.buffer.par_sort_unstable());
-        let mut sources = vec![Source::Memory(self.buffer.into_iter())];
-        sources.extend(
-            self.files
-                .into_iter()
-                .map(|file| Source::File(BufReader::with_capacity(1 << 18, file))),
-        );
-        let mut heads = BinaryHeap::with_capacity(sources.len());
-        for (index, source) in sources.iter_mut().enumerate() {
-            if let Some(record) = source.next()? {
-                heads.push(Reverse((record, index)));
-            }
+        while self.runs.len() > self.merge_fan_in {
+            let group = (self.runs.len() + 1 - self.merge_fan_in).min(self.merge_fan_in);
+            let mut merge = Sorted::<N>::new(Vec::new(), self.runs.drain(..group).collect())?;
+            let records = merge.records;
+            let run = write_run(&self.budget, records, || merge.next())?;
+            drop(merge);
+            self.runs.push(run);
         }
-        Ok(Sorted {
-            sources,
-            heads,
-            _reservation: self.reservation,
-        })
+        Sorted::new(self.buffer, self.runs)
     }
+}
+
+fn write_run<const N: usize>(
+    budget: &Arc<TempBudget>,
+    records: usize,
+    mut next: impl FnMut() -> io::Result<Option<[u32; N]>>,
+) -> io::Result<Run> {
+    let reservation = budget.reserve((records * N * 4) as u64)?;
+    let file = tempfile::Builder::new().prefix(RUN_PREFIX).tempfile()?;
+    let mut writer = BufWriter::with_capacity(1 << 20, file);
+    while let Some(record) = next()? {
+        for word in record {
+            writer.write_all(&word.to_le_bytes())?;
+        }
+    }
+    let file = writer
+        .into_inner()
+        .map_err(io::IntoInnerError::into_error)?;
+    Ok(Run {
+        path: file.into_temp_path(),
+        records,
+        _reservation: reservation,
+    })
 }
 
 enum Source<const N: usize> {
@@ -122,10 +141,33 @@ impl<const N: usize> Source<N> {
 struct Sorted<const N: usize> {
     sources: Vec<Source<N>>,
     heads: BinaryHeap<Reverse<([u32; N], usize)>>,
-    _reservation: TempReservation,
+    records: usize,
+    _runs: Vec<Run>,
 }
 
 impl<const N: usize> Sorted<N> {
+    fn new(memory: Vec<[u32; N]>, runs: Vec<Run>) -> io::Result<Self> {
+        let mut records = memory.len();
+        let mut sources = vec![Source::Memory(memory.into_iter())];
+        for run in &runs {
+            records += run.records;
+            let file = File::open(&run.path)?;
+            sources.push(Source::File(BufReader::with_capacity(1 << 18, file)));
+        }
+        let mut heads = BinaryHeap::with_capacity(sources.len());
+        for (index, source) in sources.iter_mut().enumerate() {
+            if let Some(record) = source.next()? {
+                heads.push(Reverse((record, index)));
+            }
+        }
+        Ok(Self {
+            sources,
+            heads,
+            records,
+            _runs: runs,
+        })
+    }
+
     fn next(&mut self) -> io::Result<Option<[u32; N]>> {
         let Some(Reverse((record, index))) = self.heads.pop() else {
             return Ok(None);
@@ -146,6 +188,7 @@ pub struct WindowTally {
     sentence: Vec<u32>,
     windows: Runs<MAX_WIDTH>,
     budget: Arc<TempBudget>,
+    merge_fan_in: usize,
 }
 
 impl WindowTally {
@@ -155,10 +198,9 @@ impl WindowTally {
         windows: &[TokenWindow],
         pattern_ordinals: &BTreeMap<String, u64>,
         budget: Arc<TempBudget>,
-    ) -> io::Result<Option<Self>> {
-        let Some(first) = windows.first() else {
-            return Ok(None);
-        };
+        merge_fan_in: usize,
+    ) -> Option<Self> {
+        let first = windows.first()?;
         let attributes = first
             .key
             .iter()
@@ -166,7 +208,7 @@ impl WindowTally {
             .map(|field| field.attribute.clone())
             .collect::<Vec<_>>();
         if attributes.is_empty() {
-            return Ok(None);
+            return None;
         }
         let mut patterns = Vec::with_capacity(windows.len());
         for window in windows {
@@ -179,7 +221,7 @@ impl WindowTally {
                 .get(window.name.as_str())
                 .and_then(|ordinal| u32::try_from(*ordinal).ok());
             let (true, Some(ordinal), 1..=MAX_WIDTH) = (positional, ordinal, window.width) else {
-                return Ok(None);
+                return None;
             };
             patterns.push(Pattern {
                 ordinal,
@@ -192,16 +234,17 @@ impl WindowTally {
             .map(|pattern| pattern.width)
             .max()
             .unwrap_or(0);
-        Ok(Some(Self {
+        Some(Self {
             patterns,
             attributes,
             width,
             symbols: FxHashMap::default(),
             key: Vec::new(),
             sentence: Vec::new(),
-            windows: Runs::new(&budget)?,
+            windows: Runs::new(&budget, merge_fan_in),
             budget,
-        }))
+            merge_fan_in,
+        })
     }
 
     /// Adds one sentence and returns its window count over every definition.
@@ -279,7 +322,7 @@ impl WindowTally {
             }
         }
 
-        let mut ordered = Runs::<ORDER_WORDS>::new(&self.budget)?;
+        let mut ordered = Runs::<ORDER_WORDS>::new(&self.budget, self.merge_fan_in);
         let mut unkeyed = 0_u64;
         let mut windows = self.windows.into_sorted(pool)?;
         let mut current = [PAD; MAX_WIDTH];
@@ -405,5 +448,92 @@ impl SummaryRows for FinalizedWindows {
             emitted += 1;
         }
         Ok(emitted)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FAN_IN: usize = 4;
+
+    fn pool() -> rayon::ThreadPool {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap()
+    }
+
+    fn record(index: usize) -> [u32; 2] {
+        [(index * 7919 % 13) as u32, (index * 104_729 % 101) as u32]
+    }
+
+    #[cfg(target_os = "linux")]
+    fn runs_open() -> usize {
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| {
+                target
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(RUN_PREFIX))
+            })
+            .count()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_run_files_stay_within_fan_in_as_runs_grow() {
+        let pool = pool();
+        for runs in [3, 17, 70] {
+            let mut spill = Runs::<2>::new(&Arc::new(TempBudget::new(u64::MAX)), FAN_IN);
+            let mut peak = 0;
+            for index in 0..runs * RUN_RECORDS {
+                spill.push(&pool, record(index)).unwrap();
+                peak = peak.max(runs_open());
+            }
+            let mut sorted = spill.into_sorted(&pool).unwrap();
+            let reading = runs_open();
+            while sorted.next().unwrap().is_some() {
+                peak = peak.max(runs_open());
+            }
+            assert!(
+                reading > 0,
+                "the final merge of {runs} runs reads no run file"
+            );
+            assert!(
+                peak.max(reading) <= FAN_IN + 1,
+                "{runs} runs held {peak} files open at once, more than fan-in {FAN_IN} plus one"
+            );
+        }
+    }
+
+    #[test]
+    fn merging_runs_by_fan_in_yields_the_fully_sorted_records() {
+        let pool = pool();
+        for (records, fan_in) in [
+            (0, 2),
+            (5, 2),
+            (17, 2),
+            (8 * 9 + 3, 2),
+            (8 * 70 + 1, 4),
+            (8 * 70, 16),
+        ] {
+            let budget = Arc::new(TempBudget::new(u64::MAX));
+            let mut spill = Runs::<2>::new(&budget, fan_in);
+            for index in 0..records {
+                spill.push(&pool, record(index)).unwrap();
+            }
+            let mut sorted = spill.into_sorted(&pool).unwrap();
+            let mut merged = Vec::new();
+            while let Some(record) = sorted.next().unwrap() {
+                merged.push(record);
+            }
+            let mut expected = (0..records).map(record).collect::<Vec<_>>();
+            expected.sort_unstable();
+            assert_eq!(merged, expected, "{records} records at fan-in {fan_in}");
+            drop(sorted);
+            assert_eq!(budget.used_bytes(), 0);
+        }
     }
 }
