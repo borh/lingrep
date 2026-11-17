@@ -198,43 +198,71 @@ impl Drop for CancelOnDrop {
     }
 }
 
-fn rejection(status: StatusCode, message: &'static str) -> Response {
+fn rejection(
+    status: StatusCode,
+    locale: WorkbookLocale,
+    english: &'static str,
+    japanese: &'static str,
+) -> Response {
+    let (lang, message) = match locale {
+        WorkbookLocale::English => ("en", english),
+        WorkbookLocale::Japanese => ("ja", japanese),
+    };
     (
         status,
-        Html(format!("<div class=\"alert alert-error\">{message}</div>")),
+        Html(format!(
+            "<div class=\"alert alert-error\" lang=\"{lang}\">{message}</div>"
+        )),
     )
         .into_response()
 }
 
-fn results_gone() -> Response {
+fn results_gone(locale: WorkbookLocale) -> Response {
     rejection(
         StatusCode::NOT_FOUND,
+        locale,
         "The server no longer holds these results. Run the search again, then download them.",
+        "この結果はサーバーに残っていません。もう一度検索してから、ダウンロードしてください。",
     )
 }
 
-fn corpus_unavailable() -> Response {
+fn corpus_unavailable(locale: WorkbookLocale) -> Response {
     rejection(
         StatusCode::CONFLICT,
+        locale,
         "The corpus was rebuilt or became unavailable after these results were produced. Run \
          the search again, then download the results.",
+        "この結果を出したあとで、コーパスが再構築されたか、利用できなくなりました。もう一度検索してから、ダウンロードしてください。",
     )
 }
 
-fn export_failed() -> Response {
+fn export_failed(locale: WorkbookLocale) -> Response {
     rejection(
         StatusCode::INTERNAL_SERVER_ERROR,
+        locale,
         "The server could not build the download. Run the search again, then download the \
          results. The server log records the cause.",
+        "ダウンロードするファイルを作成できませんでした。もう一度検索してから、ダウンロードしてください。原因はサーバーのログに記録されています。",
     )
 }
 
-fn lookup_rejection(error: SnapshotLookupError) -> Response {
+fn corpus_unreadable(locale: WorkbookLocale) -> Response {
+    rejection(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        locale,
+        "The corpus data could not be read.",
+        "コーパスデータを読み込めませんでした。",
+    )
+}
+
+fn lookup_rejection(error: SnapshotLookupError, locale: WorkbookLocale) -> Response {
     match error {
-        SnapshotLookupError::UnknownWorkbench => results_gone(),
+        SnapshotLookupError::UnknownWorkbench => results_gone(locale),
         SnapshotLookupError::StaleSnapshot => rejection(
             StatusCode::CONFLICT,
+            locale,
             "A newer search replaced these results. Download the results the page shows.",
+            "この結果は新しい検索の結果に置き換わりました。元のページに表示されている結果をダウンロードしてください。",
         ),
     }
 }
@@ -259,7 +287,7 @@ async fn export(
         .displayed_snapshot(&workbench, revision_id)
         .await
     {
-        return lookup_rejection(error);
+        return lookup_rejection(error, options.locale);
     }
 
     // Serialise with display scans; the permit is MOVED into the blocking task
@@ -273,20 +301,20 @@ async fn export(
         .await
     {
         Ok(snapshot) => snapshot,
-        Err(error) => return lookup_rejection(error),
+        Err(error) => return lookup_rejection(error, options.locale),
     };
     // The workbench's own corpus, not the store's default: the identity check
     // below is only meaningful against the corpus the snapshot was scanned from.
     // The key comes back with the runtime because the About sheet must NAME this
     // same corpus further down, and one binding should cost one lookup.
     let Some((corpus_key, runtime)) = store.coordinators.bound_entry(&workbench).await else {
-        return results_gone();
+        return results_gone(options.locale);
     };
     let Some(ready) = runtime.ready().await else {
-        return corpus_unavailable();
+        return corpus_unavailable(options.locale);
     };
     if ready.identity != snapshot.corpus_identity {
-        return corpus_unavailable();
+        return corpus_unavailable(options.locale);
     }
 
     let cancel = CancellationFlag::new();
@@ -305,10 +333,7 @@ async fn export(
         Ok(view) => crate::search_scope::BoundScope::new(snapshot.admission.clone(), view),
         Err(error) => {
             tracing::warn!(%error, "provenance view unavailable");
-            return rejection(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The corpus data could not be read.",
-            );
+            return corpus_unreadable(options.locale);
         }
     };
     let scan = tokio::task::spawn_blocking(move || {
@@ -336,17 +361,17 @@ async fn export(
         }
         Ok(Err(ExportScanError::Compile(message))) => {
             tracing::warn!(%message, "export recompile failed");
-            return export_failed();
+            return export_failed(options.locale);
         }
         Ok(Err(ExportScanError::Bind(message))) => {
             tracing::warn!(%message, "export catalog did not bind to the corpus schema");
-            return export_failed();
+            return export_failed(options.locale);
         }
         Ok(Err(ExportScanError::Sink(message))) => {
             tracing::warn!(%message, "export sink failed");
-            return export_failed();
+            return export_failed(options.locale);
         }
-        Err(_) => return export_failed(),
+        Err(_) => return export_failed(options.locale),
     };
     let provenance = BoundProvenance::open(&ready).await.ok();
 
@@ -413,7 +438,7 @@ async fn export(
     .await
     {
         Ok(Ok(bytes)) => bytes,
-        _ => return export_failed(),
+        _ => return export_failed(options.locale),
     };
 
     let filename = format!("concordance-{revision}.xlsx");
@@ -615,5 +640,28 @@ mod tests {
     fn completed_yields_data() {
         let sink = ExportSink::new(&["p"], 10, 10, 1_024);
         assert!(classify_outcome(Ok(RunOutcome::Completed(Default::default())), sink).is_ok());
+    }
+
+    #[tokio::test]
+    async fn every_rejection_has_japanese_text_under_the_japanese_locale() {
+        let rejections: [fn(WorkbookLocale) -> Response; 6] = [
+            results_gone,
+            corpus_unavailable,
+            export_failed,
+            corpus_unreadable,
+            |locale| lookup_rejection(SnapshotLookupError::UnknownWorkbench, locale),
+            |locale| lookup_rejection(SnapshotLookupError::StaleSnapshot, locale),
+        ];
+        for rejection in rejections {
+            let body = axum::body::to_bytes(rejection(WorkbookLocale::Japanese).into_body(), 4_096)
+                .await
+                .unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains("lang=\"ja\""), "{body}");
+            assert!(
+                body.chars().any(|c| ('\u{3040}'..='\u{30ff}').contains(&c)),
+                "{body}"
+            );
+        }
     }
 }

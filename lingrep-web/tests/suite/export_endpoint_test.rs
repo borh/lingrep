@@ -410,6 +410,42 @@ async fn a_workbench_the_server_does_not_hold_is_not_found_with_a_next_step() {
 }
 
 #[tokio::test]
+async fn rejections_follow_the_requested_locale_and_default_to_english() {
+    let (store, _dir) = store_with_verbs(3, 1_000).await;
+    let workbench = WorkbenchId::new("export-rejection-locale");
+    let first = complete(&store, &workbench, "verb := [upos=VERB].").await;
+    complete(&store, &workbench, "verb := [upos=VERB] [upos=VERB].").await;
+    let stale = export_uri(&workbench, first);
+    let gone = "/api/export/evicted-or-restarted/1".to_string();
+    for (uri, status, english, japanese) in [
+        (
+            &stale,
+            axum::http::StatusCode::CONFLICT,
+            "A newer search replaced these results.",
+            "この結果は新しい検索の結果に置き換わりました。元のページに表示されている結果をダウンロードしてください。",
+        ),
+        (
+            &gone,
+            axum::http::StatusCode::NOT_FOUND,
+            "The server no longer holds these results.",
+            "この結果はサーバーに残っていません。もう一度検索してから、ダウンロードしてください。",
+        ),
+    ] {
+        for (query, lang, expected) in [
+            ("", "en", english),
+            ("?locale=en", "en", english),
+            ("?locale=ja", "ja", japanese),
+        ] {
+            let response = get(&store, &format!("{uri}{query}")).await;
+            assert_eq!(response.status(), status, "{uri}{query}");
+            let body = body_text(response).await;
+            assert!(body.contains(&format!("lang=\"{lang}\"")), "{body}");
+            assert!(body.contains(expected), "{body}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn results_of_a_corpus_that_became_unavailable_are_a_conflict_with_a_next_step() {
     let (fixture, runtime) = runtime_fixture(
         "export-corrupt",
@@ -448,6 +484,18 @@ async fn results_of_a_corpus_that_became_unavailable_are_a_conflict_with_a_next_
     let body = body_text(unavailable).await;
     assert!(
         body.contains("The corpus was rebuilt or became unavailable after these results"),
+        "{body}"
+    );
+
+    let japanese = get(
+        &store,
+        &format!("{}?locale=ja", export_uri(&workbench, revision)),
+    )
+    .await;
+    assert_eq!(japanese.status(), axum::http::StatusCode::CONFLICT);
+    let body = body_text(japanese).await;
+    assert!(
+        body.contains("この結果を出したあとで、コーパスが再構築されたか、利用できなくなりました。もう一度検索してから、ダウンロードしてください。"),
         "{body}"
     );
 }
