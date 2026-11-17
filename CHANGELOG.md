@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-18
+
 ### Added
 
 - `--input-format plain` reads a directory of `.txt` files, one document per
@@ -14,10 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepare several plain-text works as one corpus. A directory path without
   an extension still defaults to Markdown.
 - Question links that use the served catalog identify it by fingerprint. If
-  the catalog has changed, the page asks the reader to choose whether to
-  search with the current catalog.
+  the catalog has changed, the page offers a choice between searching with
+  the current catalog and opening the default question.
 - Question result lists support arrow keys, Home and End to move between
   document links and examples, with one Tab stop for the list.
+
+### Changed
+
+- spaCy (GiNZA) and Stanza analyzer identity is derived from the adapter's
+  semantics revision, the resolved package versions and the model hashes,
+  not from the bytes of the adapter files. Under 0.8.1, analyzers prepared
+  by either release have new identities, so `ling corpus build` writes a
+  sibling of an artifact built under 0.8.0. `ling` rejects a 0.8.1 analyzer
+  whose adapter code differs from what its setup recorded, and `ling` 0.8.0
+  cannot run an analyzer prepared by 0.8.1.
 
 ### Fixed
 
@@ -53,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conflicting Transformers constraints. The wheel extras use the constraint
   from spacy-transformers; `ling analyzer prepare ginza` retains its locked
   package versions.
+- In Safari, Escape now closes an open example after you click one of its
+  tokens. Focus returns to the result line that opened it.
+- When the server rejects a Workbench download, the message is in Japanese
+  if the interface is in Japanese.
 
 ## [0.8.0] - 2026-11-17
 
