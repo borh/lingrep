@@ -3258,3 +3258,44 @@ async fn printing_the_question_page_leaves_out_its_controls() -> WebDriverResult
     served.server.abort();
     result
 }
+
+/// The first Tab on a question page, restored or fresh, reaches a link to
+/// the question sentence, and following it puts the next Tab on the
+/// sentence's first control.
+#[tokio::test]
+async fn the_first_tab_leads_to_the_question_sentence() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('.line-controls input') ? true : null",
+            "the results",
+        )
+        .await?;
+        let body = driver.find(By::Css("body")).await?;
+        body.send_keys(Key::Tab).await?;
+        let active = "const a = document.activeElement; return [a.getAttribute('href'), a.textContent, !!a.closest('.question-sentence')]";
+        assert_eq!(
+            driver.execute(active, Vec::new()).await?.json(),
+            &json!(["#question-sentence", "Skip to the question", false])
+        );
+        driver
+            .action_chain()
+            .send_keys(Key::Enter)
+            .send_keys(Key::Tab)
+            .perform()
+            .await?;
+        assert_eq!(driver.execute(active, Vec::new()).await?.json()[2], json!(true));
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
