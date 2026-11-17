@@ -385,7 +385,7 @@ impl CliError {
             Self::Execution(ExecutionError::Matching(lingrep_core::fsm::BoundExecutionError::Resource(
                 lingrep_core::fsm::MatchResourceError::BatchOutput { .. },
             ))) => vec![
-                "Rerun with --batch-sentences 1 or narrow the pattern to produce fewer matches.".into()
+                "Narrow the pattern to produce fewer matches in one sentence.".into()
             ],
             Self::Execution(ExecutionError::SentenceTooLarge { actual, .. }) => raise("--max-sentence-bytes", *actual),
             Self::Execution(ExecutionError::SentenceTooLargeAtLeast { minimum, .. }) => raise("--max-sentence-bytes", *minimum),
@@ -756,7 +756,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn batch_output_error_has_a_distinct_code_and_batch_remedy() {
+    fn batch_output_error_has_a_distinct_code_and_pattern_remedy() {
         let error = CliError::Execution(lingrep_core::execution::ExecutionError::Matching(
             lingrep_core::fsm::BoundExecutionError::Resource(
                 lingrep_core::fsm::MatchResourceError::BatchOutput { limit: 1024 },
@@ -771,7 +771,7 @@ mod tests {
             error
                 .suggestions()
                 .iter()
-                .any(|suggestion| suggestion.contains("--batch-sentences 1"))
+                .any(|suggestion| suggestion.contains("Narrow the pattern"))
         );
     }
 

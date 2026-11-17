@@ -1558,7 +1558,6 @@ where
         return Ok(BatchControl::Cancelled);
     }
 
-    let found;
     let windows;
     let published = if let Some(widths) = window_widths {
         windows = sentences
@@ -1575,12 +1574,44 @@ where
         }
         Found::Windows(&windows)
     } else {
-        found = match_batch(held, links, targets)?;
-        debug_assert_eq!(found.len(), sentences.len());
-        for (sentence, matches) in sentences.iter().zip(&found) {
-            state.observe_match(sentence, matches.len())?;
+        let mut next = targets.start;
+        let mut width = targets.len();
+        while next < targets.end {
+            if cancel.is_cancelled() {
+                return Ok(BatchControl::Cancelled);
+            }
+            let end = next + width.min(targets.end - next);
+            let found = match match_batch(held, links, next..end) {
+                Err(ExecutionError::Matching(crate::fsm::BoundExecutionError::Resource(
+                    crate::fsm::MatchResourceError::BatchOutput { .. },
+                ))) if end - next > 1 => {
+                    width = (end - next) / 2;
+                    continue;
+                }
+                result => result?,
+            };
+            let sentences = &held[next..end];
+            debug_assert_eq!(found.len(), sentences.len());
+            for (sentence, matches) in sentences.iter().zip(&found) {
+                state.observe_match(sentence, matches.len())?;
+            }
+            let control = publish_partition(
+                &locations[next - targets.start..end - targets.start],
+                sentences,
+                Found::Matches(&found),
+                logical_batch_sentences,
+                pool,
+                cancel,
+                sink,
+                progress,
+                state,
+            )?;
+            if control != BatchControl::Continue {
+                return Ok(control);
+            }
+            next = end;
         }
-        Found::Matches(&found)
+        return Ok(BatchControl::Continue);
     };
     publish_partition(
         locations,
@@ -1606,6 +1637,158 @@ mod tests {
         ExecutionBatch, ExecutionLimits, ExecutionSentence, SentenceBatchSource,
     };
     use crate::token_match::{TokenAttributeIndex, TokenInfo};
+
+    #[test]
+    fn output_budget_retries_preserve_context_and_publish_each_sentence_once() {
+        for mode in ["complete", "stop", "cancel", "single_error", "other_error"] {
+            let cancel = CancellationFlag::new();
+            let mut state = PublicationState::default();
+            let locations = (0..6).map(SentenceLocation::run_local).collect::<Vec<_>>();
+            let compiled = crate::fsm::compile_catalog(
+                crate::fsm::PatternSource::named(
+                    "retry.lx",
+                    "pattern p := (?<x> [text=a]) followed_by([text=a], within=document).",
+                ),
+                crate::fsm::CompileLimits::default(),
+            )
+            .unwrap()
+            .matcher;
+            let schema = TokenSchema::unidic_morphology();
+            let bound = compiled.bind(&schema).unwrap();
+            let held = (0..8)
+                .map(|_| {
+                    BoundSentenceInput::new(
+                        BoundTokenSentence::project(bound.projection(), &[token("a")]).unwrap(),
+                        EnhancedGraphInput::NotRequested,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let links = vec![true; 8];
+            let mut attempts = Vec::new();
+            let mut observations = Vec::new();
+            let mut progress = Vec::new();
+            let mut pushed = Vec::new();
+            struct RecordingSink<'a> {
+                rows: &'a mut Vec<(u64, Vec<Match>)>,
+                cancel: &'a CancellationFlag,
+                mode: &'a str,
+            }
+            impl MatchSink for RecordingSink<'_> {
+                fn push(
+                    &mut self,
+                    location: &SentenceLocation,
+                    _: &dyn TokenSequence,
+                    matches: &[Match],
+                ) -> Result<SinkControl, ExecutionError> {
+                    self.rows
+                        .push((location.corpus_sentence_ordinal, matches.to_vec()));
+                    if self.mode == "cancel" {
+                        self.cancel.cancel();
+                    }
+                    if self.mode == "stop" {
+                        Ok(SinkControl::StopAfter {
+                            records_emitted: matches.len(),
+                        })
+                    } else {
+                        Ok(SinkControl::Continue {
+                            records_emitted: matches.len(),
+                        })
+                    }
+                }
+            }
+            let matched = BoundSentenceMatcher::new(&bound)
+                .match_in_windows(&pool(), &held, &links, 1..2)
+                .unwrap()
+                .remove(0)
+                .remove(0);
+            let mut sink = RecordingSink {
+                rows: &mut pushed,
+                cancel: &cancel,
+                mode,
+            };
+            let result = run_partition(
+                &locations,
+                &held,
+                &links,
+                1..7,
+                999,
+                6,
+                &pool(),
+                &cancel,
+                &mut sink,
+                &mut |value, _: &RecordingSink<'_>| progress.push(value),
+                &mut |observation: TokenizedBatchObservation| {
+                    observations.push((observation.sentence_count, observation.charged_bytes));
+                    Ok(())
+                },
+                None,
+                &mut |sentences: &[BoundSentenceInput], context: &[bool], targets: Range<usize>| {
+                    assert_eq!(sentences.len(), 8);
+                    assert_eq!(context, links);
+                    attempts.push(targets.clone());
+                    if mode == "other_error" {
+                        return Err(ExecutionError::Sink("unrelated".into()));
+                    }
+                    if targets.len() > 1 || mode == "single_error" {
+                        return Err(ExecutionError::Matching(
+                            crate::fsm::BoundExecutionError::Resource(
+                                crate::fsm::MatchResourceError::BatchOutput { limit: 1 },
+                            ),
+                        ));
+                    }
+                    BoundSentenceMatcher::new(&bound)
+                        .match_in_windows(&pool(), sentences, context, targets)
+                        .map_err(ExecutionError::Matching)
+                },
+                &mut state,
+            );
+            assert_eq!(observations, [(6, 999)]);
+            assert_eq!(state.current.sentences_admitted, 6);
+            match mode {
+                "complete" => {
+                    assert_eq!(result.unwrap(), BatchControl::Continue);
+                    assert_eq!(
+                        pushed,
+                        (0..6)
+                            .map(|i| (i, vec![matched.clone()]))
+                            .collect::<Vec<_>>()
+                    );
+                    assert_eq!(state.current.matches_found, 6);
+                    assert_eq!(progress.len(), 1);
+                }
+                "stop" | "cancel" => {
+                    assert_eq!(
+                        result.unwrap(),
+                        if mode == "stop" {
+                            BatchControl::Stop
+                        } else {
+                            BatchControl::Cancelled
+                        }
+                    );
+                    assert_eq!(pushed, [(0, vec![matched.clone()])]);
+                    assert_eq!(attempts.last(), Some(&(1..2)));
+                }
+                "single_error" => {
+                    assert!(matches!(
+                        result,
+                        Err(ExecutionError::Matching(
+                            crate::fsm::BoundExecutionError::Resource(
+                                crate::fsm::MatchResourceError::BatchOutput { .. }
+                            )
+                        ))
+                    ));
+                    assert!(pushed.is_empty());
+                    assert_eq!(attempts.last(), Some(&(1..2)));
+                }
+                _ => {
+                    assert!(matches!(result, Err(ExecutionError::Sink(_))));
+                    assert!(pushed.is_empty());
+                    assert_eq!(attempts.len(), 1);
+                    assert_eq!(attempts[0], 1..7);
+                }
+            }
+        }
+    }
 
     #[test]
     fn empty_sentence_context_is_bounded_by_the_residency_limit() {

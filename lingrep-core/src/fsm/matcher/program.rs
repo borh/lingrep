@@ -1516,9 +1516,6 @@ fn graph_node_scalar_attributes<S: TokenSequence + ?Sized>(
     tokens: &S,
     graph: Option<&EnhancedGraph>,
 ) -> Box<[GraphNodeAttribute]> {
-    // Every portable scalar: a word node can be keyed by any of them, so each
-    // must be visible to audit a published key against its binding. An empty
-    // node has no `norm`, which its own list below reflects.
     const SCALARS: [&str; 5] = ["text", "lemma", "norm", "upos", "xpos"];
     let mut attributes = Vec::new();
     attributes.push(GraphNodeAttribute {
@@ -2395,6 +2392,106 @@ mod tests {
                 .match_all(&pool, std::slice::from_ref(&input))
                 .unwrap();
             assert_eq!(fresh, vec![expected.clone()]);
+        }
+    }
+
+    #[test]
+    fn execution_splits_output_limited_batches_and_preserves_complete_graph_matches() {
+        use crate::execution::{
+            AnalysisBinding, CancellationFlag, ExecutionBatch, ExecutionError, ExecutionLimits,
+            ExecutionSentence, MatchSink, PolicySelection, SentenceAdmission, SentenceBatchSource,
+            SentenceLocation, SinkControl, TokenizedBatchObservation, execute_analyzed,
+        };
+        struct Source(Option<ExecutionBatch>);
+        impl SentenceBatchSource for Source {
+            fn wants_lookahead(&self) -> bool {
+                false
+            }
+            fn next_batch(
+                &mut self,
+                _: &ExecutionLimits,
+            ) -> Result<Option<ExecutionBatch>, ExecutionError> {
+                Ok(self.0.take())
+            }
+        }
+        struct Sink {
+            expected: Vec<crate::fsm::Match>,
+            ordinal: u64,
+        }
+        impl MatchSink for Sink {
+            fn push(
+                &mut self,
+                location: &SentenceLocation,
+                _: &dyn crate::token_match::TokenSequence,
+                matches: &[crate::fsm::Match],
+            ) -> Result<SinkControl, ExecutionError> {
+                if location.corpus_sentence_ordinal != self.ordinal || matches != self.expected {
+                    return Err(ExecutionError::Sink(format!(
+                        "sentence {} differs from complete sequential graph matches",
+                        self.ordinal
+                    )));
+                }
+                self.ordinal += 1;
+                Ok(SinkControl::Continue {
+                    records_emitted: matches.len(),
+                })
+            }
+        }
+        let mut clauses = (0..7)
+            .map(|index| format!("$v -[obj]-> (?<b{index}> [])"))
+            .collect::<Vec<_>>();
+        clauses.push(
+            (0..7)
+                .map(|index| format!("$b{index}"))
+                .collect::<Vec<_>>()
+                .join(" < "),
+        );
+        let (bound, input) = graph_fixture_with_clauses(13, &clauses.join(", "));
+        let expected = bound.find_matches_input(&input).unwrap();
+        assert_eq!(expected.len(), 792);
+        let charge = input.resident_bytes().unwrap();
+        for threads in [1, 4] {
+            let source = Source(Some(ExecutionBatch::bound_tokenized_with_charges(
+                (0..32)
+                    .map(|ordinal| ExecutionSentence {
+                        location: SentenceLocation::run_local(ordinal),
+                        value: input.clone(),
+                    })
+                    .collect(),
+                vec![charge; 32],
+            )));
+            let mut sink = Sink {
+                expected: expected.clone(),
+                ordinal: 0,
+            };
+            type NoAnalyzer = crate::testing::execution::FixtureSession<
+                fn(&str) -> Vec<crate::token_match::TokenInfo>,
+            >;
+            let outcome = execute_analyzed::<_, NoAnalyzer, _, _, _>(
+                source,
+                AnalysisBinding::Prepared(crate::corpus::conllu::token_schema()),
+                &bound,
+                &rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap(),
+                &ExecutionLimits::default(),
+                32,
+                &CancellationFlag::new(),
+                &mut sink,
+                &mut |_, _: &Sink| {},
+                &mut |_: TokenizedBatchObservation| Ok(()),
+                PolicySelection::Apply,
+                &SentenceAdmission::All,
+            )
+            .unwrap();
+            assert_eq!(sink.ordinal, 32);
+            let crate::execution::RunOutcome::Completed(report) = outcome else {
+                panic!("unexpected cancellation")
+            };
+            assert_eq!(report.sentences_admitted, 32);
+            assert_eq!(report.matches_found, 32 * 792);
+            assert_eq!(report.records_emitted, 32 * 792);
         }
     }
 
