@@ -723,5 +723,7 @@
   "frequency.legend_exact": "Type a value into a field to count only the entries with that value in that field.",
   "frequency.legend_names": "The words the pattern names with (?<n> …) and the like, in the order the entry lists them.",
   "frequency.legend_share": "The share of the searched documents in which the entry occurs at least once.",
-  "frequency.legend_per_million": "Occurrences per million tokens of the searched documents, so corpora of different sizes compare."
+  "frequency.legend_per_million": "Occurrences per million tokens of the searched documents, so corpora of different sizes compare.",
+  "editor.diag_attribute_unavailable": "This corpus's token schema ({schema}) does not carry `{attribute}`, which {definitions} references; tests over it match nothing, and only `!(…)` complements hold.",
+  "editor.diag_schema_bind": "The pattern cannot bind to this corpus's token schema ({schema}): {error}."
 }

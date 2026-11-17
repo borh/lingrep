@@ -12,7 +12,7 @@ const count = (value) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja
 let locale = storedLocale(globalThis.localStorage, navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja = {
-    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter または「検索する」で検索します。', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '文書を読む',
+    readingOptions: '表示の設定', questionActions: '問いの操作', questionNav: '問い', remix: '問いを複製', saveQuestion: '問いを保存', openQuestion: '開く', searchFor: '', among: 'の', update: '検索する', done: '完了', exclude: '選んだ値を除外', previousValues: '前の値', nextValues: '次の値', clearConditions: '条件を消去', textClause: '条件式を直接編集', read: '表示する用例は', examplesWith: '件、前後の文脈は', contextTokens: 'トークンずつ', closeAnalysis: '用例を閉じる', tokenHelp: 'トークンを選ぶと、属性を確認できます。', remixTest: '条件を追加', showLatest: '新しい結果を表示', prototypeOptions: '検索の設定', searchNav: '検索', incumbentNav: '分析ツール', frequencyNav: '頻度', compareNav: '比較', helpNav: 'ヘルプ', stopReplay: '再生を停止', find: '', in: '', patternSource: 'パターンのソース', toSearch: 'で検索', draft: 'Alt+Enter または「検索する」で検索します。', formatSource: 'パターンを整形', run: '検索する', where: '文書の条件', edited: '編集済み · 検索して適用', ready: '検索できます。', stop: '検索を停止', retry: 'もう一度検索', during: '新しい検索の実行中は', keep: '完了した結果を表示', live: '途中の結果を表示', compare: '前回と今回を並べる', replay: '検索の経過を再生', replayNote: '検索の経過を再生しています。', boundary: '検索結果について', boundaryBody: '選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。', return: '用例に戻る', paragraph: '段落を読む', document: '文書を読む',
     current: '今回の結果', previous: '前回の完了した結果', completed: '検索完了', partial: '検索中 · 件数は途中経過', cancelled: '停止済み · 件数は途中経過', failed: '検索に失敗', retained: '表示中の用例', noLines: 'このパターンの用例はまだありません。', download: 'JSONL で保存', source: '検索時のパターン', copy: 'CLI コマンドをコピー', copied: 'コピーしました', savedQuery: '検索時の query.lx を保存', runNumber: '検索', scope: '文書の条件', all: 'すべての文書', soFar: '件が見つかりました', running: '検索しています', notTotal: '検索中の件数は途中経過です。', stopped: '検索を停止しました。途中の件数はコーパス全体の件数ではありません。', failedKeep: '検索に失敗しました。前回の検索結果を表示しています。', errorRetry: 'パターンや条件を確認して、もう一度検索してください。', draftRunning: '新しいパターンを編集中です。実行中の検索には影響しません。', keeping: '新しい検索の間、前回の完了した結果を表示しています。', loadingRead: '原文を読み込んでいます…', readError: '原文を読み込めませんでした。もう一度開いてください。', tokenContext: 'トークンによる前後の文脈', real: '検索', replayed: '記録した検索の再生', unknownProgress: '進捗の割合は不明', dependencies: '係り受け', viewBunsetsu: '文節', viewWords: '語', viewVertical: '全文（縦）', evidenceCaption: 'この用例が結び付ける語', evidenceWord: '語番号', evidenceRoles: '役割', evidenceText: '表層形', evidenceLemma: '辞書形', evidencePos: '品詞', evidenceHead: '係り先', evidenceRel: '関係', root: '文の中心', frequencyReturn: '頻度に戻る', occurrenceMissing: '頻度表の用例をこの検索で開けませんでした。',
 };
 const extra = { readingOptions: 'Reading options', questionActions: 'Question actions', stopReplay: 'Stop replay', current: 'Current results', previous: 'Previous results', completed: 'Complete', partial: 'Searching · counts are partial', cancelled: 'Stopped · counts are partial', failed: 'Search failed', retained: 'Displayed examples', noLines: 'No lines for this pattern yet.', download: 'Download JSONL', source: 'Pattern used for this search', copy: 'Copy CLI command', copied: 'Copied', savedQuery: 'Download this query.lx', runNumber: 'Search', scope: 'Document condition', all: 'All documents', soFar: 'matches found', running: 'Searching', notTotal: 'Counts are partial until the search finishes.', stopped: 'Search stopped. Counts are partial.', failedKeep: 'Search failed. Previous results are retained.', errorRetry: 'Check the pattern or condition and run the search again.', draftRunning: 'Editing the next pattern. The running search is unchanged.', keeping: 'Showing previous results while searching.', loadingRead: 'Loading the original text…', readError: 'Could not load the original text. Open it again to retry.', tokenContext: 'Token context', real: 'Live search', replayed: 'Recorded search replay', unknownProgress: 'Scan percentage unavailable', occurrenceMissing: 'Could not open the frequency table occurrence in this search.' };
@@ -152,7 +152,7 @@ async function executeSavedSection(link, signal) {
     const recipe = link.recipe;
     if (!Object.hasOwn(config.datasets, recipe.dataset))
         throw new Error(`The corpus for this saved query is unavailable: ${recipe.dataset}.`);
-    $('#source').value = recipe.source;
+    setSource(recipe.source);
     $('#corpus').value = recipe.dataset;
     analysisExpectation = recipe.analysis;
     controls.restore(new URLSearchParams({ ...controls.entries(), metadata: '{}', raw: recipe.where }));
@@ -279,19 +279,51 @@ editError.id = 'edit-pattern-error';
 editError.hidden = true;
 $('#error').after(editError);
 const patternFailure = (run) => run?.phase === 'failed' ? run.diagnostics?.find(d => d.data.stage === 'catalog' && d.data.severity === 'error') : undefined;
+let patternEditor = null, editorLocale = null;
+function loadPatternEditor() {
+    patternEditor ??= (async () => {
+        const stylesheet = document.createElement('link');
+        stylesheet.rel = 'stylesheet';
+        stylesheet.href = new URL('../editor/pattern-editor.css', import.meta.url).href;
+        document.head.append(stylesheet);
+        try {
+            const [editor, i18n] = await Promise.all([import(new URL('../editor/pattern-editor.js', import.meta.url).href), import(new URL('../i18n.js', import.meta.url).href)]);
+            editorLocale = i18n.useLocale;
+            await i18n.useLocale(locale);
+            const mounted = await editor.mountPatternEditor($('#source'), { corpus: () => $('#corpus').value || null, formatOnBlur: false, describedBy: 'draft-note' });
+            if (mounted)
+                $('#format-source').hidden = false;
+            return mounted ? editor : null;
+        }
+        catch {
+            return null;
+        }
+    })();
+    return patternEditor;
+}
+/** Writes the pattern source, and the editor showing it. */
+function setSource(value) { const input = $('#source'); input.value = value; input.dispatchEvent(new Event('pattern:sync')); }
+/** Focuses the pattern source with `from`–`to` selected, in the editor once it has loaded. */
+function focusSource(from, to = from) {
+    const input = $('#source');
+    input.focus();
+    if (from != null)
+        input.setSelectionRange(from, to ?? from);
+    void loadPatternEditor().then(editor => { if (editor && !$('#source-editor').hidden)
+        editor.selectSource(input, from ?? 0, to ?? from ?? 0); });
+}
 function editFailedPattern(focus = true) {
     const run = state.current, diagnostic = patternFailure(run);
     if (!run || !diagnostic)
         return;
     $('#source-editor').hidden = false;
     $('#edit-source').setAttribute('aria-expanded', 'true');
+    void loadPatternEditor();
     const input = $('#source');
     if (focus) {
-        input.focus();
         const span = diagnostic.data.location?.source_span;
         const range = span && input.value === run.source ? sourceSelection(run.source, span) : null;
-        if (range)
-            input.setSelectionRange(...range);
+        focusSource(range?.[0] ?? null, range?.[1]);
     }
 }
 editError.addEventListener('click', () => editFailedPattern());
@@ -323,7 +355,7 @@ limitChoices.addEventListener('click', event => {
     if (!button || !run)
         return;
     const pattern = button.dataset.limitPattern;
-    $('#source').value = run.source;
+    setSource(run.source);
     $('#corpus').value = run.dataset;
     searchLimit = { source: run.source, pattern, document: searchLimit?.source === run.source ? searchLimit.document : null };
     preferredPattern = pattern;
@@ -352,6 +384,7 @@ async function request(path, options) {
 const post = (path, body = {}, signal) => request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
 function translate() {
     document.documentElement.lang = locale;
+    void editorLocale?.(locale);
     localizeExample();
     renderDependencies();
     if (tokenData && inspecting)
@@ -1759,7 +1792,7 @@ $('#use-pattern').addEventListener('click', () => {
     const run = inspecting.run;
     analysisExpectation = run.contract_run?.analysis_identity ?? null;
     const origin = { parent: run.id, view: hitLocation(run, inspecting.row, 'example'), label: `${documentTitle(inspecting.row)} · ${inspecting.row.surface}` };
-    $('#source').value = patternSource(conditions);
+    setSource(patternSource(conditions));
     $('#corpus').value = run.dataset;
     controls.restore(new URLSearchParams({ ...controls.entries(), metadata: '{}', raw: run.where }));
     updateCorpus();
@@ -1781,7 +1814,8 @@ $('#reading-options').addEventListener('keydown', event => { if (event.key === '
     event.preventDefault(); });
 $('#query-form').addEventListener('submit', search);
 $('#source').addEventListener('input', updateDraft);
-$('#corpus').addEventListener('change', () => { analysisExpectation = null; updateCorpus(); updateDraft(); });
+$('#corpus').addEventListener('change', () => { analysisExpectation = null; updateCorpus(); updateDraft(); void patternEditor?.then(editor => editor?.recheck($('#source'))); });
+$('#format-source').addEventListener('click', () => { void patternEditor?.then(editor => editor?.formatCurrent($('#source'))); });
 $('#behavior').addEventListener('change', () => { updateDraft(); render(true); });
 $('#cancel').addEventListener('click', async () => {
     if (restoreController) {
@@ -1832,10 +1866,9 @@ function openSourceEditor() {
     if (editor.hidden)
         return;
     const input = $('#source'), at = definitionOffset(input.value, $('#source-label').textContent ?? '');
-    input.focus();
+    focusSource(at < 0 ? null : at);
     if (at < 0)
         return;
-    input.setSelectionRange(at, at);
     const line = parseFloat(getComputedStyle(input).lineHeight) || 20;
     input.scrollTop = Math.max(0, (input.value.slice(0, at).split('\n').length - 2) * line);
 }
@@ -2101,7 +2134,7 @@ async function navigateView(href, preserveDraft = false, historyMode = 'push') {
         if (!preserveDraft) {
             analysisExpectation = run.contract_run?.analysis_identity ?? null;
             const question = questionParams(url, run);
-            $('#source').value = question.get('source') ?? run.source;
+            setSource(question.get('source') ?? run.source);
             $('#corpus').value = question.get('corpus') ?? run.dataset;
             restoreLimit(question);
             controls.restore(question);
@@ -2168,7 +2201,7 @@ async function init() {
         throw new Error('The corpus for this question is not registered.');
     $('#corpus').value = corpus;
     analysisExpectation = params.get('analysis') || null;
-    $('#source').value = params.get('source') ?? config.source;
+    setSource(params.get('source') ?? config.source);
     controls = initQuestion(config, { changed: updateDraft, viewChanged: () => render(true), search: () => search(), getLocale: () => locale }, params);
     if (['keep', 'live', 'compare'].includes(params.get('behavior') ?? ''))
         $('#behavior').value = params.get('behavior');
@@ -2199,7 +2232,7 @@ async function init() {
                 params.set(key, value);
         analysisExpectation = expectedAnalysis(params, current);
         $('#corpus').value = params.get('corpus');
-        $('#source').value = params.get('source');
+        setSource(params.get('source'));
         controls.restore(params);
     }
     state = { current: null, previous: null, completed: previous?.phase === 'complete' ? previous : evidence?.phase === 'complete' ? evidence : null };

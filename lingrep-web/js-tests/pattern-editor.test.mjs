@@ -19,6 +19,7 @@ import {
   patternCompletionOptions,
   patternDefinitions,
   patternHoverInfo,
+  checkRequest,
   setValueNames,
   patternNavigationIndex,
   patternSignatureContext,
@@ -653,4 +654,10 @@ test("completion and hover help reads in Japanese when the page is in Japanese",
   assert.equal(patternHoverInfo("p := [upos=VE|RB].".replace("|", ""), "p := [upos=VE".length, "ja").detail, "動詞");
   assert.equal(patternHoverInfo("p := not_followed_by([]).", 7, "ja").detail, "否定の先読み（幅ゼロ）: 式がここから始まらないこと。");
   assert.equal(info("verb := [|", "lemma") !== patternCompletionOptions(contextAt("verb := [|")).find((option) => option.label === "lemma").info, true);
+});
+
+test("a check names the corpus only when one is selected", () => {
+  assert.deepEqual(checkRequest("p := [].", "natsume"), { source: "p := [].", corpus: "natsume" });
+  assert.deepEqual(checkRequest("p := [].", null), { source: "p := []." });
+  assert.deepEqual(checkRequest("p := [].", ""), { source: "p := []." });
 });

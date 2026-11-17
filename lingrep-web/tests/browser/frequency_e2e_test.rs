@@ -3419,9 +3419,15 @@ async fn the_definition_blank_is_a_menu_of_the_catalogs_definitions() -> WebDriv
         driver.execute("document.querySelector('[data-edit-source]').click()", Vec::new()).await?;
         observed(
             &driver,
-            "return [document.querySelector('#definition-menu').hidden, document.querySelector('#source-editor').hidden, document.activeElement.id]",
-            json!([true, false, "source"]),
+            "return [document.querySelector('#definition-menu').hidden, document.querySelector('#source-editor').hidden]",
+            json!([true, false]),
             "editing the source from the menu",
+        )
+        .await?;
+        wait_for(
+            &driver,
+            "return document.activeElement?.closest('#source-editor .pattern-editor') !== null",
+            "the focused pattern editor",
         )
         .await?;
         assert_no_page_errors(&driver).await
@@ -3518,6 +3524,64 @@ async fn a_clamped_reading_option_is_announced() -> WebDriverResult<()> {
             )
             .await?;
         observed(&driver, "return document.querySelector('#reading-clamp').textContent", json!(""), "an in-range context").await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// The question page's source editor is the pattern editor, loaded when the
+/// source editor opens: it highlights and completes the source, and with the
+/// selected corpus it marks an attribute that corpus's tokens lack.
+#[tokio::test]
+async fn the_question_source_editor_checks_the_source_against_the_selected_corpus()
+-> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver.goto(limited_question(&served.base, ENTRY_CATALOG, true)).await?;
+        wait_for(&driver, "return document.querySelectorAll('.kwic-row').length > 0", "the search's lines").await?;
+        assert_eq!(
+            driver.execute("return document.querySelector('.pattern-editor, link[href$=\"pattern-editor.css\"]')", Vec::new()).await?.json(),
+            &Value::Null,
+            "the editor loads only when the source editor opens"
+        );
+        driver.execute("document.querySelector('#edit-source').click()", Vec::new()).await?;
+        wait_for(&driver, "return !!document.querySelector('#source-editor .cm-content')", "the pattern editor").await?;
+        wait_for(&driver, "return document.querySelectorAll('#source-editor .cm-content [class*=pattern-]').length > 0", "highlighting").await?;
+        driver
+            .execute(
+                "const source = document.querySelector('#source');                  source.value = 'pattern noun := [text in {猫, 本}].\\nsubject := [dep.rel=nsubj].\\n';                  source.dispatchEvent(new Event('input'));",
+                Vec::new(),
+            )
+            .await?;
+        wait_for(
+            &driver,
+            "return [...document.querySelectorAll('#source-editor .cm-lintRange-warning')].some((mark) => mark.textContent === 'dep.rel')",
+            "the unavailable-attribute warning",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [!document.querySelector('#draft-badge').hidden, document.querySelector('#source').value.includes('dep.rel')]",
+            json!([true, true]),
+            "the edit is a draft",
+        )
+        .await?;
+        let content = driver.find(By::Css("#source-editor .cm-content")).await?;
+        content.click().await?;
+        content.send_keys(Key::Control + Key::End).await?;
+        content.send_keys("x := [up").await?;
+        wait_for(
+            &driver,
+            "return [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((item) => item.textContent.startsWith('upos'))",
+            "attribute completion",
+        )
+        .await?;
         assert_no_page_errors(&driver).await
     }
     .await;

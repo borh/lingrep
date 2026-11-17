@@ -118,3 +118,5 @@ button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
 .result-header .evidence-context:has(+a)::after{content:" ·"}
 @media print{*:focus,*:focus-visible{outline:none!important}}
 .reading-clamp{color:var(--soft);font-size:13px}
+.source-editor{--pattern-focus:var(--green);--pattern-font-mono:var(--mono)}.source-editor .pattern-editor-status{font-size:14px;color:var(--soft);margin:3px 0}.source-editor .pattern-diagnostic-excerpt:empty{display:none}.format-source{font-size:14px;border:0;color:var(--green);padding:2px 0}
+.source-editor .pattern-editor .cm-editor{max-height:min(22rem,55vh)}

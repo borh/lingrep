@@ -163,6 +163,18 @@ async function apply(locale, { persist = true } = {}) {
   updateToggle();
 }
 
+/**
+ * Sets the locale `t` reads and notifies `onLocaleChange` subscribers, without
+ * localizing the document: for a page with its own translations that loads a
+ * module using `t` (the question page loading the pattern editor).
+ */
+export async function useLocale(locale) {
+  if (!supported(locale) || locale === current) return;
+  if (locale !== "en") await dictionary(locale);
+  current = locale;
+  for (const listener of listeners) listener(locale);
+}
+
 const toggle = () => document.querySelector("[data-locale-toggle]");
 
 function updateToggle() {

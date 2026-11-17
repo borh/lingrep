@@ -1376,7 +1376,7 @@ function submitNotice(state, key) {
 }
 
 function diagnosticMessage(diagnostic) {
-  return diagnostic?.message_key ? t(diagnostic.message_key) : diagnostic?.message || t("editor.diag_invalid");
+  return diagnostic?.message_key ? t(diagnostic.message_key, diagnostic.args ?? null) : diagnostic?.message || t("editor.diag_invalid");
 }
 
 // The navigation index for the current parse. Rebuilt per request rather than
@@ -1518,6 +1518,11 @@ function serverDiagnosticMapping(state, source, diagnostics) {
   return mapServerDiagnostics(source, diagnostics, state.positions ?? createPositionIndex(source));
 }
 
+/** The `api/pattern/check` request for `source`, naming `corpus` when there is one. */
+export function checkRequest(source, corpus) {
+  return corpus ? { source, corpus } : { source };
+}
+
 async function checkSource(state, source, reason = "input") {
   state.checkController?.abort();
   const controller = new AbortController();
@@ -1527,12 +1532,13 @@ async function checkSource(state, source, reason = "input") {
     const response = await fetch("api/pattern/check", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify(checkRequest(source, state.corpus())),
       signal: controller.signal,
     });
     const result = await response.json();
     if (!shouldPublish(source, state.source())) return [];
     if (result.status === "valid") {
+      state.tokenKeys = result.token_keys ?? null;
       state.keyEdits = result.capture_key_edits ?? [];
       state.keyEditSource = source;
       captureKeyPicker(state, state.keyEdits, source);
@@ -1620,7 +1626,7 @@ function patternCompletionSource(state) {
     const options = patternCompletionOptions(completionContext, {
       definitions: patternDefinitions(source),
       captures: patternCaptures(source),
-      tokenKeys: document.querySelector("[data-token-keys]")?.dataset.tokenKeys.split(" "),
+      tokenKeys: state.tokenKeys ?? document.querySelector("[data-token-keys]")?.dataset.tokenKeys.split(" "),
     }).map((option) =>
       option.template ? state.cm.snippetCompletion(option.template, option) : option,
     );
@@ -1781,7 +1787,7 @@ export async function formatCurrent(textarea) {
   return state.formatPromise;
 }
 
-async function enhance(textarea, grammar, cm) {
+async function enhance(textarea, grammar, cm, options = {}) {
   if (states.has(textarea)) return;
   const wrapper = document.createElement("div");
   wrapper.className = "pattern-editor";
@@ -1819,7 +1825,11 @@ async function enhance(textarea, grammar, cm) {
     positions: null,
     lastCheck: null,
     relint: false,
+    tokenKeys: null,
     source: () => state.view.state.doc.toString(),
+    // The corpus `api/pattern/check` binds the source to: the value of the
+    // element `data-pattern-corpus` selects, or the caller's `options.corpus`.
+    corpus: options.corpus ?? (() => (textarea.dataset.patternCorpus ? document.querySelector(textarea.dataset.patternCorpus)?.value || null : null)),
   };
   if (textarea.id === "corpus-pattern") {
     const picker = document.createElement("details");
@@ -1891,6 +1901,8 @@ async function enhance(textarea, grammar, cm) {
       cm.placeholder(textarea.getAttribute("placeholder") ?? ""),
       cm.keymap.of([
         { key: "Shift-F8", run: cm.previousDiagnostic, preventDefault: true },
+        // A page that searches on Mod-Enter keeps the key for itself.
+        ...(options.formatOnBlur === false ? [{ key: "Mod-Enter", run: () => true }, { key: "Shift-Alt-f", run: () => { void formatCurrent(textarea); return true; } }] : []),
         // `run` returns true on every path, including the failures: a
         // "nowhere to go" message is a handled key, not a fall-through.
         { key: "F12", run: () => runNavigation(state, "definition"), preventDefault: true },
@@ -1933,8 +1945,10 @@ async function enhance(textarea, grammar, cm) {
     label.addEventListener("click", () => view.focus());
   }
 
-  // External writes (draft restore, tests, tooling) flow into the view.
-  textarea.addEventListener("input", () => {
+  if (options.describedBy) view.contentDOM.setAttribute("aria-describedby", `${options.describedBy} ${statusNode.id} ${diagnosticNode.id}`);
+  // External writes (draft restore, tests, tooling) flow into the view;
+  // `pattern:sync` carries a write that is not an edit, without an `input`.
+  const sync = () => {
     const value = textarea.value;
     if (value !== view.state.doc.toString()) {
       state.applyingTextareaInput = true;
@@ -1944,11 +1958,57 @@ async function enhance(textarea, grammar, cm) {
         state.applyingTextareaInput = false;
       }
     }
-  });
+  };
+  textarea.addEventListener("input", sync);
+  textarea.addEventListener("pattern:sync", sync);
   view.contentDOM.addEventListener("blur", () => {
-    void formatCurrent(textarea);
+    if (options.formatOnBlur !== false) void formatCurrent(textarea);
     void checkSource(state, state.source(), "blur").then(() => cm.forceLinting(view));
   });
+}
+
+/** Rechecks `textarea`'s source, as when the corpus it is checked against changes. */
+export function recheck(textarea) {
+  const state = states.get(textarea);
+  if (!state?.view) return;
+  state.lastCheck = null;
+  state.relint = true;
+  state.view.dispatch({});
+}
+
+/** Selects `from`–`to` (UTF-16 offsets) in `textarea`'s editor, or in the textarea itself when it has none, and focuses it. */
+export function selectSource(textarea, from, to = from) {
+  textarea.setSelectionRange?.(from, to);
+  const state = states.get(textarea);
+  if (!state?.view) {
+    textarea.focus();
+    return;
+  }
+  const length = state.view.state.doc.length;
+  state.view.dispatch({ selection: { anchor: Math.min(from, length), head: Math.min(to, length) }, scrollIntoView: true });
+  state.view.focus();
+}
+
+/**
+ * Enhances one textarea that does not carry `data-pattern-editor`, for a page
+ * that loads this module on demand: no draft persistence, and `options`
+ * (`corpus`, a function returning the corpus key to check against;
+ * `formatOnBlur: false`, which leaves Mod-Enter to the page and formats on
+ * Shift-Alt-F instead; `describedBy`, ids that describe the editing surface).
+ * Resolves true once the editor is mounted, false when it cannot load and the
+ * textarea stays the editing surface.
+ */
+export async function mountPatternEditor(textarea, options = {}) {
+  if (states.has(textarea)) return true;
+  try {
+    const [grammar, cm] = await Promise.all([loadGrammar(), loadCodeMirror()]);
+    await enhance(textarea, grammar, cm, options);
+    return true;
+  } catch (error) {
+    textarea.dataset.lxEnhancement = "unavailable";
+    textarea.dataset.lxEnhancementError = String(error);
+    return false;
+  }
 }
 
 async function initializeEditors() {
