@@ -18,7 +18,7 @@ const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(l
 let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
 const ja: Record<string,string> = {
-  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'作品を読む',
+  readingOptions:'表示の設定',questionActions:'問いの操作',questionNav:'問い',remix:'問いを複製',saveQuestion:'問いを保存',openQuestion:'開く',searchFor:'',among:'の',update:'検索する',done:'完了',exclude:'選んだ値を除外',previousValues:'前の値',nextValues:'次の値',clearConditions:'条件を消去',textClause:'条件式を直接編集',read:'表示する用例は',examplesWith:'件、前後の文脈は',contextTokens:'トークンずつ',closeAnalysis:'用例を閉じる',tokenHelp:'トークンを選ぶと、属性を確認できます。',remixTest:'条件を追加',showLatest:'新しい結果を表示',prototypeOptions:'検索の設定',searchNav:'検索',incumbentNav:'分析ツール',frequencyNav:'頻度',compareNav:'比較',helpNav:'ヘルプ',stopReplay:'再生を停止', find:'', in:'', patternSource:'パターンのソース', toSearch:'で検索', draft:'Alt+Enter、または欄から移動して検索します。',run:'検索する',where:'文書の条件',edited:'編集済み · 検索して適用',ready:'検索できます。',stop:'検索を停止',retry:'もう一度検索',during:'新しい検索の実行中は',keep:'完了した結果を表示',live:'途中の結果を表示',compare:'前回と今回を並べる',replay:'検索の経過を再生',replayNote:'検索の経過を再生しています。',boundary:'検索結果について',boundaryBody:'選択したコーパスとコンパイル済みのパターンに基づく検索結果です。用例はページごとに表示します。検索中の件数は途中経過です。原文は検索条件で絞り込まずに表示します。',return:'用例に戻る',paragraph:'段落を読む',document:'文書を読む',
   current:'今回の結果',previous:'前回の完了した結果',completed:'検索完了',partial:'検索中 · 件数は途中経過',cancelled:'停止済み · 件数は途中経過',failed:'検索に失敗',retained:'表示中の用例',noLines:'このパターンの用例はまだありません。',download:'JSONL で保存',source:'検索時のパターン',copy:'CLI コマンドをコピー',copied:'コピーしました',savedQuery:'検索時の query.lx を保存',runNumber:'検索',scope:'文書の条件',all:'すべての文書',soFar:'件が見つかりました',running:'検索しています',notTotal:'検索中の件数は途中経過です。',stopped:'検索を停止しました。途中の件数はコーパス全体の件数ではありません。',failedKeep:'検索に失敗しました。前回の検索結果を表示しています。',errorRetry:'パターンや条件を確認して、もう一度検索してください。',draftRunning:'新しいパターンを編集中です。実行中の検索には影響しません。',keeping:'新しい検索の間、前回の完了した結果を表示しています。',loadingRead:'原文を読み込んでいます…',readError:'原文を読み込めませんでした。もう一度開いてください。',tokenContext:'トークンによる前後の文脈',real:'検索',replayed:'記録した検索の再生',unknownProgress:'進捗の割合は不明',dependencies:'係り受け',viewBunsetsu:'文節',viewWords:'語',viewVertical:'全文（縦）',evidenceCaption:'この用例が結び付ける語',evidenceWord:'語番号',evidenceRoles:'役割',evidenceText:'表層形',evidenceLemma:'辞書形',evidencePos:'品詞',evidenceHead:'係り先',evidenceRel:'関係',root:'文の中心',frequencyReturn:'頻度に戻る',occurrenceMissing:'頻度表の用例をこの検索で開けませんでした。',
 };
 const extra: Record<string,string> = {readingOptions:'Reading options',questionActions:'Question actions',stopReplay:'Stop replay',current:'Current results',previous:'Previous results',completed:'Complete',partial:'Searching · counts are partial',cancelled:'Stopped · counts are partial',failed:'Search failed',retained:'Displayed examples',noLines:'No lines for this pattern yet.',download:'Download JSONL',source:'Pattern used for this search',copy:'Copy CLI command',copied:'Copied',savedQuery:'Download this query.lx',runNumber:'Search',scope:'Document condition',all:'All documents',soFar:'matches found',running:'Searching',notTotal:'Counts are partial until the search finishes.',stopped:'Search stopped. Counts are partial.',failedKeep:'Search failed. Previous results are retained.',errorRetry:'Check the pattern or condition and run the search again.',draftRunning:'Editing the next pattern. The running search is unchanged.',keeping:'Showing previous results while searching.',loadingRead:'Loading the original text…',readError:'Could not load the original text. Open it again to retry.',tokenContext:'Token context',real:'Live search',replayed:'Recorded search replay',unknownProgress:'Scan percentage unavailable',occurrenceMissing:'Could not open the frequency table occurrence in this search.'};
@@ -226,7 +226,7 @@ function translate() {
   $('#corpus-comma').textContent='';
   $('#scope-end').textContent=locale==='ja'?'から ':'';
   $('.question-sentence').insertBefore($('#edit-source'),locale==='ja'?$('.sentence-period'):$('#corpus-join'));
-  for(const button of document.querySelectorAll<HTMLButtonElement>('[data-reader-document]'))button.textContent=Number(button.dataset.readerDocument)<0?(locale==='ja'?'前の作品':'Previous document'):(locale==='ja'?'次の作品':'Next document');
+  for(const button of document.querySelectorAll<HTMLButtonElement>('[data-reader-document]'))button.textContent=Number(button.dataset.readerDocument)<0?(locale==='ja'?'前の文書':'Previous document'):(locale==='ja'?'次の文書':'Next document');
   controls?.localize();
   $<HTMLInputElement>('#metadata-query').placeholder=locale==='ja'?'値を検索…':'Find a value…';$<HTMLInputElement>('#metadata-query').setAttribute('aria-label',locale==='ja'?'メタデータの値を検索':'Find a metadata value');
   $<HTMLInputElement>('#where').placeholder = locale === 'ja' ? 'すべての文書 · 必要なら --where 条件を入力' : 'All documents · optional --where clause';
@@ -242,7 +242,7 @@ function translate() {
 function updateCorpus() {
   const dataset=config?.datasets[$<HTMLSelectElement>('#corpus').value];if(!dataset)return;
   const facts:string[]=[];
-  if(dataset.documents!=null)facts.push(`${count(dataset.documents)} ${locale==='ja'?'作品':'documents'}`);
+  if(dataset.documents!=null)facts.push(`${count(dataset.documents)} ${locale==='ja'?'文書':'documents'}`);
   if(dataset.sentences!=null)facts.push(`${count(dataset.sentences)} ${locale==='ja'?'文':'sentences'}`);
   if(dataset.readiness!=='ready')facts.push(locale==='ja'?(dataset.readiness==='failed'?'コーパスの準備に失敗しました。検索で再試行できます。':'コーパスを準備しています。検索すると準備の完了を待ちます。'):(dataset.readiness==='failed'?'Corpus preparation failed. Search to retry.':'Corpus preparing · searches wait until it is ready.'));
   $('#corpus-meta').textContent=dataset.readiness==='ready'?'':facts.join(' · ');
@@ -284,8 +284,8 @@ const limitChips=document.createElement('div');limitChips.className='scope-chips
 function renderLimits(limit:SearchLimit|null){
   const label=$('#scope-label'),dataset=$<HTMLSelectElement>('#corpus').value;
   if(limit?.document!=null){label.textContent=documentName(dataset,limit.document);label.dataset.limited='';}
-  else if(label.dataset.limited!==undefined){delete label.dataset.limited;label.textContent=locale==='ja'?'すべての作品':'all documents';}
-  const chips=[...(limit?.pattern?[['pattern',locale==='ja'?`定義: ${limit.pattern}`:`Definition: ${limit.pattern}`]]:[]),...(limit?.document!=null?[['document',locale==='ja'?`作品: ${documentName(dataset,limit.document)}`:`Document: ${documentName(dataset,limit.document)}`]]:[]),...(entryShown(displayedEvidence())?[['entry',locale==='ja'?`用例: ${entryLines!.words.join(' ')}`:`Examples: ${entryLines!.words.join(' ')}`]]:[])];
+  else if(label.dataset.limited!==undefined){delete label.dataset.limited;label.textContent=locale==='ja'?'すべての文書':'all documents';}
+  const chips=[...(limit?.pattern?[['pattern',locale==='ja'?`定義: ${limit.pattern}`:`Definition: ${limit.pattern}`]]:[]),...(limit?.document!=null?[['document',locale==='ja'?`文書: ${documentName(dataset,limit.document)}`:`Document: ${documentName(dataset,limit.document)}`]]:[]),...(entryShown(displayedEvidence())?[['entry',locale==='ja'?`用例: ${entryLines!.words.join(' ')}`:`Examples: ${entryLines!.words.join(' ')}`]]:[])];
   const signature=JSON.stringify(chips);if(renderSignatures.get(limitChips)===signature)return;renderSignatures.set(limitChips,signature);
   limitChips.replaceChildren(...chips.map(([kind,text])=>{const button=document.createElement('button');button.type='button';button.className='scope-chip';button.dataset.clearLimit=kind;button.setAttribute('aria-label',kind==='pattern'&&menuDefinitions().some(definition=>definition.count_only)?(locale==='ja'?`${text} を別の定義に変える`:`Choose another definition than ${text}`):locale==='ja'?`${text} の限定を外す`:`Remove the limit ${text}`);button.innerHTML=`${escape(text)}<span aria-hidden="true"> ×</span>`;return button;}));
 }
@@ -571,13 +571,13 @@ function renderDocumentNavigation(panel: HTMLElement,run: RunSnapshot,pattern: s
   }
   finder.hidden=view.documentsTotal<=100&&!view.query;
   const searchInput=$<HTMLInputElement>('input',finder);
-  searchInput.placeholder=locale==='ja'?'作品名・著者を検索':'Find a document or author';searchInput.setAttribute('aria-label',searchInput.placeholder);
-  $('[data-titles="-1"]',finder).textContent=locale==='ja'?'前の作品一覧':'Previous titles';
-  $('[data-titles="1"]',finder).textContent=locale==='ja'?'次の作品一覧':'Next titles';
+  searchInput.placeholder=locale==='ja'?'題名・著者を検索':'Find a document or author';searchInput.setAttribute('aria-label',searchInput.placeholder);
+  $('[data-titles="-1"]',finder).textContent=locale==='ja'?'前の文書一覧':'Previous titles';
+  $('[data-titles="1"]',finder).textContent=locale==='ja'?'次の文書一覧':'Next titles';
   $<HTMLButtonElement>('[data-titles="-1"]',finder).disabled=view.documentsOffset===0||view.loading;
   $<HTMLButtonElement>('[data-titles="1"]',finder).disabled=view.documentsOffset+100>=view.documentsTotal||view.loading;
   $('span',finder).textContent=`${count(view.documentsTotal?view.documentsOffset+1:0)}–${count(Math.min(view.documentsOffset+100,view.documentsTotal))} / ${count(view.documentsTotal)}`;
-  $('.document-jump',wrapper).textContent=locale==='ja'?`作品へ移動 · ${count(view.documentsTotal)} 作品`:`Jump to document · ${count(view.documentsTotal)} works`;
+  $('.document-jump',wrapper).textContent=locale==='ja'?`文書へ移動 · ${count(view.documentsTotal)} 文書`:`Jump to document · ${count(view.documentsTotal)} documents`;
   const documents=view.documents??[];
   const options=view.selectedDoc&&!documents.some(d=>d.ordinal===view.selectedDoc!.ordinal)?[view.selectedDoc,...documents]:documents;
   if(!nav.children.length){
@@ -590,17 +590,17 @@ function renderDocumentNavigation(panel: HTMLElement,run: RunSnapshot,pattern: s
   }
   const select=$<HTMLSelectElement>('select',nav),optionSignature=JSON.stringify([options,locale]);
   if(renderSignatures.get(select)!==optionSignature){
-    select.innerHTML=`<option value="">${locale==='ja'?'すべての作品':'All documents'}</option>${options.map(d=>`<option value="${d.ordinal}">${escape(d.title)}${d.author?' · '+escape(d.author):''} (${count(d.matches)})</option>`).join('')}`;
+    select.innerHTML=`<option value="">${locale==='ja'?'すべての文書':'All documents'}</option>${options.map(d=>`<option value="${d.ordinal}">${escape(d.title)}${d.author?' · '+escape(d.author):''} (${count(d.matches)})</option>`).join('')}`;
     renderSignatures.set(select,optionSignature);
   }
-  select.setAttribute('aria-label',locale==='ja'?'作品へ移動':'Jump to document');select.value=String(view.document??'');
+  select.setAttribute('aria-label',locale==='ja'?'文書へ移動':'Jump to document');select.value=String(view.document??'');
   for(const link of nav.querySelectorAll<HTMLAnchorElement>('[data-document-step]')){
     const direction=Number(link.dataset.documentStep),target=direction<0?view.previousDoc:view.nextDoc;
     link.hidden=view.scopeDocument==null;
-    link.textContent=locale==='ja'?(direction<0?'前の作品':'次の作品'):(direction<0?'Previous document':'Next document');
+    link.textContent=locale==='ja'?(direction<0?'前の文書':'次の文書'):(direction<0?'Previous document':'Next document');
     updateNavigationLink(link,target==null?null:hrefFor(run,{...concordanceFor(run),scopeDocument:target,document:target,after:-1}),view.loading);
   }
-  $('span',nav).textContent=view.error??(view.loading?(locale==='ja'?'読み込み中…':'Loading…'):view.position!=null?`${view.position+1} / ${count(view.documentsTotal)}`:`${count(view.documentsTotal)} ${locale==='ja'?'作品に用例':'matching documents'}`);
+  $('span',nav).textContent=view.error??(view.loading?(locale==='ja'?'読み込み中…':'Loading…'):view.position!=null?`${view.position+1} / ${count(view.documentsTotal)}`:`${count(view.documentsTotal)} ${locale==='ja'?'文書に用例':'matching documents'}`);
   const retry=$<HTMLButtonElement>('[data-document-retry]',nav);retry.hidden=!view.error;retry.textContent=locale==='ja'?'もう一度読み込む':'Retry loading documents';
   if(!paging.children.length){paging.innerHTML='<a data-view data-page-step="-1"></a><a data-view data-page-step="1"></a><button type="button" data-page-retry hidden></button>'; $('[data-page-retry]',paging).addEventListener('click',()=>retryDocumentPage(panel,run,pattern,view));}
   paging.hidden=!view.error&&view.previousAfter==null&&view.next==null;
@@ -637,7 +637,7 @@ function updateReaderNavigation() {
   }).catch(error=>{
     if((readerTarget??inspecting)!==inspection||epoch!==readerNavigationEpoch)return;
     nav.setAttribute('aria-busy','false');
-    const retry=document.createElement('button');retry.type='button';retry.dataset.readerRetry='';retry.textContent=locale==='ja'?'作品の移動を再読み込み':'Retry document navigation';retry.title=errorMessage(error);retry.addEventListener('click',updateReaderNavigation);nav.append(retry);
+    const retry=document.createElement('button');retry.type='button';retry.dataset.readerRetry='';retry.textContent=locale==='ja'?'文書の移動を再読み込み':'Retry document navigation';retry.title=errorMessage(error);retry.addEventListener('click',updateReaderNavigation);nav.append(retry);
   });
 }
 
@@ -677,11 +677,11 @@ function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=fals
     : locale==='ja'?`${count(total)} 件が見つかりました · ${count(rows.length)} 件を表示`:`${count(rows.length)} shown · ${count(total)} found`;
   if(view.loading&&!rows.length)$('.line-controls span',panel).textContent=locale==='ja'?`全 ${count(total)} 件`:`${count(total)} total matches`;
   const matchingDocuments=pageReady?(view.scopeDocument!=null?(total?1:0):view.query?null:view.documentsTotal):null;
-  $('.evidence-sentence',panel).textContent=run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 作品`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
+  $('.evidence-sentence',panel).textContent=run.phase!=='complete'&&!isReplay?(locale==='ja'?`途中までに ${count(total)} 件。`:`${count(total)} ${total===1?'match':'matches'} so far.`):locale==='ja'?`${count(total)} 件${matchingDocuments==null?'':` · ${count(matchingDocuments)} 文書`}。`:`${count(total)} ${total===1?'match':'matches'}${matchingDocuments==null?'':` in ${count(matchingDocuments)} ${matchingDocuments===1?'document':'documents'}`}.`;
   const scope=$('.document-scope',panel);
   scope.hidden=view.scopeDocument==null;
   if(!scope.hidden){
-    const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての作品に戻る':'Return to all documents'}</a>`;
+    const markup=`<a data-view href="${escape(hrefFor(run,{...concordanceFor(run),scopeDocument:null,document:null,after:view.returnAfter}))}">${locale==='ja'?'すべての文書に戻る':'Return to all documents'}</a>`;
     if(renderSignatures.get(scope)!==markup){scope.innerHTML=markup;renderSignatures.set(scope,markup);}
   }
   const note=$('.line-note',panel);note.setAttribute('role','status');
@@ -771,7 +771,7 @@ function renderEntryList(panel:HTMLElement,run:RunSnapshot){
   const entry=entryLines!,pattern=entry.pattern,context=controls.state.context,list=$('.kwic-list',panel);
   void readEntryTexts(run);
   const works=entry.works??new Set(entry.lines.map(line=>line.document)).size,name=entry.words.join('');
-  $('.evidence-sentence',panel).textContent=locale==='ja'?`${name} · ${count(entry.total)} 件 · ${count(works)} 作品。`:`${name} · ${count(entry.total)} ${entry.total===1?'match':'matches'} in ${count(works)} ${works===1?'document':'documents'}.`;
+  $('.evidence-sentence',panel).textContent=locale==='ja'?`${name} · ${count(entry.total)} 件 · ${count(works)} 文書。`:`${name} · ${count(entry.total)} ${entry.total===1?'match':'matches'} in ${count(works)} ${works===1?'document':'documents'}.`;
   const note=$('.line-note',panel);
   note.textContent=entry.lines.length<entry.total?(locale==='ja'?`頻度表に並んだ最初の ${count(entry.lines.length)} 件です。`:`The first ${count(entry.lines.length)} lines listed in Frequencies.`):'';note.hidden=!note.textContent;
   let exit=panel.querySelector<HTMLButtonElement>('.entry-exit');

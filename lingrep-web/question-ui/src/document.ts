@@ -109,10 +109,10 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
   }
   function renderChips() {
     const active=Object.entries(state.metadata).filter(([,c])=>c.numeric?(c.min!==''&&c.min!=null)||(c.max!==''&&c.max!=null):c.values?.length);
-    $('#scope-label').textContent=active.length||state.raw?text('selected documents','条件に合う作品'):text('all documents','すべての作品');
+    $('#scope-label').textContent=active.length||state.raw?text('selected documents','条件に合う文書'):text('all documents','すべての文書');
     $('#scope-chips').innerHTML=active.map(([key,c])=>`<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric?`${esc(c.min??'…')}–${esc(c.max??'…')}`:esc(c.values.map(v=>metadataValueLabel(config,key,v,getLocale(),c.labels&&Object.hasOwn(c.labels,String(v))?c.labels[String(v)]:String(v))).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
     for(const button of $('#scope-chips').querySelectorAll<HTMLButtonElement>('button'))button.addEventListener('click',()=>{delete state.metadata[button.dataset.field??''];changedScope();if(button.dataset.field===key)loadValues();});
-    $('#clause-preview').textContent=scopeClause(state.metadata,state.raw)||text('All documents','すべての作品');
+    $('#clause-preview').textContent=scopeClause(state.metadata,state.raw)||text('All documents','すべての文書');
   }
   async function loadFields() {
     const epoch=++requestId;
@@ -128,7 +128,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
       $<HTMLSelectElement>('#metadata-field').innerHTML=fields.map(f=>`<option value="${esc(f.key)}">${esc(label(f.key))} (${f.present.toLocaleString()})</option>`).join('');
       key=initialKey;$<HTMLInputElement>('#metadata-query').value='';
       $<HTMLSelectElement>('#metadata-field').value=key;
-      $('#metadata-state').textContent=text(`${fields.length} metadata fields · counts are documents in this corpus.`,`${fields.length} 個のメタデータ項目 · 件数はコーパス内の作品数です。`);
+      $('#metadata-state').textContent=text(`${fields.length} metadata fields · counts are documents in this corpus.`,`${fields.length} 個のメタデータ項目 · 件数はコーパス内の文書数です。`);
       after='';previous=[];await loadValues(initialValues);
     }catch(error){if(epoch===requestId)$('#metadata-state').textContent=errorMessage(error);}
   }
@@ -208,7 +208,7 @@ export function initQuestion(config: Configuration, {changed,viewChanged,search,
     try{
       const data=await api(`api/questions/data/${$<HTMLSelectElement>('#corpus').value}/metadata`);
       if(epoch!==fieldsEpoch||data.fields.some(field=>!hiddenMetadataFields.has(field.key))||state.raw)return;
-      closePicker();toggle.disabled=true;toggle.title=text('This corpus has no document metadata to choose from.','このコーパスの作品には、絞り込みに使える情報（メタデータ）がありません。');
+      closePicker();toggle.disabled=true;toggle.title=text('This corpus has no document metadata to choose from.','このコーパスの文書には、絞り込みに使える情報（メタデータ）がありません。');
     }catch{}
   }
   function closePicker(){++pickerEpoch;pickerState='closed';$('#metadata-picker').hidden=true;$('#scope-toggle').setAttribute('aria-expanded','false');$('#scope-toggle').removeAttribute('aria-busy');}

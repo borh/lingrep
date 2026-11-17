@@ -153,12 +153,12 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
     }
     function renderChips() {
         const active = Object.entries(state.metadata).filter(([, c]) => c.numeric ? (c.min !== '' && c.min != null) || (c.max !== '' && c.max != null) : c.values?.length);
-        $('#scope-label').textContent = active.length || state.raw ? text('selected documents', '条件に合う作品') : text('all documents', 'すべての作品');
+        $('#scope-label').textContent = active.length || state.raw ? text('selected documents', '条件に合う文書') : text('all documents', 'すべての文書');
         $('#scope-chips').innerHTML = active.map(([key, c]) => `<button type="button" class="scope-chip" data-field="${esc(key)}">${esc(label(key))}: ${c.numeric ? `${esc(c.min ?? '…')}–${esc(c.max ?? '…')}` : esc(c.values.map(v => metadataValueLabel(config, key, v, getLocale(), c.labels && Object.hasOwn(c.labels, String(v)) ? c.labels[String(v)] : String(v))).join(', '))}<span aria-hidden="true"> ×</span></button>`).join('');
         for (const button of $('#scope-chips').querySelectorAll('button'))
             button.addEventListener('click', () => { delete state.metadata[button.dataset.field ?? '']; changedScope(); if (button.dataset.field === key)
                 loadValues(); });
-        $('#clause-preview').textContent = scopeClause(state.metadata, state.raw) || text('All documents', 'すべての作品');
+        $('#clause-preview').textContent = scopeClause(state.metadata, state.raw) || text('All documents', 'すべての文書');
     }
     async function loadFields() {
         const epoch = ++requestId;
@@ -177,7 +177,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
             key = initialKey;
             $('#metadata-query').value = '';
             $('#metadata-field').value = key;
-            $('#metadata-state').textContent = text(`${fields.length} metadata fields · counts are documents in this corpus.`, `${fields.length} 個のメタデータ項目 · 件数はコーパス内の作品数です。`);
+            $('#metadata-state').textContent = text(`${fields.length} metadata fields · counts are documents in this corpus.`, `${fields.length} 個のメタデータ項目 · 件数はコーパス内の文書数です。`);
             after = '';
             previous = [];
             await loadValues(initialValues);
@@ -314,7 +314,7 @@ export function initQuestion(config, { changed, viewChanged, search, getLocale }
                 return;
             closePicker();
             toggle.disabled = true;
-            toggle.title = text('This corpus has no document metadata to choose from.', 'このコーパスの作品には、絞り込みに使える情報（メタデータ）がありません。');
+            toggle.title = text('This corpus has no document metadata to choose from.', 'このコーパスの文書には、絞り込みに使える情報（メタデータ）がありません。');
         }
         catch { }
     }
