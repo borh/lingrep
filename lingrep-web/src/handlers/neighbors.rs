@@ -76,18 +76,20 @@ pub fn page_routes() -> Router<RequestStore> {
 
 async fn page(State(store): State<RequestStore>, Query(params): Query<Params>) -> Response {
     let frequency_view = !store.frequency.is_empty();
-    let page = tokio::task::spawn_blocking(move || {
-        view(
-            crate::patterns::word_vectors(),
-            params.word.trim(),
-            params.min.as_deref(),
-            frequency_view,
-        )
-    })
-    .await;
+    let page = store
+        .coordinators
+        .pattern_task(move || {
+            view(
+                crate::patterns::word_vectors(),
+                params.word.trim(),
+                params.min.as_deref(),
+                frequency_view,
+            )
+        })
+        .await;
     match page {
         Ok(page) => crate::handlers::render_or_500(page),
-        Err(error) => super::server_error(error),
+        Err(error) => super::pattern_task_error(error),
     }
 }
 

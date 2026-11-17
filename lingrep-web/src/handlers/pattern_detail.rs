@@ -312,9 +312,22 @@ async fn pattern_detail(
         names.extend(overlaps.into_iter().map(|candidate| candidate.name));
     }
     projection.overlap_names = names.into_iter().collect();
+    let definition_snapshot = std::sync::Arc::clone(&snapshot);
+    let definition = match store
+        .coordinators
+        .pattern_task(move || {
+            definition_snapshot
+                .pattern(key)
+                .and_then(|pattern| definition_view(&definition_snapshot, pattern))
+        })
+        .await
+    {
+        Ok(definition) => definition,
+        Err(error) => return super::pattern_task_error(error),
+    };
     let fragment = PatternDetailFragment {
         pattern_name: &pattern.name,
-        definition: definition_view(&snapshot, pattern),
+        definition,
         chains: crate::compound_chains::chain_panel(&snapshot, key),
         chained: crate::compound_chains::chain_share(&snapshot, key),
         documents: crate::document_reach::document_share(&snapshot, key),

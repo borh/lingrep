@@ -121,7 +121,16 @@ async fn check(
     let Ok(Json(request)) = request else {
         return (StatusCode::BAD_REQUEST, Json(CheckResponse::BadRequest)).into_response();
     };
-    match compile_web_pattern(&request.source) {
+    let source = request.source.clone();
+    let compiled = match store
+        .coordinators
+        .pattern_task(move || compile_web_pattern(&source))
+        .await
+    {
+        Ok(compiled) => compiled,
+        Err(error) => return super::pattern_task_error(error),
+    };
+    match compiled {
         Ok(output) => {
             let mut diagnostics = editor_diagnostics(&output.diagnostics);
             let mut token_keys = None;
@@ -444,6 +453,63 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn check_rejects_work_when_pattern_workers_are_occupied() {
+        let store = RequestStore::default();
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let mut releases = Vec::new();
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let registry = store.coordinators.clone();
+            let started = started.clone();
+            let (release, wait) = std::sync::mpsc::channel();
+            releases.push(release);
+            workers.push(tokio::spawn(async move {
+                registry
+                    .pattern_task(move || {
+                        started.send(()).unwrap();
+                        wait.recv_timeout(std::time::Duration::from_secs(5))
+                            .expect("pattern task was not released");
+                        compile_web_pattern("p := [].").unwrap()
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(10), starts.recv())
+            .await
+            .expect("pattern task did not start")
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), starts.recv())
+            .await
+            .expect("pattern task did not start")
+            .unwrap();
+        let response = check(
+            State(store.clone()),
+            Ok(Json(EditorRequest {
+                source: "p := [].".into(),
+                corpus: None,
+            })),
+        )
+        .await;
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for worker in workers {
+            worker.await.unwrap();
+        }
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let response = check(
+            State(store),
+            Ok(Json(EditorRequest {
+                source: "p := [].".into(),
+                corpus: None,
+            })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 
     #[test]
     fn unknown_diagnostic_categories_have_a_safe_fallback() {

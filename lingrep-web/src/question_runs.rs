@@ -354,7 +354,7 @@ async fn project_run(
         .is_some_and(|failure| failure.category == ErrorCategory::Compile)
     {
         let source = attempt.source.clone();
-        tokio::task::spawn_blocking(move||crate::patterns::compile_web_pattern(&source).err().map(|error|error.diagnostics.into_iter().map(|diagnostic|{
+        store.coordinators.pattern_task(move||crate::patterns::compile_web_pattern(&source).err().map(|error|error.diagnostics.into_iter().map(|diagnostic|{
             let location=diagnostic.location();let span=location.byte_range();
             json!({"schema":"lingrep.diagnostic/v1","type":"diagnostic","data":{"stage":"catalog","severity":"error","message":diagnostic.message,"location":{"source_name":location.source_name(),"source_span":{"start":span.start,"end":span.end},"line":location.line(),"column":location.column()}}})
         }).collect::<Vec<_>>()).unwrap_or_default()).await.map_err(unavailable)?
@@ -370,7 +370,9 @@ async fn project_run(
             .is_some_and(|failure| failure.category == ErrorCategory::ResultLimit)
     {
         let source = attempt.source.clone();
-        definitions = tokio::task::spawn_blocking(move || catalog_definitions(&source))
+        definitions = store
+            .coordinators
+            .pattern_task(move || catalog_definitions(&source))
             .await
             .map_err(unavailable)?;
     }
@@ -764,7 +766,13 @@ async fn occurrence(
             "This corpus analysis differs from the one the frequency table counts. The occurrence cannot be located.".into(),
         ));
     }
-    if crate::patterns::web_catalog_fingerprint(&snapshot.source) != query.fingerprint {
+    let source = snapshot.source.clone();
+    let fingerprint = store
+        .coordinators
+        .pattern_task(move || crate::patterns::web_catalog_fingerprint(&source))
+        .await
+        .map_err(unavailable)?;
+    if fingerprint != query.fingerprint {
         return Err(ApiError(
             StatusCode::CONFLICT,
             "This search's catalog differs from the one the frequency table counts. The occurrence cannot be located.".into(),

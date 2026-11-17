@@ -175,6 +175,16 @@ pub(crate) fn render_or_500<T: Template>(template: T) -> Response {
 
 const SERVER_ERROR_MESSAGE: &str = "Could not complete this request. Try again. If it fails again, ask the server operator to check the logs.";
 
+pub(crate) fn pattern_task_error(error: crate::coordinator::PatternTaskError) -> Response {
+    match error {
+        crate::coordinator::PatternTaskError::Busy => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"status": "server_error", "error": "Pattern workers are busy. Try again."})),
+        ).into_response(),
+        crate::coordinator::PatternTaskError::Worker(error) => server_error(error),
+    }
+}
+
 pub(super) fn server_error(error: impl std::fmt::Debug) -> Response {
     tracing::error!(?error, "request failed");
     (

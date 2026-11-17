@@ -42,7 +42,22 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
     let Some(permit) = store.coordinators.try_acquire_scan_permit() else {
         return failure(StatusCode::TOO_MANY_REQUESTS, "summary_busy");
     };
-    let Ok(compiled) = crate::patterns::compile_web_pattern(&request.source) else {
+    let source = request.source.clone();
+    let (permit, compiled) = match store
+        .coordinators
+        .pattern_task(move || {
+            let compiled = crate::patterns::compile_web_pattern(&source).map(|compiled| {
+                let fingerprint = crate::patterns::web_catalog_fingerprint(&source);
+                (compiled, fingerprint)
+            });
+            (permit, compiled)
+        })
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => return super::pattern_task_error(error),
+    };
+    let Ok((compiled, fingerprint)) = compiled else {
         return failure(StatusCode::UNPROCESSABLE_ENTITY, "invalid_source");
     };
     if !compiled
@@ -89,7 +104,6 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
     let identity = lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes());
     let source_identity =
         lingrep_corpus::format_identity(ready.artifact.source_identity().as_bytes());
-    let fingerprint = crate::patterns::web_catalog_fingerprint(&request.source);
     let Ok(program) = std::env::current_exe().and_then(|path| program(&path)) else {
         return failure(StatusCode::BAD_GATEWAY, "summary_failed");
     };

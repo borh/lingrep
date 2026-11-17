@@ -111,10 +111,19 @@ async fn config(State(store): State<RequestStore>) -> Response {
             }
         }
     }
+    let source = store.default_pattern.clone();
+    let definitions = match store
+        .coordinators
+        .pattern_task(move || crate::patterns::question_definitions(&source))
+        .await
+    {
+        Ok(definitions) => definitions,
+        Err(error) => return crate::handlers::pattern_task_error(error),
+    };
     Json(Configuration {
         datasets,
         source: store.default_pattern.to_string(),
-        definitions: crate::patterns::question_definitions(&store.default_pattern),
+        definitions,
         labels,
         value_names: crate::metadata_labels::value_names(),
     })

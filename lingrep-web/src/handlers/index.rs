@@ -323,7 +323,11 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
     }
 }
 
-async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuery) -> Html<String> {
+#[allow(clippy::result_large_err)]
+async fn question_page(
+    State(store): State<RequestStore>,
+    RawQuery(raw): RawQuery,
+) -> Result<Html<String>, axum::response::Response> {
     let target = parse_target(raw.as_deref());
     if let Target::Link(params) = &target {
         let scope_supported = params
@@ -335,7 +339,7 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
             || params.run_options.overlaps != Overlaps::Catalog
             || !scope_supported
         {
-            return index_page(State(store), RawQuery(raw)).await;
+            return Ok(index_page(State(store), RawQuery(raw)).await);
         }
     }
     let selected_key = match &target {
@@ -343,7 +347,7 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
         _ => None,
     };
     let Some(slot) = store.corpora.resolve(selected_key) else {
-        return index_page(State(store), RawQuery(raw)).await;
+        return Ok(index_page(State(store), RawQuery(raw)).await);
     };
     slot.runtime.start_or_observe().await;
     let ready = slot.runtime.ready().await;
@@ -360,7 +364,7 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
     let landing = interpret(&target, &store.default_pattern, &readiness);
     let asserted = matches!(&target,Target::Link(params) if params.corpus.is_some());
     if landing.link_banner.is_some() || (asserted && ready.is_none()) {
-        return index_page(State(store), RawQuery(raw)).await;
+        return Ok(index_page(State(store), RawQuery(raw)).await);
     }
     let mut seed = serde_json::json!({
         "source":landing.seed_pattern,"corpus":slot.name.as_str(),
@@ -371,10 +375,17 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
         seed["analysis"] = ready.identity.as_str().into();
     }
     // A link names what it runs; only the served catalog has a default selection.
-    if !matches!(target, Target::Link(_))
-        && let Some(pattern) = crate::patterns::default_question_definition(&landing.seed_pattern)
-    {
-        seed["pattern"] = pattern.into();
+    if !matches!(target, Target::Link(_)) {
+        let source = landing.seed_pattern.clone();
+        match store
+            .coordinators
+            .pattern_task(move || crate::patterns::default_question_definition(&source))
+            .await
+        {
+            Ok(Some(pattern)) => seed["pattern"] = pattern.into(),
+            Ok(None) => {}
+            Err(error) => return Err(super::pattern_task_error(error)),
+        }
     }
     if let Some(lines) = landing.retained {
         seed["lines"] = lines.to_string().into();
@@ -382,7 +393,10 @@ async fn question_page(State(store): State<RequestStore>, RawQuery(raw): RawQuer
     if let Some(notice) = landing.link_notice {
         seed["notice"] = notice.text.into();
     }
-    crate::question_assets::page(seed, !store.frequency.is_empty())
+    Ok(crate::question_assets::page(
+        seed,
+        !store.frequency.is_empty(),
+    ))
 }
 
 pub async fn index_page(
@@ -542,6 +556,7 @@ mod tests {
             ))),
         )
         .await
+        .unwrap()
         .0;
         let seed = question_seed(&html);
         assert_eq!(seed["source"], source);
@@ -568,6 +583,7 @@ mod tests {
             RawQuery(None),
         )
         .await
+        .unwrap()
         .0;
         let seed = question_seed(&bare);
         assert_eq!(seed["source"], "default := [].");
@@ -582,7 +598,7 @@ mod tests {
         let (_directory, store, _digest) = ready_question_store().await;
         let seed_of = |source: &'static str| {
             let store = store.clone().with_default_pattern(source);
-            async move { question_seed(&question_page(State(store), RawQuery(None)).await.0) }
+            async move { question_seed(&question_page(State(store), RawQuery(None)).await.unwrap().0) }
         };
         let seed = seed_of(
             "key: [upos]\nevery := [].\nkey: [lemma]\nnouns := (?<n> [upos=NOUN]).\n\
@@ -619,6 +635,7 @@ mod tests {
                 ))),
             )
             .await
+            .unwrap()
             .0;
             assert!(html.contains("data-query-tab"), "{suffix}");
             assert!(!html.contains("id=\"question-seed\""));
@@ -630,6 +647,7 @@ mod tests {
             RawQuery(Some(mismatch.strip_prefix("/?").unwrap().into())),
         )
         .await
+        .unwrap()
         .0;
         assert!(html.contains("permalink-banner"));
         let cold =
@@ -639,6 +657,7 @@ mod tests {
             RawQuery(Some(cold.strip_prefix("/?").unwrap().into())),
         )
         .await
+        .unwrap()
         .0;
         assert!(!html.contains("id=\"question-seed\""));
         assert!(html.contains("legacy := []."));
@@ -651,6 +670,7 @@ mod tests {
             RawQuery(Some("v=1&q=invalid".into())),
         )
         .await
+        .unwrap()
         .0;
         let seed = question_seed(&html);
         assert_eq!(seed["source"], "default := [].");

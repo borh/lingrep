@@ -8,8 +8,8 @@
 //!
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no
-//! dictionary. The worker-slot permit is held across the `spawn_blocking().await`
-//! for the whole analysis, not just the acquire. `store.context.tokenizer()` is resolved
+//! dictionary. The blocking task retains the worker slot until analysis ends,
+//! including after request cancellation. `store.context.tokenizer()` is resolved
 //! *inside* the blocking closure because its first-call dictionary load is
 //! synchronous I/O that must not run on the async executor; a load failure
 //! surfaces as 503.
@@ -106,7 +106,7 @@ pub async fn run_sample(
             "The sample exceeds the test limits. Shorten it or search a corpus with this pattern.",
         );
     }
-    let Ok(_permit) = SAMPLE_SLOTS.try_acquire() else {
+    let Ok(permit) = SAMPLE_SLOTS.try_acquire() else {
         return fragment(
             StatusCode::TOO_MANY_REQUESTS,
             "sample.busy",
@@ -120,6 +120,7 @@ pub async fn run_sample(
     // failure returns `Err(TokenizerUnavailable)` (503); a genuine join failure
     // is the outer `Err` (500).
     let outcome = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let tokenizer = store.context.tokenizer()?;
         Ok::<_, TokenizerUnavailable>(analyze_sample(&pattern, &sample, &tokenizer))
     })
@@ -145,5 +146,49 @@ pub async fn run_sample(
             "sample.failed",
             "Sample analysis failed.",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_a_queued_sample_retains_its_worker_slot() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started, start) = std::sync::mpsc::channel();
+        let blocker = runtime.spawn_blocking(move || {
+            started.send(()).unwrap();
+            wait.recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        });
+        start
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let before = SAMPLE_SLOTS.available_permits();
+        let during = runtime.block_on(async {
+            {
+                let pending = run_sample(
+                    State(RequestStore::default()),
+                    Form(SampleForm {
+                        pattern: "p := [].".into(),
+                        sample: "猫".into(),
+                    }),
+                );
+                tokio::pin!(pending);
+                assert!(futures::poll!(&mut pending).is_pending());
+            }
+            SAMPLE_SLOTS.available_permits()
+        });
+        release.send(()).unwrap();
+        runtime.block_on(blocker).unwrap();
+        drop(runtime);
+        assert_eq!(during, before - 1);
+        assert_eq!(SAMPLE_SLOTS.available_permits(), before);
     }
 }

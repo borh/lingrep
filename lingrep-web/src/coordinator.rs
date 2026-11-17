@@ -367,15 +367,35 @@ enum Prepared {
 /// exists, because a producer whose consumer was never built parks on a full
 /// channel with nothing to drain it.
 async fn prepare_scan(
+    registry: &CoordinatorRegistry,
+    permit: Arc<tokio::sync::OwnedSemaphorePermit>,
     ready: &ReadyCorpus,
     source: &str,
     pattern: Option<&str>,
     scope: &crate::search_scope::SearchScope,
 ) -> Prepared {
-    let compiled = match pattern.map_or_else(
-        || compile_web_pattern(source),
-        |pattern| crate::patterns::compile_web_catalog_pattern(source, pattern),
-    ) {
+    let source = source.to_owned();
+    let pattern = pattern.map(str::to_owned);
+    let compiled = match registry
+        .pattern_task(move || {
+            let _permit = permit;
+            pattern.as_deref().map_or_else(
+                || compile_web_pattern(&source),
+                |pattern| crate::patterns::compile_web_catalog_pattern(&source, pattern),
+            )
+        })
+        .await
+    {
+        Ok(compiled) => compiled,
+        Err(error) => {
+            tracing::warn!(%error, "pattern preparation failed");
+            return Prepared::Failed(AttemptFailure {
+                category: ErrorCategory::Execution,
+                message: "The pattern could not be checked. Try the search again.".into(),
+            });
+        }
+    };
+    let compiled = match compiled {
         Ok(output) => output,
         Err(error) => {
             return Prepared::Failed(AttemptFailure {
@@ -685,9 +705,18 @@ struct RegistryInner {
     entries: Mutex<HashMap<WorkbenchId, Arc<Entry>>>,
     permit: Arc<Semaphore>,
     reading: Arc<Semaphore>,
+    compiling: Arc<Semaphore>,
     max_refs: usize,
     max_entries: NonZeroUsize,
     tick: AtomicU64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PatternTaskError {
+    #[error("pattern workers are busy")]
+    Busy,
+    #[error("pattern worker failed: {0}")]
+    Worker(tokio::task::JoinError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -736,6 +765,7 @@ impl CoordinatorRegistry {
                 entries: Mutex::new(HashMap::new()),
                 permit: Arc::new(Semaphore::new(scan_concurrency.get())),
                 reading: Arc::new(Semaphore::new(READING_CONCURRENCY)),
+                compiling: Arc::new(Semaphore::new(2)),
                 max_refs,
                 max_entries,
                 tick: AtomicU64::new(0),
@@ -983,6 +1013,22 @@ impl CoordinatorRegistry {
             .ok_or(SnapshotLookupError::StaleSnapshot)
     }
 
+    /// At most two pattern tasks run per registry; cancelling a caller retains its slot until the task exits.
+    pub(crate) async fn pattern_task<T: Send + 'static>(
+        &self,
+        task: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, PatternTaskError> {
+        let permit = Arc::clone(&self.inner.compiling)
+            .try_acquire_owned()
+            .map_err(|_| PatternTaskError::Busy)?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            task()
+        })
+        .await
+        .map_err(PatternTaskError::Worker)
+    }
+
     /// Acquire the shared scan permit. The export path holds this INSIDE its
     /// blocking task so it is released when the scan actually ends — not when the
     /// request future drops — and so exports never oversubscribe the Rayon pool.
@@ -1148,10 +1194,13 @@ impl CoordinatorRegistry {
         let expected_sentence_count = ready.sentence_count().ok();
         let source: std::sync::Arc<str> = source.into();
 
+        let permit = Arc::new(permit);
         let scan_cancel = cancel.clone();
         let scan_source = Arc::clone(&source);
         let scan = async {
             let prepared = prepare_scan(
+                self,
+                Arc::clone(&permit),
                 &ready,
                 &scan_source,
                 options.pattern.as_deref(),
@@ -1735,6 +1784,64 @@ mod tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_pattern_tasks_retain_slots_until_blocking_work_finishes() {
+        let registry = CoordinatorRegistry::new(10);
+        let runtime_thread = std::thread::current().id();
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let mut releases = Vec::new();
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let registry = registry.clone();
+            let started = started.clone();
+            let (release, wait) = std::sync::mpsc::channel();
+            releases.push(release);
+            workers.push(tokio::spawn(async move {
+                registry
+                    .pattern_task(move || {
+                        let thread = std::thread::current().id();
+                        let compiled = compile_web_pattern("p := [text=x].").unwrap();
+                        started.send(thread).unwrap();
+                        wait.recv_timeout(std::time::Duration::from_secs(5))
+                            .expect("pattern task was not released");
+                        compiled
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+        for _ in 0..2 {
+            assert_ne!(
+                tokio::time::timeout(std::time::Duration::from_secs(10), starts.recv())
+                    .await
+                    .expect("pattern task did not start")
+                    .unwrap(),
+                runtime_thread
+            );
+        }
+        for worker in workers {
+            worker.abort();
+            assert!(matches!(worker.await, Err(error) if error.is_cancelled()));
+        }
+        let refused = registry.pattern_task(|| ()).await;
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        assert!(matches!(refused, Err(PatternTaskError::Busy)));
+        let all = tokio::time::timeout(
+            Duration::from_secs(10),
+            registry.inner.compiling.clone().acquire_many_owned(2),
+        )
+        .await
+        .expect("pattern slots were not released")
+        .unwrap();
+        drop(all);
+        registry
+            .pattern_task(|| compile_web_pattern("p := [text=x].").unwrap())
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -2523,8 +2630,17 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn prepare_scan_maps_a_compile_error_to_a_compile_failure() {
         let (_dir, ready) = tiny_ready_corpus(1);
-        let Prepared::Failed(failure) =
-            prepare_scan(&ready, "broken := [text~/x/.", None, &Default::default()).await
+        let registry = CoordinatorRegistry::new(10);
+        let permit = Arc::new(registry.acquire_scan_permit().await);
+        let Prepared::Failed(failure) = prepare_scan(
+            &registry,
+            permit,
+            &ready,
+            "broken := [text~/x/.",
+            None,
+            &Default::default(),
+        )
+        .await
         else {
             panic!("a syntactically invalid catalog cannot be prepared");
         };
@@ -2536,9 +2652,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn prepare_scan_admits_a_corpus_without_sections() {
         let (_dir, ready) = tiny_ready_corpus(1);
+        let registry = CoordinatorRegistry::new(10);
+        let permit = Arc::new(registry.acquire_scan_permit().await);
         let Prepared::Ready {
             producer, sections, ..
-        } = prepare_scan(&ready, "p := [].", None, &Default::default()).await
+        } = prepare_scan(
+            &registry,
+            permit,
+            &ready,
+            "p := [].",
+            None,
+            &Default::default(),
+        )
+        .await
         else {
             panic!("a valid catalog over a readable corpus prepares");
         };
