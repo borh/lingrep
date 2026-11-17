@@ -107,10 +107,12 @@ export function contextHtml(text, bound, side) {
   }
   return html + esc(chars.slice(at).join(""));
 }
-/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words` and `total` and its listed `lines`, `at` the index of `line`, so the question page steps through those lines. */
+/** The question page address that runs `s.pattern` of `source` over `line`'s document and opens `line`'s occurrence; `back` is the frequency view address to return to. With `entry`, the address also carries the entry's `words`, `total` and `works`, its listed `lines` with their spans and their documents' `names`, and `at`, the index of `line`, so the question page lists those lines and steps through them. */
 export function inspectHref(s, line, { source, analysis, fingerprint }, back, entry = null) {
   const occurrence = { pattern: s.pattern, sentence: line.sentence, document: line.document, roles: line.roles, analysis, fingerprint };
-  const lines = entry && { words: entry.words, total: entry.total, at: entry.at, lines: entry.lines.map(({ sentence, document, roles }) => ({ sentence, document, roles })) };
+  const named = entry && documentNames(entry.lines), generic = (l) => named(l) === t("frequency.document", { id: l.document });
+  const names = entry && Object.fromEntries(entry.lines.filter((l) => !generic(l)).map((l) => [l.document, named(l)]));
+  const lines = entry && { words: entry.words, total: entry.total, ...(entry.works != null ? { works: entry.works } : {}), at: entry.at, ...(Object.keys(names).length ? { names } : {}), lines: entry.lines.map(({ sentence, document, start, end, roles }) => ({ sentence, document, start, end, roles })) };
   return `./#${new URLSearchParams({ fresh: "1", run: "1", corpus: s.corpus, analysis, source, occurrence: JSON.stringify(occurrence), ...(lines ? { entry: JSON.stringify(lines) } : {}), return: back })}`;
 }
 
@@ -863,7 +865,7 @@ export function mountFrequency(root) {
     const link = e.target.closest?.(".fq-inspect"), i = Number(link?.closest("li[data-i]")?.dataset.i);
     if (!link || !lined || entryEl.classList.contains("previewing") || !lined.lines[i]) return;
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
-    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, lines: lined.lines, at: i });
+    link.href = inspectHref(s, lined.lines[i], { source, analysis: lined.analysis_identity, fingerprint: lined.catalog_fingerprint }, back, { words: groupWords(profile.group), total: lined.total, works: profile.works, lines: lined.lines, at: i });
   };
   entryEl.addEventListener("pointerdown", withEntryLines);
   entryEl.addEventListener("click", withEntryLines, true);

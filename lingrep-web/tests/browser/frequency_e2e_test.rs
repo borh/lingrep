@@ -2761,10 +2761,11 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
 }
 
 /// トークンを調べる from an entry's line opens that line on the question page
-/// with the entry as a removable context: the title names the entry and the
-/// line's position among its lines, and the example steps go through those
-/// lines, within the searched document and into the next one, until the
-/// context is removed.
+/// with the entry as a removable context: the result lists the entry's lines
+/// with the opened one's example under it, the title names the entry and the
+/// line's position among its lines, the example steps and the listed lines go
+/// through those lines, within the searched document and into the next one,
+/// and removing the context lists the search's whole result again.
 #[tokio::test]
 async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -2794,6 +2795,28 @@ async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<(
             )
         };
         wait_for(&driver, &at(2), "the second line").await?;
+        let listing = "const rows = [...document.querySelectorAll('.listing-entry .entry-row')]; \
+            const open = rows.findIndex((row) => row.getAttribute('aria-expanded') === 'true'); \
+            return {rows: rows.length, open, lab: rows[open]?.nextElementSibling?.id ?? null, \
+              header: document.querySelector('.listing-entry .evidence-sentence')?.textContent ?? null, \
+              note: document.querySelector('.listing-entry .line-note')?.textContent ?? null, \
+              read: rows.every((row) => row.querySelector('mark').textContent === '猫'), \
+              whole: !!document.querySelector('.listing-entry .entry-exit:not([hidden])')}";
+        wait_for(
+            &driver,
+            "return [...document.querySelectorAll('.entry-row mark')].filter((mark) => mark.textContent).length === 50",
+            "the listed lines' text",
+        )
+        .await?;
+        observed(
+            &driver,
+            listing,
+            json!({"rows": LINES, "open": 1, "lab": "token-lab",
+                "header": format!("猫 · {cats} matches in {} documents.", WORKS.len()),
+                "note": format!("The first {LINES} lines listed in Frequencies."), "read": true, "whole": true}),
+            "the entry's lines as the result",
+        )
+        .await?;
         let chip = "return document.querySelector('[data-clear-limit=entry]')?.textContent ?? null";
         observed(&driver, chip, json!("Examples: 猫 ×"), "the entry chip").await?;
         let step = |direction: &'static str| {
@@ -2811,9 +2834,20 @@ async fn an_inspected_line_steps_through_its_entrys_lines() -> WebDriverResult<(
         )
         .await?;
         driver
+            .execute("document.querySelector('.entry-row[data-entry-line=\"4\"]').click()", Vec::new())
+            .await?;
+        wait_for(&driver, &at(5), "the fifth listed line").await?;
+        driver
             .execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new())
             .await?;
         observed(&driver, chip, Value::Null, "the removed chip").await?;
+        wait_for(
+            &driver,
+            "return document.querySelectorAll('.entry-row').length === 0 && \
+              !!document.querySelector('.kwic-row[data-sequence][aria-expanded=true] + #token-lab')",
+            "the whole result around the open example",
+        )
+        .await?;
         let plain = driver.execute(title, Vec::new()).await?.json().clone();
         assert!(!plain.as_str().unwrap().contains(" / "), "{plain}");
         observed(
@@ -2856,6 +2890,15 @@ async fn the_page_filter_names_the_lines_it_filters_and_links_an_empty_result_to
             &driver,
             "const lab = document.querySelector('#token-lab'); return !!lab && !lab.hidden",
             "the opened line",
+        )
+        .await?;
+        // The hand-off lists the entry's lines, which have no page filter;
+        // removing the entry lists the search's lines the filter works on.
+        driver.execute("document.querySelector('[data-clear-limit=entry]').click()", Vec::new()).await?;
+        wait_for(
+            &driver,
+            "const input = document.querySelector('.line-controls input'); return !!input && input.placeholder !== '' && !document.querySelector('.listing-entry')",
+            "the search's lines",
         )
         .await?;
         let filter = "const input = document.querySelector('.line-controls input'); \

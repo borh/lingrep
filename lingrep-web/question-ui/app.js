@@ -1,7 +1,7 @@
 import { serviceURL, ServiceError, expiredSearch } from './service.js';
 import { parseSections, restoreSections } from './sections.js';
 import { addCondition, patternSource } from './composer.js';
-import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn } from './location.js';
+import { expectedAnalysis, defaultView, parseView, locationHash, locationURL, savedQuestion, seedParams, parseOccurrence, parseEntryLines, frequencyReturn, entryContext } from './location.js';
 import { begin, receive, receiveUpdate, visible } from './state.mjs';
 import { initQuestion, questionSettings } from './document.js';
 import { boundOutside, dependencyView, evidenceWords, hasDependencies, bunsetsuStarts, dependencyUnits, focusLayout, verticalArcs, headLabel, valueName } from './dependency.js';
@@ -261,6 +261,9 @@ let pendingOccurrence = null;
 let entryLines = null;
 const entryLine = (at) => ({ ...entryLines.lines[at], pattern: entryLines.pattern, analysis: entryLines.analysis, fingerprint: entryLines.fingerprint });
 function entryActive() { return !!entryLines && !!inspecting && !tokenLab.hidden && inspecting.row.pattern === entryLines.pattern && inspecting.row.corpus_sentence_ordinal === entryLines.lines[entryLines.at].sentence; }
+// The searches a hand-off ran; while the entry context holds, their results list the entry's lines.
+const entryRuns = new Set();
+const entryShown = (run) => !!entryLines && !!run && entryRuns.has(run.id);
 // The draft's definition and document limit; it applies while the pattern source is `source`.
 let searchLimit = null;
 const runLimits = new Map();
@@ -450,7 +453,7 @@ function renderLimits(limit) {
         delete label.dataset.limited;
         label.textContent = locale === 'ja' ? 'すべての作品' : 'all documents';
     }
-    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : []), ...(entryActive() ? [['entry', locale === 'ja' ? `用例: ${entryLines.words.join(' ')}` : `Examples: ${entryLines.words.join(' ')}`]] : [])];
+    const chips = [...(limit?.pattern ? [['pattern', locale === 'ja' ? `定義: ${limit.pattern}` : `Definition: ${limit.pattern}`]] : []), ...(limit?.document != null ? [['document', locale === 'ja' ? `作品: ${documentName(dataset, limit.document)}` : `Document: ${documentName(dataset, limit.document)}`]] : []), ...(entryShown(displayedEvidence()) ? [['entry', locale === 'ja' ? `用例: ${entryLines.words.join(' ')}` : `Examples: ${entryLines.words.join(' ')}`]] : [])];
     const signature = JSON.stringify(chips);
     if (renderSignatures.get(limitChips) === signature)
         return;
@@ -458,9 +461,7 @@ function renderLimits(limit) {
     limitChips.replaceChildren(...chips.map(([kind, text]) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'scope-chip'; button.dataset.clearLimit = kind; button.setAttribute('aria-label', locale === 'ja' ? `${text} の限定を外す` : `Remove the limit ${text}`); button.innerHTML = `${escape(text)}<span aria-hidden="true"> ×</span>`; return button; }));
 }
 limitChips.addEventListener('click', event => { const button = event.target.closest('[data-clear-limit]'); if (button?.dataset.clearLimit === 'entry') {
-    entryLines = null;
-    renderExampleSteps();
-    updateDraft();
+    leaveEntry();
     return;
 } if (!button || !searchLimit)
     return; searchLimit = button.dataset.clearLimit === 'pattern' ? { ...searchLimit, pattern: null } : { ...searchLimit, document: null }; updateDraft(); });
@@ -531,6 +532,8 @@ async function search(event, derivedFrom, occurrence) {
             return;
         }
         activeId = result.id;
+        if (occurrence)
+            entryRuns.add(result.id);
         expectedAnalyses.set(result.id, analysisExpectation);
         runLimits.set(result.id, { pattern: limit?.pattern ?? null, document: limit?.document ?? null });
         state = begin(state, runningSnapshot(result.id, body));
@@ -700,6 +703,8 @@ function render(force = false) {
             panel.dataset.run = run.id;
             panel.innerHTML = '<p class="result-scope"></p><ul class="result-notices" hidden></ul><div class="panel-body"><aside class="pattern-list" aria-label="Patterns"></aside><div class="lines-area"><div class="result-reading"><span class="evidence-sentence"></span> <span class="document-scope" hidden></span> <span class="line-controls"><span></span> <input type="search"></span> <details class="document-nav" aria-label="Documents" hidden><summary class="document-jump"></summary><div class="document-finder" hidden></div><div class="document-choice"></div></details> <span class="result-header"></span> <span class="line-note" role="status" hidden></span></div><div class="kwic-list"></div><nav class="document-pages" aria-label="Example pages" hidden></nav></div></div><details class="query-tools-detail"><summary></summary><pre></pre><div class="query-tools"><button type="button" data-copy></button><button type="button" data-source></button></div></details>';
             $('.document-nav', panel).open = false;
+            $('.kwic-list', panel).addEventListener('click', event => { const row = event.target.closest('[data-entry-line]'); if (row)
+                void openEntryLine(runFor(run.id), Number(row.dataset.entryLine)); });
             $('.line-controls input', panel).addEventListener('input', e => { filters.set(run.id, e.target.value); viewLocation = concordanceFor(runFor(run.id)); renderLines(panel, runFor(run.id), true); updateDraft(); });
             $('[data-copy]', panel).addEventListener('click', async (e) => {
                 const model = runFor(run.id);
@@ -973,6 +978,11 @@ function setContext(element, tokens, bound) {
 function renderLines(panel, run, _force = false) {
     if (!run)
         return;
+    panel.classList.toggle('listing-entry', entryShown(run));
+    if (entryShown(run)) {
+        renderEntryList(panel, run);
+        return;
+    }
     const pattern = selection.get(run.id) ?? '', view = documentView(run, pattern);
     if (!isReplay && run.phase === 'complete' && !view.loading && (!view.error && (view.documents === null || view.limit !== controls.state.lines) || view.error && view.request?.limit !== controls.state.lines)) {
         void loadDocumentPage(panel, run, pattern, view.document, view.after);
@@ -1127,6 +1137,139 @@ function renderLines(panel, run, _force = false) {
         if (!used.has(key))
             nodes.delete(key);
 }
+// Each listed line's sentence as token texts, or the reason it could not be read, by corpus and sentence.
+const entryTexts = new Map();
+let entryReading = false;
+async function readEntryTexts(run) {
+    if (entryReading || !entryLines)
+        return;
+    const keys = [...new Set(entryLines.lines.map(line => `${run.dataset}:${line.sentence}`))].filter(key => !entryTexts.has(key));
+    if (!keys.length)
+        return;
+    entryReading = true;
+    try {
+        for (let at = 0; at < keys.length; at += 6)
+            await Promise.all(keys.slice(at, at + 6).map(async (key) => {
+                const sentence = key.slice(key.lastIndexOf(':') + 1);
+                try {
+                    const data = tokenCache.get(key) ?? parseStoredSentence(await request(`api/questions/data/${encodeURIComponent(run.dataset)}/tokens?sentence=${sentence}`));
+                    entryTexts.set(key, entryLines && data.analysis_identity !== entryLines.analysis ? { error: t('occurrenceChanged') } : data.tokens.map(token => token.attributes.text));
+                }
+                catch (error) {
+                    entryTexts.set(key, { error: errorMessage(error) });
+                }
+            }));
+    }
+    finally {
+        entryReading = false;
+    }
+    render(true);
+}
+// From a frequency entry, the result lists the entry's lines, with the open one's example under it; the search's whole result is a step away.
+function renderEntryList(panel, run) {
+    const entry = entryLines, pattern = entry.pattern, context = controls.state.context, list = $('.kwic-list', panel);
+    void readEntryTexts(run);
+    const works = entry.works ?? new Set(entry.lines.map(line => line.document)).size, name = entry.words.join('');
+    $('.evidence-sentence', panel).textContent = locale === 'ja' ? `${name} · ${count(entry.total)} 件 · ${count(works)} 作品。` : `${name} · ${count(entry.total)} ${entry.total === 1 ? 'match' : 'matches'} in ${count(works)} ${works === 1 ? 'document' : 'documents'}.`;
+    const note = $('.line-note', panel);
+    note.textContent = entry.lines.length < entry.total ? (locale === 'ja' ? `頻度表に並んだ最初の ${count(entry.lines.length)} 件です。` : `The first ${count(entry.lines.length)} lines listed in Frequencies.`) : '';
+    note.hidden = !note.textContent;
+    let exit = panel.querySelector('.entry-exit');
+    if (!exit) {
+        exit = document.createElement('button');
+        exit.type = 'button';
+        exit.className = 'entry-exit';
+        exit.addEventListener('click', leaveEntry);
+        $('.evidence-sentence', panel).after(exit);
+    }
+    const limited = runLimits.get(run.id)?.document, total = count(run.counts[pattern] ?? 0);
+    exit.hidden = run.phase !== 'complete';
+    exit.textContent = limited != null ? (locale === 'ja' ? `${documentName(run.dataset, limited)}の${pattern}をすべて表示（${total} 件）` : `Show all ${total} ${pattern} matches in ${documentName(run.dataset, limited)}`) : (locale === 'ja' ? `${pattern}の結果をすべて表示（${total} 件）` : `Show all ${total} ${pattern} matches`);
+    let nodes = concordanceNodes.get(list);
+    if (!nodes) {
+        nodes = new Map();
+        concordanceNodes.set(list, nodes);
+    }
+    const desired = [], used = new Set();
+    const node = (key, tag, className) => { used.add(key); let value = nodes.get(key); if (!value) {
+        value = document.createElement(tag);
+        value.className = className;
+        nodes.set(key, value);
+    } return value; };
+    const open = entryActive();
+    entry.lines.forEach((line, index) => {
+        const title = entry.names?.[line.document] ?? documentName(run.dataset, line.document);
+        if (index === 0 || entry.lines[index - 1].document !== line.document) {
+            const heading = node(`entry-document:${index}`, 'div', 'document-heading'), signature = title;
+            if (renderSignatures.get(heading) !== signature) {
+                heading.replaceChildren(Object.assign(document.createElement('span'), { className: 'entry-document', textContent: title }));
+                renderSignatures.set(heading, signature);
+            }
+            desired.push(heading);
+        }
+        const row = node(`entry:${index}`, 'button', 'kwic-row entry-row');
+        row.type = 'button';
+        row.dataset.entryLine = String(index);
+        const texts = entryTexts.get(`${run.dataset}:${line.sentence}`), expanded = String(open && index === entry.at);
+        if (row.getAttribute('aria-expanded') !== expanded)
+            row.setAttribute('aria-expanded', expanded);
+        const failure = texts && 'error' in texts ? texts.error : null, read = texts && !('error' in texts) ? entryContext(texts, line, context) : null, signature = JSON.stringify([locale, context, read ? 0 : failure ?? null, title]);
+        if (renderSignatures.get(row) !== signature) {
+            row.innerHTML = '<span class="line-number"></span><span class="context-left" lang="ja"><span></span></span><mark lang="ja"></mark><span class="context-right" lang="ja"></span>';
+            const [number, left, hit, right] = [row.children[0], row.children[1].firstElementChild, row.children[2], row.children[3]];
+            number.textContent = String(index + 1);
+            if (read) {
+                setContext(left, read.left, read.bound);
+                hit.textContent = read.hit;
+                setContext(right, read.right, read.bound);
+                row.setAttribute('aria-label', `${title}, ${index + 1}: ${words(read.left)}${read.hit}${words(read.right)}`);
+            }
+            else {
+                right.textContent = failure != null ? (locale === 'ja' ? `文を読み込めませんでした。${failure}` : `Could not load the sentence. ${failure}`) : (locale === 'ja' ? '読み込んでいます…' : 'Loading…');
+                row.setAttribute('aria-label', `${title}, ${index + 1}`);
+            }
+            renderSignatures.set(row, signature);
+        }
+        desired.push(row);
+        if (open && index === entry.at) {
+            desired.push(tokenLab);
+            if (readerPanel.open)
+                desired.push(readerPanel);
+        }
+    });
+    const desiredNodes = new Set(desired);
+    for (const child of [...list.children])
+        if (!desiredNodes.has(child)) {
+            if (child === tokenLab || child === readerPanel)
+                document.body.append(child);
+            else
+                child.remove();
+        }
+    desired.forEach((child, index) => { if (list.children[index] !== child)
+        list.insertBefore(child, list.children[index] ?? null); });
+    for (const key of nodes.keys())
+        if (!used.has(key))
+            nodes.delete(key);
+    list.setAttribute('aria-busy', 'false');
+}
+// Leaving the entry context lists the search's whole result again, around the open example.
+function leaveEntry() {
+    entryLines = null;
+    for (const exit of document.querySelectorAll('.entry-exit'))
+        exit.remove();
+    renderExampleSteps();
+    updateDraft();
+    render(true);
+    const open = inspecting;
+    if (!open || tokenLab.hidden) {
+        $('#results').focus({ preventScroll: true });
+        return;
+    }
+    const panel = panels.get(open.run.id), view = documentView(open.run, open.row.pattern);
+    if (panel && !view.rows.some(row => row.sequence === open.row.sequence))
+        void loadDocumentPage(panel, open.run, open.row.pattern, open.row.document_ordinal, open.row.sequence - 1);
+    $('#token-origin').focus({ preventScroll: true });
+}
 // The Frequencies tables served, read once when a page filter first finds nothing.
 let frequencyPairs;
 // A page filter that finds nothing says it searched only the lines shown, and links to Frequencies, filtered by the same text, when a table counts this pattern.
@@ -1228,12 +1371,12 @@ function renderExampleSteps() {
     next.disabled = position === page.rows.length - 1 && page.next == null;
     $('#token-origin').textContent = `${documentTitle(row)} · ${count(position < 0 ? row.sequence + 1 : page.start + position + 1)}`;
 }
-// A step from an entry's line opens the next line in this search when the search covers its document, else searches that document.
-async function stepEntry(step) {
-    const from = entryLines.at, at = from + step, target = entryLine(at), run = inspecting.run, limited = runLimits.get(run.id)?.document;
+// An entry's line opens in this search when the search covers its document, else in a search of that document.
+async function openEntryLine(run, at) {
+    const from = entryLines.at, target = entryLine(at), limited = runLimits.get(run.id)?.document;
     entryLines = { ...entryLines, at };
     if (limited == null || limited === target.document) {
-        if (!await openOccurrence(run, target))
+        if (!await openOccurrence(run, target) && entryLines)
             entryLines = { ...entryLines, at: from };
         return;
     }
@@ -1249,7 +1392,7 @@ for (const control of exampleSteps.querySelectorAll('button'))
         if (entryActive()) {
             control.disabled = true;
             try {
-                await stepEntry(Number(control.dataset.exampleStep));
+                await openEntryLine(origin.run, entryLines.at + Number(control.dataset.exampleStep));
             }
             finally {
                 if (inspecting === origin)
@@ -1835,7 +1978,8 @@ async function applyView(run, target, pin = true, epoch = ++navigationEpoch) {
             return;
         if (!row)
             throw new Error('This saved location has no matching example. Choose another document.');
-        let link = panel.querySelector(`[data-sequence="${row.sequence}"]`);
+        const entryRow = entryShown(run) && entryLines.lines[entryLines.at].sentence === row.corpus_sentence_ordinal ? panel.querySelector(`[data-entry-line="${entryLines.at}"]`) : null;
+        let link = entryRow ?? panel.querySelector(`[data-sequence="${row.sequence}"]`);
         if (!link) {
             filters.set(run.id, '');
             await loadDocumentPage(panel, run, pattern, row.document_ordinal, row.sequence - 1);

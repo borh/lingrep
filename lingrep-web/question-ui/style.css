@@ -92,3 +92,8 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 #token-origin:focus{outline:none}
 .line-controls input{width:auto;field-sizing:content;min-width:14ch;max-width:100%}
 .dependency-evidence td code,.attribute-row>span code{font:13px var(--mono);color:var(--soft)}.dependency-gloss{font:13px var(--font);color:var(--soft)}.dependency-tree .dependency-meta{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}text.dependency-arc{pointer-events:auto;cursor:help}
+.listing-entry .line-controls,.listing-entry .document-nav,.listing-entry .document-pages,.listing-entry .document-scope{display:none!important}
+.entry-exit{border:0;padding:0;min-height:0;background:none;color:var(--green);text-decoration:underline;text-underline-offset:3px;font-size:14px;margin-inline-start:.5em}
+.entry-exit:hover:not(:disabled){background:none;text-decoration-thickness:2px}
+button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
+.entry-document{font-weight:600}

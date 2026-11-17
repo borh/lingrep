@@ -23,12 +23,12 @@ test("a frequency line's handoff address names its occurrence and document, and 
 test("a line's handoff carries its entry's words, total and lines, at the line's position", () => {
   const s = readState(`#${new URLSearchParams({ corpus: "natsume", catalog: "class6.lx", pattern: "npv", entry: '{"kind":"key"}' })}`);
   const roles = (n) => [{ name: "n", start: n, end: n + 1 }];
-  const lines = [{ sentence: 3, document: 1, start: 0, end: 2, left: "x", right: "y", roles: roles(0) }, { sentence: 41, document: 5, start: 0, end: 2, left: "", right: "", roles: roles(2) }];
+  const lines = [{ sentence: 3, document: 1, source_name: "Natsume_S_Meian.conllu", start: 0, end: 2, left: "x", right: "y", roles: roles(0) }, { sentence: 41, document: 5, start: 1, end: 3, left: "", right: "", roles: roles(2) }];
   const identity = { source: "npv := [].", analysis: "a".repeat(64), fingerprint: "f".repeat(64) };
-  const href = inspectHref(s, lines[1], identity, "frequencies#x", { words: ["坂", "を", "上る"], total: 10, lines, at: 1 });
+  const href = inspectHref(s, lines[1], identity, "frequencies#x", { words: ["坂", "を", "上る"], total: 10, works: 6, lines, at: 1 });
   assert.deepEqual(parseEntryLines(new URLSearchParams(href.slice(3)).get("entry")), {
-    words: ["坂", "を", "上る"], total: 10, at: 1,
-    lines: [{ sentence: 3, document: 1, roles: roles(0) }, { sentence: 41, document: 5, roles: roles(2) }],
+    words: ["坂", "を", "上る"], total: 10, works: 6, at: 1, names: { 1: "Natsume_S_Meian" },
+    lines: [{ sentence: 3, document: 1, start: 0, end: 2, roles: roles(0) }, { sentence: 41, document: 5, start: 1, end: 3, roles: roles(2) }],
   });
   assert.equal(new URLSearchParams(inspectHref(s, lines[1], identity, "frequencies#x").slice(3)).get("entry"), null);
 });
