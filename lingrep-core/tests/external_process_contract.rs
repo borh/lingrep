@@ -23,6 +23,14 @@ use lingrep_core::token_match::{
     TokenAttributeIndex, TokenSchema,
 };
 
+const SPACY_SEMANTICS_DIGEST: &str =
+    "f9d77b5c557f7b403316c99ef6ce0b03087ed07036b2fc9c9115e9fb852934e6";
+const STANZA_SEMANTICS_DIGEST: &str =
+    "21a0972b2d9b8719c6af51f07cec52e3c1894a817bd41d1861f9c9d1306fcf2a";
+// The Python setup computes the same digest over the same tree in
+// test_implementation_digest_uses_the_rust_manifest_framing.
+const SPACY_FIXTURE_IMPLEMENTATION_MANIFEST_DIGEST: &str =
+    "d40fd67b4dac95a6e8901c2dbd0410bf3d7860bcd54c61c94fcb10111c96871a";
 const PORTABLE_CONTENT_WORDS: &str = include_str!("../../patterns/portable-content-words.lx");
 
 fn portable_content_catalog(schema: &TokenSchema, projection: &BoundProjection) -> BoundCatalog {
@@ -1271,74 +1279,187 @@ fn stanza_fixture() -> (
     Vec<(PathBuf, [u8; 32])>,
     Vec<(PathBuf, [u8; 32])>,
 ) {
+    python_bundle_fixture("stanza")
+}
+
+fn python_bundle_fixture(
+    kind: &str,
+) -> (
+    tempfile::TempDir,
+    Vec<(PathBuf, [u8; 32])>,
+    Vec<(PathBuf, [u8; 32])>,
+) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    for (relative, bytes) in [
+    let package = format!("adapter/src/lingrep_{kind}_adapter");
+    let implementation = [
+        (format!("adapter/bin/lingrep-{kind}-adapter"), "entrypoint"),
+        ("adapter/pyproject.toml".to_owned(), "project"),
+        ("adapter/uv.lock".to_owned(), "lock"),
+        (format!("{package}/__init__.py"), "package"),
+        (format!("{package}/__main__.py"), "main"),
+        (format!("{package}/adapter.py"), "adapter"),
+        (format!("{package}/bundle.py"), "bundle"),
         (
-            "adapter/bin/lingrep-stanza-adapter",
-            b"entrypoint".as_slice(),
-        ),
-        ("adapter/pyproject.toml", b"project".as_slice()),
-        ("adapter/uv.lock", b"lock".as_slice()),
-        (
-            "adapter-protocol/pyproject.toml",
-            b"protocol project".as_slice(),
-        ),
-        (
-            "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
-            b"protocol".as_slice(),
+            "adapter-protocol/pyproject.toml".to_owned(),
+            "protocol project",
         ),
         (
-            "adapter/src/lingrep_stanza_adapter/__init__.py",
-            b"package".as_slice(),
+            "adapter-protocol/src/lingrep_adapter_protocol/__init__.py".to_owned(),
+            "protocol",
         ),
-        (
-            "adapter/src/lingrep_stanza_adapter/__main__.py",
-            b"main".as_slice(),
-        ),
-        (
-            "adapter/src/lingrep_stanza_adapter/adapter.py",
-            b"adapter".as_slice(),
-        ),
-        (
-            "adapter/src/lingrep_stanza_adapter/bundle.py",
-            b"bundle".as_slice(),
-        ),
-        ("model/resources.json", b"resources".as_slice()),
-        ("model/tokenize/gsd.pt", b"tokenizer".as_slice()),
-        ("model/lingrep-stanza-model.json", b"{}".as_slice()),
-    ] {
+    ];
+    let resources: &[(&str, &str)] = if kind == "stanza" {
+        &[
+            ("model/resources.json", "resources"),
+            ("model/tokenize/gsd.pt", "tokenizer"),
+            ("model/lingrep-stanza-model.json", "{}"),
+        ]
+    } else {
+        &[
+            ("model/config.cfg", "config"),
+            ("model/lingrep-spacy-model.json", "{}"),
+        ]
+    };
+    let entry = |relative: &str, bytes: &str| {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, bytes).unwrap();
-    }
-    let entry = |relative: &str| {
+        std::fs::write(&path, bytes).unwrap();
         (
             PathBuf::from(relative),
-            *blake3::hash(&std::fs::read(root.join(relative)).unwrap()).as_bytes(),
+            *blake3::hash(bytes.as_bytes()).as_bytes(),
         )
     };
-    let implementation = [
-        "adapter/bin/lingrep-stanza-adapter",
-        "adapter/pyproject.toml",
-        "adapter/uv.lock",
-        "adapter/src/lingrep_stanza_adapter/__init__.py",
-        "adapter/src/lingrep_stanza_adapter/__main__.py",
-        "adapter/src/lingrep_stanza_adapter/adapter.py",
-        "adapter/src/lingrep_stanza_adapter/bundle.py",
-        "adapter-protocol/pyproject.toml",
-        "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
-    ]
-    .map(entry)
-    .to_vec();
-    let resources = [
-        "model/resources.json",
-        "model/tokenize/gsd.pt",
-        "model/lingrep-stanza-model.json",
-    ]
-    .map(entry)
-    .to_vec();
+    let implementation = implementation
+        .iter()
+        .map(|(relative, bytes)| entry(relative, bytes))
+        .collect();
+    let resources = resources
+        .iter()
+        .map(|(relative, bytes)| entry(relative, bytes))
+        .collect();
     (directory, implementation, resources)
+}
+
+#[test]
+fn bundled_adapter_identity_follows_its_semantics_revision_not_its_file_bytes() {
+    // blake3("lingrep.adapter-semantics/v1" || u64le(len) || revision), which
+    // the Python adapter tests pin for the same revisions.
+    let cases = [
+        (
+            "spacy",
+            ExternalAdapterCommand::spacy(
+                "python3",
+                "adapter/bin/lingrep-spacy-adapter",
+                "model",
+                "cpu",
+                1,
+            )
+            .unwrap(),
+            "spacy-profile",
+            "lingrep.spacy-adapter/v1",
+            SPACY_SEMANTICS_DIGEST,
+        ),
+        (
+            "stanza",
+            ExternalAdapterCommand::stanza(
+                "python3",
+                "adapter/bin/lingrep-stanza-adapter",
+                "model",
+                "fr",
+                "cpu",
+                1,
+            )
+            .unwrap(),
+            "stanza-profile",
+            "lingrep.stanza-adapter/v1",
+            STANZA_SEMANTICS_DIGEST,
+        ),
+    ];
+    for (kind, command, profile, revision, pinned) in cases {
+        let (directory, implementation, resources) = python_bundle_fixture(kind);
+        let root = directory.path();
+        let seal = |implementation: &[(PathBuf, [u8; 32])], resources: &[(PathBuf, [u8; 32])]| {
+            VerifiedAdapterManifest::new(
+                root,
+                implementation.to_vec(),
+                resources.to_vec(),
+                &command,
+                vec![ExternalComponent::new(profile, [1; 32]).unwrap()],
+            )
+            .unwrap()
+        };
+        let original = seal(&implementation, &resources);
+        let mut semantics = blake3::Hasher::new();
+        semantics.update(b"lingrep.adapter-semantics/v1");
+        semantics.update(&(revision.len() as u64).to_le_bytes());
+        semantics.update(revision.as_bytes());
+        assert_eq!(
+            original.implementation_digest(),
+            *semantics.finalize().as_bytes()
+        );
+        assert_eq!(
+            original.implementation_digest(),
+            decode_digest(pinned),
+            "{kind}"
+        );
+        if kind == "spacy" {
+            assert_eq!(
+                original.implementation_manifest_digest(),
+                decode_digest(SPACY_FIXTURE_IMPLEMENTATION_MANIFEST_DIGEST)
+            );
+        }
+
+        let package = format!("adapter/src/lingrep_{kind}_adapter");
+        for edited in [
+            "adapter/pyproject.toml".to_owned(),
+            "adapter/uv.lock".to_owned(),
+            format!("{package}/adapter.py"),
+            "adapter-protocol/pyproject.toml".to_owned(),
+        ] {
+            let path = root.join(&edited);
+            let before = std::fs::read(&path).unwrap();
+            let mut after = before.clone();
+            after.extend_from_slice(b"\n# comment or version bump\n");
+            std::fs::write(&path, &after).unwrap();
+            let rehashed = implementation
+                .iter()
+                .map(|(relative, digest)| {
+                    if relative == &PathBuf::from(&edited) {
+                        (relative.clone(), *blake3::hash(&after).as_bytes())
+                    } else {
+                        (relative.clone(), *digest)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let changed = seal(&rehashed, &resources);
+            assert_eq!(
+                changed.implementation_digest(),
+                original.implementation_digest(),
+                "{kind}: {edited}"
+            );
+            assert_ne!(
+                changed.implementation_manifest_digest(),
+                original.implementation_manifest_digest(),
+                "{kind}: {edited}"
+            );
+            std::fs::write(&path, &before).unwrap();
+        }
+
+        let (resource, digest) = &resources[0];
+        std::fs::write(root.join(resource), b"other model bytes").unwrap();
+        let mut changed_resources = resources.clone();
+        changed_resources[0] = (
+            resource.clone(),
+            *blake3::hash(b"other model bytes").as_bytes(),
+        );
+        assert_ne!(*digest, changed_resources[0].1);
+        assert_ne!(
+            seal(&implementation, &changed_resources).resource_manifest_digest(),
+            original.resource_manifest_digest(),
+            "{kind}"
+        );
+    }
 }
 
 #[test]

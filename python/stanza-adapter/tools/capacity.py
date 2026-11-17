@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import blake3
+from lingrep_adapter_protocol.resources import adapter_semantics_digest
 
+from lingrep_stanza_adapter.adapter import ADAPTER_SEMANTICS_REVISION
 from lingrep_stanza_adapter.bundle import load_profile, resource_manifest_digest
 
 ZERO = "00" * 32
@@ -87,7 +89,7 @@ def main() -> int:
         "language_policy": "fr",
         "boundary_policy": selection["boundary_policy"],
         "projection": selection["schema"],
-        "implementation_digest": ZERO,
+        "implementation_digest": adapter_semantics_digest(ADAPTER_SEMANTICS_REVISION),
         "resource_manifest_digest": resource_manifest_digest(
             model_relative, manifest_root
         ),

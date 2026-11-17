@@ -124,6 +124,45 @@ fn hex(value: &str) -> Result<[u8; 32], CliError> {
     Ok(result)
 }
 
+/// Compares the adapter code with the implementation digest that setup wrote
+/// to the runtime receipt beside the model. Bundles whose receipt predates the
+/// digest, and models without a receipt, are not checked.
+fn verify_recorded_implementation(
+    model: &Path,
+    manifest: &VerifiedAdapterManifest,
+) -> Result<(), CliError> {
+    let Some(bundle) = model.parent() else {
+        return Ok(());
+    };
+    let receipt = bundle.join("lingrep-runtime.json");
+    let bytes = match std::fs::read(&receipt) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(CliError::InputIo {
+                path: receipt,
+                source,
+            });
+        }
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| invalid(format!("{}: {error}", receipt.display())))?;
+    let Some(recorded) = value.get("implementation_digest") else {
+        return Ok(());
+    };
+    let recorded = recorded
+        .as_str()
+        .ok_or_else(|| invalid(format!("{}: implementation_digest", receipt.display())))?;
+    if hex(recorded)? != manifest.implementation_manifest_digest() {
+        return Err(invalid(format!(
+            "adapter code in {} differs from the code recorded in {}",
+            bundle.display(),
+            receipt.display()
+        )));
+    }
+    Ok(())
+}
+
 impl ExternalPlan {
     pub(crate) fn load(
         path: &Path,
@@ -383,6 +422,10 @@ impl ExternalPlan {
         let manifest =
             VerifiedAdapterManifest::new(root, implementation, resources, &command, components)
                 .map_err(invalid)?;
+        if matches!(file.kind.as_str(), "spacy" | "stanza") {
+            let model = resolve(file.model.as_deref().expect("known adapters bind a model"))?;
+            verify_recorded_implementation(&model, &manifest)?;
+        }
         let schema = TokenSchema::new(
             schema
                 .into_iter()
@@ -448,5 +491,100 @@ impl ExternalPlan {
             }),
             ExternalAdapterCancellation::from_flag(&self.cancellation),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundle() -> (tempfile::TempDir, VerifiedAdapterManifest) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let mut implementation = Vec::new();
+        let mut resources = Vec::new();
+        for (relative, bytes) in [
+            ("spacy-adapter/bin/lingrep-spacy-adapter", "entrypoint"),
+            ("spacy-adapter/pyproject.toml", "project"),
+            ("spacy-adapter/uv.lock", "lock"),
+            (
+                "spacy-adapter/src/lingrep_spacy_adapter/adapter.py",
+                "adapter",
+            ),
+            ("adapter-protocol/pyproject.toml", "protocol project"),
+            (
+                "adapter-protocol/src/lingrep_adapter_protocol/__init__.py",
+                "protocol",
+            ),
+            ("model/lingrep-spacy-model.json", "{}"),
+        ] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            let entry = (
+                PathBuf::from(relative),
+                *blake3::hash(bytes.as_bytes()).as_bytes(),
+            );
+            if relative.starts_with("model/") {
+                resources.push(entry);
+            } else {
+                implementation.push(entry);
+            }
+        }
+        let command = ExternalAdapterCommand::spacy(
+            "python3",
+            "spacy-adapter/bin/lingrep-spacy-adapter",
+            "model",
+            "cpu",
+            1,
+        )
+        .unwrap();
+        let manifest = VerifiedAdapterManifest::new(
+            root,
+            implementation,
+            resources,
+            &command,
+            vec![ExternalComponent::new("spacy-profile", [1; 32]).unwrap()],
+        )
+        .unwrap();
+        (directory, manifest)
+    }
+
+    fn receipt(root: &Path, value: &serde_json::Value) {
+        std::fs::write(
+            root.join("lingrep-runtime.json"),
+            serde_json::to_vec(value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn adapter_code_must_match_the_digest_setup_recorded() {
+        let (directory, manifest) = bundle();
+        let root = directory.path();
+        let model = root.join("model");
+        let recorded = manifest
+            .implementation_manifest_digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+
+        assert!(verify_recorded_implementation(&model, &manifest).is_ok());
+        receipt(root, &serde_json::json!({"packages": []}));
+        assert!(verify_recorded_implementation(&model, &manifest).is_ok());
+        receipt(
+            root,
+            &serde_json::json!({"implementation_digest": recorded}),
+        );
+        assert!(verify_recorded_implementation(&model, &manifest).is_ok());
+
+        receipt(
+            root,
+            &serde_json::json!({"implementation_digest": "00".repeat(32)}),
+        );
+        let error = verify_recorded_implementation(&model, &manifest)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("differs from the code recorded"), "{error}");
     }
 }

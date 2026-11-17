@@ -14,6 +14,7 @@ from pathlib import Path
 from .resources import (
     RUNTIME_IDENTITY_FILE,
     canonical_json,
+    implementation_manifest_digest,
     runtime_identity,
     runtime_receipt_path,
     validate_runtime,
@@ -202,7 +203,11 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
                     probe_text=args.probe_text,
                     packages=packages,
                 )
-            _write_runtime(model, _runtime_receipt(output / "model"))
+            receipt = _runtime_receipt(output / "model")
+            receipt["implementation_digest"] = implementation_manifest_digest(
+                root, kind
+            )
+            _write_runtime(model, receipt)
             (root / "setup.json").write_text(
                 json.dumps(_request(kind, args), sort_keys=True)
             )

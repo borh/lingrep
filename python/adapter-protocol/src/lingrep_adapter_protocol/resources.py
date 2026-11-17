@@ -10,8 +10,13 @@ from typing import Any, Literal
 MANIFEST_HASH_CHUNK_BYTES = 1 << 20
 RUNTIME_RECEIPT_FILE = "lingrep-runtime.json"
 RUNTIME_IDENTITY_FILE = "lingrep-runtime-identity.json"
-RUNTIME_IDENTITY_FORMAT = "lingrep.adapter-runtime-identity/v1"
+RUNTIME_IDENTITY_FORMAT = "lingrep.adapter-runtime-identity/v2"
 PLATFORM_KERNEL_DISTRIBUTIONS = frozenset({"thinc-apple-ops"})
+# The adapter semantics revision identifies the output of lingrep's own
+# adapter code, so their distribution versions stay out of the identity.
+ADAPTER_DISTRIBUTIONS = frozenset(
+    {"lingrep-adapter-protocol", "lingrep-spacy-adapter", "lingrep-stanza-adapter"}
+)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -30,22 +35,69 @@ def digest_json(value: Any) -> str:
     return blake3.blake3(canonical_json(value)).hexdigest()
 
 
+def adapter_semantics_digest(revision: str) -> str:
+    """Return the run header's implementation digest for a bundled adapter's
+    semantics revision; lingrep computes the same value."""
+
+    import blake3
+
+    encoded = revision.encode("utf-8")
+    digest = blake3.blake3(b"lingrep.adapter-semantics/v1")
+    digest.update(len(encoded).to_bytes(8, "little"))
+    digest.update(encoded)
+    return digest.hexdigest()
+
+
 def resource_manifest_digest(
     resource_root: Path, manifest_root: Path, *, provider: Literal["spaCy", "Stanza"]
+) -> str:
+    label = "spaCy model" if provider == "spaCy" else "Stanza resource"
+    if resource_root.is_absolute() or any(
+        part in {"", ".", ".."} for part in resource_root.parts
+    ):
+        raise ValueError(f"{label} root must be normalized and manifest-relative")
+    return _manifest_digest(
+        b"lingrep.analyzer-resources/v1", manifest_root, [resource_root], provider
+    )
+
+
+def implementation_manifest_digest(
+    manifest_root: Path, kind: Literal["spacy", "stanza"]
+) -> str:
+    """Return the digest lingrep computes over a staged adapter's code files."""
+
+    project = Path(f"{kind}-adapter")
+    protocol = Path("adapter-protocol")
+    return _manifest_digest(
+        b"lingrep.adapter-implementation/v1",
+        manifest_root,
+        [
+            project / "bin",
+            project / "src",
+            project / "uv.lock",
+            project / "pyproject.toml",
+            protocol / "pyproject.toml",
+            protocol / "src",
+        ],
+        "spaCy" if kind == "spacy" else "Stanza",
+    )
+
+
+def _manifest_digest(
+    domain: bytes,
+    manifest_root: Path,
+    paths: list[Path],
+    provider: Literal["spaCy", "Stanza"],
 ) -> str:
     import blake3
 
     root = manifest_root.resolve(strict=True)
-    model = resource_root
-    label = "spaCy model" if provider == "spaCy" else "Stanza resource"
-    if model.is_absolute() or any(part in {"", ".", ".."} for part in model.parts):
-        raise ValueError(f"{label} root must be normalized and manifest-relative")
-    absolute = root / model
     entries: list[tuple[str, int, bytes]] = []
-    _collect_manifest_files(root, absolute, entries, provider)
+    for path in paths:
+        _collect_manifest_files(root, root / path, entries, provider)
     entries.sort(key=lambda entry: entry[0].encode("utf-8"))
     digest = blake3.blake3()
-    digest.update(b"lingrep.analyzer-resources/v1")
+    digest.update(domain)
     digest.update(len(entries).to_bytes(8, "little"))
     for relative, length, content_digest in entries:
         encoded = relative.encode("utf-8")
@@ -108,15 +160,16 @@ def _distribution_name(name: str) -> str:
 
 def runtime_identity(receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Return the interpreter release and normalized package versions,
-    excluding PLATFORM_KERNEL_DISTRIBUTIONS."""
+    excluding PLATFORM_KERNEL_DISTRIBUTIONS and ADAPTER_DISTRIBUTIONS."""
 
+    excluded = PLATFORM_KERNEL_DISTRIBUTIONS | ADAPTER_DISTRIBUTIONS
     return {
         "format": RUNTIME_IDENTITY_FORMAT,
         "python": receipt["python_release"],
         "packages": sorted(
             [_distribution_name(name), version]
             for name, version in receipt["packages"]
-            if _distribution_name(name) not in PLATFORM_KERNEL_DISTRIBUTIONS
+            if _distribution_name(name) not in excluded
         ),
     }
 

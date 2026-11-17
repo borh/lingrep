@@ -25,6 +25,14 @@ use crate::token_match::TokenSchema;
 
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
+/// Identifies the output of the bundled spaCy adapter code. It mirrors
+/// `ADAPTER_SEMANTICS_REVISION` in `lingrep_spacy_adapter/adapter.py`, which
+/// rejects a run header carrying any other revision. Replace both when the
+/// adapter's token output changes for the same model and runtime.
+const SPACY_ADAPTER_SEMANTICS_REVISION: &str = "lingrep.spacy-adapter/v1";
+/// The Stanza counterpart of [`SPACY_ADAPTER_SEMANTICS_REVISION`].
+const STANZA_ADAPTER_SEMANTICS_REVISION: &str = "lingrep.stanza-adapter/v1";
+
 pub type DiagnosticCallback = Arc<dyn Fn(&[u8]) -> Result<(), String> + Send + Sync + 'static>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,6 +259,7 @@ pub struct VerifiedAdapterManifest {
     implementation: Box<[ManifestEntry]>,
     resources: Box<[ManifestEntry]>,
     implementation_digest: [u8; 32],
+    implementation_manifest_digest: [u8; 32],
     resource_manifest_digest: [u8; 32],
     components: Box<[ExternalComponent]>,
     command_digest: [u8; 32],
@@ -331,8 +340,17 @@ impl VerifiedAdapterManifest {
                 "manifest component closure must be nonempty with unique names".to_owned(),
             ));
         }
-        let implementation_digest =
+        let implementation_manifest_digest =
             manifest_digest(b"lingrep.adapter-implementation/v1", &implementation)?;
+        let implementation_digest = match &command.verified_bundle {
+            Some(VerifiedBundle::Spacy { .. }) => {
+                adapter_semantics_digest(SPACY_ADAPTER_SEMANTICS_REVISION)
+            }
+            Some(VerifiedBundle::Stanza { .. }) => {
+                adapter_semantics_digest(STANZA_ADAPTER_SEMANTICS_REVISION)
+            }
+            None => implementation_manifest_digest,
+        };
         let resource_manifest_digest =
             manifest_digest(b"lingrep.analyzer-resources/v1", &resources)?;
         Ok(Self {
@@ -340,6 +358,7 @@ impl VerifiedAdapterManifest {
             implementation: implementation.into_boxed_slice(),
             resources: resources.into_boxed_slice(),
             implementation_digest,
+            implementation_manifest_digest,
             resource_manifest_digest,
             components: components.into_boxed_slice(),
             command_digest,
@@ -370,9 +389,19 @@ impl VerifiedAdapterManifest {
         Ok(())
     }
 
+    /// The implementation input to the analyzer's semantic identity. For a
+    /// spaCy or Stanza bundle this is the adapter's semantics revision, so
+    /// packaging, version and comment edits leave it unchanged; for a generic
+    /// protocol adapter it is [`Self::implementation_manifest_digest`].
     #[must_use]
     pub const fn implementation_digest(&self) -> [u8; 32] {
         self.implementation_digest
+    }
+
+    /// The digest over every implementation file's path, length and content.
+    #[must_use]
+    pub const fn implementation_manifest_digest(&self) -> [u8; 32] {
+        self.implementation_manifest_digest
     }
 
     #[must_use]
@@ -714,6 +743,13 @@ fn verify_manifest_entry(root: &Path, entry: &ManifestEntry) -> Result<(), Exter
         )));
     }
     Ok(())
+}
+
+fn adapter_semantics_digest(revision: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"lingrep.adapter-semantics/v1");
+    update_command_frame(&mut hasher, revision.as_bytes());
+    *hasher.finalize().as_bytes()
 }
 
 fn manifest_digest(

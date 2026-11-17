@@ -14,7 +14,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from lingrep_adapter_protocol.resources import adapter_semantics_digest
+
 from lingrep_spacy_adapter.adapter import (
+    ADAPTER_SEMANTICS_REVISION,
     LoadedPipeline,
     ProjectionAttribute,
     _decode_batch_begin,
@@ -391,34 +394,44 @@ class AdapterProtocolTests(unittest.TestCase):
             )
             header["component_closure"][1]["digest"] = profile_digest
             header["output_config_digest"] = profile_digest
-            records = [
-                header,
-                {"record": "batch_begin", "batch_id": 0, "document_count": 1},
-                document,
-                {"record": "batch_end", "batch_id": 0},
-            ]
-            encoded = b"".join(
-                json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
-                + b"\n"
-                for record in records
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "lingrep_spacy_adapter",
-                    "--model-root",
-                    "model",
-                    "--backend",
-                    "cpu",
-                    "--batch-size",
-                    "1",
-                ],
-                input=encoded,
-                capture_output=True,
-                check=False,
-                cwd=root,
-            )
+
+            def run(implementation_digest: str) -> subprocess.CompletedProcess:
+                records = [
+                    {**header, "implementation_digest": implementation_digest},
+                    {"record": "batch_begin", "batch_id": 0, "document_count": 1},
+                    document,
+                    {"record": "batch_end", "batch_id": 0},
+                ]
+                encoded = b"".join(
+                    json.dumps(
+                        record, ensure_ascii=False, separators=(",", ":")
+                    ).encode()
+                    + b"\n"
+                    for record in records
+                )
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "lingrep_spacy_adapter",
+                        "--model-root",
+                        "model",
+                        "--backend",
+                        "cpu",
+                        "--batch-size",
+                        "1",
+                    ],
+                    input=encoded,
+                    capture_output=True,
+                    check=False,
+                    cwd=root,
+                )
+
+            rejected = run(zero)
+            result = run(adapter_semantics_digest(ADAPTER_SEMANTICS_REVISION))
+        self.assertEqual(rejected.returncode, 1)
+        self.assertIn(b"does not name adapter semantics", rejected.stderr)
+        self.assertEqual(rejected.stdout, b"")
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         output = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(
@@ -1086,6 +1099,138 @@ class ModelBundleTests(unittest.TestCase):
                 load_spacy_pipeline(str(model), "cpu", "morphology", "input")
 
 
+GOLDEN_FILE = Path(__file__).with_name("golden") / "ginza-output.json"
+GOLDEN_MODEL = "ja_ginza"
+GOLDEN_RUNTIME_DISTRIBUTIONS = (
+    "ginza",
+    "ja-ginza",
+    "spacy",
+    "sudachipy",
+    "sudachidict-core",
+    "thinc",
+)
+GOLDEN_TEXTS = (
+    "彼女は坂を一つ上った。",
+    "猫が走った。犬は庭で寝ている。",
+    "えたいの知れない不吉な塊が私の心を始終圧えつけていた。",
+    "開いている窓を一つ一つ見ていると、僕はそのことを憶い出す。",
+    "2026年11月17日、東京駅でＡＩの本を3冊買いました！　高かった？",
+    "「行こうか」と彼は言ったが、誰も答えなかった。",
+)
+
+
+def _golden_sentences(model: Path, selection: str) -> list[dict]:
+    """Serve GOLDEN_TEXTS through the adapter protocol and return its
+    sentence records."""
+
+    profile, segmentation = selection.split("/")
+    loaded = load_spacy_pipeline(str(model), "cpu", profile, segmentation)
+    zero = "00" * 32
+    header = {
+        "record": "run_header",
+        "protocol": "lingrep.external-morphology/v1",
+        "run_id": "ginza-golden",
+        "family": "external",
+        "profile": profile,
+        "segmentation": segmentation,
+        "normalization": "none",
+        "language_policy": loaded.language,
+        "boundary_policy": loaded.boundary_policy,
+        "projection": [
+            {"key": attribute.key, "kind": attribute.kind}
+            for attribute in loaded.schema
+        ],
+        "implementation_digest": adapter_semantics_digest(ADAPTER_SEMANTICS_REVISION),
+        "resource_manifest_digest": zero,
+        "projection_policy_digest": zero,
+        "alignment_policy_digest": zero,
+        "component_closure": sorted(
+            [{"name": "adapter-command", "digest": zero}, *loaded.component_closure],
+            key=lambda component: component["name"],
+        ),
+        "output_config_digest": loaded.output_config_digest,
+        "protocol_limits": {
+            "max_record_bytes": 1_048_576,
+            "max_request_batch_bytes": 67_108_864,
+            "max_response_batch_bytes": 67_108_864,
+            "max_documents_per_batch": 2048,
+            "max_schema_keys": 255,
+            "max_schema_key_bytes": 256,
+            "max_warnings_per_sentence": 64,
+            "max_warning_message_bytes": 16_384,
+            "max_stderr_tail_bytes": 65_536,
+        },
+    }
+    kind = "sentence" if segmentation == "input" else "segment"
+    records = [
+        header,
+        {"record": "batch_begin", "batch_id": 0, "document_count": len(GOLDEN_TEXTS)},
+        *(
+            {
+                "record": "document",
+                "batch_id": 0,
+                "document_ordinal": ordinal,
+                "input_id": ordinal,
+                "kind": kind,
+                "text": text,
+                "provenance": {
+                    "source_identity": zero,
+                    "document_identity": 1,
+                    "paragraph_identity": None,
+                    "metadata_digest": zero,
+                },
+            }
+            for ordinal, text in enumerate(GOLDEN_TEXTS)
+        ),
+        {"record": "batch_end", "batch_id": 0},
+    ]
+    stdin = io.BytesIO(
+        b"".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
+            + b"\n"
+            for record in records
+        )
+    )
+    stdout = io.BytesIO()
+    serve(
+        stdin,
+        stdout,
+        model_root=str(model),
+        backend="cpu",
+        batch_size=32,
+        lock_digest=zero,
+        load_pipeline=lambda *_: loaded,
+    )
+    return [
+        record
+        for record in map(json.loads, stdout.getvalue().splitlines())
+        if record["record"] == "sentence"
+    ]
+
+
+def _golden_json(value: dict) -> str:
+    """Render one sentence record per line so that output changes diff by
+    sentence."""
+
+    def dump(item: object) -> str:
+        return json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+
+    lines = ["{"]
+    for key in ("revision", "model", "runtime", "texts"):
+        lines.append(f" {dump(key)}: {dump(value[key])},")
+    lines.append(' "selections": {')
+    selections = list(value["selections"].items())
+    for index, (key, sentences) in enumerate(selections):
+        lines.append(f"  {dump(key)}: [")
+        lines.extend(
+            f"   {dump(sentence)}{',' if position + 1 < len(sentences) else ''}"
+            for position, sentence in enumerate(sentences)
+        )
+        lines.append("  ]" + ("," if index + 1 < len(selections) else ""))
+    lines.extend([" }", "}"])
+    return "\n".join(lines) + "\n"
+
+
 @unittest.skipUnless(
     os.environ.get("LINGREP_SPACY_GINZA_MODEL"),
     "requires LINGREP_SPACY_GINZA_MODEL and the ginza uv extra",
@@ -1232,6 +1377,69 @@ class GiNzaModelTests(unittest.TestCase):
         self.assertEqual("".join(expected["values"][0::4]), text)
 
     @unittest.skipUnless(
+        os.environ.get("LINGREP_SPACY_GINZA_MODEL") == GOLDEN_MODEL,
+        f"the golden output is recorded for {GOLDEN_MODEL}",
+    )
+    def test_real_ginza_model_output_matches_its_semantics_revision_golden(
+        self,
+    ) -> None:
+        """Changing the adapter's output requires a new semantics revision.
+
+        Set LINGREP_SPACY_WRITE_GOLDEN=1 to record the golden file after the
+        revision or the runtime changes."""
+
+        import importlib.metadata
+
+        runtime = {
+            name: importlib.metadata.version(name)
+            for name in GOLDEN_RUNTIME_DISTRIBUTIONS
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model"
+            save_model(GOLDEN_MODEL, model)
+            profile = prepare_model_bundle(model, probe_text="猫が走る。")
+            selections = {
+                key: _golden_sentences(model, key)
+                for key in sorted(profile["selections"])
+            }
+        actual = {
+            "revision": ADAPTER_SEMANTICS_REVISION,
+            "model": GOLDEN_MODEL,
+            "runtime": runtime,
+            "texts": list(GOLDEN_TEXTS),
+            "selections": selections,
+        }
+        recorded = (
+            json.loads(GOLDEN_FILE.read_text()) if GOLDEN_FILE.is_file() else None
+        )
+        same_inputs = recorded is not None and all(
+            recorded[key] == actual[key]
+            for key in ("revision", "model", "runtime", "texts")
+        )
+        if os.environ.get("LINGREP_SPACY_WRITE_GOLDEN") == "1":
+            self.assertFalse(
+                same_inputs and recorded != actual,
+                "adapter output changed under the same semantics revision and "
+                "runtime; replace ADAPTER_SEMANTICS_REVISION and its Rust mirror",
+            )
+            GOLDEN_FILE.parent.mkdir(exist_ok=True)
+            GOLDEN_FILE.write_text(_golden_json(actual))
+            return
+        self.assertIsNotNone(recorded, f"{GOLDEN_FILE} is missing")
+        self.assertTrue(
+            same_inputs,
+            "the semantics revision or runtime differs from the golden file; "
+            "record it with LINGREP_SPACY_WRITE_GOLDEN=1",
+        )
+        self.assertEqual(
+            recorded["selections"],
+            actual["selections"],
+            "adapter output changed under the same semantics revision and "
+            "runtime; replace ADAPTER_SEMANTICS_REVISION and its Rust mirror, "
+            "then record the golden file",
+        )
+
+    @unittest.skipUnless(
         os.environ.get("LINGREP_SPACY_RUN_ROCM") == "1",
         "requires LINGREP_SPACY_RUN_ROCM=1 and the rocm uv extra",
     )
@@ -1308,6 +1516,9 @@ class GiNzaModelTests(unittest.TestCase):
             )
             header["component_closure"][1]["digest"] = profile_digest
             header["output_config_digest"] = profile_digest
+            header["implementation_digest"] = adapter_semantics_digest(
+                ADAPTER_SEMANTICS_REVISION
+            )
             encoded = b"".join(
                 json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
                 + b"\n"

@@ -7,6 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lingrep_adapter_protocol.resources import (
+    _manifest_digest,
+    adapter_semantics_digest,
+    implementation_manifest_digest,
     resource_manifest_digest,
     validate_runtime,
 )
@@ -19,13 +22,21 @@ from lingrep_adapter_protocol.setup import (
     setup,
 )
 
+from lingrep_spacy_adapter.adapter import ADAPTER_SEMANTICS_REVISION
+
+REPOSITORY = Path(__file__).resolve().parents[3]
+
 LINUX_RECEIPT = {
     "python": "../runtime/bin/python",
     "python_release": "cpython-3.14.0",
     "python_version": "3.14.0 (main, Oct 14 2025, 17:48:02) [Clang 20.1.4 ]",
     "packages": [
+        ["SudachiDict-core", "20260723"],
+        ["SudachiPy", "0.6.11"],
         ["ginza", "5.3.1"],
-        ["ja-ginza", "5.3.0"],
+        ["ja_ginza", "5.3.0"],
+        ["lingrep-adapter-protocol", "0.8.0"],
+        ["lingrep-spacy-adapter", "0.8.0"],
         ["spacy", "3.8.18"],
         ["thinc", "8.3.14"],
     ],
@@ -168,14 +179,94 @@ class RuntimeIdentityTests(unittest.TestCase):
     def test_platform_build_details_do_not_change_the_resource_digest(self):
         self.assertEqual(self._digest(LINUX_RECEIPT), self._digest(DARWIN_RECEIPT))
 
+    def test_lingrep_adapter_versions_do_not_change_the_resource_digest(self):
+        bumped = _with_package(LINUX_RECEIPT, "lingrep-spacy-adapter", "0.8.1")
+        bumped = _with_package(bumped, "lingrep-adapter-protocol", "0.8.1")
+        self.assertEqual(self._digest(LINUX_RECEIPT), self._digest(bumped))
+
     def test_output_affecting_runtime_facts_change_the_resource_digest(self):
         baseline = self._digest(LINUX_RECEIPT)
         for name, receipt in (
             ("spacy", _with_package(LINUX_RECEIPT, "spacy", "3.8.19")),
-            ("ja-ginza", _with_package(LINUX_RECEIPT, "ja-ginza", "5.4.0")),
+            ("ginza", _with_package(LINUX_RECEIPT, "ginza", "5.3.2")),
+            ("ja_ginza", _with_package(LINUX_RECEIPT, "ja_ginza", "5.4.0")),
+            ("SudachiPy", _with_package(LINUX_RECEIPT, "SudachiPy", "0.6.12")),
+            (
+                "SudachiDict-core",
+                _with_package(LINUX_RECEIPT, "SudachiDict-core", "20261015"),
+            ),
+            ("thinc", _with_package(LINUX_RECEIPT, "thinc", "8.3.15")),
+            ("transformers", _with_package(LINUX_RECEIPT, "transformers", "4.57.1")),
             ("python", {**LINUX_RECEIPT, "python_release": "cpython-3.14.1"}),
         ):
             with self.subTest(name):
                 self.assertNotEqual(self._digest(receipt), baseline)
         with self.subTest("weights"):
             self.assertNotEqual(self._digest(LINUX_RECEIPT, b"other"), baseline)
+
+
+class AdapterSemanticsTests(unittest.TestCase):
+    def test_revision_digest_matches_the_rust_pin(self):
+        # SPACY_SEMANTICS_DIGEST in lingrep-core/tests/external_process_contract.rs
+        self.assertEqual(
+            adapter_semantics_digest("lingrep.spacy-adapter/v1"),
+            "f9d77b5c557f7b403316c99ef6ce0b03087ed07036b2fc9c9115e9fb852934e6",
+        )
+
+    @unittest.skipUnless(
+        (REPOSITORY / "lingrep-core").is_dir(), "requires the lingrep repository"
+    )
+    def test_revision_matches_its_rust_mirror(self):
+        source = (
+            REPOSITORY / "lingrep-core/src/execution/external_process.rs"
+        ).read_text()
+        self.assertIn(
+            "const SPACY_ADAPTER_SEMANTICS_REVISION: &str = "
+            f'"{ADAPTER_SEMANTICS_REVISION}";',
+            source,
+        )
+
+    def test_implementation_digest_uses_the_rust_manifest_framing(self):
+        # The python_bundle_fixture("spacy") tree in external_process_contract.rs.
+        files = {
+            "adapter/bin/lingrep-spacy-adapter": "entrypoint",
+            "adapter/pyproject.toml": "project",
+            "adapter/uv.lock": "lock",
+            "adapter/src/lingrep_spacy_adapter/__init__.py": "package",
+            "adapter/src/lingrep_spacy_adapter/__main__.py": "main",
+            "adapter/src/lingrep_spacy_adapter/adapter.py": "adapter",
+            "adapter/src/lingrep_spacy_adapter/bundle.py": "bundle",
+            "adapter-protocol/pyproject.toml": "protocol project",
+            "adapter-protocol/src/lingrep_adapter_protocol/__init__.py": "protocol",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative, text in files.items():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(text)
+            digest = _manifest_digest(
+                b"lingrep.adapter-implementation/v1",
+                root,
+                [
+                    Path("adapter/bin"),
+                    Path("adapter/src"),
+                    Path("adapter/uv.lock"),
+                    Path("adapter/pyproject.toml"),
+                    Path("adapter-protocol/pyproject.toml"),
+                    Path("adapter-protocol/src"),
+                ],
+                "spaCy",
+            )
+        # SPACY_FIXTURE_IMPLEMENTATION_MANIFEST_DIGEST in the Rust contract test.
+        self.assertEqual(
+            digest, "d40fd67b4dac95a6e8901c2dbd0410bf3d7860bcd54c61c94fcb10111c96871a"
+        )
+
+    def test_staged_code_edits_change_the_implementation_manifest_digest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _stage_code(root, "spacy")
+            before = implementation_manifest_digest(root, "spacy")
+            adapter = root / "spacy-adapter/src/lingrep_spacy_adapter/adapter.py"
+            adapter.write_text(adapter.read_text() + "# comment\n")
+            self.assertNotEqual(implementation_manifest_digest(root, "spacy"), before)

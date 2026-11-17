@@ -60,6 +60,7 @@ from lingrep_adapter_protocol import (
 from lingrep_adapter_protocol import (
     decode_header as _decode_protocol_header,
 )
+from lingrep_adapter_protocol.resources import adapter_semantics_digest
 
 from .bundle import (
     BASE_UD_FEATURE_NAMES,
@@ -68,6 +69,11 @@ from .bundle import (
     resource_manifest_digest,
     selection_digest,
 )
+
+# Identifies this adapter's token output for a given model and runtime, and is
+# mirrored by STANZA_ADAPTER_SEMANTICS_REVISION in lingrep-core's
+# execution/external_process.rs. Replace both when the output changes.
+ADAPTER_SEMANTICS_REVISION = "lingrep.stanza-adapter/v1"
 
 ValueKind = Literal["scalar", "string_set"]
 Segmentation = Literal["input", "analyzer"]
@@ -248,6 +254,14 @@ def serve(
         raise ValueError("max_record_bytes exceeds the adapter safety ceiling")
 
     if load_pipeline is None:
+        if header["implementation_digest"] != adapter_semantics_digest(
+            ADAPTER_SEMANTICS_REVISION
+        ):
+            raise ValueError(
+                "run_header implementation digest does not name adapter semantics "
+                f"{ADAPTER_SEMANTICS_REVISION}; use the lingrep release that "
+                "prepared this analyzer"
+            )
         actual_resource_digest = resource_manifest_digest(
             Path(resource_root), Path.cwd()
         )

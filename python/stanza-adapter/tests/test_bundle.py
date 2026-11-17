@@ -9,6 +9,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from lingrep_adapter_protocol.resources import adapter_semantics_digest
+
+from lingrep_stanza_adapter.adapter import ADAPTER_SEMANTICS_REVISION
 from lingrep_stanza_adapter.bundle import (
     PROFILE_FILE,
     load_profile,
@@ -297,6 +300,30 @@ class BundleTests(unittest.TestCase):
                     loaded["selection_digests"][name], selection_digest(selection)
                 )
             self.assertEqual(json.loads(first_bytes), first)
+
+
+class AdapterSemanticsTests(unittest.TestCase):
+    def test_revision_digest_matches_the_rust_pin(self):
+        # STANZA_SEMANTICS_DIGEST in lingrep-core/tests/external_process_contract.rs
+        self.assertEqual(
+            adapter_semantics_digest("lingrep.stanza-adapter/v1"),
+            "21a0972b2d9b8719c6af51f07cec52e3c1894a817bd41d1861f9c9d1306fcf2a",
+        )
+
+    @unittest.skipUnless(
+        (Path(__file__).resolve().parents[3] / "lingrep-core").is_dir(),
+        "requires the lingrep repository",
+    )
+    def test_revision_matches_its_rust_mirror(self):
+        source = (
+            Path(__file__).resolve().parents[3]
+            / "lingrep-core/src/execution/external_process.rs"
+        ).read_text()
+        self.assertIn(
+            "const STANZA_ADAPTER_SEMANTICS_REVISION: &str = "
+            f'"{ADAPTER_SEMANTICS_REVISION}";',
+            source,
+        )
 
 
 if __name__ == "__main__":
