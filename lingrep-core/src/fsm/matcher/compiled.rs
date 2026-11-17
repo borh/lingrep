@@ -12,7 +12,7 @@ use super::exec::Matcher;
 use super::predicate::PredicateMetrics;
 use super::predicate::{PredicateCatalog, PredicateDigest, PredicateSession};
 use super::program::Program;
-use super::resource::{MatchBudget, MatchResourceError};
+use super::resource::{MatchBudget, MatchResourceError, OutputBudget};
 #[cfg(feature = "bench-instrumentation")]
 use super::spawn_candidate_metrics::SpawnCandidateAccumulator;
 use crate::corpus::conllu::{EnhancedGraph, EnhancedGraphObservation};
@@ -29,6 +29,7 @@ use crate::token_match::{AttributeKey, AttributeKind, TokenSequence};
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 #[cfg(feature = "bench-instrumentation")]
 use std::time::{Duration, Instant};
 
@@ -320,13 +321,18 @@ fn catalog_match_key(matched: &Match) -> (usize, usize, &str, Option<&str>) {
     )
 }
 
-fn merge_catalog_matches(ordinary: Vec<Match>, lexical: Vec<Match>) -> Vec<Match> {
+fn merge_catalog_matches(
+    ordinary: Vec<Match>,
+    lexical: Vec<Match>,
+    output_budget: &OutputBudget,
+) -> Result<Vec<Match>, MatchResourceError> {
     if lexical.is_empty() {
-        return ordinary;
+        return Ok(ordinary);
     }
     if ordinary.is_empty() {
-        return lexical;
+        return Ok(lexical);
     }
+    output_budget.reserve_buffer::<Match>(ordinary.len().saturating_add(lexical.len()))?;
     let mut output = Vec::with_capacity(ordinary.len() + lexical.len());
     let mut ordinary = ordinary.into_iter().peekable();
     let mut lexical = lexical.into_iter().peekable();
@@ -339,7 +345,7 @@ fn merge_catalog_matches(ordinary: Vec<Match>, lexical: Vec<Match>) -> Vec<Match
     }
     output.extend(ordinary);
     output.extend(lexical);
-    output
+    Ok(output)
 }
 
 impl CompiledCatalog {
@@ -574,7 +580,7 @@ impl CompiledCatalog {
     ///
     /// Returns an anchor-resolution error if the catalog's anchor cannot be resolved.
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_published_matches`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_published_matches`] to handle this error.
     #[expect(
         clippy::panic,
         clippy::panic_in_result_fn,
@@ -591,7 +597,7 @@ impl CompiledCatalog {
         }
     }
 
-    /// As [`Self::find_published_matches`], with graph-enumeration failures returned as errors.
+    /// As [`Self::find_published_matches`], with matching resource failures returned as errors.
     pub fn try_find_published_matches<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -632,7 +638,7 @@ impl CompiledCatalog {
     /// result policy cannot resolve an anchor. This is the same failure mode as
     /// [`Self::find_published_matches`].
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_explain_sentence`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_explain_sentence`] to handle this error.
     #[expect(
         clippy::panic,
         clippy::panic_in_result_fn,
@@ -649,7 +655,7 @@ impl CompiledCatalog {
         }
     }
 
-    /// As [`Self::explain_sentence`], with graph-enumeration failures returned as errors.
+    /// As [`Self::explain_sentence`], with matching resource failures returned as errors.
     pub fn try_explain_sentence<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -664,7 +670,7 @@ impl CompiledCatalog {
     ///
     /// As [`Self::explain_sentence`].
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_explain_sentence_in_context`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_explain_sentence_in_context`] to handle this error.
     #[expect(
         clippy::panic,
         clippy::panic_in_result_fn,
@@ -682,7 +688,7 @@ impl CompiledCatalog {
         }
     }
 
-    /// As [`Self::explain_sentence_in_context`], with graph-enumeration failures returned as errors.
+    /// As [`Self::explain_sentence_in_context`], with matching resource failures returned as errors.
     pub fn try_explain_sentence_in_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
@@ -839,13 +845,13 @@ impl CompiledCatalog {
     }
 
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Vec<Match> {
         self.try_find_matches(tokens)
-            .expect("graph matching exceeded its sentence budget")
+            .expect("matching exceeded its resource budget")
     }
 
-    /// Returns complete canonical matches, or an error when one sentence exceeds a graph-enumeration budget.
+    /// Returns complete canonical matches, or an error when matching exceeds a graph budget or the memory budget for results.
     pub fn try_find_matches<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -859,17 +865,17 @@ impl CompiledCatalog {
     /// Matching reads at most [`Self::lookaround_reach`] tokens of a window on
     /// each side of the sentence.
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_in_context`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches_in_context`] to handle this error.
     pub fn find_matches_in_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
         context: &'t super::LookaroundContext<'t, S>,
     ) -> Vec<Match> {
         self.try_find_matches_with_context(tokens, Some(context))
-            .expect("graph matching exceeded its sentence budget")
+            .expect("matching exceeded its resource budget")
     }
 
-    /// As [`Self::find_matches_in_context`], with graph-enumeration failures returned as errors.
+    /// As [`Self::find_matches_in_context`], with matching resource failures returned as errors.
     pub fn try_find_matches_in_context<'t, S: TokenSequence + ?Sized>(
         &self,
         tokens: &'t S,
@@ -902,57 +908,76 @@ impl CompiledCatalog {
         tokens: &'t S,
         context: Option<&'t super::LookaroundContext<'t, S>>,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        let mut budget = MatchBudget::default();
+        self.try_find_matches_with_context_and_output(
+            tokens,
+            context,
+            &Arc::new(OutputBudget::default()),
+        )
+    }
+
+    pub(crate) fn try_find_matches_with_context_and_output<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        context: Option<&'t super::LookaroundContext<'t, S>>,
+        output: &Arc<OutputBudget>,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        output.check()?;
+        let mut budget = MatchBudget::with_output(Arc::clone(output));
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
-            let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
+            let mut matches =
+                Matcher::try_find_matches_dense(&budget.output, &self.dense, &predicates, tokens)?;
             for matched in &mut matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                     matched.captures = plan
-                        .extract_without_assertions(&predicates, tokens, matched.start, matched.end)
+                        .extract_without_assertions(
+                            &budget.output,
+                            &predicates,
+                            tokens,
+                            matched.start,
+                            matched.end,
+                        )?
                         .expect("NFA-accepted capture span must have a prioritized extraction");
                 }
             }
             for plan in &self.evaluated_plans {
-                matches.extend(plan.try_find_matches_without_assertions(
-                    &mut budget,
-                    &predicates,
-                    tokens,
-                )?);
+                let found =
+                    plan.try_find_matches_without_assertions(&mut budget, &predicates, tokens)?;
+                budget.output.reserve_vec(&mut matches, found.len())?;
+                matches.extend(found);
             }
-            return Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)));
+            return self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output);
         }
 
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
             .with_context(context);
-        let mut matches = Matcher::find_matches_dense_with_assertions(
+        let mut matches = Matcher::try_find_matches_dense_with_assertions(
+            &budget.output,
             &self.dense,
             &predicates,
             tokens,
             &mut session,
-        );
+        )?;
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                 matched.captures = plan
                     .extract(
+                        &budget.output,
                         &predicates,
                         tokens,
                         matched.start,
                         matched.end,
                         &mut session,
-                    )
+                    )?
                     .expect("NFA-accepted capture span must have a prioritized extraction");
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(plan.try_find_matches(
-                &mut budget,
-                &predicates,
-                tokens,
-                &mut session,
-            )?);
+            let found = plan.try_find_matches(&mut budget, &predicates, tokens, &mut session)?;
+            budget.output.reserve_vec(&mut matches, found.len())?;
+            matches.extend(found);
         }
-        Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)))
+        self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output)
     }
 
     /// Matches with an explicit enhanced-graph observation.
@@ -963,7 +988,7 @@ impl CompiledCatalog {
     /// semantics; bound execution additionally fails when its source did not
     /// request a graph required by the catalog.
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_with_enhanced_graph`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches_with_enhanced_graph`] to handle this error.
     #[expect(
         clippy::panic,
         clippy::panic_in_result_fn,
@@ -981,7 +1006,7 @@ impl CompiledCatalog {
         }
     }
 
-    /// As [`Self::find_matches_with_enhanced_graph`], with graph-enumeration failures returned as errors.
+    /// As [`Self::find_matches_with_enhanced_graph`], with matching resource failures returned as errors.
     pub fn try_find_matches_with_enhanced_graph<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1007,59 +1032,88 @@ impl CompiledCatalog {
         graph: &EnhancedGraph,
         context: Option<&'t super::LookaroundContext<'t, S>>,
     ) -> Result<Vec<Match>, MatchResourceError> {
-        let mut budget = MatchBudget::default();
+        self.try_find_matches_with_complete_graph_and_output(
+            tokens,
+            graph,
+            context,
+            &Arc::new(OutputBudget::default()),
+        )
+    }
+
+    pub(crate) fn try_find_matches_with_complete_graph_and_output<'t, S: TokenSequence + ?Sized>(
+        &self,
+        tokens: &'t S,
+        graph: &EnhancedGraph,
+        context: Option<&'t super::LookaroundContext<'t, S>>,
+        output: &Arc<OutputBudget>,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        output.check()?;
+        let mut budget = MatchBudget::with_output(Arc::clone(output));
         let predicates = PredicateSession::new(&self.predicates);
         if !self.requires_assertion_session() {
-            let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
+            let mut matches =
+                Matcher::try_find_matches_dense(&budget.output, &self.dense, &predicates, tokens)?;
             for matched in &mut matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                     matched.captures = plan
-                        .extract_without_assertions(&predicates, tokens, matched.start, matched.end)
+                        .extract_without_assertions(
+                            &budget.output,
+                            &predicates,
+                            tokens,
+                            matched.start,
+                            matched.end,
+                        )?
                         .expect("NFA-accepted capture span must have a prioritized extraction");
                 }
             }
             for plan in &self.evaluated_plans {
-                matches.extend(plan.try_find_matches_without_assertions_with_graph(
+                let found = plan.try_find_matches_without_assertions_with_graph(
                     &mut budget,
                     &predicates,
                     tokens,
                     graph,
-                )?);
+                )?;
+                budget.output.reserve_vec(&mut matches, found.len())?;
+                matches.extend(found);
             }
-            return Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)));
+            return self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output);
         }
 
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens)
             .with_context(context);
-        let mut matches = Matcher::find_matches_dense_with_assertions(
+        let mut matches = Matcher::try_find_matches_dense_with_assertions(
+            &budget.output,
             &self.dense,
             &predicates,
             tokens,
             &mut session,
-        );
+        )?;
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                 matched.captures = plan
                     .extract(
+                        &budget.output,
                         &predicates,
                         tokens,
                         matched.start,
                         matched.end,
                         &mut session,
-                    )
+                    )?
                     .expect("NFA-accepted capture span must have a prioritized extraction");
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(plan.try_find_matches_with_graph(
+            let found = plan.try_find_matches_with_graph(
                 &mut budget,
                 &predicates,
                 tokens,
                 &mut session,
                 graph,
-            )?);
+            )?;
+            budget.output.reserve_vec(&mut matches, found.len())?;
+            matches.extend(found);
         }
-        Ok(self.finish_catalog_matches(tokens, canonical_matches(matches)))
+        self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output)
     }
 
     /// Runs normal matching and reports assertion-evaluator work.
@@ -1069,7 +1123,7 @@ impl CompiledCatalog {
     /// method nor the counters it reads.
     #[cfg(feature = "bench-instrumentation")]
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_assertion_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1081,34 +1135,43 @@ impl CompiledCatalog {
         let mut budget = MatchBudget::default();
         let predicates = PredicateSession::new(&self.predicates);
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
-        let mut matches = Matcher::find_matches_dense_with_assertions(
+        let mut matches = Matcher::try_find_matches_dense_with_assertions(
+            &budget.output,
             &self.dense,
             &predicates,
             tokens,
             &mut session,
-        );
+        )
+        .expect("matching exceeded its resource budget");
         for matched in &mut matches {
             if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                 matched.captures = plan
                     .extract(
+                        &budget.output,
                         &predicates,
                         tokens,
                         matched.start,
                         matched.end,
                         &mut session,
                     )
+                    .expect("matching exceeded its resource budget")
                     .expect("NFA-accepted capture span must have a prioritized extraction");
             }
         }
         for plan in &self.evaluated_plans {
-            matches.extend(
-                plan.try_find_matches(&mut budget, &predicates, tokens, &mut session)
-                    .expect("graph matching exceeded its sentence budget"),
-            );
+            let found = plan
+                .try_find_matches(&mut budget, &predicates, tokens, &mut session)
+                .expect("matching exceeded its resource budget");
+            budget
+                .output
+                .reserve_vec(&mut matches, found.len())
+                .expect("matching exceeded its resource budget");
+            matches.extend(found);
         }
         let metrics = session.metrics();
         (
-            self.finish_catalog_matches(tokens, canonical_matches(matches)),
+            self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output)
+                .expect("matching exceeded its resource budget"),
             metrics,
         )
     }
@@ -1120,7 +1183,7 @@ impl CompiledCatalog {
     /// benchmark-instrumentation builds.
     #[cfg(feature = "bench-instrumentation")]
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_execution_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1135,7 +1198,7 @@ impl CompiledCatalog {
     /// [`Self::find_matches_with_execution_metrics`].
     #[cfg(feature = "bench-instrumentation")]
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches`] for untrusted patterns.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches`] for untrusted patterns.
     pub fn find_matches_with_spawn_candidate_metrics<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1163,7 +1226,9 @@ impl CompiledCatalog {
 
         if !self.requires_assertion_session() {
             let nfa_started = Instant::now();
-            let mut matches = Matcher::find_matches_dense(&self.dense, &predicates, tokens);
+            let mut matches =
+                Matcher::try_find_matches_dense(&budget.output, &self.dense, &predicates, tokens)
+                    .expect("matching exceeded its resource budget");
             metrics.nfa_duration = nfa_started.elapsed();
             metrics.nfa_matches = matches.len();
 
@@ -1172,7 +1237,14 @@ impl CompiledCatalog {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                     metrics.capture_plan_invocations += 1;
                     let captures = plan
-                        .extract_without_assertions(&predicates, tokens, matched.start, matched.end)
+                        .extract_without_assertions(
+                            &budget.output,
+                            &predicates,
+                            tokens,
+                            matched.start,
+                            matched.end,
+                        )
+                        .expect("matching exceeded its resource budget")
                         .expect("NFA-accepted capture span must have a prioritized extraction");
                     metrics.extracted_captures += captures.len();
                     metrics.extracted_capture_tokens += captures
@@ -1189,8 +1261,12 @@ impl CompiledCatalog {
                 metrics.evaluated_plan_invocations += 1;
                 let found = plan
                     .try_find_matches_without_assertions(&mut budget, &predicates, tokens)
-                    .expect("graph matching exceeded its sentence budget");
+                    .expect("matching exceeded its resource budget");
                 metrics.evaluated_matches += found.len();
+                budget
+                    .output
+                    .reserve_vec(&mut matches, found.len())
+                    .expect("matching exceeded its resource budget");
                 matches.extend(found);
             }
             metrics.evaluated_duration = evaluated_started.elapsed();
@@ -1199,19 +1275,22 @@ impl CompiledCatalog {
                 predicates.merge_spawn_candidate_metrics(accumulator);
             }
             return (
-                self.finish_catalog_matches(tokens, canonical_matches(matches)),
+                self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output)
+                    .expect("matching exceeded its resource budget"),
                 metrics,
             );
         }
 
         let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
         let nfa_started = Instant::now();
-        let mut matches = Matcher::find_matches_dense_with_assertions(
+        let mut matches = Matcher::try_find_matches_dense_with_assertions(
+            &budget.output,
             &self.dense,
             &predicates,
             tokens,
             &mut session,
-        );
+        )
+        .expect("matching exceeded its resource budget");
         metrics.nfa_duration = nfa_started.elapsed();
         metrics.nfa_matches = matches.len();
 
@@ -1221,12 +1300,14 @@ impl CompiledCatalog {
                 metrics.capture_plan_invocations += 1;
                 let captures = plan
                     .extract(
+                        &budget.output,
                         &predicates,
                         tokens,
                         matched.start,
                         matched.end,
                         &mut session,
                     )
+                    .expect("matching exceeded its resource budget")
                     .expect("NFA-accepted capture span must have a prioritized extraction");
                 metrics.extracted_captures += captures.len();
                 metrics.extracted_capture_tokens += captures
@@ -1243,8 +1324,12 @@ impl CompiledCatalog {
             metrics.evaluated_plan_invocations += 1;
             let found = plan
                 .try_find_matches(&mut budget, &predicates, tokens, &mut session)
-                .expect("graph matching exceeded its sentence budget");
+                .expect("matching exceeded its resource budget");
             metrics.evaluated_matches += found.len();
+            budget
+                .output
+                .reserve_vec(&mut matches, found.len())
+                .expect("matching exceeded its resource budget");
             matches.extend(found);
         }
         metrics.evaluated_duration = evaluated_started.elapsed();
@@ -1253,19 +1338,20 @@ impl CompiledCatalog {
             predicates.merge_spawn_candidate_metrics(accumulator);
         }
         (
-            self.finish_catalog_matches(tokens, canonical_matches(matches)),
+            self.finish_catalog_matches(tokens, canonical_matches(matches), &budget.output)
+                .expect("matching exceeded its resource budget"),
             metrics,
         )
     }
 
     /// # Panics
-    /// Panics on graph-enumeration exhaustion; use [`Self::try_find_matches_with_trace`] to handle this error.
+    /// Panics when matching exceeds a resource budget; use [`Self::try_find_matches_with_trace`] to handle this error.
     pub fn find_matches_with_trace<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Trace {
         self.try_find_matches_with_trace(tokens)
-            .expect("graph matching exceeded its sentence budget")
+            .expect("matching exceeded its resource budget")
     }
 
-    /// As [`Self::find_matches_with_trace`], with graph-enumeration failures returned as errors.
+    /// As [`Self::find_matches_with_trace`], with matching resource failures returned as errors.
     pub fn try_find_matches_with_trace<S: TokenSequence + ?Sized>(
         &self,
         tokens: &S,
@@ -1274,45 +1360,48 @@ impl CompiledCatalog {
         let predicates = PredicateSession::new(&self.predicates);
         let mut trace = if self.requires_assertion_session() {
             let mut session = AssertionSession::new(&self.assertion_catalog, &predicates, tokens);
-            let mut trace = Matcher::find_matches_with_trace_dense_with_assertions(
+            let mut trace = Matcher::try_find_matches_with_trace_dense_with_assertions(
+                &budget.output,
                 &self.dense,
                 &predicates,
                 tokens,
                 &mut session,
-            );
+            )?;
             for matched in &mut trace.matches {
                 if let Some(plan) = self.capture_plans.get(&matched.pattern) {
                     matched.captures = plan
                         .extract(
+                            &budget.output,
                             &predicates,
                             tokens,
                             matched.start,
                             matched.end,
                             &mut session,
-                        )
+                        )?
                         .expect("NFA-accepted capture span must have a prioritized extraction");
                 }
             }
             for plan in &self.evaluated_plans {
-                trace.matches.extend(plan.try_find_matches(
-                    &mut budget,
-                    &predicates,
-                    tokens,
-                    &mut session,
-                )?);
+                let found =
+                    plan.try_find_matches(&mut budget, &predicates, tokens, &mut session)?;
+                budget.output.reserve_vec(&mut trace.matches, found.len())?;
+                trace.matches.extend(found);
             }
-            trace.matches = self.finish_catalog_matches(tokens, canonical_matches(trace.matches));
+            trace.matches = self.finish_catalog_matches(
+                tokens,
+                canonical_matches(trace.matches),
+                &budget.output,
+            )?;
             trace
         } else {
-            let mut trace =
-                Matcher::find_matches_with_trace_dense(&self.dense, &predicates, tokens);
-            // The session-free trace walk does not canonicalize or run the
-            // capture and span-equality plans, so the matches come from the
-            // shared entry point instead. Folded into this branch rather than
-            // repeated as `if !requires_assertion_session()` below: the two are
-            // one decision, and reading them as one is what stops a later change
-            // moving only one of them.
-            trace.matches = self.try_find_matches(tokens)?;
+            let mut trace = Matcher::try_find_matches_with_trace_dense(
+                &budget.output,
+                &self.dense,
+                &predicates,
+                tokens,
+            )?;
+            trace.matches =
+                self.try_find_matches_with_context_and_output(tokens, None, &budget.output)?;
             trace
         };
         trace
@@ -1423,11 +1512,12 @@ impl CompiledCatalog {
         &self,
         tokens: &S,
         ordinary: Vec<Match>,
-    ) -> Vec<Match> {
+        output: &Arc<OutputBudget>,
+    ) -> Result<Vec<Match>, MatchResourceError> {
         let Some(lexicons) = &self.lexicons else {
-            return ordinary;
+            return Ok(ordinary);
         };
-        merge_catalog_matches(ordinary, lexicons.find_matches(tokens))
+        merge_catalog_matches(ordinary, lexicons.try_find_matches(output, tokens)?, output)
     }
 
     pub(crate) fn install_lexicons(&mut self, lexicons: Option<super::CompiledLexicons>) {
@@ -1604,6 +1694,56 @@ mod tests {
     use crate::fsm::matcher::{PUNCT_ANCHOR, compile_for_test};
     use crate::fsm::{CompileLimits, PatternSource, compile_catalog};
     use crate::token_match::{AttributeKey, TokenAttributeIndex, TokenInfo};
+
+    #[test]
+    fn dense_and_lexical_outputs_cannot_bypass_the_shared_quota() {
+        let mut token = TokenInfo::default();
+        token.set(TokenAttributeIndex::Orth, "a".into());
+        for source in ["p := [].", "lexicon p by [text] := {\"a\"}."] {
+            let matcher = compile_catalog(
+                PatternSource::named("output.lx", source),
+                CompileLimits::default(),
+            )
+            .unwrap()
+            .matcher;
+            let output = std::sync::Arc::new(super::OutputBudget::new(0));
+            assert!(matches!(
+                matcher.try_find_matches_with_context_and_output(&[token.clone()], None, &output),
+                Err(super::MatchResourceError::BatchOutput { limit: 0 })
+            ));
+            assert_eq!(matcher.try_find_matches(&[token.clone()]).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn captured_payloads_consume_output_quota_beyond_dense_spans() {
+        let mut token = TokenInfo::default();
+        token.set(TokenAttributeIndex::Orth, "a".into());
+        let plain = compile_catalog(
+            PatternSource::named("plain.lx", "p := []."),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let output = std::sync::Arc::new(super::OutputBudget::new(1_000_000));
+        plain
+            .try_find_matches_with_context_and_output(&[token.clone()], None, &output)
+            .unwrap();
+        let plain_bytes = output.allocated_bytes();
+        let captured = compile_catalog(
+            PatternSource::named("capture.lx", "p := (?<x> [])."),
+            CompileLimits::default(),
+        )
+        .unwrap()
+        .matcher;
+        let output = std::sync::Arc::new(super::OutputBudget::new(plain_bytes));
+        assert!(matches!(
+            captured.try_find_matches_with_context_and_output(&[token.clone()], None, &output),
+            Err(super::MatchResourceError::BatchOutput { .. })
+        ));
+        let expected = captured.try_find_matches(&[token]).unwrap();
+        assert_eq!(expected[0].captures[0].name, "x");
+    }
 
     /// Only a *pattern* that queries a lookaround needs a per-sentence session.
     ///

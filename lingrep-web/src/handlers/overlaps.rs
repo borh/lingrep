@@ -186,11 +186,22 @@ impl ScanWindows {
 }
 
 fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
+    let (code, message) = match &error {
+        lingrep_core::fsm::MatchResourceError::Sentence { .. } => {
+            ("graph_assignment_limit", error.to_string())
+        }
+        lingrep_core::fsm::MatchResourceError::BatchOutput { .. } => (
+            "match_batch_too_large",
+            format!(
+                "{error} Narrow the pattern or ask the server operator to use a smaller matching batch."
+            ),
+        ),
+    };
     (
         axum::http::StatusCode::UNPROCESSABLE_ENTITY,
         axum::Json(serde_json::json!({
-            "error": error.to_string(),
-            "code": "graph_assignment_limit",
+            "error": message,
+            "code": code,
         })),
     )
         .into_response()
@@ -199,8 +210,28 @@ fn resource_error(error: lingrep_core::fsm::MatchResourceError) -> Response {
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    async fn batch_output_response_has_a_distinct_code_and_batch_remedy() {
+        let response = super::resource_error(lingrep_core::fsm::MatchResourceError::BatchOutput {
+            limit: 1024,
+        });
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "match_batch_too_large");
+        let message = body["error"].as_str().unwrap();
+        assert!(message.contains("1024"));
+        assert!(message.contains("smaller matching batch"));
+        assert!(!message.contains("ordering constraint"));
+    }
+
+    #[tokio::test]
     async fn graph_resource_response_preserves_the_pattern_and_remedy() {
-        let response = super::resource_error(lingrep_core::fsm::MatchResourceError {
+        let response = super::resource_error(lingrep_core::fsm::MatchResourceError::Sentence {
             pattern: "connected".into(),
             resource: "graph assignments",
             limit: 65_536,

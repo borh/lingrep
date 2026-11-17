@@ -5,10 +5,19 @@ import importlib
 import importlib.metadata
 import json
 import os
+import platform
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+from .resources import (
+    RUNTIME_IDENTITY_FILE,
+    canonical_json,
+    runtime_identity,
+    runtime_receipt_path,
+    validate_runtime,
+)
 
 
 def _copy_package(package: str, destination: Path) -> Path:
@@ -53,15 +62,17 @@ def _stage_code(root: Path, kind: str) -> None:
 
 
 def _runtime_receipt(resource_root: Path) -> dict:
+    bundle = runtime_receipt_path(resource_root).parent
     python = sys.executable
     try:
-        Path(python).relative_to(resource_root.parent.parent)
+        Path(python).relative_to(bundle.parent)
     except ValueError:
         pass
     else:
-        python = os.path.relpath(python, resource_root)
+        python = os.path.relpath(python, bundle)
     return {
         "python": python,
+        "python_release": f"{sys.implementation.name}-{platform.python_version()}",
         "python_version": sys.version,
         "packages": sorted(
             (distribution.metadata["Name"], distribution.version)
@@ -70,9 +81,21 @@ def _runtime_receipt(resource_root: Path) -> dict:
     }
 
 
+def _write_runtime(resource_root: Path, receipt: dict) -> None:
+    runtime_receipt_path(resource_root).write_text(json.dumps(receipt, sort_keys=True))
+    (resource_root / RUNTIME_IDENTITY_FILE).write_bytes(
+        canonical_json(runtime_identity(receipt)) + b"\n"
+    )
+
+
 def _runtime_python(resource_root: Path) -> Path:
-    receipt = json.loads((resource_root / "lingrep-runtime.json").read_text())
-    return resource_root / receipt["python"]
+    path = runtime_receipt_path(resource_root)
+    if not path.is_file():
+        raise ValueError(
+            "output has no runtime receipt beside its model; "
+            "choose a new --output and rerun setup"
+        )
+    return path.parent / json.loads(path.read_text())["python"]
 
 
 def _packages(values: list[str]) -> dict[str, str]:
@@ -129,8 +152,6 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
                     "cached Python environment was removed; "
                     "choose a new --output and rerun setup"
                 )
-            from .resources import validate_runtime
-
             validate_runtime(output / "model")
             print(config)
             return 0
@@ -181,10 +202,7 @@ def setup(kind: str, argv: list[str] | None = None) -> int:
                     probe_text=args.probe_text,
                     packages=packages,
                 )
-            runtime = _runtime_receipt(output / "model")
-            (model / "lingrep-runtime.json").write_text(
-                json.dumps(runtime, sort_keys=True)
-            )
+            _write_runtime(model, _runtime_receipt(output / "model"))
             (root / "setup.json").write_text(
                 json.dumps(_request(kind, args), sort_keys=True)
             )

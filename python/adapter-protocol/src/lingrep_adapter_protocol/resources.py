@@ -2,10 +2,22 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
 MANIFEST_HASH_CHUNK_BYTES = 1 << 20
+# The setup receipt lies beside the resource root, outside the hashed closure;
+# the projection of it that can change an analysis lies inside, so the resource
+# manifest digest covers that projection and not the interpreter's build string.
+RUNTIME_RECEIPT_FILE = "lingrep-runtime.json"
+RUNTIME_IDENTITY_FILE = "lingrep-runtime-identity.json"
+RUNTIME_IDENTITY_FORMAT = "lingrep.adapter-runtime-identity/v1"
+# Installed by a locked requirement on only some platforms, where they replace
+# numerical kernels for the same model; identity records no platform, CPU or
+# BLAS build either.
+PLATFORM_KERNEL_DISTRIBUTIONS = frozenset({"thinc-apple-ops"})
 
 
 def canonical_json(value: Any) -> bytes:
@@ -96,8 +108,32 @@ def _collect_manifest_files(
         _collect_manifest_files(root, child, entries, provider)
 
 
+def _distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def runtime_identity(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a runtime receipt onto the facts that can change an analysis:
+    the interpreter release and every installed distribution's version, except
+    the platform kernel distributions."""
+
+    return {
+        "format": RUNTIME_IDENTITY_FORMAT,
+        "python": receipt["python_release"],
+        "packages": sorted(
+            [_distribution_name(name), version]
+            for name, version in receipt["packages"]
+            if _distribution_name(name) not in PLATFORM_KERNEL_DISTRIBUTIONS
+        ),
+    }
+
+
+def runtime_receipt_path(resource_root: Path) -> Path:
+    return resource_root.parent / RUNTIME_RECEIPT_FILE
+
+
 def validate_runtime(resource_root: Path) -> None:
-    receipt = resource_root / "lingrep-runtime.json"
+    receipt = runtime_receipt_path(resource_root)
     if not receipt.is_file():
         return
     import importlib.metadata

@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ling analyzer prepare ginza` prepares the same analysis identity on macOS
+  and Linux. The hashed model directory no longer holds the interpreter's build
+  string, its path, or `thinc-apple-ops`, which only arm64 macOS installs.
+  Bundles prepared before this change keep their identity; a bundle prepared
+  after it has a new one. Stanza identities still differ between macOS and
+  Linux, whose locked torch versions are `2.13.0` and `2.13.0+cpu`.
 - The Workbench reports unavailable token attributes and catalog-binding
   failures with their reasons.
 - spaCy setup profiles run every pipeline component up to the last one that

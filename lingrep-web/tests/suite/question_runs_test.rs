@@ -15,7 +15,7 @@ use lingrep_core::token_match::TokenInfo;
 use lingrep_web::coordinator::RevisionRequest;
 use lingrep_web::corpus_runtime::{CorpusIdentity, CorpusRuntime};
 use lingrep_web::corpus_set::CorpusName;
-use lingrep_web::revision::WorkbenchId;
+use lingrep_web::revision::{AttemptPhase, WorkbenchId};
 use lingrep_web::server_context::ServerContext;
 use lingrep_web::state::{Config, DetailLimits, RequestStore};
 use serde_json::{Value, json};
@@ -794,6 +794,52 @@ async fn unreferenced_large_attributes_do_not_block_projected_pages_or_complete_
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.into_body().collect().await.is_err());
+    store.coordinators.shutdown().await;
+}
+
+/// The oversized example is the first match, so the first live preview fails
+/// to project while thousands of sentences remain to be scanned.
+#[tokio::test]
+async fn a_preview_that_cannot_be_projected_ends_the_stream_only_after_the_search_completes() {
+    let mut sentences = vec![vec![
+        TokenInfo::default()
+            .with_orth("cat")
+            .with_lemma("x".repeat(1024 * 1024 + 1)),
+    ]];
+    sentences.extend(vec![
+        vec![
+            TokenInfo::default().with_orth("cat").with_lemma("cat")
+        ];
+        20_000
+    ]);
+    let (fixture, runtime) = crate::v6_support::runtime_fixture("late-completion", sentences);
+    let store = RequestStore::with_runtime(config(fixture.path.clone()), runtime);
+    let app = lingrep_web::app_router(store.clone());
+    let id = submit(&app, "p := [lemma~x].", "", None).await;
+    let frames = updates(&app, &id).await;
+    assert_eq!(frames.last().unwrap()["patch"]["phase"], "failed");
+    assert_eq!(
+        frames.last().unwrap()["patch"]["error"],
+        "This example is too large to display. Choose another example."
+    );
+    let view = store
+        .coordinators
+        .snapshot(&WorkbenchId::new(&id))
+        .await
+        .unwrap();
+    assert_eq!(
+        view.state.current_attempt().unwrap().phase,
+        AttemptPhase::Completed,
+        "the stream ended before the search did"
+    );
+    let response = request(
+        &app,
+        Method::GET,
+        &format!("/api/questions/runs/{id}/export"),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
     store.coordinators.shutdown().await;
 }
 
