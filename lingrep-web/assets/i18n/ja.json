@@ -713,6 +713,10 @@
   "frequency.attribute_xpos": "xpos（解析器の品詞）",
   "frequency.subset_figures": "{key}：{entries}項目、{occurrences}件、文書{works}件（パターン全体は{total}件、文書{documents}件）",
   "frequency.head_subset_share": "絞り込み内の割合",
+  "frequency.inspect_line": "{work}・{n}行目のトークンを調べる",
+  "frequency.key_field": "{field} の完全一致",
+  "frequency.clear_keys": "完全一致の指定を外す",
+  "frequency.no_key_match_hint": "値の一部だけを探すときは、上の「絞り込み」に入力してください。",
   "frequency.no_key_match": "このキーの値に完全に一致する項目はありません。",
   "views.reason_key_field": "{message}"
 }

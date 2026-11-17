@@ -218,7 +218,8 @@
 .fq .spread { width: 9rem; }
 .fq .spread span { display: block; height: 7px; background: var(--fq-bar-off); }
 .fq .spread i { display: block; height: 100%; background: var(--fq-accent); }
-.fq .more {
+.fq .more,
+.fq .fq-clear-keys {
   all: unset;
   cursor: pointer;
   margin: 0.8rem 0 0;

@@ -288,7 +288,7 @@ export function mountFrequency(root) {
     const fields = keyFields();
     if (fields.length < 2) return "";
     const label = t("frequency.key_equals");
-    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
+    return `<span class="fq-key" role="group" aria-label="${esc(label)}"><span class="fq-key-label">${esc(label)}</span>${fields.map((f) => `<label title="${esc(f)}">${esc(keyFieldLabel(f))} = <input data-k="${esc(f)}" aria-label="${esc(t("frequency.key_field", { field: keyFieldLabel(f) }))}" type="search" size="6" value="${esc(s.k[f] ?? "")}" placeholder="${esc(t("frequency.key_any"))}"></label>`).join("")}</span>`;
   }
 
   function renderSentence() {
@@ -443,7 +443,10 @@ export function mountFrequency(root) {
       return;
     }
     if (!answer.rows.length) {
-      tableEl.innerHTML = `<p class="fq-empty">${esc(answer.subset && answer.occurrences ? t("frequency.no_key_match") : s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
+      tableEl.innerHTML =
+        answer.subset && answer.occurrences
+          ? `<p class="fq-empty">${esc(t("frequency.no_key_match"))} ${esc(t("frequency.no_key_match_hint"))}</p><p><button type="button" class="fq-clear-keys" data-clear-keys>${esc(t("frequency.clear_keys"))}</button></p>`
+          : `<p class="fq-empty">${esc(s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
       return;
     }
     const heads = answer.subset ? [...HEADS.slice(0, 3), "frequency.head_subset_share", ...HEADS.slice(3)] : HEADS;
@@ -456,6 +459,10 @@ export function mountFrequency(root) {
     }
   }
   tableEl.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-clear-keys]")) {
+      set({ k: {}, entry: null });
+      return;
+    }
     const row = e.target.closest("tr[data-i]");
     if (row && answer) {
       depth = shown;
@@ -578,7 +585,7 @@ export function mountFrequency(root) {
     const source = pair()?.source, back = `frequencies#${new URLSearchParams(stateEntries({ ...s, read: null, scope: null }))}`;
     const identity = { source, analysis: st.analysis_identity, fingerprint: st.catalog_fingerprint };
     return (l, i) =>
-      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${contextHtml(l.left, l.bound, "left")}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${contextHtml(l.right, l.bound, "right")}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
+      `<li data-i="${i}" data-sentence="${l.sentence}" data-start="${l.start}" data-end="${l.end}"><span class="kl"><span>${contextHtml(l.left, l.bound, "left")}</span></span><span class="kr"><button type="button" class="kn" aria-haspopup="dialog">${esc(l.node)}</button>${contextHtml(l.right, l.bound, "right")}</span><span class="src"><span title="${esc(t("frequency.document", { id: l.document }))}">${esc(named(l))}</span>${source && st.analysis_identity && l.roles ? ` <a class="fq-inspect" href="${esc(inspectHref(s, l, identity, back))}" aria-label="${esc(t("frequency.inspect_line", { n: i + 1, work: named(l) }))}">${esc(t("frequency.inspect"))}</a>` : ""}</span></li>`;
   };
   function linesHtml(st, previewing) {
     return `<h3>${esc(t("frequency.lines"))} <span class="count">${esc(t("frequency.lines_shown", { n: num(st.lines.length), of: num(st.total) }))}</span></h3>${st.total ? "" : `<p class="fq-empty">${esc(t("frequency.empty"))}</p>`}<ol class="fq-kwic">${st.lines.map(lineHtml(st)).join("")}</ol><button class="more" data-e="more"${previewing || st.lines.length >= st.total ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: LINES }))}</button>`;

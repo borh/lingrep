@@ -3015,3 +3015,97 @@ async fn the_table_starts_above_the_fold_with_the_pattern_machinery_folded() -> 
     served.server.abort();
     result
 }
+
+/// Each exact-match field is named for its role and attribute, and an exact
+/// value no entry has is answered with a way back: the hint names the filter
+/// for partial values and a button clears the exact values.
+#[tokio::test]
+async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_key_table().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        let names = driver
+            .execute(
+                "return [...document.querySelectorAll('.fq-key input')].map((i) => i.getAttribute('aria-label'))",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let names = names.as_array().unwrap();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(
+            names.iter().all(|name| name.as_str().is_some_and(|name| name.ends_with(", exact value"))),
+            "{names:?}"
+        );
+        driver
+            .find(By::Css(".fq-key input"))
+            .await?
+            .send_keys("坂坂")
+            .await?;
+        let empty = "const p = document.querySelector('[data-fq-table] .fq-empty'); \
+            return p && document.querySelector('[data-clear-keys]') ? p.textContent : null";
+        let text = wait_for(&driver, empty, "the empty exact result").await?;
+        assert!(text.as_str().unwrap().contains("filter above"), "{text}");
+        driver
+            .find(By::Css("[data-clear-keys]"))
+            .await?
+            .click()
+            .await?;
+        wait_for(&driver, ROWS, "the entries again").await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('.fq-key input')].map((i) => i.value).join('')",
+            json!(""),
+            "the cleared fields",
+        )
+        .await?;
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
+
+/// Each トークンを調べる link in an entry's lines is named for its line and
+/// work, so a list of them reads as distinct links.
+#[tokio::test]
+async fn each_inspect_link_names_its_line_and_work() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=noun", served.base), ROWS).await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        let names = driver
+            .execute(
+                "return [...document.querySelectorAll('.fq-kwic li')].map((li) => [li.querySelector('.src span').textContent, li.querySelector('.fq-inspect')?.getAttribute('aria-label')])",
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let names = names.as_array().unwrap();
+        assert!(names.len() > 1, "{names:?}");
+        for (line, pair) in names.iter().enumerate() {
+            assert_eq!(
+                pair[1],
+                json!(format!("Inspect tokens: line {}, {}", line + 1, pair[0].as_str().unwrap())),
+                "{names:?}"
+            );
+        }
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

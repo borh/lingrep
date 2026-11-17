@@ -713,6 +713,10 @@
   "frequency.attribute_xpos": "xpos (analyzer's tag)",
   "frequency.subset_figures": "{key}: {entries} entries, {occurrences} occurrences in {works} documents, of {total} occurrences of the pattern in {documents} documents",
   "frequency.head_subset_share": "Share of subset",
+  "frequency.inspect_line": "Inspect tokens: line {n}, {work}",
+  "frequency.key_field": "{field}, exact value",
+  "frequency.clear_keys": "Clear the exact values",
+  "frequency.no_key_match_hint": "To find part of a value, type it in the filter above instead.",
   "frequency.no_key_match": "No entry has these exact key values.",
   "views.reason_key_field": "{message}"
 }
