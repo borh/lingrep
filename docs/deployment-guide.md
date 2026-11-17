@@ -114,9 +114,11 @@ identity mismatch stops the rerun rather than silently searching different data.
 Complete question results use a temporary index capped at 128 MiB per search.
 If a search exceeds that limit, narrow its pattern or document conditions and
 run it again. Result previews are capped at 4 MiB; search fewer patterns when a
-preview exceeds that limit. Question exports stream all retained matches as JSON Lines using
-`lingrep.question-results/v1`; they are separate from the workbench's existing
-exports.
+preview exceeds that limit. Completed searches remain downloadable when their
+previews exceed the display limits. Question exports stream all indexed matches
+as JSON Lines using `lingrep.question-results/v1`, including examples above the
+1 MiB memory limit for loading a sentence preview. Export memory grows with the
+largest matched sentence; the preview limits do not apply to exports.
 
 ## Frequencies view
 
@@ -416,7 +418,9 @@ nix build .#vibrato-dict-cwj --no-link --print-out-paths
 ```
 
 See [`DICTIONARIES.md`](../DICTIONARIES.md) for the full list. lingrep-web
-opens the dictionary on first corpus selection, not at startup.
+opens the dictionary on first corpus selection, not at startup. A server whose
+declared corpora are all prepared artifacts uses the dictionary only for the
+Workbench sample test, and starts without one when none resolves.
 
 ## Markdown corpus dialect
 

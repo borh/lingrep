@@ -29,8 +29,6 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    # A saved model holds its transformer weights; any Hugging Face Hub request
-    # made while it loads or runs fails instead of downloading.
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
         import blake3

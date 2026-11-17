@@ -166,8 +166,6 @@ class RuntimeIdentityTests(unittest.TestCase):
             return resource_manifest_digest(Path("model"), bundle, provider="spaCy")
 
     def test_platform_build_details_do_not_change_the_resource_digest(self):
-        # The darwin bundle differed from the Linux one only by the
-        # interpreter's build timestamp and thinc-apple-ops.
         self.assertEqual(self._digest(LINUX_RECEIPT), self._digest(DARWIN_RECEIPT))
 
     def test_output_affecting_runtime_facts_change_the_resource_digest(self):

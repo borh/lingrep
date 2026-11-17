@@ -63,8 +63,7 @@ vectors is stored in a prepared corpus. Three consequences follow:
   `ling matches`, `ling summarize` and `ling check` take `--vectors FILE`; every
   command that compiles a catalog reads `LINGREP_VECTORS_PATH` otherwise. Without a file, or when the
   file has no vector for the word, the test is `WordVectorUnavailable`.
-- Spell the file's values exactly as they appear in the tested attribute. A file
-  keyed by dictionary forms fits `unidic.orthbase`, not `lemma`.
+- Spell the file's values exactly as they appear in the tested attribute.
 - The same threshold can select different sets from different files.
   Declare the file used to choose the thresholds with a header line, `vectors: {resource: "NAME", blake3: "DIGEST"}`. DIGEST
   is the BLAKE3 digest of the file as 64 lowercase hex digits and is what
@@ -88,16 +87,16 @@ at each `near` test with the file's line number.
 The threshold is a number from 0 to 1 with at most six decimal places, and
 white space must separate the word from `>=`, because `>` and `=` are legal in
 an unquoted value. A similarity is rounded to six decimal places before it is
-compared, so a word with a nonzero vector is near itself at threshold 1.
+compared, so a word whose first vector is nonzero is near itself at threshold 1.
 `ling neighbors --min-similarity T` lists exactly the values that
 `near WORD >= T` selects, with their similarities.
 
 The file is word2vec text: a value, one space, and the numbers of its vector
 on each line, after an optional `count dimensions` first line. Components must
 be finite; components whose squares overflow or underflow, and squared norms
-that overflow, are rejected. A row whose numbers are all zero is near nothing. When a value has several rows, the first
-gives its vector as the word of a test, and the value is near a word when any
-of its rows is.
+that overflow, are rejected. All-zero rows never match. Query words use their
+first row and require a nonzero vector. A candidate value matches when any of
+its rows reaches the threshold.
 
 A run's `run` record carries `word_vectors` when the catalog has a `near`
 test: the file's path and digest, and for each distinct test its word,

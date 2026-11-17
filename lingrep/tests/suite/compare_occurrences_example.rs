@@ -22,7 +22,6 @@ fn script() -> PathBuf {
         .join("examples/compare_occurrences.py")
 }
 
-/// 猫を見た with 猫 as `nmod`: adjacent, but not an `npv` role.
 fn not_a_role() -> String {
     conllu_sentence(
         "not-a-role",
@@ -34,7 +33,6 @@ fn not_a_role() -> String {
     )
 }
 
-/// 坂を上り、道を下った: two occurrences, each verb adjacent to its particle.
 fn two_verbs() -> String {
     conllu_sentence(
         "two-verbs",
@@ -56,7 +54,6 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// Two works that repeat 坂を一つ上った.
     fn new() -> Self {
         let directory = TempDir::new().unwrap();
         let catalog = write(directory.path(), "class6.lx", CATALOG);
@@ -71,7 +68,6 @@ impl Fixture {
         Self { directory, catalog }
     }
 
-    /// Saves `ling matches` stdout to `name` and returns its path.
     fn matches(&self, name: &str, root: &str, extra: &[&str]) -> PathBuf {
         let output = lingrep()
             .args([
@@ -162,8 +158,6 @@ fn compare_reports_identical_and_one_sided_results() {
         "shared 5, a_only 0, b_only 0\n"
     );
 
-    // `pv` binds the same roles but consumes only the particle; restricted to
-    // `n` and `p`, every occurrence of either pattern is shared.
     let by_noun = compare(
         &stream,
         &stream,

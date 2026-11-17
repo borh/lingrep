@@ -70,7 +70,6 @@ def template_keys():
         # same attribute scan the templates get see an inline `data-i18n="…"`.
         source = path.read_text().replace('\\"', '"')
         keys.update(KEY_ATTR.findall(source))
-        # A quoted file name such as "sample.html" has the shape of a key.
         keys.update(
             key for key in NAMESPACED.findall(source) if not key.endswith((".html", ".jsonl"))
         )

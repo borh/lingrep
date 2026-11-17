@@ -7,7 +7,6 @@ use std::process::Output;
 
 use crate::support::{lingrep_without_dictionary, parse_jsonl};
 
-/// Cosines to `walk`: stroll 0.8, run 0.6, cook 0.
 const VECTORS: &str = "4 2\nwalk 1 0\nstroll 0.8 0.6\nrun 0.6 0.8\ncook 0 1\n";
 
 const CONLLU: &str = concat!(
@@ -225,8 +224,6 @@ fn an_inline_pattern_gets_no_notice_for_declaring_no_table() {
     assert!(!stderr.contains("vectors_"), "{stderr}");
 }
 
-/// Rows of `width` six-decimal numbers in (-1, 1) for the words `w0`, `w1`,
-/// and so on, from a fixed linear congruential sequence.
 fn generated_rows(words: usize, width: usize) -> Vec<(String, Vec<String>)> {
     let mut state = 0x2545_F491_4F6C_DD1D_u64;
     (0..words)

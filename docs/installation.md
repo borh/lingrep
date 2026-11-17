@@ -12,8 +12,7 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO https://github.com
 sh install.sh
 ```
 
-The homepage mirror supports releases 0.7.1 and later. Its latest
-installer becomes available after verification of its first supported release:
+The homepage mirror supports releases 0.7.1 and later:
 
 ```bash
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLo install.sh \

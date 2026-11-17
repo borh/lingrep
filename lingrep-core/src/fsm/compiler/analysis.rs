@@ -644,9 +644,6 @@ mod tests {
         assert_eq!(referrers, vec!["p".to_owned(), "q".to_owned()]);
     }
 
-    /// A definition counts as one token only when nothing but captures
-    /// surrounds the token test: a second token, a lookaround or a `where`
-    /// clause each make it a structure rather than a word.
     #[test]
     fn single_token_definitions_are_a_lone_token_test_in_catalog_order() {
         let text = "noun := (?<n> [upos=NOUN]).\n\

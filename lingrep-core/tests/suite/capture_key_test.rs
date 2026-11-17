@@ -1027,7 +1027,6 @@ npv := (?<n> [upos in @NOMINAL & dep.rel in @ROLE])\r\n\
 key: [$n.lemma, $p.lemma, $v.lemma]\r\n\
 npv_adjacent := (?<n> [upos in @NOMINAL]) (?<p> [lemma in @CASE]) (?<v> [upos=VERB]).\r\n";
 
-/// One sentence `名詞 を 動詞` with the verb's surface, lemma and norm.
 fn npv_sentence(
     bound: &lingrep_core::fsm::BoundCatalog,
     verb: [&str; 3],
@@ -1143,7 +1142,6 @@ fn switching_the_graph_verb_field_changes_only_that_key_value() {
         .matcher
         .bind_with_projection(&schema, schema.keys().iter().cloned())
         .unwrap();
-    // Two spellings of one lemma, and a verb whose norm the corpus does not supply.
     let sentences = [
         (["云っ", "言う", "云う"], true),
         (["言っ", "言う", "言う"], true),
@@ -1209,17 +1207,14 @@ fn switching_the_graph_verb_field_changes_only_that_key_value() {
 #[test]
 fn ineligible_key_fields_have_no_edit_and_leave_eligible_siblings_editable() {
     let cases: [(&str, &[(usize, &str)]); 7] = [
-        // A span component reads a whole capture; only the other field is editable.
         (
             "key: [$w.span.lemma, $x.lemma]\np := (?<w> []+) (?<x> []).",
             &[(1, "x")],
         ),
-        // An enhanced node not proven to be a word cannot project norm.
         (
             "key: [$n.lemma, $v.lemma]\np := (?<n> []) where (?<v> [upos=VERB]) -[enhanced obj]-> $n.",
             &[(0, "n")],
         ),
-        // node.id and edge relations are not surface attributes.
         (
             "key: [$n.lemma, $v.node.id]\np := (?<n> []) where (?<v> []) -[obj]-> $n.",
             &[(0, "n")],
@@ -1228,7 +1223,6 @@ fn ineligible_key_fields_have_no_edit_and_leave_eligible_siblings_editable() {
             "key: [$n.lemma, $e.rel]\np := (?<n> []) where (?<v> []) -[enhanced obj as $e]-> $n.",
             &[(0, "n")],
         ),
-        // Other attributes, whole-match fields and inherited keys stay text-only.
         ("key: [$w.upos, $w.lemma]\np := (?<w> []).", &[(1, "w")]),
         ("key: [lemma, upos]\np := [].", &[]),
         (

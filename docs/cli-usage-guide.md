@@ -102,21 +102,22 @@ standalone `svg`. SVG on stdout requires exactly one selected definition.
 `--output-dir DIR` writes one SVG file per selected definition instead, and
 requires `--diagram-format svg`. `DIR` must not exist: `ling` writes the files
 into a hidden staging directory beside it and renames that directory to `DIR`
-only after every selected definition renders, without replacing a file or
-directory that another process created at `DIR` in the meantime. If `DIR`
-exists, `ling` exits with status 1 and leaves it unchanged; a failed or
+only after every selected definition renders. If `DIR` already exists,
+`ling` exits with status 1 and leaves it unchanged; a failed or
 interrupted export removes its staging directory and leaves no `DIR`. Files are
 named `ORDINAL-STEM.svg`: `ORDINAL` is the 1-based source-order position, padded
 to the width of the largest ordinal, and `STEM` is at most 64 bytes of the
 definition name, with each character other than a letter, digit or `_` replaced
 by `_`. `ling` prints each definition name and its file path to stdout,
-separated by a tab, in source order. Publication requires a filesystem with a
-no-replace rename (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` on
-macOS). `--width COLUMNS` accepts 32–240 columns; the default is the terminal
-width within that range, or 80 when piped or writing `--output-dir` files. Wide
-sequences continue on connected rows. Numbered labels and subdiagrams retain
-text that cannot fit inline; dependency constraints and publication annotations
-appear separately from recognition flow.
+separated by a tab, in source order. On a filesystem without a no-replace
+rename (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` on macOS),
+such as a WSL `/mnt/c` drive, NFS or some FUSE mounts, `ling` checks that `DIR`
+is absent and then renames; an empty directory created at `DIR` between the
+check and the rename is replaced. `--width COLUMNS` accepts 32–240 columns;
+the default is the terminal width within that range, or 80 when piped or
+writing `--output-dir` files. Wide sequences continue on connected rows.
+Numbered labels and subdiagrams retain text that cannot fit inline; dependency
+constraints and publication annotations appear separately from recognition flow.
 
 Diagram mode cannot be combined with `--json`, `--compare-with`,
 `--verify-examples` or `--schema`. Compiler warnings go to stderr. `ling` exits 0
@@ -637,7 +638,8 @@ admitted sentence.
 
 `summarize --write-table PATH` checks that the destination is absent and its
 parent permits creating output before opening the corpus. Publication also
-checks for a competing destination without replacing it.
+checks for a competing destination; on filesystems without no-replace rename,
+a concurrently created empty directory can be replaced.
 
 It scans a prepared corpus once and writes every
 pattern's group counts per document, and the sentences each group occurs in,
@@ -849,7 +851,7 @@ set NEIGHBORS := {重要, 大切, 大事, たいせつ, 重大, だいじ, 肝�
 
 A pattern then tests an attribute against the set: `[unidic.orthbase in
 @NEIGHBORS]`. Spell the file's values exactly as they appear in the tested
-attribute. A file keyed by dictionary forms matches `unidic.orthbase`, not `lemma`.
+attribute.
 
 The file is text with one `value x1 ... xn` line per value, with or without a
 leading `count dimensions` line. This is the word2vec text format, which
@@ -1265,9 +1267,12 @@ and finish with zero matched sentences. Excluded blocks are not decoded;
 
 ## Direct roots and stdin
 
-File and directory roots are inferred. Directory traversal is recursive and
-deterministically ordered. Symlink and hard-link aliases remain distinct
-logical documents; targets outside the root are admitted and marked. Preview
+Formats are inferred from path extensions. A directory path without an extension
+defaults to Markdown and selects its `.md` files. `--input-format plain` selects `.txt` files
+instead and reads each as one plain-text document; `conllu` selects `.conllu`
+and `tei` selects `.xml`. Extensions match case-insensitively. Directory
+traversal is recursive and deterministically ordered. Symlink and hard-link
+aliases remain distinct logical documents; targets outside the root are admitted and marked. Preview
 that contract with:
 
 ```bash
@@ -1314,10 +1319,10 @@ have different failure behavior for three cases:
   limit.
 
 If a matching batch exceeds its [output allocation budget](fsm-development.md#supported-architecture),
-the run fails with `match_batch_too_large` and publishes no `complete` record.
-Retry with `--batch-sentences 1` to reduce the number of sentences retained
-together. If one sentence still exceeds the budget, narrow the pattern. Results
-are not silently truncated to fit the budget.
+the executor retries smaller groups of sentences and releases each group's results
+after publication. If one sentence still exceeds the budget, the run fails with
+`match_batch_too_large` and publishes no `complete` record. Narrow the pattern to
+produce fewer matches in that sentence. Results are not truncated to fit the budget.
 
 With the default `--progress auto`, deferred human output, such as a
 `summarize` table, can show one status line on stderr at the next count update
@@ -1342,6 +1347,11 @@ an explicit `--dict-path` first, then from `LINGREP_DICTIONARY_PATH`, then from
 the `cwj` dictionary that `ling dictionary install` installs. If none is
 present, invocation fails with exit status 2 before writing to stdout.
 CLI queries over prepared corpora do not consult that environment variable.
+`ling serve` and `lingrep-web` require a dictionary only when a declared
+corpus is a source, which they analyze into a prepared artifact. When every
+declared corpus is a prepared artifact and no dictionary resolves, they start
+without one, and the Workbench sample test reports that it needs a
+dictionary.
 
 ### CoNLL-U and UD treebanks
 
@@ -1821,6 +1831,13 @@ to use this preparation command. The standalone `lingrep-spacy-setup` and
 `lingrep-stanza-setup` wheel entry points remain available for custom model and
 GPU setup, with a caller-managed Python environment.
 
+The spaCy adapter wheel's `electra` and `bert-large` extras use the Transformers
+version constraint from spacy-transformers 1.4 (`transformers<4.53.3`). The
+project's `uv.lock` uses an override for `transformers==4.57.6`; that override is
+not part of the wheel metadata. To apply the same override when installing a
+wheel, add `--override overrides.txt` to `uv pip install`, with
+`transformers==4.57.6` in `overrides.txt`.
+
 `ling analyzer prepare ginza` installs GiNZA 5.3.1 with `ja_ginza` 5.3.0, whose
 weights are inside the wheel. GiNZA's transformer models, `ja_ginza_electra`
 5.3.1 and `ja_ginza_bert_large` 5.3.0 (the adapter's `electra` and `bert-large`
@@ -2042,7 +2059,7 @@ artifact and never touches the existing one.
 Reuse does not test whether the canonical path exists. `corpus build` scans the
 `.lingcorpus` directories beside ROOT, reads each bounded manifest, and compares
 the recorded source, reader, admission, analyzer semantics, token schema and
-trust against the request. Only `g2.a1` artifacts are candidates.
+trust against the request. Only `g3.a1` artifacts are candidates.
 
 Reuse also requires the candidate to open: a sibling whose token or location
 component is missing or truncated is not reused. Reuse does not fully hash the
@@ -2052,7 +2069,8 @@ and skipped rather than failing the run or hiding the realizations beside it.
 A directory at the canonical path whose recorded identity does not match is a hard
 error naming that path and the differing fields, not a rebuild. An explicit
 `--output` is taken as spelled, is never pre-scanned, and uses the same
-no-replace commit.
+publication checks and filesystem fallback described for
+[`check --output-dir`](#pattern-diagrams).
 
 Long sentences are handled automatically. A sentence larger than the raw batch
 budget runs on its own, with its full text and its original sentence ordinal.

@@ -164,8 +164,14 @@ node --test lingrep-web/js-tests/*.test.mjs lingrep-web/question-ui/*.test.mjs
 scripts/run_lingrep_web_layout_e2e.sh
 ```
 
-The layout runner exits with status 2 when Chromium or ChromeDriver is not on
-`PATH`, so run it inside `nix develop`.
+Run the layout tests inside `nix develop`. On Linux, the runner requires
+`chromium` and `chromedriver` on `PATH`; on macOS, it requires `chromedriver`.
+Missing executables cause exit status 2.
+
+The macOS shell packages ChromeDriver beside the matching Google Chrome, which
+ChromeDriver selects before an installation in `/Applications`. To use another
+Chrome installation, put its matching driver earlier on `PATH`. The flake permits
+the unfree Google Chrome package for these browser tests.
 
 ## Performance work
 

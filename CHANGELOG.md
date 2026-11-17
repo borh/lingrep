@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--input-format plain` reads a directory of `.txt` files, one document per
+  file, including nested directories. Use it with `ling corpus build` to
+  prepare several plain-text works as one corpus. A directory path without
+  an extension still defaults to Markdown.
+- Question links that use the served catalog identify it by fingerprint. If
+  the catalog has changed, the page asks the reader to choose whether to
+  search with the current catalog.
+- Question result lists support arrow keys, Home and End to move between
+  document links and examples, with one Tab stop for the list.
+
+### Fixed
+
+- Completed question searches remain downloadable when their previews exceed
+  display limits. JSONL downloads include every indexed match, including
+  examples too large to preview. The page checks that export can succeed
+  before offering the link and restores it after a reload.
+- Question searches preserve an example opened during the initial search and
+  keep the search controls in place while results update. Analysis-tool links
+  open the Workbench on the current pattern and corpus with compound
+  derivation off.
+- Compound derivation stops at explicit limits and reports how to disable
+  derivation or search fewer definitions.
+- `ling summarize` bounds concurrently open spill files, including for
+  token-window catalogs, and fits its shards and merge fan-in to the
+  available open-file limit. It reports `warning[open_file_limit]` when it
+  narrows the layout. If the minimum layout cannot fit, it fails before
+  scanning and reports the required number of additional open files.
+- The execution pipeline retries batches that exceed the match-output budget
+  in smaller groups. A single sentence that still exceeds the budget reports
+  an error with a suggestion to narrow the pattern.
+- `ling serve` and `lingrep-web` start without a dictionary when every declared
+  corpus is a prepared artifact. Source corpora and Workbench sample analysis
+  still require a dictionary; their errors explain how to supply one.
+- Corpus, count-table and SVG directory publication use a checked rename when
+  no-replace rename is unavailable. This fallback may replace an empty
+  destination directory created concurrently. Corpus builds also avoid
+  SQLite shared-memory index files.
+- Analyzer setup and Hugging Face dataset exports stop before downloading or
+  streaming data if their required symbolic-link or hard-link probe fails.
+  Errors retain the OS reason and suggest a suitable output directory.
+- The spaCy adapter's `electra` and `bert-large` wheel extras install without
+  conflicting Transformers constraints. The wheel extras use the constraint
+  from spacy-transformers; `ling analyzer prepare ginza` retains its locked
+  package versions.
+
 ## [0.8.0] - 2026-11-17
 
 ### Added

@@ -413,8 +413,6 @@ mod tests {
         }
     }
 
-    /// A name stands for one value of its attribute, so a list of values
-    /// named in words (Frequencies' rows by `upos`) has no two alike.
     #[test]
     fn no_two_values_of_an_attribute_share_a_name() {
         let names: serde_json::Value = serde_json::from_str(LABEL_NAMES_JSON).unwrap();

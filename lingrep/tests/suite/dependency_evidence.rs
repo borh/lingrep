@@ -12,9 +12,6 @@ use tempfile::TempDir;
 
 use crate::support::{assert_success, lingrep, parse_jsonl};
 
-/// The class 6 relation patterns: `npv` consumes noun+particle and binds the
-/// verb anywhere in the sentence; `npv_adjacent` consumes all three; `pv`
-/// consumes only the particle and binds two words.
 pub(crate) const CATALOG: &str = "\
 set CASE := {が, を, に, で, から, より, と, へ}.
 set NOMINAL := {NOUN, PROPN, PRON, NUM}.
@@ -28,7 +25,6 @@ pv := (?<p> [dep.rel=case & lemma in @CASE])
       where (?<n> [upos in @NOMINAL]) -[case]-> $p, (?<v> [upos=VERB]) -[@ROLE]-> $n.
 ";
 
-/// One CoNLL-U word: form, lemma, UPOS, XPOS, head, relation.
 type Word<'a> = (&'a str, &'a str, &'a str, &'a str, usize, &'a str);
 
 pub(crate) fn conllu_sentence(id: &str, words: &[Word<'_>]) -> String {
@@ -46,7 +42,6 @@ pub(crate) fn conllu_sentence(id: &str, words: &[Word<'_>]) -> String {
     sentence
 }
 
-/// 坂を一つ上った: the verb is two words after the particle.
 pub(crate) fn nonadjacent() -> String {
     conllu_sentence(
         "nonadjacent",
@@ -59,7 +54,6 @@ pub(crate) fn nonadjacent() -> String {
     )
 }
 
-/// 坂を上った: the verb follows the particle.
 pub(crate) fn adjacent() -> String {
     conllu_sentence(
         "adjacent",
@@ -71,7 +65,6 @@ pub(crate) fn adjacent() -> String {
     )
 }
 
-/// 見た、猫を: the head verb precedes its dependent noun; its XPOS is `_`.
 fn head_first() -> String {
     conllu_sentence(
         "head-first",
@@ -84,7 +77,6 @@ fn head_first() -> String {
     )
 }
 
-/// 坂を上り、道を下った: two occurrences bound to two different verbs.
 fn two_verbs() -> String {
     conllu_sentence(
         "two-verbs",
@@ -100,7 +92,6 @@ fn two_verbs() -> String {
     )
 }
 
-/// 坂を, 300 commas, 上った: the verb is far beyond any context window.
 fn long() -> String {
     let mut words: Vec<Word<'_>> = vec![
         ("坂", "坂", "NOUN", "名詞", 303, "obj"),
@@ -176,7 +167,6 @@ fn word(
     })
 }
 
-/// Every relation record's pattern, sentence, span, and complete evidence.
 fn relation_evidence(records: &[Value]) -> Vec<Value> {
     records
         .iter()
@@ -377,9 +367,6 @@ fn evidence_names_graph_bound_words_outside_the_span_direct_and_prepared() {
     );
 }
 
-/// `--evidence` adds one field to each match record and changes nothing else
-/// the default stream publishes — spans, character offsets, tokens, and the
-/// scalars of graph bindings — over a direct and a prepared corpus.
 #[test]
 fn evidence_is_additive_to_the_default_json_records() {
     let directory = TempDir::new().unwrap();
@@ -471,7 +458,6 @@ fn evidence_tsv_rows_are_one_word_per_row_with_the_full_sentence() {
         .concat()
     );
 
-    // The default projection is unchanged: one eleven-column row per match.
     let default = run(&["matches", "--tsv"], &catalog, &input);
     assert_eq!(
         String::from_utf8(default.stdout).unwrap(),

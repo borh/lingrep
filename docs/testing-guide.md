@@ -72,7 +72,9 @@ targets rather than features and so cannot see a feature-gated module at all.
 
 Run `./ci.sh --full` before finishing a branch. It adds the complete
 integration inventory, the matcher correctness gate, the adapter suites, and
-the browser layout checks.
+the browser layout checks. The browser checks need Chromium and ChromeDriver on
+Linux and only ChromeDriver on macOS, whose dev shell provides the matching
+Chrome; see [development-environment.md](development-environment.md).
 Fuzz and performance are independent `--fuzz` and `--performance` modes.
 
 ### Soranoha corpus validation
@@ -243,6 +245,23 @@ let stats = run_matching_test(
 `lingrep_core::testing::strategies` provides Japanese sentence and pattern strategies
 for property tests. Pair a generated input with an explicit invariant; the
 strategy alone proves nothing.
+
+### Browser tests
+
+`lingrep-web/tests/browser/` runs on Linux Chromium and macOS Google Chrome.
+Use the shared helpers to keep input and viewport handling consistent:
+
+- Open sessions with `crate::session` to close Chrome after a test failure.
+- Use `crate::MOD` for CodeMirror's `Mod-` shortcuts: Command on macOS and
+  Control on Linux.
+- Use `crate::resize` to set the page width, including widths below 500 px.
+- Use `two_frames` before inspecting layout updated by `ResizeObserver`,
+  media-query changes, or `fullscreenchange`; poll for any further asynchronous
+  state that the assertion requires instead of sleeping for a fixed time.
+- After an htmx swap, wait for `.htmx-added` to clear before clicking an
+  element with `hx-*` attributes.
+- For hover previews, assert how long the pointer must remain over a bar
+  before a request, rather than the number of requests during a WebDriver sweep.
 
 ### Snapshot locations
 

@@ -8,15 +8,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 MANIFEST_HASH_CHUNK_BYTES = 1 << 20
-# The setup receipt lies beside the resource root, outside the hashed closure;
-# the projection of it that can change an analysis lies inside, so the resource
-# manifest digest covers that projection and not the interpreter's build string.
 RUNTIME_RECEIPT_FILE = "lingrep-runtime.json"
 RUNTIME_IDENTITY_FILE = "lingrep-runtime-identity.json"
 RUNTIME_IDENTITY_FORMAT = "lingrep.adapter-runtime-identity/v1"
-# Installed by a locked requirement on only some platforms, where they replace
-# numerical kernels for the same model; identity records no platform, CPU or
-# BLAS build either.
 PLATFORM_KERNEL_DISTRIBUTIONS = frozenset({"thinc-apple-ops"})
 
 
@@ -113,9 +107,8 @@ def _distribution_name(name: str) -> str:
 
 
 def runtime_identity(receipt: Mapping[str, Any]) -> dict[str, Any]:
-    """Project a runtime receipt onto the facts that can change an analysis:
-    the interpreter release and every installed distribution's version, except
-    the platform kernel distributions."""
+    """Return the interpreter release and normalized package versions,
+    excluding PLATFORM_KERNEL_DISTRIBUTIONS."""
 
     return {
         "format": RUNTIME_IDENTITY_FORMAT,

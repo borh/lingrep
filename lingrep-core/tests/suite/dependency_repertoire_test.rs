@@ -941,9 +941,6 @@ fn captured_relations_reject_missing_and_malformed_endpoint_observations() {
     }
 }
 
-/// A word graph binding publishes every portable scalar the token carries,
-/// `norm` included, so `key: [$v.norm]` can be audited against the binding;
-/// a value the token lacks is omitted rather than published empty.
 #[test]
 fn word_graph_bindings_publish_norm_and_omit_absent_scalars() {
     use lingrep_core::corpus::conllu::EnhancedNodeId;
@@ -966,7 +963,6 @@ fn word_graph_bindings_publish_norm_and_omit_absent_scalars() {
         .matcher
         .bind_with_projection(&schema, schema.keys().iter().cloned())
         .unwrap();
-    // 坂 obj→2, 上った root; the second sentence's verb has no norm or xpos.
     let sentence = |verb_norm: Option<&str>, verb_xpos: Option<&str>| {
         let words: [[Option<&str>; 7]; 2] = [
             [

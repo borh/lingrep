@@ -121,7 +121,7 @@ pattern finite_tail := (@past_tail | @nonpast_tail).
 | A fragment is optional and is skipped | The selected witness has no occurrence for that call | Every referenced fragment participated |
 | One fragment is called twice | The calls remain distinct by call site and span | A set of fragment names completely explains the result |
 | Two alternatives accept the same span | Selection follows a declared deterministic witness rule | Both alternatives become two new matches |
-| A positive assertion inspects another sentence | The asserted evidence is distinct from consumed material | Its label describes the consumed span |
+| A positive assertion inspects tokens outside the consumed span | The asserted evidence is distinct from consumed material | Its label describes the consumed span |
 | A negative assertion succeeds | Success establishes an absence condition | A failed fragment call becomes a successful occurrence |
 | An intersection requires two expressions | Both constraints can hold over one span | Their metadata values are mutually exclusive alternatives |
 | An author writes `tense: none` to remove a file default | The authored key remains absent | Later inheritance restores the removed value |

@@ -380,8 +380,6 @@ impl PostingsBuilder {
             }
             Ok(())
         };
-        // Runs hold disjoint, ascending sentence ranges in run order, so equal
-        // values merge by run index.
         let sorted_result = (|| -> std::io::Result<()> {
             if run_ends.last().is_none_or(|end| *end == 0) {
                 return Ok(());

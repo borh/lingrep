@@ -33,12 +33,7 @@ MORPH_TARGETS = {
     "token.pos": lambda token: bool(token.pos_),
     "token.tag": lambda token: bool(token.tag_),
 }
-# Projected attributes that some pipelines do not assign.
 MORPH_OUTPUTS = {"token.morph", "token.dep", "token.head"}
-# GiNZA's `transformer_custom` component loads its transformer by Hugging Face
-# repository name, from whatever commit the repository's `main` names when the
-# model loads. Setup fetches the commit pinned here instead and saves the
-# weights inside the model directory, where the resource manifest covers them.
 HUB_FACTORY = "transformer_custom"
 HUB_REVISIONS = {
     "megagonlabs/transformers-ud-japanese-bert-large-ginza": (
@@ -49,24 +44,13 @@ HUB_REVISIONS = {
     ),
 }
 HUB_SOURCES_FILE = "lingrep-hub-sources.json"
-# GiNZA's bunsetu_recognizer labels each token B (first in its bunsetu) or I;
-# `ginza -f conllu` prints the same label as BunsetuBILabel in MISC.
 BUNSETU_KEY = "spacy.ginza.bunsetu"
-# The Electra repository's tokenizer_config.json names this class through an
-# `auto_map` entry whose modeling.py only imports it from sudachitra. Registering
-# the class from the locked sudachitra lets the tokenizer load without running
-# repository code.
 SUDACHITRA_TOKENIZER = "modeling.ElectraSudachipyTokenizer"
 
 
 def save_model(model: str, destination: Path, *, offline: bool = False) -> None:
-    """Save an installed or local spaCy model so that loading reads only files
-    inside ``destination``.
-
-    A GiNZA transformer is fetched at its pinned revision, loaded from that local
-    copy, saved with its weights, and switched to spacy-transformers' stock
-    ``transformer`` factory, which loads the saved weights instead of the Hub.
-    """
+    """Save a spaCy model with pinned GiNZA transformer weights;
+    offline setup rejects models requiring those downloads."""
 
     import spacy
 
@@ -121,8 +105,6 @@ def save_model(model: str, destination: Path, *, offline: bool = False) -> None:
             }
             if loaded != {snapshots[name]}:
                 raise ValueError(f"component {name!r} loaded {loaded}, not the pin")
-            # The saved shim records these names; the temporary path would make
-            # every setup's bundle, and so its identity, differ.
             objects.transformer.config._name_or_path = value["repository"]
             objects.tokenizer.name_or_path = value["repository"]
         pipeline.to_disk(destination)
@@ -190,8 +172,7 @@ def _drop_sudachitra_auto_map(path: Path) -> None:
 
 
 def _point_transformer_at(path: Path, repository: str, local: Path) -> None:
-    """Rewrite a transformer_custom component's serialized repository name to the
-    absolute path of its download, so from_pretrained reads only that directory."""
+
 
     import srsly
 
@@ -376,9 +357,7 @@ def _components_through(
     targets: set[str],
     boundary: str | None,
 ) -> list[str]:
-    """Return the pipeline prefix through the last component that is ``boundary``
-    or assigns one of ``targets``. A component can read earlier components'
-    output without declaring it in ``requires``, so none of them is dropped."""
+
 
     last = -1
     for index, name in enumerate(names):

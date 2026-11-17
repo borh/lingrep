@@ -1018,8 +1018,6 @@ class ModelBundleTests(unittest.TestCase):
                     max_position_embeddings=32,
                 )
             ).save_pretrained(tiny)
-            # A GiNZA package stores no weights: its shim names the repository
-            # that transformer_custom passes to from_pretrained.
             source = root / "source"
             pipeline = spacy.blank("en")
             pipeline.add_pipe("transformer", config={"model": {"name": str(tiny)}})
@@ -1098,7 +1096,6 @@ class GiNzaModelTests(unittest.TestCase):
             "彼女は坂を一つ上った。",
             "猫が走った。犬は庭で寝ている。",
             "えたいの知れない不吉な塊が私の心を始終圧えつけていた。",
-            # bunsetu_recognizer reads the ner component's entity 一つ一つ.
             "開いている窓を一つ一つ見ていると、僕はそのことを憶い出す。",
         ]
         name = os.environ["LINGREP_SPACY_GINZA_MODEL"]
@@ -1167,8 +1164,6 @@ class GiNzaModelTests(unittest.TestCase):
             )
         self.assertEqual(analyzer, cli)
         self.assertEqual({"B", "I"}, {row[-1] for sentence in cli for row in sentence})
-        # One input line holds two parser sentences, so its heads are numbered
-        # from the line's first token and it has two roots.
         self.assertEqual(unit[0], cli[0])
         self.assertEqual(unit[2:], cli[3:])
         second = [

@@ -1769,8 +1769,6 @@ fn cancellation_during_value_aggregation_stops_before_the_remaining_documents() 
     }
 }
 
-/// One `npv`-shaped pattern: `(noun, particle, verb)` keys counted per
-/// document, and one surface pattern beside it.
 fn npv_table(path: &Path, entries: &[([&str; 3], &[(u32, u64)])]) -> CountTable {
     let mut values = entries
         .iter()

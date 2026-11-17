@@ -23,7 +23,6 @@ use lingrep_core::fsm::{
 };
 use lingrep_core::token_match::{TokenAttributeIndex, TokenInfo};
 
-/// Similarities to `研究` only; every other word has no vector.
 struct Table {
     asked: RefCell<Vec<Vec<NearQuery>>>,
 }
