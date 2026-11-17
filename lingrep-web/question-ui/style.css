@@ -79,7 +79,7 @@ main{padding-top:8px}.site{height:40px}.question-sentence{font-size:16px;line-he
 
 .dependency-evidence th code{display:block;font:400 13px/1.3 var(--mono);color:var(--soft)}.kwic-row mark.bound-word{background:none;padding:0;font-weight:600;text-decoration:underline;text-decoration-color:var(--green);text-decoration-thickness:2px;text-underline-offset:4px}
 .dependency-evidence-scroll{flex:0 1 auto;min-width:0;max-width:100%;overflow-x:auto}
-@media print{.skip,header.site,.run-action,.draft-badge,.scope-chip>span[aria-hidden],.line-controls input,.document-nav,.result-header a[download],.result-header a[href$="/export"],.token-lab>header a,.example-steps,.token-help,.attribute-actions,.query-tools-detail,.reading-options>summary,#edit-pattern-error,#search-current-corpus{display:none}.dependency-role{color:var(--ink);background:none;border:1px solid var(--ink)}}
+@media print{.skip,header.site,.run-action,.draft-badge,.scope-chip>span[aria-hidden],.line-controls input,.document-nav,.document-pages,.result-header a[download],.result-header a[href$="/export"],.token-lab>header a,.example-steps,.token-help,.attribute-actions,.query-tools-detail,.reading-options>summary,#edit-pattern-error,#search-current-corpus{display:none!important}.dependency-role{color:var(--ink);background:none;border:1px solid var(--ink)}}
 @media(max-width:480px){.site{height:auto;flex-wrap:wrap;row-gap:0}.routes .brand{margin-right:6px}.routes a:not(.brand){padding:3px 5px}.question-actions{margin-left:auto}}
 .dependency-evidence tr.in-span td{background:var(--match-wash)}
 .role-names{font:13px var(--mono);color:var(--soft)}
