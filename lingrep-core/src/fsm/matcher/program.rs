@@ -2392,7 +2392,7 @@ mod tests {
                 "aggregate output must exceed the matching batch budget"
             );
             let fresh = crate::fsm::BoundSentenceMatcher::new(&bound)
-                .match_all(&pool, &[input.clone()])
+                .match_all(&pool, std::slice::from_ref(&input))
                 .unwrap();
             assert_eq!(fresh, vec![expected.clone()]);
         }
