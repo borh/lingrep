@@ -2764,6 +2764,13 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
             assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
             assert_eq!(columns["wholeWords"], json!(true), "{subset}: {columns}");
             assert_eq!(columns["fieldNames"], json!(["n · p · v", 0]), "named once, over the entries: {columns}");
+            observed(
+                &driver,
+                "return [...document.querySelectorAll('details.fq-legend dt')].map((d) => d.textContent)",
+                json!(["完全一致", "n · p · v", "文書に占める割合", "100万語あたり"]),
+                "the table's terms explained beside it",
+            )
+            .await?;
         }
         assert_no_page_errors(&driver).await
     }

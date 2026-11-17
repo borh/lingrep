@@ -433,6 +433,19 @@ export function mountFrequency(root) {
     const subset = answer.subset ? `<td class="fig r" title="${esc(`${num(r.count)} / ${num(answer.subset.occurrences)}`)}">${answer.subset.occurrences ? ((r.count / answer.subset.occurrences) * 100).toFixed(1) : "0.0"}%</td>` : "";
     return `<tr${s.where == null ? ` data-i="${i}"` : ""}><td class="fig r">${num(r.rank)}</td><td class="entry-cell">${s.where == null ? `<button class="open-entry" data-i="${i}">${esc(r.text)}</button>` : esc(r.text)}${glossHtml(r.group)}</td><td class="fig r"><b>${num(r.count)}</b></td>${subset}<td class="fig r">${num(r.works)}</td><td class="spread" title="${(share * 100).toFixed(1)}%"><span><i style="width:${Math.max(1, share * 100).toFixed(1)}%"></i></span></td><td class="fig r pm" data-v="${pm}"></td></tr>`;
   }
+  /** The table's terms, explained in a disclosure under it: the exact-value fields when the key has them, the field names `names`, and the two rate columns. */
+  function legend(names) {
+    const details = document.createElement("details");
+    details.className = "fq-legend";
+    const terms = [
+      ...(keyFields().length > 1 ? [[t("frequency.key_equals"), "frequency.legend_exact"]] : []),
+      ...(names ? [[entryFieldNames(names), "frequency.legend_names"]] : []),
+      [t("frequency.head_share"), "frequency.legend_share"],
+      [t("frequency.head_per_million"), "frequency.legend_per_million"],
+    ];
+    details.innerHTML = `<summary>${esc(t("frequency.legend"))}</summary><dl>${terms.map(([term, key]) => `<dt>${esc(term)}</dt><dd>${esc(t(key))}</dd>`).join("")}</dl>`;
+    return details;
+  }
   function alignColumn(cells) {
     const xs = cells.map((c) => +c.dataset.v), digits = places(xs);
     cells.forEach((c, i) => (c.textContent = fixed(xs[i], digits)));
@@ -454,6 +467,7 @@ export function mountFrequency(root) {
     const names = keyNames(answer.rows[0].group);
     const entryNames = names ? ` <small class="entry-names" title="${esc(names.join(" "))}">${esc(entryFieldNames(names))}</small>` : "";
     tableEl.innerHTML = `<table class="freq"><thead><tr>${heads.map((h) => `<th class="${HEAD_CLASS[h] ?? "r"}">${esc(t(h))}${h === "views.head_entry" ? entryNames : ""}</th>`).join("")}</tr></thead><tbody>${answer.rows.map((r, i) => rowHtml(r, i)).join("")}</tbody></table><button class="more"${shown >= answer.matching ? " hidden" : ""}${paging.pending ? " disabled" : ""}>${esc(t("views.more", { n: PAGE }))}</button>`;
+    tableEl.querySelector("table.freq").after(legend(names));
     alignColumn([...tableEl.querySelectorAll("td.pm")]);
     if (lastEntry) {
       const i = answer.rows.findIndex((r) => JSON.stringify(r.group) === lastEntry);
