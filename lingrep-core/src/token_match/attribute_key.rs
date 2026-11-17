@@ -41,6 +41,14 @@ impl AttributeKey {
         &self.0
     }
 
+    pub(crate) fn heap_bytes(&self) -> usize {
+        if self.0.is_heap_allocated() {
+            self.0.capacity()
+        } else {
+            0
+        }
+    }
+
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()

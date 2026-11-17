@@ -1,3 +1,4 @@
+use super::resource::{MatchResourceError, OutputBudget, compact_heap_bytes};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
@@ -101,15 +102,28 @@ impl CompiledLexicons {
         &self.definitions
     }
 
+    #[cfg(test)]
     pub(crate) fn find_matches<S: TokenSequence + ?Sized>(&self, tokens: &S) -> Vec<Match> {
-        LEXICON_SCRATCH.with_borrow_mut(|scratch| self.find_matches_with_scratch(tokens, scratch))
+        self.try_find_matches(&OutputBudget::default(), tokens)
+            .expect("matching exceeded its resource budget")
+    }
+
+    pub(crate) fn try_find_matches<S: TokenSequence + ?Sized>(
+        &self,
+        output: &OutputBudget,
+        tokens: &S,
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        LEXICON_SCRATCH
+            .with_borrow_mut(|scratch| self.find_matches_with_scratch(output, tokens, scratch))
     }
 
     fn find_matches_with_scratch<S: TokenSequence + ?Sized>(
         &self,
+        output: &OutputBudget,
         tokens: &S,
         scratch: &mut LexiconScratch,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, MatchResourceError> {
+        output.check()?;
         scratch.hits.clear();
         for automaton in &self.projections {
             scratch.begin(tokens.len());
@@ -122,26 +136,25 @@ impl CompiledLexicons {
                 {
                     scratch.append(value.as_bytes(), token_index + 1);
                 } else {
-                    scan_run(automaton, &self.definitions, scratch);
+                    scan_run(automaton, &self.definitions, scratch, output)?;
                     run_start = token_index + 1;
                     scratch.reset_run(run_start);
                 }
             }
-            scan_run(automaton, &self.definitions, scratch);
+            scan_run(automaton, &self.definitions, scratch, output)?;
         }
 
+        output.check()?;
         let mut matches = Vec::with_capacity(scratch.hits.len());
         for (&(definition_id, start, end, term_id), &mask) in &scratch.hits {
             let definition = &self.definitions[definition_id as usize];
-            let matched_by = definition
-                .by
-                .iter()
-                .enumerate()
-                .filter_map(|(index, projection)| {
-                    ((mask & (1 << index)) != 0).then_some(projection.clone())
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
+            let mut matched_by = Vec::with_capacity(definition.by.len());
+            for (index, projection) in definition.by.iter().enumerate() {
+                if mask & (1 << index) != 0 {
+                    matched_by.push(projection.clone());
+                }
+            }
+            let matched_by = matched_by.into_boxed_slice();
             matches.push(Match {
                 pattern: definition.name.clone(),
                 start,
@@ -168,7 +181,7 @@ impl CompiledLexicons {
                     &right.lexical.as_ref().expect("lexical match").term,
                 ))
         });
-        matches
+        Ok(matches)
     }
 
     pub(crate) fn owned_bytes(&self) -> usize {
@@ -204,9 +217,10 @@ fn scan_run(
     automaton: &ProjectionAutomaton,
     definitions: &[CompiledLexiconDefinition],
     scratch: &mut LexiconScratch,
-) {
+    output: &OutputBudget,
+) -> Result<(), MatchResourceError> {
     if scratch.bytes.is_empty() {
-        return;
+        return Ok(());
     }
     for found in automaton.machine.find_overlapping_iter(&scratch.bytes) {
         let Some(start) = scratch.boundaries.get(found.start()) else {
@@ -223,9 +237,34 @@ fn scan_run(
                 .position(|candidate| candidate == &automaton.projection)
                 .expect("automaton labels only definitions using its projection");
             let key = (label.definition_id, start, end, label.term_id);
+            if !scratch.hits.contains_key(&key) {
+                let declaration = &definitions[definition];
+                let bytes = std::mem::size_of::<Match>()
+                    .saturating_add(std::mem::size_of::<LexicalMatch>())
+                    .saturating_add(compact_heap_bytes(&declaration.name))
+                    .saturating_add(compact_heap_bytes(
+                        &declaration.members[label.term_id as usize],
+                    ))
+                    .saturating_add(
+                        declaration
+                            .by
+                            .len()
+                            .max(4)
+                            .saturating_mul(2 * std::mem::size_of::<AttributeKey>()),
+                    )
+                    .saturating_add(
+                        declaration
+                            .by
+                            .iter()
+                            .map(AttributeKey::heap_bytes)
+                            .sum::<usize>(),
+                    );
+                output.reserve(bytes)?;
+            }
             *scratch.hits.entry(key).or_insert(0) |= 1 << projection_index;
         }
     }
+    Ok(())
 }
 
 enum BoundaryMap {

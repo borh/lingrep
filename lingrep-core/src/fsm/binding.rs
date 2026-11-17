@@ -1,5 +1,7 @@
+use super::matcher::resource::OutputBudget;
 use compact_str::CompactString;
 use std::fmt;
+use std::sync::Arc;
 
 use super::{CompiledCatalog, PredicateDigest};
 use crate::execution::{BoundSentenceInput, EnhancedGraphInput};
@@ -218,7 +220,15 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
     ) -> Result<Vec<Match>, BoundExecutionError> {
-        self.find_matches_input_with(input, None)
+        self.find_matches_input_with(input, None, &Arc::new(OutputBudget::default()))
+    }
+
+    pub(crate) fn find_matches_input_with_output(
+        &self,
+        input: &BoundSentenceInput,
+        output: &Arc<OutputBudget>,
+    ) -> Result<Vec<Match>, BoundExecutionError> {
+        self.find_matches_input_with(input, None, output)
     }
 
     /// Executes one bound sentence input whose `within=` lookarounds of each
@@ -230,7 +240,21 @@ impl BoundCatalog {
         windows: &[ScopeWindow<'_>],
     ) -> Result<Vec<Match>, BoundExecutionError> {
         let tokens = self.window_tokens(windows)?;
-        self.find_matches_input_with(input, Some(&window_context(&tokens)))
+        self.find_matches_input_with(
+            input,
+            Some(&window_context(&tokens)),
+            &Arc::new(OutputBudget::default()),
+        )
+    }
+
+    pub(crate) fn find_matches_input_in_windows_with_output(
+        &self,
+        input: &BoundSentenceInput,
+        windows: &[ScopeWindow<'_>],
+        output: &Arc<OutputBudget>,
+    ) -> Result<Vec<Match>, BoundExecutionError> {
+        let tokens = self.window_tokens(windows)?;
+        self.find_matches_input_with(input, Some(&window_context(&tokens)), output)
     }
 
     /// Explains one bound sentence input as
@@ -294,6 +318,7 @@ impl BoundCatalog {
         &self,
         input: &BoundSentenceInput,
         context: Option<&crate::fsm::LookaroundContext<'_, BoundExecutionTokens<'_>>>,
+        output: &Arc<OutputBudget>,
     ) -> Result<Vec<Match>, BoundExecutionError> {
         self.validate_tokens(input.words())?;
         let tokens = BoundExecutionTokens {
@@ -303,7 +328,7 @@ impl BoundCatalog {
         if !self.compiled.requires_enhanced_graph() {
             return self
                 .compiled
-                .try_find_matches_with_context(&tokens, context)
+                .try_find_matches_with_context_and_output(&tokens, context, output)
                 .map_err(BoundExecutionError::Resource);
         }
         match input.enhanced_graph() {
@@ -312,7 +337,7 @@ impl BoundCatalog {
                 let Some(graph) = observation.complete() else {
                     return self
                         .compiled
-                        .try_find_matches_with_context(&tokens, context)
+                        .try_find_matches_with_context_and_output(&tokens, context, output)
                         .map_err(BoundExecutionError::Resource);
                 };
                 if graph.word_count() != input.words().len() {
@@ -322,7 +347,9 @@ impl BoundCatalog {
                     });
                 }
                 self.compiled
-                    .try_find_matches_with_complete_graph(&tokens, graph, context)
+                    .try_find_matches_with_complete_graph_and_output(
+                        &tokens, graph, context, output,
+                    )
                     .map_err(BoundExecutionError::Resource)
             }
         }
