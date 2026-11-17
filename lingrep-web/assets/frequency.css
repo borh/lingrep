@@ -213,7 +213,7 @@
 .fq table.freq tbody tr:hover { background: var(--fq-accent-wash); }
 .fq table.freq .fig { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fq table.freq b { font-weight: 600; }
-.fq .entry-cell { font-family: var(--font-cjk); overflow-wrap: anywhere; }
+.fq .entry-cell { font-family: var(--font-cjk); word-break: keep-all; overflow-wrap: break-word; }
 .fq .entry-cell small { display: block; color: var(--fq-soft); font-size: 13px; }
 .fq .spread { width: 9rem; }
 .fq .spread span { display: block; height: 7px; background: var(--fq-bar-off); }

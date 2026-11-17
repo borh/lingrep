@@ -109,3 +109,9 @@ button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
 .definition-note{font-size:14px;color:var(--soft)}
 .definition-menu .definition-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .attribute-row>strong code{font:13px var(--mono);color:var(--soft);font-weight:400}
+.dependency-evidence-scroll[data-more=right]{mask-image:linear-gradient(to right,#000 calc(100% - 36px),transparent)}
+.dependency-evidence-scroll[data-more=left]{mask-image:linear-gradient(to left,#000 calc(100% - 36px),transparent)}
+.dependency-evidence-scroll[data-more=both]{mask-image:linear-gradient(to right,transparent,#000 36px,#000 calc(100% - 36px),transparent)}
+.dependency-tree .dependency-gloss{color:var(--ink)}
+@media(min-width:481px){.token-lab{font-size:14px}.kwic-row{font-size:15px}.dependency-evidence{font-size:15px}text.dependency-arc,text.dependency-arc.bound,.dependency-chip small,.dependency-meta,.dependency-evidence td code,.dependency-evidence th code,.attribute-row>span code,.attribute-row>strong code{font-size:14px}.attribute-row{font-size:15px}}
+@media(min-width:1440px){body{font-size:15px}.kwic-row{font-size:17px}.dependency-chip{font-size:19px}.dependency-word{font-size:17px}.dependency-evidence,.attribute-row{font-size:16px}text.dependency-arc,text.dependency-arc.bound,.dependency-chip small,.dependency-meta{font-size:15px}}

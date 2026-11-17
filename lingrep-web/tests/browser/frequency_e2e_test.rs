@@ -2710,11 +2710,21 @@ return {
   perMillion: over ? over.textContent : null,
   entryEms: entry.getBoundingClientRect().width / parseFloat(getComputedStyle(entry).fontSize),
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  wholeWords: (() => {
+    const text = entry.querySelector('.open-entry').firstChild;
+    let at = 0;
+    return text.textContent.split(' ').every((word) => {
+      const tops = new Set([...word].map((_, i) => { const r = document.createRange(); r.setStart(text, at + i); r.setEnd(text, at + i + 1); return Math.round(r.getBoundingClientRect().top); }));
+      at += word.length + 1;
+      return tops.size === 1;
+    });
+  })(),
 };";
 
 /// At phone width the table hides the same columns from its header and its
 /// rows, so each visible header stays over its own values, with and without
-/// the subset column an exact-match field adds; the entry stays readable.
+/// the subset column an exact-match field adds; the entry stays readable and
+/// wraps only between its words.
 #[tokio::test]
 async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -2751,6 +2761,7 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
             assert_eq!(columns["perMillion"], json!("100万語あたり"), "{subset}: {columns}");
             assert!(columns["entryEms"].as_f64().unwrap() >= 4.0, "{subset}: {columns}");
             assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
+            assert_eq!(columns["wholeWords"], json!(true), "{subset}: {columns}");
         }
         assert_no_page_errors(&driver).await
     }

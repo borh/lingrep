@@ -1526,7 +1526,7 @@ function renderDependencies() {
             const y1 = (arc.from + .5) * TREE_ROW, y2 = (arc.to + .5) * TREE_ROW, x = gutter - 6 - arc.column * TREE_COLUMN;
             svg.append(svgNode('path', { class: arc.bound ? 'dependency-arc bound' : 'dependency-arc', d: `M${gutter},${y1} H${x} V${y2} H${gutter - 3} M${gutter - 8},${y2 - 4} L${gutter - 3},${y2} L${gutter - 8},${y2 + 4}` }));
         }
-        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel', value(index, 'dep.rel')) ?? '')}">${index + 1} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}${relationGloss(value(index, 'dep.rel'))}</span>`; }).join('')}</div>`;
+        diagram.innerHTML = `<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token, index) => { const word = byIndex.get(index); return `<span class="dependency-word${word?.inSpan ? ' in-span' : ''}${word?.roles.length ? ' bound' : ''}">${roleTags(word?.roles ?? [])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel', value(index, 'dep.rel')) ?? '')}">${index + 1}${value(index, 'dep.head') === '0' ? '' : '→' + escape(value(index, 'dep.head'))}${relationGloss(value(index, 'dep.rel'))} ${escape(value(index, 'upos'))} ${escape(value(index, 'dep.rel'))}</span>`; }).join('')}</div>`;
         diagram.firstElementChild.prepend(svg);
     }
     else {
@@ -1554,9 +1554,15 @@ function renderDependencies() {
         arcObserver.observe(chips);
     }
     $('#dependency-evidence').innerHTML = words.map(word => `<tr${word.inSpan ? ' class="in-span"' : ''}><td>${word.index + 1}</td><td>${escape(named('upos', value(word.index, 'upos')) ?? value(word.index, 'upos'))}${word.roles.length ? ` <small class="role-names">${escape(word.roles.join(', '))}</small>` : ''}</td>${['text', 'lemma', 'upos'].map(key => `<td>${escape(value(word.index, key))}</td>`).join('')}<td>${escape(headLabel(tokens, word.index) ?? t('root'))}</td><td>${relationCell(value(word.index, 'dep.rel'))}</td></tr>`).join('');
+    scrollCue();
 }
 compactLayout.addEventListener('change', () => { if (!dependencyChoice)
     renderDependencies(); });
+// The evidence table fades at an edge it can scroll past.
+const evidenceScroll = $('.dependency-evidence-scroll');
+function scrollCue() { const { scrollLeft, scrollWidth, clientWidth } = evidenceScroll, left = scrollLeft > 1, right = scrollLeft + clientWidth < scrollWidth - 1; evidenceScroll.dataset.more = left && right ? 'both' : left ? 'left' : right ? 'right' : ''; }
+evidenceScroll.addEventListener('scroll', scrollCue, { passive: true });
+new ResizeObserver(scrollCue).observe(evidenceScroll);
 dependencyPanel.addEventListener('click', event => { const button = event.target.closest('[data-dependency-view]'); if (!button)
     return; dependencyChoice = button.dataset.dependencyView; renderDependencies(); });
 // A frequency handoff opens the example whose sentence and role words match the line it came from, or reports why it cannot.
