@@ -1804,7 +1804,7 @@ ling matches --analyzer-config ./analyzers/ginza/analyzer.toml \
 ```
 
 Preparation downloads the release's adapter wheels, checks their SHA-256
-checksums, and installs Python 3.14, dependencies and the selected model under
+checksums, and installs Python 3.14.9, dependencies and the selected model under
 `--output`. Package versions come from the release locks, with hashes
 checked during installation. Keep that directory at its original path. Deleting
 download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
@@ -1855,10 +1855,15 @@ the parser runs over each input unit and still splits it where it would split
 a document, so a unit holding two parser sentences has two tokens with
 `dep.head` `0`, and its heads count from the unit's first token.
 
-The bundle hashes staged adapter/protocol code and model files. Its runtime
-receipt checks Python and installed package versions, without hashing third-party
-library binaries. Managed analyzer identity does not depend on the output
-directory.
+The bundle hashes staged adapter/protocol code and model files. Setup writes a
+runtime receipt, `lingrep-runtime.json`, beside the model; the adapter checks
+the running Python and installed package versions against it. The model
+directory's `lingrep-runtime-identity.json` holds the Python release and the
+package versions, without the interpreter's build string, the interpreter path,
+or `thinc-apple-ops`, and is hashed with the model. Third-party library binaries
+are not hashed. Managed analyzer identity does not depend on the output
+directory, and an x86_64 or aarch64 Linux or macOS host that installs the same
+Python release and package versions prepares the same identity.
 
 Relative paths resolve from the TOML file's directory. The model must be sealed
 by setup or the repository adapter's `--prepare` command; its profile declares the
