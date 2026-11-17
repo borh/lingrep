@@ -103,6 +103,12 @@ Analyzer identities are built from explicit revision constants, never from
 source bytes, so that editing a comment does not invalidate prepared corpora.
 Replace a revision when output changes; the pinned identity literals in
 `artifact_fingerprint_golden.rs` and `sudachi_contract.rs` fail until then.
+The spaCy and Stanza adapters follow the same rule: their implementation
+identity is `ADAPTER_SEMANTICS_REVISION` in each adapter's `adapter.py`,
+mirrored in `lingrep-core/src/execution/external_process.rs`, and their runtime
+identity is the resolved package versions. Replace both copies when adapter
+output changes; the GiNZA golden test in `scripts/check-spacy-adapter.sh full`
+fails until then.
 
 Pretokenized CoNLL-U adds analyzer-neutral dependency keys `dep.head`,
 `dep.rel`, and `dep.enhanced`. Integer word `ID` is not a separate attribute:

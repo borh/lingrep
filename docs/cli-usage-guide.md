@@ -1872,15 +1872,26 @@ the parser runs over each input unit and still splits it where it would split
 a document, so a unit holding two parser sentences has two tokens with
 `dep.head` `0`, and its heads count from the unit's first token.
 
-The bundle hashes staged adapter/protocol code and model files. Setup writes a
-runtime receipt, `lingrep-runtime.json`, beside the model; the adapter checks
-the running Python and installed package versions against it. The model
-directory's `lingrep-runtime-identity.json` holds the Python release and the
-package versions, without the interpreter's build string, the interpreter path,
-or `thinc-apple-ops`, and is hashed with the model. Third-party library binaries
-are not hashed. Managed analyzer identity does not depend on the output
-directory, and an x86_64 or aarch64 Linux or macOS host that installs the same
-Python release and package versions prepares the same identity.
+Setup writes a runtime receipt, `lingrep-runtime.json`, beside the model. It
+records the Python interpreter, the installed package versions and a digest of
+the staged adapter and protocol code. The adapter checks the running Python and
+package versions against the receipt, and `ling` rejects a bundle whose adapter
+or protocol code differs from the recorded digest. The model directory's
+`lingrep-runtime-identity.json` holds the Python release and the package
+versions, without the interpreter's build string, the interpreter path,
+`thinc-apple-ops` or lingrep's own adapter packages, and is hashed with the
+model. Third-party library binaries are not hashed.
+
+The analyzer identity covers the model files, `lingrep-runtime-identity.json`,
+the profile selection and the adapter's semantics revision, which lingrep
+replaces only when the adapter's token output changes. It does not cover the
+adapter code's bytes, its `pyproject.toml` or `uv.lock`, or the lingrep version.
+A lingrep release that leaves adapter output unchanged therefore prepares the
+same identity, while a different version of any other resolved package,
+including a patch release of GiNZA, spaCy, SudachiPy or the model, prepares a
+new one. Managed analyzer identity does not depend on the output directory, and
+an x86_64 or aarch64 Linux or macOS host that installs the same Python release
+and package versions prepares the same identity.
 
 Relative paths resolve from the TOML file's directory. The model must be sealed
 by setup or the repository adapter's `--prepare` command; its profile declares the
