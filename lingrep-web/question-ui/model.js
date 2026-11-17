@@ -88,9 +88,9 @@ export function sourceSelection(source, span) {
     }
 }
 const BASIC_ATTRIBUTES = ['text', 'lemma', 'norm', 'upos', 'xpos', 'dep.head', 'dep.rel', 'unidic.cform', 'unidic.ctype', 'unidic.kana', 'unidic.pron', 'unidic.orthbase', 'unidic.lform', 'unidic.goshu', 'unidic.pos1', 'unidic.pos2', 'unidic.pos3', 'unidic.pos4', 'unidic.pronbase', 'unidic.kanabase'];
-/** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others. A narrow panel shows the first rows only. */
+/** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others except raw CoNLL-U fields. A narrow panel shows the first rows only. */
 export function basicAttributeKeys(attributes) {
-    return [...BASIC_ATTRIBUTES.filter(key => key in attributes), ...Object.keys(attributes).filter(key => !BASIC_ATTRIBUTES.includes(key))].slice(0, 18);
+    return [...BASIC_ATTRIBUTES.filter(key => key in attributes), ...Object.keys(attributes).filter(key => !BASIC_ATTRIBUTES.includes(key) && !key.startsWith('conllu.'))].slice(0, 18);
 }
 /** The offset of the line defining `name` in a catalog source (`name :=`, after an optional definition keyword), or -1. */
 export function definitionOffset(source, name) {

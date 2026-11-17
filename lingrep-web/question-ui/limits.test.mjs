@@ -49,9 +49,9 @@ test('a definition is found on its own line, after an optional keyword, and not 
   assert.equal(definitionOffset('axb := [].','a.b'),-1);
 });
 
-test('token details list the dependency right after the portable keys, ahead of raw CoNLL-U fields',async()=>{
+test('token details list the dependency right after the portable keys and leave raw CoNLL-U fields to all attributes',async()=>{
   const {basicAttributeKeys}=await import('./model.js');
-  const token={text:'滑か',lemma:'滑らか',upos:'ADJ',xpos:'形状詞','conllu.misc':['BunsetuBILabel=B','SpaceAfter=No'],'dep.head':'3','dep.rel':'acl'};
-  assert.deepEqual(basicAttributeKeys(token),['text','lemma','upos','xpos','dep.head','dep.rel','conllu.misc']);
+  const token={text:'滑か',lemma:'滑らか',upos:'ADJ',xpos:'形状詞','conllu.misc':['BunsetuBILabel=B','SpaceAfter=No'],'conllu.feats':'_','dep.head':'3','dep.rel':'acl'};
+  assert.deepEqual(basicAttributeKeys(token),['text','lemma','upos','xpos','dep.head','dep.rel']);
   assert.equal(basicAttributeKeys(Object.fromEntries(Array.from({length:30},(_,i)=>[`k${i}`,'v']))).length,18);
 });

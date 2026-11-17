@@ -108,3 +108,4 @@ button.kwic-row{font:inherit;font-size:inherit;color:var(--ink);cursor:pointer}
 .definition-menu li>a{font-weight:600}
 .definition-note{font-size:14px;color:var(--soft)}
 .definition-menu .definition-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.attribute-row>strong code{font:13px var(--mono);color:var(--soft);font-weight:400}
