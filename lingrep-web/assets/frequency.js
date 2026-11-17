@@ -445,7 +445,7 @@ export function mountFrequency(root) {
     if (!answer.rows.length) {
       tableEl.innerHTML =
         answer.subset && answer.occurrences
-          ? `<p class="fq-empty">${esc(t("frequency.no_key_match"))} ${esc(t("frequency.no_key_match_hint"))}</p><p><button type="button" class="fq-clear-keys" data-clear-keys>${esc(t("frequency.clear_keys"))}</button></p>`
+          ? `<p class="fq-empty">${esc(t("frequency.no_key_match"))}</p><p class="fq-empty">${esc(t("frequency.no_key_match_hint"))}</p><p><button type="button" class="fq-clear-keys" data-clear-keys>${esc(t("frequency.clear_keys"))}</button></p>`
           : `<p class="fq-empty">${esc(s.q && answer.occurrences ? t("frequency.no_match", { q: s.q }) : t("frequency.empty"))}</p>`;
       return;
     }

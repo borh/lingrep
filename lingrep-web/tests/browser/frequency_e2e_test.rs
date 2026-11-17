@@ -3046,8 +3046,8 @@ async fn an_exact_value_without_entries_offers_to_clear_the_exact_values() -> We
             .await?
             .send_keys("坂坂")
             .await?;
-        let empty = "const p = document.querySelector('[data-fq-table] .fq-empty'); \
-            return p && document.querySelector('[data-clear-keys]') ? p.textContent : null";
+        let empty = "const p = document.querySelector('[data-fq-table]'); \
+            return p.querySelector('.fq-empty') && p.querySelector('[data-clear-keys]') ? p.textContent : null";
         let text = wait_for(&driver, empty, "the empty exact result").await?;
         assert!(text.as_str().unwrap().contains("filter above"), "{text}");
         driver
