@@ -2708,6 +2708,16 @@ return {
   heads: heads.map((h) => [h.textContent, ...extent(h)]),
   cells: cells.map((c) => [c.textContent, ...extent(c)]),
   perMillion: over ? over.textContent : null,
+  brokenWords: heads.flatMap((h) => {
+    const walker = document.createTreeWalker(h, NodeFilter.SHOW_TEXT), broken = [];
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      for (const word of text.textContent.matchAll(/[A-Za-z0-9]+/g)) {
+        const tops = new Set([...word[0]].map((_, i) => { const r = document.createRange(); r.setStart(text, word.index + i); r.setEnd(text, word.index + i + 1); return Math.round(r.getBoundingClientRect().top); }));
+        if (tops.size > 1) broken.push(word[0]);
+      }
+    }
+    return broken;
+  }),
   entryEms: entry.getBoundingClientRect().width / parseFloat(getComputedStyle(entry).fontSize),
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   fieldNames: [document.querySelector('table.freq thead .entry-names')?.textContent ?? null, document.querySelectorAll('table.freq tbody .entry-cell small:not(.gloss)').length],
@@ -2722,10 +2732,11 @@ return {
   })(),
 };";
 
-/// At phone width the table hides the same columns from its header and its
-/// rows, so each visible header stays over its own values, with and without
-/// the subset column an exact-match field adds; the entry stays readable and
-/// wraps only between its words.
+/// At phone width, in Japanese and English, the table hides the same columns
+/// from its header and its rows, so each visible header stays over its own
+/// values, with and without the subset column an exact-match field adds; the
+/// entry stays readable and wraps only between its words, and no header
+/// breaks inside a word.
 #[tokio::test]
 async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDriverResult<()> {
     let Some(driver) = driver().await? else {
@@ -2735,19 +2746,24 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
     let served = serve_key_table().await;
     let result: WebDriverResult<()> = async {
         open(&driver, &served.base, ROWS).await?;
-        driver
-            .execute("localStorage.setItem('lingrep-web:locale:v1', 'ja')", Vec::new())
-            .await?;
         let exact = serde_urlencoded::to_string([("k", json!({"$n.lemma": "坂"}).to_string())]).unwrap();
+        for (locale, subset_share, per_million, legend) in [
+            ("ja", "絞り込み内の割合", "100万語あたり", json!(["完全一致", "n · p · v", "文書に占める割合", "100万語あたり"])),
+            ("en", "Share of subset", "Per million tokens", json!(["exactly", "n · p · v", "Share of documents", "Per million tokens"])),
+        ] {
+        driver
+            .execute(&format!("localStorage.setItem('lingrep-web:locale:v1', '{locale}')"), Vec::new())
+            .await?;
         for (address, subset) in [
             (format!("{}#pattern=noun&{exact}", served.base), true),
             (format!("{}#pattern=noun", served.base), false),
         ] {
             open(&driver, &address, ROWS).await?;
-            let subset_head = "return [...document.querySelectorAll('table.freq thead th')].some((h) => h.textContent === '絞り込み内の割合')";
+            let subset_head = format!("return [...document.querySelectorAll('table.freq thead th')].some((h) => h.textContent === '{subset_share}')");
             if subset {
-                wait_for(&driver, subset_head, "the subset column").await?;
+                wait_for(&driver, &subset_head, "the subset column").await?;
             }
+            let subset = format!("{locale} {subset}");
             let columns = driver.execute(COLUMNS, Vec::new()).await?.json().clone();
             let heads = columns["heads"].as_array().unwrap();
             let cells = columns["cells"].as_array().unwrap();
@@ -2759,7 +2775,8 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
                     "{subset}: {head} over {cell}"
                 );
             }
-            assert_eq!(columns["perMillion"], json!("100万語あたり"), "{subset}: {columns}");
+            assert_eq!(columns["perMillion"], json!(per_million), "{subset}: {columns}");
+            assert_eq!(columns["brokenWords"], json!([]), "{subset}: {columns}");
             assert!(columns["entryEms"].as_f64().unwrap() >= 4.0, "{subset}: {columns}");
             assert!(columns["overflow"].as_f64().unwrap() <= 0.0, "{subset}: {columns}");
             assert_eq!(columns["wholeWords"], json!(true), "{subset}: {columns}");
@@ -2767,10 +2784,11 @@ async fn a_phone_width_table_keeps_each_header_over_its_own_values() -> WebDrive
             observed(
                 &driver,
                 "return [...document.querySelectorAll('details.fq-legend dt')].map((d) => d.textContent)",
-                json!(["完全一致", "n · p · v", "文書に占める割合", "100万語あたり"]),
+                legend.clone(),
                 "the table's terms explained beside it",
             )
             .await?;
+        }
         }
         assert_no_page_errors(&driver).await
     }
