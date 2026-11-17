@@ -174,3 +174,119 @@ npv := (?<n> [dep.rel in @ROLE]) (?<p> [dep.rel=case])\n\
         json!([edit(0, "n"), edit(1, "p"), edit(2, "v")])
     );
 }
+
+/// A store serving one ready morphology corpus under the default key, whose
+/// token schema carries the UniDic keys and no dependency keys.
+fn morphology_store() -> (crate::v6_support::ArtifactFixture, RequestStore) {
+    let (fixture, runtime) = crate::v6_support::runtime_fixture(
+        "editor-check",
+        vec![vec![
+            lingrep_core::token_match::TokenInfo::default()
+                .with_orth("猫")
+                .with_pos("NOUN"),
+        ]],
+    );
+    let store = RequestStore::with_runtime(
+        lingrep_web::state::Config {
+            dict_path: String::new(),
+            corpora: Vec::new(),
+            input_format: None,
+            markdown: lingrep_core::corpus::MarkdownReaderConfig::new(
+                lingrep_core::corpus::SectionPolicy::default(),
+            ),
+            max_record_bytes: lingrep_core::execution::DEFAULT_MAX_INPUT_RECORD_BYTES,
+            detail_limits: lingrep_web::state::DetailLimits { max_kwic: 10 },
+        },
+        runtime,
+    );
+    (fixture, store)
+}
+
+async fn post_to(store: RequestStore, value: Value) -> (StatusCode, Value) {
+    let response = pattern_editor::routes()
+        .with_state(store)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/check")
+                .header("content-type", "application/json")
+                .body(Body::from(value.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn check_with_a_corpus_warns_of_attributes_its_schema_lacks_and_without_one_does_not() {
+    let (_fixture, store) = morphology_store();
+    let source = "noun := [unidic.pos1=名詞].\nsubject := [dep.rel=nsubj].\n";
+    let corpus = lingrep_web::corpus_set::CorpusName::default_key();
+    let (status, body) = post_to(
+        store.clone(),
+        json!({"source": source, "corpus": corpus.as_str()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "valid");
+    let warnings: Vec<&Value> = body["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "attribute_unavailable")
+        .collect();
+    assert_eq!(warnings.len(), 1, "{body}");
+    let warning = warnings[0];
+    assert_eq!(warning["severity"], "warning");
+    assert_eq!(warning["message_key"], "editor.diag_attribute_unavailable");
+    assert_eq!(warning["args"]["attribute"], "dep.rel");
+    assert_eq!(warning["args"]["definitions"], "subject");
+    assert_eq!(warning["args"]["schema"], "vibrato morphology");
+    let start = warning["location"]["byte_range"]["start"].as_u64().unwrap() as usize;
+    let end = warning["location"]["byte_range"]["end"].as_u64().unwrap() as usize;
+    assert_eq!(&source[start..end], "dep.rel");
+    assert_eq!(warning["location"]["line"], 2);
+    assert!(
+        body["token_keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "unidic.pos1")
+    );
+
+    let (status, body) = post_to(store.clone(), json!({"source": source})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !body["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "attribute_unavailable"),
+        "{body}"
+    );
+    assert!(body.get("token_keys").is_none());
+
+    let (status, body) = post_to(store, json!({"source": source, "corpus": "undeclared"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.get("token_keys").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn check_with_a_corpus_refuses_a_dependency_where_its_schema_cannot_answer() {
+    let (_fixture, store) = morphology_store();
+    let corpus = lingrep_web::corpus_set::CorpusName::default_key();
+    let source = "pattern edge := (?<d> []) where (?<h> []) -[*]-> $d.\n";
+    let (status, body) = post_to(store.clone(), json!({"source": source})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post_to(store, json!({"source": source, "corpus": corpus.as_str()})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["diagnostics"][0]["code"], "SchemaBind");
+    assert_eq!(body["diagnostics"][0]["severity"], "error");
+    assert_eq!(
+        body["diagnostics"][0]["args"]["schema"],
+        "vibrato morphology"
+    );
+}

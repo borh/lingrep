@@ -1,13 +1,17 @@
+use std::borrow::Cow;
+
 use axum::{
     Json, Router,
-    extract::rejection::JsonRejection,
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
 use lingrep_core::fsm::{
-    CompilerStats, Diagnostic, DiagnosticCode, DiagnosticSeverity, FormatError,
+    CatalogAnalysis, CompileOutput, CompilerStats, Diagnostic, DiagnosticCode, DiagnosticSeverity,
+    FormatError,
 };
+use lingrep_core::token_match::AttributeKey;
 use serde::{Deserialize, Serialize};
 
 use crate::patterns::{WEB_PATTERN_SOURCE_NAME, compile_web_pattern, format_web_pattern};
@@ -23,6 +27,11 @@ pub fn routes() -> Router<RequestStore> {
 #[derive(Deserialize)]
 struct EditorRequest {
     source: String,
+    /// The key of a served corpus. When it names a ready corpus, `check` also
+    /// binds the source to that corpus's token schema and reports what the
+    /// binding finds, as a run would.
+    #[serde(default)]
+    corpus: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -44,8 +53,11 @@ struct EditorDiagnostic {
     code: String,
     category: &'static str,
     severity: &'static str,
-    message: &'static str,
+    message: Cow<'static, str>,
     message_key: &'static str,
+    /// Interpolation arguments for `message_key`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<serde_json::Value>,
     location: Option<EditorLocation>,
 }
 
@@ -83,6 +95,9 @@ enum CheckResponse {
         capture_key_edits: Vec<lingrep_core::fsm::CaptureKeyEdit>,
         diagnostics: Vec<EditorDiagnostic>,
         stats: EditorStats,
+        /// The token attribute keys of the requested corpus, when it is ready.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token_keys: Option<Vec<String>>,
     },
     Invalid {
         diagnostics: Vec<EditorDiagnostic>,
@@ -99,20 +114,51 @@ enum FormatResponse {
     ServerError,
 }
 
-async fn check(request: Result<Json<EditorRequest>, JsonRejection>) -> Response {
+async fn check(
+    State(store): State<RequestStore>,
+    request: Result<Json<EditorRequest>, JsonRejection>,
+) -> Response {
     let Ok(Json(request)) = request else {
         return (StatusCode::BAD_REQUEST, Json(CheckResponse::BadRequest)).into_response();
     };
     match compile_web_pattern(&request.source) {
-        Ok(output) => (
-            StatusCode::OK,
-            Json(CheckResponse::Valid {
-                capture_key_edits: output.capture_key_edits,
-                diagnostics: editor_diagnostics(&output.diagnostics),
-                stats: EditorStats::from(&output.stats),
-            }),
-        )
-            .into_response(),
+        Ok(output) => {
+            let mut diagnostics = editor_diagnostics(&output.diagnostics);
+            let mut token_keys = None;
+            if let Some((schema, schema_name)) =
+                corpus_schema(&store, request.corpus.as_deref()).await
+            {
+                token_keys = Some(
+                    schema
+                        .keys()
+                        .iter()
+                        .map(|key| key.as_str().to_owned())
+                        .collect(),
+                );
+                match binding_diagnostics(&request.source, &output, &schema, &schema_name) {
+                    Ok(found) => diagnostics.extend(found),
+                    Err(refusal) => {
+                        return (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            Json(CheckResponse::Invalid {
+                                diagnostics: vec![*refusal],
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            (
+                StatusCode::OK,
+                Json(CheckResponse::Valid {
+                    capture_key_edits: output.capture_key_edits,
+                    diagnostics,
+                    stats: EditorStats::from(&output.stats),
+                    token_keys,
+                }),
+            )
+                .into_response()
+        }
         Err(error) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(CheckResponse::Invalid {
@@ -121,6 +167,129 @@ async fn check(request: Result<Json<EditorRequest>, JsonRejection>) -> Response 
         )
             .into_response(),
     }
+}
+
+/// The token schema of the served corpus `key` and its name as run notices
+/// give it (`family profile`); `None` when no key is given, the key names no
+/// served corpus, or the corpus is not ready.
+async fn corpus_schema(
+    store: &RequestStore,
+    key: Option<&str>,
+) -> Option<(lingrep_core::token_match::TokenSchema, String)> {
+    let slot = store.corpora.resolve(Some(key?))?;
+    let ready = slot.runtime.ready().await?;
+    let schema = ready.artifact.token_schema().ok()?;
+    let analyzer = ready.artifact.analyzer();
+    Some((schema, format!("{} {}", analyzer.family, analyzer.profile)))
+}
+
+/// What binding `output` to `schema` finds, as a run reports it: a warning per
+/// definition that references an attribute the schema does not carry, or the
+/// refusal a run fails with (a dependency `where` without its edge keys, or a
+/// value-kind conflict).
+fn binding_diagnostics(
+    source: &str,
+    output: &CompileOutput,
+    schema: &lingrep_core::token_match::TokenSchema,
+    schema_name: &str,
+) -> Result<Vec<EditorDiagnostic>, Box<EditorDiagnostic>> {
+    let bound = output
+        .matcher
+        .bind_with_projection(schema, output.matcher.execution_attributes())
+        .map_err(|error| {
+            Box::new(EditorDiagnostic {
+            code: "SchemaBind".into(),
+            category: "schema",
+            severity: "error",
+            message: Cow::Owned(format!(
+                "The pattern cannot bind to this corpus's token schema ({schema_name}): {error}."
+            )),
+            message_key: "editor.diag_schema_bind",
+            args: Some(serde_json::json!({ "schema": schema_name, "error": error.to_string() })),
+            location: None,
+        })
+        })?;
+    Ok(bound
+        .unavailable_attributes()
+        .iter()
+        .flat_map(|attribute| {
+            unavailable_diagnostics(source, &output.analysis, attribute, schema_name)
+        })
+        .collect())
+}
+
+/// One warning per definition referencing `attribute`, placed on its first
+/// mention at or after the definition's declaration; one unplaced warning when
+/// only the catalog configuration references it.
+fn unavailable_diagnostics(
+    source: &str,
+    analysis: &CatalogAnalysis,
+    attribute: &AttributeKey,
+    schema_name: &str,
+) -> Vec<EditorDiagnostic> {
+    let sites: Vec<_> = analysis.references_to(attribute).collect();
+    let definitions = sites
+        .iter()
+        .map(|site| site.definition.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let diagnostic = |location: Option<EditorLocation>| {
+        let referenced_by = if definitions.is_empty() {
+            "the catalog configuration"
+        } else {
+            &definitions
+        };
+        EditorDiagnostic {
+            code: "attribute_unavailable".into(),
+            category: "schema",
+            severity: "warning",
+            message: Cow::Owned(format!(
+                "This corpus's token schema ({schema_name}) does not carry `{attribute}`, which \
+                 {referenced_by} references; tests over it match nothing, and only `!(…)` \
+                 complements hold."
+            )),
+            message_key: "editor.diag_attribute_unavailable",
+            args: Some(serde_json::json!({
+                "attribute": attribute.as_str(),
+                "definitions": referenced_by,
+                "schema": schema_name,
+            })),
+            location,
+        }
+    };
+    if sites.is_empty() {
+        return vec![diagnostic(None)];
+    }
+    sites
+        .iter()
+        .map(|site| diagnostic(mention(source, site.declaration_line, attribute.as_str())))
+        .collect()
+}
+
+/// The first occurrence of `needle` at or after the start of 1-based `line`.
+fn mention(source: &str, line: usize, needle: &str) -> Option<EditorLocation> {
+    let line_start = source
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    let start = line_start + source.get(line_start..)?.find(needle)?;
+    let before = source.get(..start)?;
+    let line = before.matches('\n').count() + 1;
+    let column = before
+        .rsplit('\n')
+        .next()
+        .map_or(0, |text| text.chars().count())
+        + 1;
+    Some(EditorLocation {
+        source_name: WEB_PATTERN_SOURCE_NAME.into(),
+        line,
+        column,
+        byte_range: Some(EditorByteRange {
+            start,
+            end: start + needle.len(),
+        }),
+    })
 }
 
 async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response {
@@ -143,8 +312,9 @@ async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response
                     code: "Syntax".into(),
                     category: "syntax",
                     severity: "error",
-                    message: "Pattern syntax is invalid.",
+                    message: Cow::Borrowed("Pattern syntax is invalid."),
                     message_key: "editor.diag_syntax",
+                    args: None,
                     location: Some(EditorLocation {
                         source_name: WEB_PATTERN_SOURCE_NAME.into(),
                         line,
@@ -162,8 +332,9 @@ async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response
                     code: "LimitExceeded".into(),
                     category: "limit",
                     severity: "error",
-                    message: "Pattern is too large.",
+                    message: Cow::Borrowed("Pattern is too large."),
                     message_key: "editor.diag_too_large",
+                    args: None,
                     location: None,
                 }],
             }),
@@ -190,8 +361,9 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
                     DiagnosticSeverity::Error => "error",
                     DiagnosticSeverity::Warning => "warning",
                 },
-                message,
+                message: Cow::Borrowed(message),
                 message_key,
+                args: None,
                 location: Some(EditorLocation {
                     source_name: location.source_name().into(),
                     line: location.line(),
