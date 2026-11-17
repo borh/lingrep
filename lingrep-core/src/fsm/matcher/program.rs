@@ -148,23 +148,59 @@ struct GraphAssignment {
 impl GraphAssignment {
     fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
+            .saturating_add(btree_storage_bytes::<
+                compact_str::CompactString,
+                EnhancedNodeId,
+            >(self.nodes.len()))
+            .saturating_add(btree_storage_bytes::<
+                compact_str::CompactString,
+                (EnhancedNodeId, EnhancedNodeId, compact_str::CompactString),
+            >(self.edges.len()))
             .saturating_add(
                 self.nodes
                     .keys()
-                    .map(|name| 1024usize.saturating_add(name.len()))
+                    .map(compact_string_heap_bytes)
                     .sum::<usize>(),
             )
             .saturating_add(
                 self.edges
                     .iter()
                     .map(|(name, (_, _, label))| {
-                        1536usize
-                            .saturating_add(name.len())
-                            .saturating_add(label.len())
+                        compact_string_heap_bytes(name)
+                            .saturating_add(compact_string_heap_bytes(label))
                     })
                     .sum::<usize>(),
             )
     }
+}
+
+fn compact_string_heap_bytes(value: &compact_str::CompactString) -> usize {
+    if value.is_heap_allocated() {
+        value.capacity()
+    } else {
+        0
+    }
+}
+
+/// Upper storage estimate for maps constructed only by insertion and cloning.
+fn btree_storage_bytes<K, V>(entries: usize) -> usize {
+    // Rust's alloc/collections/btree/node.rs uses eleven-slot nodes and a five-entry non-root minimum:
+    // https://doc.rust-lang.org/src/alloc/collections/btree/node.rs.html
+    const CAPACITY: usize = 11;
+    const MIN_NON_ROOT: usize = 5;
+    if entries == 0 {
+        return 0;
+    }
+    let pointer_bytes = std::mem::size_of::<usize>();
+    let leaf_bytes =
+        2 * pointer_bytes + CAPACITY * (std::mem::size_of::<K>() + std::mem::size_of::<V>());
+    if entries <= CAPACITY {
+        return leaf_bytes;
+    }
+    let internal_bytes = leaf_bytes + (CAPACITY + 1) * pointer_bytes;
+    entries
+        .div_ceil(MIN_NON_ROOT)
+        .saturating_mul(internal_bytes)
 }
 
 trait AssertionLookup {
@@ -1064,10 +1100,20 @@ fn enhanced_assignments_from<S: TokenSequence + ?Sized>(
             continue;
         }
         if let Some(name) = &relation.edge {
+            let before = btree_storage_bytes::<
+                compact_str::CompactString,
+                (EnhancedNodeId, EnhancedNodeId, compact_str::CompactString),
+            >(next.edges.len());
+            let after =
+                btree_storage_bytes::<
+                    compact_str::CompactString,
+                    (EnhancedNodeId, EnhancedNodeId, compact_str::CompactString),
+                >(next.edges.len() + usize::from(!next.edges.contains_key(name)));
             budget.allocate(
                 pattern,
-                1536usize
-                    .saturating_add(name.len())
+                after
+                    .saturating_sub(before)
+                    .saturating_add(compact_string_heap_bytes(name))
                     .saturating_add(label.len()),
             )?;
             let value = (head, dependent, label.into());
@@ -1280,8 +1326,19 @@ fn enhanced_endpoint_accepts<S: TokenSequence + ?Sized>(
                     break;
                 }
             }
-            if matches {
-                budget.allocate(pattern, 1024usize.saturating_add(name.len()))?;
+            if matches && !assignments.contains_key(name) {
+                let before = btree_storage_bytes::<compact_str::CompactString, EnhancedNodeId>(
+                    assignments.len(),
+                );
+                let after = btree_storage_bytes::<compact_str::CompactString, EnhancedNodeId>(
+                    assignments.len() + 1,
+                );
+                budget.allocate(
+                    pattern,
+                    after
+                        .saturating_sub(before)
+                        .saturating_add(compact_string_heap_bytes(name)),
+                )?;
                 assignments.insert(name.clone(), node);
             }
             matches
