@@ -1594,7 +1594,12 @@ mod tests {
         assert!(poll!(&mut abandoned).is_pending());
         drop(receiver);
         assert!(poll!(&mut abandoned).is_pending());
-        tokio::time::advance(ABANDONED_SCAN_GRACE - Duration::from_secs(1)).await;
+        tokio::time::advance(
+            ABANDONED_SCAN_GRACE
+                .checked_sub(Duration::from_secs(1))
+                .unwrap(),
+        )
+        .await;
         assert!(poll!(&mut abandoned).is_pending());
         tokio::time::advance(Duration::from_secs(1)).await;
         assert!(poll!(&mut abandoned).is_ready());
@@ -1650,7 +1655,7 @@ mod tests {
             .port();
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("Caddyfile");
-        std::fs::write(&config, format!("{{\n admin off\n auto_https off\n persist_config off\n}}\nhttp://127.0.0.1:{port} {{\n reverse_proxy {upstream} {{\n }}\n}}\n")).unwrap();
+        std::fs::write(&config, format!("{{\n admin off\n auto_https off\n persist_config off\n}}\nhttp://127.0.0.1:{port} {{\n bind 127.0.0.1\n reverse_proxy {upstream} {{\n }}\n}}\n")).unwrap();
         let log = std::fs::File::create(directory.path().join("caddy.log")).unwrap();
         let proxy = Proxy(
             Command::new(&binary)
@@ -1708,7 +1713,12 @@ mod tests {
             .await
             .expect("a second session must acquire the released permit")
             .unwrap();
-            assert!(departure.elapsed() >= ABANDONED_SCAN_GRACE - Duration::from_secs(1));
+            assert!(
+                departure.elapsed()
+                    >= ABANDONED_SCAN_GRACE
+                        .checked_sub(Duration::from_secs(1))
+                        .unwrap()
+            );
             assert_eq!(entry.view_tx.receiver_count(), 0);
             drop(next_session);
             worker.await.unwrap();
