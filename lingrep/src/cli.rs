@@ -149,6 +149,33 @@ fn help_argument(action: clap::ArgAction) -> clap::Arg {
 }
 
 fn configure_help(command: clap::Command) -> clap::Command {
+    let command = match command.get_name() {
+        "matches" => command.override_usage(concat!(
+            "ling matches [OPTIONS] --pattern <PATTERN> [ROOT]\n",
+            "       ling matches [OPTIONS] --patterns <FILE> [ROOT]"
+        )),
+        "summarize" => command.override_usage(concat!(
+            "ling summarize [OPTIONS] --pattern <PATTERN> [ROOT]\n",
+            "       ling summarize [OPTIONS] --patterns <FILE> [ROOT]"
+        )),
+        "explore" => command.override_usage(concat!(
+            "ling explore [OPTIONS] --pattern <PATTERN> [ROOT]\n",
+            "       ling explore [OPTIONS] --patterns <FILE> [ROOT]"
+        )),
+        "check" => command.override_usage(concat!(
+            "ling check [OPTIONS] --pattern <PATTERN>\n",
+            "       ling check [OPTIONS] --patterns <FILE>"
+        )),
+        "table" => command.override_usage(concat!(
+            "ling table [OPTIONS] --pattern <PATTERN> --corpus <ARTIFACT> [TABLE]\n",
+            "       ling table [OPTIONS] --patterns <FILE> --corpus <ARTIFACT> [TABLE]"
+        )),
+        "contrast" => command.override_usage(concat!(
+            "ling contrast [OPTIONS] --pattern <PATTERN> --table <TABLE> --corpus <ARTIFACT>\n",
+            "       ling contrast [OPTIONS] --patterns <FILE> --table <TABLE> --corpus <ARTIFACT>"
+        )),
+        _ => command,
+    };
     let check = command.get_name() == "check";
     let action = if check {
         clap::ArgAction::Help
@@ -2420,6 +2447,46 @@ impl Default for ResourceArgs {
 #[cfg(test)]
 mod analyzer_selection_tests {
     use super::*;
+
+    #[test]
+    fn catalog_usage_lists_separate_invocations_and_requires_one_source() {
+        for name in [
+            "matches",
+            "summarize",
+            "explore",
+            "check",
+            "table",
+            "contrast",
+        ] {
+            let mut cli = Cli::command();
+            cli.build();
+            let command = cli.find_subcommand_mut(name).unwrap();
+            for help in [command.render_help(), command.render_long_help()] {
+                let help = help.to_string();
+                assert!(!help.contains("<--"), "{name}: {help}");
+                let usage = command.render_usage().to_string();
+                assert_eq!(usage.lines().count(), 2, "{name}: {usage}");
+                assert!(help.contains("--pattern <PATTERN>"), "{name}: {help}");
+                assert!(help.contains("--patterns <FILE>"), "{name}: {help}");
+            }
+            let required = match name {
+                "table" => vec!["--corpus", "corpus", "table"],
+                "contrast" => vec!["--corpus", "corpus", "--table", "table"],
+                "matches" | "summarize" | "explore" => vec!["input.txt"],
+                _ => vec![],
+            };
+            let mut args = vec!["ling", name];
+            args.extend(required);
+            assert!(Cli::try_parse_from(&args).is_err(), "{name}");
+            for source in [["--pattern", "[]."], ["--patterns", "catalog.lx"]] {
+                let mut invocation = args.clone();
+                invocation.extend(source);
+                Cli::try_parse_from(invocation).unwrap_or_else(|error| panic!("{name}: {error}"));
+            }
+            args.extend(["--pattern", "[].", "--patterns", "catalog.lx"]);
+            assert!(Cli::try_parse_from(args).is_err(), "{name}");
+        }
+    }
 
     #[test]
     fn direct_analysis_defaults_to_vibrato_nfc_morphology_input() {
