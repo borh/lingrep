@@ -4043,3 +4043,81 @@ async fn a_completed_search_with_an_oversized_example_offers_its_download() -> W
     served.server.abort();
     result
 }
+
+#[tokio::test]
+async fn clicking_the_jsonl_link_saves_every_result_and_keeps_the_page() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let directory = tempfile::tempdir().unwrap();
+    driver
+        .cdp()
+        .send_raw(
+            "Browser.setDownloadBehavior",
+            json!({"behavior": "allow", "downloadPath": directory.path()}),
+        )
+        .await?;
+    let served = serve_entries().await;
+    let result: WebDriverResult<()> = async {
+        driver
+            .goto(limited_question(&served.base, ENTRY_CATALOG, true))
+            .await?;
+        let link = ".result-header a[aria-label=\"Download all results as JSONL\"]";
+        wait_for(
+            &driver,
+            &format!("return document.querySelector('{link}') ? true : null"),
+            "the download link of the completed search",
+        )
+        .await?;
+        let served_body = driver
+            .execute_async(
+                &format!(
+                    "const done = arguments[arguments.length - 1]; \
+                     fetch(document.querySelector('{link}').href).then((r) => r.text()).then(done);"
+                ),
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        let before = driver.current_url().await?;
+        driver.find(By::Css(link)).await?.click().await?;
+        let file = directory.path().join("matches.jsonl");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !file.exists() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let saved = std::fs::read_to_string(&file)
+            .map_err(|error| WebDriverError::Timeout(format!("matches.jsonl download: {error}")))?;
+        assert_eq!(saved, served_body.as_str().unwrap());
+        let records: Vec<Value> = saved
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let matches = records.iter().filter(|r| r["type"] == "match").count();
+        assert!(matches > 0);
+        assert_eq!(records.first().unwrap()["type"], "run");
+        assert_eq!(records.last().unwrap()["type"], "complete");
+        assert_eq!(
+            records.last().unwrap()["data"]["counters"]["matches_found"],
+            json!(matches)
+        );
+        assert_eq!(driver.windows().await?.len(), 1);
+        assert_eq!(driver.current_url().await?, before);
+        assert_eq!(
+            driver
+                .execute(
+                    &format!("return !!document.querySelector('{link}')"),
+                    Vec::new()
+                )
+                .await?
+                .json(),
+            &json!(true)
+        );
+        assert_no_page_errors(&driver).await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}
