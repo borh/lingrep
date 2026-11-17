@@ -3533,10 +3533,14 @@ async fn an_example_opened_during_the_initial_search_stays_open() -> WebDriverRe
                 const Native = window.EventSource; \
                 window.EventSource = class extends Native { addEventListener(type, listener, options) { \
                   if (type !== 'update') return super.addEventListener(type, listener, options); \
+                  const deliver = (update) => listener.call(this, new MessageEvent('update', {data: JSON.stringify(update)})); \
                   return super.addEventListener(type, (event) => { \
-                    const phase = JSON.parse(event.data).patch.phase; \
-                    if (__hold && phase !== undefined && phase !== 'running') __held.push(() => listener.call(this, event)); \
-                    else listener.call(this, event); }, options); } }; \
+                    const update = JSON.parse(event.data), phase = update.patch.phase; \
+                    if (!__hold || !__held.length && (phase === undefined || phase === 'running')) return listener.call(this, event); \
+                    if (!__held.length && Object.values(update.append).some((rows) => rows.length)) { \
+                      deliver({...update, patch: {...update.patch, phase: 'running'}}); \
+                      __held.push(() => deliver({...update, reset: false, append: {}})); \
+                    } else __held.push(() => listener.call(this, event)); }, options); } }; \
                 window.__release = () => { __hold = false; for (const deliver of __held.splice(0)) deliver(); };"}),
         )
         .await?;
