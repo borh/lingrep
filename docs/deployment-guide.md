@@ -207,10 +207,12 @@ lingrep.example.com/v1 {
 }
 ```
 
-- `flush_interval -1` is required. lingrep-web publishes progress and exact
-  counts for the scanned prefix over Server-Sent Events; without it, Caddy
-  buffers 4 KiB before forwarding and the UI shows no progress until the
-  buffer fills.
+- Preserve client-disconnect propagation through every proxy between the
+  browser and lingrep-web. A workbench with no open event stream is cancelled
+  after a 30-second grace period; reconnecting and leaving starts a new grace
+  period. After changing the proxy configuration or version, close a tab
+  during a long-running search and check that a second session can start
+  scanning after that grace period.
 - Basic auth is the simplest access control. Caddy also supports OIDC through
   the `caddy-security` plugin.
 
