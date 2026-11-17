@@ -55,6 +55,9 @@ async fn summary(State(store): State<RequestStore>, Json(request): Json<Request>
         .await
     {
         Ok(result) => result,
+        Err(crate::coordinator::PatternTaskError::Busy) => {
+            return failure(StatusCode::TOO_MANY_REQUESTS, "summary_busy");
+        }
         Err(error) => return super::pattern_task_error(error),
     };
     let Ok((compiled, fingerprint)) = compiled else {

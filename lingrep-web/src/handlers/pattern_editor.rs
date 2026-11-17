@@ -493,6 +493,21 @@ mod tests {
             })),
         )
         .await;
+        use tower::ServiceExt;
+        let summary = routes()
+            .with_state(store.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/summary")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        r#"{"source":"p := [].","definition":"p"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         for release in releases {
             release.send(()).unwrap();
         }
@@ -500,6 +515,15 @@ mod tests {
             worker.await.unwrap();
         }
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(summary.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(summary.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+            "summary_busy"
+        );
+        assert!(store.coordinators.try_acquire_scan_permit().is_some());
         let response = check(
             State(store),
             Ok(Json(EditorRequest {
