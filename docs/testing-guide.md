@@ -57,21 +57,21 @@ against the independent oracle (`lingrep-core/src/fsm/compiler/oracle.rs`) plus 
 lingrep patterns contract suites. It requires no dictionary. The full `ci.sh`
 lane and the GitHub CI workflow both run it.
 
-### Kani location proofs
+### Kani prepared-corpus proofs
 
-On x86-64 Linux, run the location proofs from the workspace root. The verification
+On x86-64 Linux, run the corpus proofs from the workspace root. The verification
 shell supplies Kani 0.68.0 and the nightly compiler it was built against:
 
 ```bash
-nix develop .#verification --command cargo kani -p lingrep-corpus \
-  --harness locations::proofs::
+nix develop .#verification --command cargo kani -p lingrep-corpus
 ```
 
 | Boundary | Inputs | Property |
 | --- | --- | --- |
-| Record lookup | Any `u64` sentence count and ordinal | Accept exactly the in-range ordinals. An accepted ordinal identifies an existing block and a slot within that block, including a final partial block. |
-| Block directory | Any `u64` metadata fields for the block selected by a valid record ordinal | Accept exactly the canonical start, record count, and byte offset. Reject inconsistent entries without panicking. |
-| Slicing | Any `u64` offset and length, with buffer lengths from 0 to 16 bytes | Accept exactly the in-bounds ranges and return the requested length. |
+| Location record lookup | Any `u64` sentence count and ordinal | Accept exactly the in-range ordinals. An accepted ordinal identifies an existing block and a slot within that block, including a final partial block. |
+| Location block directory | Any `u64` metadata fields for the block selected by a valid record ordinal | Accept exactly the canonical start, record count, and byte offset. Reject inconsistent entries without panicking. |
+| Location slicing | Any `u64` offset and length, with buffer lengths from 0 to 16 bytes | Accept exactly the in-bounds ranges and return the requested length. |
+| Token directory | Any `u64` corpus sentence count, block start, and block sentence count | Accept exactly the nonempty ranges within the corpus. The end fits in `u64` and is greater than the start. |
 
 For new proofs, state the input domain and compare the production function
 with an independent specification. Use wider arithmetic for the specification

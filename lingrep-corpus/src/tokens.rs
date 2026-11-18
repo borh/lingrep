@@ -63,6 +63,18 @@ pub(crate) struct DirectoryEntry {
     checksum: [u8; 32],
 }
 
+impl DirectoryEntry {
+    fn validate_sentence_range(&self, corpus_sentence_count: u64) -> Result<(), CorpusError> {
+        let end = self.first_sentence.checked_add(self.sentence_count);
+        if self.sentence_count == 0 || end.is_none_or(|end| end > corpus_sentence_count) {
+            return Err(invalid(
+                "V1 token block has an empty or out-of-bounds sentence range",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Accumulates sentences into blocks, encodes each finished block on a pool,
 /// and hands the results to a [`BlockRecorder`] that writes them in order.
 ///
@@ -664,11 +676,13 @@ impl TokenReader {
         if index >= self.block_count {
             return Err(invalid("block index is outside the V1 directory"));
         }
-        decode_directory_entry(slice(
+        let entry = decode_directory_entry(slice(
             &self.map,
             self.directory_offset + index * DIRECTORY_ENTRY_LEN,
             DIRECTORY_ENTRY_LEN,
-        )?)
+        )?)?;
+        entry.validate_sentence_range(self.sentence_count)?;
+        Ok(entry)
     }
 
     pub(crate) fn block_for_sentence(
@@ -2376,6 +2390,33 @@ fn truncated(offset: u64) -> CorpusError {
     CorpusError::Truncated {
         component: COMPONENT,
         offset,
+    }
+}
+
+#[cfg(kani)]
+mod proofs {
+    use super::DirectoryEntry;
+
+    #[kani::proof]
+    fn directory_ranges_are_nonempty_and_within_the_corpus() {
+        let corpus_sentence_count: u64 = kani::any();
+        let entry = DirectoryEntry {
+            first_sentence: kani::any(),
+            sentence_count: kani::any(),
+            file_offset: 0,
+            stored_len: 0,
+            raw_len: 0,
+            token_count: 0,
+            checksum: [0; 32],
+        };
+        let end = u128::from(entry.first_sentence) + u128::from(entry.sentence_count);
+        let valid = entry.sentence_count != 0 && end <= u128::from(corpus_sentence_count);
+        let accepted = entry.validate_sentence_range(corpus_sentence_count).is_ok();
+        assert_eq!(accepted, valid);
+        if accepted {
+            let end = entry.first_sentence + entry.sentence_count;
+            assert!(entry.first_sentence < end && end <= corpus_sentence_count);
+        }
     }
 }
 

@@ -31,7 +31,7 @@ ROCm stack so that it fits on a CI runner alongside the CWJ dictionary and a
 Cargo target directory. Use the default shell for profiling and browser checks.
 
 The verification shell supplies each verifier's pinned compiler. Run the
-[Kani location proofs](testing-guide.md#kani-location-proofs) or verify a
+[Kani corpus proofs](testing-guide.md#kani-prepared-corpus-proofs) or verify a
 standalone Verus file with `nix develop .#verification --command verus path/to/proof.rs`.
 
 ## Build and run
