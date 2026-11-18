@@ -16,9 +16,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and publish
-        required: true
+        description: Existing tag to build; empty builds the dispatched branch
+        required: false
         type: string
+      # A tag push always publishes. A dispatch publishes only when asked, so
+      # a branch can run the builds and gates without releasing anything.
+      publish:
+        description: Publish the release when every gate passes
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -85,6 +92,7 @@ jobs:
         run: scripts/check-release-linkage.sh "target/${{ matrix.target }}/release/ling"
 
       - name: Assert the version matches the tag
+        if: github.event_name == 'push' || inputs.publish
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
           expected="${tag#v}"
@@ -139,6 +147,12 @@ jobs:
           name: ${{ matrix.target }}
           path: dist
 
+      # The Soranoha archives, verified against their pinned SHA-256 values.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/student-scenario
+          key: student-scenario-texts-${{ hashFiles('scripts/student-scenario-texts.sha256') }}
+
       - name: Unpack the archive and install the dictionary
         run: |
           mkdir unpacked
@@ -149,7 +163,9 @@ jobs:
 
       - name: Run the student scenario
         if: runner.os != 'Linux' || runner.arch != 'X64'
-        run: python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario"
+        run: |
+          python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario" \
+            --downloads "$HOME/.cache/student-scenario"
 
       # 4 GiB is what an 8 GB laptop leaves for ling beside the OS and a
       # browser. The 5 GiB allocation first proves that the cgroup enforces the
@@ -166,7 +182,8 @@ jobs:
             echo "error: the memory cap admitted a 5 GiB allocation" >&2
             exit 1
           fi
-          capped python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario"
+          capped python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario" \
+            --downloads "$HOME/.cache/student-scenario"
 
   adapters:
     name: Python analyzer wheels
@@ -198,6 +215,7 @@ jobs:
   publish:
     name: Publish release
     needs: [build, gate, adapters]
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
