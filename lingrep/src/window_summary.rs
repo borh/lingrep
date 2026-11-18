@@ -460,6 +460,7 @@ impl SummaryRows for FinalizedWindows {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     const FAN_IN: usize = 4;
 
     fn pool() -> rayon::ThreadPool {
