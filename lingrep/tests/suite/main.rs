@@ -30,6 +30,7 @@ mod kwic_characterization;
 mod manpages;
 mod near;
 mod neighbors;
+mod nfc_inputs;
 mod policy_publication;
 mod prepared_protocol;
 mod protocol;

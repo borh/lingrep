@@ -1,3 +1,4 @@
+use crate::analysis::NormalizationPolicy;
 use crate::fsm::{AttrValue, AttrValueType, KeyComponent, KeyProjection, PositionAssertion};
 use crate::token_match::{AttributeKey, TokenAttributeIndex};
 use compact_str::CompactString;
@@ -216,6 +217,8 @@ struct Lowerer<'a, 'src> {
     warnings: Vec<Diagnostic>,
     rewrite_skip: bool,
     near: IndexMap<NearQuery, NearResolution>,
+    /// The definition being lowered, named in normalization warnings.
+    definition: CompactString,
 }
 
 #[derive(Clone)]
@@ -407,6 +410,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             warnings: Vec::new(),
             rewrite_skip: true,
             near: IndexMap::new(),
+            definition: CompactString::default(),
         }
     }
 
@@ -415,6 +419,14 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         let mut draft = DocumentDraft::default();
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
+            self.definition = child
+                .kind()
+                .ends_with("_definition")
+                .then(|| child.child_by_field_name("name"))
+                .flatten()
+                .and_then(|name| self.text(name).ok())
+                .unwrap_or_default()
+                .into();
             match child.kind() {
                 "comment" => {}
                 "metadata_entry" | "key_entry" | "skip_entry" => {
@@ -1632,6 +1644,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     }
                     "metadata_string" => {
                         let decoded: CompactString = self.metadata_string_text(child)?.into();
+                        let decoded = self.normalized_literal(child, decoded);
                         if decoded.is_empty() {
                             return Err(self.error(
                                 child,
@@ -2979,7 +2992,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         self.refuse_unspaced_pipe(node, text)?;
         self.refuse_quoted_value(node, text)?;
         if !text.contains('\\') {
-            return Ok(text.into());
+            return Ok(self.normalized_literal(node, text.into()));
         }
         let mut decoded = String::with_capacity(text.len());
         let mut characters = text.chars();
@@ -3018,7 +3031,52 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 }
             }
         }
-        Ok(decoded.into())
+        Ok(self.normalized_literal(node, decoded.into()))
+    }
+
+    /// The NFC form of a decoded literal value, with a warning naming the
+    /// definition when that differs from what was written.
+    ///
+    /// Corpus text is NFC-normalized on admission by default, so a literal
+    /// typed or pasted in NFD (カ + U+3099 for ガ) would otherwise match
+    /// nothing. [`NormalizationPolicy::apply`] is the function admission uses,
+    /// so the two cannot normalize differently.
+    fn normalized_literal(&mut self, node: Node<'_>, value: CompactString) -> CompactString {
+        if unicode_normalization::is_nfc(&value) {
+            return value;
+        }
+        let normalized: CompactString = NormalizationPolicy::Nfc.apply(value.to_string()).into();
+        let message = format!(
+            "{} has the value `{value}` ({}), which is not in Unicode NFC; it is compiled as \
+             `{normalized}` ({}) to match NFC-normalized text",
+            self.definition_label(),
+            code_points(&value),
+            code_points(&normalized),
+        );
+        self.warn(node, DiagnosticCode::NormalizedLiteral, message);
+        normalized
+    }
+
+    /// `definition `name``, or `the catalog header` outside a definition.
+    fn definition_label(&self) -> String {
+        if self.definition.is_empty() {
+            "the catalog header".to_owned()
+        } else {
+            format!("definition `{}`", self.definition)
+        }
+    }
+
+    fn warn(&mut self, node: Node<'_>, code: DiagnosticCode, message: String) {
+        let range = node.byte_range();
+        let (line, column) = source_line_column(self.source.text, range.start);
+        self.warnings.push(Diagnostic::warning_with_source_label(
+            code,
+            Arc::clone(&self.source_label),
+            range,
+            message,
+            line,
+            column,
+        ));
     }
 
     /// Reject an unquoted literal that contains a `|`.
@@ -3132,15 +3190,27 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             ));
         }
 
+        if !unicode_normalization::is_nfc(inner) {
+            let message = format!(
+                "{} has the regex `/{inner}/`, which is not in Unicode NFC, so it cannot match \
+                 NFC-normalized text where it spells a composed character. It is compiled as \
+                 written, because normalizing a regex can change its meaning; write `/{}/` if \
+                 that is what you meant",
+                self.definition_label(),
+                NormalizationPolicy::Nfc.apply(inner.to_owned()),
+            );
+            self.warn(node, DiagnosticCode::RegexNotNfc, message);
+        }
         Regex::new(inner)
             .map(AttrValueType::Regex)
             .map_err(|_| self.error(node, DiagnosticCode::InvalidRegex, "invalid Rust regex"))
     }
 
-    fn literal_test(&self, node: Node<'_>) -> Result<ParsedTest, CompileError> {
+    fn literal_test(&mut self, node: Node<'_>) -> Result<ParsedTest, CompileError> {
+        let value = self.normalized_literal(node, self.text(node)?.into());
         Ok(ParsedTest::Attr(resolved_attr(AttrValue {
             attr: TokenAttributeIndex::Orth,
-            value: AttrValueType::Single(self.text(node)?.into()),
+            value: AttrValueType::Single(value),
             complement: false,
         })))
     }
@@ -3633,3 +3703,12 @@ fn source_line_column(source: &str, offset: usize) -> (usize, usize) {
 #[cfg(test)]
 #[path = "lower_tests.rs"]
 mod tests;
+
+/// `U+30AB U+3099`: the code points of `text`, which is where NFC and NFD
+/// spellings of the same character differ visibly.
+fn code_points(text: &str) -> String {
+    text.chars()
+        .map(|character| format!("U+{:04X}", u32::from(character)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}

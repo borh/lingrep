@@ -10,7 +10,9 @@
 //! error explaining what to change, rather than reporting a setup failure as
 //! a read failure.
 
-use lingrep_core::fsm::{BoundCatalog, CatalogAnalysis, SchemaBindError};
+use lingrep_core::fsm::{
+    BoundCatalog, CatalogAnalysis, CompileOutput, DiagnosticCode, SchemaBindError,
+};
 use lingrep_core::token_match::AttributeKey;
 
 use crate::cli::ExecutionCliConfig;
@@ -95,6 +97,41 @@ pub(crate) fn write_unavailable_attribute_notices(
             DiagnosticStage::Catalog,
             "attribute_unavailable",
             message,
+            None,
+            Vec::new(),
+        )
+        .map_err(CliError::Io)?;
+    }
+    Ok(())
+}
+
+/// Writes the compiler's Unicode normalization warnings to stderr,
+/// unconditionally: a literal compiled as its NFC form, or a regex compiled
+/// as written although it is not NFC, means the run matches something other
+/// than the bytes in the catalog.
+pub(crate) fn write_normalization_notices(
+    compiled: &CompileOutput,
+    config: &ExecutionCliConfig,
+) -> Result<(), CliError> {
+    for diagnostic in &compiled.diagnostics {
+        let code = match diagnostic.code() {
+            DiagnosticCode::NormalizedLiteral => "literal_normalized",
+            DiagnosticCode::RegexNotNfc => "regex_not_nfc",
+            _ => continue,
+        };
+        let location = diagnostic.location();
+        crate::commands::query_support::write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Catalog,
+            code,
+            format!(
+                "{}:{}:{}: {}",
+                location.source_name(),
+                location.line(),
+                location.column(),
+                diagnostic.message
+            ),
             None,
             Vec::new(),
         )

@@ -53,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as `［`, `＝` or the ideographic space, has a note at that character
   naming the ASCII one to type, in `ling` and in lingrep-web's editor and
   question page, with Japanese text in lingrep-web.
+- A pattern literal in Unicode NFD, such as `ガ` written as `カ` + U+3099 in text
+  copied from a PDF, compiles to its NFC form and matches NFC corpus text.
+  Under 0.8.1 it matched nothing. `matches` and `summarize` warn
+  `literal_normalized` and `check` reports `NormalizedLiteral`, naming the
+  definition and both spellings. A regex that is not NFC is compiled as written
+  and warns `regex_not_nfc`. A catalog whose source is not NFC gets a new
+  fingerprint, and NFC catalogs keep theirs.
 - A token-test value in IME or typographic quotes, such as `[text=”猫”]` or
   `[text=「猫」]`, is rejected as `QuotedAttributeValue` like `[text="猫"]`.
   Under 0.8.1 the catalog compiled and its pattern matched nothing.

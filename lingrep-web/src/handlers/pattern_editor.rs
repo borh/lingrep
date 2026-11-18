@@ -449,6 +449,16 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'st
             "A test is never referenced.",
             "editor.diag_unused_test",
         ),
+        DiagnosticCode::NormalizedLiteral => (
+            "lint",
+            "A value is not in Unicode NFC; it is searched for in its NFC form.",
+            "editor.diag_normalized_literal",
+        ),
+        DiagnosticCode::RegexNotNfc => (
+            "lint",
+            "A regular expression is not in Unicode NFC, so it may not match composed characters.",
+            "editor.diag_regex_not_nfc",
+        ),
         DiagnosticCode::PipeInBareValue => (
             "syntax",
             "An unquoted value contains `|`, which does not \
@@ -620,6 +630,28 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_nfd_value_is_reported_as_searched_for_in_its_nfc_form() {
+        let body = check_body("g := [text=\u{30ab}\u{3099}].").await;
+        assert_eq!(body["status"], "valid", "{body}");
+        assert_eq!(
+            body["diagnostics"],
+            serde_json::json!([{
+                "code": "NormalizedLiteral",
+                "category": "lint",
+                "severity": "warning",
+                "message": "A value is not in Unicode NFC; it is searched for in its NFC form.",
+                "message_key": "editor.diag_normalized_literal",
+                "location": {
+                    "source_name": WEB_PATTERN_SOURCE_NAME,
+                    "line": 1,
+                    "column": 12,
+                    "byte_range": {"start": 11, "end": 17},
+                },
+            }])
+        );
     }
 
     #[test]

@@ -69,6 +69,12 @@ pub enum DiagnosticCode {
     /// A `fragment` no pattern references. Non-fatal: it compiles, but it can
     /// never contribute to a match because fragments never emit.
     UnusedFragment,
+    /// A literal value that is not in Unicode NFC, compiled as its NFC form
+    /// so that it compares equal to NFC-normalized corpus text.
+    NormalizedLiteral,
+    /// A regex whose source is not in Unicode NFC. Reported and compiled as
+    /// written, because normalizing a regex can change what it means.
+    RegexNotNfc,
     /// A `set` no reachable definition references.
     ///
     /// Its own code rather than `UnusedFragment` because the message names a
@@ -347,6 +353,8 @@ impl DiagnosticCode {
             Self::NullableUnboundedRepeat => "NullableUnboundedRepeat",
             Self::DefinitionDropped => "DefinitionDropped",
             Self::UnusedFragment => "UnusedFragment",
+            Self::NormalizedLiteral => "NormalizedLiteral",
+            Self::RegexNotNfc => "RegexNotNfc",
             Self::UnusedSet => "UnusedSet",
             Self::UnusedTest => "UnusedTest",
             Self::TokenTestTooComplex => "TokenTestTooComplex",

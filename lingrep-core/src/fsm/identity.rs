@@ -35,11 +35,19 @@ pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v1";
 
 /// Fingerprints trimmed catalog source together with the grammar, compiler and
 /// policy semantic revisions; excludes [`MATCHER_SEMANTICS_IDENTITY`].
+///
+/// Source that is not in Unicode NFC is fingerprinted under its own domain:
+/// its literals compile to their NFC form, which ling 0.8.1 did not do, so a
+/// result stored under its 0.8.1 fingerprint is not reused. The fingerprint of
+/// NFC source is unchanged.
 #[must_use]
 pub fn catalog_fingerprint(source: &str) -> String {
     let normalized = source.trim();
     let mut digest = blake3::Hasher::new();
     digest.update(b"lingrep/catalog/v1");
+    if !unicode_normalization::is_nfc(normalized) {
+        digest.update(b"/nfc-literals");
+    }
     digest.update(b"tree-sitter-lingrep/");
     digest.update(GRAMMAR_SEMANTICS_REVISION.as_bytes());
     digest.update(COMPILER_SCHEMA_IDENTITY.as_bytes());

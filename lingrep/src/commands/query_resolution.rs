@@ -184,6 +184,7 @@ impl QueryProjection<'_> {
             analyzer,
             config,
         )?;
+        crate::attribute_binding::write_normalization_notices(compiled, config)?;
         Ok(bound)
     }
 }
