@@ -993,6 +993,28 @@ fn truncated(offset: u64) -> CorpusError {
     }
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::checked_subslice;
+
+    #[kani::proof]
+    fn checked_subslice_accepts_exactly_in_bounds_ranges() {
+        let backing = [0_u8; 16];
+        let size: u8 = kani::any();
+        kani::assume(size <= 16);
+        let bytes = &backing[..usize::from(size)];
+        let offset: u64 = kani::any();
+        let len: u64 = kani::any();
+
+        let result = checked_subslice(bytes, offset, len);
+        let end = u128::from(offset) + u128::from(len);
+        assert_eq!(result.is_ok(), end <= u128::from(size));
+        if let Ok(slice) = result {
+            assert_eq!(usize::try_from(len), Ok(slice.len()));
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "locations/structural_tests.rs"]
 mod structural_tests;

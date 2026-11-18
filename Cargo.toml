@@ -288,3 +288,4 @@ unit_bindings = "deny"
 unused_import_braces = "deny"
 unused_lifetimes = "deny"
 unused_macro_rules = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

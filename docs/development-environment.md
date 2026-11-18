@@ -15,7 +15,7 @@ which is also the toolchain CI, release and Nix package builds use; rustup
 reads the same file outside Nix. The workspace `rust-version` is the pin's
 minor version. A commit that updates the pin also raises `rust-version` and
 fixes the new compiler and Clippy warnings the updated toolchain reports.
-Five shells are available:
+Choose the shell for the work you are doing:
 
 | Shell | Purpose |
 | --- | --- |
@@ -24,10 +24,15 @@ Five shells are available:
 | `nix develop .#stable` | The newest stable in the locked `rust-overlay` |
 | `nix develop .#ci` | The GitHub workflow's shell: the pinned toolchain and only what `./ci.sh --fast` invokes |
 | `nix develop .#packaged` | User workflows: the default shell plus the packaged `ling` and `lingrep-web` on `PATH` |
+| `nix develop .#verification` | Opt-in Kani and Verus proofs on x86-64 Linux |
 
 `.#ci` omits Chromium and ChromeDriver, `perf`, `gdb`, `valgrind`, and the
 ROCm stack so that it fits on a CI runner alongside the CWJ dictionary and a
 Cargo target directory. Use the default shell for profiling and browser checks.
+
+The verification shell supplies each verifier's pinned compiler. Run the
+[Kani location proof](testing-guide.md#kani-location-bounds-proof) or verify a
+standalone Verus file with `nix develop .#verification --command verus path/to/proof.rs`.
 
 ## Build and run
 

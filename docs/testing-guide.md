@@ -57,6 +57,21 @@ against the independent oracle (`lingrep-core/src/fsm/compiler/oracle.rs`) plus 
 lingrep patterns contract suites. It requires no dictionary. The full `ci.sh`
 lane and the GitHub CI workflow both run it.
 
+### Kani location bounds proof
+
+On x86-64 Linux, run the proof from the workspace root. The verification
+shell supplies Kani 0.68.0 and the nightly compiler it was built against:
+
+```bash
+nix develop .#verification --command cargo kani -p lingrep-corpus \
+  --harness checked_subslice_accepts_exactly_in_bounds_ranges
+```
+
+The opt-in harness calls the location reader's slice helper with arbitrary
+`u64` offsets and lengths and buffer lengths from 0 to 16 bytes. It checks
+that the helper accepts exactly the in-bounds ranges and returns slices of the
+requested length.
+
 ## Pre-Commit Validation
 
 Before pushing changes, run bounded validation:

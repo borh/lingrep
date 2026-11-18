@@ -893,33 +893,36 @@
           // lib.optionalAttrs isLinux {
           };
 
-          devShells.default = mkDevShell pinnedToolchain;
+          devShells = {
+            default = mkDevShell pinnedToolchain;
 
-          # The full shell plus the packaged `ling` and `lingrep-web`, built
-          # from the git-tracked source as it stood when the shell was entered.
-          # Kept out of `default` so direnv does not rebuild the workspace on
-          # every source change.
-          devShells.packaged = mkDevShellWith {
-            rustToolchain = pinnedToolchain;
-            packages = fullDevPackages ++ [
-              self'.packages.lingrep
-              self'.packages.lingrep-web
-            ];
+            # The full shell plus the packaged `ling` and `lingrep-web`, built
+            # from the git-tracked source as it stood when the shell was entered.
+            # Kept out of `default` so direnv does not rebuild the workspace on
+            # every source change.
+            packaged = mkDevShellWith {
+              rustToolchain = pinnedToolchain;
+              packages = fullDevPackages ++ [
+                self'.packages.lingrep
+                self'.packages.lingrep-web
+              ];
+            };
+
+            # What CI enters. See `ciDevDeps` for what it leaves out and why.
+            ci = mkDevShellWith {
+              rustToolchain = pinnedToolchain;
+              packages = ciDevDeps;
+              profilingExtras = false;
+            };
+
+            nightly = mkDevShell (
+              pkgs.rust-bin.nightly.latest.default.override { extensions = [ "rust-src" ]; }
+            );
+            stable = mkDevShell (pkgs.rust-bin.stable.latest.default.override { extensions = [ "rust-src" ]; });
+          }
+          // lib.optionalAttrs (system == "x86_64-linux") {
+            verification = import ./nix/verification.nix { inherit pkgs buildDeps; };
           };
-
-          # What CI enters. See `ciDevDeps` for what it leaves out and why.
-          devShells.ci = mkDevShellWith {
-            rustToolchain = pinnedToolchain;
-            packages = ciDevDeps;
-            profilingExtras = false;
-          };
-
-          devShells.nightly = mkDevShell (
-            pkgs.rust-bin.nightly.latest.default.override { extensions = [ "rust-src" ]; }
-          );
-          devShells.stable = mkDevShell (
-            pkgs.rust-bin.stable.latest.default.override { extensions = [ "rust-src" ]; }
-          );
 
           # Merged for the same reason `packages` is: the two Linux-only checks
           # must be absent on darwin, not present-and-undefined.
