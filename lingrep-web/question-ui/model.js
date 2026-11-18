@@ -127,10 +127,24 @@ const diagnosticMessages = {
         ja: 'パターンの書き方に誤りがあります。括弧が閉じているか、各定義がピリオドで終わっているかを確認してください。',
     },
 };
-/** A catalog diagnostic as one located sentence in `locale`; messages without a translation stay as the compiler wrote them. */
+/** Japanese for the compiler's full-width-character notes, matched on the note text the compiler writes. */
+const noteMessages = [
+    [/^`(.+)` \(U\+[0-9A-F]{4}\) is full-width; write the ASCII `(.)` instead$/u, found => `「${found[1]}」は全角文字です。半角の「${found[2]}」を入力してください。`],
+    [/^`.+` \(U\+[0-9A-F]{4}\) is a full-width space; write an ASCII space instead$/u, () => '全角スペースではなく半角スペースで区切ってください。'],
+];
+function noteText(message, locale) {
+    if (locale === 'ja')
+        for (const [pattern, text] of noteMessages) {
+            const found = message.match(pattern);
+            if (found)
+                return text(found);
+        }
+    return `${message}.`;
+}
+/** A catalog diagnostic as one located sentence in `locale`, followed by its notes; messages without a translation stay as the compiler wrote them. */
 export function diagnosticText(diagnostic, locale) {
     const { line, column } = diagnostic.data.location ?? {};
-    const message = diagnosticMessages[diagnostic.data.message]?.[locale] ?? diagnostic.data.message;
+    const message = [diagnosticMessages[diagnostic.data.message]?.[locale] ?? diagnostic.data.message, ...(diagnostic.data.related_locations ?? []).map(note => noteText(note.message, locale))].join(' ');
     if (!line)
         return message;
     const place = locale === 'ja' ? `${line} 行${column ? ` ${column} 文字目` : ''}` : `Line ${line}${column ? `, column ${column}` : ''}`;

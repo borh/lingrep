@@ -326,6 +326,8 @@
   "editor.count_warning": "警告 {n} 件",
   "editor.count_warnings": "警告 {n} 件",
   "editor.diag_examples": "定義に記載された例を検証できません。",
+  "editor.diag_full_width": "`{found}` は全角文字です。パターンの構文には半角の `{ascii}` を使ってください。",
+  "editor.diag_full_width_space": "`{found}` は全角スペースです。パターンの要素は半角スペースで区切ってください。",
   "editor.diag_invalid": "パターンが無効です。",
   "editor.diag_limit": "パターンがコンパイラの上限を超えています。",
   "editor.diag_missing": "{node} がありません",

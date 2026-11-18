@@ -23,6 +23,16 @@ test('a catalog diagnostic names its line and column in the page language withou
   assert.equal(diagnosticText(other,'ja'),'3 行: unknown key `orth`');
 });
 
+test('a syntax diagnostic adds its full-width note in the page language',()=>{
+  const note=(message,start)=>({message,location:{line:1,column:start+1,source_span:{start,end:start+3}}});
+  const diagnostic=found=>({schema:'lingrep.diagnostic/v1',type:'diagnostic',data:{stage:'catalog',severity:'error',message:'invalid lingrep patterns syntax',location:{line:1,column:1,source_span:{start:0,end:21}},related_locations:[found]}});
+  const bracket=diagnostic(note('`［` (U+FF3B) is full-width; write the ASCII `[` instead',5));
+  assert.equal(diagnosticText(bracket,'ja'),'1 行 1 文字目: パターンの書き方に誤りがあります。括弧が閉じているか、各定義がピリオドで終わっているかを確認してください。 「［」は全角文字です。半角の「[」を入力してください。');
+  assert.equal(diagnosticText(bracket,'en'),'Line 1, column 1: The pattern is not written correctly. Check that every bracket is closed and every definition ends with a period. `［` (U+FF3B) is full-width; write the ASCII `[` instead.');
+  const space=diagnostic(note('`\u3000` (U+3000) is a full-width space; write an ASCII space instead',16));
+  assert.match(diagnosticText(space,'ja'),/ 全角スペースではなく半角スペースで区切ってください。$/);
+});
+
 test('the question page reads the language setting shared with Frequencies before its former key',async()=>{
   const {storedLocale}=await import('./model.js');
   const storage=entries=>({getItem:key=>entries[key]??null});

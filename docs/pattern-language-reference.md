@@ -162,7 +162,13 @@ Two spellings are rejected with their own diagnostics:
 - Metadata quotes every value and a token test quotes none, so `[text="の"]`
   would test for the three-character literal `"の"`. The compiler rejects it
   (`QuotedAttributeValue`) and reports the unquoted spelling and `\u0022` for a
-  literal quote character.
+  literal quote character. The quotes a Japanese IME or word processor types
+  are rejected the same way: `“…”` and `”…”`, `‘…’`, `「…」`, `『…』`, `＂…＂` and
+  `＇…＇`, each with its own `\uXXXX` escapes.
+
+Syntax is ASCII. When a syntax error's span contains a full-width character
+(U+FF01 to U+FF5E, such as `［` or `＝`) or the ideographic space U+3000, the
+error carries a note at that character naming its ASCII replacement.
 
 ## Operators and precedence
 

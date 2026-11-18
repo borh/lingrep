@@ -8,8 +8,8 @@ use axum::{
     routing::post,
 };
 use lingrep_core::fsm::{
-    CatalogAnalysis, CompileOutput, CompilerStats, Diagnostic, DiagnosticCode, DiagnosticSeverity,
-    FormatError,
+    CatalogAnalysis, CompileOutput, CompilerStats, Diagnostic, DiagnosticCode, DiagnosticLocation,
+    DiagnosticSeverity, FormatError, FullWidthCharacter,
 };
 use lingrep_core::token_match::AttributeKey;
 use serde::{Deserialize, Serialize};
@@ -132,7 +132,7 @@ async fn check(
     };
     match compiled {
         Ok(output) => {
-            let mut diagnostics = editor_diagnostics(&output.diagnostics);
+            let mut diagnostics = editor_diagnostics(&request.source, &output.diagnostics);
             let mut token_keys = None;
             if let Some((schema, schema_name)) =
                 corpus_schema(&store, request.corpus.as_deref()).await
@@ -171,7 +171,7 @@ async fn check(
         Err(error) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(CheckResponse::Invalid {
-                diagnostics: editor_diagnostics(&error.diagnostics),
+                diagnostics: editor_diagnostics(&request.source, &error.diagnostics),
             }),
         )
             .into_response(),
@@ -357,12 +357,26 @@ async fn format(request: Result<Json<EditorRequest>, JsonRejection>) -> Response
     }
 }
 
-fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
+fn editor_diagnostics(source: &str, diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            let (category, message, message_key) = diagnostic_message(diagnostic.code());
-            let location = diagnostic.location();
+            let (category, message, mut message_key) = diagnostic_message(diagnostic.code());
+            let mut location = diagnostic.location();
+            let mut args = None;
+            if let Some((note, character)) = full_width_note(source, diagnostic) {
+                location = note;
+                if character.ascii == ' ' {
+                    message_key = "editor.diag_full_width_space";
+                    args = Some(serde_json::json!({ "found": character.found }));
+                } else {
+                    message_key = "editor.diag_full_width";
+                    args = Some(serde_json::json!({
+                        "found": character.found,
+                        "ascii": character.ascii,
+                    }));
+                }
+            }
             EditorDiagnostic {
                 code: diagnostic.code().as_str().into(),
                 category,
@@ -372,7 +386,7 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
                 },
                 message: Cow::Borrowed(message),
                 message_key,
-                args: None,
+                args,
                 location: Some(EditorLocation {
                     source_name: location.source_name().into(),
                     line: location.line(),
@@ -385,6 +399,22 @@ fn editor_diagnostics(diagnostics: &[Diagnostic]) -> Vec<EditorDiagnostic> {
             }
         })
         .collect()
+}
+
+/// The full-width character a syntax diagnostic's note points at, and the
+/// note's location.
+fn full_width_note<'a>(
+    source: &str,
+    diagnostic: &'a Diagnostic,
+) -> Option<(&'a DiagnosticLocation, FullWidthCharacter)> {
+    if diagnostic.code() != DiagnosticCode::Syntax {
+        return None;
+    }
+    diagnostic.related_locations().iter().find_map(|related| {
+        let location = related.location();
+        let character = FullWidthCharacter::first_in(source.get(location.byte_range())?)?;
+        Some((location, character))
+    })
 }
 
 fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'static str) {
@@ -533,6 +563,63 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn check_body(source: &str) -> serde_json::Value {
+        let response = check(
+            State(RequestStore::default()),
+            Ok(Json(EditorRequest {
+                source: source.into(),
+                corpus: None,
+            })),
+        )
+        .await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_syntax_error_at_full_width_punctuation_names_it_and_its_ascii_character() {
+        for (source, args, key, start, end) in [
+            (
+                "n := ［upos=NOUN］.",
+                serde_json::json!({"found": "［", "ascii": "["}),
+                "editor.diag_full_width",
+                5,
+                8,
+            ),
+            (
+                "n := [upos=NOUN]\u{3000}[upos=ADP].",
+                serde_json::json!({"found": "\u{3000}"}),
+                "editor.diag_full_width_space",
+                16,
+                19,
+            ),
+        ] {
+            assert_eq!(
+                check_body(source).await,
+                serde_json::json!({
+                    "status": "invalid",
+                    "diagnostics": [{
+                        "code": "Syntax",
+                        "category": "syntax",
+                        "severity": "error",
+                        "message": "Pattern syntax is invalid.",
+                        "message_key": key,
+                        "args": args,
+                        "location": {
+                            "source_name": WEB_PATTERN_SOURCE_NAME,
+                            "line": 1,
+                            "column": start + 1,
+                            "byte_range": {"start": start, "end": end},
+                        },
+                    }],
+                }),
+                "{source}"
+            );
+        }
     }
 
     #[test]

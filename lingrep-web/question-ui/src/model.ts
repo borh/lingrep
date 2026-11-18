@@ -21,7 +21,7 @@ export interface MatchRecord {
   readonly left_context?: readonly Token[];
   readonly right_context?: readonly Token[];
 }
-export interface Diagnostic { readonly schema: "lingrep.diagnostic/v1"; readonly type: "diagnostic"; readonly data: { readonly stage: string; readonly severity: string; readonly message: string; readonly location?: { readonly line?: number; readonly column?: number; readonly source_span?: {readonly start:number;readonly end:number} } | null; readonly [key:string]:unknown }; }
+export interface Diagnostic { readonly schema: "lingrep.diagnostic/v1"; readonly type: "diagnostic"; readonly data: { readonly stage: string; readonly severity: string; readonly message: string; readonly location?: { readonly line?: number; readonly column?: number; readonly source_span?: {readonly start:number;readonly end:number} } | null; readonly related_locations?: readonly { readonly message: string }[]; readonly [key:string]:unknown }; }
 export interface SnapshotFields extends Question {
   readonly diagnostics?: readonly Diagnostic[];
   readonly notices?: readonly string[];
@@ -181,10 +181,22 @@ const diagnosticMessages: Readonly<Record<string, Readonly<Record<Locale, string
     ja: 'パターンの書き方に誤りがあります。括弧が閉じているか、各定義がピリオドで終わっているかを確認してください。',
   },
 };
-/** A catalog diagnostic as one located sentence in `locale`; messages without a translation stay as the compiler wrote them. */
+/** Japanese for the compiler's full-width-character notes, matched on the note text the compiler writes. */
+const noteMessages: readonly (readonly [RegExp, (found: RegExpMatchArray) => string])[] = [
+  [/^`(.+)` \(U\+[0-9A-F]{4}\) is full-width; write the ASCII `(.)` instead$/u, found => `「${found[1]}」は全角文字です。半角の「${found[2]}」を入力してください。`],
+  [/^`.+` \(U\+[0-9A-F]{4}\) is a full-width space; write an ASCII space instead$/u, () => '全角スペースではなく半角スペースで区切ってください。'],
+];
+function noteText(message: string, locale: Locale): string {
+  if (locale === 'ja') for (const [pattern, text] of noteMessages) {
+    const found = message.match(pattern);
+    if (found) return text(found);
+  }
+  return `${message}.`;
+}
+/** A catalog diagnostic as one located sentence in `locale`, followed by its notes; messages without a translation stay as the compiler wrote them. */
 export function diagnosticText(diagnostic: Diagnostic, locale: Locale): string {
   const {line, column} = diagnostic.data.location ?? {};
-  const message = diagnosticMessages[diagnostic.data.message]?.[locale] ?? diagnostic.data.message;
+  const message = [diagnosticMessages[diagnostic.data.message]?.[locale] ?? diagnostic.data.message, ...(diagnostic.data.related_locations ?? []).map(note => noteText(note.message, locale))].join(' ');
   if (!line) return message;
   const place = locale === 'ja' ? `${line} 行${column ? ` ${column} 文字目` : ''}` : `Line ${line}${column ? `, column ${column}` : ''}`;
   return `${place}: ${message}`;

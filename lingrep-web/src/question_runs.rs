@@ -378,7 +378,8 @@ async fn project_run(
         let source = attempt.source.clone();
         store.coordinators.pattern_task(move||crate::patterns::compile_web_pattern(&source).err().map(|error|error.diagnostics.into_iter().map(|diagnostic|{
             let location=diagnostic.location();let span=location.byte_range();
-            json!({"schema":"lingrep.diagnostic/v1","type":"diagnostic","data":{"stage":"catalog","severity":"error","message":diagnostic.message,"location":{"source_name":location.source_name(),"source_span":{"start":span.start,"end":span.end},"line":location.line(),"column":location.column()}}})
+            let related=diagnostic.related_locations().iter().map(|related|{let location=related.location();let span=location.byte_range();json!({"message":related.message(),"location":{"source_name":location.source_name(),"source_span":{"start":span.start,"end":span.end},"line":location.line(),"column":location.column()}})}).collect::<Vec<_>>();
+            json!({"schema":"lingrep.diagnostic/v1","type":"diagnostic","data":{"stage":"catalog","severity":"error","message":diagnostic.message,"location":{"source_name":location.source_name(),"source_span":{"start":span.start,"end":span.end},"line":location.line(),"column":location.column()},"related_locations":related}})
         }).collect::<Vec<_>>()).unwrap_or_default()).await.map_err(unavailable)?
     } else {
         Vec::new()

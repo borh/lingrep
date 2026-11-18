@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like Shift_JIS (CP932), the message gives an `iconv` or `nkf` command that
   converts it. A ZIP archive read as plain text or Markdown fails with advice
   to unzip it, or to read a Soranoha archive with `--input-format soranoha`.
+- A pattern syntax error at a full-width character that a Japanese IME types,
+  such as `［`, `＝` or the ideographic space, has a note at that character
+  naming the ASCII one to type, in `ling` and in lingrep-web's editor and
+  question page, with Japanese text in lingrep-web.
+- A token-test value in IME or typographic quotes, such as `[text=”猫”]` or
+  `[text=「猫」]`, is rejected as `QuotedAttributeValue` like `[text="猫"]`.
+  Under 0.8.1 the catalog compiled and its pattern matched nothing.
 
 ## [0.8.1] - 2026-11-18
 

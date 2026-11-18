@@ -326,6 +326,8 @@
   "editor.count_warning": "{n} warning",
   "editor.count_warnings": "{n} warnings",
   "editor.diag_examples": "A documented example cannot be verified.",
+  "editor.diag_full_width": "`{found}` is a full-width character. Pattern syntax uses the ASCII `{ascii}`.",
+  "editor.diag_full_width_space": "`{found}` is a full-width space. Separate pattern elements with an ASCII space.",
   "editor.diag_invalid": "Pattern is invalid.",
   "editor.diag_limit": "Pattern exceeds a compiler limit.",
   "editor.diag_missing": "Missing {node}",

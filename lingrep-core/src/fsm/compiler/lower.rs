@@ -11,7 +11,10 @@ use tree_sitter::{Node, Parser};
 use tree_sitter_lingrep::LANGUAGE;
 
 use super::PatternSource;
-use super::diagnostic::{CompileError, Diagnostic, DiagnosticCode};
+use super::diagnostic::{
+    CompileError, Diagnostic, DiagnosticCode, DiagnosticLocation, FullWidthCharacter,
+    RelatedDiagnosticLocation,
+};
 use super::limits::CompileLimits;
 use super::model::{
     CaptureProjection, CatalogVectors, DefinitionVisibility, GroupOperator, LookDirection,
@@ -3062,24 +3065,42 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// `has any` and a `set` member. Regex operands never arrive here, so
     /// `[text~/"/]` is untouched.
     ///
-    /// A literal that begins and ends with a double quote remains
-    /// expressible, because escape decoding runs after tokenization.
+    /// The quotes a Japanese IME or a word processor types, typographic
+    /// and corner brackets included, are rejected the same way.
+    ///
+    /// A literal that begins and ends with a quote remains expressible,
+    /// because escape decoding runs after tokenization.
     fn refuse_quoted_value(&self, node: Node<'_>, text: &str) -> Result<(), CompileError> {
+        const QUOTES: &[(&[char], &[char])] = &[
+            (&['"'], &['"']),
+            (&['“', '”'], &['“', '”']),
+            (&['‘', '’'], &['‘', '’']),
+            (&['「'], &['」']),
+            (&['『'], &['』']),
+            (&['＂'], &['＂']),
+            (&['＇'], &['＇']),
+        ];
         // `strip_suffix` after `strip_prefix` is what makes a lone `"` not a
         // wrapping pair: stripping the prefix leaves nothing for the suffix.
-        let Some(inner) = text
-            .strip_prefix('"')
-            .and_then(|rest| rest.strip_suffix('"'))
-        else {
+        let Some((open, inner, close)) = QUOTES.iter().find_map(|(opens, closes)| {
+            let open = text.chars().next().filter(|first| opens.contains(first))?;
+            let rest = text.strip_prefix(open)?;
+            let close = rest
+                .chars()
+                .next_back()
+                .filter(|last| closes.contains(last))?;
+            Some((open, rest.strip_suffix(close)?, close))
+        }) else {
             return Ok(());
         };
+        let (open, close) = (u32::from(open), u32::from(close));
         Err(self.error(
             node,
             DiagnosticCode::QuotedAttributeValue,
             format!(
                 "a token-test value is never quoted, so this value would be the literal \
                  `{text}`, quotes included. Write `{inner}` for the value itself, or \
-                 `\\u0022{inner}\\u0022` if the quotes belong inside it"
+                 `\\u{open:04X}{inner}\\u{close:04X}` if the quotes belong inside it"
             ),
         ))
     }
@@ -3218,16 +3239,51 @@ impl<'a, 'src> Lowerer<'a, 'src> {
     /// unhelpfully wrong: a definition whose `.` is missing and which is
     /// followed by another definition.
     fn recovery_error(&self, node: Node<'_>) -> CompileError {
-        if let Some(offset) = self.unterminated_definition_offset(node) {
-            return error_at_offset(
+        let error = if let Some(offset) = self.unterminated_definition_offset(node) {
+            error_at_offset(
                 self.source,
                 Arc::clone(&self.source_label),
                 offset,
                 DiagnosticCode::Syntax,
                 "missing `.`",
-            );
-        }
-        self.error(node, DiagnosticCode::Syntax, self.recovery_message(node))
+            )
+        } else {
+            self.error(node, DiagnosticCode::Syntax, self.recovery_message(node))
+        };
+        self.note_full_width_character(error, node.byte_range())
+    }
+
+    /// Points a syntax error at the first full-width character in `range`.
+    fn note_full_width_character(
+        &self,
+        mut error: CompileError,
+        range: Range<usize>,
+    ) -> CompileError {
+        let Some(character) = self
+            .source
+            .text
+            .get(range.clone())
+            .and_then(FullWidthCharacter::first_in)
+        else {
+            return error;
+        };
+        let start = range.start + character.offset;
+        let (line, column) = source_line_column(self.source.text, start);
+        let note = RelatedDiagnosticLocation::new(
+            DiagnosticLocation::with_source_label(
+                Arc::clone(&self.source_label),
+                start..start + character.found.len_utf8(),
+                line,
+                column,
+            ),
+            character.note(),
+        );
+        error.diagnostics = error
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.with_related_location(note.clone()))
+            .collect();
+        error
     }
 
     /// Byte offset where a missing `.` belongs, if `node` is the ERROR that

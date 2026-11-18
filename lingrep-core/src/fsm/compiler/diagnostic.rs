@@ -595,6 +595,53 @@ impl Diagnostic {
     }
 }
 
+/// A full-width character that a Japanese IME types where lingrep patterns
+/// syntax has its ASCII counterpart: U+FF01 to U+FF5E, or the ideographic
+/// space U+3000.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullWidthCharacter {
+    /// Byte offset of the character in the searched text.
+    pub offset: usize,
+    pub found: char,
+    pub ascii: char,
+}
+
+impl FullWidthCharacter {
+    /// Returns the first full-width character in `text`.
+    #[must_use]
+    pub fn first_in(text: &str) -> Option<Self> {
+        text.char_indices().find_map(|(offset, found)| {
+            let ascii = match u32::from(found) {
+                0x3000 => ' ',
+                code @ 0xFF01..=0xFF5E => char::from_u32(code - 0xFEE0)?,
+                _ => return None,
+            };
+            Some(Self {
+                offset,
+                found,
+                ascii,
+            })
+        })
+    }
+
+    /// The note a syntax diagnostic attaches at this character.
+    #[must_use]
+    pub fn note(&self) -> String {
+        let code = u32::from(self.found);
+        if self.ascii == ' ' {
+            format!(
+                "`{}` (U+{code:04X}) is a full-width space; write an ASCII space instead",
+                self.found
+            )
+        } else {
+            format!(
+                "`{}` (U+{code:04X}) is full-width; write the ASCII `{}` instead",
+                self.found, self.ascii
+            )
+        }
+    }
+}
+
 /// A structured failure at the lingrep patterns compilation boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompileError {

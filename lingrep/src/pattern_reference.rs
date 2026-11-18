@@ -256,7 +256,9 @@ rejected as `PipeInBareValue`. Write `[text=a | text=b]` for disjunction, or
 `[text=a\u007Cb]` when the literal value contains a pipe.
 Metadata quotes its values and a token test never does, so `[text=\u0022x\u0022]`
 would specify the literal `\u0022x\u0022`; it is rejected as
-`QuotedAttributeValue`.
+`QuotedAttributeValue`, as are values in IME quotes such as `”x”`, `「x」`
+and `『x』`. Syntax is ASCII: a syntax error at a full-width `［`, `＝` or
+ideographic space names the ASCII character to type instead.
 
 METADATA
 

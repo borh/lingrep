@@ -39,7 +39,7 @@ pub use analysis::{AttributeReferenceSite, CatalogAnalysis, ExclusionSite, Lexic
 pub use capture_key::CaptureKeyEdit;
 pub use diagnostic::{
     CompileError, Diagnostic, DiagnosticCode, DiagnosticLocation, DiagnosticSeverity,
-    RelatedDiagnosticLocation,
+    FullWidthCharacter, RelatedDiagnosticLocation,
 };
 pub use diagram::{DiagramCatalog, DiagramError, PatternDiagram};
 pub use drift::{

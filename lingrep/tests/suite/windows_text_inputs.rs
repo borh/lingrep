@@ -21,7 +21,7 @@ use lingrep_core::testing::MiniDictionary;
 use serde_json::Value;
 use tempfile::TempDir;
 
-use crate::support::{SORANOHA_CATALOG, fixture, lingrep, parse_jsonl};
+use crate::support::{SORANOHA_CATALOG, fixture, lingrep, lingrep_without_dictionary, parse_jsonl};
 
 const BOM: &str = "\u{feff}";
 
@@ -287,5 +287,96 @@ fn a_zip_read_as_plain_text_says_to_unzip_it_or_read_it_as_soranoha() {
         "--input-format soranoha",
     ] {
         assert!(stderr.contains(expected), "{expected}: {stderr}");
+    }
+}
+
+fn check_diagnostics(directory: &Path, name: &str, catalog: &str) -> Vec<Value> {
+    let path = write_named(directory, "ime", name, catalog.as_bytes());
+    let output = lingrep_without_dictionary()
+        .args(["--json", "check", "--patterns"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{catalog}");
+    parse_jsonl(&output.stderr)
+        .into_iter()
+        .filter(|event| event["type"] == "diagnostic")
+        .map(|event| event["data"].clone())
+        .collect()
+}
+
+#[test]
+fn a_syntax_error_at_full_width_punctuation_points_at_it_and_names_the_ascii_character() {
+    let directory = TempDir::new().unwrap();
+    for (catalog, found, note) in [
+        (
+            "n := ［upos=NOUN］.\n",
+            "［",
+            "`［` (U+FF3B) is full-width; write the ASCII `[` instead",
+        ),
+        (
+            "n := [upos＝NOUN].\n",
+            "＝",
+            "`＝` (U+FF1D) is full-width; write the ASCII `=` instead",
+        ),
+        (
+            "n := [upos=NOUN]\u{3000}[upos=ADP].\n",
+            "\u{3000}",
+            "`\u{3000}` (U+3000) is a full-width space; write an ASCII space instead",
+        ),
+    ] {
+        let diagnostics = check_diagnostics(directory.path(), "ime.lx", catalog);
+        let start = catalog.find(found).unwrap();
+        let column = catalog[..start].chars().count() + 1;
+        assert_eq!(diagnostics.len(), 1, "{catalog}");
+        let data = &diagnostics[0];
+        assert_eq!(data["code"], "Syntax", "{catalog}");
+        assert_eq!(
+            data["message"], "invalid lingrep patterns syntax",
+            "{catalog}"
+        );
+        assert_eq!(
+            data["related_locations"],
+            serde_json::json!([{
+                "message": note,
+                "location": {
+                    "source_name": data["location"]["source_name"],
+                    "source_span": {"start": start, "end": start + found.len()},
+                    "line": 1,
+                    "column": column,
+                    "corpus_sentence_ordinal": null,
+                    "token_index": null,
+                },
+            }]),
+            "{catalog}"
+        );
+    }
+}
+
+#[test]
+fn a_value_in_japanese_or_typographic_quotes_is_rejected_like_ascii_quotes() {
+    let directory = TempDir::new().unwrap();
+    for (open, close) in [
+        ('”', '”'),
+        ('“', '”'),
+        ('「', '」'),
+        ('『', '』'),
+        ('＂', '＂'),
+        ('＇', '＇'),
+        ('‘', '’'),
+    ] {
+        let catalog = format!("n := [text={open}猫{close}].\n");
+        let diagnostics = check_diagnostics(directory.path(), "quoted.lx", &catalog);
+        assert_eq!(diagnostics.len(), 1, "{catalog}");
+        let data = &diagnostics[0];
+        assert_eq!(data["code"], "QuotedAttributeValue", "{catalog}");
+        let escaped = format!("\\u{:04X}猫\\u{:04X}", u32::from(open), u32::from(close));
+        let message = data["message"].as_str().unwrap();
+        assert!(
+            message.contains(&format!("literal `{open}猫{close}`"))
+                && message.contains("Write `猫`")
+                && message.contains(&escaped),
+            "{message}"
+        );
     }
 }
