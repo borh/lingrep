@@ -1781,7 +1781,10 @@ also cause them, so a gap does not prove a missing grammatical construction.
 Prepared queries decode unmatched sentences too. The report fails above 4096
 groups or a 32 MiB retained-data charge; narrow the scope when that happens.
 It is published only after a completed scan, never replaces a file, and cannot
-be combined with `--limit`, `--retain` or `--raw-matches`.
+be combined with `--limit`, `--retain` or `--raw-matches`. On a filesystem
+without no-replace rename, `ling` publishes the report through a hard link. With
+neither, the command fails; the error names the OS reason and ends with "choose
+an output directory on a filesystem that supports one of them".
 
 ### Use an external protocol adapter
 
