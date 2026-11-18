@@ -219,6 +219,35 @@ pub(crate) async fn enable_wal_without_shared_memory(
     Ok(())
 }
 
+/// Checkpoints a database set up by [`enable_wal_without_shared_memory`] and returns it to
+/// rollback-journal mode, closing `connection`; `options` reopen the same database.
+///
+/// The journal-mode change rewrites the header through a rollback journal, and SQLite fails
+/// that write with `SQLITE_READONLY_DBMOVED` when the file's inode number differs from the
+/// one recorded at open (<https://www.sqlite.org/rescode.html#readonly_dbmoved>). On macOS
+/// 15.8's FSKit msdos driver a new file's inode number changes when the checkpoint writes it,
+/// so the journal-mode change runs on a connection opened after the checkpoint.
+pub(crate) async fn leave_wal(
+    mut connection: sqlx::SqliteConnection,
+    options: &sqlx::sqlite::SqliteConnectOptions,
+) -> sqlx::Result<()> {
+    use sqlx::{Connection as _, Executor as _, Row as _};
+    let busy: i64 = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut connection)
+        .await?
+        .try_get(0)?;
+    if busy != 0 {
+        return Err(sqlx::Error::Protocol(
+            "the WAL checkpoint could not complete".into(),
+        ));
+    }
+    connection.close().await?;
+    let mut connection = sqlx::SqliteConnection::connect_with(options).await?;
+    connection.execute("PRAGMA locking_mode=EXCLUSIVE").await?;
+    connection.execute("PRAGMA journal_mode=DELETE").await?;
+    connection.close().await
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
     CString::new(path.as_os_str().as_bytes())
@@ -299,6 +328,9 @@ impl Primitives for Faults {
         injected(self.symlink, || System.symlink(target, link))
     }
 }
+
+#[cfg(test)]
+mod moved_after_growth;
 
 #[cfg(test)]
 mod tests {
@@ -696,5 +728,66 @@ mod tests {
             let error = std::io::Error::from_raw_os_error(errno);
             assert!(!Capability::HardLinks.unsupported_by(&error), "{error}");
         }
+    }
+
+    async fn wal_database_grown_after_open(
+        path: &Path,
+    ) -> (sqlx::SqliteConnection, sqlx::sqlite::SqliteConnectOptions) {
+        use sqlx::{Connection as _, Executor as _};
+        super::moved_after_growth::register();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .vfs(super::moved_after_growth::name())
+            .create_if_missing(true);
+        let mut connection = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        super::enable_wal_without_shared_memory(&mut connection)
+            .await
+            .unwrap();
+        connection.execute("BEGIN IMMEDIATE").await.unwrap();
+        connection
+            .execute("CREATE TABLE rows(value BLOB)")
+            .await
+            .unwrap();
+        for _ in 0..64 {
+            sqlx::query("INSERT INTO rows(value) VALUES(zeroblob(4096))")
+                .execute(&mut connection)
+                .await
+                .unwrap();
+        }
+        connection.execute("COMMIT").await.unwrap();
+        (connection, options)
+    }
+
+    #[tokio::test]
+    async fn leaving_wal_succeeds_when_the_database_reports_moved_after_growing() {
+        use sqlx::{Connection as _, Row as _};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provenance.sqlite");
+        let (connection, options) = wal_database_grown_after_open(&path).await;
+
+        super::leave_wal(connection, &options).await.unwrap();
+
+        let mut reader = sqlx::SqliteConnection::connect_with(&options.clone().read_only(true))
+            .await
+            .unwrap();
+        let mode: String = sqlx::query("PRAGMA journal_mode")
+            .fetch_one(&mut reader)
+            .await
+            .unwrap()
+            .get(0);
+        let rows: i64 = sqlx::query("SELECT count(*) FROM rows")
+            .fetch_one(&mut reader)
+            .await
+            .unwrap()
+            .get(0);
+        reader.close().await.unwrap();
+        assert_eq!((mode.as_str(), rows), ("delete", 64));
+        let names = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["provenance.sqlite"]);
     }
 }

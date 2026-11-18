@@ -800,10 +800,7 @@ impl ProvenanceWriter {
                     CorpusError::Io(error)
                 }
             })?;
-        let options = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(false);
-        let mut connection = SqliteConnection::connect_with(&options)
+        let mut connection = SqliteConnection::connect_with(&writer_options(path))
             .await
             .map_err(|error| writer_database(path, error))?;
         connection
@@ -1230,12 +1227,7 @@ impl ProvenanceWriter {
             .execute("COMMIT")
             .await
             .map_err(|error| writer_database(&self.path, error))?;
-        self.connection
-            .execute("PRAGMA journal_mode=DELETE")
-            .await
-            .map_err(|error| writer_database(&self.path, error))?;
-        self.connection
-            .close()
+        crate::fs_capability::leave_wal(self.connection, &writer_options(&self.path))
             .await
             .map_err(|error| writer_database(&self.path, error))?;
         reject_sidecars(&self.path)
@@ -3606,6 +3598,12 @@ fn decode_region_labels(encoded: String) -> Result<Box<[String]>, CorpusError> {
     serde_json::from_str::<Vec<String>>(&encoded)
         .map(Vec::into_boxed_slice)
         .map_err(|error| invalid(error.to_string()))
+}
+
+fn writer_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
 }
 
 fn writer_database(path: &Path, error: sqlx::Error) -> CorpusError {
