@@ -43,9 +43,9 @@ use roaring::RoaringTreemap;
 use serde_json::Value;
 use tempfile::TempDir;
 
-use crate::support::hard_open_file_limit::{lingrep, lingrep_std, lingrep_without_dictionary};
 use crate::support::{
-    assert_success, build_single_sentence_artifact, missing_attribute_location, parse_jsonl,
+    assert_success, build_single_sentence_artifact, lingrep, lingrep_std,
+    lingrep_without_dictionary, missing_attribute_location, parse_jsonl,
 };
 
 fn row(pattern_ordinal: u64, rank: u64, surface: &'static str, count: u64) -> SummaryRow {
@@ -3476,7 +3476,7 @@ fn write_table_under_open_file_limit(
     let catalog = directory.path().join("table.lx");
     fs::write(&catalog, TABLE_CATALOG).unwrap();
     let table = directory.path().join("t.lingtable");
-    let mut command = crate::support::lingrep_std();
+    let mut command = crate::support::without_open_file_limit::lingrep_std();
     command
         .args(["summarize", "--workers", "8", "--patterns"])
         .arg(&catalog)
@@ -3560,59 +3560,65 @@ fn write_table_raises_a_low_soft_open_file_limit_to_the_hard_limit() {
 
 #[cfg(unix)]
 #[test]
-fn launched_processes_start_under_the_macos_soft_open_file_limit() {
-    let limits = |command: &mut std::process::Command| {
-        let output = command
-            .args(["-c", "ulimit -Sn; ulimit -Hn"])
-            .output()
-            .unwrap();
-        assert_success(&output);
-        String::from_utf8(output.stdout).unwrap()
-    };
-    let inherited = limits(&mut std::process::Command::new("sh"));
-    let hard = inherited.lines().nth(1).unwrap();
-    assert_eq!(
-        limits(&mut crate::support::under_open_file_limit("sh")),
-        format!("256\n{hard}\n")
-    );
-    assert_eq!(
-        limits(crate::support::without_open_file_limit(
-            &mut crate::support::under_open_file_limit("sh")
-        )),
-        inherited
-    );
+fn a_wrapper_starts_under_the_fixed_macos_open_file_limit() {
+    let output = crate::support::under_open_file_limit("sh")
+        .args(["-c", "ulimit -Sn; ulimit -Hn"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "256\n256\n");
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn summarize_tests_launch_ling_under_a_fixed_macos_open_file_limit() {
+fn ling_starts_under_the_fixed_macos_open_file_limit_unless_opted_out() {
     use std::process::Stdio;
 
     let dictionary = MiniDictionary::new();
     let directory = tempfile::tempdir().unwrap();
     let patterns = directory.path().join("patterns.lx");
     fs::write(&patterns, "pattern any := [].\n").unwrap();
-    let mut child = lingrep_std()
-        .args(["summarize", "--patterns"])
-        .arg(&patterns)
-        .arg("--dict-path")
-        .arg(dictionary.path())
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let limits = fs::read_to_string(format!("/proc/{}/limits", child.id())).unwrap();
-    drop(child.stdin.take());
-    child.wait().unwrap();
-    let open_files = limits
-        .lines()
-        .find(|line| line.starts_with("Max open files"))
-        .unwrap()
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    assert_eq!(open_files[3..5], ["256", "256"], "{limits}");
+    let hard_open_files = |mut command: std::process::Command| {
+        let mut child = command
+            .args(["summarize", "--patterns"])
+            .arg(&patterns)
+            .arg("--dict-path")
+            .arg(dictionary.path())
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let limits = fs::read_to_string(format!("/proc/{}/limits", child.id())).unwrap();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+        let open_files = limits
+            .lines()
+            .find(|line| line.starts_with("Max open files"))
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        open_files[4].to_owned()
+    };
+    let mut inherited = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `inherited` is a valid, writable `rlimit`.
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut inherited) },
+        0
+    );
+    assert_eq!(hard_open_files(lingrep_std()), "256");
+    assert_eq!(
+        hard_open_files(crate::support::without_open_file_limit::lingrep_std()),
+        if inherited.rlim_max == libc::RLIM_INFINITY {
+            "unlimited".to_owned()
+        } else {
+            inherited.rlim_max.to_string()
+        }
+    );
 }
 
 #[cfg(all(unix, debug_assertions))]

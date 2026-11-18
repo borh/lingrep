@@ -71,10 +71,12 @@ pub fn shell_without_lingrep_binary_env(program: impl AsRef<std::ffi::OsStr>) ->
 /// Construct the package binary for tests that need a live child process.
 #[allow(dead_code)]
 pub fn lingrep_std() -> Command {
-    locked_lingrep(OpenFileCeiling::Raisable)
+    let mut command = locked_lingrep();
+    limit_open_files(&mut command);
+    command
 }
 
-fn locked_lingrep(ceiling: OpenFileCeiling) -> Command {
+fn locked_lingrep() -> Command {
     let binary_path = lingrep_binary_path();
     let lock_path = binary_path.with_extension("integration-test.lock");
 
@@ -88,41 +90,32 @@ fn locked_lingrep(ceiling: OpenFileCeiling) -> Command {
         .args(["--exclusive", "--no-fork"])
         .arg(lock_path)
         .arg(binary_path);
-    limit_open_files(&mut command, ceiling);
     command
 }
 
 /// The soft open-file limit of a macOS login session (`launchctl limit
-/// maxfiles`), under which every `ling` these tests launch starts.
+/// maxfiles`). Every `ling` these tests launch starts with it as both its soft
+/// and hard limit, so `ling` cannot raise it.
 #[cfg(unix)]
 const OPEN_FILE_LIMIT: libc::rlim_t = 256;
 
-#[derive(Clone, Copy)]
-enum OpenFileCeiling {
-    /// Lower only the soft limit, as macOS does; `ling` may raise it to the
-    /// inherited hard limit.
-    Raisable,
-    /// Lower the hard limit too, so `ling` cannot raise the soft limit.
-    Fixed,
-}
-
 /// `program`, which runs with at most [`OPEN_FILE_LIMIT`] open files, as does
-/// every `ling` it starts; the hard limit is inherited unchanged.
+/// every `ling` it starts.
 #[allow(dead_code)]
 pub fn under_open_file_limit(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
-    limit_open_files(&mut command, OpenFileCeiling::Raisable);
+    limit_open_files(&mut command);
     command
 }
 
 #[cfg(unix)]
-fn limit_open_files(command: &mut Command, ceiling: OpenFileCeiling) {
+fn limit_open_files(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
     // SAFETY: `getrlimit` and `setrlimit` are async-signal-safe, and the
     // closure touches no state shared with the parent.
     unsafe {
-        command.pre_exec(move || {
+        command.pre_exec(|| {
             let mut limit = libc::rlimit {
                 rlim_cur: 0,
                 rlim_max: 0,
@@ -131,9 +124,7 @@ fn limit_open_files(command: &mut Command, ceiling: OpenFileCeiling) {
                 return Err(std::io::Error::last_os_error());
             }
             limit.rlim_cur = limit.rlim_cur.min(OPEN_FILE_LIMIT);
-            if matches!(ceiling, OpenFileCeiling::Fixed) {
-                limit.rlim_max = limit.rlim_max.min(OPEN_FILE_LIMIT);
-            }
+            limit.rlim_max = limit.rlim_max.min(OPEN_FILE_LIMIT);
             if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) == 0 {
                 Ok(())
             } else {
@@ -144,56 +135,18 @@ fn limit_open_files(command: &mut Command, ceiling: OpenFileCeiling) {
 }
 
 #[cfg(not(unix))]
-fn limit_open_files(_command: &mut Command, _ceiling: OpenFileCeiling) {}
+fn limit_open_files(_command: &mut Command) {}
 
-/// Restore the test process's own open-file limits in `command`, for a test
-/// whose `ling` legitimately needs more than [`OPEN_FILE_LIMIT`] files.
-#[cfg(unix)]
+/// Constructors that keep the test process's own open-file limits, for a test
+/// whose `ling` needs more than [`OPEN_FILE_LIMIT`] files or sets its own
+/// limits. A lowered hard limit cannot be raised again, so these replace the
+/// limited constructors rather than modify their commands.
 #[allow(dead_code)]
-pub fn without_open_file_limit(command: &mut Command) -> &mut Command {
-    use std::os::unix::process::CommandExt;
-
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: `limit` is a valid `rlimit` for `getrlimit` to fill.
-    assert_eq!(
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) },
-        0
-    );
-    // SAFETY: `setrlimit` is async-signal-safe, and `limit` is a copy.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) == 0 {
-                Ok(())
-            } else {
-                Err(std::io::Error::last_os_error())
-            }
-        });
-    }
-    command
-}
-
-/// The same constructors with the hard open-file limit also lowered to
-/// [`OPEN_FILE_LIMIT`], so `ling` cannot raise its soft limit.
-#[allow(dead_code)]
-pub mod hard_open_file_limit {
-    use super::{OpenFileCeiling, limit_open_files, lingrep_binary_path, locked_lingrep};
+pub mod without_open_file_limit {
     use std::process::Command;
 
-    pub fn lingrep() -> assert_cmd::Command {
-        assert_cmd::Command::from_std(lingrep_std())
-    }
-
-    pub fn lingrep_without_dictionary() -> assert_cmd::Command {
-        let mut command = Command::new(lingrep_binary_path());
-        limit_open_files(&mut command, OpenFileCeiling::Fixed);
-        assert_cmd::Command::from_std(command)
-    }
-
     pub fn lingrep_std() -> Command {
-        locked_lingrep(OpenFileCeiling::Fixed)
+        super::locked_lingrep()
     }
 }
 
