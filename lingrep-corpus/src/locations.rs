@@ -454,6 +454,7 @@ impl LocationWriter {
 
 impl MappedLocations {
     /// Opens a location relation after constant-size header and extent validation.
+    #[deny(clippy::as_conversions, clippy::indexing_slicing)]
     pub(crate) fn open(
         path: &Path,
         expected_analysis: &AnalysisIdentity,
@@ -466,7 +467,7 @@ impl MappedLocations {
         // The file descriptor remains owned by the mapping after this call; no caller data is
         // dereferenced without a prior checked range validation.
         let map = unsafe { MmapOptions::new().map(&file)? };
-        if &map[..8] != LOCATION_MAGIC {
+        if checked_subslice(&map, 0, 8)? != LOCATION_MAGIC {
             return Err(invalid("wrong magic"));
         }
         let version = read_u32(&map, 8)?;
@@ -476,7 +477,7 @@ impl MappedLocations {
                 version,
             });
         }
-        if read_u32(&map, 12)? != HEADER_LEN as u32 {
+        if u64::from(read_u32(&map, 12)?) != HEADER_LEN {
             return Err(invalid("wrong header length"));
         }
         let analysis = AnalysisIdentity::from_bytes(read_array(&map, 16)?);

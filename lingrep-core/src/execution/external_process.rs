@@ -1,3 +1,5 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::fmt;
@@ -1492,14 +1494,15 @@ impl ExternalAdapterProcess {
     }
 
     fn terminate_group(&self, signal: i32) {
-        // Negative PID addresses the process group created at spawn. ESRCH is
-        // benign: it means the group already exited between observation and signal.
+        // SAFETY: the positive child PID identifies the process group created at spawn.
+        // Negating it targets that group, and the caller supplies a valid signal.
         unsafe {
             libc::kill(-self.process_group, signal);
         }
     }
 
     fn group_exists(&self) -> bool {
+        // SAFETY: the child PID identifies its group, and signal 0 only checks for existence.
         let result = unsafe { libc::kill(-self.process_group, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
@@ -1588,6 +1591,7 @@ impl SpawnGuard {
 impl Drop for SpawnGuard {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
+            // SAFETY: the positive child PID identifies the group created at spawn.
             unsafe {
                 libc::kill(-self.process_group, libc::SIGTERM);
             }
@@ -1598,6 +1602,7 @@ impl Drop for SpawnGuard {
                     child_reaped = true;
                 }
                 let group_exists = {
+                    // SAFETY: signal 0 checks for the child process group without sending a signal.
                     let result = unsafe { libc::kill(-self.process_group, 0) };
                     result == 0
                         || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
@@ -1607,6 +1612,7 @@ impl Drop for SpawnGuard {
                 }
                 thread::sleep(Duration::from_millis(10));
             }
+            // SAFETY: the negative child PID addresses the group created at spawn.
             unsafe {
                 libc::kill(-self.process_group, libc::SIGKILL);
             }

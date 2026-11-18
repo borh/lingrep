@@ -1,3 +1,5 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 use std::{io, ptr::NonNull};
 
 use libsqlite3_sys::{
