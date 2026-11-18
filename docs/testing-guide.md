@@ -71,7 +71,7 @@ nix develop .#verification --command cargo kani -p lingrep-corpus
 | Location record lookup | Any `u64` sentence count and ordinal | Accept exactly the in-range ordinals. An accepted ordinal identifies an existing block and a slot within that block, including a final partial block. |
 | Location block directory | Any `u64` metadata fields for the block selected by a valid record ordinal | Accept exactly the canonical start, record count, and byte offset. Reject inconsistent entries without panicking. |
 | Location slicing | Any `u64` offset and length, with buffer lengths from 0 to 16 bytes | Accept exactly the in-bounds ranges and return the requested length. |
-| Token directory | Any `u64` corpus sentence count, block start, and block sentence count | Accept exactly the nonempty ranges within the corpus. The end of an accepted range fits in `u64` and advances beyond its start. |
+| Token directory | Any `u64` corpus sentence count, block start, and block sentence count | Accept exactly the nonempty ranges within the corpus. The end fits in `u64` and is greater than the start. |
 
 For new proofs, state the input domain and compare the production function
 with an independent specification. Use wider arithmetic for the specification

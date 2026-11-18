@@ -67,7 +67,9 @@ impl DirectoryEntry {
     fn validate_sentence_range(&self, corpus_sentence_count: u64) -> Result<(), CorpusError> {
         let end = self.first_sentence.checked_add(self.sentence_count);
         if self.sentence_count == 0 || end.is_none_or(|end| end > corpus_sentence_count) {
-            return Err(invalid("invalid V1 block sentence range"));
+            return Err(invalid(
+                "V1 token block has an empty or out-of-bounds sentence range",
+            ));
         }
         Ok(())
     }
