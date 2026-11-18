@@ -226,8 +226,7 @@ impl EndingReport {
                 groups: self.groups.values().collect(),
             },
         )?;
-        file.persist_noclobber(path).map_err(|error| error.error)?;
-        Ok(())
+        lingrep_corpus::fs_capability::persist_noclobber(file, path)
     }
 }
 
