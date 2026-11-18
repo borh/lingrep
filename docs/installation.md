@@ -73,7 +73,7 @@ platform. An archive unpacks to a single directory containing `bin/ling`, shell
 completions, manual pages, the license, and third-party notices.
 
 ```bash
-version=0.8.1
+version=0.8.2
 target=aarch64-apple-darwin  # or x86_64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
 base=https://github.com/borh/lingrep/releases/download/v$version
 curl -LO "$base/ling-$version-$target.tar.gz"
