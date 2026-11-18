@@ -203,7 +203,10 @@ jobs:
         env:
           UV_EXCLUDE_NEWER: "P3D"
         run: |
-          python3 scripts/check-adapter-wheels.py --output dist --tag "${{ inputs.tag || github.ref_name }}"
+          if [ "${{ github.event_name == 'push' || inputs.publish }}" = true ]; then
+            set -- --tag "${{ inputs.tag || github.ref_name }}"
+          fi
+          python3 scripts/check-adapter-wheels.py --output dist "$@"
 
       - uses: actions/upload-artifact@v7
         with:
