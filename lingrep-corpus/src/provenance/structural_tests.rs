@@ -579,13 +579,12 @@ async fn writer_rejects_sidecars_left_after_close() {
         .unwrap();
     fs::create_dir(PathBuf::from(format!("{}-journal", path.display()))).unwrap();
 
-    assert!(matches!(
-        writer.finish(analysis_identity()).await,
-        Err(CorpusError::InvalidFormat {
-            component: "provenance.sqlite",
-            ..
-        })
-    ));
+    let error = writer.finish(analysis_identity()).await.unwrap_err();
+    assert_eq!(error.code(), "io", "{error}");
+    assert!(
+        error.to_string().contains(&path.display().to_string()),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -1867,4 +1866,37 @@ async fn document_value_distribution_orders_global_frequencies_and_preserves_typ
             .iter()
             .any(|row| row.get::<String, _>(0) == "TEMP_STORE=3")
     );
+}
+
+#[tokio::test]
+async fn a_rejected_provenance_write_is_an_io_error_naming_the_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut writer = SqliteConnection::connect_with(&options.clone().create_if_missing(true))
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE t(x)")
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    writer.close().await.unwrap();
+    let mut reader = SqliteConnection::connect_with(&options.read_only(true))
+        .await
+        .unwrap();
+    let rejected = sqlx::raw_sql("INSERT INTO t VALUES(1)")
+        .execute(&mut reader)
+        .await
+        .unwrap_err();
+
+    let error = super::writer_database(&path, rejected);
+
+    assert_eq!(error.code(), "io");
+    assert!(!error.is_artifact_corruption());
+    let message = error.to_string();
+    assert!(
+        message.contains(&format!("cannot write '{}'", path.display())),
+        "{message}"
+    );
+    assert!(message.contains("readonly database"), "{message}");
 }

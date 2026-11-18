@@ -805,22 +805,22 @@ impl ProvenanceWriter {
             .create_if_missing(false);
         let mut connection = SqliteConnection::connect_with(&options)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(path, error))?;
         connection
             .execute("PRAGMA foreign_keys=ON")
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(path, error))?;
         crate::fs_capability::enable_wal_without_shared_memory(&mut connection)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(path, error))?;
         connection
             .execute("BEGIN IMMEDIATE")
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(path, error))?;
         sqlx::raw_sql(SCHEMA)
             .execute(&mut connection)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(path, error))?;
         sqlx::query(
             "INSERT INTO provenance_identity(singleton, schema_version, analysis_identity, state, sentence_count) VALUES(1, ?, ?, 'building', 0)",
         )
@@ -828,13 +828,13 @@ impl ProvenanceWriter {
         .bind([0_u8; 32].as_slice())
         .execute(&mut connection)
         .await
-        .map_err(writer_database)?;
+        .map_err(|error| writer_database(path, error))?;
         for key in sentence_metadata_keys {
             sqlx::query("INSERT INTO sentence_metadata_keys(key) VALUES(?)")
                 .bind(key)
                 .execute(&mut connection)
                 .await
-                .map_err(writer_database)?;
+                .map_err(|error| writer_database(path, error))?;
         }
         Ok(Self {
             connection,
@@ -1020,7 +1020,7 @@ impl ProvenanceWriter {
             .bind(block)
             .execute(&mut self.connection)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(&self.path, error))?;
         Ok(())
     }
 
@@ -1056,7 +1056,7 @@ impl ProvenanceWriter {
             .bind(analyzer.origin.metadata_digest.as_slice())
             .fetch_one(&mut self.connection)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(&self.path, error))?;
             self.origins = Some((analyzer.origin.clone(), id));
             origin_ids.push(Some(id));
         }
@@ -1112,7 +1112,7 @@ impl ProvenanceWriter {
             .build()
             .execute(&mut self.connection)
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(&self.path, error))?;
         if !sentence_metadata.is_empty() {
             let mut builder = sqlx::QueryBuilder::new(
                 "INSERT INTO sentence_metadata(sentence_id, metadata_json)",
@@ -1124,7 +1124,7 @@ impl ProvenanceWriter {
                 .build()
                 .execute(&mut self.connection)
                 .await
-                .map_err(writer_database)?;
+                .map_err(|error| writer_database(&self.path, error))?;
         }
         Ok(())
     }
@@ -1189,7 +1189,7 @@ impl ProvenanceWriter {
                     .bind(sqlite_integer(division.id.0,"division ID")?).bind(sqlite_integer(division.document_id.get(),"document ID")?)
                     .bind(&division.kind).bind(&division.source_id).bind(division.parent_id.map(|id|sqlite_integer(id.0,"parent ID")).transpose()?)
                     .bind(sqlite_integer(row.first_sentence,"division start")?).bind(sqlite_integer(self.next_sentence,"division end")?).bind(json)
-                    .execute(&mut self.connection).await.map_err(writer_database)?;
+                    .execute(&mut self.connection).await.map_err(|error| writer_database(&self.path, error))?;
             }
             AdmittedCorpusEvent::DivisionObservation {
                 document_id,
@@ -1200,7 +1200,7 @@ impl ProvenanceWriter {
                     .map_err(|error| invalid(error.to_string()))?;
                 sqlx::query("INSERT INTO division_observations(document_id,kind,observation_json) VALUES(?,?,?) ON CONFLICT(document_id,kind) DO UPDATE SET observation_json=excluded.observation_json")
                     .bind(sqlite_integer(document_id.get(),"document ID")?).bind(kind).bind(json)
-                    .execute(&mut self.connection).await.map_err(writer_database)?;
+                    .execute(&mut self.connection).await.map_err(|error| writer_database(&self.path, error))?;
             }
             _ => return Err(invalid("nonstructural event sent to division recorder")),
         }
@@ -1225,16 +1225,19 @@ impl ProvenanceWriter {
         .bind(sqlite_integer(self.next_sentence, "sentence count")?)
         .execute(&mut self.connection)
         .await
-        .map_err(writer_database)?;
+        .map_err(|error| writer_database(&self.path, error))?;
         self.connection
             .execute("COMMIT")
             .await
-            .map_err(writer_database)?;
+            .map_err(|error| writer_database(&self.path, error))?;
         self.connection
             .execute("PRAGMA journal_mode=DELETE")
             .await
-            .map_err(writer_database)?;
-        self.connection.close().await.map_err(writer_database)?;
+            .map_err(|error| writer_database(&self.path, error))?;
+        self.connection
+            .close()
+            .await
+            .map_err(|error| writer_database(&self.path, error))?;
         reject_sidecars(&self.path)
     }
 }
@@ -2793,7 +2796,7 @@ impl ProvenanceWriter {
             .bind(sqlite_integer(document.first_sentence, "first sentence")?)
             .bind(sqlite_integer(document.sentence_count, "sentence count")?)
             .bind(document.metadata_json)
-            .execute(&mut self.connection).await.map_err(writer_database)?;
+            .execute(&mut self.connection).await.map_err(|error| writer_database(&self.path, error))?;
         Ok(())
     }
 
@@ -2865,7 +2868,7 @@ impl ProvenanceWriter {
         .bind(sqlite_integer(self.next_sentence, "region end")?)
         .execute(&mut self.connection)
         .await
-        .map_err(writer_database)?;
+        .map_err(|error| writer_database(&self.path, error))?;
         Ok(())
     }
 }
@@ -3605,8 +3608,13 @@ fn decode_region_labels(encoded: String) -> Result<Box<[String]>, CorpusError> {
         .map_err(|error| invalid(error.to_string()))
 }
 
-fn writer_database(error: sqlx::Error) -> CorpusError {
-    invalid(error.to_string())
+fn writer_database(path: &Path, error: sqlx::Error) -> CorpusError {
+    match database(error) {
+        CorpusError::Io(error) => {
+            CorpusError::Io(crate::error::io_at("write", path, error.kind(), error))
+        }
+        content => content,
+    }
 }
 
 /// SQLite primary result codes that report the environment, the connection or

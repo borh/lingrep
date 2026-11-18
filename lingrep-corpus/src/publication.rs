@@ -9,6 +9,7 @@ use std::{
 use crate::{
     CorpusError,
     artifact::CompletedStagingArtifact,
+    error::io_at,
     fs_capability::{Capability, rename_noreplace},
 };
 
@@ -82,12 +83,14 @@ fn publish_guarded_with_ops(
         if !should_continue() {
             return Ok(false);
         }
-        ops.fsync(&component)?;
+        ops.fsync(&component)
+            .map_err(|error| CorpusError::Io(sync_error(&component, error)))?;
     }
     if !should_continue() {
         return Ok(false);
     }
-    ops.fsync(completed.path())?;
+    ops.fsync(completed.path())
+        .map_err(|error| CorpusError::Io(sync_error(completed.path(), error)))?;
 
     if !claim_commit() {
         return Ok(false);
@@ -95,7 +98,7 @@ fn publish_guarded_with_ops(
     let staging = completed.path();
     let destination = completed.destination();
     ops.rename_noreplace(staging, destination)
-        .map_err(|error| map_rename_error(error, destination))?;
+        .map_err(|error| map_rename_error(error, staging, destination))?;
     completed.mark_published();
 
     let parent = destination_parent(completed.destination());
@@ -107,7 +110,16 @@ fn publish_guarded_with_ops(
     Ok(true)
 }
 
-fn map_rename_error(error: io::Error, destination: &Path) -> CorpusError {
+fn sync_error(path: &Path, error: io::Error) -> io::Error {
+    io_at("sync", path, error.kind(), error)
+}
+
+fn rename_error(staging: &Path, destination: &Path, error: io::Error) -> io::Error {
+    let operation = format!("rename '{}' to", staging.display());
+    io_at(operation, destination, error.kind(), error)
+}
+
+fn map_rename_error(error: io::Error, staging: &Path, destination: &Path) -> CorpusError {
     let errno = error.raw_os_error().unwrap_or(libc::EIO);
     if matches!(errno, libc::EEXIST | libc::ENOTEMPTY) {
         CorpusError::DestinationExists {
@@ -119,7 +131,7 @@ fn map_rename_error(error: io::Error, destination: &Path) -> CorpusError {
             errno,
         }
     } else {
-        CorpusError::Io(error)
+        CorpusError::Io(rename_error(staging, destination, error))
     }
 }
 
@@ -353,7 +365,8 @@ impl StagingDirectory {
         let bytes = fs::read_dir(&self.path)?
             .map(|entry| Ok(entry?.metadata()?.len()))
             .sum::<io::Result<u64>>()?;
-        ops.fsync(&self.path)?;
+        ops.fsync(&self.path)
+            .map_err(|error| sync_error(&self.path, error))?;
         ops.rename_noreplace(&self.path, destination)
             .map_err(|source| {
                 let errno = source.raw_os_error().unwrap_or(libc::EIO);
@@ -367,7 +380,7 @@ impl StagingDirectory {
                         errno,
                     }
                 } else {
-                    PublicationError::Io(source)
+                    PublicationError::Io(rename_error(&self.path, destination, source))
                 }
             })?;
         self.published = true;
@@ -746,6 +759,37 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_failed_rename_names_the_staging_directory_and_the_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("science.lingcorpus");
+        let mut completed = complete_staging(&destination).await;
+        let staging = completed.path().to_path_buf();
+
+        let error = publish_with_ops(&RecordingOps::failing_rename(libc::EACCES), &mut completed)
+            .unwrap_err();
+
+        assert_eq!(error.code(), "io");
+        let message = error.to_string();
+        let expected = format!(
+            "cannot rename '{}' to '{}': {}",
+            staging.display(),
+            destination.display(),
+            std::io::Error::from_raw_os_error(libc::EACCES)
+        );
+        assert!(message.contains(&expected), "{message}");
+        assert!(!destination.exists());
+    }
+
+    /// The errno of `error` or of the I/O error it names a path for.
+    fn os_error(error: &std::io::Error) -> Option<i32> {
+        error.raw_os_error().or_else(|| {
+            std::error::Error::source(error)?
+                .downcast_ref::<std::io::Error>()?
+                .raw_os_error()
+        })
+    }
+
     /// Publication operations whose no-replace rename runs through the seam with `faults`.
     struct FaultedOps(Faults);
 
@@ -796,7 +840,7 @@ mod tests {
             drop(completed);
 
             assert!(
-                matches!(error, CorpusError::Io(ref source) if source.raw_os_error() == Some(errno)),
+                matches!(error, CorpusError::Io(ref source) if os_error(source) == Some(errno)),
                 "errno {errno}: {error:?}"
             );
             assert!(!destination.exists());
@@ -860,7 +904,7 @@ mod tests {
                     );
                 }
                 (Err(super::PublicationError::Io(source)), Err("io")) => {
-                    assert_eq!(source.raw_os_error(), fallback_rename.or(Some(errno)));
+                    assert_eq!(os_error(&source), fallback_rename.or(Some(errno)));
                     assert!(!destination.exists(), "{case:?}");
                 }
                 (

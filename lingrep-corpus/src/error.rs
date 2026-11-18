@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::IdentityError;
 
@@ -100,6 +100,33 @@ pub enum CorpusError {
         sentence_ordinal: Option<u64>,
         message: String,
     },
+}
+
+/// An I/O failure with the operation and path that produced it.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot {operation} '{}': {source}", path.display())]
+struct OperationFailed {
+    operation: String,
+    path: PathBuf,
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+/// An I/O error whose message names `operation` and `path`, with kind `kind` and
+/// `source` as its source.
+pub(crate) fn io_at(
+    operation: impl Into<String>,
+    path: &Path,
+    kind: std::io::ErrorKind,
+    source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> std::io::Error {
+    std::io::Error::new(
+        kind,
+        OperationFailed {
+            operation: operation.into(),
+            path: path.to_path_buf(),
+            source: source.into(),
+        },
+    )
 }
 
 impl CorpusError {
