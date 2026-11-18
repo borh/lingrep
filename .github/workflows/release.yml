@@ -109,6 +109,65 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The class workflow at full-novel size against the uploaded archive, at the
+  # open-file limit of a macOS login shell. A failure on any target blocks
+  # publication.
+  gate:
+    name: Student scenario (${{ matrix.target }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.target }}
+          path: dist
+
+      - name: Unpack the archive and install the dictionary
+        run: |
+          mkdir unpacked
+          tar xzf dist/*.tar.gz -C unpacked
+          ling="$(echo "$PWD"/unpacked/ling-*/bin/ling)"
+          echo "LING=$ling" >> "$GITHUB_ENV"
+          "$ling" dictionary install
+
+      - name: Run the student scenario
+        if: runner.os != 'Linux' || runner.arch != 'X64'
+        run: python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario"
+
+      # 4 GiB is what an 8 GB laptop leaves for ling beside the OS and a
+      # browser. The 5 GiB allocation first proves that the cgroup enforces the
+      # cap without swap; the runner has 16 GB, so uncapped it would succeed.
+      - name: Run the student scenario under a 4 GiB memory cap
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          capped() {
+            sudo systemd-run --scope --quiet --uid="$(id -u)" --gid="$(id -g)" \
+              --setenv=HOME="$HOME" --setenv=PATH="$PATH" \
+              -p MemoryMax=4G -p MemorySwapMax=0 -- "$@"
+          }
+          if capped python3 -c 'b"x" * (5 << 30)'; then
+            echo "error: the memory cap admitted a 5 GiB allocation" >&2
+            exit 1
+          fi
+          capped python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario"
+
   adapters:
     name: Python analyzer wheels
     runs-on: ubuntu-24.04
@@ -138,7 +197,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, adapters]
+    needs: [build, gate, adapters]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
