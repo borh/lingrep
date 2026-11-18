@@ -2,6 +2,7 @@ use crate::{AnalysisIdentity, CorpusError, TokenSchemaIdentity, tokens::TokenRea
 use lingrep_core::{
     fsm::SentenceFilter,
     spill::{BudgetedWriter, TempBudget},
+    test_scale::ScaleKnob,
     token_match::{
         AttributeKey, AttributeKind, AttributeOrdinal, BoundProjection, BoundTokenSentence,
     },
@@ -218,7 +219,7 @@ impl PostingsBuilder {
             .sentences
             .checked_add(1)
             .ok_or_else(|| invalid("sentence count overflow"))?;
-        if self.pending_bytes >= RUN_BYTES {
+        if self.pending_bytes >= ScaleKnob::PostingsRunBytes.or(RUN_BYTES) {
             self.flush_run()?;
         }
         Ok(())

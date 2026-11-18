@@ -96,6 +96,7 @@ declare -A ALLOWED_STANDALONE=(
     [lingrep-core/tests/external_process_contract.rs]="observes child PIDs, process groups, signals, pipes, and fixed wall-clock grace"
     [lingrep-core/tests/real_world_validation_tests.rs]="wall-clock and large-corpus gating"
     [lingrep-web/tests/cli.rs]="trycmd harness; owns its own binary by design"
+    [lingrep-web/tests/compound_derivation_bounds.rs]="lowers process-wide compound-derivation limits through lingrep_core::test_scale"
 )
 
 for dir in "${SUITES[@]}"; do

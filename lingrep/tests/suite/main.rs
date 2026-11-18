@@ -34,6 +34,8 @@ mod prepared_protocol;
 mod protocol;
 mod protocol_discovery;
 mod sample_protocol;
+#[cfg(unix)]
+mod scale_bounds;
 mod scope_protocol;
 mod scoped_lookaround_protocol;
 mod section_protocol;

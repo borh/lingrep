@@ -6,6 +6,8 @@ pub mod corpus_context;
 pub mod corpus_runtime;
 pub mod corpus_set;
 mod derived_patterns;
+#[cfg(any(test, feature = "testing"))]
+pub use derived_patterns::held_chains;
 pub mod document_reach;
 pub mod document_reader;
 mod export;

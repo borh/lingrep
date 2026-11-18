@@ -14,6 +14,7 @@ use indexmap::IndexSet;
 use lingrep_core::execution::CancellationFlag;
 use lingrep_core::fsm::{LexicalProjectedKeyField, LexicalProjectedKeyValue, ProjectedKeyField};
 use lingrep_core::spill::{SortedDrain, SortedRunCounts, SpillPolicy, TempBudget};
+use lingrep_core::test_scale::ScaleKnob;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::query::{
@@ -34,6 +35,10 @@ use crate::protocol::query::{
 const DEFAULT_RESIDENT_KEYS: usize = 65_536;
 const DEFAULT_MERGE_FAN_IN: usize = 16;
 const MIN_MERGE_FAN_IN: usize = 2;
+
+fn resident_keys() -> usize {
+    ScaleKnob::SummaryResidentKeys.or(DEFAULT_RESIDENT_KEYS)
+}
 
 /// Keys carried per message from the scan to a counting shard.
 ///
@@ -982,7 +987,7 @@ impl SpillLayout {
     pub fn new(shards: usize) -> Self {
         Self {
             shards: shards.max(1),
-            merge_fan_in: DEFAULT_MERGE_FAN_IN,
+            merge_fan_in: ScaleKnob::SummaryMergeFanIn.or(DEFAULT_MERGE_FAN_IN),
         }
     }
 
@@ -1050,7 +1055,7 @@ pub struct SummaryAggregator {
 impl SummaryAggregator {
     pub fn new(max_temp_bytes: u64, layout: SpillLayout) -> io::Result<Self> {
         Self::with_limits(
-            DEFAULT_RESIDENT_KEYS,
+            resident_keys(),
             layout.merge_fan_in,
             max_temp_bytes,
             layout.shards,
@@ -1763,7 +1768,7 @@ impl GroupingTally {
         let mut counts = SortedRunCounts::with_policy(
             SpillPolicy {
                 max_pending_bytes: usize::MAX,
-                max_pending_keys: DEFAULT_RESIDENT_KEYS,
+                max_pending_keys: resident_keys(),
                 merge_fan_in,
             },
             budget,
@@ -1873,7 +1878,7 @@ impl SectionTally {
         merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        Self::with_limits(labels, DEFAULT_RESIDENT_KEYS, merge_fan_in, budget)
+        Self::with_limits(labels, resident_keys(), merge_fan_in, budget)
     }
 
     pub fn with_limits(
@@ -1966,7 +1971,7 @@ impl MetadataValueTally {
         merge_fan_in: usize,
         budget: Arc<TempBudget>,
     ) -> io::Result<Self> {
-        Self::with_limits(key, documents, DEFAULT_RESIDENT_KEYS, merge_fan_in, budget)
+        Self::with_limits(key, documents, resident_keys(), merge_fan_in, budget)
     }
 
     pub fn with_limits(

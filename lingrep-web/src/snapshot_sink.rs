@@ -8,7 +8,7 @@ use lingrep_core::token_match::AttributeKey;
 use lingrep_core::token_match::TokenInfo;
 
 use crate::derived_patterns::{
-    CompoundLimitExceeded, MAX_DERIVED_PATTERNS, compound_name, contiguous_chains,
+    CompoundLimitExceeded, compound_name, contiguous_chains, max_derived_patterns,
 };
 use crate::revision::ErrorCategory;
 use crate::section_tally::{
@@ -206,7 +206,7 @@ impl SnapshotSink {
         if let Some(key) = self.compound_ids.get(components) {
             return Ok(*key);
         }
-        if self.compound_ids.len() >= MAX_DERIVED_PATTERNS {
+        if self.compound_ids.len() >= max_derived_patterns() {
             return Err(compound_limit(CompoundLimitExceeded));
         }
         let component_names = components
@@ -1891,7 +1891,10 @@ mod tests {
         }
         let error = failure.expect("65 × 65 distinct pairs exceed the derived-pattern limit");
         assert!(error.to_string().contains("Derive compounds"), "{error}");
-        assert_eq!(sink.patterns.len(), names.len() + MAX_DERIVED_PATTERNS);
+        assert_eq!(
+            sink.patterns.len(),
+            names.len() + crate::derived_patterns::MAX_DERIVED_PATTERNS
+        );
     }
 
     #[test]

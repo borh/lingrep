@@ -137,7 +137,7 @@ pub(crate) struct OutputBudget {
 
 impl Default for OutputBudget {
     fn default() -> Self {
-        Self::new(64 * 1024 * 1024)
+        Self::new(crate::test_scale::ScaleKnob::MatchOutputBytes.or(64 * 1024 * 1024))
     }
 }
 

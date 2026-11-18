@@ -22,7 +22,9 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 fn main() {
-    std::process::exit(run_process());
+    let code = run_process();
+    lingrep_core::test_scale::write_spill_file_report();
+    std::process::exit(code);
 }
 
 fn run_process() -> i32 {

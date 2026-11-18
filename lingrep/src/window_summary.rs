@@ -9,6 +9,7 @@ use std::sync::Arc;
 use compact_str::CompactString;
 use lingrep_core::fsm::{ProjectedKeyField, TokenWindow};
 use lingrep_core::spill::{TempBudget, TempReservation};
+use lingrep_core::test_scale::{ScaleKnob, SpillFileGuard};
 use lingrep_core::token_match::{AttributeKey, TokenSequence};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -60,7 +61,7 @@ impl<const N: usize> Runs<N> {
 
     fn push(&mut self, pool: &rayon::ThreadPool, record: [u32; N]) -> io::Result<()> {
         self.buffer.push(record);
-        if self.buffer.len() == RUN_RECORDS {
+        if self.buffer.len() == ScaleKnob::WindowRunRecords.or(RUN_RECORDS) {
             self.spill(pool)?;
         }
         Ok(())
@@ -96,6 +97,7 @@ fn write_run<const N: usize>(
 ) -> io::Result<Run> {
     let reservation = budget.reserve((records * N * 4) as u64)?;
     let file = tempfile::Builder::new().prefix(RUN_PREFIX).tempfile()?;
+    let _open = SpillFileGuard::open();
     let mut writer = BufWriter::with_capacity(1 << 20, file);
     while let Some(record) = next()? {
         for word in record {
@@ -114,14 +116,14 @@ fn write_run<const N: usize>(
 
 enum Source<const N: usize> {
     Memory(std::vec::IntoIter<[u32; N]>),
-    File(BufReader<File>),
+    File(BufReader<File>, SpillFileGuard),
 }
 
 impl<const N: usize> Source<N> {
     fn next(&mut self) -> io::Result<Option<[u32; N]>> {
         match self {
             Self::Memory(records) => Ok(records.next()),
-            Self::File(reader) => {
+            Self::File(reader, _) => {
                 if reader.fill_buf()?.is_empty() {
                     return Ok(None);
                 }
@@ -152,7 +154,10 @@ impl<const N: usize> Sorted<N> {
         for run in &runs {
             records += run.records;
             let file = File::open(&run.path)?;
-            sources.push(Source::File(BufReader::with_capacity(1 << 18, file)));
+            sources.push(Source::File(
+                BufReader::with_capacity(1 << 18, file),
+                SpillFileGuard::open(),
+            ));
         }
         let mut heads = BinaryHeap::with_capacity(sources.len());
         for (index, source) in sources.iter_mut().enumerate() {

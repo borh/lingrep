@@ -6,6 +6,7 @@ pub mod execution;
 pub mod fsm;
 pub mod scope;
 pub mod spill;
+pub mod test_scale;
 pub mod token_match;
 pub mod utils;
 

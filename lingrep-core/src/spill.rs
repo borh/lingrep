@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tempfile::{NamedTempFile, TempDir, TempPath};
 
 use crate::execution::CancellationFlag;
+use crate::test_scale::SpillFileGuard;
 
 const MERGE_CANCELLATION_INTERVAL: u64 = 1 << 16;
 
@@ -716,6 +717,7 @@ struct RunReader {
     byte_offset: u64,
     /// Reused across records: one frame's payload, never handed out.
     payload: Vec<u8>,
+    _open: SpillFileGuard,
 }
 
 impl RunReader {
@@ -726,6 +728,7 @@ impl RunReader {
             level: run.level,
             byte_offset: 0,
             payload: Vec::new(),
+            _open: SpillFileGuard::open(),
         })
     }
 
@@ -799,6 +802,7 @@ struct RunWriter {
     encoder: zstd::stream::write::Encoder<'static, BudgetedWriter<NamedTempFile>>,
     /// Reused across records: one framed record, length prefix included.
     frame: Vec<u8>,
+    _open: SpillFileGuard,
 }
 
 impl RunWriter {
@@ -812,6 +816,7 @@ impl RunWriter {
         Ok(Self {
             encoder,
             frame: Vec::new(),
+            _open: SpillFileGuard::open(),
         })
     }
 

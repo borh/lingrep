@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use lingrep_core::test_scale::ScaleKnob;
+
 use crate::snapshot::PatternKey;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +29,10 @@ pub(crate) fn compound_name(names: &[String], exists: impl Fn(&str) -> bool) -> 
 const MAX_SENTENCE_CHAIN_BYTES: usize = 128 * 1024 * 1024;
 
 pub(crate) const MAX_DERIVED_PATTERNS: usize = 4096;
+
+pub(crate) fn max_derived_patterns() -> usize {
+    ScaleKnob::CompoundPatterns.or(MAX_DERIVED_PATTERNS)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
@@ -58,25 +64,47 @@ pub(crate) fn contiguous_chains(
         in_chain: vec![false; matches.len()],
     };
     let mut seen = HashSet::new();
-    let mut budget = MAX_SENTENCE_CHAIN_BYTES;
+    let mut budget = ScaleKnob::CompoundChainBytes.or(MAX_SENTENCE_CHAIN_BYTES);
     let mut starts = HashMap::<usize, Vec<usize>>::new();
     for (index, &(_, start, _)) in matches.iter().enumerate() {
         starts.entry(start).or_default().push(index);
     }
-    for (index, &(key, start, end)) in matches.iter().enumerate() {
-        let mut path = vec![(index, key)];
-        extend(
-            matches,
-            &starts,
-            start,
-            end,
-            &mut path,
-            &mut seen,
-            &mut budget,
-            &mut output,
-        )?;
+    let enumerated = matches
+        .iter()
+        .enumerate()
+        .try_for_each(|(index, &(key, start, end))| {
+            let mut path = vec![(index, key)];
+            extend(
+                matches,
+                &starts,
+                start,
+                end,
+                &mut path,
+                &mut seen,
+                &mut budget,
+                &mut output,
+            )
+        });
+    #[cfg(any(test, feature = "testing"))]
+    held_chains::record(seen.len());
+    enumerated.map(|()| output)
+}
+
+/// The most distinct chains `contiguous_chains` has held for one sentence.
+#[cfg(any(test, feature = "testing"))]
+pub mod held_chains {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    pub(super) fn record(chains: usize) {
+        PEAK.fetch_max(chains, Ordering::Relaxed);
     }
-    Ok(output)
+
+    /// Returns the peak since the last call and resets it.
+    pub fn take_peak() -> usize {
+        PEAK.swap(0, Ordering::Relaxed)
+    }
 }
 
 fn extend(
