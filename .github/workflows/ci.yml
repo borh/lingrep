@@ -72,9 +72,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Plain cargo, not the dev shell: this job proves that the code and the
-      # packaging path work on Apple silicon, not the corpus lane, which runs
-      # in the job above.
+      # Plain cargo, not the dev shell: this job proves that the code, its
+      # tests, the class workflow and the packaging path work on Apple silicon,
+      # not the corpus lane, which runs in the job above.
       # rustup installs the toolchain `rust-toolchain.toml` names, the same one
       # the dev shells use, so a newer release cannot change this job's lints.
       - name: Install the pinned toolchain
@@ -95,11 +95,29 @@ jobs:
       - name: Check the binary loads only system libraries
         run: scripts/check-release-linkage.sh target/debug/ling
 
-      # `cargo test` is deliberately absent: `lingrep_core::testing::
-      # dictionary_path()` panics when the variable the dev shell exports is
-      # unset, so a dictionary-free run fails three tests for the environment
-      # rather than for the change.
-      #
+      # The tests read the dictionary the dev shell exports elsewhere.
+      - name: Install the dictionary
+        run: |
+          target/debug/ling dictionary install
+          echo "LINGREP_DICTIONARY_PATH=$HOME/.local/share/lingrep/dictionaries/unidic-cwj-202512.dic" >> "$GITHUB_ENV"
+
+      # The integration suite launches ling through util-linux `flock`. The
+      # three skipped tests fail on a macOS host outside the dev shell, with
+      # or without a terminal; that is not yet diagnosed.
+      - name: Test
+        run: |
+          brew install util-linux
+          PATH="$(brew --prefix util-linux)/bin:$PATH"
+          cargo test --workspace --lib --bins
+          cargo test -p lingrep --tests -- \
+            --skip completions::generated_scripts_complete_real_commands_in_supported_shells \
+            --skip terminal_safety::a_build_warning_written_during_transient_status_starts_on_an_erased_line \
+            --skip terminal_safety::progress_output_follows_mode_format_delivery_and_terminals_without_changing_stdout
+
+      - name: Student scenario
+        timeout-minutes: 30
+        run: python3 scripts/student-scenario.py target/debug/ling "$RUNNER_TEMP/scenario"
+
       # Packaging is worth running here because it is the only place the shell
       # script, `ling manpages` and the notices generator execute on a Mac, and
       # the release workflow would otherwise discover a macOS-only failure at
