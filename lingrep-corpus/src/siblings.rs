@@ -268,7 +268,7 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
             "not a canonical artifact name for this source",
         ));
     }
-    remove_in_two_steps(path, |at| {
+    remove_in_two_steps(path, ARTIFACT_LAYOUT, |at| {
         if !fs::symlink_metadata(at)?.is_dir() {
             return Err(cannot_delete(at, "not a directory"));
         }
@@ -277,7 +277,7 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
             return Err(cannot_delete(at, "manifest is not a regular file"));
         }
         match Manifest::open(&manifest) {
-            Err(error) if is_older_format(&error) => closed(at),
+            Err(error) if is_older_format(&error) => Ok(()),
             _ => Err(cannot_delete(at, "not written in an older format")),
         }
     })
@@ -314,7 +314,7 @@ pub fn remove_realization(
             "not the canonical artifact name of this source and identity",
         ));
     }
-    remove_in_two_steps(path, |at| {
+    remove_in_two_steps(path, ARTIFACT_LAYOUT, |at| {
         if !fs::symlink_metadata(at)?.is_dir() {
             return Err(cannot_delete(at, "not a directory"));
         }
@@ -324,7 +324,7 @@ pub fn remove_realization(
                 "its manifest records another analysis identity",
             ));
         }
-        closed(at)
+        Ok(())
     })
 }
 
@@ -338,6 +338,26 @@ pub fn remove_realization(
 /// an entry on another device than `path` is foreign, and so is `path`
 /// itself, reported as `.`, when it is on another device than its parent.
 pub fn foreign_entries(path: &Path) -> Result<Vec<String>, CorpusError> {
+    foreign_entries_in(path, ARTIFACT_LAYOUT)
+}
+
+/// The files of one kind of prepared directory.
+#[derive(Clone, Copy)]
+pub(crate) struct Layout {
+    /// The file that describes the directory, deleted last.
+    pub(crate) descriptor: &'static str,
+    /// The names of the other components of the directory at a path, read
+    /// from its descriptor, or `None` without a readable descriptor.
+    pub(crate) components: fn(&Path) -> Option<BTreeSet<String>>,
+}
+
+const ARTIFACT_LAYOUT: Layout = Layout {
+    descriptor: MANIFEST_NAME,
+    components: listed_components,
+};
+
+/// [`foreign_entries`] for the components `layout` lists.
+pub(crate) fn foreign_entries_in(path: &Path, layout: Layout) -> Result<Vec<String>, CorpusError> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_dir() {
         return Err(CorpusError::ExpectedArtifactDirectory {
@@ -349,14 +369,14 @@ pub fn foreign_entries(path: &Path) -> Result<Vec<String>, CorpusError> {
     if !same_device(&parent, &metadata) {
         foreign.push(".".to_owned());
     }
-    let listed = listed_components(path);
+    let listed = (layout.components)(path);
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let kind = fs::symlink_metadata(entry.path())?;
         let component = listed
             .as_ref()
-            .is_some_and(|listed| name == MANIFEST_NAME || listed.contains(&name));
+            .is_some_and(|listed| name == layout.descriptor || listed.contains(&name));
         if !component || !kind.is_file() || !same_device(&metadata, &kind) {
             foreign.push(if kind.is_dir() {
                 format!("{name}/")
@@ -447,19 +467,25 @@ pub fn finish_prune_leftover(path: &Path) -> Result<u64, CorpusError> {
     if !recognised {
         return Err(cannot_delete(path, "not an interrupted prune"));
     }
-    delete_renamed(path)
+    delete_renamed(path, ARTIFACT_LAYOUT)
 }
 
-fn cannot_delete(path: &Path, reason: &str) -> CorpusError {
+pub(crate) fn cannot_delete(path: &Path, reason: &str) -> CorpusError {
     crate::artifact::invalid_artifact(format!("cannot delete {}: {reason}", path.display()))
 }
 
-/// Checks `path` with `verify`, renames it to a hidden name beside it,
-/// checks it again under that name, and deletes it.
-fn remove_in_two_steps(
+/// Checks `path` with `verify` and for entries `layout` does not list,
+/// renames it to a hidden name beside it, checks it again under that name,
+/// and deletes it.
+pub(crate) fn remove_in_two_steps(
     path: &Path,
+    layout: Layout,
     verify: impl Fn(&Path) -> Result<(), CorpusError>,
 ) -> Result<u64, CorpusError> {
+    let verify = |at: &Path| {
+        verify(at)?;
+        closed(at, layout)
+    };
     verify(path)?;
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return Err(cannot_delete(path, "no file name"));
@@ -490,11 +516,11 @@ fn remove_in_two_steps(
             },
         );
     }
-    delete_renamed(&hidden)
+    delete_renamed(&hidden, layout)
 }
 
-fn closed(path: &Path) -> Result<(), CorpusError> {
-    let foreign = foreign_entries(path)?;
+fn closed(path: &Path, layout: Layout) -> Result<(), CorpusError> {
+    let foreign = foreign_entries_in(path, layout)?;
     if foreign.is_empty() {
         Ok(())
     } else {
@@ -508,27 +534,27 @@ fn closed(path: &Path) -> Result<(), CorpusError> {
     }
 }
 
-/// Deletes the components the manifest of the artifact directory at `path`
-/// lists, the manifest last, and then the directory, which therefore fails to
-/// delete if anything else appeared in it.
-fn delete_renamed(path: &Path) -> Result<u64, CorpusError> {
-    closed(path)?;
-    let listed = listed_components(path).unwrap_or_default();
+/// Deletes the components `layout` lists for the directory at `path`, its
+/// descriptor last, and then the directory, which therefore fails to delete
+/// if anything else appeared in it.
+fn delete_renamed(path: &Path, layout: Layout) -> Result<u64, CorpusError> {
+    closed(path, layout)?;
+    let listed = (layout.components)(path).unwrap_or_default();
     let bytes = artifact_bytes(path)?;
     let delete = |at: &Path, result: std::io::Result<()>| {
         result.map_err(|error| {
             CorpusError::Io(crate::error::io_at("delete", at, error.kind(), error))
         })
     };
-    let manifest = path.join(MANIFEST_NAME);
+    let descriptor = path.join(layout.descriptor);
     for name in &listed {
         let component = path.join(name);
-        if component != manifest && fs::symlink_metadata(&component).is_ok() {
+        if component != descriptor && fs::symlink_metadata(&component).is_ok() {
             delete(&component, fs::remove_file(&component))?;
         }
     }
-    if fs::symlink_metadata(&manifest).is_ok() {
-        delete(&manifest, fs::remove_file(&manifest))?;
+    if fs::symlink_metadata(&descriptor).is_ok() {
+        delete(&descriptor, fs::remove_file(&descriptor))?;
     }
     delete(path, fs::remove_dir(path))?;
     Ok(bytes)
