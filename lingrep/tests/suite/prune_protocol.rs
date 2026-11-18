@@ -883,7 +883,10 @@ fn a_read_only_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
         !again.status.success(),
         "the leftover still cannot be deleted"
     );
-    assert_eq!(pruning_leftovers(directory), std::slice::from_ref(&leftover));
+    assert_eq!(
+        pruning_leftovers(directory),
+        std::slice::from_ref(&leftover)
+    );
 
     let rebuilt =
         crate::disk_protocol::build(&fixture.dictionary, &fixture.source, &["--profile", "text"]);
@@ -960,4 +963,127 @@ fn an_interrupted_prune_is_ignored_by_build_and_finished_by_the_next_prune() {
     );
     assert!(!leftover.exists() && !fixture.other_analyzer.exists());
     assert!(fixture.current.exists() && fixture.other_reader.exists());
+}
+
+/// A copy of the current realization under a name that records another
+/// identity, and that sorts before it, is `misnamed`: the correctly named one
+/// stays current and both are kept.
+#[test]
+fn a_misnamed_identical_copy_does_not_displace_the_current_realization() {
+    let fixture = siblings();
+    let generation = lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION;
+    let copy = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", generation, 0x00),
+        |_| {},
+    );
+    assert!(copy < fixture.current, "the copy is scanned first");
+
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        of_type(&records, "source")[0]["current"]["path"],
+        path_string(&fixture.current)
+    );
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([path_string(&fixture.other_analyzer)])
+    );
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([(
+            path_string(&fixture.other_reader),
+            "reader_variant".to_owned()
+        )])
+    );
+    assert!(fixture.current.exists() && copy.exists());
+    let disk = run_json(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let status = |path: &Path| {
+        of_type(&disk, "realization")
+            .into_iter()
+            .find(|record| record["path"] == path_string(path))
+            .unwrap()["status"]
+            .clone()
+    };
+    assert_eq!(status(&copy), "misnamed");
+    assert_eq!(status(&fixture.current), "current");
+}
+
+/// A realization, older-format artifact or interrupted prune that holds a
+/// file or directory besides the components its manifest lists is kept as
+/// `foreign_entries` in both prune modes, and nothing inside it is deleted.
+#[cfg(unix)]
+#[test]
+fn a_directory_with_foreign_entries_is_kept() {
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let older = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", 1, 0xd1),
+        |m| {
+            m["format_generation"] = 1.into();
+        },
+    );
+    let name = fixture.other_reader.file_name().unwrap().to_str().unwrap();
+    let leftover = directory.join(format!(".{name}.pruning-1-0"));
+    fs::rename(&fixture.other_reader, &leftover).unwrap();
+    fs::write(fixture.other_analyzer.join("my-notes.txt"), b"notes").unwrap();
+    fs::create_dir(fixture.other_analyzer.join("sub")).unwrap();
+    fs::write(fixture.other_analyzer.join("sub").join("f"), b"f").unwrap();
+    fs::write(older.join("my-notes.txt"), b"notes").unwrap();
+    fs::write(leftover.join("my-notes.txt"), b"notes").unwrap();
+    let before = crate::disk_protocol::tree_listing(directory);
+
+    for all in [&[][..], &["--include-all-superseded"][..]] {
+        let records = prune_source(&fixture, all);
+        assert_eq!(removals(&records), BTreeMap::new(), "{records:?}");
+        assert_eq!(
+            kept(&records),
+            BTreeMap::from([
+                (
+                    path_string(&fixture.other_analyzer),
+                    "foreign_entries".to_owned()
+                ),
+                (path_string(&older), "foreign_entries".to_owned()),
+                (path_string(&leftover), "foreign_entries".to_owned()),
+            ])
+        );
+        let message = of_type(&records, "kept")
+            .into_iter()
+            .find(|record| record["path"] == path_string(&fixture.other_analyzer))
+            .unwrap()["message"]
+            .clone();
+        assert!(
+            message
+                .as_str()
+                .is_some_and(|message| message.ends_with("my-notes.txt, sub/")),
+            "{message}"
+        );
+        assert_eq!(crate::disk_protocol::tree_listing(directory), before);
+    }
+}
+
+/// The removal primitives delete nothing from a directory that holds an
+/// entry its manifest does not list.
+#[test]
+fn the_removal_primitives_reject_a_directory_with_foreign_entries() {
+    use lingrep_corpus::{CorpusArtifact, remove_realization};
+
+    let fixture = siblings();
+    let identity = *CorpusArtifact::open(&fixture.other_analyzer)
+        .unwrap()
+        .analysis_identity();
+    fs::write(fixture.other_analyzer.join("my-notes.txt"), b"notes").unwrap();
+    let before = crate::disk_protocol::tree_listing(fixture.directory.path());
+    assert!(remove_realization(&fixture.other_analyzer, "source.md", &identity).is_err());
+    assert_eq!(
+        crate::disk_protocol::tree_listing(fixture.directory.path()),
+        before
+    );
 }

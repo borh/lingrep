@@ -60,20 +60,38 @@ pub(crate) fn run_to<W: Write>(
             !(args.include_all_superseded && reason.deleted_with_include_all_superseded())
         })
     };
-    let kept_by_rule = scan
+    let mut kept_by_rule = scan
         .realizations
         .iter()
         .filter(|entry| !kept.contains(&entry.path))
-        .filter_map(|entry| match entry.status {
-            RealizationStatus::Superseded | RealizationStatus::OlderFormat => {
-                keep_reason(entry).map(|reason| (entry, reason))
-            }
-            RealizationStatus::Unreadable if entry.recorded.is_some() => {
-                Some((entry, PruneKeep::Damaged))
-            }
-            _ => None,
+        .filter_map(|entry| {
+            let reason = match entry.status {
+                RealizationStatus::Superseded | RealizationStatus::OlderFormat => {
+                    keep_reason(entry)?
+                }
+                RealizationStatus::Unreadable if entry.recorded.is_some() => PruneKeep::Damaged,
+                _ => return None,
+            };
+            Some(PruneKept {
+                path: display(&entry.path),
+                reason,
+                differences: entry.differences.clone(),
+                bytes: entry.bytes,
+                message: kept_message(reason, entry.message.as_deref(), &entry.foreign),
+            })
         })
+        .chain(scan.leftovers.iter().filter_map(|leftover| {
+            let reason = leftover.kept_by_prune?;
+            Some(PruneKept {
+                path: display(leftover.pruning.as_deref()?),
+                reason,
+                differences: Vec::new(),
+                bytes: leftover.bytes,
+                message: kept_message(reason, None, &leftover.foreign),
+            })
+        }))
         .collect::<Vec<_>>();
+    kept_by_rule.sort_by(|left, right| left.path.cmp(&right.path));
     let removed = scan
         .realizations
         .iter()
@@ -135,7 +153,7 @@ pub(crate) fn run_to<W: Write>(
                 .all(|artifact| removed_paths.contains(artifact))
     });
     let interrupted = scan.leftovers.iter().filter_map(|leftover| {
-        (leftover.status == LeftoverStatus::InterruptedPrune)
+        (leftover.status == LeftoverStatus::InterruptedPrune && leftover.kept_by_prune.is_none())
             .then_some(leftover.pruning.as_deref())
             .flatten()
             .map(|path| Planned::Leftover(path, leftover.bytes))
@@ -170,16 +188,8 @@ pub(crate) fn run_to<W: Write>(
     for source in &scan.sources {
         publish(PruneEvent::Source(source.record()))?;
     }
-    for (entry, reason) in &kept_by_rule {
-        publish(PruneEvent::Kept(PruneKept {
-            path: display(&entry.path),
-            reason: *reason,
-            differences: entry.differences.clone(),
-            bytes: entry.bytes,
-            message: (*reason == PruneKeep::Damaged)
-                .then(|| entry.message.clone())
-                .flatten(),
-        }))?;
+    for kept in kept_by_rule {
+        publish(PruneEvent::Kept(kept))?;
     }
 
     let (mut expected, mut freed) = (0_u64, 0_u64);
@@ -231,6 +241,19 @@ pub(crate) fn run_to<W: Write>(
         freed_bytes: freed,
     }))?;
     Ok(CommandOutcome::Success)
+}
+
+/// The `message` of a kept record: the validation failure of a damaged
+/// realization, or the entries that are not artifact components.
+fn kept_message(reason: PruneKeep, failure: Option<&str>, foreign: &[String]) -> Option<String> {
+    match reason {
+        PruneKeep::Damaged => failure.map(str::to_owned),
+        PruneKeep::ForeignEntries => Some(format!(
+            "holds entries that are not artifact components: {}",
+            foreign.join(", ")
+        )),
+        _ => None,
+    }
 }
 
 /// Resolves each `--keep` to the readable realization in the scan it names;

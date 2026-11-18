@@ -54,6 +54,19 @@ pub struct SiblingRealization {
 }
 
 impl SiblingRealization {
+    /// Whether the path's file name is the canonical artifact name for the
+    /// analysis identity and trust class the manifest records.
+    #[must_use]
+    pub fn is_canonically_named(&self) -> bool {
+        self.path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(parse_artifact_name)
+            .is_some_and(|parsed| {
+                parsed.analysis_identity == self.analysis_identity && parsed.trust == self.trust
+            })
+    }
+
     /// Reads the realization whose manifest is at `path/manifest.json`,
     /// whatever `path` is named, under the same manifest bound as
     /// [`SiblingScan::scan`].
@@ -220,7 +233,8 @@ pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
 /// `source_name`, and it holds a regular `manifest.json` that fails to open
-/// with an error [`is_older_format`] accepts. The deletion follows
+/// with an error [`is_older_format`] accepts, and it has no
+/// [`foreign_entries`]. The deletion follows
 /// [`remove_realization`]'s two steps.
 pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
     let name = path.file_name().and_then(|name| name.to_str());
@@ -242,7 +256,7 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
             return Err(cannot_delete(at, "manifest is not a regular file"));
         }
         match Manifest::open(&manifest) {
-            Err(error) if is_older_format(&error) => Ok(()),
+            Err(error) if is_older_format(&error) => closed(at),
             _ => Err(cannot_delete(at, "not written in an older format")),
         }
     })
@@ -254,8 +268,9 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
 /// `source_name` and `expected`, it passes [`CorpusArtifact::open`], and it
-/// records `expected`. Choosing which realization is superseded is the
-/// caller's; this checks only that `path` is still the one it chose.
+/// records `expected`, and it has no [`foreign_entries`]. Choosing which
+/// realization is superseded is the caller's; this checks only that `path` is
+/// still the one it chose.
 ///
 /// The deletion has two steps. The directory is first renamed, without
 /// replacing anything, to a hidden name in the same directory that
@@ -288,8 +303,78 @@ pub fn remove_realization(
                 "its manifest records another analysis identity",
             ));
         }
-        Ok(())
+        closed(at)
     })
+}
+
+/// The entries of the directory at `path` that are not components of the
+/// artifact its `manifest.json` describes, by file name, with a trailing `/`
+/// for a directory.
+///
+/// The components are `manifest.json` and the names the manifest's
+/// `components` table lists, whatever its format generation; each must be a
+/// regular file. Without a readable manifest, every entry is foreign. On Unix,
+/// an entry on another device than `path` is foreign, and so is `path`
+/// itself, reported as `.`, when it is on another device than its parent.
+pub fn foreign_entries(path: &Path) -> Result<Vec<String>, CorpusError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(CorpusError::ExpectedArtifactDirectory {
+            path: path.to_path_buf(),
+        });
+    }
+    let mut foreign = Vec::new();
+    let parent = fs::symlink_metadata(containing_directory(path))?;
+    if !same_device(&parent, &metadata) {
+        foreign.push(".".to_owned());
+    }
+    let listed = listed_components(path);
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let kind = fs::symlink_metadata(entry.path())?;
+        let component = listed
+            .as_ref()
+            .is_some_and(|listed| name == MANIFEST_NAME || listed.contains(&name));
+        if !component || !kind.is_file() || !same_device(&metadata, &kind) {
+            foreign.push(if kind.is_dir() {
+                format!("{name}/")
+            } else {
+                name
+            });
+        }
+    }
+    foreign.sort();
+    Ok(foreign)
+}
+
+/// The plain file names the manifest's `components` table lists, or `None`
+/// without a readable manifest. A listed name with a separator, `.` or `..`
+/// names nothing in the directory and is dropped.
+fn listed_components(path: &Path) -> Option<BTreeSet<String>> {
+    let manifest = Manifest::read_untyped(&path.join(MANIFEST_NAME)).ok()?;
+    manifest["components"].as_object().map(|components| {
+        components
+            .keys()
+            .filter(|name| {
+                let mut parts = Path::new(name.as_str()).components();
+                matches!(parts.next(), Some(std::path::Component::Normal(part)) if part == name.as_str())
+                    && parts.next().is_none()
+            })
+            .cloned()
+            .collect()
+    })
+}
+
+#[cfg(unix)]
+fn same_device(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev()
+}
+
+#[cfg(not(unix))]
+fn same_device(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    true
 }
 
 const PRUNE_MARKER: &str = ".pruning-";
@@ -333,7 +418,8 @@ pub fn prune_leftovers(dir: &Path) -> std::io::Result<Vec<PruneLeftover>> {
 /// Deletes the [`PruneLeftover`] at `path` and returns the bytes freed.
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
-/// symbolic link with a name [`prune_leftovers`] reports.
+/// symbolic link with a name [`prune_leftovers`] reports, and it has no
+/// [`foreign_entries`].
 pub fn finish_prune_leftover(path: &Path) -> Result<u64, CorpusError> {
     let recognised = prune_leftovers(containing_directory(path))
         .is_ok_and(|found| found.iter().any(|leftover| leftover.path == path));
@@ -386,11 +472,44 @@ fn remove_in_two_steps(
     delete_renamed(&hidden)
 }
 
+fn closed(path: &Path) -> Result<(), CorpusError> {
+    let foreign = foreign_entries(path)?;
+    if foreign.is_empty() {
+        Ok(())
+    } else {
+        Err(cannot_delete(
+            path,
+            &format!(
+                "it holds entries that are not artifact components: {}",
+                foreign.join(", ")
+            ),
+        ))
+    }
+}
+
+/// Deletes the components the manifest of the artifact directory at `path`
+/// lists, the manifest last, and then the directory, which therefore fails to
+/// delete if anything else appeared in it.
 fn delete_renamed(path: &Path) -> Result<u64, CorpusError> {
+    closed(path)?;
+    let listed = listed_components(path).unwrap_or_default();
     let bytes = artifact_bytes(path)?;
-    fs::remove_dir_all(path).map_err(|error| {
-        CorpusError::Io(crate::error::io_at("delete", path, error.kind(), error))
-    })?;
+    let delete = |at: &Path, result: std::io::Result<()>| {
+        result.map_err(|error| {
+            CorpusError::Io(crate::error::io_at("delete", at, error.kind(), error))
+        })
+    };
+    let manifest = path.join(MANIFEST_NAME);
+    for name in &listed {
+        let component = path.join(name);
+        if component != manifest && fs::symlink_metadata(&component).is_ok() {
+            delete(&component, fs::remove_file(&component))?;
+        }
+    }
+    if fs::symlink_metadata(&manifest).is_ok() {
+        delete(&manifest, fs::remove_file(&manifest))?;
+    }
+    delete(path, fs::remove_dir(path))?;
     Ok(bytes)
 }
 
@@ -449,7 +568,8 @@ impl Realization {
     /// source.
     ///
     /// Reuse requires source, reader, admission, recorded analyzer semantics,
-    /// token schema and trust to all match **and** the candidate to pass
+    /// token schema and trust to all match, the candidate's name to be the
+    /// canonical name of what its manifest records, **and** the candidate to pass
     /// [`CorpusArtifact::open`] structural admission. A manifest read alone
     /// would hand back an artifact whose token or location component is
     /// missing or truncated: the manifest is the part that parsed, not the
@@ -462,7 +582,8 @@ impl Realization {
     pub fn classify(request: &RealizationRequest<'_>, report: &SiblingReport) -> BuildOutcome {
         let same_source = report.for_source(&request.source_identity);
         let exact = same_source.iter().copied().find(|realization| {
-            realization.reader == request.analysis.reader()
+            realization.is_canonically_named()
+                && realization.reader == request.analysis.reader()
                 && realization.admission == request.analysis.admission()
                 && realization.token_schema == request.analysis.token_schema()
                 && realization.trust == request.trust

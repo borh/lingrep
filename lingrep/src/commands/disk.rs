@@ -18,7 +18,7 @@ use std::time::UNIX_EPOCH;
 use lingrep_corpus::{
     AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
     RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
-    artifact_bytes, is_older_format, parse_artifact_name, prune_leftovers,
+    artifact_bytes, foreign_entries, is_older_format, parse_artifact_name, prune_leftovers,
     recorded_source_identity, staging_leftovers,
 };
 
@@ -151,6 +151,8 @@ pub(crate) struct RealizationEntry {
     /// For a superseded or older-format realization classified against the
     /// analysis inputs, why the default prune keeps it.
     pub kept_by_prune: Option<PruneKeep>,
+    /// For a deletion candidate, its [`foreign_entries`].
+    pub foreign: Vec<String>,
     pub message: Option<String>,
 }
 
@@ -170,6 +172,10 @@ pub(crate) struct LeftoverEntry {
     pub pruning: Option<PathBuf>,
     pub status: LeftoverStatus,
     pub bytes: Option<u64>,
+    /// For an interrupted prune, why `corpus prune` keeps it.
+    pub kept_by_prune: Option<PruneKeep>,
+    /// For an interrupted prune, its [`foreign_entries`].
+    pub foreign: Vec<String>,
 }
 
 /// Everything one scan found, classified.
@@ -272,17 +278,17 @@ pub(crate) fn scan(
         } else {
             CorpusArtifact::open(&realization.path).map(drop)
         };
+        let mut foreign = Vec::new();
         let (status, differences, kept_by_prune) = if is_current {
             (RealizationStatus::Current, Vec::new(), None)
         } else if validation.is_err() {
             (RealizationStatus::Unreadable, Vec::new(), None)
-        } else if parsed.analysis_identity != realization.analysis_identity
-            || parsed.trust != realization.trust
-        {
+        } else if !realization.is_canonically_named() {
             (RealizationStatus::Misnamed, Vec::new(), None)
         } else if inputs.is_some() {
             let differences = request.map(|request| differences(realization, request));
             let keep = superseded_keep(realization, differences.as_deref());
+            foreign = foreign_of(&realization.path);
             (
                 RealizationStatus::Superseded,
                 differences.unwrap_or_default(),
@@ -298,7 +304,8 @@ pub(crate) fn scan(
             bytes: artifact_bytes(&realization.path).ok(),
             recorded: Some(realization.clone()),
             differences,
-            kept_by_prune,
+            kept_by_prune: foreign_keep(&foreign).or(kept_by_prune),
+            foreign,
             message: validation.err().map(|error| error.to_string()),
         });
     }
@@ -310,6 +317,11 @@ pub(crate) fn scan(
             continue;
         }
         let older = is_older_format(error);
+        let foreign = if older && inputs.is_some() {
+            foreign_of(path)
+        } else {
+            Vec::new()
+        };
         let kept_by_prune = if older && inputs.is_some() {
             let current = sources
                 .iter()
@@ -332,7 +344,8 @@ pub(crate) fn scan(
             bytes: artifact_bytes(path).ok(),
             recorded: None,
             differences: Vec::new(),
-            kept_by_prune,
+            kept_by_prune: foreign_keep(&foreign).or(kept_by_prune),
+            foreign,
             message: Some(error.to_string()),
         });
     }
@@ -364,6 +377,7 @@ pub(crate) fn scan(
             recorded: None,
             differences: Vec::new(),
             kept_by_prune: None,
+            foreign: Vec::new(),
             message: None,
         });
     }
@@ -508,6 +522,16 @@ fn differences(
 /// another trust class. Then a missing or edited source keeps the
 /// realization, since no rebuild of the source as it is now reproduces it.
 /// Only then does an analysis difference mark it as rebuild churn.
+/// The [`foreign_entries`] of a deletion candidate; a failure to list them is
+/// reported as one entry.
+fn foreign_of(path: &Path) -> Vec<String> {
+    foreign_entries(path).unwrap_or_else(|error| vec![format!("(cannot be listed: {error})")])
+}
+
+fn foreign_keep(foreign: &[String]) -> Option<PruneKeep> {
+    (!foreign.is_empty()).then_some(PruneKeep::ForeignEntries)
+}
+
 fn superseded_keep(
     realization: &SiblingRealization,
     differences: Option<&[VariantDifference]>,
@@ -522,6 +546,8 @@ fn superseded_keep(
     };
     if realization.trust != TrustClass::LocallyExecuted {
         Some(PruneKeep::OtherTrust)
+    } else if differences.is_empty() {
+        Some(PruneKeep::IdenticalToCurrent)
     } else if differences.contains(&Source) {
         Some(PruneKeep::SourceRevision)
     } else if differences
@@ -694,6 +720,8 @@ fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliE
                 lock: leftover.lock,
                 pruning: None,
                 bytes,
+                kept_by_prune: None,
+                foreign: Vec::new(),
             }
         })
         .collect::<Vec<_>>();
@@ -701,13 +729,18 @@ fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliE
         pruning
             .into_iter()
             .filter(|leftover| in_scope(&leftover.published_name))
-            .map(|leftover| LeftoverEntry {
-                status: LeftoverStatus::InterruptedPrune,
-                bytes: artifact_bytes(&leftover.path).ok(),
-                published_name: leftover.published_name,
-                staging: None,
-                lock: None,
-                pruning: Some(leftover.path),
+            .map(|leftover| {
+                let foreign = foreign_of(&leftover.path);
+                LeftoverEntry {
+                    status: LeftoverStatus::InterruptedPrune,
+                    bytes: artifact_bytes(&leftover.path).ok(),
+                    published_name: leftover.published_name,
+                    staging: None,
+                    lock: None,
+                    pruning: Some(leftover.path),
+                    kept_by_prune: foreign_keep(&foreign),
+                    foreign,
+                }
             }),
     );
     entries.sort_by(|left, right| left.path().cmp(&right.path()));
@@ -814,6 +847,7 @@ pub(crate) fn run_to<W: Write>(
             staging: leftover.staging.as_deref().map(display),
             lock: leftover.lock.as_deref().map(display),
             pruning: leftover.pruning.as_deref().map(display),
+            kept_by_prune: leftover.kept_by_prune,
             status: leftover.status,
             bytes: leftover.bytes,
             modified_unix_seconds: leftover.path().and_then(modified),

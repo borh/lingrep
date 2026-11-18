@@ -2198,7 +2198,7 @@ Each realization has one status:
 | `unclassified` | Readable; no analysis inputs were given. |
 | `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
 | `unreadable` | A newer format, or damaged: its manifest or a component fails the validation `corpus inspect` runs. |
-| `misnamed` | Readable, but its name records another identity or trust. |
+| `misnamed` | Readable, but its name records another identity or trust. `corpus build` does not reuse it. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
 | `non_canonical_name` | A `.lingcorpus` directory with a name `corpus build` does not derive, such as an explicit `--output`. |
 
@@ -2223,7 +2223,8 @@ others. A leftover is also `interrupted_prune`: a realization that
 `corpus prune --execute` renamed to the hidden name
 `.<artifact name>.pruning-<suffix>` and did not finish deleting, reported
 with that path as `pruning`. `corpus build` does not read it, and the next
-`corpus prune --execute` deletes it.
+`corpus prune --execute` deletes it, unless it holds anything but the
+components its manifest lists, when it is kept as `foreign_entries`.
 
 `--caches` adds the dictionary cache, which holds the decompressed copy of
 each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
@@ -2257,6 +2258,8 @@ Other superseded and older-format realizations are kept, and listed as
 | `source_revision` | source content, whatever else differs | `--include-all-superseded` |
 | `source_unknown` | not known: the source is missing, or an older-format manifest records another or no source identity | `--include-all-superseded` |
 | `other_trust` | trust class | never |
+| `identical_to_current` | nothing, yet `corpus build` would not select it | never |
+| `foreign_entries` | anything; the directory holds an entry that is not a component its manifest lists, a component that is not a regular file, or an entry on another filesystem, or is itself a mount point, and `message` names them | never |
 | `damaged` | anything; its manifest reads but it fails structural validation, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
@@ -2292,7 +2295,8 @@ scanned directory, a count table that binds an artifact being kept, or a staging
 leftover. Immediately before each deletion it checks again that the entry is
 a directory, not a symbolic link, with the canonical name and recorded
 identity the scan classified, and that a superseded realization still passes
-structural validation. It then renames the realization, without replacing
+structural validation, and that the directory holds exactly the components
+its manifest lists. It then renames the realization, without replacing
 anything, to a hidden name in the same directory, so a directory that cannot
 be written fails before anything changes; checks it again under that name;
 and deletes it.

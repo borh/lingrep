@@ -239,6 +239,14 @@ pub enum PruneKeep {
     /// Has another trust class. `corpus build` does not produce it, so no
     /// local rebuild replaces it; `corpus prune` never deletes it.
     OtherTrust,
+    /// Differs from the current request in no dimension, yet `corpus build`
+    /// would not select it. `corpus prune` never deletes it.
+    IdenticalToCurrent,
+    /// Holds an entry that is not one of the components its manifest lists,
+    /// a component that is not a regular file, or an entry on another
+    /// filesystem, or is itself a mount point. `corpus prune` never deletes
+    /// it.
+    ForeignEntries,
     /// Its manifest is readable but it fails the structural validation
     /// `corpus inspect` runs; the realization is reported as `unreadable`.
     /// `corpus prune` never deletes it.
@@ -313,6 +321,9 @@ pub struct DiskLeftover {
     /// The hidden directory of an `interrupted_prune`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pruning: Option<String>,
+    /// For an `interrupted_prune` that `corpus prune` keeps, why it keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_by_prune: Option<PruneKeep>,
     pub status: LeftoverStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,

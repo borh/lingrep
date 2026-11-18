@@ -20,8 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in analyzer or token schema, and the count tables bound only to them, with
   the bytes they occupy; `--execute` deletes them. `--include-all-superseded`
   adds those of another or unknown source content, and those that differ only
-  in reader or admission policy, such as lingrep-web's Markdown artifacts. It deletes nothing when a source has no
-  current artifact, unless `--keep ARTIFACT` names one to keep.
+  in reader or admission policy, such as lingrep-web's Markdown artifacts.
+  It deletes nothing when a source has no current artifact, unless
+  `--keep ARTIFACT` names one to keep.
+
+### Fixed
+
+- `ling corpus build` no longer reuses a prepared artifact whose directory
+  name records another analysis identity or trust class than its manifest.
 
 ## [0.8.1] - 2026-11-18
 
