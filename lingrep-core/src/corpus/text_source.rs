@@ -431,6 +431,7 @@ pub fn stream_input_events<R>(
 where
     R: BufRead + Send + 'static,
 {
+    let reader = crate::text_input::TextReader::new(reader);
     match format {
         InputFormat::Tei => match super::tei::TeiEvents::new(reader, source_name, 1024 * 1024) {
             Ok(events) => Box::new(events),

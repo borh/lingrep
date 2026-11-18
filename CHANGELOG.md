@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ling corpus build` no longer reuses a prepared artifact whose directory
   name records another analysis identity or trust class than its manifest.
 
+### Changed
+
+- Plain-text, Markdown and Soranoha archive readers have new revisions, so
+  `ling corpus build` writes a sibling of an artifact that 0.8.1 built from
+  these formats instead of reusing it. Artifacts built by 0.8.1 still open.
+  Rendering a reading sidecar for a Markdown artifact built by 0.8.1 requires
+  rebuilding the artifact first.
+
+### Fixed
+
+- A UTF-8 byte-order mark at the start of a file, which Windows Notepad and
+  Excel write, is no longer read as text. Under 0.8.1 it became part of the
+  first token of a plain-text, Markdown or Soranoha document, and a JSONL or
+  CoNLL-U file that began with one failed to parse.
+
 ## [0.8.1] - 2026-11-18
 
 ### Added

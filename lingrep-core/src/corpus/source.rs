@@ -29,7 +29,7 @@ use clap::ValueEnum;
 
 /// Fixed reader-configuration tag for the plain-text stream. See
 /// [`CorpusReadConfig::reader_tag`].
-const PLAIN_CONFIG_TAG: u64 = 0xfb3a_e7c1_d4f0_06a3u64;
+const PLAIN_CONFIG_TAG: u64 = 0x3641_4fa1_649e_991au64;
 /// Fixed reader-configuration tag for the JSONL stream. See
 /// [`CorpusReadConfig::reader_tag`].
 const JSONL_CONFIG_TAG: u64 = 0x2c8b_1f5d_9e7a_04c5u64;
@@ -42,7 +42,7 @@ const CONLLU_CONFIG_TAG: u64 = 0x94d2_6c1e_58af_43b9u64;
 const BCCWJ_CONFIG_TAG: u64 = 0x7d1c_9e4a_b3f2_8c6eu64;
 /// Fixed reader-configuration tag for a Soranoha bulk archive. Configuration
 /// only — the catalog policy is the format's, with no tunable knob.
-const SORANOHA_CONFIG_TAG: u64 = 0xf9f6_6393_1f58_6929u64;
+const SORANOHA_CONFIG_TAG: u64 = 0xd3e7_4e8e_1992_ecb3u64;
 
 /// Uses `override_format` when supplied; otherwise infers from the path extension without filesystem access.
 ///

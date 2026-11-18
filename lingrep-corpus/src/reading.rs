@@ -607,7 +607,8 @@ impl<'a> ReadingSidecarWriter<'a> {
             source_name: source_name.to_owned(),
             detail,
         };
-        let source = std::str::from_utf8(bytes).map_err(|error| replay(error.to_string()))?;
+        let source = lingrep_core::text_input::decode_document(bytes)
+            .map_err(|error| replay(error.to_string()))?;
         let lines = read_markdown_sentence_lines(io::Cursor::new(source), self.reader.clone())
             .map_err(|error| replay(error.to_string()))?;
         if lines.len() != stored.len() {

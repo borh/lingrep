@@ -1279,6 +1279,9 @@ that contract with:
 ling corpus inventory --json --progress always corpus/ >sources.jsonl
 ```
 
+Every text format is read as UTF-8. One leading byte-order mark, which Windows
+Notepad and Excel write, is not part of the text.
+
 The `source` events expose logical names, target groups, and external-target
 status. The final event reports alias multiplicity and traversal high-water
 values. Cycles, dangling links, invalid names, and exceeded limits fail the

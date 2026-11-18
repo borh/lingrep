@@ -7,6 +7,7 @@ pub mod fsm;
 pub mod scope;
 pub mod spill;
 pub mod test_scale;
+pub mod text_input;
 pub mod token_match;
 pub mod utils;
 

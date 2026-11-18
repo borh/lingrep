@@ -45,6 +45,7 @@ mod summarize;
 mod terminal_safety;
 mod tokenize_protocol;
 mod variants_protocol;
+mod windows_text_inputs;
 
 mod external_analyzer_cli;
 

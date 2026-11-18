@@ -1398,7 +1398,7 @@ mod tests {
         );
         assert_eq!(
             hex(&build_reader_identity(&CorpusReadConfig::Plain)),
-            "4929553aefc1959cfd5e0e595d7e6d79fc72cd6fd1d55ce0ca85fff60997820d"
+            "18b44ebcafc39c7a5f8404a926547ee19d68272648f13633dd1c0ff3c65440ff"
         );
 
         let markdown = CorpusReadConfig::Markdown(
@@ -1406,7 +1406,7 @@ mod tests {
         );
         assert_ne!(
             hex(&build_reader_identity(&markdown)),
-            "46a19a1b725796633f7ead3edbd095e717caaed27f09d9fa2335b1a408aad381",
+            "30f0742514aec2cbb20346c5e19c70dbc343f39546b4d451a6dfab89696ffb57",
             "the Markdown dialects differ by design and must keep two names"
         );
     }

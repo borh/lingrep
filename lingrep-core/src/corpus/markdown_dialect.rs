@@ -511,7 +511,7 @@ pub type ObservedLabels = Arc<Mutex<BTreeSet<String>>>;
 pub const DEFAULT_SELF_LABELS: &str = "title,subtitle";
 pub const DEFAULT_MAX_FRONTMATTER_BYTES: usize = 128 * 1024;
 /// Schema revision for the canonical Markdown reader-tag encoding.
-pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 12;
+pub const MARKDOWN_READER_SCHEMA_REVISION: u32 = 13;
 const MARKDOWN_READER_TAG_DOMAIN: &[u8] = b"lingrep-core/markdown-reader-tag";
 
 /// Append a label set to `encoded`: the label count, then each label's byte
@@ -1438,7 +1438,7 @@ mod reader_tag_tests {
         recovery: bool,
     ) -> u64 {
         let mut encoded = b"lingrep-core/markdown-reader-tag".to_vec();
-        encoded.extend_from_slice(&12u32.to_le_bytes());
+        encoded.extend_from_slice(&13u32.to_le_bytes());
         encoded.push(u8::from(recovery));
         match include {
             None => encoded.push(0),
