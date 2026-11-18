@@ -14,6 +14,8 @@ on:
       - "lingrep-corpus/**"
       - "lingrep-web/**"
       - "lingrep-core/**"
+      - "lingrep-cli-common/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/check-output-filesystem.py"
@@ -66,7 +68,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        filesystem: [vfat, exfat, ntfs3, ntfs-3g, ext4-casefold]
+        include:
+          - { filesystem: vfat, fstype: vfat }
+          - { filesystem: exfat, fstype: exfat }
+          - { filesystem: ntfs3, fstype: ntfs3 }
+          - { filesystem: ntfs-3g, fstype: fuseblk }
+          - { filesystem: ext4-casefold, fstype: ext4 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -98,7 +105,8 @@ jobs:
               sudo mount -t ntfs3 -o "loop,$owner" "$image" "$mountpoint" ;;
             ntfs-3g)
               mkntfs -F -Q "$image"
-              sudo ntfs-3g -o "$owner" "$image" "$mountpoint" ;;
+              # On a loop device, as on a USB disk, ntfs-3g mounts as fuseblk.
+              sudo ntfs-3g -o "$owner" "$(sudo losetup --find --show "$image")" "$mountpoint" ;;
             ext4-casefold)
               mkfs.ext4 -q -O casefold "$image"
               sudo mount -o loop "$image" "$mountpoint"
@@ -109,11 +117,13 @@ jobs:
               lsattr -d "$mountpoint/check" | grep -q F ;;
           esac
           findmnt "$mountpoint"
+          test "$(findmnt -n -o FSTYPE "$mountpoint")" = "${{ matrix.fstype }}"
       - name: Check ling on ${{ matrix.filesystem }}
+        timeout-minutes: 10
         run: python3 scripts/check-output-filesystem.py "$RUNNER_TEMP/mnt/check" bin/ling
 
-  macos:
-    name: macOS disk images
+  build-macos:
+    name: Build ling (macOS)
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -125,12 +135,37 @@ jobs:
           key: filesystems
       - name: Build
         run: cargo build --locked -p lingrep --bin ling
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ling-macos
+          path: target/debug/ling
+          if-no-files-found: error
+          retention-days: 3
+
+  macos:
+    name: macOS ${{ matrix.personality }}
+    needs: build-macos
+    runs-on: macos-15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # `diskutil info` personalities; `APFS` is case-insensitive, as on a
+        # default macOS installation.
+        personality: [ExFAT, MS-DOS FAT32, APFS]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ling-macos
+          path: bin
       - name: Install the dictionary
-        run: target/debug/ling dictionary install
-      # `APFS` is case-insensitive, as on a default macOS installation.
+        run: |
+          chmod +x bin/ling
+          bin/ling dictionary install
       # hdiutil intermittently fails with "Resource busy" on hosted runners
       # (actions/runner-images#7522), so each hdiutil call is retried.
-      - name: Check ling on exFAT, FAT and APFS images
+      - name: Mount ${{ matrix.personality }}
         run: |
           retry() {
             for _ in 1 2 3 4 5; do
@@ -139,19 +174,16 @@ jobs:
             done
             return 1
           }
-          for filesystem in ExFAT MS-DOS APFS; do
-            name="$(echo "$filesystem" | tr -cd 'A-Za-z')"
-            image="$RUNNER_TEMP/$name.dmg"
-            mountpoint="$RUNNER_TEMP/$name"
-            echo "::group::$filesystem"
-            retry hdiutil create -quiet -ov -size 512m -fs "$filesystem" -volname "LING$name" "$image"
-            mkdir "$mountpoint"
-            retry hdiutil attach -nobrowse -mountpoint "$mountpoint" "$image"
-            mount | grep "$mountpoint"
-            python3 scripts/check-output-filesystem.py "$mountpoint/check" target/debug/ling
-            retry hdiutil detach "$mountpoint"
-            echo "::endgroup::"
-          done
+          image="$RUNNER_TEMP/filesystem.dmg"
+          mountpoint="$RUNNER_TEMP/mnt"
+          retry hdiutil create -quiet -ov -size 512m -fs "${{ matrix.personality }}" -volname LINGCHECK "$image"
+          mkdir "$mountpoint"
+          retry hdiutil attach -nobrowse -mountpoint "$mountpoint" "$image"
+          diskutil info "$mountpoint" | grep -E 'Personality|Type \(Bundle\)'
+          diskutil info "$mountpoint" | grep -qE "File System Personality: +${{ matrix.personality }}\$"
+      - name: Check ling on ${{ matrix.personality }}
+        timeout-minutes: 10
+        run: python3 scripts/check-output-filesystem.py "$RUNNER_TEMP/mnt/check" bin/ling
 
   wsl:
     name: WSL 2 on drive C
@@ -171,6 +203,7 @@ jobs:
           distribution: Ubuntu-24.04
           wsl-version: 2
       - name: Check ling on /mnt/c
+        timeout-minutes: 20
         shell: wsl-bash {0}
         env:
           WSLENV: GITHUB_WORKSPACE/p
@@ -178,5 +211,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           install -m 755 bin/ling ~/ling
           ~/ling dictionary install
-          mount | grep ' /mnt/c '
+          fstype="$(findmnt -n -o FSTYPE /mnt/c)"
+          echo "/mnt/c: $fstype"
+          case "$fstype" in 9p | drvfs) ;; *) exit 1 ;; esac
           python3 scripts/check-output-filesystem.py /mnt/c/ling-filesystem-check ~/ling

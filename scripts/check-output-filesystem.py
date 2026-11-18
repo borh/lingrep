@@ -28,6 +28,30 @@ from pathlib import Path
 TEXT = "猫の名前はまだない。\n犬が庭の中を走る。\n"
 PATTERN = "particle := [text=の].\n"
 SYMLINK_ERROR = "cannot create symbolic links in"
+DESTINATION_EXISTS = "the destination already exists and was left unchanged"
+NO_CLOBBER_UNAVAILABLE = "without risking replacing an existing file"
+# The errno values lingrep_corpus::fs_capability::Capability::unsupported_by
+# treats as missing support. ENOTSUP and EOPNOTSUPP are one value on Linux.
+UNSUPPORTED = {
+    "rename_noreplace": {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP, errno.ENOTSUP},
+    "symlink": {
+        errno.EPERM,
+        errno.EACCES,
+        errno.ENOSYS,
+        errno.EOPNOTSUPP,
+        errno.ENOTSUP,
+    },
+    "hard_link": {errno.EPERM, errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP},
+}
+# A hung ling call fails the script, with its stderr, before a CI job's timeout.
+DEADLINE = time.monotonic() + 8 * 60
+
+
+def seconds_left(limit):
+    left = min(limit, DEADLINE - time.monotonic())
+    if left <= 0:
+        raise TimeoutError("the scenario exceeded its 8-minute budget")
+    return left
 
 
 def rename_noreplace(source, destination):
@@ -36,10 +60,17 @@ def rename_noreplace(source, destination):
     if platform.system() == "Darwin":
         result = libc.renamex_np(source, destination, 0x4)  # RENAME_EXCL
     else:
-        renameat2 = {"x86_64": 316, "aarch64": 276}[platform.machine()]
+        numbers = {"x86_64": 316, "aarch64": 276}
+        if platform.machine() not in numbers:
+            raise RuntimeError(f"no renameat2 syscall number for {platform.machine()}")
         at_fdcwd, rename_noreplace_flag = -100, 1
         result = libc.syscall(
-            renameat2, at_fdcwd, source, at_fdcwd, destination, rename_noreplace_flag
+            numbers[platform.machine()],
+            at_fdcwd,
+            source,
+            at_fdcwd,
+            destination,
+            rename_noreplace_flag,
         )
     if result:
         code = ctypes.get_errno()
@@ -61,7 +92,8 @@ def sqlite_wal(path, exclusive):
 
 
 def probe(directory):
-    """Print what the filesystem returns for each operation ling's fallbacks depend on."""
+    """Print and return what the filesystem returns for each operation ling's fallbacks
+    depend on: None for success, the errno for an OS error, or a message."""
     directory.mkdir()
     (directory / "target").touch()
     (directory / "staging").mkdir()
@@ -89,35 +121,47 @@ def probe(directory):
     for name, check in checks.items():
         try:
             check()
-            results[name] = "ok"
+            results[name], shown = None, "ok"
         except OSError as error:
-            results[name] = errno.errorcode.get(error.errno, str(error.errno))
+            results[name] = error.errno
+            shown = errno.errorcode.get(error.errno, str(error.errno))
         except (sqlite3.Error, RuntimeError) as error:
-            results[name] = str(error)
-        print(f"probe {name}: {results[name]}", flush=True)
+            results[name] = shown = str(error)
+        print(f"probe {name}: {shown}", flush=True)
     return results
 
 
 def ling(binary, *args, env, expect_success=True):
     print("+ ling " + " ".join(map(str, args)), flush=True)
-    result = subprocess.run(
-        [binary, *map(str, args)],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=600,
-    )
+    try:
+        result = subprocess.run(
+            [binary, *map(str, args)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=seconds_left(180),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"timed out after {error.timeout:.0f} s\n{error.stderr}"
+        ) from None
     if expect_success and result.returncode:
         raise RuntimeError(f"exit {result.returncode}\n{result.stderr}")
     return result
 
 
+def expect_failure(result, *fragments):
+    assert result.returncode != 0, f"expected a failure containing {fragments}"
+    for fragment in fragments:
+        assert fragment in result.stderr, f"expected {fragment!r} in:\n{result.stderr}"
+
+
 def wait_for_address(server, log):
-    deadline = time.monotonic() + 120
     while not (address := re.search(r"listening on (http://\S+)", log.read_text())):
-        if server.poll() is not None or time.monotonic() >= deadline:
-            raise RuntimeError(f"server did not start (exit {server.poll()})")
+        if server.poll() is not None:
+            raise RuntimeError(f"server exited before listening ({server.returncode})")
+        seconds_left(1)
         time.sleep(0.05)
     return address.group(1)
 
@@ -152,7 +196,9 @@ def serve(binary, root, env, table):
             http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
             def get(path, data=None):
-                with http.open(base + path, data=data, timeout=180) as response:
+                with http.open(
+                    base + path, data=data, timeout=seconds_left(120)
+                ) as response:
                     return response.read()
 
             meta = json.loads(get("/api/frequency/meta"))
@@ -168,7 +214,7 @@ def serve(binary, root, env, table):
             ) as workbook:
                 assert "の" in workbook.read("xl/sharedStrings.xml").decode()
             server.terminate()
-            server.wait(timeout=20)
+            server.wait(timeout=seconds_left(20))
             assert server.returncode == 0, f"server exit {server.returncode}"
         except Exception:
             print(log.read_text(), errors.read_text(), sep="\n", file=sys.stderr)
@@ -179,7 +225,7 @@ def serve(binary, root, env, table):
                 server.wait()
 
 
-def analyzer_preflight(binary, root, env, symlinks):
+def analyzer_preflight(binary, root, env, symlink):
     """Run `ling analyzer prepare` with an empty wheel directory, so it stops before any download."""
     (root / "no-wheels").mkdir()
     output = root / "analyzer"
@@ -195,15 +241,74 @@ def analyzer_preflight(binary, root, env, symlinks):
         env=env,
         expect_success=False,
     )
-    assert result.returncode != 0, "analyzer prepare succeeded without wheels"
-    if symlinks:
+    if symlink is None:
+        # The preflight passed; reading SHA256SUMS from the empty directory failed.
+        expect_failure(result, f"(os error {errno.ENOENT})")
         assert SYMLINK_ERROR not in result.stderr, result.stderr
+    elif symlink in UNSUPPORTED["symlink"]:
+        expect_failure(result, SYMLINK_ERROR, os.strerror(symlink))
     else:
-        assert SYMLINK_ERROR in result.stderr, (
-            "expected the symbolic-link preflight error before reading wheels; got:\n"
-            + result.stderr
-        )
+        expect_failure(result, f"(os error {symlink})")
+        assert SYMLINK_ERROR not in result.stderr, result.stderr
     assert not output.exists(), f"{output} was left behind"
+
+
+def ending_report(binary, root, env, corpus, probed):
+    """Write `matches --ending-report`, which persists through no-replace rename or a hard link."""
+    report = root / "endings.json"
+    result = ling(
+        binary,
+        "matches",
+        "--corpus",
+        corpus,
+        "--patterns",
+        root / "catalog" / "check.lx",
+        "--ending-report",
+        report,
+        env=env,
+        expect_success=False,
+    )
+    rename, hard_link = probed["rename_noreplace"], probed["hard_link"]
+    if rename is None or (
+        rename in UNSUPPORTED["rename_noreplace"] and hard_link is None
+    ):
+        assert result.returncode == 0, result.stderr
+        assert json.loads(report.read_text())["version"] == 1
+    elif (
+        rename in UNSUPPORTED["rename_noreplace"]
+        and hard_link in UNSUPPORTED["hard_link"]
+    ):
+        expect_failure(result, NO_CLOBBER_UNAVAILABLE)
+        assert not report.exists(), f"{report} was written"
+    else:
+        raise RuntimeError(
+            f"no expectation for rename {rename} and hard link {hard_link}"
+        )
+
+
+def case_variant(binary, root, env, corpus, case_insensitive):
+    """Build a second corpus whose name differs from the first only by case."""
+    variant = root / corpus.name.upper()
+    result = ling(
+        binary,
+        "corpus",
+        "build",
+        "--input-format",
+        "plain",
+        "--output",
+        variant,
+        root / "input" / "novel.txt",
+        env=env,
+        expect_success=False,
+    )
+    names = set(os.listdir(root))
+    if case_insensitive:
+        expect_failure(result, DESTINATION_EXISTS)
+        assert corpus.name in names and variant.name not in names, sorted(names)
+        ling(binary, "corpus", "inspect", "--verify", corpus, env=env)
+    else:
+        assert result.returncode == 0, result.stderr
+        assert {corpus.name, variant.name} <= names, sorted(names)
 
 
 def main():
@@ -215,7 +320,7 @@ def main():
     if any(root.iterdir()):
         sys.exit(f"{root} is not empty")
 
-    symlinks = probe(root / "probe")["symlink"] == "ok"
+    probed = probe(root / "probe")
     (root / "input").mkdir()
     (root / "input" / "novel.txt").write_text(TEXT, encoding="utf-8")
     (root / "catalog").mkdir()
@@ -258,8 +363,12 @@ def main():
         table,
         env=env,
     )
+    ending_report(binary, root, env, corpus, probed)
     serve(binary, root, env, table)
-    analyzer_preflight(binary, root, env, symlinks)
+    analyzer_preflight(binary, root, env, probed["symlink"])
+    case_variant(
+        binary, root, env, corpus, probed["distinct_case"] == "case-insensitive"
+    )
     print(f"Output filesystem check passed: {root}")
 
 
