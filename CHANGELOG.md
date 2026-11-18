@@ -24,11 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It deletes nothing when a source has no current artifact, unless
   `--keep ARTIFACT` names one to keep.
 
-### Fixed
-
-- `ling corpus build` no longer reuses a prepared artifact whose directory
-  name records another analysis identity or trust class than its manifest.
-
 ### Changed
 
 - Plain-text, Markdown and Soranoha archive readers have new revisions, so
@@ -44,6 +39,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Windows through WSL 2, `ling corpus build --output` under `/mnt/c`
+  failed with "Permission denied (os error 13)" in 0.8.1, although the 0.8.1
+  release notes said it worked there. `ling` held the staged artifact's files
+  open while renaming its directory, and Windows does not rename a directory
+  with open files. Corpus build, `summarize --write-table`, `table`, `serve`
+  and `matches --ending-report` now succeed on `/mnt/c`.
+- On macOS 15, `ling corpus build` to an MS-DOS (FAT32) volume failed with
+  `invalid provenance.sqlite format`. The provenance database now leaves WAL
+  mode on a new connection, after the file has its final size.
+- A failure while publishing an artifact or writing its provenance database
+  names the path and the operation, such as "cannot rename '<staging>' to
+  '<destination>'", and is reported as an I/O error rather than as a damaged
+  artifact. A full disk while writing the provenance database is reported
+  as a full disk.
+- `ling matches --ending-report` on a volume that supports neither no-replace
+  rename nor hard links, such as exFAT or FAT on macOS, lost the report after
+  the scan. It now creates the report without replacing an existing file. On
+  Linux, a no-replace rename that failed with `EOPNOTSUPP` failed the report
+  instead of falling back to a hard link.
+- `ling analyzer prepare` on a macOS volume without symbolic links reported
+  a bare I/O error instead of the symbolic-link check's message.
+- `ling corpus build` no longer reuses a prepared artifact whose directory
+  name records another analysis identity or trust class than its manifest.
+- The bundled SQLite comes from libsqlite3-sys 0.39.1, replacing the
+  version that a RustSec advisory flagged.
 - A UTF-8 byte-order mark at the start of a file, which Windows Notepad and
   Excel write, is no longer read as text. Under 0.8.1 it became part of the
   first token of a plain-text, Markdown or Soranoha document, and a JSONL or
