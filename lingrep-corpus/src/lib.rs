@@ -57,7 +57,7 @@ mod provenance;
 mod publication;
 mod reading;
 pub use fs_capability::rename_noreplace;
-pub use publication::PublicationError;
+pub use publication::{PublicationError, StagingLeftover, StagingStatus, staging_leftovers};
 pub use reading::{
     HighlightRange, OccurrenceAnchor, PageRequest, READING_SIDECAR_FORMAT, READING_SIDECAR_VERSION,
     ReadingDocument, ReadingPage, ReadingSidecar, ReadingSidecarError, ReadingSidecarKey,
@@ -96,7 +96,7 @@ pub use scope_resolution::{
 };
 pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
-    artifact_bytes, containing_directory, is_superseded, remove_superseded,
+    artifact_bytes, containing_directory, is_older_format, remove_older_format,
 };
 pub use tokens::{PreparedDocumentStats, PreparedSentenceSource};
 pub use verify::{ComponentVerification, VerificationReport};

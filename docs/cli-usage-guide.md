@@ -2158,6 +2158,67 @@ damaged one; not another source's; and not a symbolic link or a directory
 whose name is not a canonical artifact name. `lingrep-web` never deletes
 artifacts.
 
+### Disk use of prepared artifacts
+
+```bash
+ling corpus disk corpora/                       # every source in corpora/
+ling corpus disk --source corpora/works.md -d unidic-cwj.dic
+ling --json corpus disk --current --caches corpora/ >> disk-use.jsonl
+```
+
+`corpus disk DIR` reports what the prepared artifacts, count tables and
+build leftovers immediately in `DIR` occupy. `--source SOURCE` narrows the
+report to one source and scans the directory beside it, as `corpus variants`
+does. Sizes are the apparent sizes of the files under each entry. The command
+reads directory entries, manifests and count-table headers; it opens no token
+component and never deletes anything. The stream contract is
+`lingrep.disk/v1`; each `--json` run is one self-contained stream, so
+appending runs to a file records disk use over time.
+
+A realization is *current* when it is the one `corpus build` would reuse for
+its source with the same analysis inputs: the same dictionary, analyzer flags,
+`--input-format` and Markdown reader flags. The newest artifact is not current
+because it is newest. Any analysis input flag classifies realizations with
+that input; `--current` classifies with `corpus build`'s defaults, including
+the dictionary it falls back to. Classification costs the identity pass that
+`corpus build` runs before reusing an artifact: one read of each source, with
+no tokenization. Without analysis inputs, readable realizations are
+`unclassified`.
+
+Each realization has one status:
+
+| Status | Meaning |
+|---|---|
+| `current` | The realization `corpus build` would reuse with the given inputs. |
+| `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build. |
+| `unclassified` | Readable; no analysis inputs were given. |
+| `older_format` | Written in an earlier format; `corpus variants --prune` deletes it. |
+| `unreadable` | A newer format, or damaged. |
+| `misnamed` | Readable, but its name records another identity or trust. |
+| `symbolic_link` | A symbolic link with a canonical artifact name. |
+| `non_canonical_name` | A `.lingcorpus` directory with a name `corpus build` does not derive, such as an explicit `--output`. |
+
+A count table binds the analysis identity of the artifact it counts. Its
+`binding` is `current` or `superseded` when that artifact in `DIR` is,
+`present` when the artifact is present but unclassified, and `absent` when no
+artifact in `DIR` records that identity; the artifact may exist elsewhere.
+A table whose binding is `superseded` or `absent` is orphaned. Tables are
+found by their `header.json`, whatever their names.
+
+A leftover is a staging directory or lock file from a build that did not
+publish. It is `live` while a process holds its lock, `abandoned` when its
+lock records this host and is free, and `unknown` otherwise: the lock file is
+missing or records another host. The next build of the same name on the same
+host removes abandoned leftovers; see the
+[deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
+others.
+
+`--caches` adds the dictionary cache, which holds the decompressed copy of
+each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
+is named by a hash of the compressed file's metadata, so the report cannot
+name the dictionary it came from. `--analyzer-dir DIR` adds the size of a
+`ling analyzer prepare` directory, and can be repeated.
+
 Whether an artifact built by `ling` is also the one `lingrep-web` prepares
 depends on the input format, because the name includes the reader identity. For
 a JSONL or plaintext root the two tools read identically and one artifact

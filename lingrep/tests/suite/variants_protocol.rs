@@ -455,7 +455,7 @@ fn sibling_with_manifest(
 /// sources, non-canonical names and symlinks.
 #[cfg(unix)]
 #[test]
-fn prune_deletes_only_superseded_artifacts_of_the_source() {
+fn prune_deletes_only_older_format_artifacts_of_the_source() {
     let current_segment = format!(".g{}.", lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION);
     let name = |source: &str, generation: u32, byte: u8| {
         let path = canonical_artifact_path(
@@ -521,7 +521,7 @@ fn prune_deletes_only_superseded_artifacts_of_the_source() {
             old_generation.display().to_string(),
             old_schema.display().to_string(),
         ],
-        "only superseded artifacts of this source are prunable: {diagnostics:?}"
+        "only older-format artifacts of this source are prunable: {diagnostics:?}"
     );
     assert!(prunable.iter().all(|(_, bytes)| *bytes > 0));
     assert!(
@@ -586,8 +586,8 @@ fn prune_deletes_only_superseded_artifacts_of_the_source() {
         &symlink,
     ] {
         assert!(
-            lingrep_corpus::remove_superseded(protected, "source.md").is_err(),
-            "{} is not a superseded artifact of source.md",
+            lingrep_corpus::remove_older_format(protected, "source.md").is_err(),
+            "{} is not an older-format artifact of source.md",
             protected.display()
         );
     }

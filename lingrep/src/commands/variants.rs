@@ -2,7 +2,7 @@
 //!
 //! This command reports; it never builds or selects a realization, and it
 //! deletes only with `--prune`, and only artifacts of the target's source that
-//! [`lingrep_corpus::is_superseded`] classifies. It scans with the same
+//! [`lingrep_corpus::is_older_format`] classifies. It scans with the same
 //! `SiblingScan` as `corpus build`, so it lists exactly the realizations that
 //! `corpus build` selects from.
 //!
@@ -12,8 +12,8 @@
 use std::io::{self, Write};
 
 use lingrep_corpus::{
-    CorpusArtifact, SiblingRealization, SiblingScan, artifact_bytes, is_superseded,
-    parse_artifact_name, remove_superseded,
+    CorpusArtifact, SiblingRealization, SiblingScan, artifact_bytes, is_older_format,
+    parse_artifact_name, remove_older_format,
 };
 
 use super::CommandOutcome;
@@ -102,7 +102,7 @@ pub(crate) fn run_to<W: Write>(
     let mut diagnostics = Vec::with_capacity(report.diagnostics.len());
     let (mut pruned, mut freed_bytes) = (0_u64, 0_u64);
     for (path, error) in &report.diagnostics {
-        let prunable = is_superseded(error)
+        let prunable = is_older_format(error)
             && path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -116,7 +116,7 @@ pub(crate) fn run_to<W: Write>(
             pruned: false,
         };
         if prunable && args.prune {
-            let bytes = remove_superseded(path, &source_name).map_err(|error| {
+            let bytes = remove_older_format(path, &source_name).map_err(|error| {
                 CliError::Corpus(format!("cannot prune {}: {error}", path.display()))
             })?;
             diagnostic.bytes = Some(bytes);

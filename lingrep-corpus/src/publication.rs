@@ -190,17 +190,9 @@ pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
             continue;
         };
         let (staging, lock_path) = staging_paths(parent, name, suffix);
-        let Ok(mut file) = File::options().read(true).write(true).open(&lock_path) else {
+        let Some(_lock) = lock_if_abandoned(&lock_path, &host) else {
             continue;
         };
-        let mut owner = Vec::new();
-        if file.try_lock().is_err()
-            || !is_file_at(&file, &lock_path)
-            || file.read_to_end(&mut owner).is_err()
-            || owner != host
-        {
-            continue;
-        }
         match fs::remove_dir_all(&staging) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => {}
             _ => {
@@ -208,6 +200,105 @@ pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
             }
         }
     }
+}
+
+/// Opens and exclusively locks the lock file at `lock_path` when it records
+/// `host`, which is the evidence that the build that created it has stopped.
+///
+/// The returned file holds the lock until it is dropped.
+fn lock_if_abandoned(lock_path: &Path, host: &[u8]) -> Option<File> {
+    let mut file = File::options()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .ok()?;
+    let mut owner = Vec::new();
+    if file.try_lock().is_err()
+        || !is_file_at(&file, lock_path)
+        || file.read_to_end(&mut owner).is_err()
+        || owner != host
+    {
+        return None;
+    }
+    Some(file)
+}
+
+/// Whether the build that wrote a staging directory can still publish it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StagingStatus {
+    /// A process holds the lock file's exclusive lock.
+    Live,
+    /// The lock file records this host and its lock is free, so the build
+    /// that created it has stopped. The next build of the same name on this
+    /// host removes it.
+    Abandoned,
+    /// Neither: the lock file is missing, or records another or no host name.
+    Unknown,
+}
+
+/// A staging directory or lock file left beside a destination.
+#[derive(Clone, Debug)]
+pub struct StagingLeftover {
+    /// The file name the staging directory would have been published under.
+    pub published_name: String,
+    pub staging: Option<PathBuf>,
+    pub lock: Option<PathBuf>,
+    pub status: StagingStatus,
+}
+
+/// Lists the staging directories and lock files immediately in `dir`, in
+/// bytewise path order, without removing anything.
+///
+/// A lock file is locked and released while its status is probed.
+pub fn staging_leftovers(dir: &Path) -> io::Result<Vec<StagingLeftover>> {
+    let mut found = std::collections::BTreeMap::<(String, String), (bool, bool)>::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(rest) = name.strip_prefix('.') else {
+            continue;
+        };
+        for (marker, is_lock) in [(".staging-", false), (".stagelock-", true)] {
+            if let Some((published, suffix)) = rest.rsplit_once(marker) {
+                let slot = found
+                    .entry((published.to_owned(), suffix.to_owned()))
+                    .or_default();
+                if is_lock {
+                    slot.1 = true;
+                } else {
+                    slot.0 = true;
+                }
+                break;
+            }
+        }
+    }
+    let host = host_name();
+    Ok(found
+        .into_iter()
+        .map(|((published_name, suffix), (has_staging, has_lock))| {
+            let (staging, lock) = staging_paths(dir, &published_name, &suffix);
+            let status = if !has_lock {
+                StagingStatus::Unknown
+            } else if File::open(&lock).is_ok_and(|file| file.try_lock_shared().is_err()) {
+                StagingStatus::Live
+            } else if host
+                .as_deref()
+                .is_some_and(|host| lock_if_abandoned(&lock, host).is_some())
+            {
+                StagingStatus::Abandoned
+            } else {
+                StagingStatus::Unknown
+            };
+            StagingLeftover {
+                published_name,
+                staging: has_staging.then_some(staging),
+                lock: has_lock.then_some(lock),
+                status,
+            }
+        })
+        .collect())
 }
 
 #[cfg(unix)]
@@ -824,6 +915,40 @@ mod tests {
             .verify_integrity()
             .await
             .unwrap();
+    }
+
+    /// The leftover report classifies with the reclaim's own criteria and
+    /// removes nothing.
+    #[tokio::test]
+    async fn staging_leftovers_classify_each_lock_without_removing_anything() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("science.lingcorpus");
+        let live = complete_staging(&destination).await;
+        let (dead, dead_lock) =
+            killed_builder_leftovers(directory.path(), "1-0", &host_name().unwrap());
+        let (other_host, _) =
+            killed_builder_leftovers(directory.path(), "1-1", b"another-host.invalid");
+        let unlocked = directory.path().join(".science.lingcorpus.staging-1-2");
+        std::fs::create_dir(&unlocked).unwrap();
+
+        let leftovers = super::staging_leftovers(directory.path()).unwrap();
+        let status = |staging: &Path| {
+            leftovers
+                .iter()
+                .find(|leftover| leftover.staging.as_deref() == Some(staging))
+                .map(|leftover| leftover.status)
+        };
+        assert_eq!(leftovers.len(), 4, "{leftovers:?}");
+        assert!(
+            leftovers
+                .iter()
+                .all(|leftover| leftover.published_name == "science.lingcorpus")
+        );
+        assert_eq!(status(&dead), Some(super::StagingStatus::Abandoned));
+        assert_eq!(status(&other_host), Some(super::StagingStatus::Unknown));
+        assert_eq!(status(&unlocked), Some(super::StagingStatus::Unknown));
+        assert_eq!(status(live.path()), Some(super::StagingStatus::Live));
+        assert!(dead.exists() && dead_lock.exists() && other_host.exists());
     }
 
     #[tokio::test]

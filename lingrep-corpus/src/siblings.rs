@@ -155,9 +155,9 @@ impl SiblingScan {
 /// provenance schema.
 ///
 /// Such an artifact can only be rebuilt from source. A newer format, which a
-/// newer build reads, and a damaged manifest are not superseded.
+/// newer build reads, and a damaged manifest are not older formats.
 #[must_use]
-pub fn is_superseded(error: &CorpusError) -> bool {
+pub fn is_older_format(error: &CorpusError) -> bool {
     match error {
         CorpusError::UnsupportedArtifactGeneration { generation } => {
             *generation < crate::CORPUS_ARTIFACT_FORMAT_GENERATION
@@ -187,15 +187,15 @@ pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
     Ok(total)
 }
 
-/// Deletes the superseded realization of `source_name` at `path` and returns
+/// Deletes the older-format artifact of `source_name` at `path` and returns
 /// the bytes freed.
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
 /// `source_name`, and it holds a regular `manifest.json` that fails to open
-/// with an error [`is_superseded`] accepts. Symbolic links inside it are
+/// with an error [`is_older_format`] accepts. Symbolic links inside it are
 /// removed, not followed.
-pub fn remove_superseded(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
+pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
     let reject = |reason: &str| {
         Err(crate::artifact::invalid_artifact(format!(
             "cannot delete {}: {reason}",
@@ -217,8 +217,8 @@ pub fn remove_superseded(path: &Path, source_name: &str) -> Result<u64, CorpusEr
         return reject("manifest is not a regular file");
     }
     match Manifest::open(&manifest) {
-        Err(error) if is_superseded(&error) => {}
-        _ => return reject("not written in a superseded format"),
+        Err(error) if is_older_format(&error) => {}
+        _ => return reject("not written in an older format"),
     }
     let bytes = artifact_bytes(path)?;
     fs::remove_dir_all(path)?;

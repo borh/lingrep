@@ -18,6 +18,7 @@ mod corpus_sources;
 mod dependency_evidence;
 mod diagram_export;
 mod direct_protocol;
+mod disk_protocol;
 mod document_reader;
 mod examples;
 mod explore_characterization;

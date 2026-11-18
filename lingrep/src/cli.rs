@@ -1113,6 +1113,8 @@ pub enum CorpusCommand {
     Sources(CorpusSourcesArgs),
     /// List prepared artifacts stored beside one source.
     Variants(CorpusVariantsArgs),
+    /// Report the disk use of prepared artifacts, count tables and build leftovers.
+    Disk(Box<CorpusDiskArgs>),
     /// Render a Markdown artifact's documents into a reading sidecar.
     Render(CorpusRenderArgs),
 }
@@ -1225,6 +1227,100 @@ pub struct CorpusVariantsArgs {
     /// Validate inputs and print the execution plan without scanning artifacts.
     #[arg(long, hide_short_help = true)]
     pub plan: bool,
+}
+
+/// The inputs `corpus build` derives a realization from, used to select the
+/// current realization of a source.
+#[derive(Debug, Args)]
+pub struct CurrentInputArgs {
+    /// Tokenizer dictionary, as for `corpus build`.
+    #[arg(
+        short = 'd',
+        long,
+        value_name = "PATH",
+        help_heading = "Analysis inputs"
+    )]
+    pub dict_path: Option<PathBuf>,
+
+    /// Override the inferred corpus format, as for `corpus build`.
+    #[arg(long = "input-format", value_enum, help_heading = "Analysis inputs")]
+    pub input_format: Option<CorpusFormat>,
+
+    #[command(flatten)]
+    pub resources: ResourceArgs,
+
+    #[command(flatten)]
+    pub markdown: MarkdownReaderArgs,
+}
+
+impl CurrentInputArgs {
+    /// Whether any input differs from what `corpus build` assumes when the
+    /// flag is omitted.
+    pub(crate) fn any_given(&self) -> bool {
+        let resources = &self.resources;
+        let markdown = &self.markdown;
+        self.dict_path.is_some()
+            || self.input_format.is_some()
+            || resources.analyzer != AnalyzerArg::default()
+            || resources.profile != ProfileArg::default()
+            || resources.segmentation != SegmentationArg::default()
+            || resources.normalization != NormalizationArg::default()
+            || resources.analyzer_config.is_some()
+            || resources.sudachi_dict.is_some()
+            || resources.sudachi_resources.is_some()
+            || resources.sudachi_split.is_some()
+            || resources.sudachi_edition.is_some()
+            || markdown.md_include_sections.is_some()
+            || markdown.md_exclude_sections.is_some()
+            || markdown.md_self_labels.is_some()
+            || markdown.md_recover_conversion_artifacts
+    }
+}
+
+/// Disk use of the prepared artifacts in one directory. Reads manifests,
+/// table headers and directory sizes; never deletes.
+#[derive(Debug, Args)]
+pub struct CorpusDiskArgs {
+    /// Directory to report on, non-recursively, covering every source whose
+    /// artifacts are in it.
+    #[arg(
+        value_name = "DIR",
+        required_unless_present = "source",
+        conflicts_with = "source"
+    )]
+    pub directory: Option<PathBuf>,
+
+    /// Report on one source: its artifacts, which sit beside it, and the
+    /// count tables and leftovers that belong to them.
+    #[arg(long, value_name = "SOURCE")]
+    pub source: Option<PathBuf>,
+
+    /// Classify artifacts as current or superseded using the analysis inputs
+    /// `corpus build` uses by default.
+    ///
+    /// Passing any analysis input flag has the same effect with that input.
+    /// Classification reads each source once, as `corpus build` does before
+    /// reusing an artifact; it tokenizes nothing.
+    #[arg(long)]
+    pub current: bool,
+
+    #[command(flatten)]
+    pub inputs: CurrentInputArgs,
+
+    /// Also report the dictionary cache, which holds decompressed copies of
+    /// `.dic.zst` dictionaries.
+    #[arg(long)]
+    pub caches: bool,
+
+    /// Also report the size of this analyzer directory; repeatable.
+    #[arg(long, value_name = "DIR")]
+    pub analyzer_dir: Vec<PathBuf>,
+}
+
+impl CorpusDiskArgs {
+    pub(crate) fn classifies_current(&self) -> bool {
+        self.current || self.inputs.any_given()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -2259,6 +2355,9 @@ impl Cli {
             Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Build(args),
             }) => args.resources.clone(),
+            Command::Corpus(CorpusArgs {
+                command: CorpusCommand::Disk(args),
+            }) => args.inputs.resources.clone(),
             Command::Tokenize(args) => args.resources.clone(),
             Command::Attributes(args) => args.resources.clone(),
             Command::Explore(args) => args.query.resources.as_resource_args(),

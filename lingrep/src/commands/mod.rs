@@ -10,6 +10,7 @@ pub mod corpus;
 mod corpus_metadata;
 pub mod describe;
 pub mod dictionary;
+pub mod disk;
 pub mod doctor;
 mod ending_report;
 pub mod explain;
@@ -88,6 +89,7 @@ pub fn dispatch(
             CorpusCommand::Build(args) => corpus::run_build(args, config, terminal, output),
             CorpusCommand::Inspect(args) => corpus::run_inspect(args, config, terminal, output),
             CorpusCommand::Variants(args) => variants::run(args, output),
+            CorpusCommand::Disk(args) => disk::run(args, config, terminal, output),
             CorpusCommand::Render(_) if output == crate::presentation::OutputMode::Jsonl => {
                 Err(CliError::UnsupportedOutput {
                     command: "corpus render",

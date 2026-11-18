@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ling corpus disk DIR` reports the size and status of the prepared
+  artifacts, count tables and build staging leftovers in a directory, and with
+  `--caches` the decompressed dictionary cache. Given the analysis inputs
+  `corpus build` takes, or `--current` for its defaults, it marks the
+  artifact `corpus build` would reuse as current and the other readable ones
+  as superseded. `--json` writes the `lingrep.disk/v1` stream.
+
 ## [0.8.1] - 2026-11-18
 
 ### Added

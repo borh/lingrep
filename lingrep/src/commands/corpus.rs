@@ -219,43 +219,15 @@ pub(crate) async fn ensure_artifact(
         ResultDelivery::Deferred,
     );
     let root = request.root.as_path();
-    let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
-        .map_err(|error| execution_discovery_error(&error))?;
-    let format =
-        corpus_format_for_validated_root(root, validated.is_directory(), args.input_format);
-    crate::cli::validate_format_root(format, Some(root), false).map_err(CliError::InvalidArgs)?;
-    let markdown = request
-        .markdown
-        .clone()
-        .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
-    let reader_config = CorpusReadConfig::new(format, markdown);
-    let reader = ReaderIdentity::derive(&reader_config, config.normalization);
-
-    let vibrato_dictionary = request
-        .dict_path
-        .clone()
-        .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
-    let resolved_analyzer = resolve_input(
-        format,
-        config,
-        vibrato_dictionary.as_deref(),
-        terminal.cancellation(),
-    )?;
+    let BuildInputs {
+        validated,
+        reader_config,
+        resolved_analyzer,
+        analysis,
+        analyzer_record,
+    } = resolve_build_inputs(request, config, terminal)?;
     let schema = resolved_analyzer.schema().clone();
-    let descriptor = resolved_analyzer.descriptor().clone();
     let dictionary_digest = resolved_analyzer.resource_identity();
-    // The dictionary fingerprint is a recorded inspection fact, not an
-    // identity input: the descriptor below already covers every resource that
-    // reaches output, and keying on the fingerprint alone is what let two
-    // Sudachi split modes address one artifact.
-    let analysis = AnalysisInputs::with_token_schema(
-        reader,
-        admission_identity(),
-        &descriptor,
-        TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes()),
-    )
-    .map_err(CliError::corpus)?;
-    let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(&descriptor);
     let projection = schema
         .bind_projection(schema.keys().iter().cloned())
         .map_err(CliError::corpus)?;
@@ -473,6 +445,69 @@ pub(crate) async fn ensure_artifact(
     Ok(Some(EnsuredArtifact::Prepared(destination)))
 }
 
+/// The analysis inputs `corpus build` derives for one request, before it
+/// reads the source.
+pub(crate) struct BuildInputs {
+    pub validated: lingrep_core::corpus::ValidatedCorpusRoot,
+    pub reader_config: CorpusReadConfig,
+    pub resolved_analyzer: crate::analyzer_selection::ResolvedInputAnalyzer,
+    pub analysis: AnalysisInputs,
+    pub analyzer_record: lingrep_corpus::AnalyzerRecord,
+}
+
+/// Validates the root and resolves its reader and analyzer as `corpus build`
+/// does, loading the analyzer's resources.
+pub(crate) fn resolve_build_inputs(
+    request: &BuildRequest,
+    config: &ExecutionCliConfig,
+    terminal: &TerminalArbiter,
+) -> Result<BuildInputs, CliError> {
+    let root = request.root.as_path();
+    let validated = CorpusDiscovery::validate_root(root, config.traversal.clone())
+        .map_err(|error| execution_discovery_error(&error))?;
+    let format =
+        corpus_format_for_validated_root(root, validated.is_directory(), request.input_format);
+    crate::cli::validate_format_root(format, Some(root), false).map_err(CliError::InvalidArgs)?;
+    let markdown = request
+        .markdown
+        .clone()
+        .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
+    let reader_config = CorpusReadConfig::new(format, markdown);
+    let reader = ReaderIdentity::derive(&reader_config, config.normalization);
+
+    let vibrato_dictionary = request
+        .dict_path
+        .clone()
+        .or_else(crate::packaged_dictionaries::fallback_dictionary_path);
+    let resolved_analyzer = resolve_input(
+        format,
+        config,
+        vibrato_dictionary.as_deref(),
+        terminal.cancellation(),
+    )?;
+    let schema = resolved_analyzer.schema();
+    let descriptor = resolved_analyzer.descriptor();
+    // The dictionary fingerprint is a recorded inspection fact, not an
+    // identity input: the descriptor below already covers every resource that
+    // reaches output, and keying on the fingerprint alone is what let two
+    // Sudachi split modes address one artifact.
+    let analysis = AnalysisInputs::with_token_schema(
+        reader,
+        admission_identity(),
+        descriptor,
+        TokenSchemaIdentity::from_bytes(*schema.digest().as_bytes()),
+    )
+    .map_err(CliError::corpus)?;
+    let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(descriptor);
+    Ok(BuildInputs {
+        validated,
+        reader_config,
+        resolved_analyzer,
+        analysis,
+        analyzer_record,
+    })
+}
+
 /// Whether automatic artifact resolution reused an existing artifact or
 /// published a new one.
 pub(crate) enum EnsuredArtifact {
@@ -535,27 +570,7 @@ fn resolve_destination(
     else {
         return Ok(None);
     };
-    let analysis_identity = derive_analysis_identity(&observed, analysis);
-    // `.`, `..` and `/` have no file name, and `canonical_artifact_path`
-    // would nest the artifact inside the tree being scanned rather than
-    // beside it. Resolve only those: a named root is passed through exactly
-    // as spelled, which is also how lingrep-web names one, so wherever the two
-    // agree on an artifact at all they agree on where it sits. (They agree
-    // for a JSONL or plaintext root; for Markdown they do not, because
-    // lingrep-web reads the dialect with conversion-artifact recovery and this
-    // command does not, and that flag is inside `reader_tag`. Spelling the
-    // path the same way is what keeps the sharing that does exist, and is
-    // independent of the reader question.) A relative named root needs no
-    // resolution either — `build corpus/` from `/data` names
-    // `corpus.g5.….lingcorpus`, which is the very path `build /data/corpus`
-    // names.
-    let named = if root.file_name().is_some() {
-        root.to_path_buf()
-    } else {
-        std::fs::canonicalize(root).map_err(CliError::Io)?
-    };
-    let destination =
-        canonical_artifact_path(&named, &analysis_identity, TrustClass::LocallyExecuted);
+    let destination = canonical_destination(root, &observed, analysis)?;
 
     // Path existence is not the question: an artifact whose recorded identity
     // matches can sit under a name this build would not derive, and checking
@@ -647,6 +662,39 @@ fn resolve_destination(
             )))
         }
     }
+}
+
+/// The canonical path `corpus build` publishes `root` to, given what the
+/// identity pass observed.
+pub(crate) fn canonical_destination(
+    root: &Path,
+    observed: &ObservedSources,
+    analysis: &AnalysisInputs,
+) -> Result<PathBuf, CliError> {
+    let analysis_identity = derive_analysis_identity(observed, analysis);
+    // `.`, `..` and `/` have no file name, and `canonical_artifact_path`
+    // would nest the artifact inside the tree being scanned rather than
+    // beside it. Resolve only those: a named root is passed through exactly
+    // as spelled, which is also how lingrep-web names one, so wherever the two
+    // agree on an artifact at all they agree on where it sits. (They agree
+    // for a JSONL or plaintext root; for Markdown they do not, because
+    // lingrep-web reads the dialect with conversion-artifact recovery and this
+    // command does not, and that flag is inside `reader_tag`. Spelling the
+    // path the same way is what keeps the sharing that does exist, and is
+    // independent of the reader question.) A relative named root needs no
+    // resolution either — `build corpus/` from `/data` names
+    // `corpus.g5.….lingcorpus`, which is the very path `build /data/corpus`
+    // names.
+    let named = if root.file_name().is_some() {
+        root.to_path_buf()
+    } else {
+        std::fs::canonicalize(root).map_err(CliError::Io)?
+    };
+    Ok(canonical_artifact_path(
+        &named,
+        &analysis_identity,
+        TrustClass::LocallyExecuted,
+    ))
 }
 
 /// Names, deterministically, what distinguishes a sibling from this request.
@@ -939,7 +987,7 @@ fn traversal_limits_from_report(report: &DiscoveryReport) -> TraversalLimits {
 /// traversal. The drain-then-break ordering matches `build_artifact`'s own
 /// loop: a trailing document that yields no events is enqueued by the same
 /// `next()` call that reports end of stream.
-fn observe_root(
+pub(crate) fn observe_root(
     root: &Path,
     config: &ExecutionCliConfig,
     reader_config: &CorpusReadConfig,

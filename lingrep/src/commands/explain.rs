@@ -24,7 +24,7 @@ pub fn requested(cli: &Cli) -> bool {
             CorpusCommand::Inspect(args) => args.plan,
             CorpusCommand::Sources(args) => args.plan,
             CorpusCommand::Variants(args) => args.plan,
-            CorpusCommand::Render(_) => false,
+            CorpusCommand::Render(_) | CorpusCommand::Disk(_) => false,
         },
         Command::Doctor(_)
         | Command::Dictionary(_)
@@ -172,7 +172,7 @@ fn resolve(
                     }),
                 ))
             }
-            CorpusCommand::Render(_) => Err(CliError::InvalidArgs(
+            CorpusCommand::Render(_) | CorpusCommand::Disk(_) => Err(CliError::InvalidArgs(
                 "--plan is not supported by this command".into(),
             )),
         },
@@ -324,7 +324,8 @@ fn resolve_dictionary(
             CorpusCommand::Inspect(_)
             | CorpusCommand::Sources(_)
             | CorpusCommand::Variants(_)
-            | CorpusCommand::Render(_) => Ok((None, None)),
+            | CorpusCommand::Render(_)
+            | CorpusCommand::Disk(_) => Ok((None, None)),
         },
         _ => Ok((None, None)),
     }
@@ -373,9 +374,10 @@ fn progress(cli: &Cli) -> String {
         Command::Corpus(args) => match &args.command {
             CorpusCommand::Build(args) => args.resources.progress,
             CorpusCommand::Sources(args) => args.progress,
-            CorpusCommand::Inspect(_) | CorpusCommand::Variants(_) | CorpusCommand::Render(_) => {
-                crate::presentation::ProgressMode::Never
-            }
+            CorpusCommand::Inspect(_)
+            | CorpusCommand::Variants(_)
+            | CorpusCommand::Render(_)
+            | CorpusCommand::Disk(_) => crate::presentation::ProgressMode::Never,
         },
         _ => crate::presentation::ProgressMode::Never,
     };

@@ -14,6 +14,7 @@ pub mod contrast;
 pub mod diagnostic;
 pub mod dictionary;
 pub mod discovery;
+pub mod disk;
 pub mod doctor;
 pub mod invocation;
 pub mod manpages;
