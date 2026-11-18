@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use lingrep_corpus::{
-    AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
-    RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
-    artifact_bytes, foreign_entries, is_newer_format, is_older_format, parse_artifact_name,
-    prune_leftovers, recorded_source_identity, staging_leftovers,
+    AnalysisIdentity, BuildOutcome, CorpusArtifact, CorpusError, CountTable, CountTableError,
+    PruneLeftoverKind, Realization, RealizationRequest, SiblingRealization, SiblingScan,
+    SourceIdentity, StagingStatus, TrustClass, artifact_bytes, foreign_entries, is_newer_format,
+    is_older_format, parse_artifact_name, prune_leftovers, recorded_source_identity,
+    staging_leftovers,
 };
 
 use super::CommandOutcome;
@@ -174,6 +175,10 @@ pub(crate) struct TableEntry {
     pub analysis_identity: Option<String>,
     pub binding: TableBinding,
     pub artifacts: Vec<PathBuf>,
+    /// For a `superseded` table, why `corpus prune` keeps it.
+    pub kept_by_prune: Option<PruneKeep>,
+    /// For a `superseded` table, its [`CountTable::foreign_entries`].
+    pub foreign: Vec<String>,
     pub message: Option<String>,
 }
 
@@ -403,8 +408,9 @@ pub(crate) fn scan(
     }
     realizations.sort_by(|left, right| left.path.cmp(&right.path));
 
-    let tables = tables(scope, &entries, &bindable(&entries, &report), &realizations);
-    let leftovers = leftovers(scope, directory)?;
+    let bindable = bindable(&entries, &report);
+    let tables = tables(scope, &entries, &bindable, &realizations);
+    let leftovers = leftovers(scope, directory, &bindable, &realizations)?;
     Ok(Some(Scan {
         classified: inputs.is_some(),
         sources,
@@ -545,7 +551,54 @@ fn differences(
 /// The [`foreign_entries`] of a deletion candidate; a failure to list them is
 /// reported as one entry.
 fn foreign_of(path: &Path) -> Vec<String> {
-    foreign_entries(path).unwrap_or_else(|error| vec![format!("(cannot be listed: {error})")])
+    listed_foreign(foreign_entries(path))
+}
+
+fn listed_foreign(listed: Result<Vec<String>, CorpusError>) -> Vec<String> {
+    listed.unwrap_or_else(|error| vec![format!("(cannot be listed: {error})")])
+}
+
+/// The tables `corpus prune` deletes with the realizations at `removed`:
+/// each `superseded` table whose bound artifacts are all among them and which
+/// is not kept. Also returns the realizations among `removed` that a kept
+/// table bound only to them binds, each with that table, which `corpus prune`
+/// keeps as `kept_table` so that the table is not left bound to nothing.
+///
+/// Tables that bind one analysis identity bind the same artifacts, so a kept
+/// table keeps every table of its identity.
+pub(crate) fn plan_tables<'a>(
+    tables: &'a [TableEntry],
+    removed: &BTreeSet<&Path>,
+) -> (Vec<&'a TableEntry>, BTreeMap<&'a Path, &'a TableEntry>) {
+    let bound_only = |table: &&TableEntry| {
+        table.binding == TableBinding::Superseded
+            && !table.artifacts.is_empty()
+            && table
+                .artifacts
+                .iter()
+                .all(|artifact| removed.contains(artifact.as_path()))
+    };
+    let mut protected = BTreeMap::new();
+    for table in tables
+        .iter()
+        .filter(bound_only)
+        .filter(|table| table.kept_by_prune.is_some())
+    {
+        for artifact in &table.artifacts {
+            protected.entry(artifact.as_path()).or_insert(table);
+        }
+    }
+    let deleted = tables
+        .iter()
+        .filter(bound_only)
+        .filter(|table| {
+            table
+                .artifacts
+                .iter()
+                .all(|artifact| !protected.contains_key(artifact.as_path()))
+        })
+        .collect();
+    (deleted, protected)
 }
 
 fn foreign_keep(foreign: &[String]) -> Option<PruneKeep> {
@@ -659,6 +712,8 @@ fn tables(
                         analysis_identity: None,
                         binding: TableBinding::Unreadable,
                         artifacts: Vec::new(),
+                        kept_by_prune: None,
+                        foreign: Vec::new(),
                         message: Some(
                             CountTable::read_key(path)
                                 .err()
@@ -694,19 +749,34 @@ fn tables(
         } else {
             TableBinding::Present
         };
+        let foreign = if binding == TableBinding::Superseded {
+            listed_foreign(CountTable::foreign_entries(path))
+        } else {
+            Vec::new()
+        };
         tables.push(TableEntry {
             path: path.clone(),
             bytes: artifact_bytes(path).ok(),
             analysis_identity: Some(key.analysis_identity),
             binding,
             artifacts,
+            kept_by_prune: foreign_keep(&foreign),
+            foreign,
             message: None,
         });
     }
     tables
 }
 
-fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliError> {
+/// The leftovers in `directory`. With `--source`, an interrupted realization
+/// prune is in scope when its name records the source, and an interrupted
+/// table prune when its header binds a `reported` realization.
+fn leftovers(
+    scope: &Scope,
+    directory: &Path,
+    bindable: &[(PathBuf, AnalysisIdentity)],
+    reported: &[RealizationEntry],
+) -> Result<Vec<LeftoverEntry>, CliError> {
     let found = staging_leftovers(directory).map_err(|error| CliError::InputIo {
         path: directory.to_path_buf(),
         source: error,
@@ -745,12 +815,24 @@ fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliE
             }
         })
         .collect::<Vec<_>>();
+    let table_in_scope = |path: &Path| {
+        scope.source.is_none()
+            || CountTable::read_key(path).is_ok_and(|key| {
+                bindable.iter().any(|(artifact, identity)| {
+                    encode_digest(identity.as_bytes()) == key.analysis_identity
+                        && reported.iter().any(|entry| entry.path == *artifact)
+                })
+            })
+    };
     entries.extend(
         pruning
             .into_iter()
-            .filter(|leftover| in_scope(&leftover.published_name))
+            .filter(|leftover| match leftover.kind {
+                PruneLeftoverKind::Realization => in_scope(&leftover.published_name),
+                PruneLeftoverKind::CountTable => table_in_scope(&leftover.path),
+            })
             .map(|leftover| {
-                let foreign = foreign_of(&leftover.path);
+                let foreign = listed_foreign(leftover.foreign_entries());
                 LeftoverEntry {
                     status: LeftoverStatus::InterruptedPrune,
                     bytes: artifact_bytes(&leftover.path).ok(),
@@ -832,6 +914,18 @@ pub(crate) fn run_to<W: Write>(
             .iter()
             .map(|source| DiskEvent::Source(source.record())),
     );
+    let removed = scan
+        .realizations
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                RealizationStatus::Superseded | RealizationStatus::OlderFormat
+            ) && entry.kept_by_prune.is_none()
+        })
+        .map(|entry| entry.path.as_path())
+        .collect();
+    let kept_by_table = plan_tables(&scan.tables, &removed).1;
     events.extend(scan.realizations.iter().map(|entry| {
         let recorded = entry.recorded.as_ref();
         DiskEvent::Realization(DiskRealization {
@@ -846,7 +940,9 @@ pub(crate) fn run_to<W: Write>(
             dictionary_identity: recorded
                 .map(|recorded| encode_digest(recorded.dictionary.as_bytes())),
             differences: entry.differences.clone(),
-            kept_by_prune: entry.kept_by_prune,
+            kept_by_prune: entry.kept_by_prune.or(kept_by_table
+                .contains_key(entry.path.as_path())
+                .then_some(PruneKeep::KeptTable)),
             message: entry.message.clone(),
         })
     }));
@@ -858,6 +954,7 @@ pub(crate) fn run_to<W: Write>(
             analysis_identity: table.analysis_identity.clone(),
             binding: table.binding,
             artifacts: table.artifacts.iter().map(|path| display(path)).collect(),
+            kept_by_prune: table.kept_by_prune,
             message: table.message.clone(),
         })
     }));

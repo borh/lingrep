@@ -588,12 +588,15 @@ fn a_table_bound_to_a_retained_explicit_output_is_kept() {
     crate::support::assert_success(&read_table(&table, &explicit));
 }
 
-/// A prune stopped by a deletion error leaves a state that a retry finishes:
-/// each table bound only to a planned removal is deleted, and a table whose
-/// binding was already absent is kept.
+/// A table whose own directory cannot be written is renamed to a hidden name
+/// before its deletion fails, and the run stops before the realization it
+/// binds. `corpus disk` reports the hidden directory as an interrupted prune,
+/// and once it is writable a retry deletes it, the other table bound only to
+/// the planned removal, and the realization, and keeps a table whose binding
+/// was already absent.
 #[cfg(unix)]
 #[test]
-fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
+fn a_read_only_table_leaves_an_interrupted_prune_that_a_retry_finishes() {
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = siblings();
@@ -607,25 +610,13 @@ fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
     fs::rename(&fixture.other_reader, &moved).unwrap();
     let absent = directory.join("absent.lingtable");
     write_table(&moved, &absent);
-    // A file in a read-only directory cannot be unlinked, so deleting the
-    // table that holds it fails.
-    let locked = failing.join("locked");
-    fs::create_dir(&locked).unwrap();
-    fs::write(locked.join("file"), b"x").unwrap();
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+    fs::set_permissions(&failing, fs::Permissions::from_mode(0o555)).unwrap();
 
-    let prune = || {
-        lingrep()
-            .args(["--json", "corpus", "prune", "--execute", "--dict-path"])
-            .arg(fixture.dictionary.path())
-            .arg("--source")
-            .arg(&fixture.source)
-            .output()
-            .unwrap()
-    };
-    let failed = prune();
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    let failed = prune_command(&fixture);
     assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let leftovers = pruning_leftovers(directory);
+    assert_eq!(leftovers.len(), 1, "{failed:?}");
+    let leftover = leftovers[0].clone();
     let records = crate::support::parse_jsonl(&failed.stdout);
     let attempted = of_type(&records, "removal");
     assert_eq!(
@@ -637,20 +628,68 @@ fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
     assert!(
         attempted[0]["failure"]
             .as_str()
-            .is_some_and(|failure| !failure.is_empty())
+            .is_some_and(|failure| failure.contains(leftover.to_str().unwrap())),
+        "the failure names the hidden directory: {records:?}"
     );
     let complete = of_type(&records, "complete");
     assert_eq!(complete.len(), 1, "the stream completes: {records:?}");
     assert_eq!(complete[0]["removals"], 3);
     assert_eq!(complete[0]["deleted"], 0);
     assert_eq!(complete[0]["failed"], 1);
+    assert!(!failing.exists(), "the table's name is free");
     assert!(fixture.other_analyzer.exists() && table.exists());
 
-    crate::support::assert_success(&prune());
-    assert!(!fixture.other_analyzer.exists());
-    assert!(!table.exists(), "the retry deletes the planned table");
+    let again = prune_command(&fixture);
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
+    assert_eq!(
+        pruning_leftovers(directory),
+        std::slice::from_ref(&leftover)
+    );
+    assert!(fixture.other_analyzer.exists() && table.exists());
+
+    let disk = run_json(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let reported = of_type(&disk, "leftover");
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(reported[0]["status"], "interrupted_prune");
+    assert_eq!(reported[0]["published_name"], "a.lingtable");
+    assert_eq!(reported[0]["pruning"], path_string(&leftover));
+
+    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o755)).unwrap();
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        removal_reasons(&records),
+        BTreeSet::from([
+            (path_string(&leftover), "interrupted_prune".to_owned()),
+            (path_string(&table), "table_of_removed".to_owned()),
+            (
+                path_string(&fixture.other_analyzer),
+                "superseded".to_owned()
+            ),
+        ])
+    );
+    assert!(pruning_leftovers(directory).is_empty());
     assert!(absent.exists(), "a table bound to nothing here is kept");
     assert!(fixture.current.exists());
+}
+
+/// Each `removal` record's path and reason.
+fn removal_reasons(records: &[Value]) -> BTreeSet<(String, String)> {
+    of_type(records, "removal")
+        .iter()
+        .map(|record| {
+            (
+                record["path"].as_str().unwrap().to_owned(),
+                record["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// Each `kept` record's path and reason.
@@ -870,7 +909,7 @@ fn prune_command(fixture: &crate::disk_protocol::Siblings) -> std::process::Outp
 }
 
 /// A parent directory that cannot be written fails the prune before any
-/// realization changes.
+/// count table or realization changes.
 #[cfg(unix)]
 #[test]
 fn a_read_only_parent_fails_before_anything_changes() {
@@ -878,6 +917,7 @@ fn a_read_only_parent_fails_before_anything_changes() {
 
     let fixture = siblings();
     let directory = fixture.directory.path();
+    write_table(&fixture.other_analyzer, &directory.join("t.lingtable"));
     let before = crate::disk_protocol::tree_listing(directory);
     fs::set_permissions(directory, fs::Permissions::from_mode(0o555)).unwrap();
     let failed = prune_command(&fixture);
@@ -1119,13 +1159,203 @@ fn the_removal_primitives_reject_a_directory_with_foreign_entries() {
     let identity = *CorpusArtifact::open(&fixture.other_analyzer)
         .unwrap()
         .analysis_identity();
+    let table = fixture.directory.path().join("t.lingtable");
+    write_table(&fixture.other_analyzer, &table);
     fs::write(fixture.other_analyzer.join("my-notes.txt"), b"notes").unwrap();
+    fs::write(table.join("my-notes.txt"), b"notes").unwrap();
     let before = crate::disk_protocol::tree_listing(fixture.directory.path());
     assert!(remove_realization(&fixture.other_analyzer, "source.md", &identity).is_err());
+    let bound = lingrep_corpus::CountTable::read_key(&table)
+        .unwrap()
+        .analysis_identity;
+    assert!(lingrep_corpus::CountTable::remove(&table, &bound).is_err());
     assert_eq!(
         crate::disk_protocol::tree_listing(fixture.directory.path()),
         before
     );
+}
+
+/// A prune killed partway through a table deletion leaves a hidden directory.
+/// `ling table` rejects it, `summarize --write-table` writes a new table under
+/// the name it had, `corpus disk` reports it, and the next prune deletes it
+/// before the tables and realizations it plans.
+#[test]
+fn an_interrupted_table_prune_is_rejected_by_readers_and_finished_by_the_next_prune() {
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let table = directory.join("t.lingtable");
+    write_table(&fixture.other_analyzer, &table);
+    let leftover = directory.join(".t.lingtable.pruning-1-0");
+    fs::rename(&table, &leftover).unwrap();
+
+    let read_leftover = || {
+        lingrep_without_dictionary()
+            .args(["table", "--patterns"])
+            .arg(table.with_extension("lx"))
+            .arg("--corpus")
+            .arg(&fixture.other_analyzer)
+            .arg(&leftover)
+            .output()
+            .unwrap()
+    };
+    let rejected = read_leftover();
+    assert_eq!(rejected.status.code(), Some(1), "{rejected:?}");
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("corpus prune"), "{stderr}");
+    fs::remove_file(leftover.join("values.utf8")).unwrap();
+    let rejected = read_leftover();
+    assert_eq!(rejected.status.code(), Some(1), "{rejected:?}");
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("corpus prune"), "{stderr}");
+
+    write_table(&fixture.other_analyzer, &table);
+    crate::support::assert_success(&read_table(&table, &fixture.other_analyzer));
+
+    for scope in [
+        vec!["--source".as_ref(), fixture.source.as_os_str()],
+        vec![directory.as_os_str()],
+    ] {
+        let mut args: Vec<&OsStr> = vec![
+            "corpus".as_ref(),
+            "disk".as_ref(),
+            "--dict-path".as_ref(),
+            fixture.dictionary.path().as_os_str(),
+        ];
+        args.extend(scope);
+        let disk = run_json(&args);
+        let reported = of_type(&disk, "leftover");
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert_eq!(reported[0]["status"], "interrupted_prune");
+        assert_eq!(reported[0]["published_name"], "t.lingtable");
+        assert_eq!(reported[0]["pruning"], path_string(&leftover));
+        assert_eq!(
+            of_type(&disk, "table")
+                .iter()
+                .map(|record| record["path"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>(),
+            vec![path_string(&table)]
+        );
+    }
+
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        removal_reasons(&records),
+        BTreeSet::from([
+            (path_string(&leftover), "interrupted_prune".to_owned()),
+            (path_string(&table), "table_of_removed".to_owned()),
+            (
+                path_string(&fixture.other_analyzer),
+                "superseded".to_owned()
+            ),
+        ])
+    );
+    let order = of_type(&records, "removal")
+        .iter()
+        .map(|record| record["reason"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        order,
+        ["interrupted_prune", "table_of_removed", "superseded"]
+    );
+    assert!(!leftover.exists() && !table.exists() && !fixture.other_analyzer.exists());
+    assert!(fixture.current.exists() && fixture.other_reader.exists());
+}
+
+/// A count table bound only to a planned removal that holds a file or
+/// directory besides its components, and an interrupted table prune that
+/// does, are kept as `foreign_entries`, and the realization the table binds
+/// is kept as `kept_table`, so that the table is not left bound to nothing.
+/// Nothing inside them is deleted.
+#[cfg(unix)]
+#[test]
+fn a_table_with_foreign_entries_is_kept_with_the_realization_it_binds() {
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let table = directory.join("t.lingtable");
+    write_table(&fixture.other_analyzer, &table);
+    fs::write(table.join("my-notes.txt"), b"notes").unwrap();
+    fs::create_dir(table.join("sub")).unwrap();
+    fs::write(table.join("sub").join("f"), b"f").unwrap();
+    let leftover = directory.join(".u.lingtable.pruning-1-0");
+    write_table(&fixture.other_reader, &leftover);
+    fs::write(leftover.join("my-notes.txt"), b"notes").unwrap();
+
+    let disk = run_json(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let tables = of_type(&disk, "table");
+    assert_eq!(tables.len(), 1, "{tables:?}");
+    assert_eq!(tables[0]["kept_by_prune"], "foreign_entries");
+    let realization = of_type(&disk, "realization")
+        .into_iter()
+        .find(|record| record["path"] == path_string(&fixture.other_analyzer))
+        .unwrap();
+    assert_eq!(realization["kept_by_prune"], "kept_table");
+    assert_eq!(
+        of_type(&disk, "leftover")[0]["kept_by_prune"],
+        "foreign_entries"
+    );
+
+    let before = crate::disk_protocol::tree_listing(directory);
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(removals(&records), BTreeMap::new(), "{records:?}");
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([
+            (path_string(&table), "foreign_entries".to_owned()),
+            (path_string(&leftover), "foreign_entries".to_owned()),
+            (
+                path_string(&fixture.other_analyzer),
+                "kept_table".to_owned()
+            ),
+            (
+                path_string(&fixture.other_reader),
+                "reader_variant".to_owned()
+            ),
+        ])
+    );
+    let message = |path: &Path| {
+        of_type(&records, "kept")
+            .into_iter()
+            .find(|record| record["path"] == path_string(path))
+            .unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        message(&table).ends_with("my-notes.txt, sub/"),
+        "{records:?}"
+    );
+    assert!(
+        message(&fixture.other_analyzer).contains(&path_string(&table)),
+        "{records:?}"
+    );
+    assert_eq!(crate::disk_protocol::tree_listing(directory), before);
+
+    let records = prune_source(&fixture, &["--include-all-superseded"]);
+    assert_eq!(
+        removal_reasons(&records),
+        BTreeSet::from([(path_string(&fixture.other_reader), "superseded".to_owned())])
+    );
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([
+            (path_string(&table), "foreign_entries".to_owned()),
+            (path_string(&leftover), "foreign_entries".to_owned()),
+            (
+                path_string(&fixture.other_analyzer),
+                "kept_table".to_owned()
+            ),
+        ])
+    );
+    assert!(table.join("sub").join("f").exists() && leftover.join("my-notes.txt").exists());
+    assert!(fixture.other_analyzer.exists());
 }
 
 /// With the source missing and only older-format artifacts of it left, the

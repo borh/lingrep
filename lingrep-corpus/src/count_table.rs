@@ -61,6 +61,41 @@ const DOCUMENT_SENTENCES: &str = "document_sentences.u64";
 const DOCUMENT_TOKENS: &str = "document_tokens.u64";
 const ENTRY_TOTALS_SCRATCH: &str = "entry_totals.scratch";
 
+/// Every file of a published table besides [`HEADER`].
+const SECTIONS: [&str; 21] = [
+    VALUE_OFFSETS,
+    VALUES,
+    ENTRY_KEY_OFFSETS,
+    ENTRY_KEYS,
+    ENTRY_PAIR_OFFSETS,
+    PAIR_DOCUMENTS,
+    PAIR_COUNTS,
+    ENTRY_SENTENCE_OFFSETS,
+    ENTRY_SENTENCES,
+    ENTRY_SENTENCE_COUNTS,
+    RANKED_ENTRIES,
+    RANKED_TOTALS,
+    DOCUMENT_PAIR_OFFSETS,
+    DOCUMENT_ENTRIES,
+    DOCUMENT_COUNTS,
+    DOCUMENT_PATTERN_OFFSETS,
+    DOCUMENT_PATTERNS,
+    DOCUMENT_PATTERN_COUNTS,
+    DOCUMENT_IDS,
+    DOCUMENT_SENTENCES,
+    DOCUMENT_TOKENS,
+];
+
+/// The header and sections of a table whose header reads as this format.
+pub(crate) const TABLE_LAYOUT: crate::siblings::Layout = crate::siblings::Layout {
+    descriptor: HEADER,
+    components: |path| {
+        read_header(path)
+            .ok()
+            .map(|_| SECTIONS.iter().map(|name| (*name).to_owned()).collect())
+    },
+};
+
 const CANCELLATION_INTERVAL: usize = 1 << 20;
 
 /// What a table's counts depend on. A reader serves a table only when all
@@ -149,6 +184,10 @@ pub enum CountTableError {
     GroupLimit(usize),
     #[error("count table work was cancelled")]
     Cancelled,
+    #[error(
+        "{0} is a count table that `ling corpus prune --execute` renamed for deletion and did not finish deleting; run it again to delete it"
+    )]
+    PruneLeftover(PathBuf),
 }
 
 fn corrupt(message: impl Into<String>) -> CountTableError {
@@ -1137,7 +1176,18 @@ impl CountTable {
     /// Opens the table at `path` and rejects it unless its key equals
     /// `expected`. Checks the format version and every section's length; the
     /// contents are checked by [`Self::verify`].
+    ///
+    /// Rejects a directory named as an interrupted `corpus prune` leaves it,
+    /// which [`crate::prune_leftovers`] reports.
     pub fn open(path: &Path, expected: &CountTableKey) -> Result<Self, CountTableError> {
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(crate::siblings::pruned_name)
+            .is_some()
+        {
+            return Err(CountTableError::PruneLeftover(path.to_path_buf()));
+        }
         let header = read_header(path)?;
         for (field, expected, found) in [
             (
@@ -1307,19 +1357,36 @@ impl CountTable {
     ///
     /// Fails without deleting anything unless `path` is a directory rather
     /// than a symbolic link whose regular header reads and binds
-    /// `analysis_identity`.
-    pub fn remove(path: &Path, analysis_identity: &str) -> Result<u64, CountTableError> {
-        let metadata = fs::symlink_metadata(path)?;
-        let header = fs::symlink_metadata(path.join(HEADER))?;
-        if !metadata.is_dir() || !header.is_file() {
-            return Err(corrupt("not a count table directory"));
-        }
-        if read_header(path)?.key.analysis_identity != analysis_identity {
-            return Err(corrupt("the table binds another analysis identity"));
-        }
-        let bytes = crate::artifact_bytes(path)?;
-        fs::remove_dir_all(path)?;
-        Ok(bytes)
+    /// `analysis_identity`, and it has no [`Self::foreign_entries`]. The
+    /// deletion follows [`crate::remove_realization`]'s two steps, and an
+    /// interrupted one leaves a [`crate::PruneLeftover`] of kind
+    /// [`crate::PruneLeftoverKind::CountTable`].
+    pub fn remove(path: &Path, analysis_identity: &str) -> Result<u64, crate::CorpusError> {
+        use crate::siblings::cannot_delete;
+        crate::siblings::remove_in_two_steps(path, TABLE_LAYOUT, |at| {
+            let metadata = fs::symlink_metadata(at)?;
+            let header = fs::symlink_metadata(at.join(HEADER))?;
+            if !metadata.is_dir() || !header.is_file() {
+                return Err(cannot_delete(at, "not a count table directory"));
+            }
+            let key = read_header(at)
+                .map_err(|error| cannot_delete(at, &error.to_string()))?
+                .key;
+            if key.analysis_identity != analysis_identity {
+                return Err(cannot_delete(
+                    at,
+                    "the table binds another analysis identity",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    /// The entries of the directory at `path` that are not components of the
+    /// table its header describes, as [`crate::foreign_entries`] reports them
+    /// for an artifact: without a header of this format, every entry.
+    pub fn foreign_entries(path: &Path) -> Result<Vec<String>, crate::CorpusError> {
+        crate::siblings::foreign_entries_in(path, TABLE_LAYOUT)
     }
 
     /// The key of the table at `path`, read from its header without opening

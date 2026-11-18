@@ -2229,7 +2229,9 @@ including an explicit `--output` and the target of a symbolic link, and a
 `newer_format` or `damaged` canonical artifact binds the identity its name
 records.
 A table whose binding is `superseded` or `absent` is orphaned. Tables are
-found by their `header.json`, whatever their names.
+found by their `header.json`, whatever their names. A `superseded` table that
+holds anything but the header and section files its format defines is
+`kept_by_prune: foreign_entries`.
 
 A leftover is a staging directory or lock file from a build that did not
 publish; an entry with such a name that is not a directory or a regular file
@@ -2238,12 +2240,15 @@ lock records this host and is free, and `unknown` otherwise: the lock file is
 missing or records another host. The next build of the same name on the same
 host removes abandoned leftovers; see the
 [deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
-others. A leftover is also `interrupted_prune`: a realization that
-`corpus prune --execute` renamed to the hidden name
-`.<artifact name>.pruning-<suffix>` and did not finish deleting, reported
-with that path as `pruning`. `corpus build` does not read it, and the next
-`corpus prune --execute` deletes it, unless it holds anything but the
-components its manifest lists, when it is kept as `foreign_entries`.
+others. A leftover is also `interrupted_prune`: a realization or count table
+that `corpus prune --execute` renamed to the hidden name
+`.<name>.pruning-<suffix>` and did not finish deleting, reported with that
+path as `pruning` and its former name as `published_name`. `corpus build`
+does not read it, `ling table` and `ling serve --count-table` reject it, and
+the next `corpus prune --execute` deletes it, unless it holds anything but
+the components its manifest or table format lists, when it is kept as
+`foreign_entries`. With `--source`, a count table's leftover is reported when
+its header binds a realization of that source.
 
 `--caches` adds the dictionary cache, which holds the decompressed copy of
 each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
@@ -2279,6 +2284,7 @@ Other superseded and older-format realizations are kept, and listed as
 | `other_trust` | trust class | never |
 | `identical_to_current` | nothing, yet `corpus build` would not select it | never |
 | `foreign_entries` | anything; the directory holds an entry that is not a component its manifest lists, a component that is not a regular file, or an entry on another filesystem, or is itself a mount point, and `message` names them | never |
+| `kept_table` | anything; a count table bound only to realizations this run deletes is kept as `foreign_entries`, and `message` names it | never |
 | `damaged` | anything; it is `damaged`, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
@@ -2295,13 +2301,16 @@ size and the total. With `--execute` it deletes the same set and reports the
 apparent size of each deletion. A deletion that fails ends the run: its
 `removal` record carries `failure`, the completion record counts it as
 `failed`, and the command exits with status 1. It deletes the count tables before the
-realizations they bind, and renames each realization to a hidden name before
-deleting it, so an interrupted or failed run leaves either the realization
-under its own name or an `interrupted_prune` leftover. Running it again, once
-the cause of a failure is removed, finishes the cleanup. The stream contract is
+realizations they bind, and renames each table and realization to a hidden
+name before deleting it, so an interrupted or failed run leaves either the
+entry under its own name or an `interrupted_prune` leftover. Running it
+again, once the cause of a failure is removed, finishes the cleanup. A count
+table bound only to realizations it deletes that holds anything but its own
+files is kept as `foreign_entries`, and so are those realizations, as
+`kept_table`, so that no table is left bound to nothing. The stream contract is
 `lingrep.prune/v1`, with one `kept` record per superseded, older-format or
-damaged artifact or interrupted prune it keeps, one `removal` record per path
-it deletes or attempts, and a completion record.
+damaged artifact, count table or interrupted prune it keeps, one `removal`
+record per path it deletes or attempts, and a completion record.
 
 `corpus prune` always selects the current realization: omitted analysis
 flags take `corpus build`'s defaults. When a source with something to
@@ -2316,12 +2325,14 @@ another source's artifacts when `--source` is given, an entry outside the
 scanned directory, a count table that binds an artifact being kept, or a staging
 leftover. Immediately before each deletion it checks again that the entry is
 a directory, not a symbolic link, with the canonical name and recorded
-identity the scan classified, and that a superseded realization still passes
-structural validation, and that the directory holds exactly the components
-its manifest lists. It then renames the realization, without replacing
-anything, to a hidden name in the same directory, so a directory that cannot
-be written fails before anything changes; checks it again under that name;
-and deletes it.
+identity the scan classified, or for a count table the bound identity, and
+that a superseded realization still passes structural validation, and that
+the directory holds exactly the components its manifest or table format
+lists. It then renames the entry, without replacing anything, to a hidden
+name in the same directory, so a directory that cannot be written fails
+before anything changes; checks it again under that name; and deletes those
+components, the manifest or table header last, and then the empty
+directory. It never deletes recursively.
 
 Nothing records which artifacts other processes are reading. Before
 `--execute --include-all-superseded`, stop the builds, queries and

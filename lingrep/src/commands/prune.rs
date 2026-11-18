@@ -18,7 +18,7 @@ use super::disk::{self, CurrentSelection, RealizationEntry, Scope, TableEntry, d
 use crate::cli::{CorpusPruneArgs, ExecutionCliConfig};
 use crate::error::CliError;
 use crate::presentation::OutputMode;
-use crate::protocol::disk::{LeftoverStatus, PruneKeep, RealizationStatus, TableBinding};
+use crate::protocol::disk::{LeftoverStatus, PruneKeep, RealizationStatus};
 use crate::protocol::prune::{
     PruneComplete, PruneEnvelope, PruneEvent, PruneKept, PruneRemoval, PruneRun, RemovalReason,
 };
@@ -90,8 +90,7 @@ pub(crate) fn run_to<W: Write>(
             })
         }))
         .collect::<Vec<_>>();
-    kept_by_rule.sort_by(|left, right| left.path.cmp(&right.path));
-    let removed = scan
+    let removable = scan
         .realizations
         .iter()
         .filter(|entry| match entry.status {
@@ -101,6 +100,46 @@ pub(crate) fn run_to<W: Write>(
             _ => false,
         })
         .collect::<Vec<_>>();
+    let (tables, protected) = disk::plan_tables(
+        &scan.tables,
+        &removable.iter().map(|entry| entry.path.as_path()).collect(),
+    );
+    kept_by_rule.extend(
+        scan.tables
+            .iter()
+            .filter(|table| {
+                !table.artifacts.is_empty()
+                    && table
+                        .artifacts
+                        .iter()
+                        .all(|artifact| protected.contains_key(artifact.as_path()))
+            })
+            .filter_map(|table| {
+                let reason = table.kept_by_prune?;
+                Some(PruneKept {
+                    path: display(&table.path),
+                    reason,
+                    differences: Vec::new(),
+                    apparent_bytes: table.bytes,
+                    message: kept_message(reason, None, &table.foreign),
+                })
+            }),
+    );
+    let (removed, held): (Vec<_>, Vec<_>) = removable
+        .into_iter()
+        .partition(|entry| !protected.contains_key(entry.path.as_path()));
+    kept_by_rule.extend(held.into_iter().map(|entry| {
+        PruneKept {
+            path: display(&entry.path),
+            reason: PruneKeep::KeptTable,
+            differences: entry.differences.clone(),
+            apparent_bytes: entry.bytes,
+            message: protected
+                .get(entry.path.as_path())
+                .map(|table| format!("binds the kept count table {}", table.path.display())),
+        }
+    }));
+    kept_by_rule.sort_by(|left, right| left.path.cmp(&right.path));
 
     // A source whose current realization is absent would lose every readable
     // realization; that needs an explicit choice of what to keep.
@@ -153,18 +192,6 @@ pub(crate) fn run_to<W: Write>(
         )));
     }
 
-    let removed_paths = removed
-        .iter()
-        .map(|entry| &entry.path)
-        .collect::<BTreeSet<_>>();
-    let tables = scan.tables.iter().filter(|table| {
-        table.binding == TableBinding::Superseded
-            && !table.artifacts.is_empty()
-            && table
-                .artifacts
-                .iter()
-                .all(|artifact| removed_paths.contains(artifact))
-    });
     let interrupted = scan.leftovers.iter().filter_map(|leftover| {
         (leftover.status == LeftoverStatus::InterruptedPrune && leftover.kept_by_prune.is_none())
             .then_some(leftover.pruning.as_deref())
@@ -172,7 +199,7 @@ pub(crate) fn run_to<W: Write>(
             .map(|path| Planned::Leftover(path, leftover.bytes))
     });
     let plan = interrupted
-        .chain(tables.map(Planned::Table))
+        .chain(tables.into_iter().map(Planned::Table))
         .chain(removed.iter().map(|entry| Planned::Realization(entry)))
         .collect::<Vec<_>>();
 
@@ -293,7 +320,7 @@ fn kept_message(reason: PruneKeep, failure: Option<&str>, foreign: &[String]) ->
     match reason {
         PruneKeep::Damaged => failure.map(str::to_owned),
         PruneKeep::ForeignEntries => Some(format!(
-            "holds entries that are not artifact components: {}",
+            "holds entries that are not components: {}",
             foreign.join(", ")
         )),
         _ => None,

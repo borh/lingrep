@@ -619,6 +619,40 @@ fn open_rejects_a_table_whose_key_differs_in_any_field() {
     }
 }
 
+/// The component set removal deletes is every file the writer publishes, so
+/// `CountTable::remove` deletes a published table completely.
+#[test]
+fn a_published_table_holds_only_its_components_and_removal_deletes_them_all() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("t.lingtable");
+    one_entry_table(&path);
+    assert_eq!(
+        CountTable::foreign_entries(&path).expect("listed"),
+        Vec::<String>::new()
+    );
+    CountTable::remove(&path, &key().analysis_identity).expect("removed");
+    assert_eq!(
+        std::fs::read_dir(directory.path())
+            .expect("listing")
+            .count(),
+        0
+    );
+}
+
+/// A table renamed by an interrupted `corpus prune` is not served.
+#[test]
+fn open_rejects_a_table_under_a_prune_leftover_name() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let published = directory.path().join("t.lingtable");
+    one_entry_table(&published);
+    let path = directory.path().join(".t.lingtable.pruning-1-0");
+    std::fs::rename(&published, &path).expect("renamed");
+    assert!(matches!(
+        CountTable::open(&path, &key()),
+        Err(CountTableError::PruneLeftover(rejected)) if rejected == path
+    ));
+}
+
 #[test]
 fn read_key_returns_the_key_a_table_was_written_for() {
     let directory = tempfile::tempdir().expect("tempdir");

@@ -248,10 +248,14 @@ pub enum PruneKeep {
     /// would not select it. `corpus prune` never deletes it.
     IdenticalToCurrent,
     /// Holds an entry that is not one of the components its manifest lists,
-    /// a component that is not a regular file, or an entry on another
-    /// filesystem, or is itself a mount point. `corpus prune` never deletes
-    /// it.
+    /// or, for a count table, that its format defines, a component that is
+    /// not a regular file, or an entry on another filesystem, or is itself a
+    /// mount point. `corpus prune` never deletes it.
     ForeignEntries,
+    /// A superseded realization that a count table kept as `foreign_entries`
+    /// binds, and that table binds nothing else `corpus prune` keeps.
+    /// Deleting it would leave the table bound to nothing.
+    KeptTable,
     /// The realization is `damaged`. `corpus prune` never deletes it.
     Damaged,
 }
@@ -286,6 +290,10 @@ pub struct DiskTable {
     /// canonical names other than an older format that record it in their
     /// name. A symbolic link is listed by its own path.
     pub artifacts: Vec<String>,
+    /// For a `superseded` table that `corpus prune` keeps, why it keeps it:
+    /// only `foreign_entries`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_by_prune: Option<PruneKeep>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -311,12 +319,12 @@ pub enum TableBinding {
 }
 
 /// A staging directory or lock file left by a build that did not publish, or
-/// a realization that `corpus prune` renamed for deletion and did not finish
-/// deleting.
+/// a realization or count table that `corpus prune` renamed for deletion and
+/// did not finish deleting.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskLeftover {
     /// The name the staging directory would have been published under, or
-    /// the name the pruned realization had.
+    /// the name the pruned realization or count table had.
     pub published_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staging: Option<String>,
@@ -348,9 +356,10 @@ pub enum LeftoverStatus {
     Abandoned,
     /// No lock file, or one recording another or no host name.
     Unknown,
-    /// A realization `corpus prune --execute` renamed to a hidden name and
-    /// did not finish deleting; `corpus build` does not read it, and the next
-    /// `corpus prune --execute` deletes it.
+    /// A realization or count table `corpus prune --execute` renamed to a
+    /// hidden name and did not finish deleting; `corpus build` does not read
+    /// it, count-table readers reject it, and the next `corpus prune
+    /// --execute` deletes it.
     InterruptedPrune,
 }
 

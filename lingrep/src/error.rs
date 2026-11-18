@@ -508,7 +508,8 @@ fn path_message(path: &std::path::Path, source: &CliError) -> String {
         CliError::CountTable(
             CountTableError::KeyMismatch { path, .. }
             | CountTableError::UnsupportedFormat { path, .. }
-            | CountTableError::DestinationExists(path),
+            | CountTableError::DestinationExists(path)
+            | CountTableError::PruneLeftover(path),
         ) => Some(path.as_path()),
         CliError::CountTable(CountTableError::Publication(error))
         | CliError::ReadingSidecar(ReadingSidecarError::Publication(error)) => match error {

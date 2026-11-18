@@ -48,7 +48,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "Kept realizations in bytewise path order; removals of interrupted prunes, then of tables, then of realizations, each in bytewise path order.",
+        "Kept entries in bytewise path order; removals of interrupted prunes, then of tables, then of realizations, each in bytewise path order.",
         "Entries immediately in the scanned directory at run time.",
         "A failed deletion ends the removals with its removal record, carrying `failure`, then the complete record; deletions already made remain made. A closed pipe is a machine-output failure.",
         "0 complete, 1 a deletion failed or a runtime/output failure, 2 invocation failure or no realization to keep.",
@@ -109,8 +109,9 @@ pub struct PruneRun {
     pub execute: bool,
 }
 
-/// A superseded, older-format or damaged realization, or an interrupted
-/// prune, that this run keeps.
+/// A superseded, older-format or damaged realization, a count table bound
+/// only to removed realizations, or an interrupted prune, that this run
+/// keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneKept {
     pub path: String,
@@ -120,7 +121,8 @@ pub struct PruneKept {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apparent_bytes: Option<u64>,
     /// For a `damaged` realization, the validation failure; for
-    /// `foreign_entries`, the entries that are not artifact components.
+    /// `foreign_entries`, the entries that are not components; for
+    /// `kept_table`, the kept table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -157,8 +159,9 @@ pub enum RemovalReason {
     OlderFormat,
     /// A count table whose bound artifacts are all removed by this run.
     TableOfRemoved,
-    /// A realization an earlier `corpus prune --execute` renamed for deletion
-    /// and did not finish deleting, as `lingrep.disk/v1` reports it.
+    /// A realization or count table an earlier `corpus prune --execute`
+    /// renamed for deletion and did not finish deleting, as
+    /// `lingrep.disk/v1` reports it.
     InterruptedPrune,
 }
 

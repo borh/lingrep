@@ -425,30 +425,67 @@ const PRUNE_MARKER: &str = ".pruning-";
 #[derive(Clone, Debug)]
 pub struct PruneLeftover {
     pub path: PathBuf,
-    /// The canonical artifact name the directory had before the rename.
+    /// The name the directory had before the rename.
     pub published_name: String,
+    pub kind: PruneLeftoverKind,
+}
+
+/// What a [`PruneLeftover`] was before the rename, read from its name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PruneLeftoverKind {
+    /// A prepared artifact: the published name is a canonical artifact name.
+    Realization,
+    /// A count table: any other published name.
+    CountTable,
+}
+
+impl PruneLeftover {
+    /// The entries that are not components of what it was: for a
+    /// [`PruneLeftoverKind::Realization`], [`foreign_entries`]; for a
+    /// [`PruneLeftoverKind::CountTable`],
+    /// [`crate::CountTable::foreign_entries`].
+    pub fn foreign_entries(&self) -> Result<Vec<String>, CorpusError> {
+        foreign_entries_in(&self.path, self.kind.layout())
+    }
+}
+
+impl PruneLeftoverKind {
+    fn layout(self) -> Layout {
+        match self {
+            Self::Realization => ARTIFACT_LAYOUT,
+            Self::CountTable => crate::count_table::TABLE_LAYOUT,
+        }
+    }
+}
+
+/// The name a removal renamed a directory from, when `name` is the hidden
+/// name `.<published name>.pruning-<suffix>` it gives.
+pub(crate) fn pruned_name(name: &str) -> Option<&str> {
+    let (published, _) = name.strip_prefix('.')?.rsplit_once(PRUNE_MARKER)?;
+    (!published.is_empty() && !published.starts_with('.')).then_some(published)
 }
 
 /// Lists the [`PruneLeftover`]s immediately in `dir`, in bytewise path order:
-/// directories, not symbolic links, named `.<artifact name>.pruning-<suffix>`
-/// for a canonical artifact name.
+/// directories, not symbolic links, named `.<published name>.pruning-<suffix>`
+/// for a published name that does not start with `.`.
 pub fn prune_leftovers(dir: &Path) -> std::io::Result<Vec<PruneLeftover>> {
     let mut found = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        let Some(published_name) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.strip_prefix('.'))
-            .and_then(|rest| rest.rsplit_once(PRUNE_MARKER))
-            .map(|(published, _)| published.to_owned())
-        else {
+        let file_name = entry.file_name();
+        let Some(published_name) = file_name.to_str().and_then(pruned_name) else {
             continue;
         };
-        if parse_artifact_name(&published_name).is_some() && entry.file_type()?.is_dir() {
+        if entry.file_type()?.is_dir() {
+            let kind = if parse_artifact_name(published_name).is_some() {
+                PruneLeftoverKind::Realization
+            } else {
+                PruneLeftoverKind::CountTable
+            };
             found.push(PruneLeftover {
                 path: entry.path(),
-                published_name,
+                published_name: published_name.to_owned(),
+                kind,
             });
         }
     }
@@ -460,14 +497,15 @@ pub fn prune_leftovers(dir: &Path) -> std::io::Result<Vec<PruneLeftover>> {
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link with a name [`prune_leftovers`] reports, and it has no
-/// [`foreign_entries`].
+/// [`PruneLeftover::foreign_entries`].
 pub fn finish_prune_leftover(path: &Path) -> Result<u64, CorpusError> {
-    let recognised = prune_leftovers(containing_directory(path))
-        .is_ok_and(|found| found.iter().any(|leftover| leftover.path == path));
-    if !recognised {
+    let leftover = prune_leftovers(containing_directory(path))
+        .ok()
+        .and_then(|found| found.into_iter().find(|leftover| leftover.path == path));
+    let Some(leftover) = leftover else {
         return Err(cannot_delete(path, "not an interrupted prune"));
-    }
-    delete_renamed(path, ARTIFACT_LAYOUT)
+    };
+    delete_renamed(path, leftover.kind.layout())
 }
 
 pub(crate) fn cannot_delete(path: &Path, reason: &str) -> CorpusError {
