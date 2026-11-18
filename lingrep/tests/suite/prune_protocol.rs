@@ -813,3 +813,151 @@ fn realizations_of_a_missing_source_are_kept_by_default() {
     );
     assert!(fixture.current.exists());
 }
+
+/// The hidden directories in `directory` whose names mark an interrupted
+/// prune.
+fn pruning_leftovers(directory: &Path) -> Vec<PathBuf> {
+    let mut found = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with('.') && name.contains(".pruning-"))
+        })
+        .collect::<Vec<_>>();
+    found.sort();
+    found
+}
+
+fn prune_command(fixture: &crate::disk_protocol::Siblings) -> std::process::Output {
+    lingrep()
+        .args(["--json", "corpus", "prune", "--execute", "--dict-path"])
+        .arg(fixture.dictionary.path())
+        .arg("--source")
+        .arg(&fixture.source)
+        .output()
+        .unwrap()
+}
+
+/// A parent directory that cannot be written fails the prune before any
+/// realization changes.
+#[cfg(unix)]
+#[test]
+fn a_read_only_parent_fails_before_anything_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let before = crate::disk_protocol::tree_listing(directory);
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = prune_command(&fixture);
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!failed.status.success(), "{failed:?}");
+    assert_eq!(crate::disk_protocol::tree_listing(directory), before);
+}
+
+/// A realization whose own directory cannot be written is renamed to a hidden
+/// name before its deletion fails. `corpus build` then publishes a new copy
+/// beside it, `corpus disk` reports the hidden directory as an interrupted
+/// prune, and once the directory is writable the next prune deletes it.
+#[cfg(unix)]
+#[test]
+fn a_read_only_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let analyzer = fixture.other_analyzer.clone();
+    fs::set_permissions(&analyzer, fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = prune_command(&fixture);
+    assert!(!failed.status.success(), "{failed:?}");
+    let leftovers = pruning_leftovers(directory);
+    assert_eq!(leftovers.len(), 1, "{failed:?}");
+    let leftover = leftovers[0].clone();
+    assert!(!analyzer.exists(), "the canonical name is free");
+    lingrep_corpus::CorpusArtifact::open(&leftover).unwrap();
+
+    let again = prune_command(&fixture);
+    assert!(
+        !again.status.success(),
+        "the leftover still cannot be deleted"
+    );
+    assert_eq!(pruning_leftovers(directory), std::slice::from_ref(&leftover));
+
+    let rebuilt =
+        crate::disk_protocol::build(&fixture.dictionary, &fixture.source, &["--profile", "text"]);
+    assert_eq!(rebuilt, analyzer, "corpus build ignores the leftover");
+    let disk = run_json(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let reported = of_type(&disk, "leftover");
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(reported[0]["status"], "interrupted_prune");
+    assert_eq!(reported[0]["pruning"], path_string(&leftover));
+
+    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o755)).unwrap();
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        of_type(&records, "removal")
+            .iter()
+            .map(|record| (
+                record["path"].as_str().unwrap().to_owned(),
+                record["reason"].as_str().unwrap().to_owned()
+            ))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            (path_string(&leftover), "interrupted_prune".to_owned()),
+            (path_string(&analyzer), "superseded".to_owned()),
+        ])
+    );
+    assert!(pruning_leftovers(directory).is_empty());
+    assert!(fixture.current.exists() && fixture.other_reader.exists());
+}
+
+/// A prune killed partway through a deletion leaves a hidden, partly deleted
+/// directory. `corpus build` ignores it, `corpus disk` reports it, and the
+/// next prune deletes it.
+#[test]
+fn an_interrupted_prune_is_ignored_by_build_and_finished_by_the_next_prune() {
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let name = fixture
+        .other_analyzer
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let leftover = directory.join(format!(".{name}.pruning-1-0"));
+    fs::rename(&fixture.other_analyzer, &leftover).unwrap();
+    fs::remove_file(leftover.join("tokens.v1.zst")).unwrap();
+
+    let rebuilt =
+        crate::disk_protocol::build(&fixture.dictionary, &fixture.source, &["--profile", "text"]);
+    assert_eq!(rebuilt, fixture.other_analyzer);
+    assert!(leftover.exists(), "corpus build leaves it");
+
+    let disk = run_json(&["corpus".as_ref(), "disk".as_ref(), directory.as_os_str()]);
+    let reported = of_type(&disk, "leftover");
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(reported[0]["status"], "interrupted_prune");
+    assert_eq!(reported[0]["published_name"], name);
+    assert!(
+        of_type(&disk, "realization")
+            .iter()
+            .all(|record| record["path"] != path_string(&leftover))
+    );
+
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([path_string(&leftover), path_string(&fixture.other_analyzer)])
+    );
+    assert!(!leftover.exists() && !fixture.other_analyzer.exists());
+    assert!(fixture.current.exists() && fixture.other_reader.exists());
+}

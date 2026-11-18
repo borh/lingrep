@@ -12,7 +12,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
     json_contract::<PruneEnvelope>(
         super::ContractId::Prune,
         &["corpus prune"],
-        "Superseded and older-format realizations, and their count tables, deleted or planned.",
+        "Superseded and older-format realizations, their count tables, and interrupted prunes, deleted or planned.",
         StreamShape::Phased {
             phases: &[
                 StreamPhase {
@@ -48,7 +48,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "Kept realizations in bytewise path order; removed tables in bytewise path order, then removed realizations in bytewise path order.",
+        "Kept realizations in bytewise path order; removals of interrupted prunes, then of tables, then of realizations, each in bytewise path order.",
         "Entries immediately in the scanned directory at run time.",
         "A closed pipe is a machine-output failure; deletions already made remain made.",
         "0 complete, 1 runtime/output failure, 2 invocation failure or no realization to keep.",
@@ -148,6 +148,9 @@ pub enum RemovalReason {
     OlderFormat,
     /// A count table whose bound artifacts are all removed by this run.
     TableOfRemoved,
+    /// A realization an earlier `corpus prune --execute` renamed for deletion
+    /// and did not finish deleting, as `lingrep.disk/v1` reports it.
+    InterruptedPrune,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

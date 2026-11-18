@@ -562,3 +562,22 @@ fn special_files_with_expected_names_are_skipped_without_opening_them() {
     assert!(canonical.exists() && explicit.exists() && table.exists());
     drop(held);
 }
+
+/// Every path under `directory` with its file type and length, for comparing
+/// a tree before and after a command.
+pub(crate) fn tree_listing(directory: &Path) -> Vec<(PathBuf, bool, u64)> {
+    let mut listing = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(&path).unwrap() {
+            let entry = entry.unwrap();
+            let metadata = fs::symlink_metadata(entry.path()).unwrap();
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            }
+            listing.push((entry.path(), metadata.is_dir(), metadata.len()));
+        }
+    }
+    listing.sort();
+    listing
+}

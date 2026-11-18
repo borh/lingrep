@@ -220,36 +220,32 @@ pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
 /// `source_name`, and it holds a regular `manifest.json` that fails to open
-/// with an error [`is_older_format`] accepts. Symbolic links inside it are
-/// removed, not followed.
+/// with an error [`is_older_format`] accepts. The deletion follows
+/// [`remove_realization`]'s two steps.
 pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, CorpusError> {
-    let reject = |reason: &str| {
-        Err(crate::artifact::invalid_artifact(format!(
-            "cannot delete {}: {reason}",
-            path.display()
-        )))
-    };
     let name = path.file_name().and_then(|name| name.to_str());
     if name
         .and_then(parse_artifact_name)
         .is_none_or(|parsed| parsed.source_name != source_name)
     {
-        return reject("not a canonical artifact name for this source");
+        return Err(cannot_delete(
+            path,
+            "not a canonical artifact name for this source",
+        ));
     }
-    if !fs::symlink_metadata(path)?.is_dir() {
-        return reject("not a directory");
-    }
-    let manifest = path.join(MANIFEST_NAME);
-    if !fs::symlink_metadata(&manifest)?.is_file() {
-        return reject("manifest is not a regular file");
-    }
-    match Manifest::open(&manifest) {
-        Err(error) if is_older_format(&error) => {}
-        _ => return reject("not written in an older format"),
-    }
-    let bytes = artifact_bytes(path)?;
-    fs::remove_dir_all(path)?;
-    Ok(bytes)
+    remove_in_two_steps(path, |at| {
+        if !fs::symlink_metadata(at)?.is_dir() {
+            return Err(cannot_delete(at, "not a directory"));
+        }
+        let manifest = at.join(MANIFEST_NAME);
+        if !fs::symlink_metadata(&manifest)?.is_file() {
+            return Err(cannot_delete(at, "manifest is not a regular file"));
+        }
+        match Manifest::open(&manifest) {
+            Err(error) if is_older_format(&error) => Ok(()),
+            _ => Err(cannot_delete(at, "not written in an older format")),
+        }
+    })
 }
 
 /// Deletes the readable realization of `source_name` at `path` and returns
@@ -260,31 +256,141 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
 /// `source_name` and `expected`, it passes [`CorpusArtifact::open`], and it
 /// records `expected`. Choosing which realization is superseded is the
 /// caller's; this checks only that `path` is still the one it chose.
+///
+/// The deletion has two steps. The directory is first renamed, without
+/// replacing anything, to a hidden name in the same directory that
+/// [`prune_leftovers`] reports, so a parent that cannot be written fails
+/// before anything changes. It is checked again under that name and then
+/// deleted. A deletion that fails or is interrupted after the rename leaves
+/// only that hidden name, which `corpus build` does not read and
+/// [`finish_prune_leftover`] deletes.
 pub fn remove_realization(
     path: &Path,
     source_name: &str,
     expected: &AnalysisIdentity,
 ) -> Result<u64, CorpusError> {
-    let reject = |reason: &str| {
-        Err(crate::artifact::invalid_artifact(format!(
-            "cannot delete {}: {reason}",
-            path.display()
-        )))
-    };
     let name = path.file_name().and_then(|name| name.to_str());
     if name.and_then(parse_artifact_name).is_none_or(|parsed| {
         parsed.source_name != source_name || parsed.analysis_identity != *expected
     }) {
-        return reject("not the canonical artifact name of this source and identity");
+        return Err(cannot_delete(
+            path,
+            "not the canonical artifact name of this source and identity",
+        ));
     }
-    if !fs::symlink_metadata(path)?.is_dir() {
-        return reject("not a directory");
+    remove_in_two_steps(path, |at| {
+        if !fs::symlink_metadata(at)?.is_dir() {
+            return Err(cannot_delete(at, "not a directory"));
+        }
+        if *CorpusArtifact::open(at)?.analysis_identity() != *expected {
+            return Err(cannot_delete(
+                at,
+                "its manifest records another analysis identity",
+            ));
+        }
+        Ok(())
+    })
+}
+
+const PRUNE_MARKER: &str = ".pruning-";
+
+/// A directory that a removal renamed for deletion and did not finish
+/// deleting.
+#[derive(Clone, Debug)]
+pub struct PruneLeftover {
+    pub path: PathBuf,
+    /// The canonical artifact name the directory had before the rename.
+    pub published_name: String,
+}
+
+/// Lists the [`PruneLeftover`]s immediately in `dir`, in bytewise path order:
+/// directories, not symbolic links, named `.<artifact name>.pruning-<suffix>`
+/// for a canonical artifact name.
+pub fn prune_leftovers(dir: &Path) -> std::io::Result<Vec<PruneLeftover>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(published_name) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_prefix('.'))
+            .and_then(|rest| rest.rsplit_once(PRUNE_MARKER))
+            .map(|(published, _)| published.to_owned())
+        else {
+            continue;
+        };
+        if parse_artifact_name(&published_name).is_some() && entry.file_type()?.is_dir() {
+            found.push(PruneLeftover {
+                path: entry.path(),
+                published_name,
+            });
+        }
     }
-    if *CorpusArtifact::open(path)?.analysis_identity() != *expected {
-        return reject("its manifest records another analysis identity");
+    found.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(found)
+}
+
+/// Deletes the [`PruneLeftover`] at `path` and returns the bytes freed.
+///
+/// Fails without deleting anything unless `path` is a directory rather than a
+/// symbolic link with a name [`prune_leftovers`] reports.
+pub fn finish_prune_leftover(path: &Path) -> Result<u64, CorpusError> {
+    let recognised = prune_leftovers(containing_directory(path))
+        .is_ok_and(|found| found.iter().any(|leftover| leftover.path == path));
+    if !recognised {
+        return Err(cannot_delete(path, "not an interrupted prune"));
     }
+    delete_renamed(path)
+}
+
+fn cannot_delete(path: &Path, reason: &str) -> CorpusError {
+    crate::artifact::invalid_artifact(format!("cannot delete {}: {reason}", path.display()))
+}
+
+/// Checks `path` with `verify`, renames it to a hidden name beside it,
+/// checks it again under that name, and deletes it.
+fn remove_in_two_steps(
+    path: &Path,
+    verify: impl Fn(&Path) -> Result<(), CorpusError>,
+) -> Result<u64, CorpusError> {
+    verify(path)?;
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err(cannot_delete(path, "no file name"));
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let hidden = containing_directory(path).join(format!(
+        ".{name}{PRUNE_MARKER}{}-{nanos}",
+        std::process::id()
+    ));
+    crate::fs_capability::rename_noreplace(path, &hidden).map_err(|error| {
+        CorpusError::Io(crate::error::io_at(
+            format!("rename '{}' to", path.display()),
+            &hidden,
+            error.kind(),
+            error,
+        ))
+    })?;
+    if let Err(error) = verify(&hidden) {
+        return Err(
+            match crate::fs_capability::rename_noreplace(&hidden, path) {
+                Ok(()) => error,
+                Err(_) => cannot_delete(
+                    &hidden,
+                    &format!("it changed after the scan and stays under this name: {error}"),
+                ),
+            },
+        );
+    }
+    delete_renamed(&hidden)
+}
+
+fn delete_renamed(path: &Path) -> Result<u64, CorpusError> {
     let bytes = artifact_bytes(path)?;
-    fs::remove_dir_all(path)?;
+    fs::remove_dir_all(path).map_err(|error| {
+        CorpusError::Io(crate::error::io_at("delete", path, error.kind(), error))
+    })?;
     Ok(bytes)
 }
 

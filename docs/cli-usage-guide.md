@@ -2219,7 +2219,11 @@ lock records this host and is free, and `unknown` otherwise: the lock file is
 missing or records another host. The next build of the same name on the same
 host removes abandoned leftovers; see the
 [deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
-others.
+others. A leftover is also `interrupted_prune`: a realization that
+`corpus prune --execute` renamed to the hidden name
+`.<artifact name>.pruning-<suffix>` and did not finish deleting, reported
+with that path as `pruning`. `corpus build` does not read it, and the next
+`corpus prune --execute` deletes it.
 
 `--caches` adds the dictionary cache, which holds the decompressed copy of
 each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
@@ -2267,8 +2271,10 @@ replaces it.
 Without `--execute` it deletes nothing and lists each path with its size and
 the total that would be freed. With `--execute` it deletes the same set and
 reports the bytes each deletion freed. It deletes the count tables before the
-realizations they bind, so running it again after an interrupted or failed run
-finishes the cleanup. The stream contract is
+realizations they bind, and renames each realization to a hidden name before
+deleting it, so an interrupted or failed run leaves either the realization
+under its own name or an `interrupted_prune` leftover. Running it again, once
+the cause of a failure is removed, finishes the cleanup. The stream contract is
 `lingrep.prune/v1`, with one `kept` record per superseded or damaged artifact
 it keeps, one `removal` record per path, and a completion record.
 
@@ -2282,11 +2288,14 @@ it satisfies that requirement for its source, and can be repeated.
 It never deletes the current or a kept artifact, an `unclassified`,
 `unreadable`, `misnamed`, `symbolic_link` or `non_canonical_name` entry,
 another source's artifacts when `--source` is given, an entry outside the
-scanned directory, a count table that binds an artifact being kept, or a
+scanned directory, a count table that binds an artifact being kept, or a staging
 leftover. Immediately before each deletion it checks again that the entry is
 a directory, not a symbolic link, with the canonical name and recorded
 identity the scan classified, and that a superseded realization still passes
-structural validation.
+structural validation. It then renames the realization, without replacing
+anything, to a hidden name in the same directory, so a directory that cannot
+be written fails before anything changes; checks it again under that name;
+and deletes it.
 
 Nothing records which artifacts other processes are reading. Before
 `--execute --include-all-superseded`, stop the builds, queries and

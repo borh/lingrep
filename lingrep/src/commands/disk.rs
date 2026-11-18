@@ -18,8 +18,8 @@ use std::time::UNIX_EPOCH;
 use lingrep_corpus::{
     AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
     RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
-    artifact_bytes, is_older_format, parse_artifact_name, recorded_source_identity,
-    staging_leftovers,
+    artifact_bytes, is_older_format, parse_artifact_name, prune_leftovers,
+    recorded_source_identity, staging_leftovers,
 };
 
 use super::CommandOutcome;
@@ -167,6 +167,7 @@ pub(crate) struct LeftoverEntry {
     pub published_name: String,
     pub staging: Option<PathBuf>,
     pub lock: Option<PathBuf>,
+    pub pruning: Option<PathBuf>,
     pub status: LeftoverStatus,
     pub bytes: Option<u64>,
 }
@@ -664,13 +665,18 @@ fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliE
         path: directory.to_path_buf(),
         source: error,
     })?;
-    Ok(found
+    let pruning = prune_leftovers(directory).map_err(|error| CliError::InputIo {
+        path: directory.to_path_buf(),
+        source: error,
+    })?;
+    let in_scope = |published_name: &str| {
+        scope.source.is_none()
+            || parse_artifact_name(published_name)
+                .is_some_and(|parsed| scope.includes(&parsed.source_name))
+    };
+    let mut entries = found
         .into_iter()
-        .filter(|leftover| {
-            scope.source.is_none()
-                || parse_artifact_name(&leftover.published_name)
-                    .is_some_and(|parsed| scope.includes(&parsed.source_name))
-        })
+        .filter(|leftover| in_scope(&leftover.published_name))
         .map(|leftover| {
             let bytes = [leftover.staging.as_deref(), leftover.lock.as_deref()]
                 .into_iter()
@@ -686,10 +692,36 @@ fn leftovers(scope: &Scope, directory: &Path) -> Result<Vec<LeftoverEntry>, CliE
                 published_name: leftover.published_name,
                 staging: leftover.staging,
                 lock: leftover.lock,
+                pruning: None,
                 bytes,
             }
         })
-        .collect())
+        .collect::<Vec<_>>();
+    entries.extend(
+        pruning
+            .into_iter()
+            .filter(|leftover| in_scope(&leftover.published_name))
+            .map(|leftover| LeftoverEntry {
+                status: LeftoverStatus::InterruptedPrune,
+                bytes: artifact_bytes(&leftover.path).ok(),
+                published_name: leftover.published_name,
+                staging: None,
+                lock: None,
+                pruning: Some(leftover.path),
+            }),
+    );
+    entries.sort_by(|left, right| left.path().cmp(&right.path()));
+    Ok(entries)
+}
+
+impl LeftoverEntry {
+    /// The path the leftover is reported under.
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.staging
+            .as_deref()
+            .or(self.lock.as_deref())
+            .or(self.pruning.as_deref())
+    }
 }
 
 fn file_name(path: &Path) -> Option<&str> {
@@ -781,13 +813,10 @@ pub(crate) fn run_to<W: Write>(
             published_name: leftover.published_name.clone(),
             staging: leftover.staging.as_deref().map(display),
             lock: leftover.lock.as_deref().map(display),
+            pruning: leftover.pruning.as_deref().map(display),
             status: leftover.status,
             bytes: leftover.bytes,
-            modified_unix_seconds: leftover
-                .staging
-                .as_deref()
-                .or(leftover.lock.as_deref())
-                .and_then(modified),
+            modified_unix_seconds: leftover.path().and_then(modified),
         })
     }));
     events.extend(caches.into_iter().map(DiskEvent::Cache));
@@ -1028,6 +1057,7 @@ impl Human<'_> {
                     .staging
                     .as_deref()
                     .or(record.lock.as_deref())
+                    .or(record.pruning.as_deref())
                     .map_or_else(String::new, |path| self.short(path))
             ),
             DiskEvent::Cache(record) => {

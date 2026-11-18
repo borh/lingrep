@@ -298,15 +298,21 @@ pub enum TableBinding {
     Unreadable,
 }
 
-/// A staging directory or lock file left by a build that did not publish.
+/// A staging directory or lock file left by a build that did not publish, or
+/// a realization that `corpus prune` renamed for deletion and did not finish
+/// deleting.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskLeftover {
-    /// The name the staging directory would have been published under.
+    /// The name the staging directory would have been published under, or
+    /// the name the pruned realization had.
     pub published_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staging: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock: Option<String>,
+    /// The hidden directory of an `interrupted_prune`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruning: Option<String>,
     pub status: LeftoverStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
@@ -326,6 +332,10 @@ pub enum LeftoverStatus {
     Abandoned,
     /// No lock file, or one recording another or no host name.
     Unknown,
+    /// A realization `corpus prune --execute` renamed to a hidden name and
+    /// did not finish deleting; `corpus build` does not read it, and the next
+    /// `corpus prune --execute` deletes it.
+    InterruptedPrune,
 }
 
 /// One cache entry, reported only when requested.

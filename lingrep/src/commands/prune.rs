@@ -11,14 +11,14 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use lingrep_corpus::{CountTable, remove_older_format, remove_realization};
+use lingrep_corpus::{CountTable, finish_prune_leftover, remove_older_format, remove_realization};
 
 use super::CommandOutcome;
 use super::disk::{self, CurrentSelection, RealizationEntry, Scope, TableEntry, display};
 use crate::cli::{CorpusPruneArgs, ExecutionCliConfig};
 use crate::error::CliError;
 use crate::presentation::OutputMode;
-use crate::protocol::disk::{PruneKeep, RealizationStatus, TableBinding};
+use crate::protocol::disk::{LeftoverStatus, PruneKeep, RealizationStatus, TableBinding};
 use crate::protocol::prune::{
     PruneComplete, PruneEnvelope, PruneEvent, PruneKept, PruneRemoval, PruneRun, RemovalReason,
 };
@@ -36,6 +36,8 @@ pub fn run(
 }
 
 enum Planned<'a> {
+    /// The hidden directory of an interrupted prune, and its size.
+    Leftover(&'a Path, Option<u64>),
     Realization(&'a RealizationEntry),
     Table(&'a TableEntry),
 }
@@ -132,8 +134,14 @@ pub(crate) fn run_to<W: Write>(
                 .iter()
                 .all(|artifact| removed_paths.contains(artifact))
     });
-    let plan = tables
-        .map(Planned::Table)
+    let interrupted = scan.leftovers.iter().filter_map(|leftover| {
+        (leftover.status == LeftoverStatus::InterruptedPrune)
+            .then_some(leftover.pruning.as_deref())
+            .flatten()
+            .map(|path| Planned::Leftover(path, leftover.bytes))
+    });
+    let plan = interrupted
+        .chain(tables.map(Planned::Table))
         .chain(removed.iter().map(|entry| Planned::Realization(entry)))
         .collect::<Vec<_>>();
 
@@ -178,7 +186,7 @@ pub(crate) fn run_to<W: Write>(
     for planned in &plan {
         let (path, reason, measured, differences) = match planned {
             Planned::Realization(entry) => (
-                &entry.path,
+                entry.path.as_path(),
                 if entry.status == RealizationStatus::OlderFormat {
                     RemovalReason::OlderFormat
                 } else {
@@ -188,11 +196,14 @@ pub(crate) fn run_to<W: Write>(
                 entry.differences.clone(),
             ),
             Planned::Table(table) => (
-                &table.path,
+                table.path.as_path(),
                 RemovalReason::TableOfRemoved,
                 table.bytes,
                 Vec::new(),
             ),
+            Planned::Leftover(path, bytes) => {
+                (*path, RemovalReason::InterruptedPrune, *bytes, Vec::new())
+            }
         };
         let measured = measured.unwrap_or_default();
         expected += measured;
@@ -264,6 +275,9 @@ fn delete(planned: &Planned<'_>) -> Result<u64, String> {
                 }
                 _ => Err("not a removable realization".into()),
             }
+        }
+        Planned::Leftover(path, _) => {
+            finish_prune_leftover(path).map_err(|error| error.to_string())
         }
         Planned::Table(table) => CountTable::remove(
             &table.path,
