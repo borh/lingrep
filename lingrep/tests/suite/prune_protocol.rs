@@ -577,3 +577,49 @@ fn a_table_bound_to_a_retained_explicit_output_is_kept() {
     assert!(explicit.exists() && table.exists(), "{records:?}");
     crate::support::assert_success(&read_table(&table, &explicit));
 }
+
+/// A prune stopped by a deletion error leaves a state that a retry finishes:
+/// each table bound only to a planned removal is deleted, and a table whose
+/// binding was already absent is kept.
+#[cfg(unix)]
+#[test]
+fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let failing = directory.join("a.lingtable");
+    let table = directory.join("b.lingtable");
+    write_table(&fixture.other_analyzer, &failing);
+    write_table(&fixture.other_analyzer, &table);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let moved = elsewhere.path().join("moved.lingcorpus");
+    fs::rename(&fixture.other_reader, &moved).unwrap();
+    let absent = directory.join("absent.lingtable");
+    write_table(&moved, &absent);
+    // A file in a read-only directory cannot be unlinked, so deleting the
+    // table that holds it fails.
+    let locked = failing.join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("file"), b"x").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+    let prune = || {
+        lingrep()
+            .args(["--json", "corpus", "prune", "--execute", "--dict-path"])
+            .arg(fixture.dictionary.path())
+            .arg("--source")
+            .arg(&fixture.source)
+            .output()
+            .unwrap()
+    };
+    let failed = prune();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(!failed.status.success(), "{failed:?}");
+
+    crate::support::assert_success(&prune());
+    assert!(!fixture.other_analyzer.exists());
+    assert!(!table.exists(), "the retry deletes the planned table");
+    assert!(absent.exists(), "a table bound to nothing here is kept");
+    assert!(fixture.current.exists());
+}

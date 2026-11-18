@@ -48,7 +48,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "Kept and removed realizations in bytewise path order, then tables in bytewise path order.",
+        "Kept realizations in bytewise path order; removed tables in bytewise path order, then removed realizations in bytewise path order.",
         "Entries immediately in the scanned directory at run time.",
         "A closed pipe is a machine-output failure; deletions already made remain made.",
         "0 complete, 1 runtime/output failure, 2 invocation failure or no realization to keep.",

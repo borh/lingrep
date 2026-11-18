@@ -130,10 +130,9 @@ pub(crate) fn run_to<W: Write>(
                 .iter()
                 .all(|artifact| removed_paths.contains(artifact))
     });
-    let plan = removed
-        .iter()
-        .map(|entry| Planned::Realization(entry))
-        .chain(tables.map(Planned::Table))
+    let plan = tables
+        .map(Planned::Table)
+        .chain(removed.iter().map(|entry| Planned::Realization(entry)))
         .collect::<Vec<_>>();
 
     let human = Human {

@@ -2256,7 +2256,9 @@ another trust class is not one `corpus build` produces, so no local rebuild
 replaces it.
 Without `--execute` it deletes nothing and lists each path with its size and
 the total that would be freed. With `--execute` it deletes the same set and
-reports the bytes each deletion freed. The stream contract is
+reports the bytes each deletion freed. It deletes the count tables before the
+realizations they bind, so running it again after an interrupted or failed run
+finishes the cleanup. The stream contract is
 `lingrep.prune/v1`, with one `kept` record per superseded or damaged artifact
 it keeps, one `removal` record per path, and a completion record.
 
