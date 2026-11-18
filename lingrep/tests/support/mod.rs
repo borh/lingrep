@@ -44,10 +44,13 @@ pub fn lingrep() -> assert_cmd::Command {
 /// belong on the locked constructor.
 #[allow(dead_code)]
 pub fn lingrep_without_dictionary() -> assert_cmd::Command {
-    assert_cmd::cargo::cargo_bin_cmd!("ling")
+    assert_cmd::Command::from_std(under_open_file_limit(lingrep_binary_path()))
 }
 
 /// Resolve the unwrapped package binary for shell-completion runtimes.
+///
+/// A test that spawns this path, or a shell or script that runs it, starts that
+/// process through [`under_open_file_limit`].
 #[allow(dead_code)]
 pub fn lingrep_binary_path() -> PathBuf {
     let binary = assert_cmd::cargo::cargo_bin_cmd!("ling");
@@ -60,7 +63,7 @@ pub fn lingrep_binary_path() -> PathBuf {
 /// load the isolated completion-test configuration.
 #[allow(dead_code)]
 pub fn shell_without_lingrep_binary_env(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut command = Command::new(program);
+    let mut command = under_open_file_limit(program);
     command.env_remove("CARGO_BIN_EXE_ling");
     command
 }
@@ -68,8 +71,11 @@ pub fn shell_without_lingrep_binary_env(program: impl AsRef<std::ffi::OsStr>) ->
 /// Construct the package binary for tests that need a live child process.
 #[allow(dead_code)]
 pub fn lingrep_std() -> Command {
-    let binary = assert_cmd::cargo::cargo_bin_cmd!("ling");
-    let binary_path = PathBuf::from(binary.get_program());
+    locked_lingrep(OpenFileCeiling::Raisable)
+}
+
+fn locked_lingrep(ceiling: OpenFileCeiling) -> Command {
+    let binary_path = lingrep_binary_path();
     let lock_path = binary_path.with_extension("integration-test.lock");
 
     // A dictionary-backed ling process can consume several GiB. Libtest
@@ -82,7 +88,113 @@ pub fn lingrep_std() -> Command {
         .args(["--exclusive", "--no-fork"])
         .arg(lock_path)
         .arg(binary_path);
+    limit_open_files(&mut command, ceiling);
     command
+}
+
+/// The soft open-file limit of a macOS login session (`launchctl limit
+/// maxfiles`), under which every `ling` these tests launch starts.
+#[cfg(unix)]
+const OPEN_FILE_LIMIT: libc::rlim_t = 256;
+
+#[derive(Clone, Copy)]
+enum OpenFileCeiling {
+    /// Lower only the soft limit, as macOS does; `ling` may raise it to the
+    /// inherited hard limit.
+    Raisable,
+    /// Lower the hard limit too, so `ling` cannot raise the soft limit.
+    Fixed,
+}
+
+/// `program`, which runs with at most [`OPEN_FILE_LIMIT`] open files, as does
+/// every `ling` it starts; the hard limit is inherited unchanged.
+#[allow(dead_code)]
+pub fn under_open_file_limit(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    limit_open_files(&mut command, OpenFileCeiling::Raisable);
+    command
+}
+
+#[cfg(unix)]
+fn limit_open_files(command: &mut Command, ceiling: OpenFileCeiling) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `getrlimit` and `setrlimit` are async-signal-safe, and the
+    // closure touches no state shared with the parent.
+    unsafe {
+        command.pre_exec(move || {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            limit.rlim_cur = limit.rlim_cur.min(OPEN_FILE_LIMIT);
+            if matches!(ceiling, OpenFileCeiling::Fixed) {
+                limit.rlim_max = limit.rlim_max.min(OPEN_FILE_LIMIT);
+            }
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn limit_open_files(_command: &mut Command, _ceiling: OpenFileCeiling) {}
+
+/// Restore the test process's own open-file limits in `command`, for a test
+/// whose `ling` legitimately needs more than [`OPEN_FILE_LIMIT`] files.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn without_open_file_limit(command: &mut Command) -> &mut Command {
+    use std::os::unix::process::CommandExt;
+
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid `rlimit` for `getrlimit` to fill.
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) },
+        0
+    );
+    // SAFETY: `setrlimit` is async-signal-safe, and `limit` is a copy.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    command
+}
+
+/// The same constructors with the hard open-file limit also lowered to
+/// [`OPEN_FILE_LIMIT`], so `ling` cannot raise its soft limit.
+#[allow(dead_code)]
+pub mod hard_open_file_limit {
+    use super::{OpenFileCeiling, limit_open_files, lingrep_binary_path, locked_lingrep};
+    use std::process::Command;
+
+    pub fn lingrep() -> assert_cmd::Command {
+        assert_cmd::Command::from_std(lingrep_std())
+    }
+
+    pub fn lingrep_without_dictionary() -> assert_cmd::Command {
+        let mut command = Command::new(lingrep_binary_path());
+        limit_open_files(&mut command, OpenFileCeiling::Fixed);
+        assert_cmd::Command::from_std(command)
+    }
+
+    pub fn lingrep_std() -> Command {
+        locked_lingrep(OpenFileCeiling::Fixed)
+    }
 }
 
 /// Whether the `script(1)` on PATH is util-linux's rather than BSD's.
@@ -114,7 +226,7 @@ fn script_is_util_linux() -> bool {
 #[cfg(unix)]
 #[allow(dead_code)]
 pub fn pty_script_command(invocation: &str) -> Command {
-    let mut command = Command::new("script");
+    let mut command = under_open_file_limit("script");
     if script_is_util_linux() {
         command.args(["-qec", invocation, "/dev/null"]);
     } else {
@@ -516,13 +628,14 @@ pub fn serve(
     dictionary: &Path,
     extra: &[OsString],
 ) -> Result<Server, (Option<i32>, String)> {
-    let mut command = Command::new(lingrep_binary_path());
+    let mut command = under_open_file_limit(lingrep_binary_path());
     command.arg("serve").arg("--dict-path").arg(dictionary);
     serve_command(scratch, command, extra)
 }
 
-/// The supplied command must invoke `ling serve`; this helper adds a loopback
-/// host and an available port.
+/// The supplied command must invoke `ling serve`, constructed through
+/// [`under_open_file_limit`]; this helper adds a loopback host and an available
+/// port.
 pub fn serve_command(
     scratch: &Path,
     mut command: Command,

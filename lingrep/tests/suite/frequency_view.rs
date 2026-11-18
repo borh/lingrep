@@ -23,7 +23,9 @@ use lingrep_core::testing::MiniDictionary;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use crate::support::{Server, assert_success, get, lingrep, lingrep_binary_path, parse_jsonl};
+use crate::support::{
+    Server, assert_success, get, lingrep, lingrep_binary_path, parse_jsonl, under_open_file_limit,
+};
 
 const CATALOG: &str = "cat := [text=猫].\n\
     key: [text]\n\
@@ -786,7 +788,7 @@ fn the_shown_command_reproduces_the_rows() {
     .collect::<Conditions>();
     let reply = answer(&server, "word", &conditions, "count", "");
     let clause = reply["clause"].as_str().unwrap();
-    let output = Command::new("sh")
+    let output = under_open_file_limit("sh")
         .args([
             "-c",
             &format!(
@@ -887,7 +889,7 @@ fn exact_key_fields_select_a_subset_whose_total_and_command_match_ling_table() {
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     assert_eq!(page["rows"][0]["rank"], 2);
 
-    let output = Command::new("sh")
+    let output = under_open_file_limit("sh")
         .args([
             "-c",
             &format!(
@@ -1024,7 +1026,7 @@ fn copied_command_preserves_shell_metacharacters_in_filenames() {
             &catalog
         ]
     );
-    let executed = Command::new("sh")
+    let executed = under_open_file_limit("sh")
         .args([
             "-c",
             &format!("ling() {{ \"$LINGREP_BINARY\" --json \"$@\"; }}\n{command}"),
@@ -1761,7 +1763,7 @@ fn shown_lines_command(
     );
     let command = reply["command"].as_str().unwrap();
     assert!(command.starts_with("ling --json matches "), "{command}");
-    let output = Command::new("sh")
+    let output = under_open_file_limit("sh")
         .args([
             "-c",
             &format!(

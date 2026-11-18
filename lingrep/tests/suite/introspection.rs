@@ -870,19 +870,20 @@ fn describe_lists_json_exactly_for_commands_that_accept_json() {
             );
         }
         assert_eq!(parses(&argv), Ok(()), "ling {argv:?}");
-        let mut child = std::process::Command::new(crate::support::lingrep_binary_path())
-            .args(&argv)
-            .current_dir(scratch.path())
-            .env("HOME", scratch.path())
-            .env("XDG_DATA_HOME", scratch.path())
-            .env_remove("LINGREP_DICTIONARY_PATH")
-            .env("HTTPS_PROXY", "http://127.0.0.1:9")
-            .env("HTTP_PROXY", "http://127.0.0.1:9")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child =
+            crate::support::under_open_file_limit(crate::support::lingrep_binary_path())
+                .args(&argv)
+                .current_dir(scratch.path())
+                .env("HOME", scratch.path())
+                .env("XDG_DATA_HOME", scratch.path())
+                .env_remove("LINGREP_DICTIONARY_PATH")
+                .env("HTTPS_PROXY", "http://127.0.0.1:9")
+                .env("HTTP_PROXY", "http://127.0.0.1:9")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
         let deadline = Instant::now() + Duration::from_secs(60);
         while child.try_wait().unwrap().is_none() {
             assert!(Instant::now() < deadline, "ling {argv:?} did not exit");

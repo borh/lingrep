@@ -508,7 +508,8 @@ fn a_signal_stops_table_and_contrast_without_output() {
             let temporary = scratch.path().join("tmp");
             fs::create_dir(&temporary).unwrap();
 
-            let mut invocation = std::process::Command::new(crate::support::lingrep_binary_path());
+            let mut invocation =
+                crate::support::under_open_file_limit(crate::support::lingrep_binary_path());
             invocation.args(["--json", command]);
             if command == "table" {
                 invocation.arg(&fixture.table);
@@ -548,8 +549,8 @@ fn a_signal_stops_table_and_contrast_without_output() {
 
 #[cfg(feature = "web")]
 mod served {
+    use crate::support::under_open_file_limit;
     use std::ffi::OsString;
-    use std::process::Command;
 
     use serde_json::Value;
 
@@ -639,7 +640,7 @@ mod served {
             };
             assert_eq!(reply["where"]["clause"], clause(w).unwrap_or(""));
 
-            let output = Command::new("sh")
+            let output = under_open_file_limit("sh")
                 .args([
                     "-c",
                     &format!(

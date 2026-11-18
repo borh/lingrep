@@ -248,7 +248,7 @@ fn catalog_diff_compares_published_assignments_over_both_catalogs_examples() {
     )
     .unwrap();
     let dictionary = lingrep_core::testing::MiniDictionary::new();
-    let output = std::process::Command::new("python3")
+    let output = crate::support::under_open_file_limit("python3")
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/catalog_diff.py"))
         .arg(&before)
         .arg(&after)
@@ -290,7 +290,7 @@ fn catalog_diff_reports_prepared_corpus_differences_and_refuses_failed_runs() {
         crate::support::build_single_sentence_artifact(&artifact, "猫", &[token]),
     );
     let run = |source: &std::path::Path| {
-        std::process::Command::new("python3")
+        crate::support::under_open_file_limit("python3")
             .arg(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/catalog_diff.py"),
             )

@@ -1524,7 +1524,8 @@ fn serve_dictionary_falls_back_to_the_environment_then_the_installed_default() {
     let dictionary = MiniDictionary::new();
     let data_home = directory.path().join("data");
     let serve = |environment: Option<&Path>| {
-        let mut command = std::process::Command::new(crate::support::lingrep_binary_path());
+        let mut command =
+            crate::support::under_open_file_limit(crate::support::lingrep_binary_path());
         command.arg("serve").env("XDG_DATA_HOME", &data_home);
         match environment {
             Some(path) => command.env("LINGREP_DICTIONARY_PATH", path),
@@ -1577,7 +1578,7 @@ fn serve_starts_over_prepared_corpora_without_a_dictionary() {
         .unwrap();
     crate::support::assert_success(&build);
 
-    let mut command = std::process::Command::new(crate::support::lingrep_binary_path());
+    let mut command = crate::support::under_open_file_limit(crate::support::lingrep_binary_path());
     command
         .arg("serve")
         .env_remove("LINGREP_DICTIONARY_PATH")

@@ -9,7 +9,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
-pattern='cargo_bin(_cmd)?!?[[:space:]]*\([[:space:]]*"ling"|CARGO_BIN_EXE_ling|Command::new[[:space:]]*\([^)]*"ling"|target/(debug|release)/ling'
+pattern='cargo_bin(_cmd)?!?[[:space:]]*\([[:space:]]*"ling"|CARGO_BIN_EXE_ling|Command::new[[:space:]]*\([^)]*"ling"|target/(debug|release)/ling|Command::new[[:space:]]*\([^)]*lingrep_binary_path'
 
 if bypasses=$(rg -n --glob '*.rs' --glob '!**/support/mod.rs' "$pattern" lingrep/tests); then
     echo "ling integration tests must launch the executable through tests/support" >&2
