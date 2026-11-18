@@ -68,7 +68,7 @@ jobs:
   macos:
     name: Build and package (Apple silicon)
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
@@ -114,9 +114,22 @@ jobs:
             --skip terminal_safety::a_build_warning_written_during_transient_status_starts_on_an_erased_line \
             --skip terminal_safety::progress_output_follows_mode_format_delivery_and_terminals_without_changing_stdout
 
+      # The scenario's JSONL export is about ten times slower in a debug
+      # build, so the scenario runs against a release build.
+      - name: Build the release binary
+        run: cargo build --release -p lingrep
+
+      # The Soranoha archives, verified against their pinned SHA-256 values.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/student-scenario
+          key: student-scenario-texts-${{ hashFiles('scripts/student-scenario-texts.sha256') }}
+
       - name: Student scenario
-        timeout-minutes: 30
-        run: python3 scripts/student-scenario.py target/debug/ling "$RUNNER_TEMP/scenario"
+        timeout-minutes: 15
+        run: |
+          python3 scripts/student-scenario.py target/release/ling "$RUNNER_TEMP/scenario" \
+            --downloads "$HOME/.cache/student-scenario"
 
       # Packaging is worth running here because it is the only place the shell
       # script, `ling manpages` and the notices generator execute on a Mac, and
