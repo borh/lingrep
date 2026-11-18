@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run the class 6 workflow against a ling binary at the macOS default open-file limit.
+"""Run the class 6 workflow against a ling binary started with a macOS login shell's soft
+open-file limit, 256, and the inherited hard limit, to which ling raises the soft limit.
 
 usage: student-scenario.py PATH_TO_LING WORK_DIRECTORY [--downloads DIRECTORY]
 

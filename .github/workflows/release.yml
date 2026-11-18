@@ -117,9 +117,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The class workflow at full-novel size against the uploaded archive, at the
-  # open-file limit of a macOS login shell. A failure on any target blocks
-  # publication.
+  # The class workflow at full-novel size against the uploaded archive, started
+  # with a macOS login shell's soft open-file limit, which ling raises to the
+  # hard limit. A failure on any target blocks publication.
   gate:
     name: Student scenario (${{ matrix.target }})
     needs: build

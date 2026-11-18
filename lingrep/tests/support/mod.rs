@@ -94,8 +94,9 @@ fn locked_lingrep() -> Command {
 }
 
 /// The soft open-file limit of a macOS login session (`launchctl limit
-/// maxfiles`). Every `ling` these tests launch starts with it as both its soft
-/// and hard limit, so `ling` cannot raise it.
+/// maxfiles`). Every `ling` these tests launch starts with soft and hard limits
+/// of at most this value, each the smaller of it and the inherited limit, so
+/// `ling` cannot raise its soft limit above it.
 #[cfg(unix)]
 #[allow(dead_code)]
 pub const OPEN_FILE_LIMIT: libc::rlim_t = 256;
