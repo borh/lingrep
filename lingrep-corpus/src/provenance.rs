@@ -3606,7 +3606,21 @@ fn writer_options(path: &Path) -> SqliteConnectOptions {
         .create_if_missing(false)
 }
 
+/// `SQLITE_FULL` (<https://www.sqlite.org/rescode.html#full>).
+const SQLITE_FULL: u32 = 13;
+
 fn writer_database(path: &Path, error: sqlx::Error) -> CorpusError {
+    let full = matches!(&error, sqlx::Error::Database(database)
+        if database.code().and_then(|code| code.parse::<u32>().ok())
+            .is_some_and(|code| code & 0xff == SQLITE_FULL));
+    if full {
+        return CorpusError::Io(crate::error::io_at(
+            "write",
+            path,
+            std::io::ErrorKind::StorageFull,
+            error,
+        ));
+    }
     match database(error) {
         CorpusError::Io(error) => {
             CorpusError::Io(crate::error::io_at("write", path, error.kind(), error))

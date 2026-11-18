@@ -1900,3 +1900,93 @@ async fn a_rejected_provenance_write_is_an_io_error_naming_the_database() {
     );
     assert!(message.contains("readonly database"), "{message}");
 }
+
+fn assert_io_error_naming(error: &CorpusError, path: &Path, reason: &str) {
+    assert_eq!(error.code(), "io");
+    assert!(!error.is_artifact_corruption());
+    let message = error.to_string();
+    assert!(
+        message.contains(&format!("cannot write '{}'", path.display())),
+        "{message}"
+    );
+    assert!(message.contains(reason), "{message}");
+}
+
+#[tokio::test]
+async fn a_full_provenance_database_is_a_storage_full_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let mut writer = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::raw_sql("CREATE TABLE t(x); PRAGMA max_page_count=4;")
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    let full = sqlx::raw_sql("INSERT INTO t VALUES(zeroblob(65536))")
+        .execute(&mut writer)
+        .await
+        .unwrap_err();
+    writer.close().await.unwrap();
+
+    let error = super::writer_database(&path, full);
+
+    assert_io_error_naming(&error, &path, "full");
+    let CorpusError::Io(io) = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(io.kind(), std::io::ErrorKind::StorageFull);
+}
+
+#[tokio::test]
+async fn a_wal_checkpoint_blocked_by_a_reader_is_an_io_error_naming_the_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("provenance.sqlite");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::ZERO);
+    let mut writer = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::raw_sql("CREATE TABLE t(x); INSERT INTO t VALUES(1);")
+        .execute(&mut writer)
+        .await
+        .unwrap();
+    let mut reader = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::raw_sql("BEGIN; SELECT * FROM t;")
+        .execute(&mut reader)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO t VALUES(2)")
+        .execute(&mut writer)
+        .await
+        .unwrap();
+
+    let blocked = crate::fs_capability::leave_wal(writer, &options)
+        .await
+        .unwrap_err();
+    reader.close().await.unwrap();
+
+    assert_io_error_naming(&super::writer_database(&path, blocked), &path, "checkpoint");
+}
+
+#[tokio::test]
+async fn a_journal_mode_that_stays_out_of_delete_is_an_io_error_naming_the_database() {
+    // An in-memory database keeps journal_mode=memory and returns it for
+    // journal_mode=DELETE, as SQLite returns the unchanged mode for any switch
+    // that does not take effect.
+    let options: SqliteConnectOptions = "sqlite::memory:".parse().unwrap();
+    let connection = SqliteConnection::connect_with(&options).await.unwrap();
+    let path = Path::new("provenance.sqlite");
+
+    let unchanged = crate::fs_capability::leave_wal(connection, &options)
+        .await
+        .unwrap_err();
+
+    assert_io_error_naming(
+        &super::writer_database(path, unchanged),
+        path,
+        "journal mode",
+    );
+}

@@ -270,14 +270,24 @@ pub(crate) async fn leave_wal(
         .await?
         .try_get(0)?;
     if busy != 0 {
-        return Err(sqlx::Error::Protocol(
-            "the WAL checkpoint could not complete".into(),
-        ));
+        return Err(sqlx::Error::Io(io::Error::other(
+            "the WAL checkpoint could not complete",
+        )));
     }
     connection.close().await?;
     let mut connection = sqlx::SqliteConnection::connect_with(options).await?;
     connection.execute("PRAGMA locking_mode=EXCLUSIVE").await?;
-    connection.execute("PRAGMA journal_mode=DELETE").await?;
+    // SQLite returns the unchanged journal mode, not an error, when a switch does not take
+    // effect (<https://sqlite.org/pragma.html#pragma_journal_mode>).
+    let mode: String = sqlx::query("PRAGMA journal_mode=DELETE")
+        .fetch_one(&mut connection)
+        .await?
+        .try_get(0)?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(sqlx::Error::Io(io::Error::other(format!(
+            "the journal mode stayed {mode} instead of changing to delete"
+        ))));
+    }
     connection.close().await
 }
 
