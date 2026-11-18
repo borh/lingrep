@@ -18,8 +18,8 @@ use std::time::UNIX_EPOCH;
 use lingrep_corpus::{
     AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
     RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
-    artifact_bytes, foreign_entries, is_older_format, parse_artifact_name, prune_leftovers,
-    recorded_source_identity, staging_leftovers,
+    artifact_bytes, foreign_entries, is_newer_format, is_older_format, parse_artifact_name,
+    prune_leftovers, recorded_source_identity, staging_leftovers,
 };
 
 use super::CommandOutcome;
@@ -31,9 +31,9 @@ use crate::direct_source::encode_digest;
 use crate::error::CliError;
 use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::disk::{
-    CacheKind, DiskCache, DiskComplete, DiskEnvelope, DiskEvent, DiskItem, DiskLeftover,
-    DiskRealization, DiskRun, DiskSource, DiskTable, DiskTotal, LeftoverStatus, PruneKeep,
-    RealizationStatus, SourceCurrent, TableBinding,
+    CacheKind, DiskCache, DiskComplete, DiskEnvelope, DiskEvent, DiskLeftover, DiskRealization,
+    DiskRun, DiskSource, DiskTable, DiskTotal, LeftoverStatus, PruneKeep, RealizationStatus,
+    SourceCurrent, TableBinding,
 };
 use crate::protocol::variants::VariantDifference;
 use crate::protocol::write_jsonl;
@@ -76,11 +76,23 @@ impl Scope {
         }
         let directory =
             directory.ok_or_else(|| CliError::InvalidArgs("pass DIR or --source SOURCE".into()))?;
-        if fs::symlink_metadata(directory).is_ok_and(|metadata| !metadata.is_dir()) {
-            return Err(CliError::InvalidArgs(format!(
-                "{} is not a directory; pass --source to name one source",
-                directory.display()
-            )));
+        // Without trailing separators, so that `link/` names the link
+        // itself rather than the directory it points to.
+        let named = directory.components().collect::<PathBuf>();
+        match fs::symlink_metadata(&named) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CliError::InvalidArgs(format!(
+                    "{} is a symbolic link; pass the directory it points to",
+                    directory.display()
+                )));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(CliError::InvalidArgs(format!(
+                    "{} is not a directory; pass --source to name one source",
+                    directory.display()
+                )));
+            }
+            _ => {}
         }
         Ok(Self {
             directory: directory.to_path_buf(),
@@ -282,7 +294,11 @@ pub(crate) fn scan(
         let (status, differences, kept_by_prune) = if is_current {
             (RealizationStatus::Current, Vec::new(), None)
         } else if validation.is_err() {
-            (RealizationStatus::Unreadable, Vec::new(), None)
+            (
+                RealizationStatus::Damaged,
+                Vec::new(),
+                Some(PruneKeep::Damaged),
+            )
         } else if !realization.is_canonically_named() {
             (RealizationStatus::Misnamed, Vec::new(), None)
         } else if inputs.is_some() {
@@ -338,13 +354,17 @@ pub(crate) fn scan(
             source: Some(parsed.source_name),
             status: if older {
                 RealizationStatus::OlderFormat
+            } else if is_newer_format(error) {
+                RealizationStatus::NewerFormat
             } else {
-                RealizationStatus::Unreadable
+                RealizationStatus::Damaged
             },
             bytes: artifact_bytes(path).ok(),
             recorded: None,
             differences: Vec::new(),
-            kept_by_prune: foreign_keep(&foreign).or(kept_by_prune),
+            kept_by_prune: foreign_keep(&foreign)
+                .or(kept_by_prune)
+                .or((!older && !is_newer_format(error)).then_some(PruneKeep::Damaged)),
             foreign,
             message: Some(error.to_string()),
         });
@@ -818,7 +838,7 @@ pub(crate) fn run_to<W: Write>(
             path: display(&entry.path),
             source: entry.source.clone(),
             status: entry.status,
-            bytes: entry.bytes,
+            apparent_bytes: entry.bytes,
             modified_unix_seconds: modified(&entry.path),
             analysis_identity: recorded.map(|recorded| identity(&recorded.analysis_identity)),
             format_generation: recorded.map(|recorded| recorded.format_generation),
@@ -833,7 +853,7 @@ pub(crate) fn run_to<W: Write>(
     events.extend(scan.tables.iter().map(|table| {
         DiskEvent::Table(DiskTable {
             path: display(&table.path),
-            bytes: table.bytes,
+            apparent_bytes: table.bytes,
             modified_unix_seconds: modified(&table.path),
             analysis_identity: table.analysis_identity.clone(),
             binding: table.binding,
@@ -849,7 +869,7 @@ pub(crate) fn run_to<W: Write>(
             pruning: leftover.pruning.as_deref().map(display),
             kept_by_prune: leftover.kept_by_prune,
             status: leftover.status,
-            bytes: leftover.bytes,
+            apparent_bytes: leftover.bytes,
             modified_unix_seconds: leftover.path().and_then(modified),
         })
     }));
@@ -900,13 +920,13 @@ fn caches(args: &CorpusDiskArgs) -> Vec<DiskCache> {
             kind: CacheKind::DictionaryCopy,
             modified_unix_seconds: modified(&path),
             path: display(&path),
-            bytes: Some(bytes),
+            apparent_bytes: Some(bytes),
             files: 1,
         }));
         caches.push(DiskCache {
             kind: CacheKind::DictionaryCacheOther,
             path: display(directory),
-            bytes: Some(other_bytes),
+            apparent_bytes: Some(other_bytes),
             files: other_files,
             modified_unix_seconds: modified(directory),
         });
@@ -917,7 +937,7 @@ fn caches(args: &CorpusDiskArgs) -> Vec<DiskCache> {
         caches.push(DiskCache {
             kind: CacheKind::Analyzer,
             path: display(directory),
-            bytes,
+            apparent_bytes: bytes,
             files,
             modified_unix_seconds: modified(directory),
         });
@@ -942,34 +962,57 @@ fn count_files(path: &Path) -> io::Result<(u64, u64)> {
 }
 
 fn complete(events: &[DiskEvent]) -> DiskComplete {
-    let mut totals = BTreeMap::<(DiskItem, String), (u64, u64)>::new();
-    let mut add = |item: DiskItem, status: String, bytes: Option<u64>| {
-        let slot = totals.entry((item, status)).or_default();
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum Key {
+        Realization(RealizationStatus),
+        Table(TableBinding),
+        Leftover(LeftoverStatus),
+        Cache(CacheKind),
+    }
+    let mut totals = BTreeMap::<Key, (u64, u64)>::new();
+    let mut add = |key: Key, bytes: Option<u64>| {
+        let slot = totals.entry(key).or_default();
         slot.0 += 1;
         slot.1 += bytes.unwrap_or_default();
     };
     for event in events {
         match event {
             DiskEvent::Realization(record) => {
-                add(DiskItem::Realization, wire(&record.status), record.bytes);
+                add(Key::Realization(record.status), record.apparent_bytes);
             }
-            DiskEvent::Table(record) => add(DiskItem::Table, wire(&record.binding), record.bytes),
+            DiskEvent::Table(record) => add(Key::Table(record.binding), record.apparent_bytes),
             DiskEvent::Leftover(record) => {
-                add(DiskItem::Leftover, wire(&record.status), record.bytes);
+                add(Key::Leftover(record.status), record.apparent_bytes);
             }
-            DiskEvent::Cache(record) => add(DiskItem::Cache, wire(&record.kind), record.bytes),
+            DiskEvent::Cache(record) => add(Key::Cache(record.kind), record.apparent_bytes),
             DiskEvent::Run(_) | DiskEvent::Source(_) | DiskEvent::Complete(_) => {}
         }
     }
     DiskComplete {
-        bytes: totals.values().map(|(_, bytes)| bytes).sum(),
+        apparent_bytes: totals.values().map(|(_, bytes)| bytes).sum(),
         totals: totals
             .into_iter()
-            .map(|((item, status), (count, bytes))| DiskTotal {
-                item,
-                status,
-                count,
-                bytes,
+            .map(|(key, (count, apparent_bytes))| match key {
+                Key::Realization(status) => DiskTotal::Realization {
+                    status,
+                    count,
+                    apparent_bytes,
+                },
+                Key::Table(binding) => DiskTotal::Table {
+                    binding,
+                    count,
+                    apparent_bytes,
+                },
+                Key::Leftover(status) => DiskTotal::Leftover {
+                    status,
+                    count,
+                    apparent_bytes,
+                },
+                Key::Cache(kind) => DiskTotal::Cache {
+                    kind,
+                    count,
+                    apparent_bytes,
+                },
             })
             .collect(),
     }
@@ -1071,7 +1114,7 @@ impl Human<'_> {
                     writer,
                     "  {:<18} {:>10}  {}{detail}",
                     wire(&record.status).replace('_', "-"),
-                    size(record.bytes),
+                    size(record.apparent_bytes),
                     self.short(&record.path)
                 )
             }
@@ -1079,14 +1122,14 @@ impl Human<'_> {
                 writer,
                 "  table {:<12} {:>10}  {}",
                 wire(&record.binding),
-                size(record.bytes),
+                size(record.apparent_bytes),
                 self.short(&record.path)
             ),
             DiskEvent::Leftover(record) => writeln!(
                 writer,
                 "  leftover {:<9} {:>10}  {}",
                 wire(&record.status),
-                size(record.bytes),
+                size(record.apparent_bytes),
                 record
                     .staging
                     .as_deref()
@@ -1102,21 +1145,44 @@ impl Human<'_> {
                     writer,
                     "  cache {:<12} {:>10}  {} ({} file(s))",
                     wire(&record.kind).replace('_', "-"),
-                    size(record.bytes),
+                    size(record.apparent_bytes),
                     record.path,
                     record.files
                 )
             }
             DiskEvent::Complete(complete) => {
-                writeln!(writer, "total {}", human_bytes(complete.bytes))?;
+                writeln!(
+                    writer,
+                    "total {} (apparent size)",
+                    human_bytes(complete.apparent_bytes)
+                )?;
                 for total in &complete.totals {
+                    let (item, status, count, bytes) = match total {
+                        DiskTotal::Realization {
+                            status,
+                            count,
+                            apparent_bytes,
+                        } => ("realization", wire(status), count, apparent_bytes),
+                        DiskTotal::Table {
+                            binding,
+                            count,
+                            apparent_bytes,
+                        } => ("table", wire(binding), count, apparent_bytes),
+                        DiskTotal::Leftover {
+                            status,
+                            count,
+                            apparent_bytes,
+                        } => ("leftover", wire(status), count, apparent_bytes),
+                        DiskTotal::Cache {
+                            kind,
+                            count,
+                            apparent_bytes,
+                        } => ("cache", wire(kind), count, apparent_bytes),
+                    };
                     writeln!(
                         writer,
-                        "  {:<11} {:<22} {:>5}  {:>10}",
-                        wire(&total.item),
-                        total.status,
-                        total.count,
-                        human_bytes(total.bytes)
+                        "  {item:<11} {status:<22} {count:>5}  {:>10}",
+                        human_bytes(*bytes)
                     )?;
                 }
                 Ok(())

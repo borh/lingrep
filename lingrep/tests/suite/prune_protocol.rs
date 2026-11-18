@@ -111,7 +111,7 @@ fn removals(records: &[Value]) -> BTreeMap<String, u64> {
         .map(|record| {
             (
                 record["path"].as_str().unwrap().to_owned(),
-                record["bytes"].as_u64().unwrap(),
+                record["apparent_bytes"].as_u64().unwrap(),
             )
         })
         .collect()
@@ -151,7 +151,7 @@ fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
     assert!(
         of_type(&records, "removal")
             .iter()
-            .all(|record| record["deleted"] == false)
+            .all(|record| record.get("failure").is_none() && record.get("deleted").is_none())
     );
     let kept = of_type(&records, "kept");
     assert_eq!(kept.len(), 1, "{kept:?}");
@@ -161,10 +161,12 @@ fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
     let complete = of_type(&records, "complete")[0];
     assert_eq!(complete["executed"], false);
     assert_eq!(
-        complete["expected_freed_bytes"],
+        complete["planned_apparent_bytes"],
         planned.values().sum::<u64>()
     );
-    assert_eq!(complete["freed_bytes"], 0);
+    assert_eq!(complete["deleted"], 0);
+    assert_eq!(complete["failed"], 0);
+    assert_eq!(complete["deleted_apparent_bytes"], 0);
     for path in planned.keys() {
         assert!(Path::new(path).exists(), "a dry run deletes nothing");
     }
@@ -192,12 +194,20 @@ fn execute_deletes_exactly_the_reported_set() {
     assert!(
         of_type(&records, "removal")
             .iter()
-            .all(|record| record["deleted"] == true)
+            .all(|record| record.get("failure").is_none())
     );
     let complete = of_type(&records, "complete")[0];
     assert_eq!(complete["executed"], true);
-    assert_eq!(complete["freed_bytes"], planned.values().sum::<u64>());
-    assert_eq!(complete["freed_bytes"], complete["expected_freed_bytes"]);
+    assert_eq!(complete["deleted"], planned.len());
+    assert_eq!(complete["failed"], 0);
+    assert_eq!(
+        complete["deleted_apparent_bytes"],
+        planned.values().sum::<u64>()
+    );
+    assert_eq!(
+        complete["deleted_apparent_bytes"],
+        complete["planned_apparent_bytes"]
+    );
     for path in planned.keys() {
         assert!(!Path::new(path).exists(), "{path} is deleted");
     }
@@ -615,7 +625,26 @@ fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
     };
     let failed = prune();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(!failed.status.success(), "{failed:?}");
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let records = crate::support::parse_jsonl(&failed.stdout);
+    let attempted = of_type(&records, "removal");
+    assert_eq!(
+        attempted.len(),
+        1,
+        "a failed deletion ends the removals: {records:?}"
+    );
+    assert_eq!(attempted[0]["path"], path_string(&failing));
+    assert!(
+        attempted[0]["failure"]
+            .as_str()
+            .is_some_and(|failure| !failure.is_empty())
+    );
+    let complete = of_type(&records, "complete");
+    assert_eq!(complete.len(), 1, "the stream completes: {records:?}");
+    assert_eq!(complete[0]["removals"], 3);
+    assert_eq!(complete[0]["deleted"], 0);
+    assert_eq!(complete[0]["failed"], 1);
+    assert!(fixture.other_analyzer.exists() && table.exists());
 
     crate::support::assert_success(&prune());
     assert!(!fixture.other_analyzer.exists());
@@ -871,10 +900,21 @@ fn a_read_only_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
     let analyzer = fixture.other_analyzer.clone();
     fs::set_permissions(&analyzer, fs::Permissions::from_mode(0o555)).unwrap();
     let failed = prune_command(&fixture);
-    assert!(!failed.status.success(), "{failed:?}");
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
     let leftovers = pruning_leftovers(directory);
     assert_eq!(leftovers.len(), 1, "{failed:?}");
     let leftover = leftovers[0].clone();
+    let records = crate::support::parse_jsonl(&failed.stdout);
+    let attempted = of_type(&records, "removal");
+    assert_eq!(attempted.len(), 1, "{records:?}");
+    assert_eq!(attempted[0]["path"], path_string(&analyzer));
+    assert!(
+        attempted[0]["failure"]
+            .as_str()
+            .is_some_and(|failure| failure.contains(leftover.to_str().unwrap())),
+        "the failure names the hidden directory: {records:?}"
+    );
+    assert_eq!(of_type(&records, "complete")[0]["failed"], 1);
     assert!(!analyzer.exists(), "the canonical name is free");
     lingrep_corpus::CorpusArtifact::open(&leftover).unwrap();
 
@@ -1086,4 +1126,46 @@ fn the_removal_primitives_reject_a_directory_with_foreign_entries() {
         crate::disk_protocol::tree_listing(fixture.directory.path()),
         before
     );
+}
+
+/// With the source missing and only older-format artifacts of it left, the
+/// error names the remedies that exist: neither a build nor `--keep` can
+/// anchor it.
+#[test]
+fn a_missing_source_with_only_older_formats_names_the_remedies_that_exist() {
+    let fixture = siblings();
+    let older = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", 1, 0xe1),
+        |m| {
+            m["format_generation"] = 1.into();
+        },
+    );
+    for readable in [
+        &fixture.current,
+        &fixture.other_analyzer,
+        &fixture.other_reader,
+    ] {
+        fs::remove_dir_all(readable).unwrap();
+    }
+    fs::remove_file(&fixture.source).unwrap();
+    let output = lingrep()
+        .args([
+            "--json",
+            "corpus",
+            "prune",
+            "--execute",
+            "--include-all-superseded",
+            "--dict-path",
+        ])
+        .arg(fixture.dictionary.path())
+        .arg("--source")
+        .arg(&fixture.source)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no readable artifact to keep"), "{stderr}");
+    assert!(!stderr.contains("build the current artifact"), "{stderr}");
+    assert!(older.exists());
 }

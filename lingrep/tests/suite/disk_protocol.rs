@@ -218,10 +218,26 @@ fn analysis_inputs_classify_current_and_superseded_with_their_differences() {
     let complete = of_type(&records, "complete")[0];
     let measured: u64 = of_type(&records, "realization")
         .iter()
-        .map(|record| record["bytes"].as_u64().unwrap())
+        .map(|record| record["apparent_bytes"].as_u64().unwrap())
         .sum();
     assert!(measured > 0);
-    assert_eq!(complete["bytes"], measured, "the total sums every item");
+    assert_eq!(
+        complete["apparent_bytes"], measured,
+        "the total sums every item"
+    );
+    assert_eq!(
+        complete["totals"],
+        serde_json::json!([
+            {"item": "realization", "status": "current", "count": 1,
+             "apparent_bytes": of_type(&records, "realization").iter()
+                .find(|record| record["status"] == "current").unwrap()["apparent_bytes"]},
+            {"item": "realization", "status": "superseded", "count": 2,
+             "apparent_bytes": of_type(&records, "realization").iter()
+                .filter(|record| record["status"] == "superseded")
+                .map(|record| record["apparent_bytes"].as_u64().unwrap()).sum::<u64>()},
+        ]),
+        "totals carry the typed status of their item"
+    );
     for path in [
         &fixture.current,
         &fixture.other_analyzer,
@@ -326,6 +342,12 @@ fn entries_beside_the_realizations_are_reported_by_what_they_are() {
         &canonical_name("source.md", generation, 0xa3),
         |_| {},
     );
+    let damaged = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", generation, 0xa6),
+        |_| {},
+    );
+    fs::write(damaged.join("manifest.json"), b"{").unwrap();
     let outside = tempfile::tempdir().unwrap();
     let symlink = fixture
         .directory
@@ -348,7 +370,13 @@ fn entries_beside_the_realizations_are_reported_by_what_they_are() {
         fixture.source.as_os_str(),
     ]);
     assert_eq!(status_of(&records, &older), "older_format");
-    assert_eq!(status_of(&records, &newer), "unreadable");
+    assert_eq!(status_of(&records, &newer), "newer_format");
+    assert_eq!(status_of(&records, &damaged), "damaged");
+    let damaged_record = of_type(&records, "realization")
+        .into_iter()
+        .find(|record| record["path"] == damaged.display().to_string())
+        .unwrap();
+    assert_eq!(damaged_record["kept_by_prune"], "damaged");
     assert_eq!(status_of(&records, &misnamed), "misnamed");
     assert_eq!(status_of(&records, &symlink), "symbolic_link");
     assert_eq!(status_of(&records, &explicit), "non_canonical_name");
@@ -413,7 +441,7 @@ fn count_tables_report_the_status_of_the_artifact_they_bind() {
     );
     assert_eq!(binding(&superseded_table)["binding"], "superseded");
     assert_eq!(binding(&absent_table)["binding"], "absent");
-    assert!(binding(&absent_table)["bytes"].as_u64().unwrap() > 0);
+    assert!(binding(&absent_table)["apparent_bytes"].as_u64().unwrap() > 0);
 }
 
 /// A staging directory with no lock file is reported as a leftover of unknown
@@ -442,7 +470,7 @@ fn staging_leftovers_are_reported_with_their_lock_status() {
     assert_eq!(leftovers.len(), 2, "{leftovers:?}");
     assert_eq!(leftovers[0]["staging"], unlocked.display().to_string());
     assert_eq!(leftovers[0]["status"], "unknown");
-    assert_eq!(leftovers[0]["bytes"], 7);
+    assert_eq!(leftovers[0]["apparent_bytes"], 7);
     assert_eq!(leftovers[1]["lock"], live_lock.display().to_string());
     assert_eq!(leftovers[1]["status"], "live");
     assert!(unlocked.exists(), "the report deletes nothing");
@@ -466,7 +494,7 @@ fn a_named_analyzer_directory_is_reported_with_its_size() {
     let caches = of_type(&records, "cache");
     assert_eq!(caches.len(), 1);
     assert_eq!(caches[0]["kind"], "analyzer");
-    assert_eq!(caches[0]["bytes"], 100);
+    assert_eq!(caches[0]["apparent_bytes"], 100);
     assert_eq!(caches[0]["files"], 1);
 }
 
@@ -541,7 +569,7 @@ fn special_files_with_expected_names_are_skipped_without_opening_them() {
     assert_eq!(leftovers.len(), 1, "{leftovers:?}");
     assert_eq!(leftovers[0]["lock"], live_lock.display().to_string());
     assert_eq!(leftovers[0]["status"], "live");
-    assert_eq!(status_of(&records, &canonical), "unreadable");
+    assert_eq!(status_of(&records, &canonical), "damaged");
 
     let records = run(&[
         "corpus".as_ref(),
@@ -580,4 +608,31 @@ pub(crate) fn tree_listing(directory: &Path) -> Vec<(PathBuf, bool, u64)> {
     }
     listing.sort();
     listing
+}
+
+/// A symbolic link to a directory is rejected as DIR whether or not it is
+/// spelled with a trailing separator, with a message that names the link.
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_is_rejected_as_the_scanned_directory() {
+    let fixture = siblings();
+    let outside = tempfile::tempdir().unwrap();
+    let link = outside.path().join("link");
+    std::os::unix::fs::symlink(fixture.directory.path(), &link).unwrap();
+    for spelling in [link.clone(), link.join("")] {
+        for command in ["disk", "prune"] {
+            let output = lingrep()
+                .args(["corpus", command, "--dict-path"])
+                .arg(fixture.dictionary.path())
+                .arg(&spelling)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2), "{spelling:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("is a symbolic link"),
+                "{spelling:?}: {stderr}"
+            );
+        }
+    }
 }

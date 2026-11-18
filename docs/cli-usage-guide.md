@@ -2169,9 +2169,13 @@ ling --json corpus disk --current --caches corpora/ >> disk-use.jsonl
 ```
 
 `corpus disk DIR` reports what the prepared artifacts, count tables and
-build leftovers immediately in `DIR` occupy. `--source SOURCE` narrows the
+build leftovers immediately in `DIR` occupy. `DIR` is rejected when it is a
+symbolic link, with or without a trailing `/`; pass the directory it points
+to. `--source SOURCE` narrows the
 report to one source and scans the directory beside it, as `corpus variants`
-does. Sizes are the apparent sizes of the files under each entry. The command
+does. Sizes are the apparent sizes of the files under each entry, reported
+as `apparent_bytes`: a file hard-linked into two entries is counted in both,
+and deleting one of them frees no space. The command
 reads directory entries, manifests and count-table headers, and validates each
 readable realization structurally as `corpus inspect` does: component presence
 and lengths, fixed headers and directory checksums, with no token block
@@ -2197,7 +2201,8 @@ Each realization has one status:
 | `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build, and `kept_by_prune` says why the default `corpus prune` keeps it, if it does. |
 | `unclassified` | Readable; no analysis inputs were given. |
 | `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
-| `unreadable` | A newer format, or damaged: its manifest or a component fails the validation `corpus inspect` runs. |
+| `newer_format` | Written in a later format, or with a manifest field this build does not read; a newer `ling` opens it. |
+| `damaged` | Its manifest or a component fails the validation `corpus inspect` runs. `kept_by_prune` is `damaged`. |
 | `misnamed` | Readable, but its name records another identity or trust. `corpus build` does not reuse it. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
 | `non_canonical_name` | A `.lingcorpus` directory with a name `corpus build` does not derive, such as an explicit `--output`. |
@@ -2207,8 +2212,9 @@ A count table binds the analysis identity of the artifact it counts. Its
 `present` when the artifact is present but unclassified or any other entry
 binds it, and `absent` when no artifact in `DIR` records that identity; the
 artifact may exist elsewhere. An artifact binds a table whatever its name,
-including an explicit `--output` and the target of a symbolic link, and an
-unreadable canonical artifact binds the identity its name records.
+including an explicit `--output` and the target of a symbolic link, and a
+`newer_format` or `damaged` canonical artifact binds the identity its name
+records.
 A table whose binding is `superseded` or `absent` is orphaned. Tables are
 found by their `header.json`, whatever their names.
 
@@ -2260,7 +2266,7 @@ Other superseded and older-format realizations are kept, and listed as
 | `other_trust` | trust class | never |
 | `identical_to_current` | nothing, yet `corpus build` would not select it | never |
 | `foreign_entries` | anything; the directory holds an entry that is not a component its manifest lists, a component that is not a regular file, or an entry on another filesystem, or is itself a mount point, and `message` names them | never |
-| `damaged` | anything; its manifest reads but it fails structural validation, and `message` gives the failure | never |
+| `damaged` | anything; it is `damaged`, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
 source into, such as `lingrep-web` with its Markdown reader policy, or a
@@ -2271,15 +2277,18 @@ still analyze the current content, because an earlier `ling` may have derived
 the identity differently, so it is `source_unknown`. An artifact of
 another trust class is not one `corpus build` produces, so no local rebuild
 replaces it.
-Without `--execute` it deletes nothing and lists each path with its size and
-the total that would be freed. With `--execute` it deletes the same set and
-reports the bytes each deletion freed. It deletes the count tables before the
+Without `--execute` it deletes nothing and lists each path with its apparent
+size and the total. With `--execute` it deletes the same set and reports the
+apparent size of each deletion. A deletion that fails ends the run: its
+`removal` record carries `failure`, the completion record counts it as
+`failed`, and the command exits with status 1. It deletes the count tables before the
 realizations they bind, and renames each realization to a hidden name before
 deleting it, so an interrupted or failed run leaves either the realization
 under its own name or an `interrupted_prune` leftover. Running it again, once
 the cause of a failure is removed, finishes the cleanup. The stream contract is
-`lingrep.prune/v1`, with one `kept` record per superseded or damaged artifact
-it keeps, one `removal` record per path, and a completion record.
+`lingrep.prune/v1`, with one `kept` record per superseded, older-format or
+damaged artifact or interrupted prune it keeps, one `removal` record per path
+it deletes or attempts, and a completion record.
 
 `corpus prune` always selects the current realization: omitted analysis
 flags take `corpus build`'s defaults. When a source with something to
@@ -2289,7 +2298,7 @@ nothing. `--keep ARTIFACT` names a readable, undamaged artifact in the directory
 it satisfies that requirement for its source, and can be repeated.
 
 It never deletes the current or a kept artifact, an `unclassified`,
-`unreadable`, `misnamed`, `symbolic_link` or `non_canonical_name` entry,
+`newer_format`, `damaged`, `misnamed`, `symbolic_link` or `non_canonical_name` entry,
 another source's artifacts when `--source` is given, an entry outside the
 scanned directory, a count table that binds an artifact being kept, or a staging
 leftover. Immediately before each deletion it checks again that the entry is

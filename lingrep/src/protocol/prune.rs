@@ -50,8 +50,8 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
         Channel::Stdout,
         "Kept realizations in bytewise path order; removals of interrupted prunes, then of tables, then of realizations, each in bytewise path order.",
         "Entries immediately in the scanned directory at run time.",
-        "A closed pipe is a machine-output failure; deletions already made remain made.",
-        "0 complete, 1 runtime/output failure, 2 invocation failure or no realization to keep.",
+        "A failed deletion ends the removals with its removal record, carrying `failure`, then the complete record; deletions already made remain made. A closed pipe is a machine-output failure.",
+        "0 complete, 1 a deletion failed or a runtime/output failure, 2 invocation failure or no realization to keep.",
         &["corpus prune/dry-run"],
     )
 }
@@ -116,15 +116,17 @@ pub struct PruneKept {
     pub path: String,
     pub reason: PruneKeep,
     pub differences: Vec<VariantDifference>,
+    /// Apparent size of the files under `path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
+    pub apparent_bytes: Option<u64>,
     /// For a `damaged` realization, the validation failure; for
     /// `foreign_entries`, the entries that are not artifact components.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
-/// One entry this run deletes, or would delete without `--execute`.
+/// One entry this run deletes, would delete without `--execute`, or failed
+/// to delete.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneRemoval {
     pub path: String,
@@ -133,10 +135,15 @@ pub struct PruneRemoval {
     /// the current request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<VariantDifference>,
-    /// Without `--execute`, the size measured now; with it, the size the
-    /// deletion freed.
-    pub bytes: u64,
-    pub deleted: bool,
+    /// Apparent size of the files under `path`: measured immediately before
+    /// the deletion with `--execute`, and at scan time otherwise or when the
+    /// deletion failed. A file hard-linked elsewhere is counted although its
+    /// deletion frees no space.
+    pub apparent_bytes: u64,
+    /// With `--execute`, why the deletion failed. It is the last removal
+    /// record; the entry is left as `lingrep.disk/v1` then reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 #[derive(
@@ -158,9 +165,15 @@ pub enum RemovalReason {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneComplete {
     pub executed: bool,
+    /// Removals planned.
     pub removals: u64,
-    /// Bytes the planned removals occupied when the run measured them.
-    pub expected_freed_bytes: u64,
-    /// Bytes the deletions freed; zero without `--execute`.
-    pub freed_bytes: u64,
+    /// Removals deleted; zero without `--execute`.
+    pub deleted: u64,
+    /// Removals whose deletion failed: zero, or one, after which no further
+    /// removal is attempted.
+    pub failed: u64,
+    /// Apparent size of the planned removals when the scan measured them.
+    pub planned_apparent_bytes: u64,
+    /// Apparent size of the deleted removals.
+    pub deleted_apparent_bytes: u64,
 }

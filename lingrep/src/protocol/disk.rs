@@ -154,10 +154,10 @@ pub struct DiskRealization {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     pub status: RealizationStatus,
-    /// Apparent size of the files under `path`; absent when it could not be
-    /// measured.
+    /// Apparent size of the files under `path`, which a hard link shared
+    /// with another entry counts again; absent when it could not be measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
+    pub apparent_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_unix_seconds: Option<u64>,
     /// Recorded in a readable manifest.
@@ -173,8 +173,8 @@ pub struct DiskRealization {
     /// the current request, in a fixed order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<VariantDifference>,
-    /// For a superseded or older-format realization that the default
-    /// `corpus prune` keeps, why it keeps it.
+    /// For a superseded, older-format or damaged realization that the
+    /// default `corpus prune` keeps, why it keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
     /// Why an unreadable entry could not be opened.
@@ -200,8 +200,13 @@ pub enum RealizationStatus {
     /// Written in an earlier artifact generation, manifest schema or
     /// provenance schema than this build reads.
     OlderFormat,
-    /// Cannot be opened for another reason: a newer format, or damage.
-    Unreadable,
+    /// Written in a later artifact generation, manifest schema or provenance
+    /// schema than this build reads, or with a manifest field it does not
+    /// read; a newer `ling` opens it.
+    NewerFormat,
+    /// Cannot be opened for any other reason: its manifest or a component
+    /// fails the validation `corpus inspect` runs.
+    Damaged,
     /// Readable, but its name records a different analysis identity or trust
     /// than its manifest.
     Misnamed,
@@ -247,9 +252,7 @@ pub enum PruneKeep {
     /// filesystem, or is itself a mount point. `corpus prune` never deletes
     /// it.
     ForeignEntries,
-    /// Its manifest is readable but it fails the structural validation
-    /// `corpus inspect` runs; the realization is reported as `unreadable`.
-    /// `corpus prune` never deletes it.
+    /// The realization is `damaged`. `corpus prune` never deletes it.
     Damaged,
 }
 
@@ -269,8 +272,9 @@ impl PruneKeep {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskTable {
     pub path: String,
+    /// Apparent size of the files under `path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
+    pub apparent_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_unix_seconds: Option<u64>,
     /// The analysis identity the table's header binds.
@@ -325,8 +329,9 @@ pub struct DiskLeftover {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
     pub status: LeftoverStatus,
+    /// Apparent size of the files under the reported paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
+    pub apparent_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_unix_seconds: Option<u64>,
 }
@@ -354,9 +359,10 @@ pub enum LeftoverStatus {
 pub struct DiskCache {
     pub kind: CacheKind,
     pub path: String,
+    /// Apparent size of the files counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
-    /// Files counted in `bytes`.
+    pub apparent_bytes: Option<u64>,
+    /// Files counted in `apparent_bytes`.
     pub files: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_unix_seconds: Option<u64>,
@@ -379,29 +385,37 @@ pub enum CacheKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskComplete {
-    /// Count and bytes for each item kind and status present, ordered by
-    /// kind, then status.
+    /// Count and apparent size for each item kind and status present,
+    /// ordered by item, then by status in the order the status types list
+    /// them.
     pub totals: Vec<DiskTotal>,
-    /// Sum of every measured item.
-    pub bytes: u64,
+    /// Sum of every measured item's apparent size.
+    pub apparent_bytes: u64,
 }
 
+/// The items of one kind and status, by the field their own records carry
+/// it in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DiskTotal {
-    pub item: DiskItem,
-    /// The item's status or kind, as its own records spell it.
-    pub status: String,
-    pub count: u64,
-    pub bytes: u64,
-}
-
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum DiskItem {
-    Realization,
-    Table,
-    Leftover,
-    Cache,
+#[serde(tag = "item", rename_all = "snake_case")]
+pub enum DiskTotal {
+    Realization {
+        status: RealizationStatus,
+        count: u64,
+        apparent_bytes: u64,
+    },
+    Table {
+        binding: TableBinding,
+        count: u64,
+        apparent_bytes: u64,
+    },
+    Leftover {
+        status: LeftoverStatus,
+        count: u64,
+        apparent_bytes: u64,
+    },
+    Cache {
+        kind: CacheKind,
+        count: u64,
+        apparent_bytes: u64,
+    },
 }

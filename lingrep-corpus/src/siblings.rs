@@ -198,6 +198,27 @@ pub fn is_older_format(error: &CorpusError) -> bool {
     }
 }
 
+/// Whether a scan diagnostic records an artifact written in a later format
+/// than this build reads: a later artifact generation, manifest schema or
+/// provenance schema, or a manifest field this build does not read.
+#[must_use]
+pub fn is_newer_format(error: &CorpusError) -> bool {
+    match error {
+        CorpusError::UnsupportedArtifactGeneration { generation } => {
+            *generation > crate::CORPUS_ARTIFACT_FORMAT_GENERATION
+        }
+        CorpusError::PreparedArtifactRebuildRequired { version } => {
+            *version > crate::manifest::MANIFEST_SCHEMA_VERSION
+        }
+        CorpusError::UnsupportedSchema { component, version } => {
+            *component == crate::manifest::PROVENANCE_NAME
+                && *version > crate::provenance::SCHEMA_VERSION
+        }
+        CorpusError::UnknownManifestField { .. } => true,
+        _ => false,
+    }
+}
+
 /// The source identity recorded in the manifest of the artifact at `path`,
 /// read without the format checks [`SiblingScan::scan`] applies, or `None`
 /// when the manifest records none in the 64-hex-digit form this build writes.

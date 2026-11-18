@@ -66,17 +66,16 @@ pub(crate) fn run_to<W: Write>(
         .filter(|entry| !kept.contains(&entry.path))
         .filter_map(|entry| {
             let reason = match entry.status {
-                RealizationStatus::Superseded | RealizationStatus::OlderFormat => {
-                    keep_reason(entry)?
-                }
-                RealizationStatus::Unreadable if entry.recorded.is_some() => PruneKeep::Damaged,
+                RealizationStatus::Superseded
+                | RealizationStatus::OlderFormat
+                | RealizationStatus::Damaged => keep_reason(entry)?,
                 _ => return None,
             };
             Some(PruneKept {
                 path: display(&entry.path),
                 reason,
                 differences: entry.differences.clone(),
-                bytes: entry.bytes,
+                apparent_bytes: entry.bytes,
                 message: kept_message(reason, entry.message.as_deref(), &entry.foreign),
             })
         })
@@ -86,7 +85,7 @@ pub(crate) fn run_to<W: Write>(
                 path: display(leftover.pruning.as_deref()?),
                 reason,
                 differences: Vec::new(),
-                bytes: leftover.bytes,
+                apparent_bytes: leftover.bytes,
                 message: kept_message(reason, None, &leftover.foreign),
             })
         }))
@@ -121,21 +120,35 @@ pub(crate) fn run_to<W: Write>(
                     .iter()
                     .any(|entry| entry.source.as_deref() == Some(source.name.as_str()))
         })
-        .map(|source| match &source.current {
-            CurrentSelection::Absent(path) => format!(
-                "{} has no current artifact (corpus build would write {})",
-                source.name,
-                path.display()
-            ),
-            _ => format!(
-                "{} is missing, so no artifact of it is current",
-                source.name
-            ),
+        .map(|source| {
+            let keepable = scan.realizations.iter().any(|entry| {
+                entry.source.as_deref() == Some(source.name.as_str()) && keepable(entry)
+            });
+            let keep = if keepable {
+                ", or name one to keep with --keep ARTIFACT"
+            } else {
+                ""
+            };
+            match &source.current {
+                CurrentSelection::Absent(path) => format!(
+                    "{} has no current artifact; build it with these inputs (corpus build would write {}){keep}",
+                    source.name,
+                    path.display()
+                ),
+                _ if keepable => format!(
+                    "{} is missing, so no artifact of it is current; name one to keep with --keep ARTIFACT",
+                    source.name
+                ),
+                _ => format!(
+                    "{} is missing and has no readable artifact to keep with --keep; restore it and build it, or delete its artifacts yourself",
+                    source.name
+                ),
+            }
         })
         .collect::<Vec<_>>();
     if !unanchored.is_empty() {
         return Err(CliError::InvalidArgs(format!(
-            "nothing was deleted: {}; build the current artifact or name one to keep with --keep ARTIFACT",
+            "nothing was deleted: {}",
             unanchored.join("; ")
         )));
     }
@@ -192,9 +205,13 @@ pub(crate) fn run_to<W: Write>(
         publish(PruneEvent::Kept(kept))?;
     }
 
-    let (mut expected, mut freed) = (0_u64, 0_u64);
+    let planned_apparent_bytes = plan
+        .iter()
+        .map(|planned| planned.measured().unwrap_or_default())
+        .sum();
+    let (mut deleted, mut deleted_apparent_bytes, mut failed) = (0_u64, 0_u64, 0_u64);
     for planned in &plan {
-        let (path, reason, measured, differences) = match planned {
+        let (path, reason, differences) = match planned {
             Planned::Realization(entry) => (
                 entry.path.as_path(),
                 if entry.status == RealizationStatus::OlderFormat {
@@ -202,45 +219,72 @@ pub(crate) fn run_to<W: Write>(
                 } else {
                     RemovalReason::Superseded
                 },
-                entry.bytes,
                 entry.differences.clone(),
             ),
             Planned::Table(table) => (
                 table.path.as_path(),
                 RemovalReason::TableOfRemoved,
-                table.bytes,
                 Vec::new(),
             ),
-            Planned::Leftover(path, bytes) => {
-                (*path, RemovalReason::InterruptedPrune, *bytes, Vec::new())
+            Planned::Leftover(path, _) => (*path, RemovalReason::InterruptedPrune, Vec::new()),
+        };
+        let measured = planned.measured().unwrap_or_default();
+        let (apparent_bytes, failure) = if args.execute {
+            match delete(planned) {
+                Ok(bytes) => {
+                    deleted += 1;
+                    deleted_apparent_bytes += bytes;
+                    (bytes, None)
+                }
+                Err(error) => {
+                    failed += 1;
+                    (measured, Some(error))
+                }
             }
-        };
-        let measured = measured.unwrap_or_default();
-        expected += measured;
-        let bytes = if args.execute {
-            let bytes = delete(planned).map_err(|error| {
-                CliError::Corpus(format!("cannot delete {}: {error}", path.display()))
-            })?;
-            freed += bytes;
-            bytes
         } else {
-            measured
+            (measured, None)
         };
+        let stop = failure.is_some();
         publish(PruneEvent::Removal(PruneRemoval {
             path: display(path),
             reason,
             differences,
-            bytes,
-            deleted: args.execute,
+            apparent_bytes,
+            failure,
         }))?;
+        if stop {
+            break;
+        }
     }
     publish(PruneEvent::Complete(PruneComplete {
         executed: args.execute,
         removals: plan.len() as u64,
-        expected_freed_bytes: expected,
-        freed_bytes: freed,
+        deleted,
+        failed,
+        planned_apparent_bytes,
+        deleted_apparent_bytes,
     }))?;
-    Ok(CommandOutcome::Success)
+    Ok(if failed == 0 {
+        CommandOutcome::Success
+    } else {
+        CommandOutcome::Failure
+    })
+}
+
+impl Planned<'_> {
+    fn measured(&self) -> Option<u64> {
+        match self {
+            Planned::Leftover(_, bytes) => *bytes,
+            Planned::Realization(entry) => entry.bytes,
+            Planned::Table(table) => table.bytes,
+        }
+    }
+}
+
+/// Whether `--keep` can name `entry`: a readable realization that is not
+/// damaged.
+fn keepable(entry: &RealizationEntry) -> bool {
+    entry.recorded.is_some() && entry.status != RealizationStatus::Damaged
 }
 
 /// The `message` of a kept record: the validation failure of a damaged
@@ -267,10 +311,7 @@ fn keep(
     for path in requested {
         let resolved = fs::canonicalize(path).ok();
         let found = realizations.iter().find(|entry| {
-            entry.recorded.is_some()
-                && entry.status != RealizationStatus::Unreadable
-                && resolved.is_some()
-                && fs::canonicalize(&entry.path).ok() == resolved
+            keepable(entry) && resolved.is_some() && fs::canonicalize(&entry.path).ok() == resolved
         });
         let Some(found) = found else {
             return Err(CliError::InvalidArgs(format!(
@@ -342,7 +383,7 @@ impl Human<'_> {
                 writer,
                 "  keeping {:<21} {:>10}  {}{}",
                 disk::wire(&kept.reason).replace('_', "-"),
-                disk::size(kept.bytes),
+                disk::size(kept.apparent_bytes),
                 self.short(&kept.path),
                 match (&kept.message, kept.reason) {
                     (Some(message), _) => format!(": {message}"),
@@ -352,29 +393,43 @@ impl Human<'_> {
                     (None, _) => String::new(),
                 }
             ),
-            PruneEvent::Removal(removal) => writeln!(
+            PruneEvent::Removal(removal) => {
+                let verb = match (&removal.failure, self.execute) {
+                    (Some(_), _) => "failed to delete",
+                    (None, true) => "deleted",
+                    (None, false) => "would delete",
+                };
+                writeln!(
+                    writer,
+                    "  {verb} {:<16} {:>10}  {}{}",
+                    disk::wire(&removal.reason).replace('_', "-"),
+                    disk::human_bytes(removal.apparent_bytes),
+                    self.short(&removal.path),
+                    removal
+                        .failure
+                        .as_ref()
+                        .map_or_else(String::new, |failure| format!(": {failure}"))
+                )
+            }
+            PruneEvent::Complete(complete) if complete.failed > 0 => writeln!(
                 writer,
-                "  {} {:<16} {:>10}  {}",
-                if removal.deleted {
-                    "deleted"
-                } else {
-                    "would delete"
-                },
-                disk::wire(&removal.reason).replace('_', "-"),
-                disk::human_bytes(removal.bytes),
-                self.short(&removal.path)
+                "incomplete: {} of {} item(s) deleted ({} apparent size) before a deletion failed; \
+                 run it again once the failure is fixed",
+                complete.deleted,
+                complete.removals,
+                disk::human_bytes(complete.deleted_apparent_bytes)
             ),
             PruneEvent::Complete(complete) if self.execute => writeln!(
                 writer,
-                "complete: {} item(s) deleted, {} freed",
-                complete.removals,
-                disk::human_bytes(complete.freed_bytes)
+                "complete: {} item(s) deleted, {} apparent size",
+                complete.deleted,
+                disk::human_bytes(complete.deleted_apparent_bytes)
             ),
             PruneEvent::Complete(complete) => writeln!(
                 writer,
-                "complete: {} item(s), {} would be freed; nothing was deleted (pass --execute to delete)",
+                "complete: {} item(s), {} apparent size; nothing was deleted (pass --execute to delete)",
                 complete.removals,
-                disk::human_bytes(complete.expected_freed_bytes)
+                disk::human_bytes(complete.planned_apparent_bytes)
             ),
         }
     }
