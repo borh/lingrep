@@ -54,15 +54,18 @@ pub(crate) fn run_to<W: Write>(
 
     let kept = keep(&args.keep, &scan.realizations, &scope.directory)?;
     let keep_reason = |entry: &RealizationEntry| {
-        disk::kept_by_prune(entry)
-            .filter(|reason| *reason == PruneKeep::OtherTrust || !args.include_all_superseded)
+        entry.kept_by_prune.filter(|reason| {
+            !(args.include_all_superseded && reason.deleted_with_include_all_superseded())
+        })
     };
     let kept_by_rule = scan
         .realizations
         .iter()
         .filter(|entry| !kept.contains(&entry.path))
         .filter_map(|entry| match entry.status {
-            RealizationStatus::Superseded => keep_reason(entry).map(|reason| (entry, reason)),
+            RealizationStatus::Superseded | RealizationStatus::OlderFormat => {
+                keep_reason(entry).map(|reason| (entry, reason))
+            }
             RealizationStatus::Unreadable if entry.recorded.is_some() => {
                 Some((entry, PruneKeep::Damaged))
             }
@@ -73,10 +76,9 @@ pub(crate) fn run_to<W: Write>(
         .realizations
         .iter()
         .filter(|entry| match entry.status {
-            RealizationStatus::Superseded => {
+            RealizationStatus::Superseded | RealizationStatus::OlderFormat => {
                 !kept.contains(&entry.path) && keep_reason(entry).is_none()
             }
-            RealizationStatus::OlderFormat => true,
             _ => false,
         })
         .collect::<Vec<_>>();
@@ -166,7 +168,9 @@ pub(crate) fn run_to<W: Write>(
             reason: *reason,
             differences: entry.differences.clone(),
             bytes: entry.bytes,
-            message: entry.message.clone(),
+            message: (*reason == PruneKeep::Damaged)
+                .then(|| entry.message.clone())
+                .flatten(),
         }))?;
     }
 
@@ -305,8 +309,10 @@ impl Human<'_> {
                 self.short(&kept.path),
                 match (&kept.message, kept.reason) {
                     (Some(message), _) => format!(": {message}"),
-                    (None, PruneKeep::OtherTrust | PruneKeep::Damaged) => String::new(),
-                    (None, _) => " (--include-all-superseded deletes it)".to_owned(),
+                    (None, reason) if reason.deleted_with_include_all_superseded() => {
+                        " (--include-all-superseded deletes it)".to_owned()
+                    }
+                    (None, _) => String::new(),
                 }
             ),
             PruneEvent::Removal(removal) => writeln!(

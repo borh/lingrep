@@ -96,7 +96,8 @@ pub use scope_resolution::{
 };
 pub use siblings::{
     BuildOutcome, Realization, RealizationRequest, SiblingRealization, SiblingReport, SiblingScan,
-    artifact_bytes, containing_directory, is_older_format, remove_older_format, remove_realization,
+    artifact_bytes, containing_directory, is_older_format, recorded_source_identity,
+    remove_older_format, remove_realization,
 };
 pub use tokens::{PreparedDocumentStats, PreparedSentenceSource};
 pub use verify::{ComponentVerification, VerificationReport};

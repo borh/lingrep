@@ -18,7 +18,8 @@ use std::time::UNIX_EPOCH;
 use lingrep_corpus::{
     AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
     RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
-    artifact_bytes, is_older_format, parse_artifact_name, staging_leftovers,
+    artifact_bytes, is_older_format, parse_artifact_name, recorded_source_identity,
+    staging_leftovers,
 };
 
 use super::CommandOutcome;
@@ -147,6 +148,9 @@ pub(crate) struct RealizationEntry {
     pub bytes: Option<u64>,
     pub recorded: Option<SiblingRealization>,
     pub differences: Vec<VariantDifference>,
+    /// For a superseded or older-format realization classified against the
+    /// analysis inputs, why the default prune keeps it.
+    pub kept_by_prune: Option<PruneKeep>,
     pub message: Option<String>,
 }
 
@@ -267,21 +271,24 @@ pub(crate) fn scan(
         } else {
             CorpusArtifact::open(&realization.path).map(drop)
         };
-        let (status, differences) = if is_current {
-            (RealizationStatus::Current, Vec::new())
+        let (status, differences, kept_by_prune) = if is_current {
+            (RealizationStatus::Current, Vec::new(), None)
         } else if validation.is_err() {
-            (RealizationStatus::Unreadable, Vec::new())
+            (RealizationStatus::Unreadable, Vec::new(), None)
         } else if parsed.analysis_identity != realization.analysis_identity
             || parsed.trust != realization.trust
         {
-            (RealizationStatus::Misnamed, Vec::new())
+            (RealizationStatus::Misnamed, Vec::new(), None)
         } else if inputs.is_some() {
+            let differences = request.map(|request| differences(realization, request));
+            let keep = superseded_keep(realization, differences.as_deref());
             (
                 RealizationStatus::Superseded,
-                request.map_or_else(Vec::new, |request| differences(realization, request)),
+                differences.unwrap_or_default(),
+                keep,
             )
         } else {
-            (RealizationStatus::Unclassified, Vec::new())
+            (RealizationStatus::Unclassified, Vec::new(), None)
         };
         realizations.push(RealizationEntry {
             path: realization.path.clone(),
@@ -290,6 +297,7 @@ pub(crate) fn scan(
             bytes: artifact_bytes(&realization.path).ok(),
             recorded: Some(realization.clone()),
             differences,
+            kept_by_prune,
             message: validation.err().map(|error| error.to_string()),
         });
     }
@@ -301,6 +309,17 @@ pub(crate) fn scan(
             continue;
         }
         let older = is_older_format(error);
+        let kept_by_prune = if older && inputs.is_some() {
+            let current = sources
+                .iter()
+                .find(|source| source.name == parsed.source_name)
+                .and_then(|source| source.request.as_ref())
+                .map(|request| request.source_identity);
+            (current.is_none() || recorded_source_identity(path) != current)
+                .then_some(PruneKeep::SourceUnknown)
+        } else {
+            None
+        };
         realizations.push(RealizationEntry {
             path: path.clone(),
             source: Some(parsed.source_name),
@@ -312,6 +331,7 @@ pub(crate) fn scan(
             bytes: artifact_bytes(path).ok(),
             recorded: None,
             differences: Vec::new(),
+            kept_by_prune,
             message: Some(error.to_string()),
         });
     }
@@ -342,6 +362,7 @@ pub(crate) fn scan(
             bytes: artifact_bytes(path).ok(),
             recorded: None,
             differences: Vec::new(),
+            kept_by_prune: None,
             message: None,
         });
     }
@@ -479,24 +500,29 @@ fn differences(
     differences
 }
 
-/// Why the default prune keeps this superseded realization, or `None` when
-/// it deletes it.
+/// Why the default prune keeps a superseded realization, or `None` when it
+/// deletes it. `differences` is `None` when the source is missing.
 ///
-/// Trust is checked first, from the manifest rather than the differences,
-/// which are empty when the source is missing: no local rebuild replaces
-/// another trust class. An analysis difference then marks the realization as
-/// rebuild churn, whatever else differs. With no recorded differences, which
-/// happens only when the source is missing, nothing can select the
-/// realization again.
-pub(crate) fn kept_by_prune(entry: &RealizationEntry) -> Option<PruneKeep> {
+/// Trust is checked first, from the manifest: no local rebuild replaces
+/// another trust class. Then a missing or edited source keeps the
+/// realization, since no rebuild of the source as it is now reproduces it.
+/// Only then does an analysis difference mark it as rebuild churn.
+fn superseded_keep(
+    realization: &SiblingRealization,
+    differences: Option<&[VariantDifference]>,
+) -> Option<PruneKeep> {
     use VariantDifference::{Admission, Analyzer, Reader, Source, TokenSchema};
-    let differences = &entry.differences;
-    if entry
-        .recorded
-        .as_ref()
-        .is_some_and(|recorded| recorded.trust != TrustClass::LocallyExecuted)
-    {
+    let Some(differences) = differences else {
+        return Some(if realization.trust == TrustClass::LocallyExecuted {
+            PruneKeep::SourceUnknown
+        } else {
+            PruneKeep::OtherTrust
+        });
+    };
+    if realization.trust != TrustClass::LocallyExecuted {
         Some(PruneKeep::OtherTrust)
+    } else if differences.contains(&Source) {
+        Some(PruneKeep::SourceRevision)
     } else if differences
         .iter()
         .any(|difference| matches!(difference, Analyzer | TokenSchema))
@@ -507,8 +533,6 @@ pub(crate) fn kept_by_prune(entry: &RealizationEntry) -> Option<PruneKeep> {
         .any(|difference| matches!(difference, Reader | Admission))
     {
         Some(PruneKeep::ReaderVariant)
-    } else if differences.contains(&Source) {
-        Some(PruneKeep::SourceRevision)
     } else {
         None
     }
@@ -737,9 +761,7 @@ pub(crate) fn run_to<W: Write>(
             dictionary_identity: recorded
                 .map(|recorded| encode_digest(recorded.dictionary.as_bytes())),
             differences: entry.differences.clone(),
-            kept_by_prune: (entry.status == RealizationStatus::Superseded)
-                .then(|| kept_by_prune(entry))
-                .flatten(),
+            kept_by_prune: entry.kept_by_prune,
             message: entry.message.clone(),
         })
     }));
@@ -976,10 +998,10 @@ impl Human<'_> {
                 }
                 if let Some(keep) = record.kept_by_prune {
                     detail.push_str(match keep {
-                        PruneKeep::ReaderVariant | PruneKeep::SourceRevision => {
+                        keep if keep.deleted_with_include_all_superseded() => {
                             "; prune keeps it unless --include-all-superseded"
                         }
-                        PruneKeep::OtherTrust | PruneKeep::Damaged => "; prune keeps it",
+                        _ => "; prune keeps it",
                     });
                 }
                 writeln!(

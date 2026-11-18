@@ -102,8 +102,8 @@ pub struct PruneRun {
     pub source: Option<String>,
     /// Artifacts kept by `--keep` in addition to each source's current one.
     pub keep: Vec<String>,
-    /// Whether superseded realizations that differ in no analysis dimension
-    /// are deleted too.
+    /// Whether realizations the default prune keeps as `reader_variant`,
+    /// `source_revision` or `source_unknown` are deleted too.
     pub include_all_superseded: bool,
     /// Whether this run deletes, rather than only listing what it would.
     pub execute: bool,

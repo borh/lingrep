@@ -185,6 +185,21 @@ pub fn is_older_format(error: &CorpusError) -> bool {
     }
 }
 
+/// The source identity recorded in the manifest of the artifact at `path`,
+/// read without the format checks [`SiblingScan::scan`] applies, or `None`
+/// when the manifest records none in the 64-hex-digit form this build writes.
+///
+/// For an older-format artifact, equality with the current source identity
+/// shows that it analyzed the current source content; inequality does not
+/// show the opposite, because an earlier build may have derived the identity
+/// differently.
+#[must_use]
+pub fn recorded_source_identity(path: &Path) -> Option<SourceIdentity> {
+    let manifest = Manifest::read_untyped(&path.join(MANIFEST_NAME)).ok()?;
+    let digest = crate::manifest::decode_digest(manifest["source_identity"].as_str()?, "").ok()?;
+    Some(SourceIdentity::from_bytes(digest))
+}
+
 /// Total size in bytes of the files under `path`, without following symbolic
 /// links.
 pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {

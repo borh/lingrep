@@ -268,16 +268,14 @@ impl Manifest {
         Ok(())
     }
 
+    /// Reads the manifest at `path` as untyped JSON under the same size
+    /// bound as [`Manifest::open`], whatever its format generation.
+    pub(crate) fn read_untyped(path: &Path) -> Result<serde_json::Value, CorpusError> {
+        serde_json::from_slice(&read_bounded(path)?).map_err(json)
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self, CorpusError> {
-        let mut file = crate::artifact::open_regular(File::options().read(true), path)?;
-        let metadata = file.metadata()?;
-        if metadata.len() > MAX_MANIFEST_BYTES {
-            return Err(invalid("manifest exceeds the fixed size bound"));
-        }
-        let mut bytes = Vec::with_capacity(
-            usize::try_from(metadata.len()).map_err(|_| invalid("manifest is too large"))?,
-        );
-        file.read_to_end(&mut bytes)?;
+        let bytes = read_bounded(path)?;
         #[derive(Deserialize)]
         struct ManifestVersion {
             schema_version: u32,
@@ -688,6 +686,19 @@ fn unknown_field(error: &serde_json::Error) -> Option<String> {
     let message = error.to_string();
     let rest = message.strip_prefix("unknown field `")?;
     rest.split_once('`').map(|(field, _)| field.to_owned())
+}
+
+fn read_bounded(path: &Path) -> Result<Vec<u8>, CorpusError> {
+    let mut file = crate::artifact::open_regular(File::options().read(true), path)?;
+    let metadata = file.metadata()?;
+    if metadata.len() > MAX_MANIFEST_BYTES {
+        return Err(invalid("manifest exceeds the fixed size bound"));
+    }
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(metadata.len()).map_err(|_| invalid("manifest is too large"))?,
+    );
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn json(error: serde_json::Error) -> CorpusError {

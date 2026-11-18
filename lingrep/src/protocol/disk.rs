@@ -173,8 +173,8 @@ pub struct DiskRealization {
     /// the current request, in a fixed order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<VariantDifference>,
-    /// For a superseded realization that `corpus prune` keeps unless given
-    /// `--include-all-superseded`, why it keeps it.
+    /// For a superseded or older-format realization that the default
+    /// `corpus prune` keeps, why it keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
     /// Why an unreadable entry could not be opened.
@@ -212,10 +212,13 @@ pub enum RealizationStatus {
     NonCanonicalName,
 }
 
-/// Why `corpus prune` keeps a superseded realization by default.
+/// Why `corpus prune` keeps a superseded or older-format realization by
+/// default.
 ///
-/// The default prune deletes a superseded realization that differs from the
-/// current request in `analyzer` or `token_schema`, whatever else differs.
+/// The default prune deletes a superseded realization of the current source
+/// content that differs from the current request in `analyzer` or
+/// `token_schema`, and an older-format realization that records the current
+/// source identity.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -225,9 +228,14 @@ pub enum PruneKeep {
     /// such as the artifact lingrep-web reads a Markdown source into.
     /// Deleted with `--include-all-superseded`.
     ReaderVariant,
-    /// Differs only in source content: the same analysis of an earlier
-    /// version of the source. Deleted with `--include-all-superseded`.
+    /// Differs in source content, whatever else differs: an analysis of an
+    /// earlier version of the source, which no rebuild of the current source
+    /// reproduces. Deleted with `--include-all-superseded`.
     SourceRevision,
+    /// Not known to analyze the current source content: the source is
+    /// missing, or an older-format manifest records no source identity equal
+    /// to the current one. Deleted with `--include-all-superseded`.
+    SourceUnknown,
     /// Has another trust class. `corpus build` does not produce it, so no
     /// local rebuild replaces it; `corpus prune` never deletes it.
     OtherTrust,
@@ -235,6 +243,18 @@ pub enum PruneKeep {
     /// `corpus inspect` runs; the realization is reported as `unreadable`.
     /// `corpus prune` never deletes it.
     Damaged,
+}
+
+impl PruneKeep {
+    /// Whether `--include-all-superseded` deletes a realization kept for this
+    /// reason.
+    #[must_use]
+    pub fn deleted_with_include_all_superseded(self) -> bool {
+        matches!(
+            self,
+            Self::ReaderVariant | Self::SourceRevision | Self::SourceUnknown
+        )
+    }
 }
 
 /// One count table immediately in the scanned directory.

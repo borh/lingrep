@@ -2,7 +2,7 @@
 #![allow(clippy::panic, clippy::unwrap_used)]
 //! Contracts for `corpus prune`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -621,5 +621,195 @@ fn a_retry_after_a_failed_deletion_finishes_the_table_cleanup() {
     assert!(!fixture.other_analyzer.exists());
     assert!(!table.exists(), "the retry deletes the planned table");
     assert!(absent.exists(), "a table bound to nothing here is kept");
+    assert!(fixture.current.exists());
+}
+
+/// Each `kept` record's path and reason.
+fn kept(records: &[Value]) -> BTreeMap<String, String> {
+    of_type(records, "kept")
+        .iter()
+        .map(|record| {
+            (
+                record["path"].as_str().unwrap().to_owned(),
+                record["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// `corpus prune --execute` over `source` with `extra` flags.
+fn prune_source(fixture: &crate::disk_protocol::Siblings, extra: &[&str]) -> Vec<Value> {
+    let mut args: Vec<&OsStr> = vec![
+        "corpus".as_ref(),
+        "prune".as_ref(),
+        "--execute".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+    ];
+    args.extend(extra.iter().map(OsStr::new));
+    args.push("--source".as_ref());
+    args.push(fixture.source.as_os_str());
+    run_json(&args)
+}
+
+/// After an edit and a dictionary change, every realization of the old text is
+/// a source revision, whatever else differs, so the default prune keeps it and
+/// `--include-all-superseded` deletes it.
+#[test]
+fn a_source_revision_is_kept_whatever_else_differs() {
+    let fixture = siblings();
+    fs::write(&fixture.source, "犬。\n").unwrap();
+    let rebuilt =
+        crate::disk_protocol::build(&fixture.dictionary, &fixture.source, &["--profile", "text"]);
+
+    let records = prune_source(&fixture, &["--profile", "text"]);
+    assert_eq!(removals(&records), BTreeMap::new(), "{records:?}");
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([
+            (path_string(&fixture.current), "source_revision".to_owned()),
+            (
+                path_string(&fixture.other_analyzer),
+                "source_revision".to_owned()
+            ),
+            (
+                path_string(&fixture.other_reader),
+                "source_revision".to_owned()
+            ),
+        ])
+    );
+    let differences = of_type(&records, "kept")
+        .into_iter()
+        .find(|record| record["path"] == path_string(&fixture.current))
+        .unwrap()["differences"]
+        .clone();
+    assert_eq!(
+        differences,
+        serde_json::json!(["source", "analyzer", "token_schema"])
+    );
+
+    let records = prune_source(&fixture, &["--profile", "text", "--include-all-superseded"]);
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            path_string(&fixture.current),
+            path_string(&fixture.other_analyzer),
+            path_string(&fixture.other_reader),
+        ])
+    );
+    assert!(kept(&records).is_empty(), "{records:?}");
+    assert!(rebuilt.exists());
+}
+
+/// An older-format artifact whose manifest records the current source identity
+/// is deleted by default. One that records another identity, or none, is kept
+/// as `source_unknown`, and deleted with `--include-all-superseded`.
+#[test]
+fn an_older_format_is_deleted_by_default_only_when_it_records_the_current_source() {
+    let fixture = siblings();
+    let same = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", 1, 0xc1),
+        |m| {
+            m["format_generation"] = 1.into();
+        },
+    );
+    let other = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", 1, 0xc2),
+        |m| {
+            m["format_generation"] = 1.into();
+            m["source_identity"] = "cd".repeat(32).into();
+        },
+    );
+    let none = sibling_with_manifest(
+        &fixture.current,
+        &canonical_name("source.md", 1, 0xc3),
+        |m| {
+            m["format_generation"] = 1.into();
+            m.as_object_mut().unwrap().remove("source_identity");
+        },
+    );
+
+    let dry_run = run_json(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let disk_keep = |path: &Path| {
+        of_type(&dry_run, "realization")
+            .into_iter()
+            .find(|record| record["path"] == path_string(path))
+            .unwrap()["kept_by_prune"]
+            .clone()
+    };
+    assert!(disk_keep(&same).is_null());
+    assert_eq!(disk_keep(&other), "source_unknown");
+    assert_eq!(disk_keep(&none), "source_unknown");
+
+    let records = prune_source(&fixture, &[]);
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([path_string(&same), path_string(&fixture.other_analyzer)])
+    );
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([
+            (path_string(&other), "source_unknown".to_owned()),
+            (path_string(&none), "source_unknown".to_owned()),
+            (
+                path_string(&fixture.other_reader),
+                "reader_variant".to_owned()
+            ),
+        ])
+    );
+
+    let records = prune_source(&fixture, &["--include-all-superseded"]);
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            path_string(&other),
+            path_string(&none),
+            path_string(&fixture.other_reader),
+        ])
+    );
+    assert!(fixture.current.exists());
+}
+
+/// With the source missing nothing can be rebuilt, so the default prune keeps
+/// every realization of it as `source_unknown`, even with `--keep` naming one.
+#[test]
+fn realizations_of_a_missing_source_are_kept_by_default() {
+    let fixture = siblings();
+    fs::remove_file(&fixture.source).unwrap();
+    let keep = fixture.current.to_str().unwrap();
+    let records = prune_source(&fixture, &["--keep", keep]);
+    assert_eq!(removals(&records), BTreeMap::new(), "{records:?}");
+    assert_eq!(
+        kept(&records),
+        BTreeMap::from([
+            (
+                path_string(&fixture.other_analyzer),
+                "source_unknown".to_owned()
+            ),
+            (
+                path_string(&fixture.other_reader),
+                "source_unknown".to_owned()
+            ),
+        ])
+    );
+    assert!(fixture.other_analyzer.exists() && fixture.other_reader.exists());
+
+    let records = prune_source(&fixture, &["--keep", keep, "--include-all-superseded"]);
+    assert_eq!(
+        removals(&records).into_keys().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            path_string(&fixture.other_analyzer),
+            path_string(&fixture.other_reader),
+        ])
+    );
     assert!(fixture.current.exists());
 }

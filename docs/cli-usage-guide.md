@@ -2235,26 +2235,33 @@ ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # delet
 ```
 
 `corpus prune DIR` (or `--source SOURCE`) deletes the realizations that
-`corpus disk` reports as `older_format`, and those it reports as `superseded`
-for the same analysis inputs that differ from the current one in `analyzer`
-or `token_schema`, whatever else differs. That is the churn of switching
-dictionaries, analyzers or formats. It also deletes every count table whose
+`corpus disk` reports as `older_format` and whose manifest records the current
+source identity, and those it reports as `superseded` for the same analysis
+inputs that analyze the current source content and differ from the current
+one in `analyzer` or `token_schema`. That is the churn of switching
+dictionaries, analyzers or formats: a rebuild of the source as it is now
+reproduces it. It also deletes every count table whose
 bound artifacts are all among them, so a table that an explicit `--output`
 corpus or any other artifact kept in the directory binds is kept.
 
-Other superseded realizations are kept, and listed as `kept` with a reason:
+Other superseded and older-format realizations are kept, and listed as
+`kept` with a reason:
 
 | `kept_by_prune` | Differs in | Deleted with |
 |---|---|---|
 | `reader_variant` | reader or admission policy, and no analysis dimension | `--include-all-superseded` |
-| `source_revision` | source content only | `--include-all-superseded` |
+| `source_revision` | source content, whatever else differs | `--include-all-superseded` |
+| `source_unknown` | not known: the source is missing, or an older-format manifest records another or no source identity | `--include-all-superseded` |
 | `other_trust` | trust class | never |
 | `damaged` | anything; its manifest reads but it fails structural validation, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
 source into, such as `lingrep-web` with its Markdown reader policy, or a
 `ling` release with another admission policy. A source revision may still be
-served by a process that read the source before it was edited. An artifact of
+served by a process that read the source before it was edited, and no rebuild
+reproduces it. An older-format manifest whose source identity differs may
+still analyze the current content, because an earlier `ling` may have derived
+the identity differently, so it is `source_unknown`. An artifact of
 another trust class is not one `corpus build` produces, so no local rebuild
 replaces it.
 Without `--execute` it deletes nothing and lists each path with its size and
