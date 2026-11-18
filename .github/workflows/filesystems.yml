@@ -1,0 +1,182 @@
+name: Output filesystems
+
+# Runs scripts/check-output-filesystem.py with its input, outputs and TMPDIR on
+# filesystems students write to: FAT, exFAT and NTFS on Linux, exFAT, FAT and
+# case-insensitive APFS on macOS, and Windows' C: drive from WSL 2. The CI
+# workflow writes only to the runner's ext4 disk.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: &paths
+      - "lingrep/**"
+      - "lingrep-corpus/**"
+      - "lingrep-web/**"
+      - "lingrep-core/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/check-output-filesystem.py"
+      - ".github/workflows/filesystems.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Filesystem behaviour does not depend on optimization; the dev profile
+  # without debuginfo builds faster and keeps the uploaded binary small.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  build-linux:
+    name: Build ling (Linux)
+    # The oldest supported Ubuntu, so that the binary also runs in the WSL
+    # distribution below.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: filesystems
+      - name: Build
+        run: cargo build --locked -p lingrep --bin ling
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ling-linux
+          path: target/debug/ling
+          if-no-files-found: error
+          retention-days: 3
+
+  linux:
+    name: Linux ${{ matrix.filesystem }}
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        filesystem: [vfat, exfat, ntfs3, ntfs-3g, ext4-casefold]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ling-linux
+          path: bin
+      - name: Install filesystem tools and the dictionary
+        run: |
+          chmod +x bin/ling
+          sudo apt-get update
+          sudo apt-get install -y dosfstools exfatprogs ntfs-3g
+          bin/ling dictionary install
+      - name: Mount ${{ matrix.filesystem }}
+        run: |
+          image="$RUNNER_TEMP/filesystem.img"
+          mountpoint="$RUNNER_TEMP/mnt"
+          owner="uid=$(id -u),gid=$(id -g)"
+          truncate -s 512M "$image"
+          mkdir "$mountpoint"
+          case "${{ matrix.filesystem }}" in
+            vfat)
+              mkfs.vfat "$image"
+              sudo mount -t vfat -o "loop,$owner" "$image" "$mountpoint" ;;
+            exfat)
+              mkfs.exfat "$image"
+              sudo mount -t exfat -o "loop,$owner" "$image" "$mountpoint" ;;
+            ntfs3)
+              mkntfs -F -Q "$image"
+              sudo mount -t ntfs3 -o "loop,$owner" "$image" "$mountpoint" ;;
+            ntfs-3g)
+              mkntfs -F -Q "$image"
+              sudo ntfs-3g -o "$owner" "$image" "$mountpoint" ;;
+            ext4-casefold)
+              mkfs.ext4 -q -O casefold "$image"
+              sudo mount -o loop "$image" "$mountpoint"
+              # Casefolding applies to the empty directories marked +F.
+              sudo mkdir "$mountpoint/check"
+              sudo chattr +F "$mountpoint/check"
+              sudo chown "$(id -u):$(id -g)" "$mountpoint/check"
+              lsattr -d "$mountpoint/check" | grep -q F ;;
+          esac
+          findmnt "$mountpoint"
+      - name: Check ling on ${{ matrix.filesystem }}
+        run: python3 scripts/check-output-filesystem.py "$RUNNER_TEMP/mnt/check" bin/ling
+
+  macos:
+    name: macOS disk images
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: filesystems
+      - name: Build
+        run: cargo build --locked -p lingrep --bin ling
+      - name: Install the dictionary
+        run: target/debug/ling dictionary install
+      # `APFS` is case-insensitive, as on a default macOS installation.
+      # hdiutil intermittently fails with "Resource busy" on hosted runners
+      # (actions/runner-images#7522), so each hdiutil call is retried.
+      - name: Check ling on exFAT, FAT and APFS images
+        run: |
+          retry() {
+            for _ in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep 3
+            done
+            return 1
+          }
+          for filesystem in ExFAT MS-DOS APFS; do
+            name="$(echo "$filesystem" | tr -cd 'A-Za-z')"
+            image="$RUNNER_TEMP/$name.dmg"
+            mountpoint="$RUNNER_TEMP/$name"
+            echo "::group::$filesystem"
+            retry hdiutil create -quiet -ov -size 512m -fs "$filesystem" -volname "LING$name" "$image"
+            mkdir "$mountpoint"
+            retry hdiutil attach -nobrowse -mountpoint "$mountpoint" "$image"
+            mount | grep "$mountpoint"
+            python3 scripts/check-output-filesystem.py "$mountpoint/check" target/debug/ling
+            retry hdiutil detach "$mountpoint"
+            echo "::endgroup::"
+          done
+
+  wsl:
+    name: WSL 2 on drive C
+    needs: build-linux
+    runs-on: windows-2025
+    # WSL 2 provisioning occasionally hangs on hosted runners
+    # (actions/runner-images#14938) and step timeouts do not stop it.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ling-linux
+          path: bin
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 2
+      - name: Check ling on /mnt/c
+        shell: wsl-bash {0}
+        env:
+          WSLENV: GITHUB_WORKSPACE/p
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          install -m 755 bin/ling ~/ling
+          ~/ling dictionary install
+          mount | grep ' /mnt/c '
+          python3 scripts/check-output-filesystem.py /mnt/c/ling-filesystem-check ~/ling
