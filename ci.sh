@@ -51,6 +51,7 @@ run_repository_guards() {
     scripts/check-lx-catalogs.sh
     scripts/check-artifact-naming.sh
     scripts/check-durability-fixtures.sh
+    scripts/check-fs-capability-seam.sh
     scripts/check-i18n-keys.py
 }
 
