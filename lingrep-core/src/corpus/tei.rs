@@ -507,12 +507,13 @@ impl TeiEvents {
         name: String,
         max_record_bytes: usize,
     ) -> io::Result<Self> {
-        let mut xml = String::new();
+        let mut bytes = Vec::new();
         reader
             .by_ref()
             .take(MAX_WORK_BYTES as u64 + 1)
-            .read_to_string(&mut xml)?;
-        let mut reading = TeiReading::parse(&xml, max_record_bytes)?;
+            .read_to_end(&mut bytes)?;
+        let xml = crate::text_input::decode_document(&bytes)?;
+        let mut reading = TeiReading::parse(xml, max_record_bytes)?;
         let metadata = std::mem::take(&mut reading.metadata);
         Ok(Self {
             pending: [

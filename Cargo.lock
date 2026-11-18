@@ -2631,6 +2631,7 @@ dependencies = [
  "clap",
  "compact_str",
  "criterion",
+ "encoding_rs",
  "hegeltest",
  "indexmap",
  "insta",

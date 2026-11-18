@@ -10,7 +10,7 @@ pub fn update(msg: ExplorerMessage, mut model: Model) -> (Model, Option<Command>
         ExplorerMessage::Ui(ui_msg) => handle_ui(ui_msg, model),
 
         ExplorerMessage::PatternFileChanged(change) => {
-            let source = match std::fs::read_to_string(&change.path) {
+            let source = match lingrep_core::text_input::read_utf8_file(&change.path) {
                 Ok(source) => source,
                 Err(error) => {
                     model.mode = AppMode::Error {

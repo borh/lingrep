@@ -1279,8 +1279,12 @@ that contract with:
 ling corpus inventory --json --progress always corpus/ >sources.jsonl
 ```
 
-Every text format is read as UTF-8. One leading byte-order mark, which Windows
-Notepad and Excel write, is not part of the text.
+Every text format and every catalog is read as UTF-8. One leading byte-order
+mark, which Windows Notepad and Excel write, is not part of the text. A file
+that is not UTF-8 fails with the line and byte offset of its first invalid
+byte. When the file looks like Shift_JIS (CP932), the message gives an
+`iconv -f CP932 -t UTF-8` or `nkf -w` command that converts it; `ling` does
+not decode Shift_JIS itself.
 
 The `source` events expose logical names, target groups, and external-target
 status. The final event reports alias multiplicity and traversal high-water

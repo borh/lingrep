@@ -100,9 +100,8 @@ pub fn parse_entry(bytes: &[u8], subcorpus: Subcorpus) -> io::Result<BccwjDocume
             "zstd-compressed C-XML entry: canonical BCCWJ entries are plain XML; the zstd layer in the corpus-utils reference is its own local cache, not a distribution input",
         ));
     }
-    let xml = String::from_utf8(bytes.to_vec())
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    let mut reader = Reader::from_str(&xml);
+    let xml = crate::text_input::decode_document(bytes)?;
+    let mut reader = Reader::from_str(xml);
 
     let mut stack: Vec<String> = Vec::new();
     let mut paragraphs: Vec<BccwjParagraph> = Vec::new();

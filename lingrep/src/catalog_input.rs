@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -119,7 +118,7 @@ pub(crate) fn compile(
 
 pub(crate) fn load(input: &CatalogInput) -> Result<CatalogSource, CliError> {
     match input {
-        CatalogInput::File(path) => fs::read_to_string(path)
+        CatalogInput::File(path) => lingrep_core::text_input::read_utf8_file(path)
             .map(|text| CatalogSource {
                 name: path.display().to_string(),
                 text,

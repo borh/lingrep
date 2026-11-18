@@ -184,7 +184,7 @@ impl<R: Read + Seek> SoranohaEvents<R> {
         }
         drop(entry);
         let text = crate::text_input::decode_document(&bytes)
-            .map_err(|error| context(format!("is not UTF-8: {error}")))?
+            .map_err(|error| context(error.to_string()))?
             .to_owned();
         let mut metadata = self
             .rows

@@ -111,7 +111,7 @@ fn collect(root: &Path, current: &Path, depth: usize, found: &mut Vec<(String, A
                 .map(|component| component.as_os_str().to_string_lossy())
                 .collect::<Vec<_>>()
                 .join("/");
-            match std::fs::read_to_string(&path) {
+            match lingrep_core::text_input::read_utf8_file(&path) {
                 Ok(source) => found.push((key, Arc::from(source.as_str()))),
                 Err(error) => tracing::warn!(
                     path = %path.display(),

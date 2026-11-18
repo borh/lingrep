@@ -171,3 +171,121 @@ fn a_corpus_built_from_a_notepad_file_stores_the_records_of_the_same_text_withou
         records("without", text)
     );
 }
+
+/// `ascii\r\n猫が～①髙を見た。\r\n` as Windows saves it in CP932. ～ (81 60),
+/// ① (87 40) and 髙 (FB FC) are CP932 extensions, so a strict JIS X 0208
+/// Shift_JIS decoder rejects this file and the WHATWG Shift_JIS decoder
+/// accepts it.
+const CP932: &[u8] =
+    b"ascii\r\n\x94\x4c\x82\xaa\x81\x60\x87\x40\xfb\xfc\x82\xf0\x8c\xa9\x82\xbd\x81\x42\r\n";
+
+fn failure(output: &Output) -> String {
+    assert!(!output.status.success(), "{output:?}");
+    String::from_utf8(output.stderr.clone()).unwrap()
+}
+
+fn assert_shift_jis_hint(stderr: &str, position: &str) {
+    for expected in [
+        position,
+        "looks like Shift_JIS (CP932)",
+        "iconv -f CP932 -t UTF-8 INPUT > OUTPUT",
+        "nkf -w INPUT > OUTPUT",
+    ] {
+        assert!(stderr.contains(expected), "{expected}: {stderr}");
+    }
+}
+
+#[test]
+fn a_cp932_source_names_its_first_invalid_byte_and_the_conversion() {
+    let dictionary = MiniDictionary::new();
+    let directory = TempDir::new().unwrap();
+    for name in ["sjis.txt", "sjis.md"] {
+        let input = write_named(directory.path(), "cp932", name, CP932);
+        let matches = lingrep()
+            .args(["matches", "--pattern", "w := [].", "--dict-path"])
+            .arg(dictionary.path())
+            .arg(&input)
+            .output()
+            .unwrap();
+        let stderr = failure(&matches);
+        assert!(stderr.contains(name), "{stderr}");
+        assert_shift_jis_hint(&stderr, "line 2, byte offset 7");
+
+        let build = lingrep()
+            .args(["corpus", "build", "--dict-path"])
+            .arg(dictionary.path())
+            .arg("--output")
+            .arg(directory.path().join(format!("{name}.lingcorpus")))
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert_shift_jis_hint(&failure(&build), "line 2, byte offset 7");
+    }
+}
+
+#[test]
+fn invalid_utf8_after_utf8_text_names_its_position_without_a_shift_jis_hint() {
+    let dictionary = MiniDictionary::new();
+    let directory = TempDir::new().unwrap();
+    let mut bytes = "猫が来る。\n犬が".as_bytes().to_vec();
+    bytes.extend_from_slice(b"\x94\x4c\n");
+    let input = write_named(directory.path(), "mixed", "mixed.txt", &bytes);
+    let stderr = failure(
+        &lingrep()
+            .args(["matches", "--pattern", "w := [].", "--dict-path"])
+            .arg(dictionary.path())
+            .arg(&input)
+            .output()
+            .unwrap(),
+    );
+    assert!(stderr.contains("line 2, byte offset 22"), "{stderr}");
+    assert!(!stderr.contains("Shift_JIS"), "{stderr}");
+}
+
+#[test]
+fn a_cp932_catalog_names_its_first_invalid_byte_and_the_conversion() {
+    let directory = TempDir::new().unwrap();
+    let mut catalog = b"# \x94\x4c\r\n".to_vec();
+    catalog.extend_from_slice(b"n := [upos=NOUN].\r\n");
+    let path = write_named(directory.path(), "cp932", "sjis.lx", &catalog);
+    let stderr = failure(
+        &lingrep()
+            .args(["check", "--patterns"])
+            .arg(&path)
+            .output()
+            .unwrap(),
+    );
+    assert!(stderr.contains("sjis.lx"), "{stderr}");
+    assert_shift_jis_hint(&stderr, "line 1, byte offset 2");
+}
+
+#[test]
+fn a_zip_read_as_plain_text_says_to_unzip_it_or_read_it_as_soranoha() {
+    let dictionary = MiniDictionary::new();
+    let directory = TempDir::new().unwrap();
+    let archive = directory.path().join("works.zip");
+    soranoha_archive(&archive, "猫が文を鳴く。\r\n");
+    let stderr = failure(
+        &lingrep()
+            .args([
+                "matches",
+                "--pattern",
+                "w := [].",
+                "--input-format",
+                "plain",
+                "--dict-path",
+            ])
+            .arg(dictionary.path())
+            .arg(&archive)
+            .output()
+            .unwrap(),
+    );
+    for expected in [
+        "works.zip",
+        "ZIP archive",
+        "unzip",
+        "--input-format soranoha",
+    ] {
+        assert!(stderr.contains(expected), "{expected}: {stderr}");
+    }
+}

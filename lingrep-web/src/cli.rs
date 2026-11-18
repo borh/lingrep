@@ -253,7 +253,7 @@ pub fn declared_corpora(
 /// path resolves against.
 #[must_use]
 pub fn read_default_pattern(path: &Path) -> String {
-    match std::fs::read_to_string(path) {
+    match lingrep_core::text_input::read_utf8_file(path) {
         Ok(text) => text,
         Err(error) => {
             tracing::warn!(

@@ -89,6 +89,9 @@ serde-saphyr = { version = "2.0", default-features = false, features = ["deseria
 serde_regex = "1.1.0"
 rand = "0.9.1"
 thiserror.workspace = true
+# Detection only: names a Shift_JIS (CP932) file in an invalid-UTF-8 error.
+# Already in the graph through serde-saphyr and reqwest.
+encoding_rs = "0.8.44"
 roaring = { version = "0.10.6", features = ["serde"] }
 libc = "0.2"
 # Proptest for property-based testing (optional, dev-only)

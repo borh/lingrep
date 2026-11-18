@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Excel write, is no longer read as text. Under 0.8.1 it became part of the
   first token of a plain-text, Markdown or Soranoha document, and a JSONL or
   CoNLL-U file that began with one failed to parse.
+- Input that is not UTF-8 fails with the file, line and byte offset of the
+  first invalid byte, for corpus sources and for catalogs read by
+  `--patterns`, `check` and `lingrep-web --pattern-root`. When the file looks
+  like Shift_JIS (CP932), the message gives an `iconv` or `nkf` command that
+  converts it. A ZIP archive read as plain text or Markdown fails with advice
+  to unzip it, or to read a Soranoha archive with `--input-format soranoha`.
 
 ## [0.8.1] - 2026-11-18
 
