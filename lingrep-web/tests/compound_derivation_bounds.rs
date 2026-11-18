@@ -10,8 +10,8 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! A Workbench search deriving compounds from two definitions that both match
-//! every token stops at the derivation limits at 1×, 10× and 100× one
+//! A Workbench search deriving compounds stops at the per-sentence chain-byte
+//! limit and at the per-search compound limit at 1×, 10× and 100× one
 //! fixture.
 //!
 //! Its own binary: the lowered limits are process-wide.
@@ -85,11 +85,11 @@ fn store(sentences: Vec<Vec<TokenInfo>>) -> (ArtifactFixture, RequestStore) {
 
 /// Posts the Workbench search form with 複合項目を生成 checked and waits for
 /// the revision to end.
-async fn derive_compounds(sentences: Vec<Vec<TokenInfo>>) -> QueryAttempt {
+async fn derive_compounds(catalog: &str, sentences: Vec<Vec<TokenInfo>>) -> QueryAttempt {
     let (_fixture, store) = store(sentences);
     let workbench = WorkbenchId::new("wb-compounds");
     let body = serde_urlencoded::to_string([
-        ("pattern", CATALOG),
+        ("pattern", catalog),
         ("corpus", CorpusName::DEFAULT),
         ("derive_compounds", "true"),
     ])
@@ -127,6 +127,25 @@ fn word() -> TokenInfo {
     TokenInfo::default().with_orth("語").with_pos("NOUN")
 }
 
+/// Ten definitions `w0` to `w9`, each matching only the token `語0` to `語9`.
+fn numbered_catalog() -> String {
+    (0..10)
+        .map(|n| format!("w{n} := [text=語{n}].\n"))
+        .collect()
+}
+
+/// Sentence `k` is `語k 語k+1 語k+2`, digits modulo 10, so it derives three
+/// compounds, two of them absent from sentence `k - 1`.
+fn numbered_sentence(k: usize) -> Vec<TokenInfo> {
+    (k..k + 3)
+        .map(|n| {
+            TokenInfo::default()
+                .with_orth(format!("語{}", n % 10))
+                .with_pos("NOUN")
+        })
+        .collect()
+}
+
 fn assert_result_limit(attempt: &QueryAttempt, row: &str) {
     assert_eq!(attempt.phase, AttemptPhase::Failed, "{row}: {attempt:?}");
     let failure = attempt.failure.as_ref().unwrap();
@@ -148,7 +167,7 @@ async fn compound_derivation_stops_at_its_limits_at_every_scale() {
     let chain_bytes = ScaleKnob::CompoundChainBytes.set(CHAIN_BYTES);
     for scale in SCALES {
         lingrep_web::held_chains::take_peak();
-        let attempt = derive_compounds(vec![vec![word(); 8 * scale]]).await;
+        let attempt = derive_compounds(CATALOG, vec![vec![word(); 8 * scale]]).await;
         let row = format!("{scale}× sentence length");
         assert_result_limit(&attempt, &row);
         let held = lingrep_web::held_chains::take_peak();
@@ -162,11 +181,13 @@ async fn compound_derivation_stops_at_its_limits_at_every_scale() {
     }
     drop(chain_bytes);
 
-    // 5 × scale sentences of 3 tokens: each derives few chains, but together
-    // more distinct compounds than the per-search limit.
+    // 5 × scale sentences that each derive 3 compounds, fewer than the
+    // per-search limit, and together more than it from the fourth sentence on.
     let _patterns = ScaleKnob::CompoundPatterns.set(PATTERNS);
+    let catalog = numbered_catalog();
     for scale in SCALES {
-        let attempt = derive_compounds(vec![vec![word(); 3]; 5 * scale]).await;
+        let sentences = (0..5 * scale).map(numbered_sentence).collect();
+        let attempt = derive_compounds(&catalog, sentences).await;
         assert_result_limit(&attempt, &format!("{scale}× sentence count"));
     }
 }
