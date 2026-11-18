@@ -46,6 +46,7 @@ mod value_slots;
 pub use value_slots::{DocumentSlots, TooManyValues, ValueSlots};
 mod enhanced;
 mod error;
+pub mod fs_capability;
 mod identity;
 mod locations;
 mod manifest;
@@ -55,7 +56,8 @@ pub use postings::PreparedFilterStats;
 mod provenance;
 mod publication;
 mod reading;
-pub use publication::{PublicationError, rename_noreplace};
+pub use fs_capability::rename_noreplace;
+pub use publication::PublicationError;
 pub use reading::{
     HighlightRange, OccurrenceAnchor, PageRequest, READING_SIDECAR_FORMAT, READING_SIDECAR_VERSION,
     ReadingDocument, ReadingPage, ReadingSidecar, ReadingSidecarError, ReadingSidecarKey,

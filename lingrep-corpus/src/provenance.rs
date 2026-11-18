@@ -810,14 +810,7 @@ impl ProvenanceWriter {
             .execute("PRAGMA foreign_keys=ON")
             .await
             .map_err(writer_database)?;
-        // SQLite creates no shared-memory WAL index when exclusive locking precedes
-        // the first WAL access (https://sqlite.org/wal.html#noshm).
-        connection
-            .execute("PRAGMA locking_mode=EXCLUSIVE")
-            .await
-            .map_err(writer_database)?;
-        connection
-            .execute("PRAGMA journal_mode=WAL")
+        crate::fs_capability::enable_wal_without_shared_memory(&mut connection)
             .await
             .map_err(writer_database)?;
         connection

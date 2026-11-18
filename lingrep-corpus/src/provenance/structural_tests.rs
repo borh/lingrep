@@ -251,6 +251,28 @@ async fn writer_creates_no_shared_memory_index_while_building() {
 }
 
 #[tokio::test]
+async fn writer_builds_where_no_shared_memory_index_can_be_created() {
+    // A directory at the `-shm` path makes SQLite's shared-memory open fail, as an
+    // unmappable `-shm` file does on 9p.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("building.sqlite");
+    let shared_memory = PathBuf::from(format!("{}-shm", path.display()));
+    fs::create_dir(&shared_memory).unwrap();
+    let mut writer = ProvenanceWriter::create(&path, &[]).await.unwrap();
+    writer
+        .push_sentence(&location(0, "first.md", 0, 0), &rich())
+        .await
+        .unwrap();
+    // `finish` rejects any sidecar path, including this fixture.
+    fs::remove_dir(&shared_memory).unwrap();
+    writer.finish(analysis_identity()).await.unwrap();
+
+    ProvenanceView::open(&path, &analysis_identity())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn immutable_view_opens_literal_sqlite_path_and_returns_only_rich_metadata() {
     // Would fail if the reader builds a SQLite URL instead of passing the literal
     // path to SqliteConnectOptions: `?` and `#` would then alter its meaning.

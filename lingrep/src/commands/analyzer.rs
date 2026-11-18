@@ -179,22 +179,20 @@ fn setup_command(root: &Path, args: &AnalyzerPrepareArgs, request: &Request) -> 
 
 #[cfg(unix)]
 fn require_symbolic_links(root: &Path) -> Result<(), CliError> {
-    let probe = root.join(".symlink-probe");
-    match std::os::unix::fs::symlink(".gitignore", &probe) {
-        Ok(()) => Ok(fs::remove_file(&probe)?),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
-            ) =>
-        {
-            Err(failed(format!(
-                "cannot create symbolic links in {}: {error}. Analyzer setup requires symbolic \
-                 links; choose an --output directory that permits them",
-                root.display()
-            )))
-        }
-        Err(error) => Err(error.into()),
+    lingrep_corpus::fs_capability::probe_symbolic_links(root)
+        .map_err(|error| symbolic_link_failure(root, error))
+}
+
+#[cfg(unix)]
+fn symbolic_link_failure(root: &Path, error: std::io::Error) -> CliError {
+    if lingrep_corpus::fs_capability::Capability::SymbolicLinks.unsupported_by(&error) {
+        failed(format!(
+            "cannot create symbolic links in {}: {error}. Analyzer setup requires symbolic \
+             links; choose an --output directory that permits them",
+            root.display()
+        ))
+    } else {
+        error.into()
     }
 }
 
@@ -442,4 +440,48 @@ fn verify_config(root: &Path, config: &ExecutionCliConfig) -> Result<[u8; 32], C
     return Ok(*verified.descriptor.semantic_identity().as_bytes());
     #[cfg(not(unix))]
     Err(failed("external analyzer preparation requires Unix"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    use super::symbolic_link_failure;
+    use crate::error::CliError;
+
+    #[test]
+    fn a_filesystem_without_symbolic_links_is_reported_with_its_os_reason_and_a_remedy() {
+        let root = Path::new("/mnt/usb/analyzer");
+        for errno in [libc::EPERM, libc::EACCES, libc::ENOSYS, libc::EOPNOTSUPP] {
+            let reason = std::io::Error::from_raw_os_error(errno).to_string();
+
+            let message =
+                symbolic_link_failure(root, std::io::Error::from_raw_os_error(errno)).to_string();
+
+            assert!(
+                message.starts_with("cannot create symbolic links in /mnt/usb/analyzer: "),
+                "{message}"
+            );
+            assert!(message.contains(&reason), "{message}");
+            assert!(
+                message.contains("choose an --output directory"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_symbolic_link_failures_remain_io_errors() {
+        for errno in [libc::EIO, libc::ENOSPC, libc::EEXIST] {
+            let error = symbolic_link_failure(
+                Path::new("/output"),
+                std::io::Error::from_raw_os_error(errno),
+            );
+
+            assert!(
+                matches!(error, CliError::Io(ref source) if source.raw_os_error() == Some(errno)),
+                "{error:?}"
+            );
+        }
+    }
 }

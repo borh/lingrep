@@ -6,10 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
-use crate::{CorpusError, artifact::CompletedStagingArtifact};
+use crate::{
+    CorpusError,
+    artifact::CompletedStagingArtifact,
+    fs_capability::{Capability, rename_noreplace},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
@@ -106,20 +107,13 @@ fn publish_guarded_with_ops(
     Ok(true)
 }
 
-#[cfg(target_os = "macos")]
-const UNSUPPORTED_RENAME_ERRNOS: &[i32] =
-    &[libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP, libc::ENOTSUP];
-
-#[cfg(not(target_os = "macos"))]
-const UNSUPPORTED_RENAME_ERRNOS: &[i32] = &[libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP];
-
 fn map_rename_error(error: io::Error, destination: &Path) -> CorpusError {
     let errno = error.raw_os_error().unwrap_or(libc::EIO);
     if matches!(errno, libc::EEXIST | libc::ENOTEMPTY) {
         CorpusError::DestinationExists {
             path: destination.to_path_buf(),
         }
-    } else if UNSUPPORTED_RENAME_ERRNOS.contains(&errno) {
+    } else if Capability::NoReplaceRename.unsupported_by(&error) {
         CorpusError::UnsupportedPublication {
             path: destination.to_path_buf(),
             errno,
@@ -134,12 +128,6 @@ fn destination_parent(destination: &Path) -> &Path {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn path_argument(path: &Path, message: &'static str) -> io::Result<CString> {
-    CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
 pub(crate) fn staging_paths(parent: &Path, name: &str, suffix: &str) -> (PathBuf, PathBuf) {
@@ -282,7 +270,7 @@ impl StagingDirectory {
                     PublicationError::DestinationExists {
                         path: destination.to_path_buf(),
                     }
-                } else if UNSUPPORTED_RENAME_ERRNOS.contains(&errno) {
+                } else if Capability::NoReplaceRename.unsupported_by(&source) {
                     PublicationError::Unsupported {
                         path: destination.to_path_buf(),
                         errno,
@@ -335,78 +323,6 @@ impl Drop for StagingDirectory {
     }
 }
 
-/// Renames `from` to `to`, rejecting an existing destination when no-replace rename is supported.
-///
-/// Without filesystem support, directories use a checked rename that can replace an empty
-/// destination created concurrently; non-directory sources return the unsupported-operation error.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    rename_noreplace_with(from, to, rename_noreplace_syscall)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn rename_noreplace_with(
-    from: &Path,
-    to: &Path,
-    rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
-) -> io::Result<()> {
-    let error = match rename(from, to) {
-        Err(error) if UNSUPPORTED_RENAME_ERRNOS.contains(&error.raw_os_error().unwrap_or(0)) => {
-            error
-        }
-        result => return result,
-    };
-    if !fs::symlink_metadata(from)?.is_dir() {
-        return Err(error);
-    }
-    match fs::symlink_metadata(to) {
-        Ok(_) => Err(io::Error::from_raw_os_error(libc::EEXIST)),
-        Err(absent) if absent.kind() == io::ErrorKind::NotFound => fs::rename(from, to),
-        Err(other) => Err(other),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn rename_noreplace_syscall(from: &Path, to: &Path) -> io::Result<()> {
-    let from = path_argument(from, "staging path contains a NUL byte")?;
-    let to = path_argument(to, "destination path contains a NUL byte")?;
-    // SAFETY: both pointers are valid NUL-terminated path strings for the
-    // duration of the call, and AT_FDCWD makes both paths process-relative.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn rename_noreplace_syscall(from: &Path, to: &Path) -> io::Result<()> {
-    let from = path_argument(from, "staging path contains a NUL byte")?;
-    let to = path_argument(to, "destination path contains a NUL byte")?;
-    // SAFETY: both pointers are valid NUL-terminated path strings for the
-    // duration of the call.
-    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn rename_noreplace(_from: &Path, _to: &Path) -> io::Result<()> {
-    Err(io::Error::from_raw_os_error(libc::ENOSYS))
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -423,6 +339,7 @@ mod tests {
     };
 
     use super::{PublicationOps, host_name, publish, publish_with_ops, staging_paths};
+    use crate::fs_capability::{Faults, UNSUPPORTED_RENAME_ERRNOS};
     use crate::{
         AdmissionIdentity, AnalysisInputs, BuildConfig, CorpusArtifact, CorpusBuilder, CorpusError,
         DictionaryFingerprint, ReaderIdentity, artifact::CompletedStagingArtifact,
@@ -480,7 +397,7 @@ mod tests {
             });
             match self.rename_errno {
                 Some(errno) => Err(std::io::Error::from_raw_os_error(errno)),
-                None => super::rename_noreplace(from, to),
+                None => crate::fs_capability::rename_noreplace(from, to),
             }
         }
     }
@@ -534,7 +451,7 @@ mod tests {
 
         fn rename_noreplace(&self, from: &Path, to: &Path) -> std::io::Result<()> {
             self.rename_barrier.wait();
-            super::rename_noreplace(from, to)
+            crate::fs_capability::rename_noreplace(from, to)
         }
     }
 
@@ -709,7 +626,7 @@ mod tests {
     async fn unsupported_no_replace_never_falls_back_to_a_replacing_rename() {
         // Driven by the production set so a platform that adds an errno — macOS
         // adds ENOTSUP — is covered without restating the list.
-        for &errno in super::UNSUPPORTED_RENAME_ERRNOS {
+        for &errno in UNSUPPORTED_RENAME_ERRNOS {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("science.lingcorpus");
             let mut completed = complete_staging(&destination).await;
@@ -738,97 +655,137 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn unsupported_rename(errno: i32) -> impl FnOnce(&Path, &Path) -> std::io::Result<()> {
-        move |_, _| Err(std::io::Error::from_raw_os_error(errno))
+    /// Publication operations whose no-replace rename runs through the seam with `faults`.
+    struct FaultedOps(Faults);
+
+    impl PublicationOps for FaultedOps {
+        fn fsync(&self, path: &Path) -> std::io::Result<()> {
+            std::fs::File::open(path)?.sync_all()
+        }
+
+        fn rename_noreplace(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            crate::fs_capability::rename_noreplace_with(&self.0, from, to)
+        }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn staged_component(parent: &Path) -> PathBuf {
-        let staging = parent.join(".output.staging");
-        std::fs::create_dir(&staging).unwrap();
-        std::fs::write(staging.join("component"), b"data").unwrap();
-        staging
+    fn no_replace_rename_failing(errno: i32) -> FaultedOps {
+        FaultedOps(Faults {
+            rename_noreplace: Some(errno),
+            ..Faults::default()
+        })
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn without_no_replace_rename_a_directory_is_published_to_an_absent_destination() {
-        for &errno in super::UNSUPPORTED_RENAME_ERRNOS {
+    async fn corpus_publication_falls_back_when_no_replace_rename_is_unsupported() {
+        for &errno in UNSUPPORTED_RENAME_ERRNOS {
             let directory = tempfile::tempdir().unwrap();
-            let staging = staged_component(directory.path());
-            let destination = directory.path().join("output");
+            let destination = directory.path().join("science.lingcorpus");
+            let mut completed = complete_staging(&destination).await;
+            let staging = completed.path().to_path_buf();
 
-            super::rename_noreplace_with(&staging, &destination, unsupported_rename(errno))
-                .unwrap();
+            publish_with_ops(&no_replace_rename_failing(errno), &mut completed).unwrap();
+            drop(completed);
 
-            assert!(!staging.exists());
-            assert_eq!(
-                std::fs::read(destination.join("component")).unwrap(),
-                b"data"
+            assert!(!staging.exists(), "errno {errno}");
+            CorpusArtifact::open(&destination).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn corpus_publication_reports_other_rename_errors_without_a_fallback() {
+        for errno in [libc::EPERM, libc::EACCES, libc::EXDEV] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("science.lingcorpus");
+            let mut completed = complete_staging(&destination).await;
+            let staging = completed.path().to_path_buf();
+
+            let error =
+                publish_with_ops(&no_replace_rename_failing(errno), &mut completed).unwrap_err();
+            drop(completed);
+
+            assert!(
+                matches!(error, CorpusError::Io(ref source) if source.raw_os_error() == Some(errno)),
+                "errno {errno}: {error:?}"
             );
+            assert!(!destination.exists());
+            assert!(!staging.exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn corpus_publication_reports_a_destination_taken_during_rename() {
+        for errno in [libc::EEXIST, libc::ENOTEMPTY] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("science.lingcorpus");
+            let mut completed = complete_staging(&destination).await;
+
+            let error =
+                publish_with_ops(&no_replace_rename_failing(errno), &mut completed).unwrap_err();
+
+            assert!(matches!(
+                error,
+                CorpusError::DestinationExists { ref path } if path == &destination
+            ));
         }
     }
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn without_no_replace_rename_an_existing_destination_is_left_unchanged() {
-        let occupy: [fn(&Path); 3] = [
-            |path| {
-                std::fs::create_dir(path).unwrap();
-                std::fs::write(path.join("existing"), b"kept").unwrap();
-            },
-            |path| std::fs::create_dir(path).unwrap(),
-            |path| std::fs::write(path, b"kept").unwrap(),
-        ];
-        for &errno in super::UNSUPPORTED_RENAME_ERRNOS {
-            for occupy in occupy {
-                let directory = tempfile::tempdir().unwrap();
-                let staging = staged_component(directory.path());
-                let destination = directory.path().join("output");
-                occupy(&destination);
-                let before = snapshot(&destination);
+    fn staged_directory_publication_falls_back_or_reports_why_it_could_not() {
+        for (errno, fallback_rename, expected) in [
+            (libc::EINVAL, None, Ok(())),
+            (libc::ENOSYS, None, Ok(())),
+            (libc::EOPNOTSUPP, None, Ok(())),
+            (libc::EINVAL, Some(libc::EXDEV), Err("io")),
+            (libc::EINVAL, Some(libc::EACCES), Err("io")),
+            (libc::EINVAL, Some(libc::EINVAL), Err("unsupported")),
+            (libc::EEXIST, None, Err("exists")),
+            (libc::EPERM, None, Err("io")),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("output");
+            let mut staging = super::StagingDirectory::create_beside(&destination)
+                .unwrap()
+                .unwrap();
+            std::fs::write(staging.path.join("component"), b"data").unwrap();
+            let staging_path = staging.path.clone();
+            let ops = FaultedOps(Faults {
+                rename_noreplace: Some(errno),
+                rename: fallback_rename,
+                ..Faults::default()
+            });
 
-                let error =
-                    super::rename_noreplace_with(&staging, &destination, unsupported_rename(errno))
-                        .unwrap_err();
+            let result = staging.publish_with_ops(&destination, &ops);
+            drop(staging);
 
-                assert_eq!(error.raw_os_error(), Some(libc::EEXIST));
-                assert_eq!(snapshot(&destination), before);
-                assert_eq!(std::fs::read(staging.join("component")).unwrap(), b"data");
+            let case = (errno, fallback_rename);
+            match (result, expected) {
+                (Ok(bytes), Ok(())) => {
+                    assert_eq!(bytes, 4, "{case:?}");
+                    assert_eq!(
+                        std::fs::read(destination.join("component")).unwrap(),
+                        b"data"
+                    );
+                }
+                (Err(super::PublicationError::Io(source)), Err("io")) => {
+                    assert_eq!(source.raw_os_error(), fallback_rename.or(Some(errno)));
+                    assert!(!destination.exists(), "{case:?}");
+                }
+                (
+                    Err(super::PublicationError::Unsupported { errno: found, .. }),
+                    Err("unsupported"),
+                ) => {
+                    assert_eq!(found, libc::EINVAL);
+                    assert!(!destination.exists(), "{case:?}");
+                }
+                (Err(super::PublicationError::DestinationExists { path }), Err("exists")) => {
+                    assert_eq!(path, destination);
+                }
+                (result, expected) => panic!("{case:?}: {result:?}, expected {expected:?}"),
             }
+            assert!(!staging_path.exists(), "{case:?}");
         }
-    }
-
-    #[test]
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn without_no_replace_rename_a_file_is_not_renamed() {
-        let directory = tempfile::tempdir().unwrap();
-        let staging = directory.path().join(".output.staging");
-        std::fs::write(&staging, b"data").unwrap();
-        let destination = directory.path().join("output");
-
-        let error =
-            super::rename_noreplace_with(&staging, &destination, unsupported_rename(libc::EINVAL))
-                .unwrap_err();
-
-        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
-        assert!(!destination.exists());
-        assert_eq!(std::fs::read(&staging).unwrap(), b"data");
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn snapshot(path: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
-        if path.is_file() {
-            return vec![(path.to_path_buf(), Some(std::fs::read(path).unwrap()))];
-        }
-        let mut entries = vec![(path.to_path_buf(), None)];
-        for entry in std::fs::read_dir(path).unwrap() {
-            let entry = entry.unwrap().path();
-            entries.push((entry.clone(), Some(std::fs::read(&entry).unwrap())));
-        }
-        entries.sort();
-        entries
     }
 
     fn killed_builder_leftovers(parent: &Path, suffix: &str, host: &[u8]) -> (PathBuf, PathBuf) {
