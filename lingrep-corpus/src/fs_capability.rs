@@ -74,6 +74,7 @@ pub(crate) trait Primitives {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     fn hard_link(&self, original: &Path, link: &Path) -> io::Result<()>;
     fn symlink(&self, target: &Path, link: &Path) -> io::Result<()>;
+    fn create_new(&self, path: &Path) -> io::Result<fs::File>;
 }
 
 pub(crate) struct System;
@@ -99,6 +100,13 @@ impl Primitives for System {
     #[cfg(not(unix))]
     fn symlink(&self, _target: &Path, _link: &Path) -> io::Result<()> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    fn create_new(&self, path: &Path) -> io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
     }
 }
 
@@ -143,8 +151,9 @@ pub(crate) fn rename_noreplace_with(
 /// an existing `to`.
 ///
 /// Without no-replace rename, the file is hard-linked to `to` and the temporary name removed.
-/// When the filesystem supports neither, the error keeps the OS reason and suggests another
-/// output directory.
+/// Without hard links either, `to` is created exclusively and the content copied and synced,
+/// so an interrupted write can leave a partial `to`. When that creation fails, the error keeps
+/// the OS reason and suggests another output directory.
 pub fn persist_noclobber(file: tempfile::NamedTempFile, to: &Path) -> io::Result<()> {
     persist_noclobber_with(&System, file, to)
 }
@@ -154,7 +163,7 @@ pub(crate) fn persist_noclobber_with(
     file: tempfile::NamedTempFile,
     to: &Path,
 ) -> io::Result<()> {
-    let (_file, temporary) = file.into_parts();
+    let (mut file, temporary) = file.into_parts();
     match primitives.rename_noreplace(&temporary, to) {
         Ok(()) => {
             temporary.keep().map_err(|error| error.error)?;
@@ -164,23 +173,47 @@ pub(crate) fn persist_noclobber_with(
         Err(error) => return Err(error),
     }
     match primitives.hard_link(&temporary, to) {
-        Ok(()) => Ok(()),
-        Err(error) if Capability::HardLinks.unsupported_by(&error) => Err(io::Error::new(
-            error.kind(),
-            NoClobberUnsupported {
-                path: to.to_owned(),
-                source: error,
-            },
-        )),
-        Err(error) => Err(error),
+        Ok(()) => return Ok(()),
+        Err(error) if Capability::HardLinks.unsupported_by(&error) => {}
+        Err(error) => return Err(error),
     }
+    let mut destination = match primitives.create_new(to) {
+        Ok(destination) => destination,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(error),
+        Err(error) => {
+            return Err(io::Error::new(
+                error.kind(),
+                NoClobberUnsupported {
+                    path: to.to_owned(),
+                    source: error,
+                },
+            ));
+        }
+    };
+    let copied = copy_and_sync(&mut file, &mut destination, to);
+    if copied.is_err() {
+        drop(destination);
+        let _ = fs::remove_file(to);
+    }
+    copied
+}
+
+fn copy_and_sync(source: &mut fs::File, destination: &mut fs::File, to: &Path) -> io::Result<()> {
+    use std::io::Seek as _;
+    source.seek(io::SeekFrom::Start(0))?;
+    io::copy(source, destination)?;
+    destination.sync_all()?;
+    let parent = to
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::File::open(parent)?.sync_all()
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "cannot create {} without risking replacing an existing file: {source}. The filesystem \
-     supports neither no-replace rename nor hard links; choose an output directory on a \
-     filesystem that supports one of them",
+    "cannot create {}: {source}. The filesystem supports neither no-replace rename nor hard \
+     links; choose an output directory on a filesystem that supports one of them",
     path.display()
 )]
 struct NoClobberUnsupported {
@@ -303,6 +336,7 @@ pub(crate) struct Faults {
     pub(crate) rename: Option<i32>,
     pub(crate) hard_link: Option<i32>,
     pub(crate) symlink: Option<i32>,
+    pub(crate) create_new: Option<i32>,
 }
 
 #[cfg(test)]
@@ -326,6 +360,13 @@ impl Primitives for Faults {
 
     fn symlink(&self, target: &Path, link: &Path) -> io::Result<()> {
         injected(self.symlink, || System.symlink(target, link))
+    }
+
+    fn create_new(&self, path: &Path) -> io::Result<fs::File> {
+        match self.create_new {
+            Some(errno) => Err(io::Error::from_raw_os_error(errno)),
+            None => System.create_new(path),
+        }
     }
 }
 
@@ -651,15 +692,52 @@ mod tests {
         }
     }
 
+    fn without_rename_or_link(link_errno: i32) -> Faults {
+        Faults {
+            rename_noreplace: Some(libc::EINVAL),
+            hard_link: Some(link_errno),
+            ..Faults::default()
+        }
+    }
+
     #[test]
-    fn without_no_replace_rename_or_hard_links_persisting_names_the_reason_and_a_remedy() {
+    fn without_no_replace_rename_or_hard_links_a_file_is_created_exclusively() {
         for &errno in UNSUPPORTED_HARD_LINK_ERRNOS {
             let directory = tempfile::tempdir().unwrap();
             let destination = directory.path().join("report.json");
+
+            persist_noclobber_with(
+                &without_rename_or_link(errno),
+                temporary_report(directory.path()),
+                &destination,
+            )
+            .unwrap();
+
+            assert_eq!(
+                entries(directory.path()),
+                [(destination.clone(), b"report".to_vec())]
+            );
+
+            std::fs::write(&destination, b"kept").unwrap();
+            let error = persist_noclobber_with(
+                &without_rename_or_link(errno),
+                temporary_report(directory.path()),
+                &destination,
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(entries(directory.path()), [(destination, b"kept".to_vec())]);
+        }
+    }
+
+    #[test]
+    fn when_exclusive_creation_also_fails_persisting_names_the_reason_and_a_remedy() {
+        for errno in [libc::EACCES, libc::EIO, libc::EROFS] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("report.json");
             let faults = Faults {
-                rename_noreplace: Some(libc::EINVAL),
-                hard_link: Some(errno),
-                ..Faults::default()
+                create_new: Some(errno),
+                ..without_rename_or_link(libc::EPERM)
             };
 
             let error =

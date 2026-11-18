@@ -1783,8 +1783,10 @@ groups or a 32 MiB retained-data charge; narrow the scope when that happens.
 It is published only after a completed scan, never replaces a file, and cannot
 be combined with `--limit`, `--retain` or `--raw-matches`. On a filesystem
 without no-replace rename, `ling` publishes the report through a hard link. With
-neither, the command fails; the error names the OS reason and ends with "choose
-an output directory on a filesystem that supports one of them".
+neither, it creates the report exclusively and writes it in place, so an
+interrupted write can leave a partial report that does not parse as JSON. If
+that creation fails too, the command fails; the error names the OS reason and
+ends with "choose an output directory on a filesystem that supports one of them".
 
 ### Use an external protocol adapter
 

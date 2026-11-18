@@ -29,7 +29,6 @@ TEXT = "猫の名前はまだない。\n犬が庭の中を走る。\n"
 PATTERN = "particle := [text=の].\n"
 SYMLINK_ERROR = "cannot create symbolic links in"
 DESTINATION_EXISTS = "the destination already exists and was left unchanged"
-NO_CLOBBER_UNAVAILABLE = "without risking replacing an existing file"
 # The errno values lingrep_corpus::fs_capability::Capability::unsupported_by
 # treats as missing support. ENOTSUP and EOPNOTSUPP are one value on Linux.
 UNSUPPORTED = {
@@ -254,10 +253,22 @@ def analyzer_preflight(binary, root, env, symlink):
 
 
 def ending_report(binary, root, env, corpus, probed):
-    """Write `matches --ending-report`, which persists through no-replace rename or a hard link."""
+    """Write `matches --ending-report` twice: the first creates the report through no-replace
+    rename, a hard link or exclusive creation, and the second leaves it unchanged."""
     report = root / "endings.json"
-    result = ling(
-        binary,
+    rename, hard_link = probed["rename_noreplace"], probed["hard_link"]
+    if not (
+        rename is None
+        or (rename in UNSUPPORTED["rename_noreplace"] and hard_link is None)
+        or (
+            rename in UNSUPPORTED["rename_noreplace"]
+            and hard_link in UNSUPPORTED["hard_link"]
+        )
+    ):
+        raise RuntimeError(
+            f"no expectation for rename {rename} and hard link {hard_link}"
+        )
+    arguments = [
         "matches",
         "--corpus",
         corpus,
@@ -265,25 +276,13 @@ def ending_report(binary, root, env, corpus, probed):
         root / "catalog" / "check.lx",
         "--ending-report",
         report,
-        env=env,
-        expect_success=False,
-    )
-    rename, hard_link = probed["rename_noreplace"], probed["hard_link"]
-    if rename is None or (
-        rename in UNSUPPORTED["rename_noreplace"] and hard_link is None
-    ):
-        assert result.returncode == 0, result.stderr
-        assert json.loads(report.read_text())["version"] == 1
-    elif (
-        rename in UNSUPPORTED["rename_noreplace"]
-        and hard_link in UNSUPPORTED["hard_link"]
-    ):
-        expect_failure(result, NO_CLOBBER_UNAVAILABLE)
-        assert not report.exists(), f"{report} was written"
-    else:
-        raise RuntimeError(
-            f"no expectation for rename {rename} and hard link {hard_link}"
-        )
+    ]
+    ling(binary, *arguments, env=env)
+    written = report.read_bytes()
+    assert json.loads(written)["version"] == 1
+    again = ling(binary, *arguments, env=env, expect_success=False)
+    expect_failure(again, "already exists")
+    assert report.read_bytes() == written, f"{report} was changed"
 
 
 def case_variant(binary, root, env, corpus, case_insensitive):
