@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::disk_protocol::{
     Siblings, canonical_name, of_type, run_json, sibling_with_manifest, siblings, write_table,
 };
-use crate::support::lingrep;
+use crate::support::{lingrep, lingrep_without_dictionary};
 
 /// The source's realizations plus every kind of entry prune must keep.
 struct Fixture {
@@ -488,4 +488,53 @@ fn another_trust_class_is_kept_when_the_source_is_missing() {
         assert!(attested.exists(), "include_all_superseded={all}");
     }
     assert!(fixture.current.exists());
+}
+
+/// A superseded realization that fails the structural validation
+/// `corpus inspect` runs is kept as `damaged` with the validation failure,
+/// and cannot be named by `--keep`.
+#[test]
+fn a_damaged_realization_is_kept_and_cannot_anchor_keep() {
+    let fixture = siblings();
+    fs::remove_file(fixture.other_analyzer.join("tokens.v1.zst")).unwrap();
+    let inspect = lingrep_without_dictionary()
+        .args(["corpus", "inspect"])
+        .arg(&fixture.other_analyzer)
+        .output()
+        .unwrap();
+    assert!(!inspect.status.success(), "inspect rejects the realization");
+
+    let keep = lingrep()
+        .args(["corpus", "prune", "--dict-path"])
+        .arg(fixture.dictionary.path())
+        .arg("--keep")
+        .arg(&fixture.other_analyzer)
+        .arg("--source")
+        .arg(&fixture.source)
+        .output()
+        .unwrap();
+    assert_eq!(keep.status.code(), Some(2), "{keep:?}");
+
+    let records = run_json(&[
+        "corpus".as_ref(),
+        "prune".as_ref(),
+        "--execute".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    assert!(fixture.other_analyzer.exists(), "{records:?}");
+    assert!(!removals(&records).contains_key(&path_string(&fixture.other_analyzer)));
+    let kept = of_type(&records, "kept")
+        .into_iter()
+        .find(|record| record["path"] == path_string(&fixture.other_analyzer))
+        .unwrap_or_else(|| panic!("the damaged realization is reported: {records:?}"));
+    assert_eq!(kept["reason"], "damaged");
+    assert!(
+        kept["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("tokens.v1.zst")),
+        "{kept:?}"
+    );
 }

@@ -2170,8 +2170,10 @@ ling --json corpus disk --current --caches corpora/ >> disk-use.jsonl
 build leftovers immediately in `DIR` occupy. `--source SOURCE` narrows the
 report to one source and scans the directory beside it, as `corpus variants`
 does. Sizes are the apparent sizes of the files under each entry. The command
-reads directory entries, manifests and count-table headers; it opens no token
-component and never deletes anything. The stream contract is
+reads directory entries, manifests and count-table headers, and validates each
+readable realization structurally as `corpus inspect` does: component presence
+and lengths, fixed headers and directory checksums, with no token block
+decoded. It never deletes anything. The stream contract is
 `lingrep.disk/v1`; each `--json` run is one self-contained stream, so
 appending runs to a file records disk use over time.
 
@@ -2193,7 +2195,7 @@ Each realization has one status:
 | `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build, and `kept_by_prune` says why the default `corpus prune` keeps it, if it does. |
 | `unclassified` | Readable; no analysis inputs were given. |
 | `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
-| `unreadable` | A newer format, or damaged. |
+| `unreadable` | A newer format, or damaged: its manifest or a component fails the validation `corpus inspect` runs. |
 | `misnamed` | Readable, but its name records another identity or trust. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
 | `non_canonical_name` | A `.lingcorpus` directory with a name `corpus build` does not derive, such as an explicit `--output`. |
@@ -2240,6 +2242,7 @@ Other superseded realizations are kept, and listed as `kept` with a reason:
 | `reader_variant` | reader or admission policy, and no analysis dimension | `--include-all-superseded` |
 | `source_revision` | source content only | `--include-all-superseded` |
 | `other_trust` | trust class | never |
+| `damaged` | anything; its manifest reads but it fails structural validation, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
 source into, such as `lingrep-web` with its Markdown reader policy, or a
@@ -2250,14 +2253,14 @@ replaces it.
 Without `--execute` it deletes nothing and lists each path with its size and
 the total that would be freed. With `--execute` it deletes the same set and
 reports the bytes each deletion freed. The stream contract is
-`lingrep.prune/v1`, with one `kept` record per superseded artifact it keeps,
-one `removal` record per path, and a completion record.
+`lingrep.prune/v1`, with one `kept` record per superseded or damaged artifact
+it keeps, one `removal` record per path, and a completion record.
 
 `corpus prune` always selects the current realization: omitted analysis
 flags take `corpus build`'s defaults. When a source with something to
 delete has no current realization, because it was never built with these
 inputs or the source is missing, the command exits with status 2 and deletes
-nothing. `--keep ARTIFACT` names a readable artifact in the directory to keep;
+nothing. `--keep ARTIFACT` names a readable, undamaged artifact in the directory to keep;
 it satisfies that requirement for its source, and can be repeated.
 
 It never deletes the current or a kept artifact, an `unclassified`,
@@ -2266,7 +2269,8 @@ another source's artifacts when `--source` is given, an entry outside the
 scanned directory, a count table that binds an artifact being kept, or a
 leftover. Immediately before each deletion it checks again that the entry is
 a directory, not a symbolic link, with the canonical name and recorded
-identity the scan classified.
+identity the scan classified, and that a superseded realization still passes
+structural validation.
 
 Nothing records which artifacts other processes are reading. Before
 `--execute --include-all-superseded`, stop the builds, queries and

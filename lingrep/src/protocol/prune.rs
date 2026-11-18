@@ -109,7 +109,7 @@ pub struct PruneRun {
     pub execute: bool,
 }
 
-/// A superseded realization this run keeps.
+/// A superseded or damaged realization this run keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneKept {
     pub path: String,
@@ -117,6 +117,9 @@ pub struct PruneKept {
     pub differences: Vec<VariantDifference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+    /// For a `damaged` realization, the validation failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// One entry this run deletes, or would delete without `--execute`.

@@ -60,9 +60,14 @@ pub(crate) fn run_to<W: Write>(
     let kept_by_rule = scan
         .realizations
         .iter()
-        .filter(|entry| entry.status == RealizationStatus::Superseded)
         .filter(|entry| !kept.contains(&entry.path))
-        .filter_map(|entry| keep_reason(entry).map(|reason| (entry, reason)))
+        .filter_map(|entry| match entry.status {
+            RealizationStatus::Superseded => keep_reason(entry).map(|reason| (entry, reason)),
+            RealizationStatus::Unreadable if entry.recorded.is_some() => {
+                Some((entry, PruneKeep::Damaged))
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>();
     let removed = scan
         .realizations
@@ -162,6 +167,7 @@ pub(crate) fn run_to<W: Write>(
             reason: *reason,
             differences: entry.differences.clone(),
             bytes: entry.bytes,
+            message: entry.message.clone(),
         }))?;
     }
 
@@ -213,7 +219,8 @@ pub(crate) fn run_to<W: Write>(
     Ok(CommandOutcome::Success)
 }
 
-/// Resolves each `--keep` to the readable realization in the scan it names.
+/// Resolves each `--keep` to the readable realization in the scan it names;
+/// a damaged one is not readable.
 fn keep(
     requested: &[PathBuf],
     realizations: &[RealizationEntry],
@@ -224,6 +231,7 @@ fn keep(
         let resolved = fs::canonicalize(path).ok();
         let found = realizations.iter().find(|entry| {
             entry.recorded.is_some()
+                && entry.status != RealizationStatus::Unreadable
                 && resolved.is_some()
                 && fs::canonicalize(&entry.path).ok() == resolved
         });
@@ -296,10 +304,10 @@ impl Human<'_> {
                 disk::wire(&kept.reason).replace('_', "-"),
                 disk::size(kept.bytes),
                 self.short(&kept.path),
-                if kept.reason == PruneKeep::OtherTrust {
-                    ""
-                } else {
-                    " (--include-all-superseded deletes it)"
+                match (&kept.message, kept.reason) {
+                    (Some(message), _) => format!(": {message}"),
+                    (None, PruneKeep::OtherTrust | PruneKeep::Damaged) => String::new(),
+                    (None, _) => " (--include-all-superseded deletes it)".to_owned(),
                 }
             ),
             PruneEvent::Removal(removal) => writeln!(

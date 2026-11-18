@@ -231,6 +231,10 @@ pub enum PruneKeep {
     /// Has another trust class. `corpus build` does not produce it, so no
     /// local rebuild replaces it; `corpus prune` never deletes it.
     OtherTrust,
+    /// Its manifest is readable but it fails the structural validation
+    /// `corpus inspect` runs; the realization is reported as `unreadable`.
+    /// `corpus prune` never deletes it.
+    Damaged,
 }
 
 /// One count table immediately in the scanned directory.

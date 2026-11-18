@@ -2,10 +2,12 @@
 //! occupy in one directory, and which realizations are current.
 //!
 //! The scan reads directory entries, manifests and table headers, and sums
-//! file sizes. It opens no token component except the one realization
-//! `corpus build` would reuse, which [`Realization::classify`] admits
-//! structurally. Selecting the current realization also runs the identity
-//! pass `corpus build` runs before a reuse: one read of the source.
+//! file sizes. It admits each readable realization with
+//! [`CorpusArtifact::open`], the structural validation `corpus build` applies
+//! before a reuse and `corpus inspect` before reporting: component presence
+//! and lengths, fixed headers, and directory checksums, with no token block
+//! decoded. Selecting the current realization also runs the identity pass
+//! `corpus build` runs before a reuse: one read of the source.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -14,9 +16,9 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use lingrep_corpus::{
-    AnalysisIdentity, BuildOutcome, CountTable, CountTableError, Realization, RealizationRequest,
-    SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass, artifact_bytes,
-    is_older_format, parse_artifact_name, staging_leftovers,
+    AnalysisIdentity, BuildOutcome, CorpusArtifact, CountTable, CountTableError, Realization,
+    RealizationRequest, SiblingRealization, SiblingScan, SourceIdentity, StagingStatus, TrustClass,
+    artifact_bytes, is_older_format, parse_artifact_name, staging_leftovers,
 };
 
 use super::CommandOutcome;
@@ -260,8 +262,15 @@ pub(crate) fn scan(
             .iter()
             .find(|source| source.name == parsed.source_name)
             .and_then(|source| source.request.as_ref());
+        let validation = if is_current {
+            Ok(())
+        } else {
+            CorpusArtifact::open(&realization.path).map(drop)
+        };
         let (status, differences) = if is_current {
             (RealizationStatus::Current, Vec::new())
+        } else if validation.is_err() {
+            (RealizationStatus::Unreadable, Vec::new())
         } else if parsed.analysis_identity != realization.analysis_identity
             || parsed.trust != realization.trust
         {
@@ -281,7 +290,7 @@ pub(crate) fn scan(
             bytes: artifact_bytes(&realization.path).ok(),
             recorded: Some(realization.clone()),
             differences,
-            message: None,
+            message: validation.err().map(|error| error.to_string()),
         });
     }
     for (path, error) in &report.diagnostics {
@@ -936,7 +945,7 @@ impl Human<'_> {
                         PruneKeep::ReaderVariant | PruneKeep::SourceRevision => {
                             "; prune keeps it unless --include-all-superseded"
                         }
-                        PruneKeep::OtherTrust => "; prune keeps it",
+                        PruneKeep::OtherTrust | PruneKeep::Damaged => "; prune keeps it",
                     });
                 }
                 writeln!(

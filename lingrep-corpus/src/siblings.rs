@@ -230,7 +230,7 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
-/// `source_name` and `expected`, and its regular `manifest.json` opens and
+/// `source_name` and `expected`, it passes [`CorpusArtifact::open`], and it
 /// records `expected`. Choosing which realization is superseded is the
 /// caller's; this checks only that `path` is still the one it chose.
 pub fn remove_realization(
@@ -253,11 +253,7 @@ pub fn remove_realization(
     if !fs::symlink_metadata(path)?.is_dir() {
         return reject("not a directory");
     }
-    let manifest = path.join(MANIFEST_NAME);
-    if !fs::symlink_metadata(&manifest)?.is_file() {
-        return reject("manifest is not a regular file");
-    }
-    if Manifest::open(&manifest)?.analysis_identity()? != *expected {
+    if *CorpusArtifact::open(path)?.analysis_identity() != *expected {
         return reject("its manifest records another analysis identity");
     }
     let bytes = artifact_bytes(path)?;
