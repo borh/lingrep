@@ -61,7 +61,7 @@ rmp-serde.workspace = true
 trycmd.workspace = true
 lingrep-core = { workspace = true, features = ["testing"] }
 lingrep-web = { path = ".", features = ["testing"] }
-calamine = "0.37"
+calamine = "0.38"
 
 [lints]
 workspace = true
