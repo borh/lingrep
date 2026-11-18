@@ -47,6 +47,16 @@ pub(crate) const UNSUPPORTED_RENAME_ERRNOS: &[i32] =
 pub(crate) const UNSUPPORTED_RENAME_ERRNOS: &[i32] =
     &[libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP];
 
+// macOS reports a vnode operation a filesystem lacks as ENOTSUP (autofs returns it for symlink).
+#[cfg(target_os = "macos")]
+const UNSUPPORTED_SYMLINK_ERRNOS: &[i32] = &[
+    libc::EPERM,
+    libc::EACCES,
+    libc::ENOSYS,
+    libc::EOPNOTSUPP,
+    libc::ENOTSUP,
+];
+#[cfg(not(target_os = "macos"))]
 const UNSUPPORTED_SYMLINK_ERRNOS: &[i32] =
     &[libc::EPERM, libc::EACCES, libc::ENOSYS, libc::EOPNOTSUPP];
 
@@ -516,6 +526,7 @@ mod tests {
             (libc::EACCES, true),
             (libc::ENOSYS, true),
             (libc::EOPNOTSUPP, true),
+            (libc::ENOTSUP, true),
             (libc::EIO, false),
             (libc::EEXIST, false),
             (libc::EXDEV, false),
