@@ -537,3 +537,39 @@ fn root_validation_classifies_missing_dangling_and_unsupported_roots()
     ));
     Ok(())
 }
+
+/// Source names are compared in NFC: a directory and a file named in NFD
+/// are named by their NFC spelling, and two names equal in NFC are refused
+/// with both names as written.
+#[test]
+fn source_names_are_nfc_and_names_equal_in_nfc_are_refused()
+-> Result<(), Box<dyn std::error::Error>> {
+    let nfd = "\u{30ab}\u{3099}";
+    let directory = tempdir()?;
+    fs::create_dir(directory.path().join(nfd))?;
+    fs::write(directory.path().join(nfd).join(format!("{nfd}.md")), "ガ")?;
+    let (found, _) = documents(directory.path())?;
+    let names: Vec<&str> = found
+        .iter()
+        .map(|document| document.logical_name.as_str())
+        .collect();
+    assert_eq!(names, ["ガ/ガ.md"]);
+
+    fs::create_dir(directory.path().join("ガ"))?;
+    fs::write(directory.path().join("ガ").join("ガ.md"), "ガ")?;
+    match documents(directory.path()) {
+        Err(DiscoveryError::NfcNameCollision { first, second }) => {
+            let mut names = [first, second];
+            names.sort();
+            assert_eq!(
+                names,
+                [
+                    std::path::PathBuf::from(nfd),
+                    std::path::PathBuf::from("ガ")
+                ]
+            );
+        }
+        other => panic!("expected an NFC name collision, got {other:?}"),
+    }
+    Ok(())
+}

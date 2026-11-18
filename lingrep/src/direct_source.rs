@@ -1048,6 +1048,10 @@ fn terminal_failure_from_discovery(error: &DiscoveryError) -> TerminalFailure {
         DiscoveryError::NonUtf8Name { path } => {
             ("non_utf8_source_name", path.to_string_lossy().into_owned())
         }
+        DiscoveryError::NfcNameCollision { first, .. } => (
+            "nfc_source_name_collision",
+            first.to_string_lossy().into_owned(),
+        ),
         DiscoveryError::Limit { logical_path, .. } => (
             "traversal_limit",
             logical_path.to_string_lossy().into_owned(),

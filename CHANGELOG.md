@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definition and both spellings. A regex that is not NFC is compiled as written
   and warns `regex_not_nfc`. A catalog whose source is not NFC gets a new
   fingerprint, and NFC catalogs keep theirs.
+- Source names are in Unicode NFC. A file or directory, a single input file,
+  or a Soranoha archive member named in NFD, as macOS names `ガ`, is named by
+  its NFC spelling in records and in the source identity of a directory or
+  file input. Under 0.8.1 a corpus copied from a Mac had a different identity
+  from the same files named in NFC, and a Soranoha member named in NFD had no
+  catalog row. Two names equal in NFC fail the run, naming both as written.
 - A token-test value in IME or typographic quotes, such as `[text=”猫”]` or
   `[text=「猫」]`, is rejected as `QuotedAttributeValue` like `[text="猫"]`.
   Under 0.8.1 the catalog compiled and its pattern matched nothing.

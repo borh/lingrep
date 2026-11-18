@@ -8,6 +8,7 @@ use std::io::{self, BufRead, Read, Seek};
 use super::structured::{CorpusEvent, Metadata, metadata_from_json};
 use super::zip::zip_entries;
 use crate::utils::split_sentence_ja;
+use unicode_normalization::UnicodeNormalization;
 use zip::ZipArchive;
 
 /// The archive member holding the bibliography.
@@ -106,7 +107,7 @@ impl<R: Read + Seek> SoranohaEvents<R> {
                 "soranoha archive {source_name}: not a readable ZIP archive: {error}"
             ))
         })?;
-        let entries = zip_entries(&zip)?;
+        let entries = nfc_entries(zip_entries(&zip)?, &source_name)?;
         if !entries.iter().any(|(name, _)| name == CATALOG_MEMBER) {
             return Err(invalid(format!(
                 "soranoha archive {source_name}: no {CATALOG_MEMBER} at the root"
@@ -359,6 +360,32 @@ fn read_catalog<R: Read + Seek>(zip: &mut ZipArchive<R>, source_name: &str) -> i
     Ok(bytes)
 }
 
+/// Entry names in Unicode NFC, sorted by name bytes.
+///
+/// A member name is a source name, so it is compared in NFC, as the catalog's
+/// `filename` is; an archive written on macOS can name ガ in NFD.
+fn nfc_entries(
+    entries: Vec<(String, usize)>,
+    source_name: &str,
+) -> io::Result<Vec<(String, usize)>> {
+    let mut entries: Vec<(String, String, usize)> = entries
+        .into_iter()
+        .map(|(name, index)| (name.nfc().collect(), name, index))
+        .collect();
+    entries.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    if let Some(pair) = entries.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(invalid(format!(
+            "soranoha archive {source_name}: entries {} and {} have the same name in Unicode \
+             NFC, which source names are compared in; rename one of them",
+            pair[0].1, pair[1].1
+        )));
+    }
+    Ok(entries
+        .into_iter()
+        .map(|(name, _, index)| (name, index))
+        .collect())
+}
+
 /// Parses the bibliography into one metadata record per member name.
 fn parse_catalog(bytes: &[u8], source_name: &str) -> io::Result<HashMap<String, Metadata>> {
     let text = std::str::from_utf8(bytes)
@@ -474,7 +501,7 @@ fn parse_catalog(bytes: &[u8], source_name: &str) -> io::Result<HashMap<String, 
             serde_json::Value::Object(object),
             &format!("soranoha archive {source_name}: {CATALOG_MEMBER} row {row}"),
         )?;
-        if rows.insert(filename.to_owned(), metadata).is_some() {
+        if rows.insert(filename.nfc().collect(), metadata).is_some() {
             return Err(catalog_error(
                 source_name,
                 format!("row {row} repeats the filename {filename:?}"),

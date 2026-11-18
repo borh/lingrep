@@ -10,6 +10,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 type FileIdentity = (u64, u64);
 
@@ -85,6 +86,11 @@ pub enum DiscoveryError {
     DanglingLink { logical_path: PathBuf },
     #[error("non-UTF-8 logical path component at {path}")]
     NonUtf8Name { path: PathBuf },
+    #[error(
+        "{first} and {second} have the same name in Unicode NFC, which source names are \
+         compared in; rename one of them"
+    )]
+    NfcNameCollision { first: PathBuf, second: PathBuf },
     #[error("traversal limit {field}={limit} exceeded at {logical_path} (observed {observed})")]
     Limit {
         field: &'static str,
@@ -271,7 +277,8 @@ impl CorpusDiscovery {
                 .ok_or_else(|| DiscoveryError::NonUtf8Name {
                     path: root_logical.clone(),
                 })?
-                .to_owned();
+                .nfc()
+                .collect::<String>();
             let retained_bytes = path_and_name_capacity(&root, &logical_name);
             check_root_index_limit(&limits, retained_bytes)?;
             ValidatedRootKind::File {
@@ -514,6 +521,21 @@ impl CorpusDiscovery {
                 .as_bytes()
                 .cmp(right.logical_name.as_bytes())
         });
+        if let Some([first, second]) = entries
+            .windows(2)
+            .find(|pair| pair[0].logical_name == pair[1].logical_name)
+        {
+            let written = |entry: &DirectoryEntry| {
+                join_logical_path(
+                    &logical_directory,
+                    entry.path.file_name().expect("read_dir entry has a name"),
+                )
+            };
+            return Err(DiscoveryError::NfcNameCollision {
+                first: written(first),
+                second: written(second),
+            });
+        }
         let retained_bytes = entries
             .capacity()
             .saturating_mul(std::mem::size_of::<DirectoryEntry>())
@@ -566,10 +588,7 @@ impl CorpusDiscovery {
                     Err(error) => Err(io_at(&logical_path, error)),
                 };
             }
-            let logical_name = logical_path
-                .to_str()
-                .expect("a UTF-8 parent plus UTF-8 name is UTF-8")
-                .to_owned();
+            let logical_name = nfc_logical_name(&logical_path);
             return Ok(Some(DirectoryEntry {
                 retained_bytes: path_and_name_capacity(&path, &logical_name),
                 path,
@@ -586,10 +605,7 @@ impl CorpusDiscovery {
                 path: logical_path.clone(),
             });
         }
-        let logical_name = logical_path
-            .to_str()
-            .expect("a UTF-8 parent plus UTF-8 name is UTF-8")
-            .to_owned();
+        let logical_name = nfc_logical_name(&logical_path);
         Ok(Some(DirectoryEntry {
             retained_bytes: path_and_name_capacity(&path, &logical_name),
             path,
@@ -737,6 +753,19 @@ fn logical_path(logical_name: &str) -> PathBuf {
     } else {
         PathBuf::from(logical_name)
     }
+}
+
+/// The logical name of a UTF-8 path, in Unicode NFC.
+///
+/// Source names enter the source identity and every record, so a file named
+/// in NFD, as macOS and some archivers write ガ, is named by its NFC spelling
+/// and the same corpus keeps its identity when copied between file systems.
+fn nfc_logical_name(logical_path: &Path) -> String {
+    logical_path
+        .to_str()
+        .expect("a UTF-8 parent plus UTF-8 name is UTF-8")
+        .nfc()
+        .collect()
 }
 
 fn join_logical_path(parent: &str, name: &std::ffi::OsStr) -> PathBuf {

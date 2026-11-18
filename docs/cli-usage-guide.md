@@ -1286,6 +1286,12 @@ byte. When the file looks like Shift_JIS (CP932), the message gives an
 `iconv -f CP932 -t UTF-8` or `nkf -w` command that converts it; `ling` does
 not decode Shift_JIS itself.
 
+Source names are in Unicode NFC. A file, directory or Soranoha archive member
+named in NFD, as macOS writes `ガ`, is named by its NFC spelling in source
+events, records and the source identity, so a directory corpus copied from a
+Mac has the identity of the same files named in NFC. Two names that are equal
+in NFC fail the run, naming both as written.
+
 The `source` events expose logical names, target groups, and external-target
 status. The final event reports alias multiplicity and traversal high-water
 values. Cycles, dangling links, invalid names, and exceeded limits fail the
