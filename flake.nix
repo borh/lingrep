@@ -71,6 +71,7 @@
             nodejs_24
             typescript
             jq
+            ripgrep
             sqlx-cli
             tree-sitter
             uv
