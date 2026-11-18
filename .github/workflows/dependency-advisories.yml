@@ -1,0 +1,33 @@
+name: Rust dependency advisories
+
+on:
+  schedule:
+    - cron: '27 3 * * 1'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-deny
+        run: cargo install --locked --version 0.20.2 cargo-deny
+
+      - name: Check locked dependencies for advisories
+        run: cargo deny --locked check advisories

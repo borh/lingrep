@@ -34,7 +34,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  advisories:
+    uses: ./.github/workflows/dependency-advisories.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.sha }}
+
   build:
+    needs: advisories
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
