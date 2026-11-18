@@ -249,8 +249,10 @@ pub struct DiskTable {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_identity: Option<String>,
     pub binding: TableBinding,
-    /// Readable realizations in the scanned directory that record the bound
-    /// analysis identity.
+    /// Entries in the scanned directory, whatever their names, that record
+    /// the bound analysis identity in a readable manifest, or are unreadable
+    /// canonical names other than an older format that record it in their
+    /// name. A symbolic link is listed by its own path.
     pub artifacts: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,

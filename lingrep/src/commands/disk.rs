@@ -347,7 +347,7 @@ pub(crate) fn scan(
     }
     realizations.sort_by(|left, right| left.path.cmp(&right.path));
 
-    let tables = tables(scope, &entries, &report.realizations, &realizations);
+    let tables = tables(scope, &entries, &bindable(&entries, &report), &realizations);
     let leftovers = leftovers(scope, directory)?;
     Ok(Some(Scan {
         classified: inputs.is_some(),
@@ -514,15 +514,51 @@ pub(crate) fn kept_by_prune(entry: &RealizationEntry) -> Option<PruneKeep> {
     }
 }
 
+/// Every entry in the directory, whatever its name or scope, that a count
+/// table can bind, with the analysis identity it binds: each realization with
+/// a readable manifest, including explicit outputs and symbolic-link targets,
+/// and each unreadable canonical name other than an older format, by the
+/// identity its name records.
+fn bindable(
+    entries: &[(PathBuf, EntryKind)],
+    report: &lingrep_corpus::SiblingReport,
+) -> Vec<(PathBuf, AnalysisIdentity)> {
+    let mut bindable = report
+        .realizations
+        .iter()
+        .map(|realization| (realization.path.clone(), realization.analysis_identity))
+        .collect::<Vec<_>>();
+    bindable.extend(report.diagnostics.iter().filter_map(|(path, error)| {
+        let parsed = file_name(path).and_then(parse_artifact_name)?;
+        (!is_older_format(error)).then(|| (path.clone(), parsed.analysis_identity))
+    }));
+    for (path, kind) in entries {
+        let candidate = match kind {
+            EntryKind::Symlink => true,
+            EntryKind::Directory => file_name(path)
+                .is_some_and(|name| !name.starts_with('.') && parse_artifact_name(name).is_none()),
+            EntryKind::Other => false,
+        };
+        if candidate
+            && fs::metadata(path.join("manifest.json")).is_ok_and(|metadata| metadata.is_file())
+            && let Ok(realization) = SiblingRealization::read(path)
+        {
+            bindable.push((path.clone(), realization.analysis_identity));
+        }
+    }
+    bindable.sort_by(|left, right| left.0.cmp(&right.0));
+    bindable
+}
+
 /// Count tables immediately in the directory, bound by analysis identity to
-/// the readable realizations beside them.
+/// the [`bindable`] entries beside them.
 ///
 /// A directory is a table candidate when it holds a regular `header.json`;
 /// one whose header names another format is not a table and is skipped.
 fn tables(
     scope: &Scope,
     entries: &[(PathBuf, EntryKind)],
-    readable: &[SiblingRealization],
+    bindable: &[(PathBuf, AnalysisIdentity)],
     reported: &[RealizationEntry],
 ) -> Vec<TableEntry> {
     let status_of = |path: &Path| {
@@ -563,12 +599,10 @@ fn tables(
             }
             Err(_) => continue,
         };
-        let artifacts = readable
+        let artifacts = bindable
             .iter()
-            .filter(|realization| {
-                encode_digest(realization.analysis_identity.as_bytes()) == key.analysis_identity
-            })
-            .map(|realization| realization.path.clone())
+            .filter(|(_, identity)| encode_digest(identity.as_bytes()) == key.analysis_identity)
+            .map(|(path, _)| path.clone())
             .collect::<Vec<_>>();
         let statuses = artifacts
             .iter()

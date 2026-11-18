@@ -53,6 +53,18 @@ pub struct SiblingRealization {
     pub sentence_truncation: Option<crate::SentenceTruncation>,
 }
 
+impl SiblingRealization {
+    /// Reads the realization whose manifest is at `path/manifest.json`,
+    /// whatever `path` is named, under the same manifest bound as
+    /// [`SiblingScan::scan`].
+    pub fn read(path: &Path) -> Result<Self, CorpusError> {
+        realization(
+            path.to_path_buf(),
+            &Manifest::open(&path.join(MANIFEST_NAME))?,
+        )
+    }
+}
+
 /// Realizations found, and the candidates that could not be read.
 ///
 /// Successes and failures travel together on purpose. A single truncated or

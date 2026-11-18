@@ -2202,8 +2202,11 @@ Each realization has one status:
 
 A count table binds the analysis identity of the artifact it counts. Its
 `binding` is `current` or `superseded` when that artifact in `DIR` is,
-`present` when the artifact is present but unclassified, and `absent` when no
-artifact in `DIR` records that identity; the artifact may exist elsewhere.
+`present` when the artifact is present but unclassified or any other entry
+binds it, and `absent` when no artifact in `DIR` records that identity; the
+artifact may exist elsewhere. An artifact binds a table whatever its name,
+including an explicit `--output` and the target of a symbolic link, and an
+unreadable canonical artifact binds the identity its name records.
 A table whose binding is `superseded` or `absent` is orphaned. Tables are
 found by their `header.json`, whatever their names.
 
@@ -2233,7 +2236,8 @@ ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # delet
 for the same analysis inputs that differ from the current one in `analyzer`
 or `token_schema`, whatever else differs. That is the churn of switching
 dictionaries, analyzers or formats. It also deletes every count table whose
-bound artifacts are all among them.
+bound artifacts are all among them, so a table that an explicit `--output`
+corpus or any other artifact kept in the directory binds is kept.
 
 Other superseded realizations are kept, and listed as `kept` with a reason:
 

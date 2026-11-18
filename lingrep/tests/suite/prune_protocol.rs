@@ -51,18 +51,15 @@ fn fixture() -> Fixture {
     let outside = tempfile::tempdir().unwrap();
     let target = outside.path().join("target.lingcorpus");
     fs::rename(
-        sibling_with_manifest(&siblings.other_analyzer, "copy", |_| {}),
+        sibling_with_manifest(&siblings.other_reader, "copy", |_| {}),
         &target,
     )
     .unwrap();
     let symlink = directory.join(canonical_name("source.md", generation, 0xa4));
     #[cfg(unix)]
     std::os::unix::fs::symlink(&target, &symlink).unwrap();
-    let non_canonical = sibling_with_manifest(
-        &siblings.other_analyzer,
-        "source.md.mine.lingcorpus",
-        |_| {},
-    );
+    let non_canonical =
+        sibling_with_manifest(&siblings.other_reader, "source.md.mine.lingcorpus", |_| {});
     let other_source = sibling_with_manifest(&current, &canonical_name("other.md", 1, 0xa5), |m| {
         m["format_generation"] = 1.into();
     });
@@ -72,8 +69,8 @@ fn fixture() -> Fixture {
     write_table(&current, &current_table);
     write_table(&siblings.other_analyzer, &superseded_table);
     write_table(&target, &absent_table);
-    // The copy records the superseded artifact's identity; bind the table to
-    // one that no artifact here records.
+    // The copy records the reader variant's identity; bind the table to one
+    // that no artifact here records.
     let header_path = absent_table.join("header.json");
     let mut header: Value = serde_json::from_slice(&fs::read(&header_path).unwrap()).unwrap();
     header["key"]["analysis_identity"] = "ab".repeat(32).into();
@@ -537,4 +534,46 @@ fn a_damaged_realization_is_kept_and_cannot_anchor_keep() {
             .is_some_and(|message| message.contains("tokens.v1.zst")),
         "{kept:?}"
     );
+}
+
+/// Reads `table` against `corpus` with the catalog `write_table` wrote.
+fn read_table(table: &Path, corpus: &Path) -> std::process::Output {
+    lingrep_without_dictionary()
+        .args(["table", "--patterns"])
+        .arg(table.with_extension("lx"))
+        .arg("--corpus")
+        .arg(corpus)
+        .arg(table)
+        .output()
+        .unwrap()
+}
+
+/// A count table whose identity a retained explicit-output corpus records is
+/// kept, while the superseded canonical realization of the same identity is
+/// deleted.
+#[test]
+fn a_table_bound_to_a_retained_explicit_output_is_kept() {
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let explicit = sibling_with_manifest(&fixture.other_analyzer, "explicit-copy", |_| {});
+    let table = directory.join("explicit.lingtable");
+    write_table(&explicit, &table);
+    crate::support::assert_success(&read_table(&table, &explicit));
+
+    let records = run_json(&[
+        "corpus".as_ref(),
+        "prune".as_ref(),
+        "--execute".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    assert!(
+        removals(&records).contains_key(&path_string(&fixture.other_analyzer)),
+        "{records:?}"
+    );
+    assert!(!removals(&records).contains_key(&path_string(&table)));
+    assert!(explicit.exists() && table.exists(), "{records:?}");
+    crate::support::assert_success(&read_table(&table, &explicit));
 }
