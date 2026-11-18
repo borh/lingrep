@@ -18,6 +18,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      - ".cargo/config.toml"
       - "scripts/check-output-filesystem.py"
       - ".github/workflows/filesystems.yml"
   pull_request:
