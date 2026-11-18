@@ -128,6 +128,7 @@ pub(crate) fn canonical_name(source: &str, generation: u32, byte: u8) -> String 
 
 /// The realizations of one source under three inputs: the default analysis,
 /// another analyzer profile, and another reader policy.
+#[allow(dead_code)]
 pub(crate) struct Siblings {
     pub dictionary: MiniDictionary,
     pub directory: tempfile::TempDir,

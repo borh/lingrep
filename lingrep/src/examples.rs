@@ -173,6 +173,12 @@ static CORPUS_DISK_EXAMPLES: &[CommandExample] = &[CommandExample {
     argv: &["corpus", "disk", "{root}"],
     placeholders: &[ROOT],
 }];
+static CORPUS_PRUNE_EXAMPLES: &[CommandExample] = &[CommandExample {
+    id: "corpus prune/dry-run",
+    purpose: "List the superseded prepared artifacts beside the sources in one directory.",
+    argv: &["corpus", "prune", "{root}"],
+    placeholders: &[ROOT],
+}];
 static DESCRIBE_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "describe/machine-capabilities",
     purpose: "Read one command capability as JSON.",
@@ -255,6 +261,11 @@ static SEMANTICS: &[CommandSemantics] = &[
         command: "corpus disk",
         input_modes: &["prepared"],
         examples: ExamplePublication::Published(CORPUS_DISK_EXAMPLES),
+    },
+    CommandSemantics {
+        command: "corpus prune",
+        input_modes: &["prepared"],
+        examples: ExamplePublication::Published(CORPUS_PRUNE_EXAMPLES),
     },
     CommandSemantics {
         command: "corpus render",

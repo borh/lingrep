@@ -2192,7 +2192,7 @@ Each realization has one status:
 | `current` | The realization `corpus build` would reuse with the given inputs. |
 | `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build. |
 | `unclassified` | Readable; no analysis inputs were given. |
-| `older_format` | Written in an earlier format; `corpus variants --prune` deletes it. |
+| `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
 | `unreadable` | A newer format, or damaged. |
 | `misnamed` | Readable, but its name records another identity or trust. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
@@ -2218,6 +2218,43 @@ each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
 is named by a hash of the compressed file's metadata, so the report cannot
 name the dictionary it came from. `--analyzer-dir DIR` adds the size of a
 `ling analyzer prepare` directory, and can be repeated.
+
+### Pruning superseded artifacts
+
+```bash
+ling corpus prune --source corpora/works.md -d unidic-cwj.dic            # lists only
+ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # deletes
+```
+
+`corpus prune DIR` (or `--source SOURCE`) deletes the realizations that
+`corpus disk` reports as `superseded` or `older_format` for the same analysis
+inputs, and every count table whose bound artifacts are all among them.
+Without `--execute` it deletes nothing and lists each path with its size and
+the total that would be freed. With `--execute` it deletes the same set and
+reports the bytes each deletion freed. The stream contract is
+`lingrep.prune/v1`, with one `removal` record per path and a completion
+record.
+
+`corpus prune` always selects the current realization: omitted analysis
+flags take `corpus build`'s defaults. When a source with something to
+delete has no current realization, because it was never built with these
+inputs or the source is missing, the command exits with status 2 and deletes
+nothing. `--keep ARTIFACT` names a readable artifact in the directory to keep;
+it satisfies that requirement for its source, and can be repeated.
+
+It never deletes the current or a kept artifact, an `unclassified`,
+`unreadable`, `misnamed`, `symbolic_link` or `non_canonical_name` entry,
+another source's artifacts when `--source` is given, an entry outside the
+scanned directory, a count table that binds an artifact being kept, or a
+leftover. Immediately before each deletion it checks again that the entry is
+a directory, not a symbolic link, with the canonical name and recorded
+identity the scan classified.
+
+Nothing records which artifacts other processes are reading. Stop builds,
+queries and `lingrep-web` instances that use a superseded artifact before
+executing, or keep it with `--keep`. `lingrep-web` reads Markdown with
+conversion-artifact recovery, so for a Markdown source the artifact it
+serves is current only with `--md-recover-conversion-artifacts`.
 
 Whether an artifact built by `ling` is also the one `lingrep-web` prepares
 depends on the input format, because the name includes the reader identity. For

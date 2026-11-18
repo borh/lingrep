@@ -225,6 +225,46 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
     Ok(bytes)
 }
 
+/// Deletes the readable realization of `source_name` at `path` and returns
+/// the bytes freed.
+///
+/// Fails without deleting anything unless `path` is a directory rather than a
+/// symbolic link, its name is a canonical artifact name for exactly
+/// `source_name` and `expected`, and its regular `manifest.json` opens and
+/// records `expected`. Choosing which realization is superseded is the
+/// caller's; this checks only that `path` is still the one it chose.
+pub fn remove_realization(
+    path: &Path,
+    source_name: &str,
+    expected: &AnalysisIdentity,
+) -> Result<u64, CorpusError> {
+    let reject = |reason: &str| {
+        Err(crate::artifact::invalid_artifact(format!(
+            "cannot delete {}: {reason}",
+            path.display()
+        )))
+    };
+    let name = path.file_name().and_then(|name| name.to_str());
+    if name.and_then(parse_artifact_name).is_none_or(|parsed| {
+        parsed.source_name != source_name || parsed.analysis_identity != *expected
+    }) {
+        return reject("not the canonical artifact name of this source and identity");
+    }
+    if !fs::symlink_metadata(path)?.is_dir() {
+        return reject("not a directory");
+    }
+    let manifest = path.join(MANIFEST_NAME);
+    if !fs::symlink_metadata(&manifest)?.is_file() {
+        return reject("manifest is not a regular file");
+    }
+    if Manifest::open(&manifest)?.analysis_identity()? != *expected {
+        return reject("its manifest records another analysis identity");
+    }
+    let bytes = artifact_bytes(path)?;
+    fs::remove_dir_all(path)?;
+    Ok(bytes)
+}
+
 fn realization(path: PathBuf, manifest: &Manifest) -> Result<SiblingRealization, CorpusError> {
     let inputs = manifest.analysis_inputs()?;
     Ok(SiblingRealization {

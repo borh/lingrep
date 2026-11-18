@@ -20,6 +20,7 @@ mod link;
 pub mod manpages;
 pub mod matches;
 pub mod neighbors;
+pub mod prune;
 pub(crate) mod query_completion;
 pub(crate) mod query_projection;
 pub(crate) mod query_resolution;
@@ -90,6 +91,7 @@ pub fn dispatch(
             CorpusCommand::Inspect(args) => corpus::run_inspect(args, config, terminal, output),
             CorpusCommand::Variants(args) => variants::run(args, output),
             CorpusCommand::Disk(args) => disk::run(args, config, terminal, output),
+            CorpusCommand::Prune(args) => prune::run(args, config, terminal, output),
             CorpusCommand::Render(_) if output == crate::presentation::OutputMode::Jsonl => {
                 Err(CliError::UnsupportedOutput {
                     command: "corpus render",

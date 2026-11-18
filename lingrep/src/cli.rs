@@ -1115,6 +1115,8 @@ pub enum CorpusCommand {
     Variants(CorpusVariantsArgs),
     /// Report the disk use of prepared artifacts, count tables and build leftovers.
     Disk(Box<CorpusDiskArgs>),
+    /// Delete superseded prepared artifacts and the count tables bound only to them.
+    Prune(Box<CorpusPruneArgs>),
     /// Render a Markdown artifact's documents into a reading sidecar.
     Render(CorpusRenderArgs),
 }
@@ -1315,6 +1317,40 @@ pub struct CorpusDiskArgs {
     /// Also report the size of this analyzer directory; repeatable.
     #[arg(long, value_name = "DIR")]
     pub analyzer_dir: Vec<PathBuf>,
+}
+
+/// Deletion of superseded and older-format realizations. Lists what it
+/// would delete unless `--execute` is given.
+#[derive(Debug, Args)]
+pub struct CorpusPruneArgs {
+    /// Directory to prune, non-recursively, covering every source whose
+    /// artifacts are in it.
+    #[arg(
+        value_name = "DIR",
+        required_unless_present = "source",
+        conflicts_with = "source"
+    )]
+    pub directory: Option<PathBuf>,
+
+    /// Prune one source's artifacts, which sit beside it.
+    #[arg(long, value_name = "SOURCE")]
+    pub source: Option<PathBuf>,
+
+    /// Keep this artifact in addition to each source's current one; repeatable.
+    ///
+    /// Required for a source whose current artifact is absent, which is
+    /// otherwise an error that deletes nothing.
+    #[arg(long, value_name = "ARTIFACT")]
+    pub keep: Vec<PathBuf>,
+
+    /// Delete the listed artifacts and tables. Without it, nothing is deleted.
+    #[arg(long)]
+    pub execute: bool,
+
+    /// The analysis inputs that select each source's current artifact; the
+    /// `corpus build` defaults apply to every omitted flag.
+    #[command(flatten)]
+    pub inputs: CurrentInputArgs,
 }
 
 impl CorpusDiskArgs {
@@ -2357,6 +2393,9 @@ impl Cli {
             }) => args.resources.clone(),
             Command::Corpus(CorpusArgs {
                 command: CorpusCommand::Disk(args),
+            }) => args.inputs.resources.clone(),
+            Command::Corpus(CorpusArgs {
+                command: CorpusCommand::Prune(args),
             }) => args.inputs.resources.clone(),
             Command::Tokenize(args) => args.resources.clone(),
             Command::Attributes(args) => args.resources.clone(),

@@ -73,6 +73,12 @@ impl Scope {
         }
         let directory =
             directory.ok_or_else(|| CliError::InvalidArgs("pass DIR or --source SOURCE".into()))?;
+        if fs::symlink_metadata(directory).is_ok_and(|metadata| !metadata.is_dir()) {
+            return Err(CliError::InvalidArgs(format!(
+                "{} is not a directory; pass --source to name one source",
+                directory.display()
+            )));
+        }
         Ok(Self {
             directory: directory.to_path_buf(),
             source: None,
@@ -111,6 +117,25 @@ pub(crate) struct SourceEntry {
     pub path: PathBuf,
     pub current: CurrentSelection,
     request: Option<CurrentRequest>,
+}
+
+impl SourceEntry {
+    pub(crate) fn record(&self) -> DiskSource {
+        DiskSource {
+            name: self.name.clone(),
+            path: display(&self.path),
+            current: match &self.current {
+                CurrentSelection::NotClassified => SourceCurrent::NotClassified,
+                CurrentSelection::Present(path) => SourceCurrent::Present {
+                    path: display(path),
+                },
+                CurrentSelection::Absent(path) => SourceCurrent::Absent {
+                    path: display(path),
+                },
+                CurrentSelection::SourceMissing => SourceCurrent::SourceMissing,
+            },
+        }
+    }
 }
 
 pub(crate) struct RealizationEntry {
@@ -615,22 +640,11 @@ pub(crate) fn run_to<W: Write>(
         source: scope.source.as_ref().map(|(path, _)| display(path)),
         current_classified: scan.classified,
     })];
-    events.extend(scan.sources.iter().map(|source| {
-        DiskEvent::Source(DiskSource {
-            name: source.name.clone(),
-            path: display(&source.path),
-            current: match &source.current {
-                CurrentSelection::NotClassified => SourceCurrent::NotClassified,
-                CurrentSelection::Present(path) => SourceCurrent::Present {
-                    path: display(path),
-                },
-                CurrentSelection::Absent(path) => SourceCurrent::Absent {
-                    path: display(path),
-                },
-                CurrentSelection::SourceMissing => SourceCurrent::SourceMissing,
-            },
-        })
-    }));
+    events.extend(
+        scan.sources
+            .iter()
+            .map(|source| DiskEvent::Source(source.record())),
+    );
     events.extend(scan.realizations.iter().map(|entry| {
         let recorded = entry.recorded.as_ref();
         DiskEvent::Realization(DiskRealization {

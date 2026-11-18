@@ -1303,6 +1303,25 @@ impl CountTable {
         Ok(table)
     }
 
+    /// Deletes the table at `path` and returns the bytes freed.
+    ///
+    /// Fails without deleting anything unless `path` is a directory rather
+    /// than a symbolic link whose regular header reads and binds
+    /// `analysis_identity`.
+    pub fn remove(path: &Path, analysis_identity: &str) -> Result<u64, CountTableError> {
+        let metadata = fs::symlink_metadata(path)?;
+        let header = fs::symlink_metadata(path.join(HEADER))?;
+        if !metadata.is_dir() || !header.is_file() {
+            return Err(corrupt("not a count table directory"));
+        }
+        if read_header(path)?.key.analysis_identity != analysis_identity {
+            return Err(corrupt("the table binds another analysis identity"));
+        }
+        let bytes = crate::artifact_bytes(path)?;
+        fs::remove_dir_all(path)?;
+        Ok(bytes)
+    }
+
     /// The key of the table at `path`, read from its header without opening
     /// its arrays.
     pub fn read_key(path: &Path) -> Result<CountTableKey, CountTableError> {

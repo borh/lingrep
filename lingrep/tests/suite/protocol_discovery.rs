@@ -13,17 +13,17 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
     };
     use lingrep::protocol::{
         ContractId, capabilities, check, completions, contrast, diagnostic, dictionary, disk,
-        doctor, invocation, neighbors, query, sources, status, table, tokenize, variants,
+        doctor, invocation, neighbors, prune, query, sources, status, table, tokenize, variants,
     };
 
-    assert_eq!(ContractId::ALL.len(), 25);
+    assert_eq!(ContractId::ALL.len(), 26);
     let mut ids = ContractId::ALL
         .iter()
         .map(|id| id.as_str())
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 25);
+    assert_eq!(ids.len(), 26);
     assert_eq!(query::SCHEMA, ContractId::Query.as_str());
     assert_eq!(check::SCHEMA, ContractId::Check.as_str());
     assert_eq!(tokenize::SCHEMA, ContractId::Tokenize.as_str());
@@ -41,6 +41,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
     assert_eq!(SOURCES_CONTRACT, ContractId::SourcesTsv.as_str());
     assert_eq!(variants::SCHEMA, ContractId::Variants.as_str());
     assert_eq!(disk::SCHEMA, ContractId::Disk.as_str());
+    assert_eq!(prune::SCHEMA, ContractId::Prune.as_str());
     assert_eq!(table::SCHEMA, ContractId::Table.as_str());
     assert_eq!(contrast::SCHEMA, ContractId::Contrast.as_str());
     assert_eq!(neighbors::SCHEMA, ContractId::Neighbors.as_str());
@@ -49,7 +50,7 @@ fn contract_ids_are_complete_unique_and_back_existing_schema_constants() {
 #[test]
 fn registry_is_complete_unique_and_summary_sorted() {
     let summaries = lingrep::protocol::registry::summaries();
-    assert_eq!(summaries.len(), 25);
+    assert_eq!(summaries.len(), 26);
     assert!(
         summaries
             .windows(2)
@@ -520,7 +521,7 @@ fn schema_json_distinguishes_compact_index_from_one_detail() {
     assert_eq!(records[0]["schema"], "lingrep.protocol-contract/v1");
     assert_eq!(records[0]["type"], "contract_index");
     let summaries = records[0]["data"]["contracts"].as_array().unwrap();
-    assert_eq!(summaries.len(), 25);
+    assert_eq!(summaries.len(), 26);
     assert!(
         summaries
             .iter()

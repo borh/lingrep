@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `corpus build` takes, or `--current` for its defaults, it marks the
   artifact `corpus build` would reuse as current and the other readable ones
   as superseded. `--json` writes the `lingrep.disk/v1` stream.
+- `ling corpus prune DIR` lists the superseded and older-format artifacts in
+  a directory, and the count tables bound only to them, with the bytes they
+  occupy; `--execute` deletes them. It deletes nothing when a source has no
+  current artifact, unless `--keep ARTIFACT` names one to keep.
 
 ## [0.8.1] - 2026-11-18
 

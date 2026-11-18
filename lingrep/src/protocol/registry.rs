@@ -1,8 +1,8 @@
 use super::discovery::{ContractSpec, ContractSummary};
 use super::{
     ContractId, attributes, capabilities, check, completions, contract, contrast, diagnostic,
-    dictionary, disk, doctor, invocation, manpages, neighbors, query, sources, status, table,
-    tokenize, variants,
+    dictionary, disk, doctor, invocation, manpages, neighbors, prune, query, sources, status,
+    table, tokenize, variants,
 };
 
 pub fn get(id: ContractId) -> ContractSpec {
@@ -22,6 +22,7 @@ pub fn get(id: ContractId) -> ContractSpec {
         ContractId::Dictionary => dictionary::contract(),
         ContractId::Completions => completions::contract(),
         ContractId::ProtocolContract => contract::contract(),
+        ContractId::Prune => prune::contract(),
         ContractId::Manpages => manpages::contract(),
         ContractId::MatchesTsv => crate::output::matches_contract(),
         ContractId::EvidenceTsv => crate::output::evidence_contract(),

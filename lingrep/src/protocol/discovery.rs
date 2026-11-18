@@ -56,6 +56,7 @@ contract_ids! {
     MatchesTsv => "lingrep.matches-tsv/v1",
     Neighbors => "lingrep.neighbors/v1",
     ProtocolContract => "lingrep.protocol-contract/v1",
+    Prune => "lingrep.prune/v1",
     Query => "lingrep.query/v2",
     Sources => "lingrep.sources/v1",
     SourcesTsv => "lingrep.sources-tsv/v1",
