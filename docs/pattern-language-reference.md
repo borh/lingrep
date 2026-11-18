@@ -166,17 +166,17 @@ Two spellings are rejected with their own diagnostics:
   are rejected the same way: `“…”` and `”…”`, `‘…’`, `「…」`, `『…』`, `＂…＂` and
   `＇…＇`, each with its own `\uXXXX` escapes.
 
-A literal value, a `set` or lexicon member, and a bare token literal compile
-to their Unicode NFC form, the form corpus text is normalized to on admission,
-so `ガ` written as カ followed by U+3099 (as text copied from a PDF or a macOS
-file name can be) matches `ガ`. The compiler then warns `NormalizedLiteral`,
-naming the definition and both spellings. A regex is compiled as written and
-warns `RegexNotNfc` when it is not NFC, because normalizing a regex can change
-what it means: `/[カ\u3099]/` is a class of two characters, and its NFC form
-`/[ガ]/` is a class of one. `matches` and `summarize` print both warnings, as
-`literal_normalized` and `regex_not_nfc`. A catalog whose source is not NFC
-has a different fingerprint from the one ling 0.8.1 gave it; the fingerprint
-of an NFC catalog is unchanged.
+The compiler normalizes literal values, `set` and lexicon members, and bare
+token literals to Unicode NFC. Corpus text uses NFC by default, so a literal
+written as `カ` followed by U+3099 matches `ガ`. `NormalizedLiteral` identifies
+the definition and both spellings.
+
+The compiler preserves regex source and reports `RegexNotNfc` for non-NFC
+regexes. A class containing U+30AB and U+3099 as separate characters matches
+either character. A class containing only their composition U+30AC matches
+`ガ`. `matches` and `summarize` print these diagnostics as
+`literal_normalized` and `regex_not_nfc`. Catalogs whose source is already
+in NFC retain their 0.8.1 fingerprints.
 
 Syntax is ASCII. When a syntax error's span contains a full-width character
 (U+FF01 to U+FF5E, such as `［` or `＝`) or the ideographic space U+3000, the

@@ -1,10 +1,4 @@
-//! `corpus prune` — deletes the superseded and older-format realizations that
-//! `corpus disk` reports, and the count tables bound only to them.
-//!
-//! Lists what it would delete unless `--execute` is given. Every deletion goes
-//! through a `lingrep_corpus` removal that re-checks, immediately before
-//! deleting, that the entry is still the canonical artifact or table the scan
-//! classified.
+//! Plans corpus and count-table removals and executes them only with `--execute`.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -141,8 +135,6 @@ pub(crate) fn run_to<W: Write>(
     }));
     kept_by_rule.sort_by(|left, right| left.path.cmp(&right.path));
 
-    // A source whose current realization is absent would lose every readable
-    // realization; that needs an explicit choice of what to keep.
     let anchored = scan
         .realizations
         .iter()

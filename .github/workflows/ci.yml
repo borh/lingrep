@@ -72,9 +72,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Plain cargo, not the dev shell: this job proves that the code, its
-      # tests, the class workflow and the packaging path work on Apple silicon,
-      # not the corpus lane, which runs in the job above.
       # rustup installs the toolchain `rust-toolchain.toml` names, the same one
       # the dev shells use, so a newer release cannot change this job's lints.
       - name: Install the pinned toolchain
@@ -95,15 +92,13 @@ jobs:
       - name: Check the binary loads only system libraries
         run: scripts/check-release-linkage.sh target/debug/ling
 
-      # The tests read the dictionary the dev shell exports elsewhere.
       - name: Install the dictionary
         run: |
           target/debug/ling dictionary install
           echo "LINGREP_DICTIONARY_PATH=$HOME/.local/share/lingrep/dictionaries/unidic-cwj-202512.dic" >> "$GITHUB_ENV"
 
-      # The integration suite launches ling through util-linux `flock`. The
-      # three skipped tests fail on a macOS host outside the dev shell, with
-      # or without a terminal; beads issue vibrato-pipe-t9ro.7 tracks them.
+      # The integration suite uses util-linux flock. Beads issue
+      # vibrato-pipe-t9ro.7 tracks the three macOS skips.
       - name: Test
         run: |
           brew install util-linux
@@ -114,8 +109,6 @@ jobs:
             --skip terminal_safety::a_build_warning_written_during_transient_status_starts_on_an_erased_line \
             --skip terminal_safety::progress_output_follows_mode_format_delivery_and_terminals_without_changing_stdout
 
-      # The scenario's JSONL export is about ten times slower in a debug
-      # build, so the scenario runs against a release build.
       - name: Build the release binary
         run: cargo build --release -p lingrep
 

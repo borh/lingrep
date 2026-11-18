@@ -664,27 +664,15 @@ fn resolve_destination(
     }
 }
 
-/// The canonical path `corpus build` publishes `root` to, given what the
-/// identity pass observed.
+/// The default artifact destination for this source and analysis.
 pub(crate) fn canonical_destination(
     root: &Path,
     observed: &ObservedSources,
     analysis: &AnalysisInputs,
 ) -> Result<PathBuf, CliError> {
     let analysis_identity = derive_analysis_identity(observed, analysis);
-    // `.`, `..` and `/` have no file name, and `canonical_artifact_path`
-    // would nest the artifact inside the tree being scanned rather than
-    // beside it. Resolve only those: a named root is passed through exactly
-    // as spelled, which is also how lingrep-web names one, so wherever the two
-    // agree on an artifact at all they agree on where it sits. (They agree
-    // for a JSONL or plaintext root; for Markdown they do not, because
-    // lingrep-web reads the dialect with conversion-artifact recovery and this
-    // command does not, and that flag is inside `reader_tag`. Spelling the
-    // path the same way is what keeps the sharing that does exist, and is
-    // independent of the reader question.) A relative named root needs no
-    // resolution either — `build corpus/` from `/data` names
-    // `corpus.g5.….lingcorpus`, which is the very path `build /data/corpus`
-    // names.
+    // Resolve roots such as `.` and `..` so the artifact is placed beside
+    // the source tree. Keep a named root's spelling to match lingrep-web.
     let named = if root.file_name().is_some() {
         root.to_path_buf()
     } else {

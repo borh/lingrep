@@ -19,8 +19,7 @@ on:
         description: Existing tag to build; empty builds the dispatched branch
         required: false
         type: string
-      # A tag push always publishes. A dispatch publishes only when asked, so
-      # a branch can run the builds and gates without releasing anything.
+      # Tag pushes qualify for publication after all release checks pass.
       publish:
         description: Publish the release when every gate passes
         required: false

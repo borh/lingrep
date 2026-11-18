@@ -1,9 +1,7 @@
 name: Output filesystems
 
-# Runs scripts/check-output-filesystem.py with its input, outputs and TMPDIR on
-# filesystems students write to: FAT, exFAT and NTFS on Linux, exFAT, FAT and
-# case-insensitive APFS on macOS, and Windows' C: drive from WSL 2. The CI
-# workflow writes only to the runner's ext4 disk.
+# Runs the output checks with input, output, and temporary paths on each
+# filesystem in the matrix.
 
 on:
   push:
@@ -34,8 +32,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Filesystem behaviour does not depend on optimization; the dev profile
-  # without debuginfo builds faster and keeps the uploaded binary small.
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:

@@ -169,13 +169,13 @@ static CORPUS_VARIANTS_EXAMPLES: &[CommandExample] = &[CommandExample {
 }];
 static CORPUS_DISK_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "corpus disk/root",
-    purpose: "Report the disk use of prepared artifacts beside the sources in one directory.",
+    purpose: "Report the apparent size of prepared artifacts and count tables in one directory.",
     argv: &["corpus", "disk", "{root}"],
     placeholders: &[ROOT],
 }];
 static CORPUS_PRUNE_EXAMPLES: &[CommandExample] = &[CommandExample {
     id: "corpus prune/dry-run",
-    purpose: "List the superseded prepared artifacts beside the sources in one directory.",
+    purpose: "Preview which prepared artifacts and count tables would be deleted.",
     argv: &["corpus", "prune", "{root}"],
     placeholders: &[ROOT],
 }];

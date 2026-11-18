@@ -19,10 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a directory that are in an older format or differ from the current one
   in analyzer or token schema, and the count tables bound only to them, with
   the bytes they occupy; `--execute` deletes them. `--include-all-superseded`
-  adds those of another or unknown source content, and those that differ only
-  in reader or admission policy, such as lingrep-web's Markdown artifacts.
-  It deletes nothing when a source has no current artifact, unless
-  `--keep ARTIFACT` names one to keep.
+  includes artifacts from other or unknown source revisions and artifacts
+  that differ only in reader or admission policy. When a source has eligible
+  entries and lacks a current artifact, pass `--keep ARTIFACT` to designate
+  an artifact to retain before executing the plan.
 
 ### Changed
 
@@ -64,10 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name records another analysis identity or trust class than its manifest.
 - The bundled SQLite comes from libsqlite3-sys 0.39.1, replacing the
   version that a RustSec advisory flagged.
-- A UTF-8 byte-order mark at the start of a file, which Windows Notepad and
-  Excel write, is no longer read as text. Under 0.8.1 it became part of the
-  first token of a plain-text, Markdown or Soranoha document, and a JSONL or
-  CoNLL-U file that began with one failed to parse.
+- Corpus readers strip one leading UTF-8 byte-order mark. In 0.8.1 the mark
+  appeared in the first token of plain-text, Markdown and Soranoha documents
+  and prevented JSONL and CoNLL-U files from parsing.
 - Input that is not UTF-8 fails with the file, line and byte offset of the
   first invalid byte, for corpus sources and for catalogs read by
   `--patterns`, `check` and `lingrep-web --pattern-root`. When the file looks
@@ -78,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as `［`, `＝` or the ideographic space, has a note at that character
   naming the ASCII one to type, in `ling` and in lingrep-web's editor and
   question page, with Japanese text in lingrep-web.
-- A pattern literal in Unicode NFD, such as `ガ` written as `カ` + U+3099 in text
+- A non-NFC pattern literal, such as `ガ` written as `カ` + U+3099 in text
   copied from a PDF, compiles to its NFC form and matches NFC corpus text.
   Under 0.8.1 it matched nothing. `matches` and `summarize` warn
   `literal_normalized` and `check` reports `NormalizedLiteral`, naming the

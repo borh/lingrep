@@ -249,7 +249,7 @@ pub fn artifact_bytes(path: &Path) -> std::io::Result<u64> {
 }
 
 /// Deletes the older-format artifact of `source_name` at `path` and returns
-/// the bytes freed.
+/// its apparent size in bytes.
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
@@ -284,7 +284,7 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
 }
 
 /// Deletes the readable realization of `source_name` at `path` and returns
-/// the bytes freed.
+/// its apparent size in bytes.
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link, its name is a canonical artifact name for exactly
@@ -293,13 +293,10 @@ pub fn remove_older_format(path: &Path, source_name: &str) -> Result<u64, Corpus
 /// realization is superseded is the caller's; this checks only that `path` is
 /// still the one it chose.
 ///
-/// The deletion has two steps. The directory is first renamed, without
-/// replacing anything, to a hidden name in the same directory that
-/// [`prune_leftovers`] reports, so a parent that cannot be written fails
-/// before anything changes. It is checked again under that name and then
-/// deleted. A deletion that fails or is interrupted after the rename leaves
-/// only that hidden name, which `corpus build` does not read and
-/// [`finish_prune_leftover`] deletes.
+/// A successful rename moves the directory to a hidden sibling before any
+/// component is removed. The function rechecks the hidden directory before
+/// deleting its components. If removal is interrupted, [`prune_leftovers`]
+/// can find the hidden directory and [`finish_prune_leftover`] can remove it.
 pub fn remove_realization(
     path: &Path,
     source_name: &str,
@@ -493,7 +490,7 @@ pub fn prune_leftovers(dir: &Path) -> std::io::Result<Vec<PruneLeftover>> {
     Ok(found)
 }
 
-/// Deletes the [`PruneLeftover`] at `path` and returns the bytes freed.
+/// Deletes the [`PruneLeftover`] at `path` and returns its apparent size in bytes.
 ///
 /// Fails without deleting anything unless `path` is a directory rather than a
 /// symbolic link with a name [`prune_leftovers`] reports, and it has no

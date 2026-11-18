@@ -1279,18 +1279,15 @@ that contract with:
 ling corpus inventory --json --progress always corpus/ >sources.jsonl
 ```
 
-Every text format and every catalog is read as UTF-8. One leading byte-order
-mark, which Windows Notepad and Excel write, is not part of the text. A file
-that is not UTF-8 fails with the line and byte offset of its first invalid
-byte. When the file looks like Shift_JIS (CP932), the message gives an
-`iconv -f CP932 -t UTF-8` or `nkf -w` command that converts it; `ling` does
-not decode Shift_JIS itself.
+Corpus readers and pattern catalog readers expect UTF-8. Corpus readers
+remove one leading byte-order mark. Invalid UTF-8 diagnostics report the
+line and byte offset of the first invalid byte. When the bytes suggest
+Shift_JIS (CP932), convert the file with `iconv -f CP932 -t UTF-8` or `nkf -w`.
 
-Source names are in Unicode NFC. A file, directory or Soranoha archive member
-named in NFD, as macOS writes `ガ`, is named by its NFC spelling in source
-events, records and the source identity, so a directory corpus copied from a
-Mac has the identity of the same files named in NFC. Two names that are equal
-in NFC fail the run, naming both as written.
+Source events and records use NFC for file, directory and Soranoha member
+names. For directory and file inputs, canonically equivalent names contribute
+the same spelling to source identity. If two names normalize to the same
+spelling, the diagnostic identifies both original names.
 
 The `source` events expose logical names, target groups, and external-target
 status. The final event reports alias multiplicity and traversal high-water
@@ -2181,40 +2178,33 @@ ling corpus disk --source corpora/works.md -d unidic-cwj.dic
 ling --json corpus disk --current --caches corpora/ >> disk-use.jsonl
 ```
 
-`corpus disk DIR` reports what the prepared artifacts, count tables and
-build leftovers immediately in `DIR` occupy. `DIR` is rejected when it is a
-symbolic link, with or without a trailing `/`; pass the directory it points
-to. `--source SOURCE` narrows the
-report to one source and scans the directory beside it, as `corpus variants`
-does. Sizes are the apparent sizes of the files under each entry, reported
-as `apparent_bytes`: a file hard-linked into two entries is counted in both,
-and deleting one of them frees no space. The command
-reads directory entries, manifests and count-table headers, and validates each
-readable realization structurally as `corpus inspect` does: component presence
-and lengths, fixed headers and directory checksums, with no token block
-decoded. It never deletes anything. The stream contract is
-`lingrep.disk/v1`; each `--json` run is one self-contained stream, so
-appending runs to a file records disk use over time.
+`corpus disk DIR` reports prepared artifacts, count tables and cleanup
+leftovers in the immediate entries of `DIR`. If `DIR` is a symbolic link,
+pass its target directory. `--source SOURCE` limits the report to one source
+and scans its parent directory. The `apparent_bytes` field records file lengths,
+counting a file in each entry that hard-links it. Use this value to compare
+entries by apparent size.
+
+The scan runs the same structural checks as `corpus inspect`, including
+component lengths, fixed headers and directory checksums. Each `--json` run
+emits one `lingrep.disk/v1` stream.
 
 A realization is *current* when it is the one `corpus build` would reuse for
-its source with the same analysis inputs: the same dictionary, analyzer flags,
-`--input-format` and Markdown reader flags. The newest artifact is not current
-because it is newest. Any analysis input flag classifies realizations with
-that input; `--current` classifies with `corpus build`'s defaults, including
-the dictionary it falls back to. Classification costs the identity pass that
-`corpus build` runs before reusing an artifact: one read of each source, with
-no tokenization. Without analysis inputs, readable realizations are
-`unclassified`.
+its source with the requested dictionary, analyzer, input format and Markdown
+reader options. Pass an analysis flag to classify with the requested settings,
+or pass `--current` to classify with the defaults from `corpus build`.
+Classification reads each source once to derive its identity. When neither
+option is supplied, readable realizations are `unclassified`.
 
 Each realization has one status:
 
 | Status | Meaning |
 |---|---|
 | `current` | The realization `corpus build` would reuse with the given inputs. |
-| `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build, and `kept_by_prune` says why the default `corpus prune` keeps it, if it does. |
-| `unclassified` | Readable; no analysis inputs were given. |
-| `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
-| `newer_format` | Written in a later format, or with a manifest field this build does not read; a newer `ling` opens it. |
+| `superseded` | A readable realization whose name matches its manifest and that `corpus build` would skip for the requested inputs. See `differences` and, when present, `kept_by_prune`. |
+| `unclassified` | A readable realization scanned without classification. |
+| `older_format` | An earlier artifact format. Rebuild it from source to use it with this version. |
+| `newer_format` | A later format or an unsupported manifest field. |
 | `damaged` | Its manifest or a component fails the validation `corpus inspect` runs. `kept_by_prune` is `damaged`. |
 | `misnamed` | Readable, but its name records another identity or trust. `corpus build` does not reuse it. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
@@ -2263,15 +2253,12 @@ ling corpus prune --source corpora/works.md -d unidic-cwj.dic            # lists
 ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # deletes
 ```
 
-`corpus prune DIR` (or `--source SOURCE`) deletes the realizations that
-`corpus disk` reports as `older_format` and whose manifest records the current
-source identity, and those it reports as `superseded` for the same analysis
-inputs that analyze the current source content and differ from the current
-one in `analyzer` or `token_schema`. That is the churn of switching
-dictionaries, analyzers or formats: a rebuild of the source as it is now
-reproduces it. It also deletes every count table whose
-bound artifacts are all among them, so a table that an explicit `--output`
-corpus or any other artifact kept in the directory binds is kept.
+`corpus prune DIR` lists the entries eligible for removal. For the current
+source content, it selects older-format realizations with a matching source
+identity and superseded realizations that differ in analyzer or token schema.
+It selects count tables only when every artifact bound to the table in the
+scanned directory is eligible. This includes checking artifacts built at
+explicit `--output` paths in that directory.
 
 Other superseded and older-format realizations are kept, and listed as
 `kept` with a reason:
@@ -2283,8 +2270,8 @@ Other superseded and older-format realizations are kept, and listed as
 | `source_unknown` | not known: the source is missing, or an older-format manifest records another or no source identity | `--include-all-superseded` |
 | `other_trust` | trust class | never |
 | `identical_to_current` | nothing, yet `corpus build` would not select it | never |
-| `foreign_entries` | anything; the directory holds an entry that is not a component its manifest lists, a component that is not a regular file, or an entry on another filesystem, or is itself a mount point, and `message` names them | never |
-| `kept_table` | anything; a count table bound only to realizations this run deletes is kept as `foreign_entries`, and `message` names it | never |
+| `foreign_entries` | The directory contains an unexpected entry, a non-regular component, or an entry on another filesystem, or is itself a mount point. See `message`. | never |
+| `kept_table` | Removing these realizations would leave a count table kept for `foreign_entries` without a bound artifact in the scanned directory. See `message` for the table path. | never |
 | `damaged` | anything; it is `damaged`, and `message` gives the failure | never |
 
 A reader variant is typically the artifact another tool reads the same
@@ -2312,12 +2299,12 @@ files is kept as `foreign_entries`, and so are those realizations, as
 damaged artifact, count table or interrupted prune it keeps, one `removal`
 record per path it deletes or attempts, and a completion record.
 
-`corpus prune` always selects the current realization: omitted analysis
-flags take `corpus build`'s defaults. When a source with something to
-delete has no current realization, because it was never built with these
-inputs or the source is missing, the command exits with status 2 and deletes
-nothing. `--keep ARTIFACT` names a readable, undamaged artifact in the directory to keep;
-it satisfies that requirement for its source, and can be repeated.
+`corpus prune` uses the defaults from `corpus build` for omitted analysis
+flags. If a source has entries eligible for removal and has no current
+realization, the command exits with status 2 and leaves all entries in place.
+Pass `--keep ARTIFACT` to designate a readable, undamaged realization in the
+scanned directory for that source. Repeat the flag to protect additional
+realizations.
 
 It never deletes the current or a kept artifact, an `unclassified`,
 `newer_format`, `damaged`, `misnamed`, `symbolic_link` or `non_canonical_name` entry,
@@ -2328,18 +2315,15 @@ a directory, not a symbolic link, with the canonical name and recorded
 identity the scan classified, or for a count table the bound identity, and
 that a superseded realization still passes structural validation, and that
 the directory holds exactly the components its manifest or table format
-lists. It then renames the entry, without replacing anything, to a hidden
-name in the same directory, so a directory that cannot be written fails
-before anything changes; checks it again under that name; and deletes those
-components, the manifest or table header last, and then the empty
-directory. It never deletes recursively.
+lists. It renames the entry to a hidden sibling before deleting any files.
+After checking the renamed directory again, it removes the listed files,
+then the manifest or table header, then the empty directory. It never deletes
+recursively.
 
-Nothing records which artifacts other processes are reading. Before
-`--execute --include-all-superseded`, stop the builds, queries and
-`lingrep-web` instances that use an artifact it lists, or keep that artifact
-with `--keep`. Without `--include-all-superseded`, `corpus prune` deletes
-only artifacts that differ in analysis from the current one, so a server
-using another analysis of the source is the one case to check.
+Before running with `--execute`, check the preview for artifacts used by
+builds, queries, or `lingrep-web` instances. Stop those processes or preserve
+their artifacts with `--keep`. The preview cannot detect which processes are
+using an artifact.
 
 Whether an artifact built by `ling` is also the one `lingrep-web` prepares
 depends on the input format, because the name includes the reader identity. For

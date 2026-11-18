@@ -69,7 +69,7 @@ fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Stri
     if schema == SCHEMA {
         Ok(schema)
     } else {
-        Err(D::Error::custom("wrong prune schema"))
+        Err(D::Error::custom("expected the lingrep.prune/v1 schema"))
     }
 }
 
@@ -105,13 +105,10 @@ pub struct PruneRun {
     /// Whether realizations the default prune keeps as `reader_variant`,
     /// `source_revision` or `source_unknown` are deleted too.
     pub include_all_superseded: bool,
-    /// Whether this run deletes, rather than only listing what it would.
+    /// Whether the run executes the removal plan.
     pub execute: bool,
 }
 
-/// A superseded, older-format or damaged realization, a count table bound
-/// only to removed realizations, or an interrupted prune, that this run
-/// keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneKept {
     pub path: String,
@@ -127,8 +124,7 @@ pub struct PruneKept {
     pub message: Option<String>,
 }
 
-/// One entry this run deletes, would delete without `--execute`, or failed
-/// to delete.
+/// A planned removal or the outcome of one attempted removal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PruneRemoval {
     pub path: String,
@@ -142,8 +138,7 @@ pub struct PruneRemoval {
     /// deletion failed. A file hard-linked elsewhere is counted although its
     /// deletion frees no space.
     pub apparent_bytes: u64,
-    /// With `--execute`, why the deletion failed. It is the last removal
-    /// record; the entry is left as `lingrep.disk/v1` then reports it.
+    /// The deletion error, when present on the final removal record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
 }
@@ -170,7 +165,7 @@ pub struct PruneComplete {
     pub executed: bool,
     /// Removals planned.
     pub removals: u64,
-    /// Removals deleted; zero without `--execute`.
+    /// Entries removed. Zero during a preview.
     pub deleted: u64,
     /// Removals whose deletion failed: zero, or one, after which no further
     /// removal is attempted.

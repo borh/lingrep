@@ -121,10 +121,9 @@ fn path_string(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// A dry run lists the realizations of the source superseded in an analysis
-/// dimension, the older-format ones, and the table bound only to a superseded
-/// one, with the bytes each would free, and deletes nothing. A reader-only
-/// variant is listed as kept.
+/// The preview includes the older-format artifact, the superseded analysis,
+/// and the table bound only to that analysis. It reports their apparent sizes
+/// and keeps the reader-only variant.
 #[cfg(unix)]
 #[test]
 fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
@@ -172,8 +171,7 @@ fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
     }
 }
 
-/// `--execute` deletes exactly the set the dry run reported, freeing the
-/// sizes it reported, and keeps everything else.
+/// Execution deletes the previewed entries and reports their apparent sizes.
 #[cfg(unix)]
 #[test]
 fn execute_deletes_exactly_the_reported_set() {
@@ -340,8 +338,7 @@ fn reader_variants_are_deleted_only_with_include_all_superseded() {
     assert!(fixture.current.exists());
 }
 
-/// A sibling that differs in the analyzer as well as the reader is analysis
-/// churn, so the default prune deletes it.
+/// The default prune deletes an artifact whose analyzer and reader both differ.
 #[test]
 fn an_analysis_difference_outweighs_a_reader_difference() {
     let fixture = siblings();

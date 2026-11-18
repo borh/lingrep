@@ -1279,12 +1279,10 @@ impl CurrentInputArgs {
     }
 }
 
-/// Disk use of the prepared artifacts in one directory. Reads manifests,
-/// table headers and directory sizes; never deletes.
+/// Report disk use for prepared artifacts, count tables, and cleanup leftovers.
 #[derive(Debug, Args)]
 pub struct CorpusDiskArgs {
-    /// Directory to report on, non-recursively, covering every source whose
-    /// artifacts are in it.
+    /// Scan the immediate entries in this directory.
     #[arg(
         value_name = "DIR",
         required_unless_present = "source",
@@ -1292,17 +1290,14 @@ pub struct CorpusDiskArgs {
     )]
     pub directory: Option<PathBuf>,
 
-    /// Report on one source: its artifacts, which sit beside it, and the
-    /// count tables and leftovers that belong to them.
+    /// Report one source's artifacts, count tables, and leftovers in its parent directory.
     #[arg(long, value_name = "SOURCE")]
     pub source: Option<PathBuf>,
 
     /// Classify artifacts as current or superseded using the analysis inputs
     /// `corpus build` uses by default.
     ///
-    /// Passing any analysis input flag has the same effect with that input.
-    /// Classification reads each source once, as `corpus build` does before
-    /// reusing an artifact; it tokenizes nothing.
+    /// To classify using other inputs, pass the same analysis flags as `corpus build`.
     #[arg(long)]
     pub current: bool,
 
@@ -1314,17 +1309,15 @@ pub struct CorpusDiskArgs {
     #[arg(long)]
     pub caches: bool,
 
-    /// Also report the size of this analyzer directory; repeatable.
+    /// Report the size of an analyzer directory. May be repeated.
     #[arg(long, value_name = "DIR")]
     pub analyzer_dir: Vec<PathBuf>,
 }
 
-/// Deletion of superseded and older-format realizations. Lists what it
-/// would delete unless `--execute` is given.
+/// List removable prepared artifacts and count tables. Pass `--execute` to delete them.
 #[derive(Debug, Args)]
 pub struct CorpusPruneArgs {
-    /// Directory to prune, non-recursively, covering every source whose
-    /// artifacts are in it.
+    /// Scan the immediate entries in this directory.
     #[arg(
         value_name = "DIR",
         required_unless_present = "source",
@@ -1336,23 +1329,20 @@ pub struct CorpusPruneArgs {
     #[arg(long, value_name = "SOURCE")]
     pub source: Option<PathBuf>,
 
-    /// Keep this artifact in addition to each source's current one; repeatable.
+    /// Keep this artifact in addition to the current one. May be repeated.
     ///
-    /// Required for a source whose current artifact is absent, which is
-    /// otherwise an error that deletes nothing.
+    /// Required before removing artifacts for a source without a current artifact.
     #[arg(long, value_name = "ARTIFACT")]
     pub keep: Vec<PathBuf>,
 
-    /// Delete the listed artifacts and tables. Without it, nothing is deleted.
+    /// Delete the selected artifacts and count tables.
     #[arg(long)]
     pub execute: bool,
 
-    /// Also delete superseded artifacts that differ from the current one only
-    /// in source content, reader or admission policy.
+    /// Include artifacts from other or unknown source revisions and artifacts
+    /// that differ only in reader or admission policy.
     ///
-    /// By default only those differing in analyzer or token schema are
-    /// deleted, because another reader, such as lingrep-web's, may still use
-    /// the others. Artifacts of another trust class are never deleted.
+    /// Artifacts in a different trust class remain protected.
     #[arg(long)]
     pub include_all_superseded: bool,
 

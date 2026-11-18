@@ -1,13 +1,5 @@
-//! `corpus disk` — what prepared artifacts, count tables and build leftovers
-//! occupy in one directory, and which realizations are current.
-//!
-//! The scan reads directory entries, manifests and table headers, and sums
-//! file sizes. It admits each readable realization with
-//! [`CorpusArtifact::open`], the structural validation `corpus build` applies
-//! before a reuse and `corpus inspect` before reporting: component presence
-//! and lengths, fixed headers, and directory checksums, with no token block
-//! decoded. Selecting the current realization also runs the identity pass
-//! `corpus build` runs before a reuse: one read of the source.
+//! Directory inventory for `corpus disk` and `corpus prune`.
+//! Classification reads each source to derive its identity without decoding token blocks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -427,8 +419,7 @@ enum EntryKind {
     Other,
 }
 
-/// The directory's immediate entries in bytewise path order, with their own
-/// (not followed) file types.
+/// Immediate entries in bytewise path order, with symlink metadata.
 fn directory_entries(directory: &Path) -> Result<Vec<(PathBuf, EntryKind)>, CliError> {
     let read = |error: io::Error| CliError::InputIo {
         path: directory.to_path_buf(),
@@ -450,8 +441,7 @@ fn directory_entries(directory: &Path) -> Result<Vec<(PathBuf, EntryKind)>, CliE
     Ok(entries.into_iter().collect())
 }
 
-/// Resolves the inputs and runs the identity pass `corpus build` runs, then
-/// asks the same classification which realization it would reuse.
+/// Selects the realization `corpus build` would reuse for these inputs.
 fn select_current(
     source: &Path,
     inputs: &CurrentInputArgs,
@@ -541,13 +531,7 @@ fn differences(
     differences
 }
 
-/// Why the default prune keeps a superseded realization, or `None` when it
-/// deletes it. `differences` is `None` when the source is missing.
-///
-/// Trust is checked first, from the manifest: no local rebuild replaces
-/// another trust class. Then a missing or edited source keeps the
-/// realization, since no rebuild of the source as it is now reproduces it.
-/// Only then does an analysis difference mark it as rebuild churn.
+/// Classifies retention for the default prune. Pass `None` for a missing source.
 /// The [`foreign_entries`] of a deletion candidate; a failure to list them is
 /// reported as one entry.
 fn foreign_of(path: &Path) -> Vec<String> {
@@ -558,14 +542,8 @@ fn listed_foreign(listed: Result<Vec<String>, CorpusError>) -> Vec<String> {
     listed.unwrap_or_else(|error| vec![format!("(cannot be listed: {error})")])
 }
 
-/// The tables `corpus prune` deletes with the realizations at `removed`:
-/// each `superseded` table whose bound artifacts are all among them and which
-/// is not kept. Also returns the realizations among `removed` that a kept
-/// table bound only to them binds, each with that table, which `corpus prune`
-/// keeps as `kept_table` so that the table is not left bound to nothing.
-///
-/// Tables that bind one analysis identity bind the same artifacts, so a kept
-/// table keeps every table of its identity.
+/// Returns removable tables and artifacts retained to preserve a protected
+/// table's binding within the scanned directory.
 pub(crate) fn plan_tables<'a>(
     tables: &'a [TableEntry],
     removed: &BTreeSet<&Path>,

@@ -260,7 +260,7 @@ fn a_cp932_catalog_names_its_first_invalid_byte_and_the_conversion() {
 }
 
 #[test]
-fn a_zip_read_as_plain_text_says_to_unzip_it_or_read_it_as_soranoha() {
+fn zip_input_in_plain_text_mode_reports_extraction_and_soranoha_options() {
     let dictionary = MiniDictionary::new();
     let directory = TempDir::new().unwrap();
     let archive = directory.path().join("works.zip");

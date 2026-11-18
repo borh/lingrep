@@ -247,15 +247,12 @@ fn render_rejects_another_source_tree_or_other_reader_options() {
 
     let options = render(&fixture, &output, &["--md-exclude-sections", ""]);
     assert_eq!(options.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&options.stderr)
-            .contains("Markdown options differ from those used to build this corpus, or it was built by a ling version with another Markdown reader"),
-        "{}",
-        String::from_utf8_lossy(&options.stderr)
-    );
-
     let diagnostic = String::from_utf8_lossy(&options.stderr);
-    assert!(diagnostic.contains("cannot be recovered"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("Markdown reader settings do not match the corpus"),
+        "{diagnostic}"
+    );
+    assert!(diagnostic.contains("cannot recover"), "{diagnostic}");
     assert!(diagnostic.contains("NEW_ARTIFACT"), "{diagnostic}");
 
     fs::write(
@@ -460,7 +457,7 @@ fn render_writes_the_sidecar_0_8_1_wrote_for_an_artifact_0_8_1_built() {
 }
 
 #[test]
-fn render_refuses_an_artifact_0_8_1_built_from_a_source_with_a_byte_order_mark() {
+fn render_rejects_0_8_1_artifacts_when_a_source_starts_with_a_byte_order_mark() {
     let directory = corpora_built_by_0_8_1();
     let output = directory.path().join("rendered");
     let result = render_0_8_1(directory.path(), "bom", &output);

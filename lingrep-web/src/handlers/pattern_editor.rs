@@ -451,12 +451,12 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'st
         ),
         DiagnosticCode::NormalizedLiteral => (
             "lint",
-            "A value is not in Unicode NFC; it is searched for in its NFC form.",
+            "Matching uses the NFC form of this literal.",
             "editor.diag_normalized_literal",
         ),
         DiagnosticCode::RegexNotNfc => (
             "lint",
-            "A regular expression is not in Unicode NFC, so it may not match composed characters.",
+            "This regular expression is used as written and may miss NFC-normalized text.",
             "editor.diag_regex_not_nfc",
         ),
         DiagnosticCode::PipeInBareValue => (
@@ -642,7 +642,7 @@ mod tests {
                 "code": "NormalizedLiteral",
                 "category": "lint",
                 "severity": "warning",
-                "message": "A value is not in Unicode NFC; it is searched for in its NFC form.",
+                "message": "Matching uses the NFC form of this literal.",
                 "message_key": "editor.diag_normalized_literal",
                 "location": {
                     "source_name": WEB_PATTERN_SOURCE_NAME,

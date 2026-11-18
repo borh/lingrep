@@ -3034,21 +3034,13 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(self.normalized_literal(node, decoded.into()))
     }
 
-    /// The NFC form of a decoded literal value, with a warning naming the
-    /// definition when that differs from what was written.
-    ///
-    /// Corpus text is NFC-normalized on admission by default, so a literal
-    /// typed or pasted in NFD (カ + U+3099 for ガ) would otherwise match
-    /// nothing. [`NormalizationPolicy::apply`] is the function admission uses,
-    /// so the two cannot normalize differently.
     fn normalized_literal(&mut self, node: Node<'_>, value: CompactString) -> CompactString {
         if unicode_normalization::is_nfc(&value) {
             return value;
         }
         let normalized: CompactString = NormalizationPolicy::Nfc.apply(value.to_string()).into();
         let message = format!(
-            "{} has the value `{value}` ({}), which is not in Unicode NFC; it is compiled as \
-             `{normalized}` ({}) to match NFC-normalized text",
+            "In {}, the literal `{value}` ({}) is normalized to `{normalized}` ({}) for matching",
             self.definition_label(),
             code_points(&value),
             code_points(&normalized),
@@ -3192,10 +3184,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
 
         if !unicode_normalization::is_nfc(inner) {
             let message = format!(
-                "{} has the regex `/{inner}/`, which is not in Unicode NFC, so it cannot match \
-                 NFC-normalized text where it spells a composed character. It is compiled as \
-                 written, because normalizing a regex can change its meaning; write `/{}/` if \
-                 that is what you meant",
+                "In {}, the regex `/{inner}/` is used as written and may miss NFC-normalized \
+                 text. Check whether the NFC spelling `/{}/` matches what you intended",
                 self.definition_label(),
                 NormalizationPolicy::Nfc.apply(inner.to_owned()),
             );
@@ -3323,7 +3313,6 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         self.note_full_width_character(error, node.byte_range())
     }
 
-    /// Points a syntax error at the first full-width character in `range`.
     fn note_full_width_character(
         &self,
         mut error: CompileError,
@@ -3704,8 +3693,6 @@ fn source_line_column(source: &str, offset: usize) -> (usize, usize) {
 #[path = "lower_tests.rs"]
 mod tests;
 
-/// `U+30AB U+3099`: the code points of `text`, which is where NFC and NFD
-/// spellings of the same character differ visibly.
 fn code_points(text: &str) -> String {
     text.chars()
         .map(|character| format!("U+{:04X}", u32::from(character)))

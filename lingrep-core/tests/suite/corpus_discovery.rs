@@ -538,11 +538,8 @@ fn root_validation_classifies_missing_dangling_and_unsupported_roots()
     Ok(())
 }
 
-/// Source names are compared in NFC: a directory and a file named in NFD
-/// are named by their NFC spelling, and two names equal in NFC are refused
-/// with both names as written.
 #[test]
-fn source_names_are_nfc_and_names_equal_in_nfc_are_refused()
+fn discovery_normalizes_source_names_and_rejects_nfc_collisions()
 -> Result<(), Box<dyn std::error::Error>> {
     let nfd = "\u{30ab}\u{3099}";
     let directory = tempdir()?;

@@ -1,10 +1,5 @@
-//! Decoding of source text where its bytes enter a reader.
-//!
-//! Every corpus text reader takes its bytes through [`TextReader`] (a stream)
-//! or [`decode_document`] (a document already in memory). Both strip one
-//! leading UTF-8 byte-order mark, which Windows Notepad and Excel write, and
-//! report invalid UTF-8 as a [`TextDecodeError`] that names its line and byte
-//! offset. Pattern catalogs use [`decode_utf8`], which keeps the mark.
+//! UTF-8 decoding for corpus sources and pattern catalogs, with diagnostics
+//! located in the original input bytes.
 
 use std::io::{self, BufRead, Read};
 
@@ -31,13 +26,13 @@ pub enum TextDecodeError {
     InvalidUtf8 {
         line: u64,
         byte_offset: u64,
-        /// Every byte before the invalid one is ASCII, and the next 64 KiB
-        /// decode without error as WHATWG Shift_JIS, which is CP932.
+        /// The input before the invalid byte is ASCII, and the diagnostic window
+        /// decodes as [WHATWG Shift_JIS](https://encoding.spec.whatwg.org/#shift_jis).
         looks_like_shift_jis: bool,
     },
     #[error(
-        "the file is a ZIP archive, not text: unzip it and read the extracted files, or read a \
-         Soranoha archive with --input-format soranoha"
+        "ZIP archive detected. To read its text, unzip it first. For a Soranoha archive, use \
+         --input-format soranoha."
     )]
     ZipArchive,
 }
@@ -113,8 +108,6 @@ impl Position {
     }
 }
 
-/// The error for invalid UTF-8 that follows `valid`, where `window` begins
-/// with the invalid byte and `complete` says whether it reaches end of input.
 fn invalid_utf8(
     mut position: Position,
     valid: &[u8],
@@ -129,8 +122,6 @@ fn invalid_utf8(
     }
 }
 
-/// Whether `bytes` decode without error as WHATWG Shift_JIS. A sequence cut
-/// off by an incomplete window is not an error.
 fn decodes_as_shift_jis(bytes: &[u8], complete: bool) -> bool {
     let mut decoder = encoding_rs::SHIFT_JIS.new_decoder_without_bom_handling();
     let Some(capacity) = decoder.max_utf8_buffer_length_without_replacement(bytes.len()) else {
@@ -287,7 +278,7 @@ impl<R: Read> Read for TextReader<R> {
 mod tests {
     use super::*;
 
-    /// Hands out one byte per read, the worst chunking a pipe can produce.
+    /// Limits each read to one byte.
     struct OneByte<'a>(&'a [u8]);
 
     impl Read for OneByte<'_> {
@@ -304,7 +295,6 @@ mod tests {
         }
     }
 
-    /// Reads `input` whole and one byte at a time, and checks both agree.
     #[expect(
         clippy::panic_in_result_fn,
         reason = "the result is the value under test, and the assertion compares two reads"

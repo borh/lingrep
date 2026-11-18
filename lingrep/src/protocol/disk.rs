@@ -81,7 +81,7 @@ fn deserialize_schema<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Stri
     if schema == SCHEMA {
         Ok(schema)
     } else {
-        Err(D::Error::custom("wrong disk schema"))
+        Err(D::Error::custom("expected the lingrep.disk/v1 schema"))
     }
 }
 
@@ -154,8 +154,8 @@ pub struct DiskRealization {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     pub status: RealizationStatus,
-    /// Apparent size of the files under `path`, which a hard link shared
-    /// with another entry counts again; absent when it could not be measured.
+    /// Sum of file lengths under `path`, counting hard-linked files in each entry.
+    /// Omitted if the scan could not measure the size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apparent_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,16 +173,14 @@ pub struct DiskRealization {
     /// the current request, in a fixed order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<VariantDifference>,
-    /// For a superseded, older-format or damaged realization that the
-    /// default `corpus prune` keeps, why it keeps it.
+    /// The reason the default prune retains this realization, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
-    /// Why an unreadable entry could not be opened.
+    /// The error returned when opening the entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
-/// What a realization is, relative to the analysis inputs of the run.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -191,8 +189,8 @@ pub enum RealizationStatus {
     /// Readable, and the realization `corpus build` would reuse for its
     /// source under the given analysis inputs.
     Current,
-    /// Readable, recording the analysis identity and trust its name records,
-    /// and not current.
+    /// A readable realization with a matching name and manifest that the
+    /// current analysis request would skip.
     Superseded,
     /// Readable; no analysis inputs were given, so neither current nor
     /// superseded.
@@ -200,9 +198,8 @@ pub enum RealizationStatus {
     /// Written in an earlier artifact generation, manifest schema or
     /// provenance schema than this build reads.
     OlderFormat,
-    /// Written in a later artifact generation, manifest schema or provenance
-    /// schema than this build reads, or with a manifest field it does not
-    /// read; a newer `ling` opens it.
+    /// A later artifact generation, manifest schema, provenance schema, or
+    /// an unsupported manifest field.
     NewerFormat,
     /// Cannot be opened for any other reason: its manifest or a component
     /// fails the validation `corpus inspect` runs.
@@ -217,13 +214,7 @@ pub enum RealizationStatus {
     NonCanonicalName,
 }
 
-/// Why `corpus prune` keeps a superseded or older-format realization by
-/// default.
-///
-/// The default prune deletes a superseded realization of the current source
-/// content that differs from the current request in `analyzer` or
-/// `token_schema`, and an older-format realization that records the current
-/// source identity.
+/// Reasons the default prune excludes an entry from removal.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -233,28 +224,22 @@ pub enum PruneKeep {
     /// such as the artifact lingrep-web reads a Markdown source into.
     /// Deleted with `--include-all-superseded`.
     ReaderVariant,
-    /// Differs in source content, whatever else differs: an analysis of an
-    /// earlier version of the source, which no rebuild of the current source
-    /// reproduces. Deleted with `--include-all-superseded`.
+    /// An earlier source revision, eligible with `--include-all-superseded`.
     SourceRevision,
     /// Not known to analyze the current source content: the source is
     /// missing, or an older-format manifest records no source identity equal
     /// to the current one. Deleted with `--include-all-superseded`.
     SourceUnknown,
-    /// Has another trust class. `corpus build` does not produce it, so no
-    /// local rebuild replaces it; `corpus prune` never deletes it.
+    /// A different trust class, excluded from removal.
     OtherTrust,
     /// Differs from the current request in no dimension, yet `corpus build`
     /// would not select it. `corpus prune` never deletes it.
     IdenticalToCurrent,
-    /// Holds an entry that is not one of the components its manifest lists,
-    /// or, for a count table, that its format defines, a component that is
-    /// not a regular file, or an entry on another filesystem, or is itself a
-    /// mount point. `corpus prune` never deletes it.
+    /// An unexpected entry, a non-regular component, an entry on another
+    /// filesystem, or a mount point. These entries are excluded from removal.
     ForeignEntries,
-    /// A superseded realization that a count table kept as `foreign_entries`
-    /// binds, and that table binds nothing else `corpus prune` keeps.
-    /// Deleting it would leave the table bound to nothing.
+    /// A realization retained because a protected table would otherwise
+    /// have no bound artifact in the scanned directory.
     KeptTable,
     /// The realization is `damaged`. `corpus prune` never deletes it.
     Damaged,
@@ -290,8 +275,7 @@ pub struct DiskTable {
     /// canonical names other than an older format that record it in their
     /// name. A symbolic link is listed by its own path.
     pub artifacts: Vec<String>,
-    /// For a `superseded` table that `corpus prune` keeps, why it keeps it:
-    /// only `foreign_entries`.
+    /// `foreign_entries` for a superseded table excluded from removal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -314,7 +298,7 @@ pub enum TableBinding {
     /// No artifact in the scanned directory records the bound identity; one
     /// may exist elsewhere.
     Absent,
-    /// The header cannot be read, for example a different table version.
+    /// The table header could not be opened.
     Unreadable,
 }
 
@@ -333,7 +317,7 @@ pub struct DiskLeftover {
     /// The hidden directory of an `interrupted_prune`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pruning: Option<String>,
-    /// For an `interrupted_prune` that `corpus prune` keeps, why it keeps it.
+    /// Reason an interrupted removal is excluded from cleanup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_by_prune: Option<PruneKeep>,
     pub status: LeftoverStatus,
@@ -356,10 +340,8 @@ pub enum LeftoverStatus {
     Abandoned,
     /// No lock file, or one recording another or no host name.
     Unknown,
-    /// A realization or count table `corpus prune --execute` renamed to a
-    /// hidden name and did not finish deleting; `corpus build` does not read
-    /// it, count-table readers reject it, and the next `corpus prune
-    /// --execute` deletes it.
+    /// A realization or count table left under its hidden removal name.
+    /// An eligible leftover is removed on a subsequent execute run.
     InterruptedPrune,
 }
 

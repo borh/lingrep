@@ -1353,7 +1353,7 @@ impl CountTable {
         Ok(table)
     }
 
-    /// Deletes the table at `path` and returns the bytes freed.
+    /// Deletes the table at `path` and returns its apparent size in bytes.
     ///
     /// Fails without deleting anything unless `path` is a directory rather
     /// than a symbolic link whose regular header reads and binds

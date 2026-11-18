@@ -10,8 +10,7 @@
     clippy::unchecked_time_subtraction,
     clippy::unwrap_used
 )]
-//! Text in Unicode normalization form D, as macOS file names and text copied
-//! from PDFs carry it: ガ is カ followed by U+3099.
+//! Canonically equivalent Unicode spellings in patterns and source names.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -284,7 +283,7 @@ fn a_source_named_in_nfd_has_the_identity_and_records_of_its_nfc_name() {
 }
 
 #[test]
-fn two_sources_whose_names_are_equal_in_nfc_are_refused_naming_both() {
+fn source_names_that_normalize_to_the_same_name_are_both_reported() {
     let directory = TempDir::new().unwrap();
     let corpus = write(directory.path(), "both", NAME_NFC, "ガラスが割れた。\n");
     write(directory.path(), "both", NAME_NFD, "ガラスが割れた。\n");
