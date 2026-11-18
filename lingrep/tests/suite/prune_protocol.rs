@@ -585,17 +585,15 @@ fn a_table_bound_to_a_retained_explicit_output_is_kept() {
     crate::support::assert_success(&read_table(&table, &explicit));
 }
 
-/// A table whose own directory cannot be written is renamed to a hidden name
-/// before its deletion fails, and the run stops before the realization it
-/// binds. `corpus disk` reports the hidden directory as an interrupted prune,
-/// and once it is writable a retry deletes it, the other table bound only to
+/// A table whose files cannot be deleted is renamed to a hidden name before
+/// its deletion fails, and the run stops before the realization it binds.
+/// `corpus disk` reports the hidden directory as an interrupted prune, and once
+/// its files can be deleted a retry deletes it, the other table bound only to
 /// the planned removal, and the realization, and keeps a table whose binding
 /// was already absent.
 #[cfg(unix)]
 #[test]
-fn a_read_only_table_leaves_an_interrupted_prune_that_a_retry_finishes() {
-    use std::os::unix::fs::PermissionsExt;
-
+fn an_undeletable_table_leaves_an_interrupted_prune_that_a_retry_finishes() {
     let fixture = siblings();
     let directory = fixture.directory.path();
     let failing = directory.join("a.lingtable");
@@ -607,7 +605,7 @@ fn a_read_only_table_leaves_an_interrupted_prune_that_a_retry_finishes() {
     fs::rename(&fixture.other_reader, &moved).unwrap();
     let absent = directory.join("absent.lingtable");
     write_table(&moved, &absent);
-    fs::set_permissions(&failing, fs::Permissions::from_mode(0o555)).unwrap();
+    block_deletion(&failing);
 
     let failed = prune_command(&fixture);
     assert_eq!(failed.status.code(), Some(1), "{failed:?}");
@@ -658,7 +656,7 @@ fn a_read_only_table_leaves_an_interrupted_prune_that_a_retry_finishes() {
     assert_eq!(reported[0]["published_name"], "a.lingtable");
     assert_eq!(reported[0]["pruning"], path_string(&leftover));
 
-    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o755)).unwrap();
+    allow_deletion(&leftover);
     let records = prune_source(&fixture, &[]);
     assert_eq!(
         removal_reasons(&records),
@@ -881,6 +879,37 @@ fn realizations_of_a_missing_source_are_kept_by_default() {
 
 /// The hidden directories in `directory` whose names mark an interrupted
 /// prune.
+/// Makes deleting the files under `directory` fail while renaming it still
+/// succeeds. macOS 15 rejects renaming a directory that lacks write
+/// permission (EACCES), so on macOS the files are marked immutable instead.
+#[cfg(unix)]
+fn block_deletion(directory: &Path) {
+    set_deletion(directory, true);
+}
+
+#[cfg(unix)]
+fn allow_deletion(directory: &Path) {
+    set_deletion(directory, false);
+}
+
+#[cfg(unix)]
+fn set_deletion(directory: &Path, blocked: bool) {
+    if cfg!(target_os = "macos") {
+        let status = std::process::Command::new("find")
+            .arg(directory)
+            .args(["-type", "f", "-exec", "chflags"])
+            .arg(if blocked { "uchg" } else { "nouchg" })
+            .args(["{}", "+"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "chflags under {}", directory.display());
+    } else {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if blocked { 0o555 } else { 0o755 };
+        fs::set_permissions(directory, fs::Permissions::from_mode(mode)).unwrap();
+    }
+}
+
 fn pruning_leftovers(directory: &Path) -> Vec<PathBuf> {
     let mut found = fs::read_dir(directory)
         .unwrap()
@@ -923,19 +952,17 @@ fn a_read_only_parent_fails_before_anything_changes() {
     assert_eq!(crate::disk_protocol::tree_listing(directory), before);
 }
 
-/// A realization whose own directory cannot be written is renamed to a hidden
-/// name before its deletion fails. `corpus build` then publishes a new copy
-/// beside it, `corpus disk` reports the hidden directory as an interrupted
-/// prune, and once the directory is writable the next prune deletes it.
+/// A realization whose files cannot be deleted is renamed to a hidden name
+/// before its deletion fails. `corpus build` then publishes a new copy beside
+/// it, `corpus disk` reports the hidden directory as an interrupted prune, and
+/// once its files can be deleted the next prune deletes it.
 #[cfg(unix)]
 #[test]
-fn a_read_only_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
-    use std::os::unix::fs::PermissionsExt;
-
+fn an_undeletable_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
     let fixture = siblings();
     let directory = fixture.directory.path();
     let analyzer = fixture.other_analyzer.clone();
-    fs::set_permissions(&analyzer, fs::Permissions::from_mode(0o555)).unwrap();
+    block_deletion(&analyzer);
     let failed = prune_command(&fixture);
     assert_eq!(failed.status.code(), Some(1), "{failed:?}");
     let leftovers = pruning_leftovers(directory);
@@ -981,7 +1008,7 @@ fn a_read_only_artifact_leaves_an_interrupted_prune_that_a_rerun_finishes() {
     assert_eq!(reported[0]["status"], "interrupted_prune");
     assert_eq!(reported[0]["pruning"], path_string(&leftover));
 
-    fs::set_permissions(&leftover, fs::Permissions::from_mode(0o755)).unwrap();
+    allow_deletion(&leftover);
     let records = prune_source(&fixture, &[]);
     assert_eq!(
         of_type(&records, "removal")

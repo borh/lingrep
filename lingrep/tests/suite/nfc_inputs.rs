@@ -288,23 +288,26 @@ fn source_names_that_normalize_to_the_same_name_are_both_reported() {
     let corpus = write(directory.path(), "both", NAME_NFC, "ガラスが割れた。\n");
     write(directory.path(), "both", NAME_NFD, "ガラスが割れた。\n");
     let corpus = corpus.parent().unwrap();
-    let output = lingrep()
-        .args([
-            "matches",
-            "--input-format",
-            "plain",
-            "--pattern",
-            "w := [].",
-        ])
-        .arg(corpus)
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(NAME_NFC) && stderr.contains(NAME_NFD) && stderr.contains("NFC"),
-        "{stderr}"
-    );
+    // APFS and HFS+ store canonically equivalent names as one entry.
+    if std::fs::read_dir(corpus).unwrap().count() == 2 {
+        let output = lingrep()
+            .args([
+                "matches",
+                "--input-format",
+                "plain",
+                "--pattern",
+                "w := [].",
+            ])
+            .arg(corpus)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(NAME_NFC) && stderr.contains(NAME_NFD) && stderr.contains("NFC"),
+            "{stderr}"
+        );
+    }
 
     let archive = directory.path().join("both.zip");
     let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
