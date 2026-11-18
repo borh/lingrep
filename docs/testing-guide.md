@@ -57,20 +57,26 @@ against the independent oracle (`lingrep-core/src/fsm/compiler/oracle.rs`) plus 
 lingrep patterns contract suites. It requires no dictionary. The full `ci.sh`
 lane and the GitHub CI workflow both run it.
 
-### Kani location bounds proof
+### Kani location proofs
 
-On x86-64 Linux, run the proof from the workspace root. The verification
+On x86-64 Linux, run the location proofs from the workspace root. The verification
 shell supplies Kani 0.68.0 and the nightly compiler it was built against:
 
 ```bash
 nix develop .#verification --command cargo kani -p lingrep-corpus \
-  --harness checked_subslice_accepts_exactly_in_bounds_ranges
+  --harness locations::proofs::
 ```
 
-The opt-in harness calls the location reader's slice helper with arbitrary
-`u64` offsets and lengths and buffer lengths from 0 to 16 bytes. It checks
-that the helper accepts exactly the in-bounds ranges and returns slices of the
-requested length.
+| Boundary | Inputs | Property |
+| --- | --- | --- |
+| Record lookup | Any `u64` sentence count and ordinal | Accept exactly the in-range ordinals. An accepted ordinal identifies an existing block and a slot within that block, including a final partial block. |
+| Block directory | Any `u64` metadata fields for the block selected by a valid record ordinal | Accept exactly the canonical start, record count, and byte offset. Reject inconsistent entries without panicking. |
+| Slicing | Any `u64` offset and length, with buffer lengths from 0 to 16 bytes | Accept exactly the in-bounds ranges and return the requested length. |
+
+For new proofs, state the input domain and compare the production function
+with an independent specification. Use wider arithmetic for the specification
+when testing overflow. Keep the structural tests for real mappings, file layout,
+and checksums.
 
 ## Pre-Commit Validation
 

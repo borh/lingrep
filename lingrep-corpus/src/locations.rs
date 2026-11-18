@@ -600,19 +600,9 @@ impl MappedLocations {
     }
 
     fn record(&self, ordinal: u64) -> Result<&[u8], CorpusError> {
-        if ordinal >= self.sentence_count {
-            return Err(invalid("sentence ordinal is outside the dense relation"));
-        }
-        let block_ordinal = ordinal / RECORDS_PER_BLOCK;
+        let (block_ordinal, slot) = record_block(self.sentence_count, ordinal)?;
         let block = self.block(block_ordinal)?;
-        let expected_count = (self.sentence_count - block.start).min(RECORDS_PER_BLOCK);
-        if block.start != block_ordinal * RECORDS_PER_BLOCK
-            || block.record_count != expected_count
-            || block.record_offset
-                != checked_add(HEADER_LEN, checked_mul(block.start, RECORD_LEN)?)?
-        {
-            return Err(invalid("invalid block directory entry"));
-        }
+        block.validate_layout(self.sentence_count, block_ordinal)?;
         let payload_len = checked_mul(block.record_count, RECORD_LEN)?;
         let payload = self.range(block.record_offset, payload_len)?;
         if !self.block_already_verified(block_ordinal) {
@@ -626,7 +616,7 @@ impl MappedLocations {
             }
             self.mark_block_verified(block_ordinal);
         }
-        let record_offset = checked_mul(ordinal - block.start, RECORD_LEN)?;
+        let record_offset = checked_mul(slot, RECORD_LEN)?;
         checked_subslice(payload, record_offset, RECORD_LEN)
     }
 
@@ -694,16 +684,7 @@ impl MappedLocations {
         self.verify_document_table(file_len)?;
         for block_ordinal in 0..block_count(self.sentence_count)? {
             let block = self.block(block_ordinal)?;
-            let expected_start = checked_mul(block_ordinal, RECORDS_PER_BLOCK)?;
-            let expected_count = (self.sentence_count - expected_start).min(RECORDS_PER_BLOCK);
-            let expected_offset =
-                checked_add(HEADER_LEN, checked_mul(expected_start, RECORD_LEN)?)?;
-            if block.start != expected_start
-                || block.record_count != expected_count
-                || block.record_offset != expected_offset
-            {
-                return Err(invalid("invalid block directory entry"));
-            }
+            block.validate_layout(self.sentence_count, block_ordinal)?;
             let payload = self.range(
                 block.record_offset,
                 checked_mul(block.record_count, RECORD_LEN)?,
@@ -834,6 +815,21 @@ struct DecodedBlockEntry {
     checksum: [u8; 32],
 }
 
+impl DecodedBlockEntry {
+    fn validate_layout(&self, sentence_count: u64, block_ordinal: u64) -> Result<(), CorpusError> {
+        let expected_start = checked_mul(block_ordinal, RECORDS_PER_BLOCK)?;
+        let expected_count = checked_sub(sentence_count, expected_start)?.min(RECORDS_PER_BLOCK);
+        if self.start != expected_start
+            || self.record_count != expected_count
+            || self.record_offset
+                != checked_add(HEADER_LEN, checked_mul(expected_start, RECORD_LEN)?)?
+        {
+            return Err(invalid("invalid block directory entry"));
+        }
+        Ok(())
+    }
+}
+
 struct DecodedDocumentEntry {
     document_id: u64,
     document_ordinal: u64,
@@ -956,6 +952,13 @@ fn block_count(sentence_count: u64) -> Result<u64, CorpusError> {
         .ok_or_else(|| invalid("block count overflow"))
 }
 
+fn record_block(sentence_count: u64, ordinal: u64) -> Result<(u64, u64), CorpusError> {
+    if ordinal >= sentence_count {
+        return Err(invalid("sentence ordinal is outside the dense relation"));
+    }
+    Ok((ordinal / RECORDS_PER_BLOCK, ordinal % RECORDS_PER_BLOCK))
+}
+
 fn checked_u64(value: usize) -> Result<u64, CorpusError> {
     u64::try_from(value).map_err(|_| invalid("length does not fit u64"))
 }
@@ -995,7 +998,10 @@ fn truncated(offset: u64) -> CorpusError {
 
 #[cfg(kani)]
 mod proofs {
-    use super::checked_subslice;
+    use super::{
+        DecodedBlockEntry, HEADER_LEN, RECORD_LEN, RECORDS_PER_BLOCK, block_count,
+        checked_subslice, record_block,
+    };
 
     #[kani::proof]
     fn checked_subslice_accepts_exactly_in_bounds_ranges() {
@@ -1012,6 +1018,43 @@ mod proofs {
         if let Ok(slice) = result {
             assert_eq!(usize::try_from(len), Ok(slice.len()));
         }
+    }
+
+    #[kani::proof]
+    fn record_ordinals_resolve_to_valid_block_slots() {
+        let count: u64 = kani::any();
+        let ordinal: u64 = kani::any();
+        let found = record_block(count, ordinal);
+        assert_eq!(found.is_ok(), ordinal < count);
+        if let Ok((block, slot)) = found {
+            assert!(block_count(count).is_ok_and(|blocks| block < blocks));
+            assert!(slot < RECORDS_PER_BLOCK);
+            let start = u128::from(block) * u128::from(RECORDS_PER_BLOCK);
+            assert_eq!(start + u128::from(slot), u128::from(ordinal));
+            assert!(u128::from(slot) < u128::from(count) - start);
+        }
+    }
+
+    #[kani::proof]
+    fn block_layout_accepts_only_canonical_entries() {
+        let count: u64 = kani::any();
+        let ordinal: u64 = kani::any();
+        let Ok((block, _)) = record_block(count, ordinal) else {
+            return;
+        };
+        let entry = DecodedBlockEntry {
+            start: kani::any(),
+            record_offset: kani::any(),
+            record_count: kani::any(),
+            checksum: [0; 32],
+        };
+        let start = u128::from(block) * u128::from(RECORDS_PER_BLOCK);
+        let records = (u128::from(count) - start).min(u128::from(RECORDS_PER_BLOCK));
+        let offset = u128::from(HEADER_LEN) + start * u128::from(RECORD_LEN);
+        let canonical = u128::from(entry.start) == start
+            && u128::from(entry.record_count) == records
+            && u128::from(entry.record_offset) == offset;
+        assert_eq!(entry.validate_layout(count, block).is_ok(), canonical);
     }
 }
 
