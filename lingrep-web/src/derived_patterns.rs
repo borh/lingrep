@@ -59,35 +59,40 @@ pub(crate) struct ContiguousChains {
 pub(crate) fn contiguous_chains(
     matches: &[(PatternKey, usize, usize)],
 ) -> Result<ContiguousChains, CompoundLimitExceeded> {
+    let mut seen = HashSet::new();
+    let chains = enumerate_chains(matches, &mut seen);
+    #[cfg(any(test, feature = "testing"))]
+    held_chains::record(seen.len());
+    chains
+}
+
+fn enumerate_chains(
+    matches: &[(PatternKey, usize, usize)],
+    seen: &mut HashSet<(Vec<PatternKey>, usize, usize)>,
+) -> Result<ContiguousChains, CompoundLimitExceeded> {
     let mut output = ContiguousChains {
         chains: Vec::new(),
         in_chain: vec![false; matches.len()],
     };
-    let mut seen = HashSet::new();
     let mut budget = ScaleKnob::CompoundChainBytes.or(MAX_SENTENCE_CHAIN_BYTES);
     let mut starts = HashMap::<usize, Vec<usize>>::new();
     for (index, &(_, start, _)) in matches.iter().enumerate() {
         starts.entry(start).or_default().push(index);
     }
-    let enumerated = matches
-        .iter()
-        .enumerate()
-        .try_for_each(|(index, &(key, start, end))| {
-            let mut path = vec![(index, key)];
-            extend(
-                matches,
-                &starts,
-                start,
-                end,
-                &mut path,
-                &mut seen,
-                &mut budget,
-                &mut output,
-            )
-        });
-    #[cfg(any(test, feature = "testing"))]
-    held_chains::record(seen.len());
-    enumerated.map(|()| output)
+    for (index, &(key, start, end)) in matches.iter().enumerate() {
+        let mut path = vec![(index, key)];
+        extend(
+            matches,
+            &starts,
+            start,
+            end,
+            &mut path,
+            seen,
+            &mut budget,
+            &mut output,
+        )?;
+    }
+    Ok(output)
 }
 
 /// The most distinct chains `contiguous_chains` has held for one sentence.
