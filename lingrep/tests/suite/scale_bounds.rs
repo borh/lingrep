@@ -160,6 +160,20 @@ fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
+/// Every file of a prepared corpus, without the manifest's build time.
+fn artifact_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = tree_bytes(root);
+    let manifest = files.get_mut(Path::new("manifest.json")).unwrap();
+    let mut value: Value = serde_json::from_slice(manifest).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("build_timestamp_unix_seconds")
+        .expect("the manifest records its build time");
+    *manifest = serde_json::to_vec(&value).unwrap();
+    files
+}
+
 /// The `pattern` and `summary` records of a JSON Lines summary, without the
 /// fields that differ between any two runs.
 fn summary_records(output: &Output) -> Vec<Value> {
@@ -359,9 +373,15 @@ fn corpus_build_fits_a_fixed_open_file_limit_and_postings_runs_keep_the_artifact
             &[(ScaleKnob::PostingsRunBytes, 64)],
         );
         assert_success(&shrunk.output);
+        let (actual, expected) = (artifact_files(&actual), artifact_files(&expected));
+        let differing = expected
+            .keys()
+            .chain(actual.keys())
+            .filter(|path| actual.get(*path) != expected.get(*path))
+            .collect::<std::collections::BTreeSet<_>>();
         assert!(
-            tree_bytes(&actual) == tree_bytes(&expected),
-            "scale {scale}: postings runs changed the artifact"
+            differing.is_empty(),
+            "scale {scale}: postings runs changed {differing:?}"
         );
     }
 }

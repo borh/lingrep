@@ -246,6 +246,16 @@ let stats = run_matching_test(
 for property tests. Pair a generated input with an explicit invariant; the
 strategy alone proves nothing.
 
+`lingrep_core::test_scale::ScaleKnob` lowers a size threshold (spill runs,
+merge fan-in, batch output, postings runs, compound derivation) so a small
+fixture reaches the code that otherwise runs only on large inputs. A `ling`
+child process reads each knob from its `LINGREP_TEST_*` variable; an
+in-process test calls `ScaleKnob::set`, which is process-wide, so such a test
+needs its own binary. Setting `LINGREP_TEST_SPILL_FILE_REPORT` makes `ling`
+write the most spill files it held open at once. Only builds with
+lingrep-core's `testing` feature read these; `lingrep/tests/suite/scale_bounds.rs`
+and `lingrep-web/tests/compound_derivation_bounds.rs` use them.
+
 ### Browser tests
 
 `lingrep-web/tests/browser/` runs on Linux Chromium and macOS Google Chrome.
