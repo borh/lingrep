@@ -11,10 +11,19 @@ cd "$repo_root"
 
 pattern='cargo_bin(_cmd)?!?[[:space:]]*\([[:space:]]*"ling"|CARGO_BIN_EXE_ling|Command::new[[:space:]]*\([^)]*"ling"|target/(debug|release)/ling|Command::new[[:space:]]*\([^)]*lingrep_binary_path'
 
-if bypasses=$(rg -n --glob '*.rs' --glob '!**/support/mod.rs' "$pattern" lingrep/tests); then
-    echo "ling integration tests must launch the executable through tests/support" >&2
-    echo "$bypasses" >&2
-    exit 1
-fi
+status=0
+bypasses=$(rg -n --glob '*.rs' --glob '!**/support/mod.rs' "$pattern" lingrep/tests) || status=$?
+case $status in
+    0)
+        echo "ling integration tests must launch the executable through tests/support" >&2
+        echo "$bypasses" >&2
+        exit 1
+        ;;
+    1) ;;
+    *)
+        echo "ripgrep failed with exit status $status" >&2
+        exit "$status"
+        ;;
+esac
 
 echo "ling integration-test executable seam is centralized"
