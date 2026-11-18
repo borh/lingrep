@@ -103,7 +103,7 @@ jobs:
 
       # The integration suite launches ling through util-linux `flock`. The
       # three skipped tests fail on a macOS host outside the dev shell, with
-      # or without a terminal; that is not yet diagnosed.
+      # or without a terminal; beads issue vibrato-pipe-t9ro.7 tracks them.
       - name: Test
         run: |
           brew install util-linux
