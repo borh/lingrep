@@ -255,6 +255,62 @@ class HuggingFaceDatasetAdapterTests(unittest.TestCase):
             dataset_rows.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()), [])
 
+    def test_hard_link_probe_classifies_os_errors(self):
+        unsupported = {HF.errno.EPERM, HF.errno.ENOTSUP, HF.errno.EOPNOTSUPP}
+        for number in sorted(
+            unsupported | {HF.errno.EACCES, HF.errno.ENOSYS, HF.errno.EXDEV}
+        ):
+            reason = HF.os.strerror(number)
+            with (
+                self.subTest(errno=HF.errno.errorcode[number]),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                with (
+                    mock.patch.object(
+                        HF.os, "link", side_effect=OSError(number, reason)
+                    ),
+                    self.assertRaises(OSError) as failure,
+                ):
+                    HF.require_hard_links(Path(directory))
+                self.assertEqual(failure.exception.errno, number)
+                self.assertIn(reason, str(failure.exception))
+                self.assertEqual(
+                    "Choose an --output directory" in str(failure.exception),
+                    number in unsupported,
+                )
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_publication_link_failures_keep_the_os_error_and_remove_the_partial(self):
+        arguments = HF.parser().parse_args(
+            ["owner/dataset", "--split", "train", "--output", "unused.jsonl"]
+        )
+        for number, raised in [
+            (HF.errno.EEXIST, FileExistsError),
+            (HF.errno.EPERM, PermissionError),
+            (HF.errno.EOPNOTSUPP, OSError),
+        ]:
+            with (
+                self.subTest(errno=HF.errno.errorcode[number]),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                destination = Path(directory) / "corpus.jsonl"
+                with (
+                    mock.patch.object(
+                        HF.os,
+                        "link",
+                        side_effect=raised(number, HF.os.strerror(number)),
+                    ),
+                    self.assertRaises(OSError) as failure,
+                ):
+                    HF.write_new_file(destination, [{"text": "猫。"}], arguments)
+                if number == HF.errno.EEXIST:
+                    self.assertIsInstance(failure.exception, FileExistsError)
+                    self.assertIn("output already exists", str(failure.exception))
+                    self.assertEqual(failure.exception.__cause__.errno, number)
+                else:
+                    self.assertEqual(failure.exception.errno, number)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_missing_or_non_string_text_names_the_row_and_field(self):
         for row, message in [
             ({}, "row 3: field 'text' is missing"),
