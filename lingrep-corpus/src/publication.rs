@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_no_replace_never_falls_back_to_a_replacing_rename() {
+    async fn an_unsupported_errno_from_the_rename_is_reported_as_unsupported_publication() {
         // Driven by the production set so a platform that adds an errno — macOS
         // adds ENOTSUP — is covered without restating the list.
         for &errno in UNSUPPORTED_RENAME_ERRNOS {
