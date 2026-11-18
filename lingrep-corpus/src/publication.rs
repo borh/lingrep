@@ -38,20 +38,12 @@ pub(crate) fn publish(completed: &mut CompletedStagingArtifact) -> Result<(), Co
     Ok(())
 }
 
-pub(crate) fn publish_guarded(
-    completed: &mut CompletedStagingArtifact,
-    should_continue: impl FnMut() -> bool,
-    claim_commit: impl FnOnce() -> bool,
-) -> Result<bool, CorpusError> {
-    publish_guarded_with_ops(&RealOps, completed, should_continue, claim_commit)
-}
-
-trait PublicationOps {
+pub(crate) trait PublicationOps {
     fn fsync(&self, path: &Path) -> io::Result<()>;
     fn rename_noreplace(&self, from: &Path, to: &Path) -> io::Result<()>;
 }
 
-struct RealOps;
+pub(crate) struct RealOps;
 
 impl PublicationOps for RealOps {
     fn fsync(&self, path: &Path) -> io::Result<()> {
@@ -73,7 +65,7 @@ fn publish_with_ops(
     Ok(())
 }
 
-fn publish_guarded_with_ops(
+pub(crate) fn publish_guarded_with_ops(
     ops: &impl PublicationOps,
     completed: &mut CompletedStagingArtifact,
     mut should_continue: impl FnMut() -> bool,
@@ -664,6 +656,69 @@ mod tests {
             .verify_integrity()
             .await
             .unwrap();
+    }
+
+    /// Paths under `directory` that this process holds as a file descriptor or a mapping.
+    #[cfg(target_os = "linux")]
+    fn held_paths_under(directory: &Path) -> Vec<PathBuf> {
+        let mut held = std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.unwrap().path()).ok())
+            .chain(
+                std::fs::read_to_string("/proc/self/maps")
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| line.split_once('/').map(|(_, path)| format!("/{path}")))
+                    .map(PathBuf::from),
+            )
+            .filter(|path| path.starts_with(directory))
+            .collect::<Vec<_>>();
+        held.sort();
+        held.dedup();
+        held
+    }
+
+    /// Fails the rename while the process holds anything under the staging directory, as
+    /// Windows does for a directory renamed through WSL's drvfs.
+    #[cfg(target_os = "linux")]
+    struct RenameRequiresNothingHeld {
+        held_at_rename: Mutex<Option<Vec<PathBuf>>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl PublicationOps for RenameRequiresNothingHeld {
+        fn fsync(&self, path: &Path) -> std::io::Result<()> {
+            std::fs::File::open(path)?.sync_all()
+        }
+
+        fn rename_noreplace(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            let held = held_paths_under(from);
+            let refuse = !held.is_empty();
+            *self.held_at_rename.lock().unwrap() = Some(held);
+            if refuse {
+                return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+            }
+            crate::fs_capability::rename_noreplace(from, to)
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn validated_publication_holds_nothing_under_staging_at_the_rename() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("science.lingcorpus");
+        let mut completed = complete_staging(&destination).await;
+        let ops = RenameRequiresNothingHeld {
+            held_at_rename: Mutex::new(None),
+        };
+
+        let published =
+            crate::artifact::publish_validated(&ops, &mut completed, None, || true, || true);
+
+        assert_eq!(*ops.held_at_rename.lock().unwrap(), Some(Vec::new()));
+        let artifact = published.unwrap().unwrap();
+        assert_eq!(artifact.directory(), destination);
+        artifact.verify_integrity().await.unwrap();
     }
 
     #[tokio::test]

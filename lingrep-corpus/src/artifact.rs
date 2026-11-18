@@ -726,18 +726,15 @@ impl CorpusBuilder {
         else {
             return Ok(None);
         };
-        let artifact = CorpusArtifact::open(completed.path())?;
-        if artifact.analysis_identity() != &expected {
-            return Err(CorpusError::AnalysisIdentityMismatch {
-                component: MANIFEST_NAME,
-            });
-        }
-        let destination = completed.destination().to_path_buf();
-        if crate::publication::publish_guarded(&mut completed, || true, || true)? {
-            Ok(Some(artifact.into_published_at(destination)))
-        } else {
-            Err(invalid_builder("unconditional publication guard cancelled"))
-        }
+        publish_validated(
+            &crate::publication::RealOps,
+            &mut completed,
+            Some(&expected),
+            || true,
+            || true,
+        )?
+        .ok_or_else(|| invalid_builder("unconditional publication guard cancelled"))
+        .map(Some)
     }
 
     /// Finalizes privately, then publishes only while the supplied guards allow it.
@@ -761,13 +758,13 @@ impl CorpusBuilder {
         if !should_continue() {
             return Ok(None);
         }
-        let artifact = CorpusArtifact::open(completed.path())?;
-        let destination = completed.destination().to_path_buf();
-        if crate::publication::publish_guarded(&mut completed, should_continue, claim_commit)? {
-            Ok(Some(artifact.into_published_at(destination)))
-        } else {
-            Ok(None)
-        }
+        publish_validated(
+            &crate::publication::RealOps,
+            &mut completed,
+            None,
+            should_continue,
+            claim_commit,
+        )
     }
 
     /// Registers the discovery record paired with the next admitted document.
@@ -1572,11 +1569,6 @@ impl CorpusArtifact {
         &self.source_identity
     }
 
-    fn into_published_at(mut self, destination: PathBuf) -> Self {
-        self.root = destination;
-        self
-    }
-
     /// The path supplied when opening the artifact, which may be relative.
     pub fn directory(&self) -> &Path {
         &self.root
@@ -2131,6 +2123,32 @@ fn reject_sqlite_sidecars(root: &Path) -> Result<(), CorpusError> {
         }
     }
     Ok(())
+}
+
+/// Opens the staged artifact to validate it, publishes it with `ops`, and opens the
+/// published artifact.
+///
+/// The staged artifact is closed before the rename: Windows rejects renaming a directory that
+/// contains a mapped or open file, and WSL's drvfs reports that as `EACCES`.
+pub(crate) fn publish_validated(
+    ops: &impl crate::publication::PublicationOps,
+    completed: &mut CompletedStagingArtifact,
+    expected: Option<&AnalysisIdentity>,
+    should_continue: impl FnMut() -> bool,
+    claim_commit: impl FnOnce() -> bool,
+) -> Result<Option<CorpusArtifact>, CorpusError> {
+    let staged = CorpusArtifact::open(completed.path())?;
+    if expected.is_some_and(|expected| staged.analysis_identity() != expected) {
+        return Err(CorpusError::AnalysisIdentityMismatch {
+            component: MANIFEST_NAME,
+        });
+    }
+    drop(staged);
+    if !crate::publication::publish_guarded_with_ops(ops, completed, should_continue, claim_commit)?
+    {
+        return Ok(None);
+    }
+    CorpusArtifact::open(completed.destination()).map(Some)
 }
 
 fn validate_fixed_headers(
