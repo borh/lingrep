@@ -3559,14 +3559,38 @@ fn write_table_raises_a_low_soft_open_file_limit_to_the_hard_limit() {
 }
 
 #[cfg(unix)]
+fn inherited_open_file_limits() -> libc::rlimit {
+    let mut inherited = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `inherited` is a valid, writable `rlimit`.
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut inherited) },
+        0
+    );
+    inherited
+}
+
+#[cfg(unix)]
 #[test]
 fn a_wrapper_starts_under_the_fixed_macos_open_file_limit() {
+    use crate::support::OPEN_FILE_LIMIT;
+
     let output = crate::support::under_open_file_limit("sh")
         .args(["-c", "ulimit -Sn; ulimit -Hn"])
         .output()
         .unwrap();
     assert_success(&output);
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "256\n256\n");
+    let inherited = inherited_open_file_limits();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!(
+            "{}\n{}\n",
+            inherited.rlim_cur.min(OPEN_FILE_LIMIT),
+            inherited.rlim_max.min(OPEN_FILE_LIMIT)
+        )
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -3601,16 +3625,14 @@ fn ling_starts_under_the_fixed_macos_open_file_limit_unless_opted_out() {
             .collect::<Vec<_>>();
         open_files[4].to_owned()
     };
-    let mut inherited = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: `inherited` is a valid, writable `rlimit`.
+    let inherited = inherited_open_file_limits();
     assert_eq!(
-        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut inherited) },
-        0
+        hard_open_files(lingrep_std()),
+        inherited
+            .rlim_max
+            .min(crate::support::OPEN_FILE_LIMIT)
+            .to_string()
     );
-    assert_eq!(hard_open_files(lingrep_std()), "256");
     assert_eq!(
         hard_open_files(crate::support::without_open_file_limit::lingrep_std()),
         if inherited.rlim_max == libc::RLIM_INFINITY {

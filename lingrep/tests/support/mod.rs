@@ -97,7 +97,8 @@ fn locked_lingrep() -> Command {
 /// maxfiles`). Every `ling` these tests launch starts with it as both its soft
 /// and hard limit, so `ling` cannot raise it.
 #[cfg(unix)]
-const OPEN_FILE_LIMIT: libc::rlim_t = 256;
+#[allow(dead_code)]
+pub const OPEN_FILE_LIMIT: libc::rlim_t = 256;
 
 /// `program`, which runs with at most [`OPEN_FILE_LIMIT`] open files, as does
 /// every `ling` it starts.
