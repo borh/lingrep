@@ -2099,6 +2099,25 @@ fn artifact_read_error(path: &Path, error: CorpusError) -> CorpusError {
     }
 }
 
+/// Opens `path` with `options` and fails with [`std::io::ErrorKind::InvalidInput`]
+/// unless it is a regular file. On Unix the open does not block, so a FIFO
+/// at `path` is rejected rather than waited on for a writer.
+pub(crate) fn open_regular(
+    options: &mut fs::OpenOptions,
+    path: &Path,
+) -> std::io::Result<fs::File> {
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    Ok(file)
+}
+
 fn ensure_regular(root: &Path, name: &'static str) -> Result<(), CorpusError> {
     let path = root.join(name);
     let metadata =

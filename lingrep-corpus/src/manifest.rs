@@ -269,14 +269,15 @@ impl Manifest {
     }
 
     pub(crate) fn open(path: &Path) -> Result<Self, CorpusError> {
-        let metadata = fs::metadata(path)?;
+        let mut file = crate::artifact::open_regular(File::options().read(true), path)?;
+        let metadata = file.metadata()?;
         if metadata.len() > MAX_MANIFEST_BYTES {
             return Err(invalid("manifest exceeds the fixed size bound"));
         }
         let mut bytes = Vec::with_capacity(
             usize::try_from(metadata.len()).map_err(|_| invalid("manifest is too large"))?,
         );
-        File::open(path)?.read_to_end(&mut bytes)?;
+        file.read_to_end(&mut bytes)?;
         #[derive(Deserialize)]
         struct ManifestVersion {
             schema_version: u32,

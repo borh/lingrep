@@ -2211,7 +2211,8 @@ A table whose binding is `superseded` or `absent` is orphaned. Tables are
 found by their `header.json`, whatever their names.
 
 A leftover is a staging directory or lock file from a build that did not
-publish. It is `live` while a process holds its lock, `abandoned` when its
+publish; an entry with such a name that is not a directory or a regular file
+respectively, such as a FIFO or a symbolic link, is not reported or opened. It is `live` while a process holds its lock, `abandoned` when its
 lock records this host and is free, and `unknown` otherwise: the lock file is
 missing or records another host. The next build of the same name on the same
 host removes abandoned leftovers; see the

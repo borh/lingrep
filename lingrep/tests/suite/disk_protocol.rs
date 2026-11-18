@@ -478,3 +478,87 @@ fn the_disk_contract_appears_in_schema_discovery() {
         .unwrap();
     assert_success(&detail);
 }
+
+/// FIFOs and symbolic links where a staging lock, staging directory,
+/// manifest or table header is expected are skipped without being opened,
+/// so `corpus disk` and `corpus prune` complete, and a regular held lock is
+/// still live.
+#[cfg(unix)]
+#[test]
+fn special_files_with_expected_names_are_skipped_without_opening_them() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::Duration;
+
+    let fifo = |path: &Path| {
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    };
+    let fixture = siblings();
+    let directory = fixture.directory.path();
+    let name = fixture.current.file_name().unwrap().to_str().unwrap();
+    fifo(&directory.join(format!(".{name}.stagelock-1-0")));
+    fifo(&directory.join(format!(".{name}.staging-2-0")));
+    let elsewhere = tempfile::tempdir().unwrap();
+    let target = elsewhere.path().join("fifo");
+    fifo(&target);
+    std::os::unix::fs::symlink(&target, directory.join(format!(".{name}.stagelock-3-0"))).unwrap();
+    let live_lock = directory.join(format!(".{name}.stagelock-4-0"));
+    fs::create_dir(directory.join(format!(".{name}.staging-4-0"))).unwrap();
+    let held = fs::File::create(&live_lock).unwrap();
+    held.lock().unwrap();
+    let generation = lingrep_corpus::CORPUS_ARTIFACT_FORMAT_GENERATION;
+    let canonical = directory.join(canonical_name("source.md", generation, 0xb1));
+    let explicit = directory.join("fifo-output");
+    let table = directory.join("fifo.lingtable");
+    for (parent, file) in [
+        (&canonical, "manifest.json"),
+        (&explicit, "manifest.json"),
+        (&table, "header.json"),
+    ] {
+        fs::create_dir(parent).unwrap();
+        fifo(&parent.join(file));
+    }
+    std::os::unix::fs::symlink(&target, directory.join("fifo-link")).unwrap();
+
+    let run = |args: &[&OsStr]| {
+        let output = lingrep()
+            .arg("--json")
+            .args(args)
+            .timeout(Duration::from_secs(20))
+            .output()
+            .unwrap();
+        assert_success(&output);
+        parse_jsonl(&output.stdout)
+    };
+    let records = run(&[
+        "corpus".as_ref(),
+        "disk".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        directory.as_os_str(),
+    ]);
+    let leftovers = of_type(&records, "leftover");
+    assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+    assert_eq!(leftovers[0]["lock"], live_lock.display().to_string());
+    assert_eq!(leftovers[0]["status"], "live");
+    assert_eq!(status_of(&records, &canonical), "unreadable");
+
+    let records = run(&[
+        "corpus".as_ref(),
+        "prune".as_ref(),
+        "--execute".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    assert_eq!(
+        of_type(&records, "removal")
+            .iter()
+            .map(|record| record["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [fixture.other_analyzer.display().to_string()]
+    );
+    assert!(canonical.exists() && explicit.exists() && table.exists());
+    drop(held);
+}

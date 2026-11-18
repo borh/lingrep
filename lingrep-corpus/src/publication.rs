@@ -211,11 +211,8 @@ pub(crate) fn reclaim_orphaned_staging(parent: &Path, name: &str) {
 ///
 /// The returned file holds the lock until it is dropped.
 fn lock_if_abandoned(lock_path: &Path, host: &[u8]) -> Option<File> {
-    let mut file = File::options()
-        .read(true)
-        .write(true)
-        .open(lock_path)
-        .ok()?;
+    let mut file =
+        crate::artifact::open_regular(File::options().read(true).write(true), lock_path).ok()?;
     let mut owner = Vec::new();
     if file.try_lock().is_err()
         || !is_file_at(&file, lock_path)
@@ -253,7 +250,9 @@ pub struct StagingLeftover {
 /// Lists the staging directories and lock files immediately in `dir`, in
 /// bytewise path order, without removing anything.
 ///
-/// A lock file is locked and released while its status is probed.
+/// An entry with a staging name that is not a directory, or with a lock name
+/// that is not a regular file, is skipped; a symbolic link is neither. A lock
+/// file is locked and released while its status is probed.
 pub fn staging_leftovers(dir: &Path) -> io::Result<Vec<StagingLeftover>> {
     let mut found = std::collections::BTreeMap::<(String, String), (bool, bool)>::new();
     for entry in fs::read_dir(dir)? {
@@ -264,8 +263,17 @@ pub fn staging_leftovers(dir: &Path) -> io::Result<Vec<StagingLeftover>> {
         let Some(rest) = name.strip_prefix('.') else {
             continue;
         };
+        let kind = entry.file_type()?;
         for (marker, is_lock) in [(".staging-", false), (".stagelock-", true)] {
             if let Some((published, suffix)) = rest.rsplit_once(marker) {
+                let expected = if is_lock {
+                    kind.is_file()
+                } else {
+                    kind.is_dir()
+                };
+                if !expected {
+                    break;
+                }
                 let slot = found
                     .entry((published.to_owned(), suffix.to_owned()))
                     .or_default();
@@ -285,7 +293,9 @@ pub fn staging_leftovers(dir: &Path) -> io::Result<Vec<StagingLeftover>> {
             let (staging, lock) = staging_paths(dir, &published_name, &suffix);
             let status = if !has_lock {
                 StagingStatus::Unknown
-            } else if File::open(&lock).is_ok_and(|file| file.try_lock_shared().is_err()) {
+            } else if crate::artifact::open_regular(File::options().read(true), &lock)
+                .is_ok_and(|file| file.try_lock_shared().is_err())
+            {
                 StagingStatus::Live
             } else if host
                 .as_deref()
