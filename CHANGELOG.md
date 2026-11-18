@@ -33,9 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Plain-text, Markdown and Soranoha archive readers have new revisions, so
   `ling corpus build` writes a sibling of an artifact that 0.8.1 built from
-  these formats instead of reusing it. Artifacts built by 0.8.1 still open.
-  Rendering a reading sidecar for a Markdown artifact built by 0.8.1 requires
-  rebuilding the artifact first.
+  these formats instead of reusing it. Artifacts built by 0.8.1 and their
+  reading sidecars keep working, and `ling corpus render` still writes a
+  sidecar for a Markdown artifact built by 0.8.1, with two exceptions. If a
+  source file starts with a byte-order mark, `render` fails with "re-reading
+  FILE does not reproduce the stored sentences". If a file or directory name
+  changes under Unicode NFC (see Fixed), `render` fails with "the source tree
+  has source identity …, but the artifact records …". Rebuild the artifact
+  with `ling corpus build` in either case.
 
 ### Fixed
 

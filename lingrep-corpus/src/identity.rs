@@ -80,9 +80,33 @@ impl ReaderIdentity {
         config: &lingrep_core::corpus::CorpusReadConfig,
         normalization: lingrep_core::analysis::NormalizationPolicy,
     ) -> Self {
+        Self::with_normalization(
+            &lingrep_core::corpus::reader_identity_digest(config),
+            normalization,
+        )
+    }
+
+    /// [`Self::derive`] for a Markdown reader as reader schema `revision`
+    /// identified it, to recognise an artifact an earlier ling built.
+    #[must_use]
+    pub fn derive_markdown_at(
+        config: &lingrep_core::corpus::MarkdownReaderConfig,
+        revision: u32,
+        normalization: lingrep_core::analysis::NormalizationPolicy,
+    ) -> Self {
+        Self::with_normalization(
+            &lingrep_core::corpus::markdown_reader_identity_digest_at(config, revision),
+            normalization,
+        )
+    }
+
+    fn with_normalization(
+        reader: &[u8; 32],
+        normalization: lingrep_core::analysis::NormalizationPolicy,
+    ) -> Self {
         let mut hash = blake3::Hasher::new();
         hash.update(READER_WITH_NORMALIZATION_DOMAIN);
-        hash.update(&lingrep_core::corpus::reader_identity_digest(config));
+        hash.update(reader);
         hash.update(normalization.identity_bytes());
         Self::from_bytes(*hash.finalize().as_bytes())
     }

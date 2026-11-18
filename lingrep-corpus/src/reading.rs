@@ -87,7 +87,7 @@ pub enum ReadingSidecarError {
         found: String,
     },
     #[error(
-        "The Markdown options or reader version differ from those used to build this corpus. Use the original --md-* options and a compatible ling version. The original options cannot be recovered from these hashes. If unavailable, rebuild with 'ling corpus build ROOT --output NEW_ARTIFACT' using the chosen --md-* options, then render with those options (requested reader: {found}; corpus reader: {expected})"
+        "The Markdown options differ from those used to build this corpus, or it was built by a ling version with another Markdown reader. Use the original --md-* options and a compatible ling version. The original options cannot be recovered from these hashes. If unavailable, rebuild with 'ling corpus build ROOT --output NEW_ARTIFACT' using the chosen --md-* options, then render with those options (requested reader: {found}; corpus reader: {expected})"
     )]
     ReaderMismatch { expected: String, found: String },
     #[error(
@@ -410,6 +410,14 @@ pub struct ReadingSidecarStats {
     pub bytes: u64,
 }
 
+/// The Markdown reader revision of ling 0.8.1, whose artifacts are rendered
+/// with the current reader. The two differ only in that the current one omits
+/// a leading byte-order mark, and [`ReadingSidecarWriter::write`] refuses a
+/// document whose replay does not reproduce the stored sentences, so an
+/// artifact built from a source that starts with one is refused rather than
+/// rendered wrongly.
+const RENDERABLE_EARLIER_MARKDOWN_READER_REVISION: u32 = 12;
+
 pub struct ReadingSidecarWriter<'a> {
     artifact: &'a CorpusArtifact,
     reader: MarkdownReaderConfig,
@@ -439,7 +447,12 @@ impl<'a> ReadingSidecarWriter<'a> {
             normalization,
         );
         let expected = artifact.analysis_inputs()?.reader();
-        if found != expected {
+        let earlier = ReaderIdentity::derive_markdown_at(
+            &reader,
+            RENDERABLE_EARLIER_MARKDOWN_READER_REVISION,
+            normalization,
+        );
+        if found != expected && earlier != expected {
             return Err(ReadingSidecarError::ReaderMismatch {
                 expected: format_identity(expected.as_bytes()),
                 found: format_identity(found.as_bytes()),

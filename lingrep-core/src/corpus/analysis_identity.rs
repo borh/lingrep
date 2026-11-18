@@ -1,6 +1,6 @@
 //! Canonical semantic identity inputs shared by direct and prepared execution.
 
-use super::{CorpusFormat, CorpusReadConfig};
+use super::{CorpusFormat, CorpusReadConfig, MarkdownReaderConfig};
 use crate::token_match::TokenSchema;
 
 const ADMISSION_DOMAIN: &[u8] = b"lingrep/sentence-admission/v2";
@@ -20,9 +20,26 @@ const READER_DOMAIN: &[u8] = b"lingrep/corpus-reader/v1";
 /// content was identical.
 #[must_use]
 pub fn reader_identity_digest(config: &CorpusReadConfig) -> [u8; 32] {
+    tagged_reader_identity_digest(config, config.reader_tag())
+}
+
+/// [`reader_identity_digest`] of a Markdown reader as reader schema
+/// `revision` encoded it; see [`MarkdownReaderConfig::reader_tag_at`].
+#[must_use]
+pub fn markdown_reader_identity_digest_at(
+    config: &MarkdownReaderConfig,
+    revision: u32,
+) -> [u8; 32] {
+    tagged_reader_identity_digest(
+        &CorpusReadConfig::Markdown(config.clone()),
+        config.reader_tag_at(revision),
+    )
+}
+
+fn tagged_reader_identity_digest(config: &CorpusReadConfig, tag: u64) -> [u8; 32] {
     let mut digest = blake3::Hasher::new();
     digest.update(READER_DOMAIN);
-    digest.update(&config.reader_tag().to_le_bytes());
+    digest.update(&tag.to_le_bytes());
     digest.update(&[match config.format() {
         CorpusFormat::Plain => 1,
         CorpusFormat::Jsonl => 2,

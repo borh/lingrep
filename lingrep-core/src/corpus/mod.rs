@@ -19,7 +19,8 @@ pub mod text_source;
 pub mod zip;
 
 pub use analysis_identity::{
-    admission_identity_digest, reader_identity_digest, token_schema_identity_digest,
+    admission_identity_digest, markdown_reader_identity_digest_at, reader_identity_digest,
+    token_schema_identity_digest,
 };
 pub use discovery::{
     CorpusDiscovery, CorpusFileKind, DiscoveryError, DiscoveryReport, InventoryStats,

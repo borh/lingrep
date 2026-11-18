@@ -640,6 +640,13 @@ impl MarkdownReaderConfig {
     /// schema therefore cannot silently claim a cache produced by an older
     /// interpretation of the same source bytes.
     pub fn reader_tag(&self) -> u64 {
+        self.reader_tag_at(MARKDOWN_READER_SCHEMA_REVISION)
+    }
+
+    /// [`Self::reader_tag`] as reader schema `revision` encoded it, for
+    /// recognising an artifact an earlier ling built.
+    #[must_use]
+    pub fn reader_tag_at(&self, revision: u32) -> u64 {
         let Self {
             policy,
             self_labels,
@@ -650,7 +657,7 @@ impl MarkdownReaderConfig {
         let (include, exclude) = policy.canonical_fields();
         let mut encoded = Vec::new();
         encoded.extend_from_slice(MARKDOWN_READER_TAG_DOMAIN);
-        encoded.extend_from_slice(&MARKDOWN_READER_SCHEMA_REVISION.to_le_bytes());
+        encoded.extend_from_slice(&revision.to_le_bytes());
         // A fixed-width leading field, so it cannot be confused with the
         // length-prefixed label data that follows it.
         encoded.push(u8::from(*recover_conversion_artifacts));

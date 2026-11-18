@@ -249,7 +249,7 @@ fn render_rejects_another_source_tree_or_other_reader_options() {
     assert_eq!(options.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&options.stderr)
-            .contains("Markdown options or reader version differ"),
+            .contains("Markdown options differ from those used to build this corpus, or it was built by a ling version with another Markdown reader"),
         "{}",
         String::from_utf8_lossy(&options.stderr)
     );
@@ -411,4 +411,67 @@ fn math_recovery_and_unprefixed_tables_preserve_prose_and_reading_anchors() {
         .page(PageRequest::From(DocumentId::new(1), 0), 1 << 20)
         .unwrap();
     assert!(page.html.find("表の後。").unwrap() > page.html.find("</table>").unwrap());
+}
+
+/// Unpacks `markdown-0.8.1.zip`: two Markdown trees that ling 0.8.1 built,
+/// `plain` and `bom`, whose `a.md` starts with a byte-order mark, and the
+/// sidecar 0.8.1 rendered for `plain`.
+fn corpora_built_by_0_8_1() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = fs::File::open(crate::support::fixture("markdown-0.8.1.zip")).unwrap();
+    zip::ZipArchive::new(archive)
+        .unwrap()
+        .extract(directory.path())
+        .unwrap();
+    directory
+}
+
+fn render_0_8_1(directory: &Path, corpus: &str, output: &Path) -> std::process::Output {
+    lingrep()
+        .args(["corpus", "render"])
+        .arg(directory.join(corpus).join("papers.lingcorpus"))
+        .arg("--source-root")
+        .arg(directory.join(corpus).join("papers"))
+        .arg("--output")
+        .arg(output)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn render_writes_the_sidecar_0_8_1_wrote_for_an_artifact_0_8_1_built() {
+    let directory = corpora_built_by_0_8_1();
+    let manifest = fs::read_to_string(
+        directory
+            .path()
+            .join("plain/papers.lingcorpus/manifest.json"),
+    )
+    .unwrap();
+    // The Markdown reader identity of ling 0.8.1, reader revision 12.
+    assert!(manifest.contains(
+        "\"reader_identity\": \"46a19a1b725796633f7ead3edbd095e717caaed27f09d9fa2335b1a408aad381\""
+    ));
+    let output = directory.path().join("rendered");
+    assert_success(&render_0_8_1(directory.path(), "plain", &output));
+    assert_eq!(
+        files(&output),
+        files(&directory.path().join("plain/papers.reading"))
+    );
+}
+
+#[test]
+fn render_refuses_an_artifact_0_8_1_built_from_a_source_with_a_byte_order_mark() {
+    let directory = corpora_built_by_0_8_1();
+    let output = directory.path().join("rendered");
+    let result = render_0_8_1(directory.path(), "bom", &output);
+    assert!(!result.status.success());
+    assert!(!output.exists());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains(
+            "re-reading a.md does not reproduce the stored sentences: the reader admits 1 \
+             sentences, and the artifact stores 2"
+        ),
+        "{stderr}"
+    );
 }
