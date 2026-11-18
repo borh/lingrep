@@ -31,9 +31,20 @@ OPERATIONS = {
     "hard_link": re.compile(r"\bhard_link\b|\blibc::link(at)?\b"),
     "persist": re.compile(r"\.persist(_noclobber)?\s*\("),
     "sqlite_wal": re.compile(
-        r"journal_mode\s*=\s*WAL|SqliteJournalMode::Wal|locking_mode", re.IGNORECASE
+        r"journal_mode[\s=(,'\"\\]*WAL|SqliteJournalMode::Wal|locking_mode", re.IGNORECASE
     ),
 }
+
+# A `use` of std::fs, std::os::unix::fs or libc that imports one of these
+# functions, a glob, or a module alias makes later calls unqualified.
+USE_STATEMENT = re.compile(r"\buse\s[^;]*;")
+IMPORTED_NAMES = {
+    "rename": re.compile(r"\b(rename|renameat2?|renamex_np)\b"),
+    "symlink": re.compile(r"\b(symlink(_file|_dir|at)?|soft_link)\b"),
+    "hard_link": re.compile(r"\b(hard_link|link(at)?)\b"),
+}
+IMPORTED_MODULE = re.compile(r"\b(fs|libc)\b")
+GLOB_OR_ALIAS = re.compile(r"\b(fs|libc)::\*|\b(fs|libc|self)\s+as\b")
 
 allowed = {}
 for line in sys.argv[1].splitlines():
@@ -168,6 +179,18 @@ for path in files:
             searched = literal_line if operation == "sqlite_wal" else line
             if operation not in exempt and pattern.search(searched):
                 violations.append(f"{path}:{number}: {operation}: {source.splitlines()[number - 1].strip()}")
+    joined = "\n".join(code)
+    for statement in USE_STATEMENT.finditer(joined):
+        text = statement.group()
+        if not IMPORTED_MODULE.search(text):
+            continue
+        operations = [operation for operation, pattern in IMPORTED_NAMES.items() if pattern.search(text)]
+        if GLOB_OR_ALIAS.search(text):
+            operations.append("fs_import")
+        number = joined.count("\n", 0, statement.start()) + 1
+        for operation in operations:
+            if operation not in exempt:
+                violations.append(f"{path}:{number}: {operation}: {source.splitlines()[number - 1].strip()}")
 
 stale = sorted(path for path in allowed if not pathlib.Path(path).is_file())
 if stale:
@@ -180,7 +203,7 @@ if violations:
         "scripts/check-fs-capability-seam.sh):",
         file=sys.stderr,
     )
-    print(*violations, sep="\n", file=sys.stderr)
+    print(*dict.fromkeys(violations), sep="\n", file=sys.stderr)
     sys.exit(1)
 PY
 
