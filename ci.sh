@@ -53,6 +53,7 @@ run_repository_guards() {
     scripts/check-durability-fixtures.sh
     scripts/check-fs-capability-seam.sh
     scripts/check-i18n-keys.py
+    scripts/check-release-notices.sh
 }
 
 run_common_checks() {
