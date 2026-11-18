@@ -73,6 +73,7 @@ run_common_checks() {
     uv lock --check --script scripts/huggingface_dataset.py
     python -m unittest scripts/test/test_huggingface_dataset.py scripts/test/test_wo_predicate_export.py \
         scripts/test/test_test_reference_guards.py scripts/test/test_fs_capability_seam_guard.py \
+        scripts/test/test_lx_catalog_guard.py \
         scripts/test/test_cargo_test_selected.py \
         scripts/test/test_corpus_pressure.py scripts/test/test_release_notices.py
 

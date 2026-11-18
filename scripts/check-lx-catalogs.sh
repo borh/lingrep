@@ -41,9 +41,19 @@ fi
 # 2. Regex operands belong to `~`/`!~`.
 pattern='\[[^]]*[a-z0-9_]+[[:space:]]*!?=[[:space:]]*/[^/]*/'
 
-offenders=$(git ls-files -z '*.rs' '*.lx' \
-  | xargs -0 grep -nE "$pattern" 2>/dev/null \
-  | grep -v 'legacy-lx-syntax-ok' || true)
+# One grep over every file, so that its exit status separates no match (1) from
+# an error (2 or more); xargs reports both as 123.
+mapfile -d '' sources < <(git ls-files -z '*.rs' '*.lx')
+status=0
+matches=$(grep -nEH -- "$pattern" "${sources[@]}" < /dev/null) || status=$?
+case $status in
+  0 | 1) ;;
+  *)
+    echo "grep failed with exit status $status" >&2
+    exit "$status"
+    ;;
+esac
+offenders=$(grep -v 'legacy-lx-syntax-ok' <<< "$matches" || true)
 
 if [[ -n "$offenders" ]]; then
   echo "Legacy lingrep patterns syntax (regex operand with = or !=):" >&2
