@@ -124,9 +124,10 @@ fn path_string(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// A dry run lists the superseded and older-format realizations of the source
-/// and the table bound only to a superseded one, with the bytes each would
-/// free, and deletes nothing.
+/// A dry run lists the realizations of the source superseded in an analysis
+/// dimension, the older-format ones, and the table bound only to a superseded
+/// one, with the bytes each would free, and deletes nothing. A reader-only
+/// variant is listed as kept.
 #[cfg(unix)]
 #[test]
 fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
@@ -141,7 +142,6 @@ fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
         {
             let mut expected = vec![
                 path_string(&fixture.siblings.other_analyzer),
-                path_string(&fixture.siblings.other_reader),
                 path_string(&fixture.older),
                 path_string(&fixture.superseded_table),
             ];
@@ -156,6 +156,11 @@ fn a_dry_run_lists_what_would_be_freed_and_deletes_nothing() {
             .iter()
             .all(|record| record["deleted"] == false)
     );
+    let kept = of_type(&records, "kept");
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0]["path"], path_string(&fixture.siblings.other_reader));
+    assert_eq!(kept[0]["reason"], "reader_variant");
+    assert_eq!(kept[0]["differences"], serde_json::json!(["reader"]));
     let complete = of_type(&records, "complete")[0];
     assert_eq!(complete["executed"], false);
     assert_eq!(
@@ -202,6 +207,7 @@ fn execute_deletes_exactly_the_reported_set() {
     for kept in [
         &fixture.siblings.source,
         &fixture.siblings.current,
+        &fixture.siblings.other_reader,
         &fixture.newer,
         &fixture.misnamed,
         &fixture.symlink,
@@ -257,6 +263,7 @@ fn a_missing_current_realization_requires_keep() {
         fixture.dictionary.path().as_os_str(),
         "--keep".as_ref(),
         fixture.other_analyzer.as_os_str(),
+        "--include-all-superseded".as_ref(),
         directory.as_os_str(),
     ]);
     assert_eq!(
@@ -268,7 +275,8 @@ fn a_missing_current_realization_requires_keep() {
 }
 
 /// "Current" follows the analysis inputs: under another reader policy the
-/// default-reader artifact is the superseded one.
+/// default-reader artifact is superseded, and kept by default because it
+/// differs only in the reader.
 #[test]
 fn the_inputs_decide_which_realization_is_kept() {
     let fixture = siblings();
@@ -283,9 +291,82 @@ fn the_inputs_decide_which_realization_is_kept() {
         "--source".as_ref(),
         fixture.source.as_os_str(),
     ]);
-    assert_eq!(removals(&records).len(), 2);
+    assert_eq!(
+        removals(&records).keys().cloned().collect::<Vec<_>>(),
+        [path_string(&fixture.other_analyzer)]
+    );
+    assert!(fixture.other_reader.exists() && fixture.current.exists());
+    assert!(!fixture.other_analyzer.exists());
+}
+
+/// `--include-all-superseded` adds the reader-only variant to the plan, and
+/// executing deletes exactly that plan.
+#[test]
+fn reader_variants_are_deleted_only_with_include_all_superseded() {
+    let fixture = siblings();
+    let args = |execute: bool| {
+        let mut args: Vec<&OsStr> = vec![
+            "corpus".as_ref(),
+            "prune".as_ref(),
+            "--dict-path".as_ref(),
+            fixture.dictionary.path().as_os_str(),
+            "--include-all-superseded".as_ref(),
+        ];
+        if execute {
+            args.push("--execute".as_ref());
+        }
+        args.push(fixture.directory.path().as_os_str());
+        args
+    };
+    let planned = removals(&run_json(&args(false)));
+    let mut expected = vec![
+        path_string(&fixture.other_analyzer),
+        path_string(&fixture.other_reader),
+    ];
+    expected.sort();
+    assert_eq!(planned.keys().cloned().collect::<Vec<_>>(), expected);
+    let records = run_json(&args(true));
+    assert_eq!(of_type(&records, "run")[0]["include_all_superseded"], true);
+    assert_eq!(removals(&records), planned, "the deletions are the plan");
+    assert!(of_type(&records, "kept").is_empty());
+    assert!(!fixture.other_reader.exists() && !fixture.other_analyzer.exists());
+    assert!(fixture.current.exists());
+}
+
+/// A sibling that differs in the analyzer as well as the reader is analysis
+/// churn, so the default prune deletes it.
+#[test]
+fn an_analysis_difference_outweighs_a_reader_difference() {
+    let fixture = siblings();
+    let both = crate::disk_protocol::build(
+        &fixture.dictionary,
+        &fixture.source,
+        &[
+            "--profile",
+            "text",
+            "--md-exclude-sections",
+            "references,appendix",
+        ],
+    );
+    let records = run_json(&[
+        "corpus".as_ref(),
+        "prune".as_ref(),
+        "--execute".as_ref(),
+        "--dict-path".as_ref(),
+        fixture.dictionary.path().as_os_str(),
+        "--source".as_ref(),
+        fixture.source.as_os_str(),
+    ]);
+    let removal = of_type(&records, "removal")
+        .into_iter()
+        .find(|record| record["path"] == path_string(&both))
+        .unwrap_or_else(|| panic!("the analyzer-and-reader sibling is deleted: {records:?}"));
+    assert_eq!(
+        removal["differences"],
+        serde_json::json!(["reader", "analyzer", "token_schema"])
+    );
+    assert!(!both.exists());
     assert!(fixture.other_reader.exists());
-    assert!(!fixture.current.exists() && !fixture.other_analyzer.exists());
 }
 
 /// `--keep` must name a readable realization in the scanned directory.
@@ -323,4 +404,40 @@ fn the_removal_primitives_reject_entries_that_differ_from_the_classification() {
         assert!(kept.exists(), "{}", kept.display());
     }
     assert!(fixture.symlink.join("manifest.json").exists());
+}
+
+/// A realization of edited source content under the same analysis is kept by
+/// default, since a server reading the old content may still serve it, and
+/// deleted with `--include-all-superseded`.
+#[test]
+fn a_source_revision_is_kept_by_default() {
+    let fixture = siblings();
+    fs::write(&fixture.source, "犬。\n").unwrap();
+    let rebuilt = crate::disk_protocol::build(&fixture.dictionary, &fixture.source, &[]);
+    let args = |all: bool| {
+        let mut args: Vec<&OsStr> = vec![
+            "corpus".as_ref(),
+            "prune".as_ref(),
+            "--execute".as_ref(),
+            "--dict-path".as_ref(),
+            fixture.dictionary.path().as_os_str(),
+        ];
+        if all {
+            args.push("--include-all-superseded".as_ref());
+        }
+        args.push("--source".as_ref());
+        args.push(fixture.source.as_os_str());
+        args
+    };
+    let records = run_json(&args(false));
+    let kept = of_type(&records, "kept")
+        .into_iter()
+        .find(|record| record["path"] == path_string(&fixture.current))
+        .unwrap_or_else(|| panic!("the old content is kept: {records:?}"));
+    assert_eq!(kept["reason"], "source_revision");
+    assert!(fixture.current.exists());
+
+    let records = run_json(&args(true));
+    assert!(removals(&records).contains_key(&path_string(&fixture.current)));
+    assert!(!fixture.current.exists() && rebuilt.exists());
 }

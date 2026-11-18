@@ -173,6 +173,10 @@ pub struct DiskRealization {
     /// the current request, in a fixed order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<VariantDifference>,
+    /// For a superseded realization that `corpus prune` keeps unless given
+    /// `--include-all-superseded`, why it keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_by_prune: Option<PruneKeep>,
     /// Why an unreadable entry could not be opened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -206,6 +210,27 @@ pub enum RealizationStatus {
     /// A `.lingcorpus` directory whose name is not a canonical artifact name,
     /// such as an explicit `--output`.
     NonCanonicalName,
+}
+
+/// Why `corpus prune` keeps a superseded realization by default.
+///
+/// The default prune deletes a superseded realization that differs from the
+/// current request in `analyzer` or `token_schema`, whatever else differs.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PruneKeep {
+    /// Differs in reader or admission policy and in no analysis dimension,
+    /// such as the artifact lingrep-web reads a Markdown source into.
+    /// Deleted with `--include-all-superseded`.
+    ReaderVariant,
+    /// Differs only in source content: the same analysis of an earlier
+    /// version of the source. Deleted with `--include-all-superseded`.
+    SourceRevision,
+    /// Has another trust class. `corpus build` does not produce it, so no
+    /// local rebuild replaces it; `corpus prune` never deletes it.
+    OtherTrust,
 }
 
 /// One count table immediately in the scanned directory.

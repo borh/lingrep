@@ -29,8 +29,8 @@ use crate::error::CliError;
 use crate::presentation::{OutputMode, ResultDelivery};
 use crate::protocol::disk::{
     CacheKind, DiskCache, DiskComplete, DiskEnvelope, DiskEvent, DiskItem, DiskLeftover,
-    DiskRealization, DiskRun, DiskSource, DiskTable, DiskTotal, LeftoverStatus, RealizationStatus,
-    SourceCurrent, TableBinding,
+    DiskRealization, DiskRun, DiskSource, DiskTable, DiskTotal, LeftoverStatus, PruneKeep,
+    RealizationStatus, SourceCurrent, TableBinding,
 };
 use crate::protocol::variants::VariantDifference;
 use crate::protocol::write_jsonl;
@@ -470,6 +470,34 @@ fn differences(
     differences
 }
 
+/// Why the default prune keeps a superseded realization with these
+/// differences, or `None` when it deletes it.
+///
+/// Trust is checked first: no local rebuild replaces another trust class.
+/// An analysis difference then marks the realization as rebuild churn,
+/// whatever else differs. With no recorded differences, which happens only
+/// when the source is missing, nothing can select the realization again.
+pub(crate) fn kept_by_prune(differences: &[VariantDifference]) -> Option<PruneKeep> {
+    use VariantDifference::{Admission, Analyzer, Reader, Source, TokenSchema, Trust};
+    if differences.contains(&Trust) {
+        Some(PruneKeep::OtherTrust)
+    } else if differences
+        .iter()
+        .any(|difference| matches!(difference, Analyzer | TokenSchema))
+    {
+        None
+    } else if differences
+        .iter()
+        .any(|difference| matches!(difference, Reader | Admission))
+    {
+        Some(PruneKeep::ReaderVariant)
+    } else if differences.contains(&Source) {
+        Some(PruneKeep::SourceRevision)
+    } else {
+        None
+    }
+}
+
 /// Count tables immediately in the directory, bound by analysis identity to
 /// the readable realizations beside them.
 ///
@@ -659,6 +687,9 @@ pub(crate) fn run_to<W: Write>(
             dictionary_identity: recorded
                 .map(|recorded| encode_digest(recorded.dictionary.as_bytes())),
             differences: entry.differences.clone(),
+            kept_by_prune: (entry.status == RealizationStatus::Superseded)
+                .then(|| kept_by_prune(&entry.differences))
+                .flatten(),
             message: entry.message.clone(),
         })
     }));
@@ -892,6 +923,14 @@ impl Human<'_> {
                             .collect::<Vec<_>>()
                             .join(", ")
                     );
+                }
+                if let Some(keep) = record.kept_by_prune {
+                    detail.push_str(match keep {
+                        PruneKeep::ReaderVariant | PruneKeep::SourceRevision => {
+                            "; prune keeps it unless --include-all-superseded"
+                        }
+                        PruneKeep::OtherTrust => "; prune keeps it",
+                    });
                 }
                 writeln!(
                     writer,

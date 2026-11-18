@@ -1347,6 +1347,15 @@ pub struct CorpusPruneArgs {
     #[arg(long)]
     pub execute: bool,
 
+    /// Also delete superseded artifacts that differ from the current one only
+    /// in source content, reader or admission policy.
+    ///
+    /// By default only those differing in analyzer or token schema are
+    /// deleted, because another reader, such as lingrep-web's, may still use
+    /// the others. Artifacts of another trust class are never deleted.
+    #[arg(long)]
+    pub include_all_superseded: bool,
+
     /// The analysis inputs that select each source's current artifact; the
     /// `corpus build` defaults apply to every omitted flag.
     #[command(flatten)]

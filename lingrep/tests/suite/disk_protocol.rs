@@ -204,6 +204,16 @@ fn analysis_inputs_classify_current_and_superseded_with_their_differences() {
         differences(&fixture.other_reader),
         serde_json::json!(["reader"])
     );
+    let kept_by_prune = |path: &Path| {
+        of_type(&records, "realization")
+            .into_iter()
+            .find(|record| record["path"] == path.display().to_string())
+            .unwrap()["kept_by_prune"]
+            .clone()
+    };
+    assert_eq!(kept_by_prune(&fixture.other_reader), "reader_variant");
+    assert!(kept_by_prune(&fixture.other_analyzer).is_null());
+    assert!(kept_by_prune(&fixture.current).is_null());
 
     let complete = of_type(&records, "complete")[0];
     let measured: u64 = of_type(&records, "realization")

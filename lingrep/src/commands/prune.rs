@@ -18,9 +18,9 @@ use super::disk::{self, CurrentSelection, RealizationEntry, Scope, TableEntry, d
 use crate::cli::{CorpusPruneArgs, ExecutionCliConfig};
 use crate::error::CliError;
 use crate::presentation::OutputMode;
-use crate::protocol::disk::{RealizationStatus, TableBinding};
+use crate::protocol::disk::{PruneKeep, RealizationStatus, TableBinding};
 use crate::protocol::prune::{
-    PruneComplete, PruneEnvelope, PruneEvent, PruneRemoval, PruneRun, RemovalReason,
+    PruneComplete, PruneEnvelope, PruneEvent, PruneKept, PruneRemoval, PruneRun, RemovalReason,
 };
 use crate::protocol::write_jsonl;
 use crate::terminal::TerminalArbiter;
@@ -53,11 +53,24 @@ pub(crate) fn run_to<W: Write>(
     };
 
     let kept = keep(&args.keep, &scan.realizations, &scope.directory)?;
+    let keep_reason = |entry: &RealizationEntry| {
+        disk::kept_by_prune(&entry.differences)
+            .filter(|reason| *reason == PruneKeep::OtherTrust || !args.include_all_superseded)
+    };
+    let kept_by_rule = scan
+        .realizations
+        .iter()
+        .filter(|entry| entry.status == RealizationStatus::Superseded)
+        .filter(|entry| !kept.contains(&entry.path))
+        .filter_map(|entry| keep_reason(entry).map(|reason| (entry, reason)))
+        .collect::<Vec<_>>();
     let removed = scan
         .realizations
         .iter()
         .filter(|entry| match entry.status {
-            RealizationStatus::Superseded => !kept.contains(&entry.path),
+            RealizationStatus::Superseded => {
+                !kept.contains(&entry.path) && keep_reason(entry).is_none()
+            }
             RealizationStatus::OlderFormat => true,
             _ => false,
         })
@@ -137,15 +150,24 @@ pub(crate) fn run_to<W: Write>(
         directory: display(&scope.directory),
         source: scope.source.as_ref().map(|(path, _)| display(path)),
         keep: kept.iter().map(|path| display(path)).collect(),
+        include_all_superseded: args.include_all_superseded,
         execute: args.execute,
     }))?;
     for source in &scan.sources {
         publish(PruneEvent::Source(source.record()))?;
     }
+    for (entry, reason) in &kept_by_rule {
+        publish(PruneEvent::Kept(PruneKept {
+            path: display(&entry.path),
+            reason: *reason,
+            differences: entry.differences.clone(),
+            bytes: entry.bytes,
+        }))?;
+    }
 
     let (mut expected, mut freed) = (0_u64, 0_u64);
     for planned in &plan {
-        let (path, reason, measured) = match planned {
+        let (path, reason, measured, differences) = match planned {
             Planned::Realization(entry) => (
                 &entry.path,
                 if entry.status == RealizationStatus::OlderFormat {
@@ -154,8 +176,14 @@ pub(crate) fn run_to<W: Write>(
                     RemovalReason::Superseded
                 },
                 entry.bytes,
+                entry.differences.clone(),
             ),
-            Planned::Table(table) => (&table.path, RemovalReason::TableOfRemoved, table.bytes),
+            Planned::Table(table) => (
+                &table.path,
+                RemovalReason::TableOfRemoved,
+                table.bytes,
+                Vec::new(),
+            ),
         };
         let measured = measured.unwrap_or_default();
         expected += measured;
@@ -171,6 +199,7 @@ pub(crate) fn run_to<W: Write>(
         publish(PruneEvent::Removal(PruneRemoval {
             path: display(path),
             reason,
+            differences,
             bytes,
             deleted: args.execute,
         }))?;
@@ -261,6 +290,18 @@ impl Human<'_> {
                 ),
                 _ => Ok(()),
             },
+            PruneEvent::Kept(kept) => writeln!(
+                writer,
+                "  keeping {:<21} {:>10}  {}{}",
+                disk::wire(&kept.reason).replace('_', "-"),
+                disk::size(kept.bytes),
+                self.short(&kept.path),
+                if kept.reason == PruneKeep::OtherTrust {
+                    ""
+                } else {
+                    " (--include-all-superseded deletes it)"
+                }
+            ),
             PruneEvent::Removal(removal) => writeln!(
                 writer,
                 "  {} {:<16} {:>10}  {}",

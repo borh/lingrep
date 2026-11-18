@@ -2190,7 +2190,7 @@ Each realization has one status:
 | Status | Meaning |
 |---|---|
 | `current` | The realization `corpus build` would reuse with the given inputs. |
-| `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build. |
+| `superseded` | Readable, named for the identity and trust its manifest records, and not current. `differences` names the dimensions in which it differs from what the inputs would build, and `kept_by_prune` says why the default `corpus prune` keeps it, if it does. |
 | `unclassified` | Readable; no analysis inputs were given. |
 | `older_format` | Written in an earlier format; only a rebuild from source replaces it. |
 | `unreadable` | A newer format, or damaged. |
@@ -2227,13 +2227,31 @@ ling corpus prune --source corpora/works.md -d unidic-cwj.dic --execute  # delet
 ```
 
 `corpus prune DIR` (or `--source SOURCE`) deletes the realizations that
-`corpus disk` reports as `superseded` or `older_format` for the same analysis
-inputs, and every count table whose bound artifacts are all among them.
+`corpus disk` reports as `older_format`, and those it reports as `superseded`
+for the same analysis inputs that differ from the current one in `analyzer`
+or `token_schema`, whatever else differs. That is the churn of switching
+dictionaries, analyzers or formats. It also deletes every count table whose
+bound artifacts are all among them.
+
+Other superseded realizations are kept, and listed as `kept` with a reason:
+
+| `kept_by_prune` | Differs in | Deleted with |
+|---|---|---|
+| `reader_variant` | reader or admission policy, and no analysis dimension | `--include-all-superseded` |
+| `source_revision` | source content only | `--include-all-superseded` |
+| `other_trust` | trust class | never |
+
+A reader variant is typically the artifact another tool reads the same
+source into, such as `lingrep-web` with its Markdown reader policy, or a
+`ling` release with another admission policy. A source revision may still be
+served by a process that read the source before it was edited. An artifact of
+another trust class is not one `corpus build` produces, so no local rebuild
+replaces it.
 Without `--execute` it deletes nothing and lists each path with its size and
 the total that would be freed. With `--execute` it deletes the same set and
 reports the bytes each deletion freed. The stream contract is
-`lingrep.prune/v1`, with one `removal` record per path and a completion
-record.
+`lingrep.prune/v1`, with one `kept` record per superseded artifact it keeps,
+one `removal` record per path, and a completion record.
 
 `corpus prune` always selects the current realization: omitted analysis
 flags take `corpus build`'s defaults. When a source with something to
@@ -2250,11 +2268,12 @@ leftover. Immediately before each deletion it checks again that the entry is
 a directory, not a symbolic link, with the canonical name and recorded
 identity the scan classified.
 
-Nothing records which artifacts other processes are reading. Stop builds,
-queries and `lingrep-web` instances that use a superseded artifact before
-executing, or keep it with `--keep`. `lingrep-web` reads Markdown with
-conversion-artifact recovery, so for a Markdown source the artifact it
-serves is current only with `--md-recover-conversion-artifacts`.
+Nothing records which artifacts other processes are reading. Before
+`--execute --include-all-superseded`, stop the builds, queries and
+`lingrep-web` instances that use an artifact it lists, or keep that artifact
+with `--keep`. Without `--include-all-superseded`, `corpus prune` deletes
+only artifacts that differ in analysis from the current one, so a server
+using another analysis of the source is the one case to check.
 
 Whether an artifact built by `ling` is also the one `lingrep-web` prepares
 depends on the input format, because the name includes the reader identity. For

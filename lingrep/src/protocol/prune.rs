@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-use super::disk::DiskSource;
+use super::disk::{DiskSource, PruneKeep};
+use super::variants::VariantDifference;
 
 pub const SCHEMA: &str = super::ContractId::Prune.as_str();
 
@@ -27,6 +28,12 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
                     max: None,
                 },
                 StreamPhase {
+                    name: "kept",
+                    events: &["kept"],
+                    min: 0,
+                    max: None,
+                },
+                StreamPhase {
                     name: "removals",
                     events: &["removal"],
                     min: 0,
@@ -41,7 +48,7 @@ pub(crate) fn contract() -> super::discovery::ContractSpec {
             ],
         },
         Channel::Stdout,
-        "Realizations in bytewise path order, then tables in bytewise path order.",
+        "Kept and removed realizations in bytewise path order, then tables in bytewise path order.",
         "Entries immediately in the scanned directory at run time.",
         "A closed pipe is a machine-output failure; deletions already made remain made.",
         "0 complete, 1 runtime/output failure, 2 invocation failure or no realization to keep.",
@@ -81,6 +88,7 @@ impl PruneEnvelope {
 pub enum PruneEvent {
     Run(PruneRun),
     Source(DiskSource),
+    Kept(PruneKept),
     Removal(PruneRemoval),
     Complete(PruneComplete),
 }
@@ -94,8 +102,21 @@ pub struct PruneRun {
     pub source: Option<String>,
     /// Artifacts kept by `--keep` in addition to each source's current one.
     pub keep: Vec<String>,
+    /// Whether superseded realizations that differ in no analysis dimension
+    /// are deleted too.
+    pub include_all_superseded: bool,
     /// Whether this run deletes, rather than only listing what it would.
     pub execute: bool,
+}
+
+/// A superseded realization this run keeps.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PruneKept {
+    pub path: String,
+    pub reason: PruneKeep,
+    pub differences: Vec<VariantDifference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
 }
 
 /// One entry this run deletes, or would delete without `--execute`.
@@ -103,6 +124,10 @@ pub struct PruneRun {
 pub struct PruneRemoval {
     pub path: String,
     pub reason: RemovalReason,
+    /// For a superseded realization, the dimensions on which it differs from
+    /// the current request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub differences: Vec<VariantDifference>,
     /// Without `--execute`, the size measured now; with it, the size the
     /// deletion freed.
     pub bytes: u64,
