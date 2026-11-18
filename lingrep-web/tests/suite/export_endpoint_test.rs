@@ -164,13 +164,23 @@ async fn export_returns_a_well_formed_xlsx_with_headers() {
     );
     assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
 
-    let workbook = open(body_bytes(response).await);
+    let mut workbook = open(body_bytes(response).await);
     let sheets = workbook.sheet_names().to_vec();
     assert_eq!(sheets.first().map(String::as_str), Some("About"));
     assert!(
         sheets.iter().any(|name| name == "verb"),
         "a pattern sheet is present: {sheets:?}"
     );
+
+    let about = workbook.worksheet_range("About").unwrap();
+    let timestamp = about
+        .rows()
+        .find_map(|row| match row {
+            [Data::String(label), Data::String(value), ..] if label == "Exported at" => Some(value),
+            _ => None,
+        })
+        .expect("About sheet contains the export timestamp");
+    assert!(timestamp.contains('T') && timestamp.ends_with("+00:00"));
 }
 
 #[tokio::test]

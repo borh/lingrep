@@ -430,7 +430,9 @@ async fn export(
         exported_rows: data.exported_rows as u64,
         pattern_source: snapshot.source.to_string(),
     };
-    let exported_at = chrono::Utc::now().to_rfc3339();
+    let exported_at = jiff::Timestamp::now()
+        .display_with_offset(jiff::tz::Offset::UTC)
+        .to_string();
 
     let bytes = match tokio::task::spawn_blocking(move || {
         build_workbook(&about, &data.patterns, &sections, &exported_at)
