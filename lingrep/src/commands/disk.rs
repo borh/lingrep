@@ -470,16 +470,23 @@ fn differences(
     differences
 }
 
-/// Why the default prune keeps a superseded realization with these
-/// differences, or `None` when it deletes it.
+/// Why the default prune keeps this superseded realization, or `None` when
+/// it deletes it.
 ///
-/// Trust is checked first: no local rebuild replaces another trust class.
-/// An analysis difference then marks the realization as rebuild churn,
-/// whatever else differs. With no recorded differences, which happens only
-/// when the source is missing, nothing can select the realization again.
-pub(crate) fn kept_by_prune(differences: &[VariantDifference]) -> Option<PruneKeep> {
-    use VariantDifference::{Admission, Analyzer, Reader, Source, TokenSchema, Trust};
-    if differences.contains(&Trust) {
+/// Trust is checked first, from the manifest rather than the differences,
+/// which are empty when the source is missing: no local rebuild replaces
+/// another trust class. An analysis difference then marks the realization as
+/// rebuild churn, whatever else differs. With no recorded differences, which
+/// happens only when the source is missing, nothing can select the
+/// realization again.
+pub(crate) fn kept_by_prune(entry: &RealizationEntry) -> Option<PruneKeep> {
+    use VariantDifference::{Admission, Analyzer, Reader, Source, TokenSchema};
+    let differences = &entry.differences;
+    if entry
+        .recorded
+        .as_ref()
+        .is_some_and(|recorded| recorded.trust != TrustClass::LocallyExecuted)
+    {
         Some(PruneKeep::OtherTrust)
     } else if differences
         .iter()
@@ -688,7 +695,7 @@ pub(crate) fn run_to<W: Write>(
                 .map(|recorded| encode_digest(recorded.dictionary.as_bytes())),
             differences: entry.differences.clone(),
             kept_by_prune: (entry.status == RealizationStatus::Superseded)
-                .then(|| kept_by_prune(&entry.differences))
+                .then(|| kept_by_prune(entry))
                 .flatten(),
             message: entry.message.clone(),
         })

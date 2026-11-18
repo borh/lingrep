@@ -54,7 +54,7 @@ pub(crate) fn run_to<W: Write>(
 
     let kept = keep(&args.keep, &scan.realizations, &scope.directory)?;
     let keep_reason = |entry: &RealizationEntry| {
-        disk::kept_by_prune(&entry.differences)
+        disk::kept_by_prune(entry)
             .filter(|reason| *reason == PruneKeep::OtherTrust || !args.include_all_superseded)
     };
     let kept_by_rule = scan

@@ -441,3 +441,51 @@ fn a_source_revision_is_kept_by_default() {
     assert!(removals(&records).contains_key(&path_string(&fixture.current)));
     assert!(!fixture.current.exists() && rebuilt.exists());
 }
+
+/// Copies `from` to the canonical name of an externally attested realization
+/// of the same analysis, with the trust class its manifest records.
+fn attested_copy(fixture: &crate::disk_protocol::Siblings, from: &Path) -> PathBuf {
+    use lingrep_corpus::{CorpusArtifact, TrustClass, canonical_artifact_path};
+    let identity = *CorpusArtifact::open(from).unwrap().analysis_identity();
+    let name = canonical_artifact_path(&fixture.source, &identity, TrustClass::ExternallyAttested);
+    let attested = sibling_with_manifest(from, name.file_name().unwrap().to_str().unwrap(), |m| {
+        m["trust_class"] = "externally-attested".into();
+    });
+    CorpusArtifact::open(&attested).unwrap();
+    attested
+}
+
+/// An externally attested realization is kept as `other_trust` in both prune
+/// modes when the source is missing and `--keep` anchors a locally executed
+/// realization.
+#[test]
+fn another_trust_class_is_kept_when_the_source_is_missing() {
+    let fixture = siblings();
+    let attested = attested_copy(&fixture, &fixture.other_analyzer);
+    fs::remove_file(&fixture.source).unwrap();
+    for all in [false, true] {
+        let mut args: Vec<&OsStr> = vec![
+            "corpus".as_ref(),
+            "prune".as_ref(),
+            "--execute".as_ref(),
+            "--dict-path".as_ref(),
+            fixture.dictionary.path().as_os_str(),
+            "--keep".as_ref(),
+            fixture.current.as_os_str(),
+        ];
+        if all {
+            args.push("--include-all-superseded".as_ref());
+        }
+        args.push("--source".as_ref());
+        args.push(fixture.source.as_os_str());
+        let records = run_json(&args);
+        let kept = of_type(&records, "kept")
+            .into_iter()
+            .find(|record| record["path"] == path_string(&attested))
+            .unwrap_or_else(|| panic!("the attested realization is kept: {records:?}"));
+        assert_eq!(kept["reason"], "other_trust");
+        assert!(!removals(&records).contains_key(&path_string(&attested)));
+        assert!(attested.exists(), "include_all_superseded={all}");
+    }
+    assert!(fixture.current.exists());
+}
