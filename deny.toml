@@ -1,0 +1,15 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0542", reason = "humantime is reached through the trycmd transcript tests only" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils is reached through the completest-pty shell completion tests only" },
+]
+
+[sources]
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-git = [
+    "https://github.com/WorksApplications/sudachi.rs.git",
+    "https://github.com/borh/tree-sitter-lingrep.git",
+    "https://github.com/o24s/vibrato-rkyv.git",
+    "https://github.com/tikv/jemallocator.git",
+]

@@ -29,5 +29,5 @@ jobs:
       - name: Install cargo-deny
         run: cargo install --locked --version 0.20.2 cargo-deny
 
-      - name: Check locked dependencies for advisories
-        run: cargo deny --locked check advisories
+      - name: Check locked dependencies and Git sources
+        run: cargo deny --locked check advisories sources
