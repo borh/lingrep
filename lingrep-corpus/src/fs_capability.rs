@@ -4,7 +4,10 @@
 //! probes and SQLite WAL setup through this module only; `scripts/check-fs-capability-seam.sh` rejects direct uses
 //! elsewhere.
 
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{ffi::CString, os::unix::ffi::OsStrExt};
@@ -154,15 +157,25 @@ pub(crate) fn persist_noclobber_with(
         Ok(()) => Ok(()),
         Err(error) if Capability::HardLinks.unsupported_by(&error) => Err(io::Error::new(
             error.kind(),
-            format!(
-                "cannot create {} without risking replacing an existing file: {error}. The \
-                 filesystem supports neither no-replace rename nor hard links; choose an output \
-                 directory on a filesystem that supports one of them",
-                to.display()
-            ),
+            NoClobberUnsupported {
+                path: to.to_owned(),
+                source: error,
+            },
         )),
         Err(error) => Err(error),
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "cannot create {} without risking replacing an existing file: {source}. The filesystem \
+     supports neither no-replace rename nor hard links; choose an output directory on a \
+     filesystem that supports one of them",
+    path.display()
+)]
+struct NoClobberUnsupported {
+    path: PathBuf,
+    source: io::Error,
 }
 
 /// Creates and removes a symbolic link in `directory`.
@@ -618,6 +631,10 @@ mod tests {
             );
             assert!(message.contains(&reason), "{message}");
             assert!(message.contains("choose an output directory"), "{message}");
+            let original = std::error::Error::source(&error)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .and_then(std::io::Error::raw_os_error);
+            assert_eq!(original, Some(errno), "{message}");
             assert!(entries(directory.path()).is_empty());
         }
     }
