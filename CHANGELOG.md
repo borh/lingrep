@@ -5,9 +5,15 @@ All notable changes to lingrep are recorded in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-11-20
 
 ### Added
+
+- Python programs can tokenize batches with a shared Vibrato dictionary, compile
+  patterns, search corpora, and match spaCy, GiNZA and Stanza documents. Optional
+  Polars expressions and Arrow batches expose typed token attributes.
+- Patterns can follow span dependencies, bind occurrence measurements and count
+  dependents. Saved questions and shared links can pin a word-vector table.
 
 - Every token carries `surface`, the exact source text it covers: the source
   slice for Vibrato, Sudachi and external analyzers, and FORM as written for
@@ -98,6 +104,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command used them. Run an adapter through `ExternalAnalyzerSession`, which
   publishes `surface` and the folded `text`.
 
+### Fixed
+
+- `ling analyzer prepare stanza` accepts `tokenize`, `pos` and `lemma` without
+  `mwt`, so a language for which Stanza has no multi-word token model, such as
+  Japanese, can be prepared. Its profile declares the `identity-v1` alignment
+  policy in place of `stanza-mwt/v1`. Preparation now fails, naming the missing
+  package, when Stanza loads an `mwt` model that `--package` did not name;
+  such an analyzer previously failed at its first query. Analyzers prepared
+  with `mwt` keep their identity.
+- Long Japanese sentences use 64-bit Vibrato path costs.
+
+## [0.8.2] - 2026-11-18
 
 ### Added
 
@@ -131,13 +149,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `ling analyzer prepare stanza` accepts `tokenize`, `pos` and `lemma` without
-  `mwt`, so a language for which Stanza has no multi-word token model, such as
-  Japanese, can be prepared. Its profile declares the `identity-v1` alignment
-  policy in place of `stanza-mwt/v1`. Preparation now fails, naming the missing
-  package, when Stanza loads an `mwt` model that `--package` did not name;
-  such an analyzer previously failed at its first query. Analyzers prepared
-  with `mwt` keep their identity.
 - On Windows through WSL 2, `ling corpus build --output` under `/mnt/c`
   failed with "Permission denied (os error 13)" in 0.8.1, although the 0.8.1
   release notes said it worked there. `ling` held the staged artifact's files

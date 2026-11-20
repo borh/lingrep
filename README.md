@@ -145,12 +145,12 @@ split modes and the other Sudachi options.
 ### Python
 
 Install the matching `ling` CLI using the [installer](#install). With `ling`
-on your PATH and the release wheel downloaded into the current directory:
+on your PATH, install the Python package and Japanese dictionary:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./lingrep-*.whl
+python -m pip install lingrep==0.9.0
 ling dictionary install
 python -c 'from lingrep import Tokenizer; print(Tokenizer().tokenize("猫が眠る。"))'
 ```
