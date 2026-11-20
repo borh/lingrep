@@ -127,7 +127,7 @@ def declared_model_profile(
             package_map, tokenize_processors, "analyzer", TOKENIZE_SCHEMA
         ),
     }
-    if set(package_map) != {"tokenize"}:
+    if "pos" in package_map:
         schema = MORPHOLOGY_SCALARS + tuple(
             {"key": key, "kind": "string_set"} for key in feature_keys
         )
@@ -281,7 +281,7 @@ def _validate_selection(name: str, value: Any) -> None:
     )
     if processors not in allowed:
         raise ValueError("Stanza selection processor closure is invalid")
-    packages = _validate_packages(value["packages"], allow_tokenize_mwt=True)
+    packages = _validate_packages(value["packages"])
     if set(packages) != set(processors):
         raise ValueError("Stanza selection packages differ from its processors")
     expected_boundary = "input-v1" if segmentation == "input" else "stanza:tokenize:v1"
@@ -336,9 +336,7 @@ def _validate_language(value: Any) -> None:
         raise ValueError("Stanza language must be a nonempty language tag")
 
 
-def _validate_packages(
-    value: Any, *, allow_tokenize_mwt: bool = False
-) -> dict[str, str]:
+def _validate_packages(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping) or not value or "tokenize" not in value:
         raise ValueError("Stanza packages must name the tokenize processor")
     result: dict[str, str] = {}
@@ -346,13 +344,10 @@ def _validate_packages(
         if name not in PROCESSOR_ORDER or not isinstance(package, str) or not package:
             raise ValueError("Stanza package has an unknown processor or empty package")
         result[name] = package
-    allowed = ({"tokenize"}, {"tokenize", "pos", "lemma"}, set(PROCESSOR_ORDER))
-    if allow_tokenize_mwt:
-        allowed += ({"tokenize", "mwt"},)
-    if set(result) not in allowed:
+    if set(result) - {"mwt"} not in ({"tokenize"}, {"tokenize", "pos", "lemma"}):
         raise ValueError(
-            "Stanza packages must name tokenize alone, or tokenize, pos and "
-            "lemma, with mwt when the language has an mwt model"
+            "Stanza packages must name tokenize, optionally with pos and lemma, "
+            "and include mwt when the tokenize package uses it"
         )
     return result
 

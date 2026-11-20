@@ -147,6 +147,24 @@ class BundleTests(unittest.TestCase):
                 },
             )
 
+    def test_tokenize_with_mwt_prepares_without_morphology(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_resources(root)
+            with patch.dict(sys.modules, {"stanza": fake_stanza()}):
+                profile = prepare_model_bundle(
+                    root,
+                    language="fr",
+                    probe_text="du pain",
+                    packages={"tokenize": "gsd", "mwt": "gsd"},
+                )
+            self.assertEqual(
+                set(profile["selections"]), {"tokenize/input", "tokenize/analyzer"}
+            )
+            for selection in profile["selections"].values():
+                self.assertEqual(selection["processors"], ["tokenize", "mwt"])
+            self.assertEqual(load_profile(root), profile)
+
     def test_morphology_without_mwt_declares_identity_alignment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
