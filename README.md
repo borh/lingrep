@@ -142,6 +142,155 @@ ling matches --analyzer sudachi \
 The [CLI usage guide](docs/cli-usage-guide.md#use-native-sudachi) describes the
 split modes and the other Sudachi options.
 
+### Python
+
+Install the matching `ling` CLI using the [installer](#install). With `ling`
+on your PATH and the release wheel downloaded into the current directory:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ./lingrep-*.whl
+ling dictionary install
+python -c 'from lingrep import Tokenizer; print(Tokenizer().tokenize("猫が眠る。"))'
+```
+
+The last command prints `['猫', 'が', '眠る', '。']`. For a source checkout,
+use `pip install ./python/lingrep` in the development shell. `Tokenizer` opens
+the same Vibrato dictionary as `ling`. Pass `dict_path=` to select another
+UniDic dictionary. Each input to
+`pipe` is one sentence of at most 1 MiB of UTF-8, the default record limit of
+`ling`, and results arrive in input order.
+
+```python
+from lingrep import Ling, Query, Tokenizer
+
+tokenizer = Tokenizer(workers=4)
+print(tokenizer.tokenize("猫が眠る。"))
+for surfaces in tokenizer.pipe(["猫が眠る。", "犬が走る。"]):
+    print(surfaces)
+
+subject = Query("subject := (?<noun> [upos=NOUN]) [surface=が].").compile()
+verb = Query("[upos=VERB].").compile()
+for sentence in tokenizer.analyze_pipe(["猫が眠る。", "犬が走る。"]):
+    print([(token.surface, token.lemma, token["unidic.cform"]) for token in sentence])
+    for hit in subject.find_matches(sentence):
+        noun = hit["captures"][0]["char_span"]
+        print(sentence.text[noun["start"]:noun["end"]])
+    print(verb.find_matches(sentence))
+
+with Ling().search("[upos=NOUN].", text="猫が眠る。") as results:
+    for hit in results:
+        print(hit["surface"])
+    print(results.completion["coverage"])
+```
+
+`tokenize` and `pipe` return surfaces. `analyze(text)` retains one `Sentence`
+with source offsets and every attribute in `tokenizer.schema`; pass
+`attributes=` to keep fewer. A sentence is a sequence of tokens: read an
+attribute as `token.lemma` or `token["unidic.cform"]`, or a whole column with
+`sentence.column("lemma")`.
+
+`compile()` and `find_matches(sentence)` run in Python's process and return raw
+matches in canonical order. A compiled query matches any sentence of its schema
+that carries the attributes it reads, listed in `compiled.attributes`. Spans
+have the form of `ling --json` records: `span` is a half-open token range
+`{"start": 0, "end": 1}`, and `char_span` is a half-open Python string range,
+or `None` for an empty span.
+
+`Ling().search(query, ...)` runs the `ling` executable, which applies catalog
+publication policy; pass `Ling(path)` when `ling` is not on PATH. Use
+`Query.from_file(path)` for a catalog, `search(path=...)` for a corpus source,
+and `search(corpus=...)` for a prepared artifact. `source_metadata=` accepts
+the CLI's selectors and `analyzer_config=` accepts a prepared analyzer configuration.
+When the stream ends, `results.diagnostics` holds the warnings `ling` reported,
+each also raised as a Python warning. A failed run raises `SearchError`, a
+`subprocess.CalledProcessError` whose message includes the reported errors.
+
+For a fixed query, `tokenizer.match_pipe(texts, "[upos=NOUN].")` yields
+one list of raw matches per input sentence, including empty lists. It compiles
+once per stream, selects the attributes that query reads, and uses the tokenizer's
+worker pool for both analysis and matching. For repeat searches on retained
+sentences, `sentence[i]`, `sentence.column("lemma")` and `sentence.char_spans`
+use the same indices as the captures. Record `tokenizer.dictionary_path`,
+`tokenizer.dictionary_digest` and `tokenizer.analysis_identity` with a run.
+
+Install the `arrow` extra for token tables. Each record batch includes the
+sentence index, token index and sentence-relative character offsets as
+unsigned integers. Conversion
+materializes the selected columns. Consumers can process one batch at a time.
+
+```python
+import polars as pl
+from lingrep import token_batches
+
+for batch in token_batches(tokenizer.analyze_pipe(texts), attributes=["surface", "lemma"]):
+    frame = pl.from_arrow(batch)
+```
+
+Install the `polars` extra to tokenize or search a sentence column inside a
+lazy query. Each expression returns one list per row and preserves nulls.
+
+```python
+import polars as pl
+from lingrep import Query, Tokenizer
+from lingrep.polars_expr import matches, tokenize
+
+tokenizer = Tokenizer(workers=4)
+nouns = Query("[upos=NOUN].")
+sentences = pl.scan_parquet("sentences.parquet")
+hits = sentences.with_columns(hits=matches(pl.col("text"), nouns, tokenizer=tokenizer))
+tokens = sentences.with_columns(tokens=tokenize(
+    pl.col("text"), tokenizer=tokenizer, attributes=["lemma", "upos", "char_start", "char_end"]
+))
+```
+
+Omit `attributes` for a list of surfaces. Supplying it gives one struct per
+token. `char_start` and `char_end` are half-open Python string offsets into
+that row's sentence. `matches` accepts a pattern string, a `Query` or a
+`CompiledQuery`, compiles once for the expression, and analyzes only the
+attributes the query reads. Spans are `{start, end}` structs of `UInt32`.
+
+Each hit includes the pattern, token and character spans, captures and lexical
+identity. The `interpretations_json` and `graph_bindings_json` fields contain
+JSON arrays so query-specific keys and value types survive across batches.
+Graph bindings have the fields of `ling --json` match records in both the
+Polars expression and `find_matches`.
+
+With the corresponding lingrep adapter and NLP library installed, use a
+document matcher on the output of an existing pipeline. Construct it once
+from a pattern string or `Query.from_file(path)`.
+
+```python
+from lingrep.spacy_matcher import Matcher
+
+subjects = Matcher(
+    "subject := (?<noun> [upos=NOUN]) where (?<verb> [upos=VERB]) -[nsubj]-> $noun.",
+    attributes=("text", "upos", "dep.head", "dep.rel"),
+)
+for doc in nlp.pipe(texts):  # an existing spaCy or GiNZA pipeline
+    doc.spans["subjects"] = [hit.span for hit in subjects(doc)]
+```
+
+`hit.span` and `hit.captures` are spans of the original spaCy document, labeled
+with the pattern and capture names. For Stanza:
+
+```python
+from lingrep.stanza_matcher import Matcher
+
+articles = Matcher("article := (?<det> [upos=DET]).")
+for hit in articles(doc):  # an existing Stanza Document
+    for word in hit.words:
+        print(word.text, word.parent.text)
+```
+
+Stanza matches and captures retain the original syntactic words, including
+components of a multiword token. Both matchers expose the complete lingrep
+record as `hit.raw`, and both accept `dep.head` and `dep.rel` in `attributes=`
+for `where` clauses over a parsed document. To work with lingrep sentences
+directly, use `from_spacy(doc)` or `from_stanza(doc)` and compile with
+`Query(...).compile(sentence.schema)`.
+
 ## Documentation
 
 - [Pattern language reference](docs/pattern-language-reference.md): writing

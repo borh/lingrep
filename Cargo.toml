@@ -5,7 +5,12 @@ members = [
     "lingrep-web",
     "lingrep",
     "lingrep-cli-common",
-    "lingrep-perf"
+    "lingrep-perf",
+    "python/lingrep"
+]
+default-members = [
+    "lingrep-core", "lingrep-corpus", "lingrep-web",
+    "lingrep", "lingrep-cli-common", "lingrep-perf",
 ]
 resolver = "2"
 

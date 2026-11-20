@@ -285,6 +285,49 @@ def iter_analyzed_sentences(
         }
 
 
+def document_projection(keys: Sequence[str]) -> list[ProjectionAttribute]:
+    """Returns `keys` as a canonical-order projection; raises for an unsupported key."""
+
+    if isinstance(keys, str):
+        raise TypeError("attributes must be a sequence of attribute names")
+    projection = sorted(
+        (
+            ProjectionAttribute(
+                key,
+                "string_set"
+                if key == "dep.enhanced" or key.startswith(("feat.", "spacy.morph."))
+                else "scalar",
+            )
+            for key in keys
+        ),
+        key=lambda attribute: _projection_order(attribute.key),
+    )
+    _validate_projection(projection)
+    return projection
+
+
+def iter_document_sentences(
+    doc: Any, projection: Sequence[ProjectionAttribute]
+) -> Iterable[tuple[dict[str, Any], list[int]]]:
+    """Pairs each sentence of an annotated Doc with the Doc indices of its words.
+
+    Sentences follow the Doc's sentence boundaries when it has them and are the
+    whole Doc otherwise. Whitespace tokens are not words.
+    """
+
+    if any(
+        attribute.key.startswith("dep.") for attribute in projection
+    ) and not doc.has_annotation("DEP"):
+        raise ValueError("spaCy document has no dependency annotations")
+    segmented = len(doc) > 0 and doc.has_annotation("SENT_START")
+    sources = doc.sents if segmented else [doc]
+    records = iter_analyzed_sentences(
+        doc, projection, "analyzer" if segmented else "input"
+    )
+    for source, record in zip(sources, records, strict=True):
+        yield record, [token.i for token in source if not token.is_space]
+
+
 def serve(
     stdin: BinaryIO,
     stdout: BinaryIO,

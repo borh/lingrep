@@ -480,6 +480,51 @@ def load_stanza_pipeline(
     )
 
 
+_SCALAR_KEYS = ("text", "lemma", "upos", "xpos")
+_DEPENDENCY_KEYS = ("dep.head", "dep.rel")
+
+
+def document_projection(keys: Sequence[str]) -> list[ProjectionAttribute]:
+    """Returns `keys` as a canonical-order projection; raises for an unsupported key."""
+
+    if isinstance(keys, str):
+        raise TypeError("attributes must be a sequence of attribute names")
+
+    def order(attribute: ProjectionAttribute) -> tuple[int, int, bytes]:
+        if attribute.key in _SCALAR_KEYS:
+            return 0, _SCALAR_KEYS.index(attribute.key), b""
+        return (
+            1 if attribute.key.startswith("feat.") else 2,
+            0,
+            attribute.key.encode("utf-8"),
+        )
+
+    projection = sorted(
+        (
+            ProjectionAttribute(
+                key, "string_set" if key.startswith("feat.") else "scalar"
+            )
+            for key in keys
+        ),
+        key=order,
+    )
+    _validate_projection(projection)
+    return projection
+
+
+def iter_document_sentences(
+    document: Any, projection: Sequence[ProjectionAttribute]
+) -> Iterable[tuple[dict[str, Any], Any]]:
+    """Pairs each analyzed sentence of a Stanza Document with its Stanza sentence."""
+
+    if document.text is None:
+        raise ValueError("Stanza document has no source text to align tokens with")
+    records = iter_analyzed_sentences(
+        document, document.text, projection, "morphology", "analyzer"
+    )
+    return zip(records, document.sentences, strict=True)
+
+
 def _sentence_unit(sentence: Any) -> tuple[int, int, Sequence[Any]]:
     tokens = list(sentence.tokens)
     if not tokens:
@@ -503,6 +548,12 @@ def _project_word(
         "upos": _optional_string(syntax_word.upos, "UPOS"),
         "xpos": _optional_string(syntax_word.xpos, "XPOS"),
     }
+    if any(attribute.key in _DEPENDENCY_KEYS for attribute in projection):
+        head = syntax_word.head
+        if isinstance(head, bool) or not isinstance(head, int) or head < 0:
+            raise ValueError("Stanza document has no dependency annotations")
+        scalar["dep.head"] = str(head)
+        scalar["dep.rel"] = _optional_string(syntax_word.deprel, "dependency relation")
     features = _parse_features(syntax_word.feats)
     return [
         scalar[attribute.key]
@@ -537,7 +588,7 @@ def _validate_projection(projection: Sequence[ProjectionAttribute]) -> None:
         raise ValueError("Stanza projection must include text")
     keys: list[str] = []
     for attribute in projection:
-        if attribute.key in {"text", "lemma", "upos", "xpos"}:
+        if attribute.key in _SCALAR_KEYS or attribute.key in _DEPENDENCY_KEYS:
             if attribute.kind != "scalar":
                 raise ValueError("Stanza scalar projection has the wrong kind")
         elif not _is_feature_key(attribute.key) or attribute.kind != "string_set":

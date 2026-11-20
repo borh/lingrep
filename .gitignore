@@ -1,4 +1,6 @@
 /target
+# Written by `maturin develop`.
+/python/lingrep/python/lingrep/*.so
 # Devenv
 .devenv*
 devenv.local.nix

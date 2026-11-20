@@ -52,19 +52,19 @@ def cargo_metadata(target: str | None) -> dict:
     return json.loads(completed.stdout)
 
 
-def shipped_packages(metadata: dict) -> list[dict]:
+def shipped_packages(metadata: dict, root_package: str = ROOT_PACKAGE) -> list[dict]:
     packages = {package["id"]: package for package in metadata["packages"]}
     workspace = set(metadata["workspace_members"])
     root = next(
         (
             package_id
             for package_id in metadata["workspace_members"]
-            if packages[package_id]["name"] == ROOT_PACKAGE
+            if packages[package_id]["name"] == root_package
         ),
         None,
     )
     if root is None:
-        sys.exit(f"error: no workspace package named {ROOT_PACKAGE!r}")
+        sys.exit(f"error: no workspace package named {root_package!r}")
 
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     seen: set[str] = set()
@@ -141,15 +141,16 @@ def main() -> int:
         "--target",
         help="Cargo target triple to filter platform-specific dependencies by",
     )
+    parser.add_argument("--package", choices=(ROOT_PACKAGE, "lingrep-python"), default=ROOT_PACKAGE)
     arguments = parser.parse_args()
 
     metadata = cargo_metadata(arguments.target)
     version = next(
         package["version"]
         for package in metadata["packages"]
-        if package["name"] == ROOT_PACKAGE
+        if package["name"] == arguments.package
     )
-    shipped = shipped_packages(metadata)
+    shipped = shipped_packages(metadata, arguments.package)
 
     texts: dict[str, dict] = {}
     undocumented: list[dict] = []
@@ -169,10 +170,11 @@ def main() -> int:
         ):
             undocumented.append(package)
 
-    print(f"# Third-party notices for ling {version}")
+    product = "ling" if arguments.package == ROOT_PACKAGE else "lingrep Python bindings"
+    print(f"# Third-party notices for {product} {version}")
     print()
     print(
-        "This archive contains the `ling` executable, which links the Rust "
+        f"The {product} distribution uses the Rust "
         "crates below.\nEach crate is used under the license it declares. The "
         "license texts that the\ncrate sources carry are reproduced in full "
         "after the table, deduplicated by\ntext."
@@ -220,7 +222,8 @@ def main() -> int:
         pathlib.Path(__file__).resolve().parents[1]
         / "lingrep-web/assets/THIRD-PARTY-NOTICES.md"
     )
-    print(browser_notices.read_text(encoding="utf-8"), end="")
+    if arguments.package == ROOT_PACKAGE:
+        print(browser_notices.read_text(encoding="utf-8"), end="")
 
     if undocumented:
         names = ", ".join(f"{p['name']} {p['version']}" for p in undocumented)

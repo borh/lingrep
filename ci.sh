@@ -140,11 +140,26 @@ run_full_tests_and_extras() {
         --exact --ignored
     scripts/cargo-test-selected.py -p lingrep-core --test suite -- sudachi_contract:: --ignored
 
+    echo "Checking the installed Python bindings with Vibrato and ling"
+    cargo build -p lingrep --bin ling
+    local bindings=(uv run --isolated --no-project --with ./python/lingrep --with pyarrow
+        --with polars --with mypy --with typing-extensions python -m)
+    PATH="${CARGO_TARGET_DIR:-target}/debug:$PATH" \
+        "${bindings[@]}" unittest discover -s python/lingrep/tests
+    "${bindings[@]}" mypy --config-file python/lingrep/pyproject.toml \
+        python/lingrep/python/lingrep python/lingrep/tests/typing_usage.py \
+        python/lingrep/tests/typing_polars.py
+
     echo "Running the locked spaCy adapter suite"
     scripts/check-spacy-adapter.sh full
 
     echo "Running the locked Stanza adapter suite"
     scripts/check-stanza-adapter.sh full
+
+    uv run --project python/spacy-adapter --frozen --extra cpu --extra spacy --with ./python/lingrep \
+        python -m unittest discover -s python/lingrep/tests -p test_interop.py -k spacy
+    uv run --project python/stanza-adapter --frozen --extra cpu --with ./python/lingrep \
+        python -m unittest discover -s python/lingrep/tests -p test_interop.py -k stanza
 
     run_shared_tests
 

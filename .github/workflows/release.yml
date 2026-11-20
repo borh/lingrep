@@ -128,10 +128,10 @@ jobs:
   # with a macOS login shell's soft open-file limit, which ling raises to the
   # hard limit. A failure on any target blocks publication.
   gate:
-    name: Student scenario (${{ matrix.target }})
+    name: Student scenario and Python wheel (${{ matrix.target }})
     needs: build
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -183,6 +183,42 @@ jobs:
           fi
           capped python3 scripts/student-scenario.py "$LING" "$RUNNER_TEMP/scenario" \
             --downloads "$HOME/.cache/student-scenario"
+
+      - name: Collect binding license notices
+        run: |
+          python3 scripts/third-party-notices.py --package lingrep-python --target "${{ matrix.target }}" \
+            > python/lingrep/python/lingrep/THIRD-PARTY-NOTICES.md
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: "2_28"
+          args: --release --locked --manifest-path python/lingrep/Cargo.toml --out wheels
+
+      - uses: astral-sh/setup-uv@v7
+      - name: Test the installed bindings and type declarations
+        run: |
+          export PATH="${LING%/*}:$PATH"
+          unset LINGREP_DICTIONARY_PATH
+          wheels=(wheels/*.whl)
+          wheel=${wheels[0]}
+          for version in 3.10 3.14; do
+            uv venv --clear --python "$version" "$RUNNER_TEMP/wheel-env"
+            py="$RUNNER_TEMP/wheel-env/bin/python"
+            uv pip install --python "$py" "$wheel"
+            "$py" -I -c 'from lingrep import Tokenizer; assert Tokenizer().tokenize("猫が眠る。") == ["猫", "が", "眠る", "。"]'
+            uv pip install --python "$py" "${wheel}[polars,arrow]" mypy typing-extensions
+            "$py" -I -c 'import polars, pyarrow'
+            "$py" -m unittest discover -s python/lingrep/tests
+            "$py" -m mypy --strict python/lingrep/tests/typing_usage.py python/lingrep/tests/typing_polars.py
+            "$py" -c 'from importlib.metadata import version; import subprocess; assert version("lingrep") == subprocess.check_output(["ling", "--version"], text=True).split()[1]'
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lingrep-wheel-${{ matrix.target }}
+          path: wheels/*.whl
+          if-no-files-found: error
 
   adapters:
     name: Python analyzer wheels
@@ -266,3 +302,19 @@ jobs:
             --notes-file release/notes.md \
             --verify-tag \
             ./dist/*.tar.gz ./dist/*.sha256 ./dist/*.whl ./dist/install.sh ./release/SHA256SUMS
+
+  publish-pypi:
+    name: Publish tested bindings to PyPI
+    needs: publish
+    if: vars.LINGREP_PYPI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: lingrep-wheel-*
+          merge-multiple: true
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.12,<2"]
+build-backend = "maturin"
+
+[project]
+name = "lingrep"
+dynamic = ["version"]
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+description = "Japanese tokenization with Vibrato and corpus search with lingrep"
+readme = "README.md"
+
+[project.urls]
+Repository = "https://github.com/borh/lingrep"
+
+[tool.maturin]
+python-source = "python"
+module-name = "lingrep._native"
+
+[project.optional-dependencies]
+arrow = ["pyarrow>=14"]
+polars = ["polars>=1.32"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "spacy.*", "stanza.*"]
+ignore_missing_imports = true

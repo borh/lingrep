@@ -101,7 +101,7 @@ browser assets, and grammar pin.
 
 ## Prepare a release
 
-Set the release version in `Cargo.toml` and all three `python/*/pyproject.toml`
+Set the release version in `Cargo.toml` and the three adapter/protocol `pyproject.toml`
 files. Update both adapters' `lingrep-adapter-protocol==` dependencies to the
 same version. Refresh the lockfiles and run the checks:
 
@@ -116,6 +116,23 @@ python3 scripts/check-adapter-wheels.py --update-exports
 
 Write `docs/release-notes/v<VERSION>.md` before creating the tag. Pushing a
 `v<VERSION>` tag publishes the release automatically.
+
+### Python binding releases
+
+The `lingrep` distribution inherits the Cargo workspace version. The Release
+workflow builds CPython stable-ABI wheels on the four Linux and macOS targets,
+checks bare-wheel tokenization with the packaged CLI and UniDic, then installs
+the Arrow and Polars extras and tests their APIs and typing on Python 3.10 and
+3.14. Run a manual Release workflow with publication disabled
+to inspect these wheels before enabling the first PyPI release.
+
+Configure a PyPI trusted publisher for project `lingrep`, repository
+`borh/lingrep`, workflow `release.yml`, and GitHub environment `pypi`.
+Use a pending publisher for the first release of a new PyPI project. After
+verifying the wheel runs, set the GitHub repository variable
+`LINGREP_PYPI_ENABLED` to `true`. Subsequent successful release publications
+upload the tested binding wheels through OIDC. The adapter distributions are
+separate GitHub release assets.
 
 ## Commits
 
