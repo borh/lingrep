@@ -3,14 +3,14 @@
 This guide explains how to run `lingrep-web` as a NixOS service behind a reverse
 proxy (Caddy is the worked example; Nginx follows the same shape). The
 recommended deployment is loopback plus a reverse proxy on the same host:
-lingrep-web binds only `127.0.0.1`, Caddy terminates TLS, and access control
+`lingrep-web` binds only `127.0.0.1`, Caddy terminates TLS, and access control
 (basic auth, OIDC, IP allowlists) is configured at the proxy.
 
 Without Nix, `ling serve` from the release archives runs the same server with
 the same arguments as `lingrep-web`; the proxy guidance below applies to it
 unchanged.
 
-## Why loopback + reverse proxy
+## Bind loopback behind a reverse proxy
 
 `lingrep-web` has no built-in authentication, rate limiting, or TLS. Bound
 directly to a routable interface, every endpoint is reachable without access
@@ -51,12 +51,12 @@ in
 Write each corpus `path` as a Nix string; an unquoted path literal copies the
 corpus into the store.
 
-lingrep-web binds `127.0.0.1:3000` by default. The NixOS module's systemd unit
+`lingrep-web` binds `127.0.0.1:3000` by default. The NixOS module's systemd unit
 runs as the system user `lingrep-web` with `ProtectSystem=strict`; corpora and
 the dictionary are mounted with `ReadOnlyPaths=`, and an activation script
 symlinks corpora and pattern catalogs under `/var/lib/lingrep-web/`.
 
-On SIGTERM, which `systemctl stop` sends, lingrep-web stops accepting
+On SIGTERM, which `systemctl stop` sends, `lingrep-web` stops accepting
 connections and lets in-flight requests and open progress streams run for up
 to 10 seconds. It then cancels running scans and waits up to 3 seconds for
 them, stops a running corpus build and waits up to 10 seconds for it to remove
@@ -67,12 +67,12 @@ its staging directory, and exits 0. A second signal ends these waits at once.
 
 Set `services.lingrep-web.settings.basePath` when the application is mounted below
 the proxy's root. The value may be a nested path such as
-`/temp-lingrep-web-proxy`, without a trailing slash. lingrep-web serves its
+`/temp-lingrep-web-proxy`, without a trailing slash. `lingrep-web` serves its
 routes under that prefix and emits browser-relative links, requests, assets,
 and permalinks, so one process can serve both a public subpath and a second
 proxy that rewrites its own root into that prefix. The start page is at the
 prefix with a trailing slash, `/temp-lingrep-web-proxy/`, where those relative
-links resolve inside the prefix; lingrep-web redirects the bare prefix there.
+links resolve inside the prefix; `lingrep-web` redirects the bare prefix there.
 
 ```nix
 services.lingrep-web.settings.basePath = "/temp-lingrep-web-proxy";
@@ -101,20 +101,21 @@ route {
 ## Question documents
 
 The start page is a question document with linked investigations, continuous
-concordance, document conditions, and expandable sentence context. The existing
-pattern workbench remains at `workbench`; the Frequencies, Compare, and Sample
-pages keep their existing routes.
+concordance, document conditions, and expandable sentence context. The pattern
+workbench is served at `workbench`; the Frequencies, Compare, and Sample pages
+are served at `frequencies`, `compare`, and `sample`.
 
 Saved question files preserve queries, document conditions, corpus identities,
 and the links between investigations. Results belong to the current server
-session and can expire when the server reclaims old sessions or restarts. Reopening a saved document
-then offers to rerun its queries; it does not run them automatically. A corpus
-identity mismatch stops the rerun rather than silently searching different data.
+session and can expire when the server reclaims old sessions or restarts.
+Reopening a saved document then offers to rerun its queries; it does not run
+them automatically. A corpus identity mismatch stops the rerun without searching
+different data.
 
 A saved question with a `near` test records the BLAKE3 digest of its word-vector
 table. Replaying it on a server with different vectors stops before scanning.
 Choose “Search with the current word vectors” to run it with the replacement
-table. A server without vectors reports the digest the saved query requires. Each linked
+table. A server without vectors reports the digest that the saved query requires. Each linked
 search retains its own table identity. A completed search that uses vectors also
 includes `vectors_blake3` in the run record of its JSON Lines export.
 
@@ -154,23 +155,23 @@ ling summarize --patterns patterns/collexeme.lx \
 ```
 
 A table that does not bind stops the unit at startup; `journalctl -u
-lingrep-web` shows the error naming it. The binding rules and errors are in
+lingrep-web` shows the error identifying it. The binding rules and errors are in
 [the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
 Rebuild a table after changing its corpus or catalog, and after an upgrade
 that the startup error reports as a different matcher revision or count table
 version.
 
-Selecting a row opens the entry's charts and lines. Its lines are matched from
-the corpus at request time over only the sentences the table records for the
-entry, so the unit needs the corpus as well as the table. A request matches
-only the sentences that hold its page of lines: 50 by default, at most 200.
+Selecting a row opens the entry's charts and lines. The server matches its lines
+from the corpus at request time over only the sentences that the table records
+for the entry, so the service requires both the corpus and the table. A request
+matches only the sentences that hold its page of lines: 50 by default, at most
+200.
 
 `services.lingrep-web.metadataLabels` lists display-label files; the module
 passes each as `--metadata-labels` and mounts it read-only. The question document,
-Frequencies and Compare use the key labels in English and Japanese; the question
-document also uses configured value labels. Meanwhile,
-clauses, commands and addresses keep the keys. The package installs the
-Soranoha catalog labels:
+Frequencies, and Compare use the key labels in English and Japanese; the question
+document also uses configured value labels. Clauses, commands, and addresses keep
+the raw keys. The package installs the Soranoha catalog labels:
 
 ```nix
 services.lingrep-web.metadataLabels = [
@@ -179,27 +180,26 @@ services.lingrep-web.metadataLabels = [
 ```
 
 A file that is not a valid label file stops the unit at startup with an error
-naming it. The file format is in
+identifying it. The file format is in
 [the CLI usage guide](cli-usage-guide.md#frequency-view-from-count-tables).
 
 The workbench's capture-key picker runs fresh summaries through a companion
 `ling` executable beside `lingrep-web`; the Nix package includes it. A CLI whose
 matcher semantics differ is rejected. Each live summary counts all admitted
 input, shows at most 50 groups per pattern, and uses the selected search scope.
-The web path allows 1 GiB of temporary aggregation, a 16 MiB response and
+The web path allows 1 GiB of temporary aggregation, a 16 MiB response, and
 120 seconds of execution. Use `ling summarize` directly for larger runs.
-Saved count tables are unchanged by these edits.
+Capture-key edits in the workbench do not modify saved count tables.
 
 ## Rendered documents
 
 `services.lingrep-web.readingSidecars` lists reading sidecars written by
 `ling corpus render`; the module passes each as `--reading-sidecar` and mounts
-it read-only. The reader then shows the documents of the corpus a sidecar was
-rendered from with their headings and paragraphs. Each sidecar binds to a
-prepared `.lingcorpus` corpus in `corpora` by the identities it records, and
-records the renderer revision, so render it with the `--md-*` options the
-corpus was built with and with the `ling` from the same lingrep release as the
-unit's `lingrep-web`:
+it read-only. The reader displays each rendered document with its headings and
+paragraphs. Each sidecar binds to a prepared `.lingcorpus` entry in `corpora` by
+the identities that it records, and also records the renderer revision. Render
+each sidecar with the same `--md-*` options that built the corpus and with the
+`ling` binary from the same lingrep release as `lingrep-web`:
 
 ```nix
 services.lingrep-web = {
@@ -213,8 +213,8 @@ ling corpus render /srv/corpora/papers.lingcorpus --source-root /srv/papers \
   --md-recover-conversion-artifacts --output /srv/reading/papers.reading
 ```
 
-A sidecar that does not bind stops the unit at startup with an error naming
-it. The binding rules are in
+A sidecar that does not bind stops the unit at startup with an error
+identifying it. The binding rules are in
 [the CLI usage guide](cli-usage-guide.md#rendered-documents-from-reading-sidecars).
 
 `api/read`, which the Frequencies view uses to open a line, returns any
@@ -240,9 +240,9 @@ lingrep.example.com {
 
 - Leave `flush_interval` unset. Caddy flushes `text/event-stream` responses
   immediately; no extra flush setting is needed. See [Caddy's streaming documentation](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming).
-- A workbench with no open event stream is cancelled after a 30-second grace
+- A workbench with no open event stream is canceled after a 30-second grace
   period. Reconnecting and leaving starts a new grace period. Keep client-abort
-  propagation enabled through every proxy between the browser and lingrep-web,
+  propagation enabled through every proxy between the browser and `lingrep-web`,
   and check cancellation after changing the deployed proxy configuration or version.
 - `request_body` limits requests to the server's 4 MiB API body cap.
 - Basic auth is the simplest access control. Caddy also supports OIDC through
@@ -286,7 +286,7 @@ link to a result reproduces the corpus and pattern pair.
 
 `format` is forwarded as `--input-format`, a single global override, so it is
 accepted only on the `default` entry and only when one corpus is declared.
-With several corpora, leave `format` unset and lingrep-web infers each
+With several corpora, leave `format` unset and `lingrep-web` infers each
 corpus's format from its path. The module checks this at evaluation time.
 
 `default` is optional. When only named corpora are declared, the first in
@@ -298,13 +298,12 @@ selection.
 ## Prepared artifacts, and how BCCWJ is served
 
 A `corpora.<name>.path` is either a corpus source or a prepared V1 artifact,
-a directory containing a `manifest.json`. lingrep-web distinguishes them by
+a directory containing a `manifest.json`. `lingrep-web` distinguishes them by
 that file; the module has no option for it.
 
-lingrep-web reads declared artifacts in place, never writes beside them,
-and retains them on failure with their corpora marked failed.
-An existing artifact that cannot be opened at startup is left unchanged,
-including an incomplete copy beside a declared source. Its corpus is marked
+`lingrep-web` reads declared artifacts in place and never writes beside them.
+Any existing artifact that cannot be opened at startup, including an incomplete
+copy beside a declared source, is left unchanged and its corpus is marked
 failed. Finish or quarantine that copy before restarting; publish complete
 artifact directories with an atomic rename rather than copying into a live
 artifact path.
@@ -320,8 +319,8 @@ SQLite `-wal`, `-shm` or `-journal` files beside `provenance.sqlite`, or
 unsupported manifest or component versions. Correct the cause, or delete
 the artifact directory, and restart.
 
-Use a prepared artifact to serve a format that lingrep-web cannot read directly.
-BCCWJ is read only by `ling`, and lingrep-web rejects a BCCWJ distribution
+Use a prepared artifact to serve a format that `lingrep-web` cannot read directly.
+BCCWJ is read only by `ling`, and `lingrep-web` rejects a BCCWJ distribution
 root. Prepare it once, then declare the result:
 
 ```sh
@@ -345,10 +344,10 @@ services.lingrep-web.corpora.bccwj = {
 The artifact name embeds an analysis identity that changes with the dictionary,
 the analyzer, and a `ling` release that changes how tokens are analyzed, so
 rebuilding under a new dictionary or such a release produces a new directory
-beside the old one. Update `path` to the new directory, rebuild the count
-tables over it, and delete the old one.
+beside the previous directory. Update `path` to the new directory, rebuild its
+count tables, and delete the previous directory.
 
-At startup lingrep-web checks a declared artifact's manifest and component
+At startup `lingrep-web` checks a declared artifact's manifest and component
 lengths without hashing its contents. Run `ling corpus inspect --verify` for a
 complete check.
 
@@ -395,19 +394,20 @@ catalog under `/var/lib/lingrep-web/patterns/<basename>/` and passes that root
 as `--pattern-root`.
 
 The editor seed is not resolved against that root. `editorSeed` is
-forwarded verbatim as `--patterns`, which lingrep-web resolves against its
-working directory, `/var/lib/lingrep-web`. So the value to write is
+forwarded verbatim as `--patterns`, which `lingrep-web` resolves against its
+working directory, `/var/lib/lingrep-web`. Write the value as
 `patterns/<catalog-basename>/<file>.lx`, including the leading `patterns/`:
 
 ```nix
 services.lingrep-web.patterns.editorSeed = "patterns/lingrep-patterns-default/sf-experimental.lx";
 ```
 
-A catalog directory that is itself named `patterns` — this repository's
-own `patterns/`, passed as `inputs.lingrep.outPath + "/patterns"` —
-is therefore at `patterns/patterns/sf-experimental.lx`.
+If a catalog directory is itself named `patterns` (such as this repository's
+own `patterns/`, passed as `inputs.lingrep.outPath + "/patterns"`), its files
+appear under `patterns/patterns/`, for example
+`patterns/patterns/sf-experimental.lx`.
 
-When `editorSeed` is empty, the default, lingrep-web reads
+When `editorSeed` is empty, the default, `lingrep-web` reads
 `patterns/sentence-final.lx` relative to its working directory. A seed that
 resolves to no file only logs an "empty editor" warning, so check the unit's
 log after changing it.
@@ -426,18 +426,18 @@ nix build .#vibrato-dict-cwj --no-link --print-out-paths
 # use: /nix/store/…-vibrato-dict-cwj-202512/share/vibrato/unidic-cwj-202512.dic
 ```
 
-See [`DICTIONARIES.md`](../DICTIONARIES.md) for the full list. lingrep-web
+See [`DICTIONARIES.md`](../DICTIONARIES.md) for the full list. `lingrep-web`
 opens the dictionary on first corpus selection, not at startup. A server whose
 declared corpora are all prepared artifacts uses the dictionary only for the
 Workbench sample test, and starts without one when none resolves.
 
 ## Markdown corpus dialect
 
-lingrep-web reads `.md` files using the pandoc dialect (one sentence per line).
+`lingrep-web` reads `.md` files using the pandoc dialect (one sentence per line).
 The section policy used during preparation determines which lines become
 sentences, so the same file read under two section policies produces two
 different artifacts. The module's default, `markdown.excludeSections = [
-"references" ]`, excludes only `references`; lingrep-web run without the
+"references" ]`, excludes only `references`; `lingrep-web` run without the
 module excludes `references` and ten other labels. Set `excludeSections = []`
 to read unfiltered text. See [the dialect contract](markdown-corpus-dialect.md)
 for the section labels.
@@ -451,15 +451,15 @@ for the section labels.
 | `settings.maxRecordBytes` | 1 MiB | Markdown or JSONL documents that exceed 1 MiB |
 | `markdown.excludeSections` | `[ "references" ]` | `[]` reads unfiltered text |
 
-Each option maps to the lingrep-web flag of the same name.
+Each option maps to the `lingrep-web` flag of the same name.
 
 ## Authentication, rate limiting, and state
 
-- Authentication and rate limiting: lingrep-web provides neither; configure
+- Authentication and rate limiting: `lingrep-web` provides neither; configure
   them at the proxy.
-- State: lingrep-web writes the artifacts it prepares from corpus sources under
+- State: `lingrep-web` writes the artifacts it prepares from corpus sources under
   `/var/lib/lingrep-web/corpora/`. They are rebuildable from the sources, and
-  sessions are not persisted, so lingrep-web has no state requiring backup.
+  sessions are not persisted, so `lingrep-web` has no state requiring backup.
 
 ## Logs and observability
 
@@ -476,8 +476,8 @@ preparation:
 services.lingrep-web.environment.RUST_LOG = "info,lingrep_web=debug";
 ```
 
-A catalog with a `near` test needs a word-vector file. Name it for the server
-and the `ling` processes it starts:
+A catalog with a `near` test requires a word-vector file. Configure its path
+for the server and the `ling` processes it starts:
 
 ```nix
 services.lingrep-web.environment.LINGREP_VECTORS_PATH = "/var/lib/lingrep/vectors.vec";

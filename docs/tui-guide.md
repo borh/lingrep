@@ -8,7 +8,7 @@ Vibrato analysis.
 ## Start the explorer
 
 Choose exactly one catalog source and one corpus source. A reopenable filesystem
-root is required unless `--corpus` names a prepared artifact. Unlike the batch
+root is required unless `--corpus` specifies a prepared artifact. Unlike the batch
 commands, `explore` rejects stdin because Surface and Context rescan the input.
 
 ```bash
@@ -22,8 +22,8 @@ Use `--pattern` for one inline definition:
 ling explore --pattern '[upos=VERB].' corpus.txt
 ```
 
-Prepared artifacts already contain analyzed tokens and do not take a
-dictionary:
+Prepared artifacts already contain analyzed tokens, so `--corpus` rejects
+`--dict-path`:
 
 ```bash
 ling explore \
@@ -64,13 +64,13 @@ Select a pattern in the Frequencies tab:
 | `Up` / `Down` | Scroll the visible rows |
 | `PageUp` / `PageDown` | Scroll by 20 rows |
 
-The selection remains active when changing tabs. Return to Frequencies with
+The selection remains active when you change tabs. Return to Frequencies with
 `Tab` or `Shift+Tab`; there is no separate back key.
 
 ### Inspect surfaces and contexts
 
-Surface and Context start their queries when their tab becomes active and a
-pattern is selected. Use `Up`, `Down`, `PageUp`, and `PageDown` to scroll.
+Surface and Context start their queries when you switch to the tab with a
+pattern selected. Use `Up`, `Down`, `PageUp`, and `PageDown` to scroll.
 
 Press `d` to toggle the detail panel. In Context, the selected KWIC row follows
 the scroll position. Pressing `Enter` outside Frequencies does not open the
@@ -102,8 +102,8 @@ fragment verb := [upos=VERB].
 pattern final_verb := @verb $.
 ```
 
-When `--patterns FILE` is used, the explorer also watches that file and reloads
-it after an external edit.
+When started with `--patterns FILE`, `ling explore` also watches that file and
+reloads it after an external edit.
 
 ## Test a pattern in the Playground
 

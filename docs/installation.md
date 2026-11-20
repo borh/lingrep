@@ -22,33 +22,37 @@ sh install.sh
 ```
 
 Keep `LING_DOWNLOAD_BASE` exported for subsequent `ling dictionary install`
-and `ling analyzer prepare` commands. It selects ling's release assets;
-Python runtimes, models and third-party dependencies use their upstream sources.
+and `ling analyzer prepare` commands. `LING_DOWNLOAD_BASE` selects `ling`'s
+release assets; Python runtimes, models, and third-party dependencies use their
+upstream sources.
 
-The script downloads the archive for the host platform from the release it was
-published with, checks the archive against the release's SHA-256 checksum, and
-installs these files for the current user:
+The script downloads the archive for the host platform from the release that
+published it, checks the archive against the release's SHA-256 checksum, and
+installs these files for the current user without administrator rights
+(see [scripts/install.sh](../scripts/install.sh)):
 
 | File | Location |
 |---|---|
-| `ling` | `$XDG_BIN_HOME`, or `~/.local/bin` when it is unset |
+| `ling` | `$XDG_BIN_HOME`, or `~/.local/bin` when `XDG_BIN_HOME` is unset |
 | Manual pages | `$XDG_DATA_HOME/man/man1`, or `~/.local/share/man/man1` |
 | Bash completion | `$XDG_DATA_HOME/bash-completion/completions/ling` |
 | fish completion | `$XDG_DATA_HOME/fish/vendor_completions.d/ling.fish` |
 | zsh completion | `$XDG_DATA_HOME/zsh/site-functions/_ling` |
 
-When the directory that holds `ling` is not on `PATH`, the script appends a
+When the directory holding `ling` is not on `PATH`, the script appends a
 marked line to the shell's startup file: `~/.bashrc` (`~/.bash_profile` on
-macOS), `~/.zshrc` (`$ZDOTDIR/.zshrc` when set), `$XDG_CONFIG_HOME/fish/conf.d/lingrep.fish`, or
-`~/.profile` for other shells. Running the script again replaces the installed
-files and does not add a second line. To update an installer-managed installation,
-download the latest `install.sh` again with the commands above and run it using
-the same install-directory settings. Set `LING_VERSION` to select a specific
-release or roll back, then check `ling --version`. Check the release notes for
-prepared-corpus format changes before updating; incompatible artifacts must be
-rebuilt from source. Update Nix, Cargo, and distribution-managed installations
-through their original package manager. The script requires no administrator
-rights. [scripts/install.sh](../scripts/install.sh) is its source.
+macOS), `~/.zshrc` (`$ZDOTDIR/.zshrc` when set),
+`$XDG_CONFIG_HOME/fish/conf.d/lingrep.fish`, or `~/.profile` for other shells.
+Running the script again replaces the installed files without adding a second
+line.
+
+To update an installer-managed installation, download the latest `install.sh`
+with the commands above and run it with the same install-directory settings.
+Set `LING_VERSION` to select a specific release or roll back, then check
+`ling --version`. Check the release notes for prepared-corpus format changes
+before updating; incompatible artifacts must be rebuilt from source. Update
+Nix, Cargo, and distribution-managed installations through their original
+package manager.
 
 | Variable | Effect |
 |---|---|

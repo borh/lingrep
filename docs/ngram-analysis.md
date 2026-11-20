@@ -19,10 +19,10 @@ a prepared-corpus run. The output's `pattern` column identifies the order:
 
 Each key records `text` and `upos` separately for every token position. These
 separate fields preserve token boundaries even when a value contains punctuation
-or whitespace. Key publication is all-or-nothing: if either attribute is absent
-on any token, that match contributes to `records_unkeyed` instead of a partial
-tuple. Use `ling coverage --patterns patterns/ngrams.lx ...` to check
-attribute coverage for a corpus or analyzer.
+or whitespace. Key publication is all-or-nothing: if either attribute is absent on any token,
+that match contributes to `records_unkeyed` instead of emitting a partial tuple.
+Use `ling coverage --patterns patterns/ngrams.lx ...` to check attribute
+coverage for a corpus or analyzer.
 
 To count a linguistic selection, write a smaller catalog. For example, a noun
 followed by a verb:

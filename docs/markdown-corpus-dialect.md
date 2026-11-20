@@ -11,10 +11,10 @@ reader flags:
 
 | Flag | Meaning |
 |---|---|
-| `--input-format markdown` | Read the input as this dialect. Without it, the format is inferred from the path; directories and extensionless files default to `markdown`. |
+| `--input-format markdown` | Read the input as the Markdown corpus dialect. Without it, the format is inferred from the path; directories and extensionless files default to `markdown`. |
 | `--md-include-sections`, `--md-exclude-sections` | Select lines by section label; see [Selecting sections](#selecting-sections). |
 | `--md-self-labels` | Declare heading classes that label only their own heading; see [Self-labels](#self-labels). |
-| `--md-recover-conversion-artifacts` | Accept a fixed set of converter artifacts; see [Conversion-artifact recovery](#conversion-artifact-recovery). Off by default in `ling`. `lingrep-web` always recovers, and the flag has no effect there. |
+| `--md-recover-conversion-artifacts` | Accept a fixed set of converter artifacts; see [Conversion-artifact recovery](#conversion-artifact-recovery). `ling` disables recovery by default. `lingrep-web` always enables recovery, so the flag has no effect there. |
 
 These flags determine what is read. They change which lines become sentences at
 all and are part of the reader configuration (`MarkdownReaderConfig::reader_tag`),
@@ -25,7 +25,7 @@ spelled `--where '@section …'`; see
 
 The default exclusion list removes `references` and ten other labels before a
 line becomes a sentence, so `--where '@section = references'` over a corpus
-read with the defaults is always empty. A run whose `--where` clause names
+read with the defaults is always empty. A run whose `--where` clause references
 such a label prints a warning identifying the admitting flag.
 
 ## Contract
@@ -38,7 +38,7 @@ such a label prints a warning identifying the admitting flag.
   blank lines, not presentation structure, define it.
 - **A leading `---` block is YAML frontmatter.** It is parsed as typed document
   metadata with unique mapping keys. A `---` anywhere else is a thematic break.
-- **`:::+ {.classes}` opens a region; a bare `:::+` closes it.** This follows
+- **`:::+ {.classes}` opens a region; a bare `:::+` closes it.** This rule follows
   pandoc's rule that a fence without attributes is always a closing fence. A
   colon fence that is neither is an error, not an open region.
 - **`#{1,6} text {.classes}` labels the section it introduces.** Headings are
@@ -46,7 +46,8 @@ such a label prints a warning identifying the admitting flag.
 - **`{.class}` spans are structure; every other `{...}` is content.** Unmarked
   braces such as `{T \to \infty}` are preserved.
 - **Dollar-delimited math is excluded from analysis.** Paired `$…$` and
-  `$$…$$` spans become a space, preserving a boundary between surrounding words.
+  `$$…$$` spans are replaced by a single space so surrounding words remain
+  separated.
   Inline `$…$` requires a non-space character after the opening `$` and before
   the closing `$`. A `$` followed by an ASCII digit does not close inline math,
   so `$5から$10` remains text in both strict and recovery modes.
@@ -54,7 +55,7 @@ such a label prints a warning identifying the admitting flag.
   display-math block; a subsequent line ending in `$$` closes it. Delimiter
   lines may contain math source. All block lines are skipped for analysis,
   and `:::` inside the block does not open or close a region. An unclosed
-  block is an error in strict mode; recovery treats an unmatched bare `$$`
+  block is an error in strict mode; recovery mode treats an unmatched bare `$$`
   line and its following text as ordinary Markdown. Escaped dollar signs
   remain text. Document rendering preserves the math source.
 - **`<!-- ... -->` is skipped. Every other raw HTML form is an error**:
@@ -75,20 +76,20 @@ such a label prints a warning identifying the admitting flag.
 `--md-recover-conversion-artifacts` accepts a fixed set of artifacts that
 Markdown converters emit and that the strict reader rejects:
 
-- presentational HTML and `<si ...>` linguistic notation, which the strict
-  reader rejects as raw HTML;
-- unescaped asterisk runs before `p` or `P` comparisons (`<`, `>` or `=`), with
-  an optional colon and spaces: these remain literal significance marks rather
-  than emphasis delimiters. When Markdown pairs a run with a closing delimiter,
-  recovery preserves that emphasis if replacing the run with a literal mark
-  would leave the closing delimiter unpaired with earlier openers. For example,
-  `**p < 0.05**` and `*p<.05*` lose their asterisks in both modes.
-  Strict mode uses the Markdown interpretation;
-- an unmatched bare `$$` line: it remains literal text and following lines
-  retain their Markdown structure. Complete math blocks remain excluded.
-  Recovery spools candidate blocks to temporary files instead of retaining
-  their text in memory;
-- div imbalance at the physical document boundary: an unclosed div at end of
+- Presentational HTML and `<si ...>` linguistic notation, which the strict
+  reader rejects as raw HTML.
+- Unescaped asterisk runs before `p` or `P` comparisons (`<`, `>` or `=`), with
+  an optional colon and spaces. Recovery mode treats these as literal
+  significance marks rather than emphasis delimiters. When Markdown pairs a run
+  with a closing delimiter, recovery preserves that emphasis if replacing the
+  run with a literal mark would leave the closing delimiter unpaired with
+  earlier openers. For example, `**p < 0.05**` and `*p<.05*` lose their
+  asterisks in both modes. Strict mode uses the Markdown interpretation.
+- An unmatched bare `$$` line. Recovery mode leaves it as literal text and
+  retains Markdown structure for following lines; complete math blocks remain
+  excluded. Recovery spools candidate blocks to temporary files instead of
+  retaining their text in memory.
+- Div imbalance at the physical document boundary: an unclosed div at end of
   input, and a closing fence that matches no open div.
 
 A malformed colon fence, an unterminated fenced code block, and unbalanced
@@ -122,10 +123,11 @@ label interpretation.
 
 ### Self-labels
 
-A heading class is one of two things:
+A heading class is either a section label or a self-label:
 
-- a section label, which names the section the heading introduces and applies
-  to every line until the next labeled heading (`{.references}` on an H2);
+- a section label, which identifies the section that the heading introduces and
+  applies to every line until the next labeled heading (`{.references}` on an
+  H2);
 - a self-label, which describes the heading's own text and applies to no other
   line (`{.title}` on an H1).
 
@@ -165,19 +167,20 @@ An empty list has different effects for inclusion and exclusion:
   empty include list would admit no line and read an empty corpus while
   exiting successfully, which can occur when an unset variable is passed in
   `--md-include-sections "$SECTIONS"`. Omit the flag to admit every label. A
-  list that names no label after trimming (`"  ,  "`) is the same error.
+  list that contains no label after trimming (`"  ,  "`) is the same error.
 
 A non-empty include list drops unlabeled lines: a line with no active label
-matches no named label.
+matches no listed label.
 
-Labels named in a `--where '@section …'` clause that the input never carried
-are reported at the end of the run. Labels named on `--md-include-sections` or
-`--md-exclude-sections` are not checked against the input.
+If a `--where '@section …'` clause references a label that never appears in the
+input, `ling` reports that label at the end of the run. Labels passed to
+`--md-include-sections` or `--md-exclude-sections` are not checked against the
+input.
 
-The default exclusion is bibliographic matter and figure/table apparatus:
-`references, caption, figure, table, notes, author, author_bio, keywords,
-submission_date, acknowledgments, toc`. Pass `--md-exclude-sections ""` for
-unfiltered text.
+The default exclusion list removes bibliographic matter and figure or table
+apparatus: `references, caption, figure, table, notes, author, author_bio,
+keywords, submission_date, acknowledgments, toc`. Pass
+`--md-exclude-sections ""` for unfiltered text.
 
 Passing the flag replaces this list rather than adding to it, so
 `--md-exclude-sections foo` excludes `foo` and admits `references`. List the
@@ -185,6 +188,6 @@ defaults explicitly to extend them.
 
 ### Selecting a self-label is a reported no-op
 
-A self-label never labels an emitted line, so naming one on
+A self-label never labels an emitted line, so passing one to
 `--md-include-sections` or `--md-exclude-sections` matches nothing. The run
 prints a warning identifying the labels and referencing `--md-self-labels`.

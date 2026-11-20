@@ -1,44 +1,44 @@
 # lingrep
 
-lingrep is a linguistic `grep`: where standard grep matches characters and
-regular expressions across plain text lines, `lingrep` searches token
-sequences described by surface form, lemma, part of speech, morphological
-features, or dependency relations. Like `grep`, patterns can be passed
-directly on the command line; they can also be explored interactively or
-organized into catalogs for reuse across corpora. The command-line tool,
-`ling`, tokenizes raw text or reads text that is already analyzed, then
-matches patterns, counts matches, and presents matches in context.
+lingrep is a linguistic `grep`: whereas standard `grep` matches characters and
+regular expressions across plain text lines, lingrep searches token sequences
+described by surface form, lemma, part of speech, morphological features, or
+dependency relations. As with `grep`, you can pass patterns directly on the
+command line, explore them interactively, or organize them into catalogs for
+reuse across corpora. The command-line tool, `ling`, tokenizes raw text or reads
+text that is already analyzed, then matches patterns, counts matches, and
+presents matches in context.
 
-Japanese is the main focus, but `ling` also reads CoNLL-U, so
-Universal Dependencies treebanks and other analyzed data can be searched
-without a parser.
+Japanese is the main focus, and `ling` also reads CoNLL-U so you can search
+Universal Dependencies treebanks and other analyzed data without a parser.
 
-lingrep provides a
-[pattern language](docs/pattern-language-reference.md) with
-[lookaround](docs/pattern-language-reference.md#lookaround),
-[dependency constraints](docs/pattern-language-reference.md#dependency-constraints)
-and [lexicons](docs/pattern-language-reference.md#lexicons); Japanese analysis
-with [UniDic](https://clrd.ninjal.ac.jp/unidic/) through
-[Vibrato](https://github.com/daac-tools/vibrato) or with
-[Sudachi](https://github.com/WorksApplications/sudachi.rs); input from plain
-text, JSONL, [Markdown](docs/markdown-corpus-dialect.md),
-[CoNLL-U](https://universaldependencies.org/format.html)
-([UD treebanks](https://universaldependencies.org/)),
-[BCCWJ](https://clrd.ninjal.ac.jp/bccwj/en/) distributions and
-[Soranoha](https://soranoha.org/) archives;
-[frequency summaries](docs/cli-usage-guide.md#what-summarize-groups-by),
-[attribute coverage](docs/cli-usage-guide.md#attribute-coverage-ling-coverage)
-and [sampling](docs/cli-usage-guide.md#sampling-a-corpus-with---sample);
-reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora);
-[n-gram](docs/ngram-analysis.md), [gravity](docs/gravity-analysis.md),
-[collexeme](patterns/collexeme.lx) and
-[distinctive collexeme](patterns/alternation.lx) analyses; an interactive
-[terminal explorer](docs/tui-guide.md); and a
-[web interface](docs/deployment-guide.md).
+Capabilities:
+
+- [Pattern language](docs/pattern-language-reference.md) with
+  [lookaround](docs/pattern-language-reference.md#lookaround),
+  [dependency constraints](docs/pattern-language-reference.md#dependency-constraints),
+  and [lexicons](docs/pattern-language-reference.md#lexicons)
+- Japanese analysis with [UniDic](https://clrd.ninjal.ac.jp/unidic/) through
+  [Vibrato](https://github.com/daac-tools/vibrato) or with
+  [Sudachi](https://github.com/WorksApplications/sudachi.rs)
+- Input from plain text, JSONL, [Markdown](docs/markdown-corpus-dialect.md),
+  [CoNLL-U](https://universaldependencies.org/format.html)
+  ([UD treebanks](https://universaldependencies.org/)),
+  [BCCWJ](https://clrd.ninjal.ac.jp/bccwj/en/) distributions, and
+  [Soranoha](https://soranoha.org/) archives
+- [Frequency summaries](docs/cli-usage-guide.md#what-summarize-groups-by),
+  [attribute coverage](docs/cli-usage-guide.md#attribute-coverage-ling-coverage),
+  [sampling](docs/cli-usage-guide.md#sampling-a-corpus-with---sample), and
+  reusable [prepared corpora](docs/cli-usage-guide.md#prepared-v1-corpora)
+- [N-gram](docs/ngram-analysis.md), [gravity](docs/gravity-analysis.md),
+  [collexeme](patterns/collexeme.lx), and
+  [distinctive collexeme](patterns/alternation.lx) analyses
+- Interactive [terminal explorer](docs/tui-guide.md) and
+  [web interface](docs/deployment-guide.md)
 
 > [!NOTE]
 > lingrep is experimental software under active development. Pattern syntax and
-> command-line interfaces *will* evolve between releases.
+> command-line interfaces change between releases.
 
 ## Install
 
@@ -48,10 +48,10 @@ sh install.sh
 ```
 
 The script installs `ling` on Linux and macOS (on Windows, in WSL) into
-`~/.local/bin`, or `$XDG_BIN_HOME` when it is set. With Nix, run
+`~/.local/bin`, or `$XDG_BIN_HOME` when set. With Nix, run
 `nix run github:borh/lingrep#ling -- --help` instead.
-[Install ling](docs/installation.md) lists the installer's options and the
-manual download, and [update instructions](docs/installation.md#install-script).
+[Install ling](docs/installation.md) lists the installer options, manual
+download steps, and [update instructions](docs/installation.md#install-script).
 
 ## Quick start
 
@@ -144,16 +144,16 @@ split modes and the other Sudachi options.
 
 ## Documentation
 
-- [Pattern language reference](docs/pattern-language-reference.md) — writing
+- [Pattern language reference](docs/pattern-language-reference.md): writing
   `.lx` catalogs
-- [CLI usage guide](docs/cli-usage-guide.md) — commands, inputs, output
+- [CLI usage guide](docs/cli-usage-guide.md): commands, inputs, output
   formats, and analysis workflows
-- [TUI guide](docs/tui-guide.md) — interactive exploration in the terminal
-- [Deployment guide](docs/deployment-guide.md) — serving `lingrep-web`, including
+- [TUI guide](docs/tui-guide.md): interactive exploration in the terminal
+- [Deployment guide](docs/deployment-guide.md): serving `lingrep-web`, including
   its NixOS module
 - [N-gram analysis](docs/ngram-analysis.md) and
-  [gravity analysis](docs/gravity-analysis.md) — worked corpus analyses
-- [Documentation index](docs/README.md) — developer, testing, and performance
+  [gravity analysis](docs/gravity-analysis.md): worked corpus analyses
+- [Documentation index](docs/README.md): developer, testing, and performance
   references
 
 `ling check --help` and `ling-check(1)` are the complete reference for the

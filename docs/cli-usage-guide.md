@@ -13,7 +13,7 @@ ling tokenize
 ling coverage
 ling explore
 ling serve
-ling corpus build|inspect|inventory|variants|render
+ling corpus build|inspect|inventory|variants|disk|prune|render
 ling check
 ling neighbors
 ling dictionary install
@@ -97,27 +97,32 @@ ling check --patterns patterns/double-wo.lx --diagram --diagram-format svg \
   --output-dir double-wo-diagrams
 ```
 
-`--diagram-format` selects `unicode` (the default), `ascii` connectors or a
-standalone `svg`. SVG on stdout requires exactly one selected definition.
+`--diagram-format` selects `unicode` (the default), `ascii` connectors, or a
+standalone `svg`. Writing SVG to stdout requires exactly one selected
+definition.
+
 `--output-dir DIR` writes one SVG file per selected definition instead, and
 requires `--diagram-format svg`. `DIR` must not exist: `ling` writes the files
-into a hidden staging directory beside it and renames that directory to `DIR`
-only after every selected definition renders. If `DIR` already exists,
-`ling` exits with status 1 and leaves it unchanged; a failed or
-interrupted export removes its staging directory and leaves no `DIR`. Files are
-named `ORDINAL-STEM.svg`: `ORDINAL` is the 1-based source-order position, padded
-to the width of the largest ordinal, and `STEM` is at most 64 bytes of the
-definition name, with each character other than a letter, digit or `_` replaced
-by `_`. `ling` prints each definition name and its file path to stdout,
-separated by a tab, in source order. On a filesystem without a no-replace
-rename (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` on macOS),
-such as a WSL `/mnt/c` drive, NFS or some FUSE mounts, `ling` checks that `DIR`
-is absent and then renames; an empty directory created at `DIR` between the
-check and the rename is replaced. `--width COLUMNS` accepts 32–240 columns;
-the default is the terminal width within that range, or 80 when piped or
-writing `--output-dir` files. Wide sequences continue on connected rows.
-Numbered labels and subdiagrams retain text that cannot fit inline; dependency
-constraints and publication annotations appear separately from recognition flow.
+into a hidden staging directory beside `DIR` and renames that directory to `DIR`
+only after every selected definition renders. If `DIR` already exists, `ling`
+exits with status 1 and leaves it unchanged; a failed or interrupted export
+removes its staging directory and creates no `DIR`. On a filesystem without a
+no-replace rename (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` on
+macOS), such as a WSL `/mnt/c` drive, NFS, or some FUSE mounts, `ling` checks
+that `DIR` is absent and then renames; an empty directory created at `DIR`
+between the check and the rename is replaced.
+
+Each exported file is named `ORDINAL-STEM.svg`: `ORDINAL` is the 1-based
+source-order position, padded to the width of the largest ordinal, and `STEM` is
+at most 64 bytes of the definition name, with each character other than a
+letter, digit, or `_` replaced by `_`. `ling` prints each definition name and
+its file path to stdout, separated by a tab, in source order.
+
+`--width COLUMNS` accepts 32–240 columns; the default is the terminal width
+within that range, or 80 when piped or writing `--output-dir` files. Wide
+sequences continue on connected rows. Numbered labels and subdiagrams retain
+text that cannot fit inline; dependency constraints and publication annotations
+appear separately from recognition flow.
 
 Diagram mode cannot be combined with `--json`, `--compare-with`,
 `--verify-examples` or `--schema`. Compiler warnings go to stderr. `ling` exits 0
@@ -126,22 +131,22 @@ for a closed text-output pipe; an incomplete SVG write exits 1.
 ### Matching and summaries
 
 `matches` emits canonical per-match evidence. A published token carries only the
-attributes the run projects: the catalog's own, plus `text`, plus those its
-policy projects. Add `--publish-attribute lemma` (repeatable) to include more
-attributes, or `--publish-all-attributes` for every attribute in the corpus's token
-schema. Both options require `--json`. Unavailable extra keys produce an
-`attribute_unavailable` warning and are omitted. The `run` record lists the
-published attributes in `published_attributes`; individual tokens omit values they
-do not carry.
+attributes that the run projects: the catalog's own, plus `text`, plus those
+that its policy projects. Add `--publish-attribute lemma` (repeatable) to
+include more attributes, or `--publish-all-attributes` for every attribute in
+the corpus's token schema. Both options require `--json`. Unavailable extra keys
+produce an `attribute_unavailable` warning and are omitted. The `run` record
+lists the published attributes in `published_attributes`; individual tokens omit
+values they do not carry.
 `--context N` projects at most `N` tokens to each side and never changes the
 matched span. `summarize` performs exact external aggregation before publishing
 rows. Use `--limit N` to publish only the first N matches.
 
 For exact full-scope counts with bounded examples, use
-`ling --json matches --retain 100 --retain-seed 7 ...`. This scans to EOF,
-then emits at most 100 published matches in corpus order with their original
-sequence IDs. Completion declares the Algorithm R/SplitMix64 selection, seed,
-eligible and retained counts; `records_emitted` counts retained records.
+`ling --json matches --retain 100 --retain-seed 7 ...`. That command scans to
+EOF, then emits at most 100 published matches in corpus order with their
+original sequence IDs. Completion declares the Algorithm R/SplitMix64 selection,
+seed, eligible and retained counts; `records_emitted` counts retained records.
 Retention is global across patterns, capped at 100,000 records and 64 MiB of
 serialized JSON, and fails if the byte cap is exceeded. It requires JSON and
 cannot be combined with `--limit`. No retained examples or successful completion
@@ -261,8 +266,8 @@ summary grouping.
 
 ### Dependency evidence: `--evidence`
 
-A match's span and `--context` can omit the words a relation judgment rests
-on. In this catalog the span is the noun and particle, and `v` is bound
+A match's span and `--context` can omit the words on which a relation judgment
+rests. In this catalog the span is the noun and particle, and `v` is bound
 anywhere in the sentence:
 
 ```pattern
@@ -291,24 +296,24 @@ column onwards (`cut -f9-`):
 
 The columns are the word number, its roles, whether it lies in the span,
 `text`, `lemma`, `norm`, `upos`, `xpos`, `head`, `rel`, and the sentence. The
-word number is the token index plus one, the numbering `head` uses, so `坂`
+word number is the token index plus one, the numbering that `head` uses, so `坂`
 depends on word 4, `上った`, as `obj`. The words are the span, every capture,
-and every word a `where` clause binds, whatever `--context` requests; a named
-enhanced edge `$e` marks its endpoints `e.head` and `e.dependent`. A value the
-corpus does not carry is an empty field, for example `norm` over CoNLL-U, and
-`head` and `rel` over a morphology-only corpus.
+and every word that a `where` clause binds, whatever `--context` requests; a
+named enhanced edge `$e` marks its endpoints `e.head` and `e.dependent`. A value
+that the corpus does not carry is an empty field, for example `norm` over
+CoNLL-U, and `head` and `rel` over a morphology-only corpus.
 
 With `--json`, each match record gains an `evidence` object with `sentence` and
 `words`; an absent value is `null`. Every other field of the record is
 unchanged. TSV has no run or completion record, so save the JSONL form when the
-evidence must name the corpus's `analysis_identity` or prove that the run
+evidence must record the corpus's `analysis_identity` or prove that the run
 completed. `--evidence` requires `--json` or `--tsv`.
 
 ### Comparing two patterns' occurrences
 
 Counts cannot show which passages one pattern finds and another misses.
 [`examples/compare_occurrences.py`](../examples/compare_occurrences.py) compares
-two saved `--json --evidence` runs and needs only Python 3:
+two saved `--json --evidence` runs and requires only Python 3:
 
 ```bash
 ling matches --corpus natsume.lingcorpus --json --evidence --limit all --pattern \
@@ -321,13 +326,14 @@ python3 examples/compare_occurrences.py npv.jsonl adjacent.jsonl > compare.tsv
 ```
 
 An occurrence is a sentence, identified by source name, document ordinal, and
-document sentence ordinal, together with the word each named role occupies. Both
-patterns above name `n`, `p`, and `v`, so the dependency match `坂を` and the
-sequence match `坂を上った` are the same occurrence when their three words
+document sentence ordinal, together with the word that each named role occupies.
+Both patterns above declare `n`, `p`, and `v`, so the dependency match `坂を` and
+the sequence match `坂を上った` are the same occurrence when their three words
 coincide, although their spans differ. Roles are capture names, graph-node
-names, and named edges; by default the roles every record of both runs binds
-are compared, and `--roles n,p` compares a subset. A pattern without named
-roles cannot be aligned this way. Name the roles with `(?<n> …)` as above.
+names, and named edges. By default, the script compares the roles that every
+record in both runs binds; pass `--roles n,p` to compare a subset. A pattern
+without named roles cannot be aligned this way. Name the roles with `(?<n> …)`
+as above.
 
 `compare.tsv` has a header and one row per occurrence: `shared`, `a_only` or
 `b_only`; the number of records on each side; the source name and ordinals; the
@@ -358,7 +364,7 @@ result, and each is omitted when the catalog derives nothing for it:
 
 `--trace-policy 0` writes the run's policy totals to stderr: a header with the
 statement count and, when policy removed captures, the number dropped, then one
-line per policy statement the catalog declares:
+line per policy statement that the catalog declares:
 
 ```text
 policy totals (2 statements, 3 captures dropped)
@@ -368,8 +374,8 @@ policy totals (2 statements, 3 captures dropped)
 
 Each line quotes the statement's text and its catalog line number. Every
 declared statement is reported, including one that changed nothing, so an
-inert statement is visible. The totals cover the records the run processed,
-including under `--limit`, sampling and scope filters. Use `--trace-policy`
+inert statement is visible. The totals cover the records that the run processed,
+including under `--limit`, sampling, and scope filters. Use `--trace-policy`
 to request these totals; `--progress` does not print them.
 
 Key fields keep their authored order through matching, aggregation, JSONL, TSV,
@@ -390,7 +396,7 @@ character offsets show a gap. JSONL, TSV and surface count keys distinguish
 the same key as a single space. Use `char_span` for the original spacing.
 When offsets are unavailable, match exports concatenate the unplaced tokens.
 Grouping by a multi-token surface requires offsets for every internal boundary.
-A single-token surface and an explicit attribute key need no spacing evidence.
+Single-token surfaces and explicit attribute keys require no spacing evidence.
 
 A CoNLL-U sentence with a `# text` comment takes its offsets from that text:
 each FORM is located in it, in order, with only whitespace between the forms,
@@ -399,8 +405,8 @@ wrong. A sentence has no offsets when its forms do not occur in its `# text`
 that way. `ling summarize` stops at the first multi-token surface
 or `--by-span` key in such a sentence with `error[missing_surface_offsets]`,
 exit code 1, and writes no summary and no count table, because the key would
-otherwise depend on a guess about the missing spaces. The error names the
-file, the sentence and the token after the unplaced boundary. To count the
+otherwise depend on a guess about the missing spaces. The error identifies the
+file, the sentence, and the token after the unplaced boundary. To count the
 corpus, correct or delete that sentence's `# text` line, since a sentence
 without one takes its spacing from `SpaceAfter=No`; or declare a `key:` for
 the pattern, which groups by attributes and reads no spacing. `ling matches`
@@ -466,12 +472,12 @@ policy trace truncated at 400 records
 Each record line is `source:sentence definition raw_start..raw_end`. Under it
 is one line per statement that ran while the record was a candidate: the
 statement's text, its catalog line, and its outcome: `kept`, `not selected`,
-`dropped`, or the new span a `detach` produced, with the count of captures that
-span dropped when it is not zero. A record whose lines all read `not selected`
+`dropped`, or the new span that a `detach` produced (together with the dropped
+capture count when nonzero). A record whose lines all read `not selected`
 was left unchanged because no statement selected it.
 
 - A dropped record's lines stop at the statement that dropped it; later
-  statements did not see it.
+  statements did not evaluate it.
 - Reaching `N` is reported on the last line.
 - The trace goes to stderr and is printed regardless of `--progress`. JSONL and
   TSV records are unchanged by the flag.
@@ -480,7 +486,7 @@ was left unchanged because no statement selected it.
 `exclude`, `require`, `detach` and `admit` statements still apply. `--overlaps
 longest` publishes the longest of overlapping records for a catalog whose block
 declares no `resolve`. `matches` and `summarize` accept both, and the trace
-lists the statements the run executed. `--overlaps` is rejected with
+lists the statements that the run executed. `--overlaps` is rejected with
 `--raw-matches`, and with `summarize --write-table`, whose tables hold the
 catalog's own counts. See
 [Overlaps chosen per run](pattern-language-reference.md#overlaps-chosen-per-run).
@@ -500,8 +506,8 @@ or unprojectable keys can still be absent from the output.
 
 ### What `summarize` groups by
 
-`summarize` takes its grouping value from the first of these the record has,
-each coarser than the one above it:
+`summarize` takes its grouping value from the first of these fields present on
+the record, each coarser than the one above it:
 
 1. **The declared `key:`,** represented as an ordered typed field tuple. In
    query/v2 JSONL it is a `group` of kind `key` with a `fields` array;
@@ -527,7 +533,7 @@ attribute) is dropped from keyed output and counted in
 collide with another pattern's complete key.
 
 `--grouping-coverage` adds a `grouping_coverage` array to the JSONL `complete`
-record. Each entry names a published pattern and reports `records_presented`,
+record. Each entry identifies a published pattern and reports `records_presented`,
 `records_grouped` and `records_unkeyed`; presented equals grouped plus unkeyed.
 Counts describe records admitted to grouping after matcher selection and catalog
 publication policy and any pattern-metadata filter, before unkeyed records are
@@ -550,20 +556,20 @@ Metadata category rows do not merge coverage records for their member patterns.
 ### Counting by a sentence span
 
 `ling summarize --by-span bunsetsu` counts published matches by the surface of
-their enclosing bunsetsu. The JSONL `run.by_span` field names the requested kind.
+their enclosing bunsetsu. The JSONL `run.by_span` field records the requested kind.
 Two matching words in 猫が contribute two to the
 猫が row. A match crossing a bunsetsu boundary or lacking an annotation of
 the requested kind contributes one to `counters.records_unkeyed`. This option
 overrides the pattern's grouping key. If several spans of that kind contain
 the complete match, the shortest wins, with ties resolved by sentence span ID.
 
-Span kinds are not part of a token schema: each sentence carries the spans its
-analyzer or its CoNLL-U rows supply. When no sentence of a run carries a span
+Span kinds are not part of a token schema: each sentence carries the spans that
+its analyzer or its CoNLL-U rows supply. When no sentence of a run carries a span
 of the requested kind, such as `bunsetsu` over Vibrato or `sudachi.c` under
 split mode C, every record is unkeyed and the run ends with
 `warning[span_kind_unavailable]`. `ling matches` and `ling summarize` report
 the same warning for a kind that a `where span(…)`, `within_span` or
-`span_dependency` constraint names, with the definitions that then match
+`span_dependency` constraint references, with the definitions that then match
 nothing; `ling matches` omits it after a run that `--limit` stopped. A run that
 reads no sentence reports nothing, and `ling check --schema`, the browser and
 `ling explore` do not report it.
@@ -574,8 +580,8 @@ The `whole_span_ids` object groups annotations with exactly the published
 boundaries by layer. For example, `whole_span_ids.bunsetsu` gives the IDs of
 coextensive bunsetsu. Empty groups are omitted. With `--evidence`, each ID
 indexes the sentence annotation in `evidence.spans`.
-In the web token inspector, select a word and open **Details** to see its
-enclosing units, their IDs, and any recorded heads, labels and governors.
+In the web token inspector, select a word and open the Details panel to inspect
+its enclosing units, their IDs, and any recorded heads, labels, and governors.
 
 ### Japanese reading predictors
 
@@ -591,7 +597,7 @@ and UD matches. The case-marked candidates provide the overt coargument,
 particle and modified noun for review. The gap role is an inference.
 
 Run the worked example from the repository root. The DuckDB step computes
-the predictors that need several matches or character positions.
+the predictors that require several matches or character positions.
 
 ```bash
 ling --json matches --evidence --input-format conllu \
@@ -669,8 +675,8 @@ with NULL measures. When comparing the two unit types, select sentences with
 
 `--by-document` counts each group per admitted document, and `--top` ranks
 within each pattern and document. It requires `--json`. Every `summary` record
-carries the `document` ordinal, and before the rows the run publishes one
-`document` record per document with at least one admitted sentence: its
+carries the `document` ordinal, and before the summary rows, the run publishes
+one `document` record per document with at least one admitted sentence: its
 `source_name`, `sentences_admitted` and `tokens_admitted`. A document with no
 match still has a `document` record, so the token count can normalize the
 frequencies. A document with no admitted sentence, such as an empty one, has
@@ -722,18 +728,24 @@ usage error. Everything after the first `=` is the literal value.
 key. Both options require `--by-section` and can be combined. A grouped `section`
 record has an empty `patterns` array and a `pattern_metadata` object containing
 `filter`, `group_by`, `omitted_patterns`, and `groups`. Each group contains its
-raw `value`, the member `patterns`, summed `matches`, and `pattern_sentences`:
-the sum of each member pattern's `sentences_matched`. Two distinct published pattern names in one sentence contribute two
-pattern–sentence occurrences, including when their spans coincide. This is not a count of distinct sentences. Rates use admitted sentences
-as the denominator and may exceed 100%. Groups are ordered by descending pattern–sentence count, then value.
-Missing/non-string grouping values are omitted and included in `omitted_patterns`; no replacement category is invented.
+raw `value`, the member `patterns`, summed `matches`, and `pattern_sentences`
+(the sum of each member pattern's `sentences_matched`).
+
+Two distinct published pattern names in one sentence contribute two
+pattern–sentence occurrences, including when their spans coincide;
+`pattern_sentences` is not a count of distinct sentences. Rates use admitted
+sentences as the denominator and may exceed 100%. Groups are ordered by
+descending pattern–sentence count, then value. Missing or non-string grouping
+values are omitted and included in `omitted_patterns`; no replacement category
+is invented.
+
 The ordinary keyed `summary` records remain per pattern within the selection.
-The `run` record also declares `pattern_metadata` with the filter, grouping key
+The `run` record also declares `pattern_metadata` with the filter, grouping key,
 and omitted-pattern count, including when the admitted scope is empty.
-Definitions sharing one published `output_name` form one member. A requested
-metadata key must have the same string value or absence across those definitions;
-conflicting values are rejected with the published name. Without these options,
-run and section records retain their existing shapes.
+Definitions sharing one published `output_name` form one member: a requested
+metadata key must have the same string value or absence across those definitions,
+and conflicting values are rejected with the published name. Without these
+options, `run` and `section` records retain their default shapes.
 
 ```bash
 ling --json summarize --by-section --corpus paper.lingcorpus \
@@ -752,8 +764,8 @@ links to an individual member pattern.
 `sentences_matched` under every value of one document metadata key. It
 requires `--json` and `--corpus` or `--cache`, and cannot be combined with
 `--by-document` or `--by-section`. The run publishes one `metadata_value`
-record per value with at least one admitted sentence, in the order the values
-first occur in the artifact's documents: its `key`, `value`,
+record per value with at least one admitted sentence, in the order in which the
+values first occur in the artifact's documents: its `key`, `value`,
 `documents_admitted` (documents with that value and at least one admitted
 sentence), `sentences_admitted`, `tokens_admitted`, and `patterns` as in a
 `section` record.
@@ -785,9 +797,9 @@ checks for a competing destination; on filesystems without no-replace rename,
 a concurrently created empty directory can be replaced.
 
 It scans a prepared corpus once and writes every
-pattern's group counts per document, and the sentences each group occurs in,
-to a count table at `PATH`, a new directory. `ling table` then answers a
-`--where` over document metadata from the table without scanning the corpus:
+pattern's group counts per document, and the sentences in which each group
+occurs, to a count table at `PATH`, a new directory. `ling table` then answers
+a `--where` over document metadata from the table without scanning the corpus:
 
 ```bash
 ling summarize --write-table soranoha.collexeme.lingtable \
@@ -805,12 +817,13 @@ the counts of all its groups under the clause regardless of `--top`, and
 `works`, the number of admitted documents with at least one of them; a clause
 that admits nothing gives 0. For each pattern, it then gives each group's
 `count`, equal to the `count` of `summarize --where` with the same clause, and
-`works`, the number of admitted documents in which the group occurs. Rows are
-ordered by count, with ties in `summarize`'s group order. With `--top all`, or
-JSON output without `--top`, groups are ordered through temporary files, which
-`--max-temp-bytes` limits as it does for `summarize`. The `complete` record
-gives the admitted documents, sentences and tokens. The output contract is
-`lingrep.table/v1`, whose `pattern` records carry the totals.
+`works`, the number of admitted documents in which the group occurs.
+
+Rows are ordered by count, with ties in `summarize`'s group order. With
+`--top all`, or JSON output without `--top`, groups are ordered through
+temporary files, which `--max-temp-bytes` limits as it does for `summarize`.
+The `complete` record gives the admitted documents, sentences, and tokens. The
+output contract is `lingrep.table/v1`, whose `pattern` records carry the totals.
 
 `--select PATTERN` limits the output to one pattern's total and rows.
 `--key FIELD=VALUE`, repeatable and only with `--select`, keeps the rows whose
@@ -944,7 +957,7 @@ log-likelihood of UCREL's calculator: for counts `a` and `b` in scopes of `N1`
 and `N2` admitted tokens, `E_i = N_i·(a+b)/(N1+N2)` and
 `G² = 2 Σ O·ln(O/E)`, where a cell with `O = 0` contributes 0. `min_expected`
 is the smaller `E_i`, `log2_ratio` is `log2((a/N1)/(b/N2))` with no smoothing,
-and `direction` names the scope with the higher rate, or `equal`. G² is an
+and `direction` indicates the scope with the higher rate, or `equal`. G² is an
 exploratory score: no p-value or significance label is given. It does not
 account for clustering within documents, so compare each side's `works` as well.
 
@@ -954,20 +967,21 @@ rows of that ranking. Every pattern is ranked before the first `pattern`
 record, since each record carries its `entries` count, so memory and temporary
 storage grow with the number of patterns. A `--top` up to 1,048,576 holds that
 many rows per pattern in memory. With `--top all`, a larger `--top`, or JSON
-output without `--top`, every pattern's ranking goes through temporary files at
-once, within `--max-temp-bytes`, keeping up to 1,048,576 keys per pattern in
+output without `--top`, every pattern's ranking spills to temporary files at
+once within `--max-temp-bytes` and retains up to 1,048,576 keys per pattern in
 memory.
 
-The two scopes may share documents, as when both name values of a list-valued
-key. The `scopes` record gives the documents, sentences and tokens each scope
-admits and that both admit, and a `relation` of `disjoint`, `overlapping` or
-`identical`. Nothing is subtracted: an overlapping comparison is computed over
-both scopes as given, and each row's `shared` gives its count and documents in
-the documents both admit. When a scope admits no tokens, its `per_million` and
-the row's `g2`, `min_expected`, `log2_ratio` and `direction` are `null`.
+The two scopes may share documents, as when both match values of a list-valued
+key. The `scopes` record gives the documents, sentences, and tokens that each
+scope admits and that both admit, and a `relation` of `disjoint`, `overlapping`,
+or `identical`. Nothing is subtracted: an overlapping comparison is computed
+over both scopes as given, and each row's `shared` gives its count and documents
+in the documents that both scopes admit. When a scope admits no tokens, its
+`per_million` and the row's `g2`, `min_expected`, `log2_ratio`, and `direction`
+are `null`.
 Identical scopes give a `g2` of 0 for every entry. The output contract is
 `lingrep.contrast/v1`; like `ling table`, `ling contrast` rejects a table
-written for another corpus, catalog or matcher, and a clause that names
+written for another corpus, catalog or matcher, and a clause that references
 `@section` or sentence values exits with code `2`.
 
 ### Counting authored word lists
@@ -997,7 +1011,7 @@ A pattern then tests an attribute against the set: `[unidic.orthbase in
 attribute.
 
 The file is text with one `value x1 ... xn` line per value, with or without a
-leading `count dimensions` line. This is the word2vec text format, which
+leading `count dimensions` line. That layout is the word2vec text format, which
 fastText `.vec` and chiVe files use. `ling` reads vectors and does not compute
 them.
 
@@ -1032,8 +1046,8 @@ directories. The `neighbors --json` run record includes the table digest and
 any bundle provenance.
 
 `--min-similarity` keeps the values at or above a cosine, `--top` keeps a
-number of the most similar, and at least one is required. `--name` names the
-set. `--json` reports each value with its similarity (`lingrep.neighbors/v1`).
+number of the most similar, and at least one is required. `--name` sets the
+set's name. `--json` reports each value with its similarity (`lingrep.neighbors/v1`).
 A word without a vector in the file is an error. Read the printed set before
 using it: word vectors can place antonyms and frequent function words close to
 many words.
@@ -1061,7 +1075,7 @@ ling check --patterns patterns/sentence-final.lx \
 
 - **Drift is a notice by default.** `check` exits `0` even when every shared
   name diverges, unless `--fail-on-drift` is passed.
-- **Name-level.** The report names each divergent definition and which
+- **Name-level.** The report lists each divergent definition and which
   catalogs carry each distinct body. JSON also carries `comparison`: all
   definitions, including one-sided and unchanged definitions, with body-group
   IDs, visibility and reference-expanded, formatted declarations.
@@ -1114,16 +1128,16 @@ the two catalogs are equivalent or linguistically valid.
 
 ### Attributes the corpus cannot supply
 
-A catalog may reference an attribute the bound corpus's token schema does not
-carry, such as `[unidic.cform~連用形]` over CoNLL-U or `[dep.rel=nsubj]` over
-Vibrato/UniDic. That is not an error: the attribute binds as universally
-absent, which is per-token absence applied to every token. Positive tests over
-it match nothing, `!=`/`!~`/`not in` match nothing either, and only the true
-complement `!(…)` holds. A `matches` or `summarize` run reports each such
-attribute as a `warning[attribute_unavailable]` on stderr, or as a
-`lingrep.diagnostic/v1` warning record under `--json`, regardless of
-`--progress`. The warning lists the referencing definitions and the corpus's
-token schema.
+A catalog may reference an attribute that the bound corpus's token schema does
+not carry, such as `[unidic.cform~連用形]` over CoNLL-U or `[dep.rel=nsubj]`
+over Vibrato/UniDic. Referencing an unavailable attribute is not an error: the
+attribute binds as universally absent, which is per-token absence applied to
+every token. Positive tests over it match nothing, `!=`/`!~`/`not in` match
+nothing either, and only the true complement `!(…)` holds. A `matches` or
+`summarize` run reports each such attribute as a `warning[attribute_unavailable]`
+on stderr, or as a `lingrep.diagnostic/v1` warning record under `--json`,
+regardless of `--progress`. The warning lists the referencing definitions and
+the corpus's token schema.
 
 Binding fails with exit code `2` for two invalid invocations: a dependency `where`
 clause requiring `dep.head`/`dep.rel` that the corpus cannot supply, and an
@@ -1133,7 +1147,7 @@ attribute key that the schema carries under a conflicting value kind.
 named declared schema: `unidic-morphology`, `sudachi-morphology`, `tokenize`
 (`text` and `surface`), or `conllu`.
 
-These name schemas, not analyzers. A morphology layout is determined by the
+These values identify schemas, not analyzers. A morphology layout is determined by the
 dictionary that supplies the feature columns, so `unidic-morphology` is what
 `--analyzer vibrato` produces over any of the packaged UniDic dictionaries. A
 catalog can declare both the analyzer and the dictionary with
@@ -1147,7 +1161,7 @@ ling check --patterns patterns/ud-dependency.lx --schema conllu
 local key that projects `text`, `lemma`, or `norm` from a statically
 single-token capture or from a `where` graph node that can bind only words. In
 a key with several fields, each eligible field has its own descriptor, and
-`field` is its zero-based position in the `key:` list. Each descriptor names its
+`field` is its zero-based position in the `key:` list. Each descriptor records its
 definition, capture, source file, choices, and UTF-8 byte range of the attribute
 in the original source; replacing that range changes only that field. Inherited
 keys, span components, whole-match fields, other attributes, enhanced-graph
@@ -1157,23 +1171,23 @@ text-only.
 JSON output carries a `binding` object listing each unavailable attribute with
 its referencing definition sites; human output prints one line per attribute.
 Unavailable attributes never change the exit status; a rejection (a
-`where`-bearing catalog against a schema without `dep.*`) is reported as
-`refusal` and fails the check. `doctor` reports the same finding against a real
-corpus; see
+`where`-bearing catalog against a schema without `dep.*`) is reported in the
+`refusal` field and fails the check. `doctor` reports the same finding against
+a real corpus; see
 [Discovery, explanation, and completion](#discovery-explanation-and-completion).
 
 ### Values outside a catalog's label sets
 
 A corpus can carry an attribute under a different annotation scheme from the
-one the catalog's literals use. A catalog that tests ClearNLP's `dobj` over a
-UD parse, which writes `obj`, matches nothing, and `attribute_unavailable` does
-not report it because the attribute is present. When the catalog declares its
-label sets with `labels:` (see
+one that the catalog's literals use. A catalog that tests ClearNLP's `dobj` over
+a UD parse, which writes `obj`, matches nothing, and `attribute_unavailable`
+does not report it because the attribute is present. When the catalog declares
+its label sets with `labels:` (see
 [Label sets](pattern-language-reference.md#label-sets)), a `matches` or
 `summarize` run whose corpus has values outside a declared set ends with
-`warning[label_outside_declared_set]`. The warning names the attribute, the
+`warning[label_outside_declared_set]`. The warning reports the attribute, the
 set, and up to eight values with token counts, and does not change the exit
-status. The counts cover the sentences the run reads, which over a prepared
+status. The counts cover the sentences that the run reads, which over a prepared
 corpus can be only those that the posting index selects.
 
 ## Scope conditioning with `--where`
@@ -1201,7 +1215,7 @@ op        = "=" | "!=" | "<" | "<=" | ">" | ">=" ;
 ```
 
 Conjunction is the default and disjunction requires parentheses: `a & b | c`
-is a parse error naming the grouping to supply. Outside `not within`, negation
+is a parse error reporting the grouping to supply. Outside `not within`, negation
 is per predicate, through `!=`, `not in` and `not contains`. Values are bare
 tokens, with `"…"` available for a value containing a delimiter or a space.
 
@@ -1250,7 +1264,7 @@ ling matches --patterns query.lx --where '@document.genre contains 化学' \
   --link science=http://127.0.0.1:3000/
 ```
 
-`NAME` is the corpus name the server was started with. When no server is
+`NAME` is the corpus name with which the server was started. When no server is
 running, `--serve` starts one over the command's own corpus, prints the same
 link on the line after the listening address, and runs until interrupted:
 
@@ -1260,7 +1274,7 @@ ling matches --patterns query.lx --corpus science.lingcorpus \
 ```
 
 It listens on a free loopback port; `--serve=HOST:PORT` sets the address.
-It also opens the link with the program named by the `BROWSER` environment
+It also opens the link with the program set in the `BROWSER` environment
 variable, or with `xdg-open` (`open` on macOS) when that is unset. When no
 such program can be started, it reports that and keeps serving.
 For direct text input, `--serve` supports Vibrato morphology with input
@@ -1272,17 +1286,17 @@ the input with `ling corpus build` and pass the artifact with `--corpus`.
 `--md-include-sections` and `--md-exclude-sections` determine at read time which
 lines become sentences. The default policy excludes `references` and ten
 other labels, so `--where '@section = references'` is empty unless
-`--md-exclude-sections ""` is passed. A run whose clause names such a label reports this
-and names the flag. See [the dialect contract](markdown-corpus-dialect.md).
+`--md-exclude-sections ""` is passed. A run whose clause references such a label
+reports this and identifies the flag. See [the dialect contract](markdown-corpus-dialect.md).
 
 `--md-recover-conversion-artifacts` is also a read-time flag. It admits the
-artifacts a corpus converter emits (presentational HTML, `<si …>` notation, and
-div imbalance at the document boundary), which the strict default rejects.
+artifacts that a corpus converter emits (presentational HTML, `<si …>` notation,
+and div imbalance at the document boundary), which the strict default rejects.
 An unmatched bare `$$` line becomes literal text in recovery mode; following
 lines remain prose or Markdown structure. Complete math blocks remain excluded. Use
 it when a tree fails to build on a few documents out of many; a malformed fence
 or an unterminated code block remains an error either way. The flag is part of
-`reader_tag`, so a recovered read names a different prepared artifact than a
+`reader_tag`, so a recovered read produces a different prepared artifact than a
 strict one over the same tree. `lingrep-web` always reads with recovery, so one
 `.md` tree can have two artifacts.
 
@@ -1295,7 +1309,7 @@ for `--max-tokenized-bytes` does not fail a run that excludes it.
 
 A `@section` clause over a corpus that records no sections is rejected before
 processing: JSONL input, or an artifact whose section coverage is empty. An
-empty label set there cannot distinguish "in no labelled section" from "this
+empty label set there cannot distinguish "in no labeled section" from "this
 format records none". If the corpus records sections but none with the requested
 label, the run reports a warning, because one catalog can run over several corpora.
 
@@ -1354,18 +1368,18 @@ use as a corpus denominator.
 | prepared | `full` | `corpus` | equal |
 | prepared | `prefix` | `corpus` | `>=`; the universe is the whole artifact by construction |
 
-A `--limit`ed direct run stops with its reader ahead of its matcher: the reader
-crosses document boundaries to fill a batch while the run can stop inside an
-earlier partition, so its scope counts describe neither the corpus nor the
-matched prefix. A prepared run's universe is precomputed from the whole
+A direct run stopped by `--limit` stops with its reader ahead of its matcher:
+the reader crosses document boundaries to fill a batch while the run can stop
+inside an earlier partition, so its scope counts describe neither the corpus nor
+the matched prefix. A prepared run's universe is precomputed from the whole
 artifact and does not shrink when the run stops early.
 
 ### Ordinals, and what a malformed artifact does
 
 Direct input compacts ordinals: a scope-skipped sentence consumes no sentence
 id, as a skipped blank line does. A prepared artifact never renumbers: an
-ordinal is artifact identity, so a match names the same sentence it would have
-named in an unscoped run.
+ordinal is artifact identity, so a match identifies the same sentence it would
+have identified in an unscoped run.
 
 A prepared document carrying no stored metadata is counted as a missing
 field. Stored metadata that does not parse, or that the typing rule rejects,
@@ -1497,7 +1511,7 @@ have different failure behavior for three cases:
 - **Other direct input.** Stdin, JSONL, plaintext, and every other command over
   direct input stop at the first sentence over `--max-sentence-bytes`, exit 1
   with `sentence_too_large`, and publish no `complete` record. `summarize`
-  publishes no total that silently omits a sentence.
+  publishes no total that omits a sentence without reporting an error.
 
 - **Prepared input.** Both `matches` and `summarize` omit and count a sentence
   over `--max-tokenized-bytes`. The run exits 1 with
@@ -1537,8 +1551,8 @@ CLI queries over prepared corpora do not consult that environment variable.
 `ling serve` and `lingrep-web` require a dictionary only when a declared
 corpus is a source, which they analyze into a prepared artifact. When every
 declared corpus is a prepared artifact and no dictionary resolves, they start
-without one, and the Workbench sample test reports that it needs a
-dictionary.
+without one, and the Workbench sample test reports that a dictionary is
+required.
 
 ### CoNLL-U and UD treebanks
 
@@ -1710,7 +1724,7 @@ reports a missing field, not an empty one. A column outside the pinned set is
 carried as string metadata. A missing pinned column, a row without
 `identifier`, `filename` or `release`, an `ndc` value of another form, a
 duplicate filename or identifier, and rows with conflicting release values are
-rejected with the row named.
+rejected with the row identified.
 
 The text is the plaintext projection: ruby readings and apparatus are absent,
 Aozora Bunko line breaks and source indentation are preserved, and sentences
@@ -1748,7 +1762,7 @@ and one principal `text/body`; grouped texts and ambiguous apparatus or ruby tar
 produce errors. Generic TEI separates `p`, `head`, `l`, `ab` and `item` blocks at
 both boundaries. Soranoha vocabulary versions 1–3 use Soranoha's block-end policy
 to preserve its plaintext projection. The first header title and author become
-`title` and `author` document metadata; language identifiers and licence targets
+`title` and `author` document metadata; language identifiers and license targets
 become the arrays `tei.languages` and `tei.licences`. Soranoha catalog values take
 precedence. The reader does not validate a complete TEI customization or fetch
 schemas, entities or linked documents. DTD declarations and foreign elements in
@@ -1793,8 +1807,8 @@ Authored structural metadata uses explicit whole-sentence ranges:
 {"sentences":["猫。","犬。"],"structure":{"observed_kinds":["part","section"],"divisions":[{"id":"p1","kind":"part","start":0,"end":2,"metadata":{"title":"Introduction"}},{"id":"s1","kind":"section","parent":"p1","start":0,"end":1,"metadata":{"role":"methods"}}]}}
 ```
 
-Ranges are half-open in source-sentence coordinates. Parent IDs must name an
-earlier division in the same document whose range contains the child. Empty,
+Ranges are half-open in source-sentence coordinates. Parent IDs must reference
+an earlier division in the same document whose range contains the child. Empty,
 adjacent, nested and overlapping divisions retain distinct identities.
 `observed_kinds` can declare an observed empty inventory. A division's kind
 also declares observation for the whole document. No structure is inferred
@@ -1808,7 +1822,7 @@ reviewer=A)` may use two different sections. `not within` preserves unknown
 missing/ill-shaped evidence; it cannot turn unavailable structure into absence.
 Unavailable kinds are rejected with an explanation. Nested `within` is unsupported.
 A token pattern matches inside one sentence; only a `within=` lookaround
-reads neighbouring sentences. The structure budget is 256 active
+reads neighboring sentences. The structure budget is 256 active
 divisions, 64 parent levels, 256 observed kinds per document and 16 MiB of
 active division metadata; derived sentence labels have a separate 16 MiB
 byte cap. Prepared storage retains metadata once per division. Sequential
@@ -1896,10 +1910,10 @@ The common analysis choices are:
 | `--profile` | `morphology`, `text` | Retain full morphology or token text only; default `morphology` |
 | `--segmentation` | `input`, `analyzer` | Preserve input sentence units or accept analyzer sentence boundaries; default `input` |
 
-Every analyzer reads a folded view of the source — variation selectors
-removed, half-width katakana widened, U+FF5E as U+301C, canonical
-composition — and its token boundaries are mapped back to the source. Each
-token publishes the exact source text it covers as `surface` and that
+Every analyzer reads a folded view of the source (variation selectors removed,
+half-width katakana widened, U+FF5E mapped to U+301C, and canonical composition
+applied), and `ling` maps the resulting token boundaries back to the source.
+Each token publishes the exact source text it covers as `surface` and that
 surface's folded key as `text`. Vibrato and Sudachi keep a compatibility
 ideograph inside a word their dictionary lists with it, such as 臭氣 with
 U+FA5C; external analyzers receive the unified ideograph, which NFC also
@@ -1940,7 +1954,7 @@ ling tokenize --analyzer sudachi --sudachi-dict system_core.dic corpus.txt
 Without further options, `ling` uses:
 
 - split mode `c`; `--sudachi-split a` or `b` gives shorter units;
-- the edition named by a `system_small.dic`, `system_core.dic` or
+- the edition inferred from a `system_small.dic`, `system_core.dic`, or
   `system_full.dic` file name; for a renamed file, pass `--sudachi-edition`;
 - the `char.def` built into `ling`; `--sudachi-resources DIRECTORY` replaces
   it. `ling` loads Sudachi without its input-text plugins, so `rewrite.def`
@@ -1958,11 +1972,11 @@ publishes from v20261015 on its
 [GitHub releases page](https://github.com/WorksApplications/SudachiDict/releases).
 Earlier releases, and the 20261015 archive on SudachiDict's CloudFront mirror,
 use the earlier version-header container, which `ling` rejects with an error
-naming the container.
+identifying the container.
 
-Inside `nix develop`, `$LINGREP_SUDACHI_DICT_SMALL`, `$LINGREP_SUDACHI_DICT_CORE`
-and `$LINGREP_SUDACHI_DICT_FULL` name the pinned dictionaries. Outside it, build
-one:
+Inside `nix develop`, `$LINGREP_SUDACHI_DICT_SMALL`, `$LINGREP_SUDACHI_DICT_CORE`,
+and `$LINGREP_SUDACHI_DICT_FULL` point to the pinned dictionaries. Outside it,
+build one:
 
 ```bash
 sudachi_dictionary="$(nix build .#sudachidict-core \
@@ -1989,7 +2003,7 @@ be combined with `--limit`, `--retain` or `--raw-matches`. On a filesystem
 without no-replace rename, `ling` publishes the report through a hard link. With
 neither, it creates the report exclusively and writes it in place, so an
 interrupted write can leave a partial report that does not parse as JSON. If
-that creation fails too, the command fails; the error names the OS reason and
+that creation fails too, the command fails; the error reports the OS reason and
 ends with "choose an output directory on a filesystem that supports one of them".
 
 ### Use an external protocol adapter
@@ -2029,10 +2043,10 @@ checked during installation. Keep that directory at its original path. Deleting
 download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
 querying from another directory.
 
-A Stanza analyzer names `tokenize` alone, or `tokenize`, `pos` and `lemma`. Add
-`mwt` when Stanza lists a multi-word token model for the language, as it does
-for French; preparation fails and names the missing package otherwise. For a
-language without one, such as Japanese, omit it:
+A Stanza analyzer specifies `tokenize` alone, or `tokenize`, `pos`, and `lemma`.
+Add `mwt` when Stanza lists a multi-word token model for the language, as it
+does for French; preparation fails and reports the missing package otherwise.
+For a language without one, such as Japanese, omit it:
 
 ```bash
 ling analyzer prepare stanza --output ./analyzers/stanza-ja \
@@ -2069,7 +2083,7 @@ weights and tokenizer from the Hugging Face Hub once, at the commit lingrep pins
 for each repository, into a temporary directory it removes afterwards, and saves
 them in the model directory: about 0.4 GB for Electra and 1.3 GB for BERT large.
 `model/lingrep-hub-sources.json` records the repository and commit. Setup
-therefore needs network access, and `--offline` rejects these models. Analysis
+therefore requires network access, and `--offline` rejects these models. Analysis
 reads only the saved files and disables Hugging Face Hub access, so the analyzer
 runs offline, and the resource manifest digest changes when the weights change.
 Bundles that earlier releases set up from these models fetch the weights from
@@ -2191,7 +2205,7 @@ The sealed profile declares text, lemma, norm, UPOS, XPOS, morphological feature
 and dependencies. The adapter reads the folded view of each input, and `ling`
 maps its token offsets back to the source: `surface` is the exact source text
 and `text` its folded key. A word inside a multiword token, such as French
-`du` analysed as `de le`, takes the adapter's word text as `surface`. Segmentation defaults to `input`,
+`du` analyzed as `de le`, takes the adapter's word text as `surface`. Segmentation defaults to `input`,
 retaining the caller's sentence boundaries; `--segmentation analyzer` uses the
 model's parser boundaries. Dependency labels use spaCy's model scheme (for
 example `dobj`), not a conversion to UD labels. The model is trained for
@@ -2264,7 +2278,7 @@ skips source observation.
 The artifact is `corpus build`'s artifact: same identity, same canonical path,
 same rule against overwriting. `corpus build` and `--cache` queries reuse artifacts
 published by one another. Without `--output`, `ling --json corpus build ROOT`
-reuses or builds that artifact and names it in the `run` record's
+reuses or builds that artifact and records its path in the `run` record's
 `artifact_path`, so a caller observes ROOT once and passes the path to
 `--corpus` on later runs.
 
@@ -2273,9 +2287,9 @@ run, preparation admits the complete corpus and `--where` is then applied to the
 prepared read; the cached artifact never embeds the selection.
 
 The cache search validates and reads ROOT under a build's bounds and diagnostics,
-so an input a direct query handles can still make `--cache` fail. That failure is
-reported; the run does not fall back to direct execution. An explicitly
-addressed `--corpus` is likewise strict.
+so an input that a direct query handles can still make `--cache` fail. That
+failure is reported; the run does not fall back to direct execution. An
+explicitly addressed `--corpus` is likewise strict.
 
 A human-format query that prepares an artifact prints
 `prepared corpus: PATH` to stderr in every `--progress` mode. Reusing an
@@ -2320,7 +2334,7 @@ identity derivation are separate version axes. The required manifest field
 
 Analysis identity covers the analyzer's complete semantic configuration, not
 only the dictionary, so two builds that differ in Sudachi split mode or
-segmentation mode name two artifacts. NFC normalization includes its Unicode
+segmentation mode produce two distinct artifacts. NFC normalization includes its Unicode
 table version in the reader and analyzer identities. NFC artifacts with a
 missing or different table version must be rebuilt. The dictionary fingerprint
 is recorded for inspection.
@@ -2328,7 +2342,7 @@ is recorded for inspection.
 A second `corpus build` on unchanged input reuses that artifact without
 rebuilding and prints the same recorded inventory the publishing run printed,
 apart from the elapsed time; under `--json` the reuse carries its own fresh
-`run_id`, as every artifact report does. Changed input names a new sibling
+`run_id`, as every artifact report does. Changed input produces a new sibling
 artifact and never touches the existing one.
 
 Reuse does not test whether the canonical path exists. `corpus build` scans the
@@ -2342,7 +2356,7 @@ candidate; that is `corpus inspect --verify`. An unreadable sibling is reported
 and skipped rather than failing the run or hiding the realizations beside it.
 
 A directory at the canonical path whose recorded identity does not match is a hard
-error naming that path and the differing fields, not a rebuild. An explicit
+error reporting that path and the differing fields, not a rebuild. An explicit
 `--output` is taken as spelled, is never pre-scanned, and uses the same
 publication checks and filesystem fallback described for
 [`check --output-dir`](#pattern-diagrams).
@@ -2391,9 +2405,9 @@ builds or selects a realization, and it deletes only with `--prune`.
 "Beside" means the target's parent directory, for every kind of target. A
 realization is named with the source's own file name plus a suffix, so
 `corpus/` publishes to `corpus.g3.a1.<identity>.<trust>.lingcorpus` next to
-`corpus/`, never inside it. This is why the second example above names a
-directory. Scanning a directory that is not itself a corpus root reports on
-that directory as a root, which usually finds nothing.
+`corpus/`, never inside it. Because artifacts live beside the source root, the
+second example above passes a directory. Scanning a directory that is not itself
+a corpus root reports on that directory as a root, which usually finds nothing.
 
 Each difference is a named dimension: `source`, `reader`, `admission`,
 `analyzer`, `token_schema`, or `trust`. Reading one tree under two reader
@@ -2438,10 +2452,10 @@ The scan runs the same structural checks as `corpus inspect`, including
 component lengths, fixed headers and directory checksums. Each `--json` run
 emits one `lingrep.disk/v1` stream.
 
-A realization is *current* when it is the one `corpus build` would reuse for
-its source with the requested dictionary, analyzer, input format and Markdown
-reader options. Pass an analysis flag to classify with the requested settings,
-or pass `--current` to classify with the defaults from `corpus build`.
+A realization is *current* when it is the one that `corpus build` would reuse
+for its source with the requested dictionary, analyzer, input format, and
+Markdown reader options. Pass an analysis flag to classify with the requested
+settings, or pass `--current` to classify with the defaults from `corpus build`.
 Classification reads each source once to derive its identity. When neither
 option is supplied, readable realizations are `unclassified`.
 
@@ -2449,15 +2463,15 @@ Each realization has one status:
 
 | Status | Meaning |
 |---|---|
-| `current` | The realization `corpus build` would reuse with the given inputs. |
+| `current` | The realization that `corpus build` would reuse with the given inputs. |
 | `superseded` | A readable realization whose name matches its manifest and that `corpus build` would skip for the requested inputs. See `differences` and, when present, `kept_by_prune`. |
 | `unclassified` | A readable realization scanned without classification. |
 | `older_format` | An earlier artifact format. Rebuild it from source to use it with this version. |
 | `newer_format` | A later format or an unsupported manifest field. |
-| `damaged` | Its manifest or a component fails the validation `corpus inspect` runs. `kept_by_prune` is `damaged`. |
+| `damaged` | Its manifest or a component fails the validation that `corpus inspect` runs. `kept_by_prune` is `damaged`. |
 | `misnamed` | Readable, but its name records another identity or trust. `corpus build` does not reuse it. |
 | `symbolic_link` | A symbolic link with a canonical artifact name. |
-| `non_canonical_name` | A `.lingcorpus` directory with a name `corpus build` does not derive, such as an explicit `--output`. |
+| `non_canonical_name` | A `.lingcorpus` directory with a name that `corpus build` does not derive, such as an explicit `--output`. |
 
 A count table binds the analysis identity of the artifact it counts. Its
 `binding` is `current` or `superseded` when that artifact in `DIR` is,
@@ -2465,34 +2479,37 @@ A count table binds the analysis identity of the artifact it counts. Its
 binds it, and `absent` when no artifact in `DIR` records that identity; the
 artifact may exist elsewhere. An artifact binds a table whatever its name,
 including an explicit `--output` and the target of a symbolic link, and a
-`newer_format` or `damaged` canonical artifact binds the identity its name
+`newer_format` or `damaged` canonical artifact binds the identity that its name
 records.
 A table whose binding is `superseded` or `absent` is orphaned. Tables are
 found by their `header.json`, whatever their names. A `superseded` table that
-holds anything but the header and section files its format defines is
+holds anything but the header and section files that its format defines is
 `kept_by_prune: foreign_entries`.
 
 A leftover is a staging directory or lock file from a build that did not
 publish; an entry with such a name that is not a directory or a regular file
-respectively, such as a FIFO or a symbolic link, is not reported or opened. It is `live` while a process holds its lock, `abandoned` when its
-lock records this host and is free, and `unknown` otherwise: the lock file is
-missing or records another host. The next build of the same name on the same
-host removes abandoned leftovers; see the
+respectively, such as a FIFO or a symbolic link, is not reported or opened. It
+is `live` while a process holds its lock, `abandoned` when its lock records this
+host and is free, and `unknown` otherwise (when the lock file is missing or
+records another host). The next build of the same name on the same host removes
+abandoned leftovers; see the
 [deployment guide](deployment-guide.md#interrupted-corpus-builds) for the
-others. A leftover is also `interrupted_prune`: a realization or count table
-that `corpus prune --execute` renamed to the hidden name
-`.<name>.pruning-<suffix>` and did not finish deleting, reported with that
-path as `pruning` and its former name as `published_name`. `corpus build`
-does not read it, `ling table` and `ling serve --count-table` reject it, and
-the next `corpus prune --execute` deletes it, unless it holds anything but
-the components its manifest or table format lists, when it is kept as
-`foreign_entries`. With `--source`, a count table's leftover is reported when
-its header binds a realization of that source.
+others.
+
+A leftover can also be `interrupted_prune`: a realization or count table that
+`corpus prune --execute` renamed to the hidden name `.<name>.pruning-<suffix>`
+and did not finish deleting, reported with that path as `pruning` and its former
+name as `published_name`. `corpus build` does not read it, `ling table` and
+`ling serve --count-table` reject it, and the next `corpus prune --execute`
+deletes it unless it holds anything other than the components that its manifest
+or table format lists, in which case it is kept as `foreign_entries`. With
+`--source`, a count table's leftover is reported when its header binds a
+realization of that source.
 
 `--caches` adds the dictionary cache, which holds the decompressed copy of
 each `.dic.zst` dictionary that has been loaded, one record per copy. A copy
 is named by a hash of the compressed file's metadata, so the report cannot
-name the dictionary it came from. `--analyzer-dir DIR` adds the size of a
+identify the dictionary it came from. `--analyzer-dir DIR` adds the size of a
 `ling analyzer prepare` directory, and can be repeated.
 
 ### Pruning superseded artifacts
@@ -2523,36 +2540,39 @@ Other superseded and older-format realizations are kept, and listed as
 | `kept_table` | Removing these realizations would leave a count table kept for `foreign_entries` without a bound artifact in the scanned directory. See `message` for the table path. | never |
 | `damaged` | anything; it is `damaged`, and `message` gives the failure | never |
 
-A reader variant is typically the artifact another tool reads the same
-source into, such as `lingrep-web` with its Markdown reader policy, or a
-`ling` release with another admission policy. A source revision may still be
-served by a process that read the source before it was edited, and no rebuild
-reproduces it. An older-format manifest whose source identity differs may
-still analyze the current content, because an earlier `ling` may have derived
-the identity differently, so it is `source_unknown`. An artifact of
-another trust class is not one `corpus build` produces, so no local rebuild
+A reader variant is typically the artifact into which another tool reads the
+same source, such as `lingrep-web` with its Markdown reader policy or a `ling`
+release with another admission policy. A source revision may still be served by
+a process that read the source before it was edited, and no rebuild reproduces
+it. An older-format manifest whose source identity differs may still analyze the
+current content, because an earlier `ling` may have derived the identity
+differently, so it is classified as `source_unknown`. An artifact of another
+trust class is not one that `corpus build` produces, so no local rebuild
 replaces it.
-Without `--execute` it deletes nothing and lists each path with its apparent
-size and the total. With `--execute` it deletes the same set and reports the
-apparent size of each deletion. A deletion that fails ends the run: its
-`removal` record carries `failure`, the completion record counts it as
-`failed`, and the command exits with status 1. It deletes the count tables before the
-realizations they bind, and renames each table and realization to a hidden
-name before deleting it, so an interrupted or failed run leaves either the
-entry under its own name or an `interrupted_prune` leftover. Running it
-again, once the cause of a failure is removed, finishes the cleanup. A count
-table bound only to realizations it deletes that holds anything but its own
-files is kept as `foreign_entries`, and so are those realizations, as
-`kept_table`, so that no table is left bound to nothing. The stream contract is
-`lingrep.prune/v1`, with one `kept` record per superseded, older-format or
-damaged artifact, count table or interrupted prune it keeps, one `removal`
-record per path it deletes or attempts, and a completion record.
+
+Without `--execute`, `corpus prune` deletes nothing and lists each path with its
+apparent size and the total. With `--execute`, it deletes the same set and
+reports the apparent size of each deletion. A deletion that fails ends the run:
+its `removal` record carries `failure`, the completion record counts it as
+`failed`, and the command exits with status 1.
+
+`corpus prune --execute` deletes count tables before the realizations they bind,
+and renames each table and realization to a hidden name before deleting it, so
+an interrupted or failed run leaves either the entry under its own name or an
+`interrupted_prune` leftover. Running `corpus prune --execute` again after
+removing the cause of failure finishes the cleanup. If a count table bound only
+to realizations selected for deletion holds anything other than its own files,
+the table is kept as `foreign_entries` and those realizations are kept as
+`kept_table`, so no table is left bound to nothing. The stream contract is
+`lingrep.prune/v1`, with one `kept` record per retained superseded, older-format,
+or damaged artifact, count table, or interrupted prune, one `removal` record per
+deleted or attempted path, and a completion record.
 
 `corpus prune` uses the defaults from `corpus build` for omitted analysis
 flags. If a source has entries eligible for removal and has no current
 realization, the command exits with status 2 and leaves all entries in place.
 Pass `--keep ARTIFACT` to designate a readable, undamaged realization in the
-scanned directory for that source. Repeat the flag to protect additional
+scanned directory for that source. Repeat the flag to keep additional
 realizations.
 
 It never deletes the current or a kept artifact, an `unclassified`,
@@ -2579,17 +2599,17 @@ depends on the input format, because the name includes the reader identity. For
 a JSONL or plaintext root the two tools read identically and one artifact
 serves both. For a pandoc Markdown root, `lingrep-web` reads with
 conversion-artifact recovery enabled and `corpus build` reads without it; that
-setting is part of the reader identity, so the two tools name different
-artifacts for the same tree and each prepares its own.
+setting is part of the reader identity, so the two tools derive different
+artifact paths for the same tree and each prepares its own.
 
 Omitting `--output` costs one extra read-and-hash pass over the source before
 the build, because the destination name is derived from the source's observed
 identity together with the dictionary and reader identities; a different
-dictionary or section policy therefore names a different artifact. That pass
-tokenizes nothing. `corpus build --progress always` counts the sources that
-pass reads as `identity pass: read N sources`, and the sentences the build
-stores as `build pass: stored N sentences`; reusing an artifact runs no build
-pass.
+dictionary or section policy therefore produces a different artifact path. That
+pass tokenizes nothing. `corpus build --progress always` counts the sources that
+the identity pass reads as `identity pass: read N sources`, and the sentences
+that the build stores as `build pass: stored N sentences`; reusing an artifact
+runs no build pass.
 Passing `--output` skips it. By default, the build stages and publishes the
 artifact beside `ROOT`. The directory containing `ROOT` must therefore be
 writable. When `ROOT` is a directory, this means its parent directory. A
@@ -2599,16 +2619,16 @@ pass `--output` to write elsewhere.
 
 The canonical path derives from ROOT as spelled, not from a resolved path;
 `lingrep-web` also uses the unresolved spelling. So `corpus build corpus/` from
-`/data` and `corpus build /data/corpus` name the same artifact, while naming a
-symlink and naming its target name two. A root with no file name of its own
-(`.`, `..`, `/`) is resolved first.
+`/data` and `corpus build /data/corpus` resolve to the same artifact path, while
+passing a symlink and passing its target resolve to two different paths. A root
+with no file name of its own (`.`, `..`, `/`) is resolved first.
 
-Because the naming pass and the build pass read the source separately, a source
-edited between them yields an artifact named from the older content while
-recording the newer identity. Nothing is overwritten, and that artifact is
-never reused by mistake: a run that names the same path again detects the
-mismatched recorded identity and fails, while a run over the edited source names a
-fresh sibling.
+Because the identity pass and the build pass read the source separately, a source
+edited between them yields an artifact whose filename reflects the older content
+while recording the newer identity. Nothing is overwritten, and that artifact is
+never reused by mistake: a run that resolves to the same path again detects the
+mismatched recorded identity and fails, while a run over the edited source
+produces a fresh sibling.
 
 ### Reading sidecars for Markdown corpora
 
@@ -2622,14 +2642,14 @@ HTML and writes the result to a reading sidecar, a new directory at
 `--output`. A reader can then show a document, and highlight an occurrence in
 it, from the artifact and the sidecar alone, without the source tree.
 
-`--source-root` names the tree the artifact was built from, and the `--md-*`
-options must be the ones it was built with. The command rejects options whose
-reader identity differs from the artifact's with exit code 2. It reads the
-tree once to compute its source identity, and rejects a tree whose identity
-differs from the artifact's. It then reads each document again with the
+`--source-root` specifies the tree from which the artifact was built, and the
+`--md-*` options must match those used during the build. The command rejects
+options whose reader identity differs from the artifact's with exit code 2. It
+reads the tree once to compute its source identity, and rejects a tree whose
+identity differs from the artifact's. It then reads each document again with the
 Markdown reader and verifies the source identity of the bytes it renders. If
-those bytes differ from the observed source, or the sentences differ from
-the stored ones, the command fails and publishes nothing.
+those bytes differ from the observed source, or the sentences differ from the
+stored ones, the command fails and publishes nothing.
 
 The renderer applies the dialect's own rules first: frontmatter and `<!-- -->`
 comments are not rendered, `:::` regions become `<div>` elements carrying
@@ -2656,7 +2676,7 @@ at most 4,096 characters. Longer lines remain readable, without highlights.
 A sidecar records the artifact's analysis identity and source identity and
 the renderer revision. Two renders with the same three identities write
 identical bytes. `lingrep_corpus::ReadingSidecar::open` rejects a sidecar when
-any of the three differs from the caller's, and names the field that differs.
+any of the three differs from the caller's, and reports the field that differs.
 `corpus render` does not support `--json` or `--plan`.
 
 ## Tokenization and interactive workflows
@@ -2691,9 +2711,9 @@ ling coverage --dict-path "$LINGREP_DICTIONARY_PATH" --json \
 ```
 
 `coverage` counts, for each attribute in the selected analyzer's token schema,
-how many tokens have it **`present`** (set to a value other than `*`),
-**`unspecified`** (set to `*`, which UniDic supplies to mean "does not apply
-here"; a supplied value, so neither present nor absent) and **`absent`**
+how many tokens have it `present` (set to a value other than `*`),
+`unspecified` (set to `*`, which UniDic supplies to mean "does not apply
+here"; a supplied value, so neither present nor absent), and `absent`
 (unset). Every attribute is always reported, so a partially populated one is
 visible. Totality depends on the bound dictionary and the corpus, never on the
 attribute alone.
@@ -2742,26 +2762,29 @@ JSON Schema; selecting one contract returns its record schema together with
 stream ordering, coverage, pipe, and exit semantics.
 
 `doctor` checks only the inputs supplied to it. Without `--corpus`, `doctor`
-probes the default dictionary or the dictionary named by `--dict-path`. With
-`--corpus`, `doctor` probes a dictionary only when `--dict-path` names one,
+probes the default dictionary or the dictionary specified by `--dict-path`. With
+`--corpus`, `doctor` probes a dictionary only when `--dict-path` is given,
 because queries over a prepared corpus read its stored tokens. A supplied
 catalog is compiled and a supplied artifact is opened as separate probes, and
-`ready` reports whether every selected probe passed. When both a catalog and a
-readable dictionary are checked and the catalog's `analyzer:` declaration does
-not admit the dictionary, `doctor` writes `warning[dictionary_binding_mismatch]`
-to stderr, or a diagnostic record under `--json`, in the same form as `matches`.
-This warning does not change `ready`. When a
-catalog and a corpus are both supplied and both admitted, a derived **binding
-probe** follows: it binds the catalog against the corpus's stored token schema,
-the same set a `matches` run binds, and names every referenced attribute the
-corpus cannot supply (`ok`, with evidence), while a dependency `where` clause
-the corpus cannot satisfy fails the probe with the missing edge keys. Its corpus
-check is bounded structural admission, not payload hashing; use `corpus inspect
---verify` for full verification. Human output marks a passing probe as `warning`
-when the catalog compiled with warnings or the binding names unavailable
-attributes, and lists at most three attributes and three definitions for each;
-`--json` carries the complete evidence. Any failed probe exits 1 after all
-requested results are published.
+`ready` reports whether every selected probe passed. Its corpus check is
+bounded structural admission, not payload hashing; use `corpus inspect --verify`
+for full verification.
+
+When both a catalog and a readable dictionary are checked and the catalog's
+`analyzer:` declaration does not admit the dictionary, `doctor` writes
+`warning[dictionary_binding_mismatch]` to stderr, or a diagnostic record under
+`--json`, in the same form as `matches`. This warning does not change `ready`.
+When a catalog and a corpus are both supplied and both admitted, a derived
+**binding probe** follows: it binds the catalog against the corpus's stored
+token schema (the same set that a `matches` run binds) and lists every
+referenced attribute that the corpus cannot supply (`ok`, with evidence), while
+a dependency `where` clause that the corpus cannot satisfy fails the probe with
+the missing edge keys.
+
+Human output marks a passing probe as `warning` when the catalog compiled with
+warnings or the binding reports unavailable attributes, and lists at most three
+attributes and three definitions for each; `--json` carries the complete
+evidence. Any failed probe exits 1 after all requested results are published.
 
 `--plan` is available on `matches`, `summarize`, `tokenize`, `coverage`,
 `corpus build`, `corpus inspect`, `corpus inventory`, and
@@ -2779,8 +2802,8 @@ See [the TUI guide](tui-guide.md) and
 ## Serving several corpora from `lingrep-web`
 
 This section covers `lingrep-web`, the browser interface, because `--corpus`
-has a different meaning there: on `ling` it names a prepared V1 artifact to
-query, and on `lingrep-web` it declares a corpus the running server offers.
+has a different meaning there: on `ling` it specifies a prepared V1 artifact to
+query, and on `lingrep-web` it declares a corpus that the running server offers.
 `ling serve` runs the same server and accepts the same arguments as each
 `lingrep-web` command below. A `ling` built with `--no-default-features` has no
 `serve` subcommand.
@@ -2831,16 +2854,16 @@ owned:
   See [artifact recovery](deployment-guide.md#prepared-artifacts-and-how-bccwj-is-served)
   for error categories and recovery steps.
 
-Prefer `--corpus NAME=PATH` over `--input` for an artifact: the caption is the
-declared `NAME`, whereas `--input` captions a corpus by its file stem, and an
-artifact's stem is the whole content-addressed name.
+Use `--corpus NAME=PATH` instead of `--input` for an artifact: the caption is
+the declared `NAME`, whereas `--input` captions a corpus by its file stem, and
+an artifact's stem is the whole content-addressed name.
 
 `NAME` is the corpus key in a shareable link. It is constrained to
 `[A-Za-z0-9_-]`, at most 64 characters; it requires no URL escaping and exposes
 nothing about the filesystem. It is not a caption: a corpus file may be called
 `日本語コーパス.jsonl`, which is a valid filename and an invalid key. A
 repeated `NAME`, a missing `=`, and a name outside that alphabet are each
-rejected before the server starts. A duplicate error names the key and a
+rejected before the server starts. A duplicate error reports the key and a
 malformed-entry error quotes the whole argument, while an over-long or
 invalid-character error reports only the offending character or the
 64-character limit.
@@ -2852,7 +2875,7 @@ carrying `k=default` resolves to the `--input` corpus.
 `--input` itself is optional. The server requires at least one corpus from
 either flag; the first declared one is the default that the bare `/` resolves
 to. Declaring only `--corpus` entries therefore starts a server on which no
-corpus is keyed `default`, and a link naming `k=default` finds nothing.
+corpus is keyed `default`, and a link containing `k=default` finds nothing.
 
 `--input-format` is rejected once more than one corpus is declared, because it
 is a single global override and would be applied to every path:
@@ -2899,7 +2922,7 @@ entry) and never its path.
 ### Frequency view from count tables
 
 `--count-table PATH` serves a table written by `ling summarize --write-table`
-in the **Frequencies** view, at `frequencies` under the server's base path.
+in the Frequencies view, at `frequencies` under the server's base path.
 The flag is repeatable. Without it the view is absent and the workbench is
 unchanged.
 
@@ -2913,7 +2936,7 @@ ling serve --corpus works=works.lingcorpus --pattern-root patterns \
 A table binds to the declared prepared corpus whose analysis identity it
 records and to the catalog under `--pattern-root` whose fingerprint it records;
 neither the flag order nor the file name takes part. Startup stops with an
-error naming the table when the table cannot be read or does not verify, was
+error identifying the table when the table cannot be read or does not verify, was
 written by another matcher revision, matches no declared corpus or no catalog,
 counts a document the corpus does not hold, or counts the same catalog over the
 same corpus as another table:
@@ -2932,29 +2955,31 @@ for those files. The files are removed when the server releases the corpus
 index.
 
 The view presents a query as a sentence with controls for the catalog,
-pattern, document metadata conditions, sort order and substring filter. A key
-becomes a condition when every value is a number (a range) or when its scalar
-or list values repeat (a set to keep or to exclude). Categorical values are
-queried in bounded pages; the search box searches the complete vocabulary, and
-selected values remain available outside the first page. Each condition shows
-the number of occurrences that satisfy all conditions as a share of those that
-satisfy the other conditions. The page shows the corresponding `ling table …
---where …` command. The view applies its selected sort order and substring
-filter separately. For a pattern whose key has several fields, one input per
-field selects rows whose field equals the typed value exactly; the figures
-line then gives the subset's occurrences, documents and rows beside the whole
-pattern's total, a "Share of subset" column divides each row's count by the
-subset's occurrences, and the command adds the equivalent `--select` and
-`--key` options. Command paths are relative to the common parent directory of
-the table, corpus and catalog files; run the copied command from that directory.
-Absolute server paths are omitted. When the inputs share only the filesystem
-root, the command uses `TABLE.lingtable`, `CORPUS.lingcorpus` and `CATALOG.lx`;
-replace these with your local paths. A relative path containing `..` or a path
-that is not UTF-8 cannot be shown. A clause with `@section` or `@sentence` is
-rejected with an explanation because count tables store counts per document. The URL
-stores the query state, so a copied link reopens the same view. Above the
-sentence, a "Corpus:" line names the selected table's corpus on both the
-Frequencies and Compare pages.
+pattern, document metadata conditions, sort order, and substring filter. Above
+the sentence, a "Corpus:" line shows the selected table's corpus on both the
+Frequencies and Compare pages. A key becomes a condition when every value is a
+number (a range) or when its scalar or list values repeat (a set to keep or to
+exclude). Categorical values are queried in bounded pages; the search box
+searches the complete vocabulary, and selected values remain available outside
+the first page. Each condition shows the number of occurrences that satisfy all
+conditions as a share of those that satisfy the other conditions. The view
+applies its selected sort order and substring filter separately.
+
+For a pattern whose key has several fields, one input per field selects rows
+whose field equals the typed value exactly. The figures line then gives the
+subset's occurrences, documents, and rows beside the whole pattern's total, a
+"Share of subset" column divides each row's count by the subset's occurrences,
+and the shown command adds the equivalent `--select` and `--key` options.
+
+The page shows the corresponding `ling table … --where …` command. Command paths
+are relative to the common parent directory of the table, corpus, and catalog
+files; run the copied command from that directory. Absolute server paths are
+omitted. When the inputs share only the filesystem root, the command uses
+`TABLE.lingtable`, `CORPUS.lingcorpus`, and `CATALOG.lx`; replace these with
+your local paths. A relative path containing `..` or a path that is not UTF-8
+cannot be shown. A clause with `@section` or `@sentence` is rejected with an
+explanation because count tables store counts per document. The URL stores the
+query state, so a copied link reopens the same view.
 
 Selecting a row opens that entry. For each condition key, a chart shows the
 entry's occurrences and documents under each value, counted under the other
@@ -2964,12 +2989,12 @@ Categories show their 24 most frequent values, or the 12 most frequent and the
 chosen ones when there are more, and documents without a value get a "no
 value" bar. A range key gets one column per integer when its values are
 integers and its range holds at most 160 of them, and 40 equal columns
-otherwise. Each chart has a
-table of every shown value in full. Below the charts are the entry's lines,
-50 per page, which equal the records of the shown `ling matches --where … |
-jq` command, in the same order. The server takes the sentences to match from
-the table and fails the request if a document's lines do not add up to the
-table's count for it.
+otherwise. Each chart has a table of every shown value in full.
+
+Below the charts are the entry's lines, 50 per page, which equal the records of
+the shown `ling matches --where … | jq` command, in the same order. The server
+takes the sentences to match from the table and fails the request if a
+document's lines do not add up to the table's count for it.
 
 Selecting a line's node opens the line in its document. "Inspect tokens" opens
 the question page on the same corpus: it runs only the table's pattern of the
@@ -2984,40 +3009,43 @@ fails, or the browser's Back, returns to the entry with its exact key and
 conditions.
 
 Resting the pointer on a bar for 120 ms, or focusing it, previews its value as
-the key's condition: the other charts, the entry's figures and its lines
-redraw, and the sentence and the URL keep the committed conditions. A preview
+the key's condition: the other charts, the entry's figures, and its lines
+redraw, while the sentence and the URL keep the committed conditions. A preview
 draws no more rows than the committed charts and lines hold, so the page does
 not move. Clicking or tapping a bar sets the condition; the arrow keys move
-between bars; Escape or the back link returns to the table. A value name that
-does not fit shows a shorter form that replaces whole parts with one "…":
-parts end at 、, ・ or a space, a bracketed part counts as one, and brackets
-stay balanced. No two values of a chart show the same form. The full name is
-in the bar's accessible name, in the line under the chart's name for the bar
-last pointed at, focused or tapped, and in the chart's table.
+between bars; Escape or the back link returns to the table.
+
+A value name that does not fit shows a shorter form that replaces whole parts
+with one "…": parts end at 、, ・, or a space, a bracketed part counts as one,
+and brackets stay balanced. No two values of a chart show the same form. The
+full name is in the bar's accessible name, in the line under the chart's name
+for the bar last pointed at, focused, or tapped, and in the chart's table.
 
 Opening an entry requires a version 4 count table, whose surface keys preserve
 word boundaries. Rebuild an earlier table with this release's
-`ling summarize --write-table`; otherwise startup fails with an error naming it.
+`ling summarize --write-table`; otherwise startup fails with an error
+identifying it.
 
-The same tables serve the **Compare** page, at `compare` under the base path.
+The same tables serve the Compare page, at `compare` under the base path.
 It states two scopes, A and B, as a sentence with the Frequencies view's
 condition controls, one set per scope, or as two clauses through "Edit as
 clauses". It ranks one pattern's entries by G² as `ling contrast` does, 100 per
 page, and shows the `ling contrast --where … --versus …` command that
 reproduces the first page. Each row gives each scope's occurrences, rate per
-million tokens and documents, a bar from the centre toward the scope with the
+million tokens, and documents, a bar from the center toward the scope with the
 higher rate on a log2 scale shared by the shown rows, hatched for an entry
-absent from one scope, and G². Below the sentence the page gives each scope's
+absent from one scope, and G². Below the sentence, the page lists each scope's
 documents and tokens and states whether the scopes share documents, are
 identical, or are disjoint. A narrow screen keeps each scope's rate and drops
 its counts. The URL stores both scopes, so a copied link reopens the page.
 
 `--metadata-labels PATH` reads a JSON file of display labels for document
-metadata keys and string values, by locale. The question document, Frequencies
-and Compare name a condition by its label in the page's language; a key without a label in that language is named by the key,
-with spaces for underscores in English. The flag is repeatable. Labels change
-no clause: the address, the clause and the shown `ling table` command keep the
-keys. A label applies to the key it names in every served corpus.
+metadata keys and string values, by locale. The question document, Frequencies,
+and Compare display each condition using its label in the page's language; a
+key without a label in that language falls back to the raw key, with spaces for
+underscores in English. The flag is repeatable. Labels change no clause: the
+address, the clause, and the shown `ling table` command keep the keys. A label
+applies to the matching key in every served corpus.
 
 ```json
 {
@@ -3032,9 +3060,9 @@ keys. A label applies to the key it names in every served corpus.
 }
 ```
 
-`vocabulary`, `edition`, `source` and `licence` identify the labels and their
-terms and must not be empty. Each entry in `keys` names an `@document` key and
-gives non-empty labels under `en` or `ja`, the page's supported locales.
+`vocabulary`, `edition`, `source`, and `licence` identify the labels and their
+terms and must not be empty. Each entry in `keys` specifies an `@document` key
+and gives non-empty labels under `en` or `ja`, the page's supported locales.
 A key entry may also contain a `values` map, keyed by the exact stored string:
 `"values": {"lit": {"labels": {"en": "Literature", "ja": "文学"}}}`.
 A value-only entry may omit the key's `labels`. The question document shows
@@ -3044,10 +3072,11 @@ translations use the raw value; numbers and booleans keep their original types.
 Changing a label changes neither conditions nor prepared-corpus identity.
 Grouping and splitting values are outside this format.
 
-Startup stops with an error naming the file when it cannot be read, has an unknown or empty field, names a key, value or locale twice,
-gives two keys the same label in one locale, or labels a key that another file
-labels. If no corpus with a count table contains a labelled key, the server
-reports the key at startup and continues.
+Startup stops with an error identifying the file when it cannot be read, has an
+unknown or empty field, repeats a key, value, or locale, gives two keys the
+same label in one locale, or labels a key that another file labels. If no corpus
+with a count table contains a labeled key, the server reports the key at startup
+and continues.
 [`lingrep-web/labels/soranoha-catalog.json`](../lingrep-web/labels/soranoha-catalog.json)
 provides labels for every Soranoha catalog column in English and Japanese. The
 `lingrep` and `lingrep-web` Nix packages and the release archives install it as
@@ -3063,10 +3092,10 @@ lingrep=$(nix build --no-link --print-out-paths .#lingrep)
 ```
 
 Selecting a line of an entry opens its sentence in the document it belongs
-to, in a dialog over the lines, with the matched words marked in the colour of
+to, in a dialog over the lines, with the matched words marked in the color of
 the workbench's KWIC keyword. Escape, "Back to the lines" or the browser's
-Back closes the dialog and returns focus to the line, at the scroll position
-the lines had. The address holds the open occurrence as
+Back closes the dialog and returns focus to the line, at the previous scroll
+position. The address holds the open occurrence as
 `read=SENTENCE.START.END`, and `scope=paragraph` when the reader shows the
 paragraph, so a copied link or a reload reopens the reader. The workbench's
 reader keeps the same `read` and `scope` in its address; a link to it opens
@@ -3094,7 +3123,7 @@ artifact, `--input` or `--corpus NAME=PATH`, whose analysis identity it
 records. It must also record that corpus's source identity and this release's
 renderer revision. A corpus that `lingrep-web` prepares from a source tree
 takes no sidecar; build it with `ling corpus build` and serve the artifact.
-Startup stops with an error naming the sidecar when the sidecar cannot be read
+Startup stops with an error identifying the sidecar when the sidecar cannot be read
 or does not verify, records another source identity or renderer revision,
 matches no declared corpus, or renders the same corpus as another sidecar:
 
@@ -3113,9 +3142,9 @@ The reader shows the rendered document in its Document scope, which a line
 of the Frequencies view and the workbench's "Open document" open, under the
 same title, scope controls and document metadata as the stored-sentence
 reader. It loads about 64 KiB of rendered HTML around the occurrence, with
-buttons that load the text before and after. A note says when some or all of
-the occurrence's characters are not on the rendered page, such as table pipes
-or footnote markers, and when the occurrence is not marked because its
+buttons that load the text before and after. A note indicates when some or all
+of the occurrence's characters are absent from the rendered page, such as table
+pipes or footnote markers, and when the occurrence is not marked because its
 sentence exceeds the reader's 128 KiB limit. Under a workbench search scope,
 the text of excluded sentences is grey with a dashed underline. The
 Paragraph scope still shows the stored sentences. A corpus without a sidecar,

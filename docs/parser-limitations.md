@@ -1,23 +1,24 @@
 # lingrep patterns compiler limitations
 
-What the pattern language cannot express, and the budgets compilation enforces.
+This document lists what the pattern language cannot express and the budgets
+that compilation enforces.
 [pattern-language-reference.md](pattern-language-reference.md) defines the syntax.
 
 ## Regular context only
 
 lingrep patterns supports exact sentence anchors (`^`, `$`) and four non-consuming lookaround
 assertions: `preceded_by(E)`, `not_preceded_by(E)`, `followed_by(E)`, and
-`not_followed_by(E)`. Their bodies are regular lingrep patterns expressions, not single
-predicates — `preceded_by([upos=NOUN] [upos=VERB])` and `preceded_by([]{2,3})`
-both compile — and may nest lookaround to any depth. Captures and `same_as` are
-rejected inside a body. Because the bodies are regular, no unbounded
-backreference or recursive context is expressible.
+`not_followed_by(E)`. Their bodies are regular lingrep patterns expressions
+rather than single predicates, and they may nest lookaround to any depth. Both
+`preceded_by([upos=NOUN] [upos=VERB])` and `preceded_by([]{2,3})` compile.
+Captures and `same_as` are rejected inside a body. Because the bodies are
+regular, no unbounded backreference or recursive context is expressible.
 
 ## Strict source acceptance
 
 The compiler accepts only the CST shape produced by the pinned
 `tree-sitter-lingrep` revision. Tree-sitter recovery nodes (`ERROR` or `MISSING`)
-are compile errors; the compiler does not guess at recovered meaning. Every
+are compile errors; the compiler does not attempt error recovery. Every
 definition requires its terminal period.
 
 There is no quoted-value form; a literal that contains `.`, `(`, `)` or `|` is
@@ -46,6 +47,6 @@ defaults and cannot raise them.
 Two further budgets are specific to Boolean token tests and return their own
 codes rather than `LimitExceeded`: `TokenTestTooComplex` for the
 disjunctive-normal-form branch count, and `TokenTestExpansionTooLarge` for the
-node count reached while substituting `test` references — charged both per
-`[…]` and across the whole catalog. See
+node count reached while substituting `test` references (charged both per `[…]`
+and across the whole catalog). See
 [matcher architecture](fsm-development.md).

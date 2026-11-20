@@ -15,7 +15,8 @@ ling dictionary install novel      # any name from the table below
 and writes it to `$XDG_DATA_HOME/lingrep/dictionaries/`
 (`~/.local/share/lingrep/dictionaries/` when `XDG_DATA_HOME` is unset). `ling`
 loads the installed `cwj` when neither `--dict-path` nor
-`LINGREP_DICTIONARY_PATH` names a dictionary; pass any other with `--dict-path`.
+`LINGREP_DICTIONARY_PATH` specifies a dictionary; pass any other dictionary with
+`--dict-path`.
 
 To use a mirror, pass `--download-base URL` or set `LING_DOWNLOAD_BASE`;
 `URL/unidic-202512/` must contain the compressed dictionary assets from the
@@ -62,7 +63,7 @@ from NINJAL with `mecab-dic-converter`. Converting CWJ requires about
 
 `nix build .#vibrato-dictionaries.tests.digests` verifies the released files
 and the conversion from source against the BLAKE3 digests pinned in `flake.nix`,
-the same digests `ling dictionary install` checks. Run this check after updating
+the same digests that `ling dictionary install` checks. Run this check after updating
 `flake.lock`: a dictionary digest is part of the analysis identity of every
 corpus prepared with it.
 
@@ -70,6 +71,6 @@ corpus prepared with it.
 
 `--dict-path` also accepts a `.dic.zst`. The loader expands it into
 `~/.cache/vibrato-rkyv/` on first use and maps that copy, so the archive and
-the expansion both stay on disk. `dictionary_identity` is a digest over the
+the expanded file both stay on disk. `dictionary_identity` is a digest over the
 decompressed bytes, so a `.dic` and its `.zst` have the same identity and
 prepared corpora remain valid with either.

@@ -1,14 +1,14 @@
 # lingrep patterns language reference
 
-The exact spelling and meaning of every construct the compiler accepts. Read this
-before writing or editing a `.lx` catalog under `patterns/`, or when a pattern
-compiles but does not match intended tokens.
+This reference specifies the syntax and semantics of every construct that the
+compiler accepts. Read it before writing or editing a `.lx` catalog under
+`patterns/`, or when a pattern compiles but does not match intended tokens.
 
-For changing the syntax itself — the grammar lives in a second repository and a
-change requires both — see
-[pattern-language-co-development.md](pattern-language-co-development.md). For the
-tracked catalogs, which are the worked examples of nearly everything below, see
-`patterns/`.
+To change the syntax itself, see
+[pattern-language-co-development.md](pattern-language-co-development.md); the
+grammar lives in a separate repository and syntax changes require updates in
+both. For worked examples of nearly everything below, see the tracked catalogs
+under `patterns/`.
 
 ## Definitions
 
@@ -31,16 +31,16 @@ duplicate definitions, undefined references, and cycles are compile errors.
 ## Reserved names
 
 `pattern`, `fragment`, `lexicon`, `set`, `test`, `group`, `defaults`, `schema`,
-`analyzer`, and `labels` cannot name a bare definition: `schema := …` parses as
-the block keyword and is a syntax error. An explicit declaration avoids the
-collision — `pattern schema := …` is legal. `set`, `test`, `group`, `analyzer`,
-and `labels` also cannot be metadata keys. `metadata` and
-`begin` are not keywords and are legal names.
+`analyzer`, and `labels` cannot be used as bare definition names: `schema := …`
+parses as the block keyword and is a syntax error. An explicit declaration avoids
+the collision: `pattern schema := …` is legal. `set`, `test`, `group`, `analyzer`,
+and `labels` also cannot be metadata keys. `metadata` and `begin` are not
+keywords and are legal names.
 
 ## Sets
 
-A `set` names literals so `in` and `not in` can take the name: `set CONTENT :=
-{動詞, 助動詞}.` then `[unidic.pos1 not in @CONTENT]`. A set is a value, not a
+A `set` binds a set of literals to an identifier so `in` and `not in` can
+reference it: `set CONTENT := {動詞, 助動詞}.` then `[unidic.pos1 not in @CONTENT]`. A set is a value, not a
 definition: it carries no metadata and emits nothing. It is scoped to the
 accumulated catalog and resolves where a fragment reference does, so `@X` has
 exactly one referent whichever kind `X` is.
@@ -110,21 +110,21 @@ threshold and the number of values it selected. A [word-vector bundle](cli-usage
 
 ## Token tests
 
-A `test` names a token predicate so `[…]` can reference it: `test boundary :=
-text=\u3000.` then `[!@boundary]`. Inside `[…]`, `&`, `|`, `!` and parentheses
-form a complete Boolean algebra, binding `!` then `&` then `|`. Like a set, a
-test is a value, not a definition: it carries no metadata and emits nothing. It
-shares the one `@` namespace.
+A `test` binds a token predicate to an identifier so `[…]` can reference it:
+`test boundary := text=\u3000.` then `[!@boundary]`. Inside `[…]`, `&`, `|`,
+`!` and parentheses form a complete Boolean algebra, binding `!` then `&` then
+`|`. Like a set, a test is a value, not a definition: it carries no metadata and
+emits nothing. It shares the one `@` namespace.
 
 `!` is a true complement, which differs from `!=`. `!(unidic.pos1=動詞)` holds
 for a token with no `unidic.pos1`; `unidic.pos1!=動詞` does not, because a token
 lacking an attribute satisfies neither polarity of any operator. `!` takes only
-`(…)` or `@name` — `!unidic.pos1=動詞` is a syntax error — so a complement is
-always marked by a bracket or a reference.
+`(…)` or `@name`, so a complement is always marked by parentheses or a
+reference (`!unidic.pos1=動詞` is a syntax error).
 
 A `[…]` is normalized to disjunctive normal form. Two budgets apply, each with
-its own diagnostic: `TokenTestTooComplex` names the branch count, and
-`TokenTestExpansionTooLarge` names the node count reached while substituting
+its own diagnostic: `TokenTestTooComplex` reports the branch count, and
+`TokenTestExpansionTooLarge` reports the node count reached while substituting
 `test` references, charged both per token test and across the whole catalog.
 
 ### Attribute modes
@@ -140,7 +140,7 @@ none does. Use `~` to find a MISC entry by prefix, such as GiNZA's `Inf=`.
 
 Regex values use Rust `regex` syntax, not PCRE, and match one attribute value; an
 invalid regex is `InvalidRegex`. A regex operand with `=` or `!=` is a compile
-error — use `~`, or anchor it as `~ /\A(?:…)\z/` for a whole-value match. A token
+error; use `~`, or anchor it as `~ /\A(?:…)\z/` for a whole-value match. A token
 lacking the attribute satisfies neither polarity of any of these modes. `[]` is
 the any-token predicate: it constrains nothing and so matches every token,
 including one with no attributes set.
@@ -169,8 +169,8 @@ The compiler folds every `text` literal the same way: in `=`, `!=`, `in`,
 in a lexicon member read `by [text]`. `[text=ｶﾞﾗｽ]`
 and `[text=ガラス]` find the same tokens, `[text=ＮＨＫ]` finds `NHK`, and
 `[text=長～い]` finds 長〜い. Spellings that fold to one key, as in
-`{ＮＨＫ, NHK}`, are one set member. A literal the fold changes is reported as
-`FoldedLiteral`, naming both spellings. A lexicon match reports the member as
+`{ＮＨＫ, NHK}`, are one set member. A literal that the fold changes is reported as
+`FoldedLiteral`, showing both spellings. A lexicon match reports the member as
 written. The fold applies to `text` alone: `lemma`, `norm` and provider
 attributes are compared as written.
 
@@ -178,7 +178,7 @@ Every analyzer, and the CoNLL-U reader, publishes `surface` and the folded
 `text`. A corpus prepared before 0.9 lacks `surface` and carries `text`
 unfolded, so `[text=ＮＨＫ]` does not find a token spelled ＮＨＫ there.
 `matches` and `summarize` report `warning[text_unfolded]` for such a corpus,
-naming the definitions that compare `text`; rebuild it with `ling corpus
+listing the definitions that compare `text`; rebuild it with `ling corpus
 build`. A `surface` test over such a corpus binds as
 absent and reports `warning[attribute_unavailable]`.
 
@@ -188,12 +188,12 @@ U+E0100 城, `[text=葛城]` matches and `[surface=葛城]` does not.
 
 A regex on `text` is compiled as written, because folding a
 regex can change what it means: `[ｶﾞ]` is a class of two characters, ｶ and ﾞ,
-and neither occurs in the folded key ガ. A regex containing a character the
+and neither occurs in the folded key ガ. A regex containing a character that the
 fold changes is reported as `RegexNotFolded`, with its folded spelling for
 comparison; the folded `text` never contains that character. Write the regex
-in the folded form, or test `surface` for the exact spelling. The check reads the regex source, so an escape such as
-`\x{FF5E}` is not reported. A bare token literal cannot contain a character
-the fold changes.
+in the folded form, or test `surface` for the exact spelling. The check reads
+the regex source, so an escape such as `\x{FF5E}` is not reported. A bare token
+literal cannot contain a character that the fold changes.
 
 Vibrato and Sudachi analyze the same folded text, except that they keep
 full-width ASCII and keep a CJK compatibility ideograph inside an occurrence
@@ -201,8 +201,8 @@ of a dictionary surface that contains it, such as 臭氣 with U+FA5C.
 
 ### Unquoted values and escapes
 
-There is no quoted-value form. An unquoted literal — in `=`, `!=`, `~`, `!~`,
-`in`, `not in`, and a `set` member — does not accept a bare `.`, `(` or `)`, so
+There is no quoted-value form. An unquoted literal (in `=`, `!=`, `~`, `!~`,
+`in`, `not in`, and `set` members) does not accept a bare `.`, `(`, or `)`, so
 `[text=a.b]` and `set S := {a.b}.` are both `error[Syntax]`. Two escapes are
 decoded in all of those positions: `\uXXXX` (exactly four hexadecimal digits) and
 `\\` (one backslash). Every other `\x` is a compile error. `[text=a\u002eb]` and
@@ -214,14 +214,14 @@ Two spellings are rejected with their own diagnostics:
 
 - An unquoted value is terminated by `&` and not by `|`, so `[text=a|text=b]` is
   one atom whose value is the literal `a|text=b`. The compiler rejects it
-  (`PipeInBareValue`) and names both recoveries: `\u007C` for a literal pipe, or
+  (`PipeInBareValue`) and reports both recoveries: `\u007C` for a literal pipe, or
   spacing (`[text=a | text=b]`) for a disjunction.
 - Metadata quotes every value and a token test quotes none, so `[text="の"]`
   would test for the three-character literal `"の"`. The compiler rejects it
   (`QuotedAttributeValue`) and reports the unquoted spelling and `\u0022` for a
-  literal quote character. The quotes a Japanese IME or word processor types
-  are rejected the same way: `“…”` and `”…”`, `‘…’`, `「…」`, `『…』`, `＂…＂` and
-  `＇…＇`, each with its own `\uXXXX` escapes.
+  literal quote character. The quotes that a Japanese IME or word processor
+  types are rejected the same way: `“…”` and `”…”`, `‘…’`, `「…」`, `『…』`,
+  `＂…＂`, and `＇…＇`, each with its own `\uXXXX` escapes.
 
 The compiler normalizes literal values, `set` and lexicon members, and bare
 token literals to Unicode NFC, except a literal compared with `surface`. The
@@ -248,7 +248,7 @@ before it is stale.
 
 Syntax is ASCII. When a syntax error's span contains a full-width character
 (U+FF01 to U+FF5E, such as `［` or `＝`) or the ideographic space U+3000, the
-error carries a note at that character naming its ASCII replacement.
+error carries a note at that character showing its ASCII replacement.
 
 ## Operators and precedence
 
@@ -301,10 +301,10 @@ captures and `same_as` are forbidden inside.
 
 Without a scope, a lookaround reads only the current sentence. With
 `, within=document`, as in `followed_by([text=。] [upos=NOUN], within=document)`,
-the body may also match tokens of the neighbouring sentences of the same
+the body may also match tokens of the neighboring sentences of the same
 document, and `^` and `$` inside it hold at the boundaries between sentences.
 With `, within=KIND`, where `KIND` is a division kind such as `paragraph` or
-`section`, the neighbours are the sentences of the same innermost division of
+`section`, the neighbors are the sentences of the same innermost division of
 that kind; for a sentence in no such division, the lookaround reads only that
 sentence. When the corpus observes no division of that kind, the lookaround
 reads only the current sentence. `ling matches` and `ling summarize` then report
@@ -396,9 +396,8 @@ choose independently: in `span(chunk, $a -> $b), span(chunk, $a -> $c)`,
 two different overlapping chunks containing `$a` can witness the two edges.
 A span-only clause works with the span layer alone, including on a corpus
 without token dependency attributes. A sentence missing the requested layer
-yields no matches for that definition and produces no warning of its own. When
-no sentence of a `ling matches` or `ling summarize` run carries the layer, the
-run ends with `warning[span_kind_unavailable]`, which names the definitions.
+yields no matches for that definition and produces no warning of its own. When no sentence of a `ling matches` or `ling summarize` run carries the layer,
+the run ends with `warning[span_kind_unavailable]`, which lists the definitions.
 Other definitions can still match. If the catalog also contains token dependency
 clauses, those require a corpus schema with `dep.head` and `dep.rel` before
 matching starts.
@@ -467,7 +466,7 @@ word without a string-set attribute holds no member of it, so
 count satisfies no range, including `{0}` and `{0,}`. Write a range directly
 without `not`.
 
-To **measure** the count for every head, bind it with `as` and use the
+To measure the count for every head, bind it with `as` and use the
 bare binding in `key:` for a histogram. Each verb contributes one record.
 The JSON graph binding carries a number, including zero, or `null` when
 the count is unknown. An unknown value leaves the key unfilled.
@@ -484,9 +483,8 @@ pattern nominal_load := (?<v> [upos=VERB])
 `$head -[labels]-> $dependent` holds when the dependent token's `dep.rel` is
 matched by the bracket and its `dep.head` designates the head capture's token.
 Both operands must be captures of statically exactly one token, except for the
-binder form below. A fragment may
-not declare a clause, an operand may not name itself, and each violation has its
-own diagnostic.
+binder form below. A fragment may not declare a clause, an operand may not
+reference itself, and each violation has its own diagnostic.
 
 `not $head -[labels]-> $dependent` holds when both captures bind and no matching
 edge connects their final token assignments. It requires the complete
@@ -508,32 +506,31 @@ Each binding is a separate match, so `edge` matches every basic edge of the
 sentence once, regardless of the distance or order between head and dependent.
 A token whose `dep.head` is `0`, missing, unparseable, or outside the sentence
 contributes no edge, and the sentence root cannot be bound. A key reads a binder's `text`,
-`lemma`, `upos`, `xpos`, `node.id` and `node.kind`. Only one endpoint of an edge
-may be a binder, and the form has no `not` polarity. A later edge may name an
-earlier binder as `$name`, so one clause can bind every word of a connected
-subtree that is reached from one surface capture. The binders of basic edges bind
-distinct words, and none binds the token of a surface capture that a basic edge
-names.
+`lemma`, `upos`, `xpos`, `node.id` and `node.kind`. Only one endpoint of an edge may be a binder, and the form has no `not`
+polarity. A later edge may reference an earlier binder as `$name`, so one clause
+can bind every word of a connected subtree that is reached from one surface
+capture. The binders of basic edges bind distinct words, and none binds the
+token of a surface capture that a basic edge references.
 
 Graph enumeration has a [sentence-scoped resource budget](fsm-development.md#supported-architecture).
 A search that exceeds it fails with `graph_assignment_limit`; no truncated set
 of assignments is returned as a successful result. Narrow the token or graph
 predicates, or add ordering constraints between binders to reduce enumeration.
 
-The bracket is either `*`, meaning any present basic `dep.rel`, or one or more
+The bracket contains either `*` (any present basic `dep.rel`) or one or more
 terms joined by `|`. The any-label form is written `-[*]->`, does not match a
 missing `dep.rel`, and cannot be combined with other terms.
 
-A term is a literal label — exact and subtype-included, `obl:tmod` — or a `@name`
-reference to a `set` declaration, resolved exactly where `[x in @S]` resolves, so
-`-[@SUBJ|expl]->` is legal. A literal may carry `*` in the subtype position:
-`-[obl:*]->` matches any subtype of `obl`, and not bare `obl`. Write
+A term is a literal label (exact or subtype-qualified, such as `obl:tmod`) or a
+`@name` reference to a `set` declaration, resolved exactly where `[x in @S]`
+resolves, so `-[@SUBJ|expl]->` is legal. A literal may carry `*` in the subtype
+position: `-[obl:*]->` matches any subtype of `obl`, and not bare `obl`. Write
 `-[obl|obl:*]->` for either.
 
 `key: [$d.dep.rel]` publishes the label that matched, because a token carries
-exactly one `dep.rel`. The matched label is available this way only on a dependent
-operand — `$v.dep.rel` on a head-only capture is that token's own relation to its
-head.
+exactly one `dep.rel`. The matched label is available this way only on a
+dependent operand. On a head-only capture, `$v.dep.rel` is that token's own
+relation to its head.
 
 A multi-label bracket is one disjunctive constraint, not an independent count for
 every member. Candidates admitted by its labels compete in the definition's
@@ -587,10 +584,10 @@ pattern argument_edge := (?<d> []) where (?<v> [upos=VERB]) -[nsubj|obj]-> $d.
 
 The clause's own diagnostics:
 
-- `DuplicateRelationLabel` names a term repeated in one bracket, after set
+- `DuplicateRelationLabel` reports a term repeated in one bracket, after set
   expansion.
-- `InvalidRelationLabel` names a `set` member that is not a well-formed label.
-  A set names arbitrary literals, so `set S := {動詞}.` is legal and `-[@S]->` is
+- `InvalidRelationLabel` reports a `set` member that is not a well-formed label.
+  A set holds arbitrary literals, so `set S := {動詞}.` is legal and `-[@S]->` is
   not.
 - A `@name` that resolves to a definition or a `test` produces `UndefinedReference`.
   The diagnostic reports the kind found, as in the `in` case.
@@ -600,7 +597,8 @@ The clause's own diagnostics:
 - `WhereContradictoryExistence`: a positive and negative anonymous constraint
   share a head and the negative label set covers the positive set. A positive
   captured edge counts as positive too. Mere overlap is satisfiable through a
-  positive label outside the exclusion. Subtype coverage is semantic — `obl:tmod` is covered by `obl:*`, while bare `obl` is not. Two
+  positive label outside the exclusion. Subtype coverage is semantic: `obl:tmod`
+  is covered by `obl:*`, while bare `obl` is not. Two
   negative constraints remain legal. A captured negative constraint contradicts
   a positive captured edge only when both endpoints match and its labels cover
   the positive labels.
@@ -608,14 +606,14 @@ The clause's own diagnostics:
   capture in an alternation branch binds only when that branch is taken, so
   `((?<a> …) | (?<b> …)) where $a -[obj]-> $b` can never bind both. It applies to
   the whole clause, not per constraint, because `$c -[x]-> $a, $c -[y]-> $b`
-  fails for the same reason. An alternation under a quantifier that can repeat
-  it — `+`, `*`, `{2,4}` — stays legal, because two iterations can take two
+  fails for the same reason. An alternation under a repeating quantifier
+  (`+`, `*`, `{2,4}`) stays legal, because two iterations can take two
   branches; under `?` it is rejected.
 
 ### Ordering against publication
 
-The clause filters candidate matches before keep-longest publication filtering —
-a shorter passing candidate survives a longer failing one — and before policy.
+The clause filters candidate matches before keep-longest publication filtering
+and before policy, so a shorter passing candidate survives a longer failing one.
 An assignment that fails the clause does not hide a passing assignment reaching
 the same position.
 
@@ -624,7 +622,7 @@ morphology-only corpus is rejected by name before matching. Only basic edges are
 consulted; `dep.enhanced` is not.
 
 Optional captured edges, negated labels and dependency paths are unsupported. `patterns/ud-dependency.lx` is the tracked exemplar; its
-`verbal_argument` carries all three term forms in one bracket —
+`verbal_argument` carries all three term forms in one bracket:
 `-[@CORE_ARGUMENT|obl|obl:*]->`. `patterns/ud-object-realization.lx` exercises
 anonymous existence. `patterns/double-wo-dep.lx` expresses `double-wo.lx`'s
 candidate set over dependencies: one pattern over a shared skeleton fragment, two
@@ -658,27 +656,31 @@ verb := (?<v> [upos=VERB])
 | `tree(LAYER).boundaries.open_links` | Links crossing each unit boundary, including the two sentence edges with load zero. The maximum is zero for a singleton. |
 
 Choose `word` for the basic dependency tree or `bunsetsu` for annotated
-bunsetsu ordered by surface position. A tree needs one root and a path to it
-from every unit. Bunsetsu must partition the sentence and their root must
-contain an observed root word. Punctuation and skipped tokens retain their
-positions. `count`, `mean` and `max` reduce numeric collections; `count`
-also accepts the collection itself.
+bunsetsu ordered by surface position. A valid tree has one root and a path to
+that root from every unit. Bunsetsu must partition the sentence and their root
+must contain an observed root word. Punctuation and skipped tokens retain their
+positions. `count`, `mean`, and `max` reduce numeric collections; `count` also
+accepts the collection itself.
 
 JSON match records publish a binding of kind `measure` with its name, numeric
-value and status. An observed value has status `ok`. The count of an observed
+value, and status. An observed value has status `ok`. The count of an observed
 empty selection is zero; its mean and maximum have status `empty`. A missing
-layer or capture gives `unavailable`, and so does a test that is undecided
-on a word, by the rule for [dependent counts](#counting-direct-dependents); a partially
-annotated or inconsistent tree gives `invalid_tree`. These three statuses
-carry a null value. Using such a binding in `key:` leaves the record unkeyed;
-`ling summarize` reports how many records had no key.
+layer or capture gives `unavailable`, as does a test that is undecided on a word
+under the rule for [dependent counts](#counting-direct-dependents). A partially
+annotated or inconsistent tree gives `invalid_tree`. These three non-`ok`
+statuses carry a `null` value. Using such a binding in `key:` leaves the record
+unkeyed; `ling summarize` reports how many records had no key.
+
 `measure count($v -[L]-> [T])` counts the links that `where $v -[L]-> [T] as $n`
-counts. They differ on a sentence whose dependencies are not one tree: the
-measure is `invalid_tree`, and the `where` count reads the edges present. Measures are published
-in JSON match records only. When a pattern with `interpret` entries has
-several readings of one occurrence, readings with the same measures share a
-record and readings with different measures are separate records.
-A `where` dependency prerequisite still applies when the pattern has one.
+counts. They differ on a sentence whose dependencies do not form a single tree:
+the measure returns `invalid_tree`, while the `where` count reads the edges
+present.
+
+Measures are published in JSON match records only. When a pattern with
+`interpret` entries has several readings of one occurrence, readings with the
+same measures share a record and readings with different measures appear as
+separate records. Any `where` dependency prerequisite still applies when the
+pattern has one.
 
 ## Enhanced graph constraints
 
@@ -702,7 +704,7 @@ capture or graph binding and publishes no identity. Missing, malformed, root, an
 out-of-range heads produce no endpoint. Either polarity may use it; incomplete
 enhanced observation proves neither presence nor absence.
 
-`as $edge` optionally names the exact enhanced edge. Unnamed parallel edges are
+`as $edge` optionally binds a name to the exact enhanced edge. Unnamed parallel edges are
 existential, while named parallel edges publish distinct complete assignments.
 
 `not ENDPOINT -[enhanced labels]-> ENDPOINT` is the only negative form: each
@@ -740,7 +742,7 @@ empty-node motifs without declaring every absence an annotation error.
 
 Use `interpret $capture as role {labels}` when alternative readings of the
 same match matter. Give each capture one public role. Several captures may
-supply the same role. Add `classify by role` to project that role’s labels
+supply the same role. Add `classify by role` to project that role's labels
 onto the whole reading. Both declarations apply to the following pattern.
 
 ```pattern
@@ -759,7 +761,7 @@ occurrence. Classification collects the distinct values of each label on the
 designated role within that reading. If the designated role is absent from a reading, its classification is omitted. Fragment references can supply captures; the public role
 name comes from the declaration on the emitting pattern.
 
-`ling matches --json` publishes the readings in the match’s `interpretations`
+`ling matches --json` publishes the readings in the match's `interpretations`
 array. Ordinary match counts still count that record once. To count each
 interpretation by voice in this example, pipe the JSONL through:
 
@@ -769,7 +771,7 @@ jq -r 'select(.type == "match") | .data.interpretations[]? | .classification.voi
 ```
 
 Interpretation extraction supports token tests, named captures, sequences,
-alternation and repetition. A `where` clause filters each reading with its own capture assignments and the published graph bindings. Role declarations name surface captures. Extraction is bounded
+alternation and repetition. A `where` clause filters each reading with its own capture assignments and the published graph bindings. Role declarations reference surface captures. Extraction is bounded
 per sentence. Exceeding a resource limit fails the query before that sentence
 is published. The Workbench hit inspector shows the same roles and classifications.
 
@@ -802,24 +804,25 @@ pattern ようである := [text=よう] [lemma=だ].
 
 Values are typed by the grammar: `string`, `number`, `boolean`, `list`, and `map`.
 Strings are always quoted; the only unquoted tokens are `true`, `false`, numbers,
-and `none`. There is no `null`; omit the key instead. In a definition’s
+and `none`. There is no `null`; omit the key instead. In a definition's
 annotation run, `KEY: none` removes a file default, and `override KEY: none`
 removes a bundle value.
 Using `none` without an inherited value or inside a list or map is a compile error.
 
 Without a `schema` block, any key is accepted. A `schema` block closes the
 catalog's descriptive key set, so an undeclared key is rejected; an empty `schema`
-block closes it to compiler-owned keys alone. A declaration names one of the
-five value types; `map` admits any map, whatever its keys. Compiler-owned keys —
-`output_name`, `groups`, `priority_order`, `key`, `skip`, `publish`, `transform`, `tags`,
-`render`, `dictionary`, `anchor`, `within_span`, `span_dependency` and `max_nesting` — are admitted without
-declaration and are an error to declare. `examples` and `counterexamples` are
-authored content, not compiler-owned, and stay declarable. A `pattern` or
-`fragment` prefix scopes `required`, so a key can be obligatory on patterns and
-absent from every fragment. Declared keys do not affect matching.
+block closes it to compiler-owned keys alone. A declaration specifies one of the
+five value types; `map` admits any map, whatever its keys. Compiler-owned keys
+(`output_name`, `groups`, `priority_order`, `key`, `skip`, `publish`,
+`transform`, `tags`, `render`, `dictionary`, `anchor`, `within_span`,
+`span_dependency`, and `max_nesting`) are admitted without declaration, and
+declaring any of them in `schema` is a compile error. `examples` and
+`counterexamples` are authored content, not compiler-owned, and stay declarable.
+A `pattern` or `fragment` prefix scopes `required`, so a key can be obligatory
+on patterns and absent from every fragment. Declared keys do not affect matching.
 
 Diagnostics about a metadata value point at the key that carried it. A defect in
-the definition — a fragment declaring publication policy at all — points at the
+the definition (such as a fragment declaring a publication policy) points at the
 definition.
 
 `ling summarize --by-section --pattern-filter KEY=VALUE` selects published
@@ -852,9 +855,10 @@ their own namespace and must be unique in the file. Start an annotation run
 with one `use @name`. File defaults apply first, followed by bundle values
 and then local annotations. A local entry can repeat the same value. To change
 or remove a bundle value, write `override slot: "other"` or
-`override slot: none`. An override must name a key the selected bundle supplies.
-Removal also suppresses any file default for that key. The schema checks the
-effective metadata of each definition, including required keys after removal.
+`override slot: none`. An override must reference a key that the selected bundle
+supplies. Removal also suppresses any file default for that key. The schema
+checks the effective metadata of each definition, including required keys after
+removal.
 
 Compiler-owned keys such as `key`, `skip`, and `output_name` must stay outside
 bundles. Applying a bundle to a fragment annotates that fragment alone.
@@ -899,7 +903,7 @@ pattern for_example := [text=for] [text=example].
 the pattern, `[]` included, matches a skipped token, and neither a match nor a
 capture starts or ends on one; spans and captures report sentence positions.
 Lookarounds, `^` and `$` step over skipped tokens, so `^ [text=well]` matches
-after a leading quote. A `within=` lookaround reads neighbouring sentences up
+after a leading quote. A `within=` lookaround reads neighboring sentences up
 to the body's maximum width before skip rewriting. Skipped tokens count toward
 that limit: under `skip: @dropped`, `preceded_by([text=yes], within=document)`
 holds after a previous sentence that ends in `yes` but not after one that ends
@@ -916,8 +920,8 @@ is a pattern with `skip:` that references another definition or uses
 
 `publish:` lists token attributes every record must carry, without testing them.
 A run publishes only the catalog's tested attributes, `text`, and what its policy
-projects; name any other attribute a consumer requires here instead of writing a
-predicate for it. An attribute the corpus does not supply draws the ordinary
+projects; list any other attribute a consumer requires here instead of writing a
+predicate for it. An attribute that the corpus does not supply draws the ordinary
 `warning[attribute_unavailable]`. Like `key:`, it is declared per definition and
 unioned across the catalog.
 
@@ -940,9 +944,9 @@ Without a scope, a span rewrite narrows the record span and discards every
 capture outside that span. The discarded captures usually include the capture
 that the transform was written for. A scoped step rewrites only its own
 capture: the record span, the sibling captures, and any capture nested inside
-are unchanged. A scope naming a capture the match did not bind has no effect.
-`substitute`'s `component:` names an edge — `first` or `last` — of whichever
-span the scope selected; `span` and a `$capture` component are rejected.
+are unchanged. A scope referencing a capture that the match did not bind has no
+effect. `substitute`'s `component:` selects an edge (`first` or `last`) of the
+scoped span; `span` and a `$capture` component are rejected.
 `patterns/npv-collocation.lx` is the tracked exemplar.
 
 A `substitute` with no later `join` is rejected unless a `key:` projects the
@@ -977,9 +981,9 @@ subject `patterns` selects ordinary patterns and excludes lexicons.
 
 ## Label sets
 
-A `labels:` entry declares, per attribute, the label set the file's literals
-belong to. It precedes every annotation and definition, and a file has at most
-one.
+A `labels:` entry declares, per attribute, the label set to which the file's
+literals belong. It precedes every annotation and definition, and a file has at
+most one.
 
 ```pattern
 labels: {
@@ -1013,7 +1017,7 @@ for different schemes.
 
 A `matches` or `summarize` run also counts, over the sentences it reads, the
 tokens whose value of a declared attribute is outside its set, and reports them
-after the run as `warning[label_outside_declared_set]`, naming up to eight
+after the run as `warning[label_outside_declared_set]`, listing up to eight
 values with token counts. The warning does not change the exit status. Such
 values show that the corpus uses labels outside the catalog's scheme, as when a
 ClearNLP catalog runs over a UD parse and its `dobj` tests match nothing.
@@ -1045,21 +1049,21 @@ ordinary emitting patterns and excludes lexicons.
 
 `%group` membership is the union of `groups:` lists and derived `group`
 declarations, so a definition may be selected by several statements. A
-declaration — `group upper_layer := layer in {"S1", "S2", "S3"}.` — derives
+declaration such as `group upper_layer := layer in {"S1", "S2", "S3"}.` derives
 membership from a metadata predicate over the emitting definitions: `=`/`!=`
 take one quoted string, `in`/`not in` a braced set, and every form is existential
 and two-valued over presence, so a definition lacking the key or carrying a
 non-string value is a member of no form. `partition:`, by contrast, rejects a
 non-string value.
 
-Naming a derived group in a literal `groups:` list is a compile error
+Listing a derived group in a literal `groups:` list is a compile error
 (`LiteralEntryForDerivedGroup`); a second declaration of one name is
 `DuplicateGroupDefinition`. Derivation considers emitting definitions only, so a
 derived group never contains a fragment; it can contain a lexicon whose metadata
 satisfies the predicate. Group names are their own `%` namespace, shared with
 nothing `@` resolves.
 
-A group has no effect until a statement names it. A declared group whose
+A group has no effect until a statement references it. A declared group whose
 predicate selects nothing still resolves and draws the empty-subject warning.
 
 ### Rank and partition
@@ -1106,7 +1110,7 @@ matches":
 | Value | The run executes |
 |---|---|
 | `catalog` (default) | the block as written |
-| `keep` | the block without its `resolve` statements; a later statement with `evidence: current` then sees the records a `resolve` would have dropped |
+| `keep` | the block without its `resolve` statements; a later statement with `evidence: current` then receives the records that `resolve` would have dropped |
 | `longest` | the block, followed by `resolve patterns rank: [longest, start, end, pattern].` when the block declares no `resolve`; a block with a `resolve` runs as written |
 
 All three retain per-start longest-candidate selection within each definition.
@@ -1135,8 +1139,8 @@ end
 ```
 
 The sentence-final distance and the `という` rule are two `admit`s over one
-anchor. `%upper_layer` is derived — `group upper_layer := layer in {"S1", "S2",
-"S3"}.` — while `aspect`, `trailing_copula` and `s0_conditional` are literal
+anchor. `%upper_layer` is derived (`group upper_layer := layer in {"S1", "S2",
+"S3"}.`), while `aspect`, `trailing_copula`, and `s0_conditional` are literal
 `groups:` lists: they are curated memberships, not functions of any metadata key.
 
 ### Anchors

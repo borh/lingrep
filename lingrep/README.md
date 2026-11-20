@@ -16,10 +16,16 @@ Corpus work:
 ```text
 ling matches
 ling summarize
+ling table
+ling contrast
 ling tokenize
 ling coverage
 ling explore
-ling corpus build|inspect|inventory|variants
+ling serve
+ling corpus build|inspect|inventory|variants|disk|prune|render
+ling neighbors
+ling dictionary install
+ling analyzer prepare
 ```
 
 Catalog and interface discovery:
@@ -43,9 +49,9 @@ language reference.
   prepared artifact. Add `--cache` to build and reuse one.
 - Human-readable output is the default. Use `--json` or a command's supported
   `--tsv` mode for versioned machine output.
-- Omitted roots are errors; pass `-` explicitly for stdin.
-- `--corpus` with a prepared `.lingcorpus` artifact rejects `--dict-path`,
-  because the artifact already contains analyzed tokens.
+- Omitting a corpus root is an error; pass `-` explicitly for stdin.
+- Queries using `--corpus` with a prepared `.lingcorpus` artifact reject
+  `--dict-path`, because the artifact already contains analyzed tokens.
 
 Use `ling contracts` to inspect stable machine-output contracts and
 `ling describe COMMAND` for arguments, examples, and contracts owned by a

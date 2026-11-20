@@ -1,6 +1,6 @@
 # Gravity analysis as an external program
 
-Gravity is a corpus-level calculation, not a lingrep patterns matcher primitive.
+Gravity is a corpus-level calculation performed outside the lingrep matcher.
 A lingrep patterns catalog selects the tokens to analyze; an external program
 computes adjacent-pair frequencies and gravity scores. The repository includes
 [`examples/gravity.py`](../examples/gravity.py) as that integration example.
@@ -25,7 +25,7 @@ adjacent pair, in lexical pair order. Ranking, thresholding, chain formation,
 and presentation are left to the calling analysis workflow.
 
 The script accepts only a complete `ling` run with full coverage and EOF
-termination, and rejects a failed, cancelled, or limited upstream query.
+termination, and rejects a failed, canceled, or limited upstream query.
 
 ## Scope and resource boundary
 
