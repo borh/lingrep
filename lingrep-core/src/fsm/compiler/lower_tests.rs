@@ -759,13 +759,13 @@ fn lowers_all_regular_lookaround_forms_with_direction_polarity_body_and_span() {
 
 #[test]
 fn rejects_unknown_capture_projection_at_the_projection_name() {
-    let source = "pattern p := (?<unit> a) same_as($unit, by=surface).";
-    let start = source.find("surface").expect("fixture has projection");
+    let source = "pattern p := (?<unit> a) same_as($unit, by=form).";
+    let start = source.find("form").expect("fixture has projection");
     assert_diagnostic(
         source,
         &CompileLimits::default(),
         DiagnosticCode::Syntax,
-        start - 5..start + "surface".len(),
+        start - 5..start + "form".len(),
     );
 }
 

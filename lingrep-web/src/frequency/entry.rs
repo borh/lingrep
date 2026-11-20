@@ -81,7 +81,10 @@ impl EntryMatcher {
                         .matcher
                         .execution_attributes()
                         .into_iter()
-                        .chain(std::iter::once(text.clone())),
+                        .chain(std::iter::once(text.clone()))
+                        .chain(lingrep_core::token_match::display_surface_attributes(
+                            &schema,
+                        )),
                 )
                 .map_err(|error| error.to_string())?;
             Ok((
@@ -209,7 +212,6 @@ fn record_group<'r>(
     policy: &CatalogPolicy,
     record: &RecordView<'r>,
     sentence: &dyn TokenSequence,
-    text: &AttributeKey,
 ) -> Option<RecordGroup<'r>> {
     match record.group_by(policy)? {
         GroupBy::Key => record.key.map(RecordGroup::Key),
@@ -222,7 +224,7 @@ fn record_group<'r>(
             let end = record.end.min(sentence.len());
             let mut surface = String::new();
             for index in record.start.min(end)..end {
-                surface.push_str(sentence.get_key(index, text)?);
+                surface.push_str(lingrep_core::token_match::display_surface(sentence, index)?);
             }
             Some(RecordGroup::Surface(surface))
         }
@@ -402,7 +404,6 @@ struct EntrySink<'a> {
     pattern: &'a str,
     entry: &'a Group<'a>,
     policy: &'a CatalogPolicy,
-    text: AttributeKey,
     lines: Vec<Line>,
 }
 
@@ -414,17 +415,13 @@ impl EntrySink<'_> {
         record: &RecordView<'_>,
     ) {
         if record.pattern != self.pattern
-            || !record_group(self.policy, record, sentence, &self.text)
+            || !record_group(self.policy, record, sentence)
                 .is_some_and(|group| same_group(&group, self.entry))
         {
             return;
         }
         let texts = (0..sentence.len())
-            .map(|index| {
-                sentence
-                    .get_key(index, &self.text)
-                    .map_or("", |text| text.as_str())
-            })
+            .map(|index| lingrep_core::token_match::display_surface(sentence, index).unwrap_or(""))
             .collect::<Vec<_>>();
         let end = record.end.min(texts.len());
         let start = record.start.min(end);
@@ -890,7 +887,6 @@ impl FrequencyPair {
             pattern,
             entry: &table_group,
             policy,
-            text: AttributeKey::new("text").expect("text is a canonical attribute key"),
             lines: Vec::new(),
         };
         matcher

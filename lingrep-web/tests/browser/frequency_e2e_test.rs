@@ -4171,3 +4171,149 @@ async fn clicking_the_jsonl_link_saves_every_result_and_keeps_the_page() -> WebD
     served.server.abort();
     result
 }
+
+const KEYED_CATALOG: &str = "key: [$w.text]\npattern glass := (?<w> [text=ガラス]).\n";
+
+/// Two sentences of one work whose first words share the match key ガラス:
+/// one spelled in half-width katakana, one in full width.
+fn variant_sentences() -> Vec<Vec<TokenInfo>> {
+    let word = |surface: &str, text: &str| {
+        TokenInfo::default()
+            .with_orth(text)
+            .with_surface(surface)
+            .with_pos("NOUN")
+    };
+    vec![
+        vec![
+            word("ｶﾞﾗｽ", "ガラス"),
+            word("の", "の"),
+            word("靴", "靴"),
+            word("。", "。"),
+        ],
+        vec![
+            word("ガラス", "ガラス"),
+            word("が", "が"),
+            word("割れる", "割れる"),
+            word("。", "。"),
+        ],
+    ]
+}
+
+/// The count table `ling summarize --write-table` writes for
+/// `KEYED_CATALOG`: one entry, keyed by `text`, counted in both sentences.
+fn write_keyed_table(artifact: &std::path::Path, destination: &std::path::Path) {
+    let mut writer = CountTableWriter::create(
+        destination,
+        table_key(artifact, KEYED_CATALOG),
+        vec!["glass".into()],
+        vec![GroupSchema {
+            kind: GroupKind::Key,
+            names: vec!["$w.text".into()],
+        }],
+        &["ガラス"],
+        &[DocumentTotals {
+            document_id: 0,
+            sentences: 2,
+            tokens: 8,
+        }],
+    )
+    .unwrap();
+    writer.begin_entry(0, 0, &[0]).unwrap();
+    writer.add_sentence(0, 0, 1).unwrap();
+    writer.add_sentence(0, 1, 1).unwrap();
+    writer
+        .finish(&CancellationFlag::new())
+        .unwrap()
+        .publish()
+        .unwrap();
+}
+
+/// A table row keyed by `text` names the key; its lines, the reader and the
+/// question page show each occurrence's exact surface.
+#[tokio::test]
+async fn a_folded_key_lists_and_reads_each_exact_surface() -> WebDriverResult<()> {
+    let Some(driver) = driver().await? else {
+        return Ok(());
+    };
+    let served = serve_artifact(
+        support::build_artifact(vec![("work.txt", 0, false, variant_sentences())]),
+        KEYED_CATALOG,
+        write_keyed_table,
+        &[],
+    )
+    .await;
+    let result: WebDriverResult<()> = async {
+        open(&driver, &format!("{}#pattern=glass", served.base), ROWS).await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('table.freq tbody tr button.open-entry')].map((b) => b.textContent.trim())",
+            json!(["ガラス"]),
+            "the row names the key",
+        )
+        .await?;
+        driver
+            .execute("document.querySelector('button.open-entry').click()", Vec::new())
+            .await?;
+        wait_for(&driver, ENTRY_READY, "the entry").await?;
+        wait_for(
+            &driver,
+            "return document.querySelectorAll('.fq-kwic li').length === 2",
+            "both lines",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('.fq-kwic li')].map((li) => [li.querySelector('.kn').textContent, li.querySelector('.kr').textContent])",
+            json!([["ｶﾞﾗｽ", "ｶﾞﾗｽの靴。"], ["ガラス", "ガラスが割れる。"]]),
+            "each line's exact surface",
+        )
+        .await?;
+        driver
+            .find(By::Css(".fq-kwic li[data-i='0'] .kn"))
+            .await?
+            .click()
+            .await?;
+        wait_for(
+            &driver,
+            "return document.querySelector('[data-fq-reader]').open && !!document.querySelector('#document-reader-body mark')",
+            "the reader",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return [...document.querySelectorAll('#document-reader-body mark')].map((m) => m.textContent).join('')",
+            json!("ｶﾞﾗｽ"),
+            "the reader marks the exact surface",
+        )
+        .await?;
+        let inspect: String = driver
+            .execute(
+                "return document.querySelector(\".fq-kwic li[data-i='0'] .fq-inspect\").href",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        driver.goto("about:blank").await?;
+        driver.goto(&inspect).await?;
+        wait_for(
+            &driver,
+            "const lab = document.querySelector('#token-lab'); return !!lab && !lab.hidden && !!document.querySelector('#focused-sentence mark')",
+            "the inspected example",
+        )
+        .await?;
+        observed(
+            &driver,
+            "return {sentence: document.querySelector('#focused-sentence').textContent, \
+              mark: document.querySelector('#focused-sentence mark').textContent, \
+              words: [...document.querySelectorAll('#token-ribbon button')].map((b) => b.textContent)}",
+            json!({"sentence": "ｶﾞﾗｽの靴。", "mark": "ｶﾞﾗｽ", "words": ["ｶﾞﾗｽ", "の", "靴", "。"]}),
+            "the question page shows the exact surface",
+        )
+        .await?;
+        observed(&driver, PAGE_ERRORS, json!([]), "page errors").await
+    }
+    .await;
+    driver.quit().await?;
+    served.server.abort();
+    result
+}

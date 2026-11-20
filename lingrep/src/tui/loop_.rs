@@ -366,11 +366,8 @@ fn execute_playground(
         .map(|matched| PlaygroundMatch {
             start_token: matched.start,
             end_token: matched.end,
-            matched_text: tokens
-                .get(matched.start..matched.end)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|token| token.orth())
+            matched_text: (matched.start..matched.end.min(tokens.len()))
+                .filter_map(|index| lingrep_core::token_match::display_surface(&tokens[..], index))
                 .collect(),
             pattern_name: Some(matched.pattern.to_string()),
         })

@@ -39,7 +39,7 @@ fn projection_preserves_missing_empty_and_nonempty_values() {
     let token = TokenInfo::default().with_orth("食べる").with_lemma("");
     let projected = InspectionProjector::project_token(&token);
     assert_eq!(
-        projected.field("orth").unwrap().value.as_deref(),
+        projected.field("text").unwrap().value.as_deref(),
         Some("食べる")
     );
     assert_eq!(projected.field("lemma").unwrap().value.as_deref(), Some(""));

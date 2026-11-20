@@ -335,9 +335,11 @@ services.lingrep-web.corpora.bccwj = {
 };
 ```
 
-The artifact name embeds an analysis identity that changes with the dictionary
-and analyzer, so rebuilding under a new dictionary produces a new directory
-beside the old one. Update `path` to the new directory and delete the old one.
+The artifact name embeds an analysis identity that changes with the dictionary,
+the analyzer, and a `ling` release that changes how tokens are analyzed, so
+rebuilding under a new dictionary or such a release produces a new directory
+beside the old one. Update `path` to the new directory, rebuild the count
+tables over it, and delete the old one.
 
 At startup lingrep-web checks a declared artifact's manifest and component
 lengths without hashing its contents. Run `ling corpus inspect --verify` for a

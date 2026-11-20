@@ -89,7 +89,7 @@ mod tests {
     fn the_published_token_schema_identity_is_unchanged() {
         assert_eq!(
             hex(&token_schema_identity_digest()),
-            "0258eb71de9f5983c95b8a9fa9fc4bd23a883f0087a16cf26fd9a6f6b9eda7cc"
+            "8cbbff2a6d2c10c97ba0776f7045738ba5d6e180b1148669ba3e99010c170ba0"
         );
     }
 

@@ -703,7 +703,8 @@ async fn project_occurrences(
                 .map(|token| {
                     token
                         .attributes
-                        .get("text")
+                        .get("surface")
+                        .or_else(|| token.attributes.get("text"))
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                 })

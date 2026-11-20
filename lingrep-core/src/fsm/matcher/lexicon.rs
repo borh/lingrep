@@ -33,6 +33,8 @@ pub(crate) struct CompiledLexicons {
 pub(crate) struct LexiconCompileError(pub(crate) String);
 
 impl CompiledLexicons {
+    /// Members are matched against the `text` projection as their folded
+    /// key, and against `norm` as written.
     pub(crate) fn compile(
         definitions: Vec<CompiledLexiconDefinition>,
     ) -> Result<Option<Self>, LexiconCompileError> {
@@ -44,6 +46,7 @@ impl CompiledLexicons {
             AttributeKey::new("text").expect("form is canonical"),
             AttributeKey::new("norm").expect("norm is canonical"),
         ] {
+            let fold = projection.as_str() == "text";
             let mut ids: HashMap<Vec<u8>, usize> = HashMap::new();
             let mut patterns: Vec<Vec<u8>> = Vec::new();
             let mut labels: Vec<Vec<LexiconLabel>> = Vec::new();
@@ -52,7 +55,8 @@ impl CompiledLexicons {
                     continue;
                 }
                 for (term_id, term) in definition.members.iter().enumerate() {
-                    let bytes = term.as_bytes();
+                    let folded = fold.then(|| crate::analysis::text_key(term));
+                    let bytes = folded.as_deref().unwrap_or(term).as_bytes();
                     let pattern_id = if let Some(id) = ids.get(bytes) {
                         *id
                     } else {

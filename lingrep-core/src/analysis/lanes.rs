@@ -295,7 +295,12 @@ mod tests {
     fn vibrato_test_plan() -> Option<VibratoPlan> {
         let path = fixed_resource("LINGREP_DICTIONARY_PATH")?;
         let tokenizer = crate::dictionary::create_tokenizer_from_path(&path).ok()?;
-        Some(VibratoPlan::with_mode(tokenizer, SegmentationMode::Input))
+        VibratoPlan::with_mode(
+            tokenizer,
+            std::path::Path::new(&path),
+            SegmentationMode::Input,
+        )
+        .ok()
     }
 
     fn sudachi_test_plan() -> Option<SudachiPlan> {

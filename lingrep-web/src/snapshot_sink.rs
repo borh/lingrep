@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 use compact_str::CompactString;
 use lingrep_core::execution::{ExecutionError, MatchSink, SentenceLocation, SinkControl};
@@ -100,12 +99,6 @@ pub(crate) struct SnapshotSink {
     surface_scratch: Vec<(PatternKey, String)>,
     surface_used: usize,
 }
-
-/// The surface accessor, and the one the KWIC key is joined from. Matching
-/// `lingrep-web/src/inspection/projector.rs`'s `FORM` is what makes a variation
-/// selected in the pane name the same string this counted.
-static FORM: LazyLock<AttributeKey> =
-    LazyLock::new(|| AttributeKey::new("text").expect("text is canonical"));
 
 impl SnapshotSink {
     pub(crate) fn set_metadata_conflicts(
@@ -378,7 +371,7 @@ impl SnapshotSink {
         joined.clear();
         lingrep_core::utils::join_orth_into(
             joined,
-            span.filter_map(|index| sentence.scalar_key(index, &FORM)),
+            span.filter_map(|index| lingrep_core::token_match::display_surface(sentence, index)),
         );
         // A sentence carrying one surface of one pattern twice is one
         // sentence, which is the unit the section table counts in.

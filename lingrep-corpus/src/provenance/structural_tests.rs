@@ -942,8 +942,11 @@ async fn an_analyzed_and_two_unanalyzed_sentences_all_reach_storage() {
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("provenance.sqlite");
-    let plan =
-        lingrep_core::analysis::VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = lingrep_core::analysis::VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection(plan.schema().keys().iter().cloned())
@@ -1649,8 +1652,11 @@ async fn origin_deduplication_keeps_one_cached_entry() {
     };
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("provenance.sqlite");
-    let plan =
-        lingrep_core::analysis::VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = lingrep_core::analysis::VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection(plan.schema().keys().iter().cloned())

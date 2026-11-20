@@ -2381,7 +2381,7 @@ fn a_directory_without_an_override_still_resolves_to_markdown() {
     let run = &events[0]["data"];
     assert_eq!(
         run["reader_identity"],
-        "30f0742514aec2cbb20346c5e19c70dbc343f39546b4d451a6dfab89696ffb57"
+        "6de13997319c4350999d2aa5c8aa944f463eb34d148eeeae28eafdcafd8d1754"
     );
 }
 #[test]
@@ -2475,7 +2475,7 @@ fn query_serving_rejects_analysis_options_it_cannot_apply() {
             ["--analyzer-config", "/missing/analyzer.toml"],
             ["--profile", "text"],
             ["--segmentation", "analyzer"],
-            ["--normalization", "none"],
+            ["--normalization", "nfc"],
         ] {
             let output = lingrep()
                 .timeout(std::time::Duration::from_secs(3))

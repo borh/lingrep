@@ -1436,7 +1436,10 @@ fn graph_node_predicate_matches<S: TokenSequence + ?Sized>(
                         }
                     }),
                 EnhancedNodeId::Empty { .. } => empty.is_some_and(|empty| match key {
-                    "text" => empty
+                    "text" => empty.form().is_some_and(|actual| {
+                        scalar_value_matches(&crate::analysis::text_key(actual), &atom.value)
+                    }),
+                    "surface" => empty
                         .form()
                         .is_some_and(|actual| scalar_value_matches(actual, &atom.value)),
                     "lemma" => empty
@@ -1547,8 +1550,9 @@ fn graph_node_scalar_attributes<S: TokenSequence + ?Sized>(
             else {
                 return Box::default();
             };
+            let text = empty.form().map(crate::analysis::text_key);
             for (spelling, value) in [
-                ("text", empty.form()),
+                ("text", text.as_deref()),
                 ("lemma", empty.lemma()),
                 ("upos", empty.upos()),
                 ("xpos", empty.xpos()),

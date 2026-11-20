@@ -63,17 +63,13 @@ fn widest_projection_reconstructs_all_current_values_exactly() {
         .bind_projection(schema.keys().iter().cloned())
         .expect("widest current projection binds");
     let mut expected = TokenInfo::default();
-    for (index, attribute) in TokenAttributeIndex::ALL
-        .into_iter()
-        .filter(|attribute| *attribute != TokenAttributeIndex::Text)
-        .enumerate()
-    {
+    for (index, attribute) in TokenAttributeIndex::ALL.into_iter().enumerate() {
         expected.set(attribute, format!("value-{index}").into());
     }
     let sentence = BoundTokenSentence::project(&projection, &[expected.clone()])
         .expect("widest projection succeeds");
     let actual = TokenInfo::from_sequence(&sentence, 0).expect("the token exists");
 
-    assert_eq!(sentence.width(), TokenAttributeIndex::COUNT - 1);
+    assert_eq!(sentence.width(), TokenAttributeIndex::COUNT);
     assert_eq!(actual, expected);
 }

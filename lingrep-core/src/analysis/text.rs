@@ -77,6 +77,16 @@ impl NormalizationPolicy {
         }
     }
 
+    /// Applies this policy to `source` and aligns the result to it, so a span of
+    /// the admitted text maps back to the exact source it came from.
+    #[must_use]
+    pub fn apply_aligned(self, source: &str) -> super::AnalysisView {
+        match self {
+            Self::None => super::AnalysisView::unchanged(source),
+            Self::Nfc => super::AnalysisView::canonical_composition(source),
+        }
+    }
+
     /// Returns whether applying this normalization policy to `raw` produces `normalized`.
     #[must_use]
     pub fn normalizes(self, raw: &str, normalized: &str) -> bool {

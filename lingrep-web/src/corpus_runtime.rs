@@ -16,7 +16,6 @@ use lingrep_core::{
         DiscoveryReport, InputFormat, MarkdownReaderConfig, SectionPolicy, SourceDocument,
         resolve_input_format, stream_input_events,
     },
-    dictionary::create_tokenizer_from_path,
     execution::{BoundedRecordReader, DEFAULT_MAX_INPUT_RECORD_BYTES},
     spill::TempBudget,
     token_match::{TokenAttributeIndex, TokenInfo},
@@ -62,8 +61,9 @@ pub fn read_config(
 ///
 /// Named once because it is two separate identity inputs — the reader's, and
 /// the analyzer descriptor's — and two literals that must agree is one literal
-/// waiting to disagree.
-const BUILD_NORMALIZATION: NormalizationPolicy = NormalizationPolicy::Nfc;
+/// waiting to disagree. It is `ling corpus build`'s Vibrato default, so the two
+/// name one artifact for one root.
+const BUILD_NORMALIZATION: NormalizationPolicy = NormalizationPolicy::None;
 
 /// The identity of reading `config`, as `ling` derives it.
 ///
@@ -909,13 +909,9 @@ fn prepare_artifact(
             }
         }
     }
-    // The permit still bounds concurrent builds, and it is still acquired
-    // before the dictionary is opened. It does not bound a ~1.31 GB decoded
-    // buffer per queued build: the tokenizer is built inside
-    // `build_artifact` from `create_tokenizer_from_path`, which memory-maps a
-    // globally-cached decompressed copy. That is the same loader
-    // `ServerContext::tokenizer` uses, and for the same reason its
-    // documentation gives.
+    // The permit bounds concurrent builds, not dictionary memory: every build
+    // analyzes with `ServerContext::plan`, whose one tokenizer memory-maps a
+    // globally-cached decompressed copy.
     let permit = handle
         .block_on(inner.context.build_permit().acquire_owned())
         .expect("the build semaphore is never closed");
@@ -1019,22 +1015,20 @@ fn build_artifact(
     expected_analysis: AnalysisIdentity,
     fingerprint: [u8; 32],
 ) -> Result<CorpusArtifact, CacheFailureCategory> {
-    let dict_path = inner.context.dict_path().ok_or_else(|| {
-        classify(CacheFailureCategory::Dictionary, "create tokenizer")(
-            "no dictionary is configured",
-        )
-    })?;
-    let tokenizer = create_tokenizer_from_path(&dict_path.to_string_lossy()).map_err(classify(
-        CacheFailureCategory::Dictionary,
-        "create tokenizer",
-    ))?;
-    let plan = VibratoPlan::configured(
-        tokenizer,
-        fingerprint,
-        ExtractionProfile::Morphology,
-        SegmentationMode::Input,
-        BUILD_NORMALIZATION,
-    );
+    let plan = inner
+        .context
+        .plan()
+        .map_err(|unavailable| {
+            classify(CacheFailureCategory::Dictionary, "create tokenizer")(format!(
+                "{unavailable:?}"
+            ))
+        })?
+        .reconfigured(
+            fingerprint,
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            BUILD_NORMALIZATION,
+        );
     let analyzer_record = lingrep_corpus::AnalyzerRecord::from_descriptor(plan.descriptor());
     let schema = plan.schema().clone();
     let projection = schema
@@ -1394,11 +1388,11 @@ mod tests {
 
         assert_eq!(
             hex(&build_reader_identity(&CorpusReadConfig::Jsonl)),
-            "65d0a037af9c05ba6473371af4f3b1c10aa6c6131335f6e8fcad4f3cddeb735b"
+            "3343fdcf585975f8e90f93cd0b6b33130bdce35a857e58d3cb9b1a134b7043e8"
         );
         assert_eq!(
             hex(&build_reader_identity(&CorpusReadConfig::Plain)),
-            "18b44ebcafc39c7a5f8404a926547ee19d68272648f13633dd1c0ff3c65440ff"
+            "5a4d1c6a050c122622698d3b92d69abbbf4feb0ac8020e79baa725341714c954"
         );
 
         let markdown = CorpusReadConfig::Markdown(
@@ -1406,7 +1400,7 @@ mod tests {
         );
         assert_ne!(
             hex(&build_reader_identity(&markdown)),
-            "30f0742514aec2cbb20346c5e19c70dbc343f39546b4d451a6dfab89696ffb57",
+            "6de13997319c4350999d2aa5c8aa944f463eb34d148eeeae28eafdcafd8d1754",
             "the Markdown dialects differ by design and must keep two names"
         );
     }

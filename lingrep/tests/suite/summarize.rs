@@ -796,11 +796,11 @@ fn temp_exhaustion_after_run_publishes_no_summary_or_complete() {
 }
 
 #[test]
-fn prepared_summary_never_substitutes_text_for_missing_orth() {
+fn prepared_summary_rejects_a_token_without_surface_or_text() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let artifact = directory.path().join("missing-orth.lingcorpus");
-    let missing = TokenInfo::default().with_text("fallback-must-not-appear");
+    let missing = TokenInfo::default().with_lemma("fallback-must-not-appear");
     runtime.block_on(build_single_sentence_artifact(
         &artifact,
         "surface",

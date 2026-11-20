@@ -473,7 +473,7 @@ pub(crate) fn resolve_build_inputs(
         .clone()
         .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
     let reader_config = CorpusReadConfig::new(format, markdown);
-    let reader = ReaderIdentity::derive(&reader_config, config.normalization);
+    let reader = ReaderIdentity::derive(&reader_config, config.reader_normalization(format));
 
     let vibrato_dictionary = request
         .dict_path
@@ -1065,7 +1065,7 @@ fn run_sources_to<W: Write>(
         run_id: run_id.clone(),
         source_kind: SourcesKind::Live,
         reader_identity: encode_digest(
-            ReaderIdentity::derive(&reader_config, config.normalization).as_bytes(),
+            ReaderIdentity::derive(&reader_config, config.reader_normalization(format)).as_bytes(),
         ),
         admission_policy_identity: encode_digest(admission_identity().as_bytes()),
         traversal_limits: protocol_traversal_limits(config),

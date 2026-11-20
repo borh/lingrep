@@ -617,7 +617,8 @@ export function shouldSelectDiagnostic(reason) { return reason === "blur" || rea
 // ---------------------------------------------------------------------------
 
 export const PATTERN_ATTRIBUTES = [
-  ["text", "Portable surface form as written"],
+  ["text", "Match form: the surface with variant spellings folded"],
+  ["surface", "Exact source text"],
   ["lemma", "Dictionary lemma"],
   ["norm", "Normalized form"],
   ["upos", "Portable coarse POS tag (VERB, NOUN, …)"],
@@ -668,7 +669,8 @@ export function patternAttributes(tokenKeys) {
 }
 
 const HELP_JA = {
-  "Portable surface form as written": "表層形（書かれたとおりの形）",
+  "Match form: the surface with variant spellings folded": "照合形（異体の表記をそろえた表層形）",
+  "Exact source text": "表層形（原文のとおり）",
   "Dictionary lemma": "辞書形（見出し語）",
   "Normalized form": "正規化した形",
   "Portable coarse POS tag (VERB, NOUN, …)": "共通の品詞タグ（VERB, NOUN, …）",

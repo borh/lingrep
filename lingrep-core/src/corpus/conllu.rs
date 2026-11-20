@@ -85,10 +85,12 @@ pub const UD_FEATURE_NAMES: [&str; 43] = [
 /// producer-specific MISC keys. Known universal features are additionally
 /// projected as typed `feat.*` attributes.
 pub fn token_schema() -> TokenSchema {
-    let portable = ["text", "lemma", "upos", "xpos"].into_iter().map(|key| {
-        SchemaAttribute::new(key, AttributeKind::Scalar)
-            .expect("canonical CoNLL-U scalar key must be valid")
-    });
+    let portable = ["text", "surface", "lemma", "upos", "xpos"]
+        .into_iter()
+        .map(|key| {
+            SchemaAttribute::new(key, AttributeKind::Scalar)
+                .expect("canonical CoNLL-U scalar key must be valid")
+        });
     let features = UD_FEATURE_NAMES.into_iter().map(|name| {
         SchemaAttribute::new(format!("feat.{name}"), AttributeKind::StringSet)
             .expect("canonical UD feature key must be valid")
@@ -136,13 +138,21 @@ pub fn analyzer_descriptor() -> crate::analysis::AnalyzerDescriptor {
         "conllu-sentence-v1",
         DECODER_REVISION,
         [0; 32],
-        *blake3::hash(b"lingrep.conllu-projection/v1").as_bytes(),
+        conllu_projection_digest(),
         *blake3::hash(b"lingrep.conllu-word-alignment/v1").as_bytes(),
         [0; 32],
         *blake3::hash(b"lingrep.conllu-output/v1").as_bytes(),
         schema.digest(),
     )
     .expect("the fixed CoNLL-U descriptor is valid")
+}
+
+/// `text` is the folded key of FORM and `surface` is FORM as written.
+fn conllu_projection_digest() -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"lingrep.conllu-projection/v2");
+    hasher.update(crate::analysis::TEXT_KEY_REVISION);
+    *hasher.finalize().as_bytes()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -662,7 +672,10 @@ impl Sentence {
         for (word_index, word) in self.words.iter().enumerate() {
             for key in projection.keys().iter().map(AttributeKey::as_str) {
                 let value = match key {
-                    "text" => ProjectedAttributeValue::scalar(word.form.clone()),
+                    "text" => {
+                        ProjectedAttributeValue::scalar(crate::analysis::text_key(&word.form))
+                    }
+                    "surface" => ProjectedAttributeValue::scalar(word.form.clone()),
                     "lemma" => ProjectedAttributeValue::Scalar(word.lemma.clone()),
                     "upos" => ProjectedAttributeValue::Scalar(word.upos.clone()),
                     "xpos" => ProjectedAttributeValue::Scalar(word.xpos.clone()),

@@ -1,12 +1,12 @@
-//! Shared scan pool, dictionary identity, and sample tokenizer for all served corpora.
+//! Shared scan pool, dictionary identity, and Vibrato plan for all served corpora.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use lingrep_core::analysis::VibratoPlan;
 use rayon::ThreadPool;
-use vibrato_rkyv::Tokenizer;
 
 use lingrep_core::PipelineError;
 use lingrep_core::dictionary::{create_tokenizer_from_path, dictionary_identity};
@@ -21,7 +21,7 @@ pub struct ServerContext {
     fingerprint: Mutex<Option<[u8; 32]>>,
     build_permit: Arc<tokio::sync::Semaphore>,
     builds_stopping: AtomicBool,
-    tokenizer: OnceLock<Arc<Tokenizer>>,
+    plan: OnceLock<Arc<VibratoPlan>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,7 +44,7 @@ impl ServerContext {
         Self::with_dictionary(Some(dict_path.into()))
     }
 
-    /// When `dict_path` is `None`, [`Self::dictionary_fingerprint`] and [`Self::tokenizer`] return errors.
+    /// When `dict_path` is `None`, [`Self::dictionary_fingerprint`] and [`Self::plan`] return errors.
     pub fn with_dictionary(dict_path: Option<PathBuf>) -> io::Result<Self> {
         Ok(Self {
             dict_path,
@@ -52,7 +52,7 @@ impl ServerContext {
             fingerprint: Mutex::new(None),
             build_permit: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BUILDS)),
             builds_stopping: AtomicBool::new(false),
-            tokenizer: OnceLock::new(),
+            plan: OnceLock::new(),
         })
     }
 
@@ -113,28 +113,30 @@ impl ServerContext {
         Ok(fingerprint)
     }
 
-    /// The sample-analysis tokenizer, built once on first use.
+    /// The Vibrato plan over this server's dictionary, built once on first
+    /// use: sample analysis tokenizes with it and every artifact build
+    /// derives its plan from it, so the dictionary is loaded and its
+    /// protected-surface table built once per process.
     ///
-    /// This lives here rather than on `RequestStore` because `--dict-path` is
-    /// a single global: the tokenizer is identical for every corpus, so a
-    /// copy per corpus would be a copy of the same dictionary. It is built
-    /// with [`create_tokenizer_from_path`], which memory-maps a
-    /// globally-cached decompressed copy rather than parsing a second one
-    /// into anonymous heap.
-    pub fn tokenizer(&self) -> Result<Arc<Tokenizer>, TokenizerUnavailable> {
-        if let Some(existing) = self.tokenizer.get() {
+    /// The tokenizer is built with [`create_tokenizer_from_path`], which
+    /// memory-maps a globally-cached decompressed copy rather than parsing a
+    /// second one into anonymous heap.
+    pub fn plan(&self) -> Result<Arc<VibratoPlan>, TokenizerUnavailable> {
+        if let Some(existing) = self.plan.get() {
             return Ok(Arc::clone(existing));
         }
         let path = self
             .dict_path
             .as_ref()
             .ok_or(TokenizerUnavailable::NoDictionary)?;
-        let built = Arc::new(
-            create_tokenizer_from_path(&path.to_string_lossy())
-                .map_err(|_| TokenizerUnavailable::LoadFailed)?,
-        );
-        // First writer wins; a lost race discards an equivalent tokenizer.
-        let _ = self.tokenizer.set(Arc::clone(&built));
+        let tokenizer = create_tokenizer_from_path(&path.to_string_lossy())
+            .map_err(|_| TokenizerUnavailable::LoadFailed)?;
+        let built = Arc::new(VibratoPlan::new(tokenizer, path).map_err(|error| {
+            tracing::warn!(%error, cause = %error.source, "Vibrato plan construction failed");
+            TokenizerUnavailable::LoadFailed
+        })?);
+        // First writer wins; a lost race discards an equivalent plan.
+        let _ = self.plan.set(Arc::clone(&built));
         Ok(built)
     }
 }
@@ -191,6 +193,6 @@ mod tests {
     #[test]
     fn a_missing_dictionary_makes_the_tokenizer_unavailable() {
         let context = ServerContext::new("/lingrep-web/no/such/dict.zst").unwrap();
-        assert!(context.tokenizer().is_err());
+        assert!(context.plan().is_err());
     }
 }

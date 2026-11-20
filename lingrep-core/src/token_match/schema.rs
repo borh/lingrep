@@ -164,7 +164,6 @@ impl TokenSchema {
         Self::new(
             TokenAttributeIndex::ALL
                 .into_iter()
-                .filter(|index| *index != TokenAttributeIndex::Text)
                 .map(AttributeKey::from)
                 .map(|key| SchemaAttribute {
                     provider: TokenAttributeIndex::from_attribute_key(&key)
@@ -201,7 +200,7 @@ impl TokenSchema {
             .map(|attribute| attribute.key.clone())
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let digest = digest_attributes(&attributes);
+        let digest = digest_attributes(&attributes, crate::analysis::TEXT_KEY_REVISION);
         Ok(Self {
             attributes: attributes.into_boxed_slice(),
             keys,
@@ -242,6 +241,21 @@ impl TokenSchema {
     #[must_use]
     pub fn keys(&self) -> &[AttributeKey] {
         &self.keys
+    }
+
+    /// Whether `text` is the folded match key of `surface`.
+    ///
+    /// A schema that carries `surface` declares it: its `text` is `surface`
+    /// with variation selectors removed, half-width katakana widened, U+FF5E
+    /// as U+301C, canonical composition, and full-width ASCII as ASCII. Such a
+    /// schema's [`digest`](Self::digest) includes the revision of that fold, so
+    /// an artifact whose `text` was folded by another revision fails its schema
+    /// identity check. A schema without `surface` carries `text` as its source
+    /// wrote it, which a catalog's folded `text` literals do not find where the
+    /// fold changes a spelling.
+    #[must_use]
+    pub fn text_is_folded_key(&self) -> bool {
+        self.keys.iter().any(|key| key.as_str() == "surface")
     }
 
     /// Returns this ordered schema's structural identity.
@@ -448,17 +462,26 @@ impl BoundProjection {
     }
 }
 
-fn digest_attributes(attributes: &[SchemaAttribute]) -> TokenSchemaDigest {
+fn digest_attributes(
+    attributes: &[SchemaAttribute],
+    text_key_revision: &[u8],
+) -> TokenSchemaDigest {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"lingrep.token-schema/v1");
     hasher.update(&(attributes.len() as u64).to_le_bytes());
+    let mut carries_surface = false;
     for attribute in attributes {
+        carries_surface |= attribute.key.as_str() == "surface";
         hasher.update(&(attribute.key.as_bytes().len() as u64).to_le_bytes());
         hasher.update(attribute.key.as_bytes());
         hasher.update(&[match attribute.kind {
             AttributeKind::Scalar => 0,
             AttributeKind::StringSet => 1,
         }]);
+    }
+    if carries_surface {
+        hasher.update(&(text_key_revision.len() as u64).to_le_bytes());
+        hasher.update(text_key_revision);
     }
     TokenSchemaDigest(*hasher.finalize().as_bytes())
 }
@@ -532,5 +555,25 @@ mod tests {
 
         assert_eq!(dynamic.digest(), graph.digest());
         assert_ne!(dynamic, graph);
+    }
+
+    #[test]
+    fn text_key_revision_is_part_of_a_surface_schema_identity() {
+        let surface = TokenSchema::from_keys(["text", "surface"]).unwrap();
+        let text_only = TokenSchema::from_keys(["text"]).unwrap();
+        let other_revision = b"lingrep.text-key/other";
+
+        assert_eq!(
+            surface.digest(),
+            digest_attributes(surface.attributes(), crate::analysis::TEXT_KEY_REVISION)
+        );
+        assert_ne!(
+            surface.digest(),
+            digest_attributes(surface.attributes(), other_revision)
+        );
+        assert_eq!(
+            text_only.digest(),
+            digest_attributes(text_only.attributes(), other_revision)
+        );
     }
 }

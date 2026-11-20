@@ -33,7 +33,7 @@ const EXPECTED: [(&str, TokenAttributeIndex); 32] = [
     ("pos", TokenAttributeIndex::Pos),
     ("tag", TokenAttributeIndex::Tag),
     ("norm", TokenAttributeIndex::Norm),
-    ("text", TokenAttributeIndex::Text),
+    ("surface", TokenAttributeIndex::Surface),
     ("lextype", TokenAttributeIndex::LexType),
 ];
 

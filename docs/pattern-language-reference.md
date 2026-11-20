@@ -142,6 +142,57 @@ including one with no attributes set.
 Combine attributes with `&`, `|`, `!` and parentheses. `;`, `:` and implicit
 adjacency are syntax errors.
 
+### `text` and `surface`
+
+`text`, `surface`, `lemma`, `norm`, `upos` and `xpos` are the portable
+attributes. `surface` is the exact source text of a token, or the FORM column
+of a CoNLL-U word, and `text` is its match key, the surface folded in this
+order:
+
+1. variation selectors U+FE00..U+FE0F and U+E0100..U+E01EF removed;
+2. half-width katakana and punctuation U+FF61..U+FF9F widened, with ﾞ and ﾟ
+   composed onto the preceding kana, or as U+309B and U+309C when they compose
+   with nothing;
+3. U+FF5E FULLWIDTH TILDE as U+301C WAVE DASH;
+4. canonical composition (NFC);
+5. full-width ASCII U+FF01..U+FF5D as ASCII U+0021..U+007D. U+3000
+   IDEOGRAPHIC SPACE is kept.
+
+The compiler folds every `text` literal the same way: in `=`, `!=`, `in`,
+`not in`, `~` and `!~`, in an inline or named set compared with `text`, and
+in a lexicon member read `by [text]`. `[text=ｶﾞﾗｽ]`
+and `[text=ガラス]` find the same tokens, `[text=ＮＨＫ]` finds `NHK`, and
+`[text=長～い]` finds 長〜い. Spellings that fold to one key, as in
+`{ＮＨＫ, NHK}`, are one set member. A literal the fold changes is reported as
+`FoldedLiteral`, naming both spellings. A lexicon match reports the member as
+written. The fold applies to `text` alone: `lemma`, `norm` and provider
+attributes are compared as written.
+
+Every analyzer, and the CoNLL-U reader, publishes `surface` and the folded
+`text`. A corpus prepared before 0.9 lacks `surface` and carries `text`
+unfolded, so `[text=ＮＨＫ]` does not find a token spelled ＮＨＫ there.
+`matches` and `summarize` report `warning[text_unfolded]` for such a corpus,
+naming the definitions that compare `text`; rebuild it with `ling corpus
+build`. A `surface` test over such a corpus binds as
+absent and reports `warning[attribute_unavailable]`.
+
+`surface` literals, including the members of a named set compared with
+`surface`, are compared exactly, without the fold or NFC. Over the source 葛
+U+E0100 城, `[text=葛城]` matches and `[surface=葛城]` does not.
+
+A regex on `text` is compiled as written, because folding a
+regex can change what it means: `[ｶﾞ]` is a class of two characters, ｶ and ﾞ,
+and neither occurs in the folded key ガ. A regex containing a character the
+fold changes is reported as `RegexNotFolded`, with its folded spelling for
+comparison; the folded `text` never contains that character. Write the regex
+in the folded form, or test `surface` for the exact spelling. The check reads the regex source, so an escape such as
+`\x{FF5E}` is not reported. A bare token literal cannot contain a character
+the fold changes.
+
+Vibrato analyzes the same folded text, except that it keeps full-width ASCII
+and keeps a CJK compatibility ideograph inside an occurrence of a dictionary
+surface that contains it, such as 臭氣 with U+FA5C.
+
 ### Unquoted values and escapes
 
 There is no quoted-value form. An unquoted literal — in `=`, `!=`, `~`, `!~`,
@@ -167,16 +218,20 @@ Two spellings are rejected with their own diagnostics:
   `＇…＇`, each with its own `\uXXXX` escapes.
 
 The compiler normalizes literal values, `set` and lexicon members, and bare
-token literals to Unicode NFC. Corpus text uses NFC by default, so a literal
-written as `カ` followed by U+3099 matches `ガ`. `NormalizedLiteral` identifies
-the definition and both spellings.
+token literals to Unicode NFC, except a literal compared with `surface`. The
+`text` key is composed even where the corpus keeps its source unchanged, so a
+literal written as `カ` followed by U+3099 matches `ガ`. `NormalizedLiteral`
+identifies the definition and both spellings.
 
 The compiler preserves regex source and reports `RegexNotNfc` for non-NFC
 regexes. A class containing U+30AB and U+3099 as separate characters matches
 either character. A class containing only their composition U+30AC matches
 `ガ`. `matches` and `summarize` print these diagnostics as
-`literal_normalized` and `regex_not_nfc`. Catalogs whose source is already
-in NFC retain their 0.8.1 fingerprints.
+`literal_normalized`, `regex_not_nfc`, `literal_folded` and
+`regex_not_folded`. Catalogs whose source is already in NFC retain their
+0.8.1 fingerprints. The `text` fold changes no fingerprint; it advances the
+matcher semantics identity to `lingrep-core-matcher/v2`, so a count stored
+before it is stale.
 
 Syntax is ASCII. When a syntax error's span contains a full-width character
 (U+FF01 to U+FF5E, such as `［` or `＝`) or the ideographic space U+3000, the

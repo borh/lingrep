@@ -24,10 +24,9 @@ use lingrep_core::execution::{
 };
 use lingrep_core::fsm::CompiledCatalog;
 use lingrep_core::spill::TempBudget;
-use lingrep_core::token_match::{TokenInfo, tokenize};
+use lingrep_core::token_match::TokenInfo;
 use lingrep_corpus::CorpusArtifact;
 use rayon::ThreadPoolBuilder;
-use vibrato_rkyv::Tokenizer;
 
 use crate::cli::{ExecutionCliConfig, QueryInputArgs};
 use crate::direct_source::{
@@ -39,7 +38,9 @@ use crate::error::{CliError, FailureCode};
 enum InputSpec {
     Direct {
         root: Option<PathBuf>,
-        tokenizer: Arc<Tokenizer>,
+        /// Built once, so every execution and sample shares one
+        /// protected-surface table.
+        plan: Arc<VibratoPlan>,
         reader_config: CorpusReadConfig,
     },
     Prepared {
@@ -76,13 +77,15 @@ impl InteractiveExecution {
             .ok_or_else(|| CliError::Dictionary("dictionary path is not UTF-8".into()))?;
         let tokenizer = create_tokenizer_from_path(dictionary_path)
             .map_err(|error| CliError::Dictionary(error.to_string()))?;
-        Self::direct_with_tokenizer(args, config, Arc::new(tokenizer))
+        let plan = VibratoPlan::new(tokenizer, &dict_path)
+            .map_err(|error| CliError::Dictionary(format!("{error}: {}", error.source)))?;
+        Self::direct_with_plan(args, config, Arc::new(plan))
     }
 
-    fn direct_with_tokenizer(
+    fn direct_with_plan(
         args: &QueryInputArgs,
         config: &ExecutionCliConfig,
-        tokenizer: Arc<Tokenizer>,
+        plan: Arc<VibratoPlan>,
     ) -> Result<Self, CliError> {
         let declared_stdin = args
             .root
@@ -104,7 +107,7 @@ impl InteractiveExecution {
         Ok(Self::from_input(
             InputSpec::Direct {
                 root,
-                tokenizer,
+                plan,
                 reader_config: CorpusReadConfig::new(format, markdown),
             },
             config,
@@ -143,7 +146,7 @@ impl InteractiveExecution {
 
     pub(crate) fn tokenize_sample(&self, text: &str) -> Result<Vec<TokenInfo>, CliError> {
         match &self.input {
-            InputSpec::Direct { tokenizer, .. } => Ok(tokenize(text, tokenizer)),
+            InputSpec::Direct { plan, .. } => Ok(plan.tokenize(text)),
             InputSpec::Prepared { .. } => Err(CliError::InvalidArgs(
                 "playground sample execution is unavailable: prepared artifacts do not retain a tokenizer"
                     .into(),
@@ -161,7 +164,8 @@ impl InteractiveExecution {
     where
         S: MatchSink,
     {
-        let (source, tokenizer) = self.open_source(matcher.lookaround_division_kinds())?;
+        let (source, plan, stored_schema) =
+            self.open_source(matcher.lookaround_division_kinds())?;
         let pool = ThreadPoolBuilder::new()
             .num_threads(self.config.workers)
             .build()
@@ -177,18 +181,23 @@ impl InteractiveExecution {
         // UniDic dictionary, so one schema is a constant here and binds both
         // the catalog and prepared-token projection.
         let schema = lingrep_core::token_match::TokenSchema::unidic_morphology();
+        // The rendered surfaces read `surface` only where the tokens carry it:
+        // a prepared artifact written before it existed does not.
+        let display = lingrep_core::token_match::display_surface_attributes(
+            stored_schema.as_ref().unwrap_or(&schema),
+        );
         let bound = matcher
-            .bind_with_projection(&schema, matcher.execution_attributes())
+            .bind_with_projection(
+                &schema,
+                matcher.execution_attributes().into_iter().chain(display),
+            )
             .map_err(|error| {
                 crate::attribute_binding::bind_refusal(&error, "vibrato morphology")
             })?;
         // Lanes rather than one session, for the same reason `matches` uses
         // them: this pool is idle while tokenization runs, and an interactive
         // surface is the one that feels it.
-        let plan = tokenizer
-            .as_ref()
-            .map(|tokenizer| VibratoPlan::new(tokenizer.as_ref().clone()));
-        let binding = plan.as_ref().map_or_else(
+        let binding = plan.as_deref().map_or_else(
             || AnalysisBinding::Prepared(schema),
             |plan| AnalysisBinding::Session(AnalyzerLanes::new(plan, self.config.workers, &pool)),
         );
@@ -212,10 +221,18 @@ impl InteractiveExecution {
     fn open_source(
         &self,
         division_kinds: Vec<compact_str::CompactString>,
-    ) -> Result<(BoxSentenceSource, Option<Arc<Tokenizer>>), CliError> {
+    ) -> Result<
+        (
+            BoxSentenceSource,
+            Option<Arc<VibratoPlan>>,
+            Option<lingrep_core::token_match::TokenSchema>,
+        ),
+        CliError,
+    > {
         match &self.input {
             InputSpec::Prepared { artifact } => {
                 let artifact = CorpusArtifact::open(artifact)?;
+                let stored_schema = artifact.token_schema()?;
                 let source = artifact.sentence_source()?;
                 let source = if division_kinds.is_empty() {
                     source
@@ -226,11 +243,11 @@ impl InteractiveExecution {
                         artifact.provenance_reader()?,
                     )?
                 };
-                Ok((Box::new(source), None))
+                Ok((Box::new(source), None, Some(stored_schema)))
             }
             InputSpec::Direct {
                 root: Some(root),
-                tokenizer,
+                plan,
                 reader_config,
             } => {
                 let (events, _, _) = FilesystemCorpusEvents::new(
@@ -245,12 +262,13 @@ impl InteractiveExecution {
                             .with_normalization(self.config.normalization)
                             .with_lookaround_divisions(division_kinds),
                     ),
-                    Some(Arc::clone(tokenizer)),
+                    Some(Arc::clone(plan)),
+                    None,
                 ))
             }
             InputSpec::Direct {
                 root: None,
-                tokenizer,
+                plan,
                 reader_config,
             } => {
                 if self.stdin_opened.swap(true, Ordering::AcqRel) {
@@ -277,7 +295,8 @@ impl InteractiveExecution {
                             .with_normalization(self.config.normalization)
                             .with_lookaround_divisions(division_kinds),
                     ),
-                    Some(Arc::clone(tokenizer)),
+                    Some(Arc::clone(plan)),
+                    None,
                 ))
             }
         }
@@ -308,8 +327,8 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
         diagnostic_format: crate::cli::DiagnosticFormat::Human,
         stderr: crate::terminal::RunStderr::new(std::io::stderr()),
     };
-    static TOKENIZER: OnceLock<Arc<Tokenizer>> = OnceLock::new();
-    let tokenizer = Arc::clone(TOKENIZER.get_or_init(|| {
+    static PLAN: OnceLock<Arc<VibratoPlan>> = OnceLock::new();
+    let plan = Arc::clone(PLAN.get_or_init(|| {
         let mini = lingrep_core::testing::MiniDictionary::new();
         let dictionary_path = mini
             .path()
@@ -317,10 +336,15 @@ pub(crate) fn direct_test_execution(text: &str) -> (tempfile::TempDir, Arc<Inter
             .expect("miniature dictionary path must be UTF-8");
         let dictionary =
             load_dictionary_data(dictionary_path).expect("load miniature test dictionary");
-        Arc::new(create_tokenizer(&dictionary).expect("create miniature test tokenizer"))
+        Arc::new(
+            VibratoPlan::new(
+                create_tokenizer(&dictionary).expect("create miniature test tokenizer"),
+                mini.path(),
+            )
+            .expect("the miniature dictionary lexicon enumerates"),
+        )
     }));
-    let execution =
-        InteractiveExecution::direct_with_tokenizer(&input, &config, tokenizer).unwrap();
+    let execution = InteractiveExecution::direct_with_plan(&input, &config, plan).unwrap();
     (directory, Arc::new(execution))
 }
 
@@ -329,26 +353,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_test_fixtures_reuse_the_immutable_tokenizer() {
+    fn direct_test_fixtures_reuse_the_immutable_plan() {
         let (_first_directory, first) = direct_test_execution("猫。\n");
         let (_second_directory, second) = direct_test_execution("犬。\n");
 
         let InputSpec::Direct {
-            tokenizer: first_tokenizer,
-            ..
+            plan: first_plan, ..
         } = &first.input
         else {
-            panic!("direct fixture must retain a tokenizer");
+            panic!("direct fixture must retain a plan");
         };
         let InputSpec::Direct {
-            tokenizer: second_tokenizer,
-            ..
+            plan: second_plan, ..
         } = &second.input
         else {
-            panic!("direct fixture must retain a tokenizer");
+            panic!("direct fixture must retain a plan");
         };
 
-        assert!(Arc::ptr_eq(first_tokenizer, second_tokenizer));
+        assert!(Arc::ptr_eq(first_plan, second_plan));
     }
 
     #[derive(Default)]

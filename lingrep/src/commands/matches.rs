@@ -284,6 +284,13 @@ pub fn run(
         projected_attributes.dedup();
     }
     let mut published_attributes = projected_attributes.clone();
+    // Read by the rendered surface and context; a schema without it drops it.
+    projected_attributes.push(
+        lingrep_core::token_match::AttributeKey::new("surface")
+            .expect("surface is a canonical attribute"),
+    );
+    projected_attributes.sort_unstable();
+    projected_attributes.dedup();
     if args.evidence {
         projected_attributes.extend(EVIDENCE_ATTRIBUTES.iter().map(|key| {
             lingrep_core::token_match::AttributeKey::new(key).expect("canonical evidence key")

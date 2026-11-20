@@ -223,7 +223,7 @@ Examples:
 
 Japanese text is analyzed with the dictionary installed by
 `ling dictionary install`, or one specified by --dict-path or
-LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+LINGREP_DICTIONARY_PATH.
 Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.";
 
 /// Top-level public operation.
@@ -1266,7 +1266,7 @@ impl CurrentInputArgs {
             || resources.analyzer != AnalyzerArg::default()
             || resources.profile != ProfileArg::default()
             || resources.segmentation != SegmentationArg::default()
-            || resources.normalization != NormalizationArg::default()
+            || resources.normalization() != ResourceArgs::default().normalization()
             || resources.analyzer_config.is_some()
             || resources.sudachi_dict.is_some()
             || resources.sudachi_resources.is_some()
@@ -1807,7 +1807,8 @@ impl From<&TraversalArgs> for TraversalLimits {
 /// Analysis choices for commands that can build tokens from direct input.
 #[derive(Clone, Debug, Args)]
 pub struct ResourceArgs {
-    /// Normalize input text before analysis; `nfc` is the default.
+    /// Normalize input text before analysis; `none`, the default, reads the
+    /// source unchanged.
     #[arg(
         long,
         value_enum,
@@ -1850,8 +1851,9 @@ pub struct ResourceArgs {
     )]
     pub sudachi_dict: Option<PathBuf>,
 
-    /// Sudachi resource directory holding `char.def`, `unk.def`, `rewrite.def`
-    /// and `sudachi.json`; without it, the copies built into `ling` are used.
+    /// Sudachi resource directory holding `char.def`; without it, the copy
+    /// built into `ling` is used. Sudachi's input-text plugins are not loaded,
+    /// so `rewrite.def` and `sudachi.json` do not affect analysis.
     #[arg(
         long,
         value_name = "DIRECTORY",
@@ -1997,7 +1999,8 @@ pub struct RuntimeArgs {
 /// Resource controls used by interactive Vibrato workflows.
 #[derive(Clone, Debug, Args)]
 pub struct InteractiveResourceArgs {
-    /// Normalize direct input text before analysis; `nfc` is the default.
+    /// Normalize direct input text before analysis; `none`, the default,
+    /// reads the source unchanged.
     #[arg(
         long,
         value_enum,
@@ -2046,8 +2049,8 @@ pub enum DiagnosticFormat {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum NormalizationArg {
-    #[default]
     Nfc,
+    #[default]
     None,
 }
 
@@ -2533,7 +2536,27 @@ impl Cli {
     }
 }
 
+impl ExecutionCliConfig {
+    /// The normalization a reader of `format` is identified under. CoNLL-U
+    /// is read as written whatever `--normalization` says: its tokens are its
+    /// FORM column, not analyzed text.
+    pub(crate) fn reader_normalization(
+        &self,
+        format: lingrep_core::corpus::CorpusFormat,
+    ) -> lingrep_core::analysis::NormalizationPolicy {
+        if format == lingrep_core::corpus::CorpusFormat::Conllu {
+            lingrep_core::analysis::NormalizationPolicy::None
+        } else {
+            self.normalization
+        }
+    }
+}
+
 impl ResourceArgs {
+    pub(crate) fn normalization(&self) -> lingrep_core::analysis::NormalizationPolicy {
+        self.normalization.into()
+    }
+
     fn with_traversal(traversal: TraversalArgs, progress: ProgressMode) -> Self {
         Self {
             runtime: RuntimeArgs {
@@ -2565,7 +2588,7 @@ impl Default for RuntimeArgs {
 impl Default for ResourceArgs {
     fn default() -> Self {
         Self {
-            normalization: NormalizationArg::Nfc,
+            normalization: NormalizationArg::None,
             analyzer: AnalyzerArg::Vibrato,
             profile: ProfileArg::Morphology,
             segmentation: SegmentationArg::Input,
@@ -2626,13 +2649,13 @@ mod analyzer_selection_tests {
     }
 
     #[test]
-    fn direct_analysis_defaults_to_vibrato_nfc_morphology_input() {
+    fn direct_analysis_defaults_to_vibrato_unnormalized_morphology_input() {
         let cli = Cli::try_parse_from(["ling", "matches", "--pattern", "[]", "input.txt"]).unwrap();
         let config = cli.execution_config().unwrap();
         assert_eq!(config.analyzer, AnalyzerCliConfig::Vibrato);
         assert_eq!(
             config.normalization,
-            lingrep_core::analysis::NormalizationPolicy::Nfc
+            lingrep_core::analysis::NormalizationPolicy::None
         );
         assert_eq!(
             config.profile,
@@ -2677,6 +2700,30 @@ mod analyzer_selection_tests {
         ])
         .unwrap();
         assert!(conflicting.execution_config().is_err());
+    }
+
+    /// Every analyzer reads the raw source by default.
+    #[test]
+    fn normalization_defaults_to_none_for_every_analyzer_and_an_explicit_choice_wins() {
+        use lingrep_core::analysis::NormalizationPolicy::{Nfc, None as Raw};
+        let normalization = |extra: &[&str]| {
+            let mut args = vec!["ling", "matches", "--pattern", "[]"];
+            args.extend_from_slice(extra);
+            args.push("input.txt");
+            Cli::try_parse_from(args)
+                .unwrap()
+                .execution_config()
+                .unwrap()
+                .normalization
+        };
+        let sudachi = ["--analyzer", "sudachi", "--sudachi-dict", "system_core.dic"];
+        assert_eq!(normalization(&[]), Raw);
+        assert_eq!(normalization(&["--normalization", "nfc"]), Nfc);
+        assert_eq!(normalization(&sudachi), Raw);
+        assert_eq!(
+            normalization(&[&sudachi[..], &["--normalization", "nfc"]].concat()),
+            Nfc
+        );
     }
 
     #[test]

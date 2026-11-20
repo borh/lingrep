@@ -55,4 +55,4 @@ pub(crate) use windows::{WindowLinks, window_at};
 #[cfg(unix)]
 mod external_session;
 #[cfg(unix)]
-pub use external_session::ExternalAnalyzerSession;
+pub use external_session::{ExternalAnalyzerSession, published_descriptor, published_schema};

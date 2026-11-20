@@ -1212,7 +1212,8 @@ impl PreparedSentenceSource {
         }
     }
 
-    /// Reads only written word forms. Returns `None` before token projection
+    /// Reads only written word forms: each token's `surface` where it has one,
+    /// else its `text`. Returns `None` before token projection
     /// when recorded residency exceeds `limit`, or when the joined text exceeds
     /// it, or when written forms are unavailable. Token-block decompression
     /// retains its existing fixed scratch bound.
@@ -1224,14 +1225,14 @@ impl PreparedSentenceSource {
         if self.reader.resident_size(ordinal)? > limit {
             return Ok(None);
         }
-        let key = lingrep_core::token_match::AttributeKey::from(TokenAttributeIndex::Orth);
-        if !self.reader.schema.keys().contains(&key) {
+        let keys = lingrep_core::token_match::display_surface_attributes(&self.reader.schema);
+        if keys.is_empty() {
             return Ok(None);
         }
         let projection = self
             .reader
             .schema
-            .bind_projection([key.clone()])
+            .bind_projection(keys)
             .map_err(|error| invalid(error.to_string()))?;
         let sentences = self
             .reader
@@ -1242,7 +1243,7 @@ impl PreparedSentenceSource {
         let mut bytes = 0usize;
         let mut words = Vec::with_capacity(sentence.len());
         for index in 0..sentence.len() {
-            let Some(text) = sentence.scalar_key(index, &key) else {
+            let Some(text) = lingrep_core::token_match::display_surface(sentence, index) else {
                 return Ok(None);
             };
             bytes = bytes.saturating_add(text.len());

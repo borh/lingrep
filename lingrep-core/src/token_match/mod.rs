@@ -30,6 +30,8 @@ use vibrato_rkyv::dictionary::LexType;
 use vibrato_rkyv::token::Token;
 use vibrato_rkyv::tokenizer::worker::Worker;
 
+use crate::analysis::{UNPROTECTED, ViewFold, ViewSpan};
+
 impl fmt::Display for TokenAttributeIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
@@ -102,7 +104,7 @@ pub enum TokenAttributeIndex {
     Pos,
     Tag,
     Norm,
-    Text,
+    Surface,
     LexType,
 }
 
@@ -113,7 +115,7 @@ impl TokenAttributeIndex {
     pub const ALL: [Self; Self::COUNT] = [
         Pos1, Pos2, Pos3, Pos4, CType, CForm, LForm, Lemma, Orth, Pron, OrthBase, PronBase, Goshu,
         IType, IForm, FType, FForm, IConType, FConType, Type, Kana, KanaBase, Form, FormBase,
-        AType, AConType, AModType, Pos, Tag, Norm, Text, LexType,
+        AType, AConType, AModType, Pos, Tag, Norm, Surface, LexType,
     ];
 
     pub const fn pattern_key(self) -> &'static str {
@@ -148,7 +150,7 @@ impl TokenAttributeIndex {
             Pos => "pos",
             Tag => "tag",
             Norm => "norm",
-            Text => "text",
+            Surface => "surface",
             LexType => "lextype",
         }
     }
@@ -186,6 +188,7 @@ impl From<TokenAttributeIndex> for AttributeKey {
             TokenAttributeIndex::Norm => "norm".to_owned(),
             TokenAttributeIndex::Pos => "upos".to_owned(),
             TokenAttributeIndex::Tag => "xpos".to_owned(),
+            TokenAttributeIndex::Surface => "surface".to_owned(),
             other => format!("unidic.{}", other.pattern_key()),
         };
         Self::new(key).expect("physical Vibrato attributes have canonical V1 keys")
@@ -227,7 +230,7 @@ impl FromStr for TokenAttributeIndex {
             "pos" => Ok(Pos),
             "tag" => Ok(Tag),
             "norm" => Ok(Norm),
-            "text" => Ok(Text),
+            "surface" => Ok(Surface),
             "lextype" => Ok(LexType),
             _ => Err(()),
         }
@@ -401,8 +404,36 @@ token_attribute_accessors! {
     (pos, set_pos, with_pos) => Pos,
     (tag, set_tag, with_tag) => Tag,
     (norm, set_norm, with_norm) => Norm,
-    (text, set_text, with_text) => Text,
+    (surface, set_surface, with_surface) => Surface,
     (lex_type, set_lex_type, with_lex_type) => LexType,
+}
+
+static SURFACE_KEY: std::sync::LazyLock<AttributeKey> =
+    std::sync::LazyLock::new(|| AttributeKey::new("surface").expect("surface is canonical"));
+static TEXT_KEY: std::sync::LazyLock<AttributeKey> =
+    std::sync::LazyLock::new(|| AttributeKey::new("text").expect("text is canonical"));
+
+/// The token's text as output displays it: `surface` when the token carries
+/// one, otherwise `text`.
+///
+/// `text` can differ from the source (full-width ASCII folds to ASCII), and
+/// `surface` is the exact source slice. Schemas without `surface` — 0.8
+/// artifacts, Sudachi, external analyzers, CoNLL-U — display `text`.
+pub fn display_surface<S: TokenSequence + ?Sized>(tokens: &S, index: usize) -> Option<&str> {
+    tokens
+        .scalar_key(index, &SURFACE_KEY)
+        .or_else(|| tokens.scalar_key(index, &TEXT_KEY))
+}
+
+/// The attributes [`display_surface`] reads that `schema` carries, for a
+/// caller that binds a projection against a known schema.
+#[must_use]
+pub fn display_surface_attributes(schema: &TokenSchema) -> Vec<AttributeKey> {
+    [&*SURFACE_KEY, &*TEXT_KEY]
+        .into_iter()
+        .filter(|key| schema.keys().contains(key))
+        .cloned()
+        .collect()
 }
 
 /// Construct a token from a surface string, setting `orth` and leaving all
@@ -512,18 +543,23 @@ fn next_feature_field(rest: &str) -> (Cow<'_, str>, Option<&str>) {
     (Cow::Owned(value), after_quote.strip_prefix(','))
 }
 
+/// Featurizes a token whose surface is its own analyzed text.
 pub fn featurize(token: &Token, next_token: Option<&Token>) -> TokenInfo {
     TokenInfo::from_values(featurize_selected(
         token,
         next_token,
         &[true; TokenAttributeIndex::COUNT],
+        token.surface(),
     ))
 }
 
+/// `surface` is the source slice that produced `token`, which the analyzer
+/// read in its folded view.
 fn featurize_selected(
     token: &Token,
     next_token: Option<&Token>,
     requested: &[bool; TokenAttributeIndex::COUNT],
+    surface: &str,
 ) -> [Option<CompactString>; TokenAttributeIndex::COUNT] {
     let mut values: [Option<CompactString>; TokenAttributeIndex::COUNT] =
         [const { None }; TokenAttributeIndex::COUNT];
@@ -533,7 +569,7 @@ fn featurize_selected(
     const INDICES: [TokenAttributeIndex; 32] = [
         Pos1, Pos2, Pos3, Pos4, CType, CForm, LForm, Lemma, Orth, Pron, OrthBase, PronBase, Goshu,
         IType, IForm, FType, FForm, IConType, FConType, Type, Kana, KanaBase, Form, FormBase,
-        AType, AConType, AModType, Pos, Tag, Norm, Text, LexType,
+        AType, AConType, AModType, Pos, Tag, Norm, Surface, LexType,
     ];
 
     for (i, &index) in INDICES.iter().enumerate() {
@@ -566,10 +602,10 @@ fn featurize_selected(
         .clone()
         .unwrap_or_else(|| CompactString::from(token.surface()));
     if requested[Orth as usize] {
-        values[Orth as usize] = Some(orth.clone());
+        values[Orth as usize] = Some(CompactString::from(crate::analysis::text_key(surface)));
     }
-    if requested[Text as usize] {
-        values[Text as usize] = Some(CompactString::from(token.surface()));
+    if requested[Surface as usize] {
+        values[Surface as usize] = Some(CompactString::from(surface));
     }
 
     if token.lex_type() == LexType::Unknown {
@@ -635,68 +671,116 @@ fn featurize_selected(
     values
 }
 
+/// Tokenizes `text` with every attribute, folding it with
+/// [`ViewFold::unprotected`].
 pub fn tokenize(text: &str, tokenizer: &Tokenizer) -> Vec<TokenInfo> {
-    let mut worker = tokenizer.new_worker();
-    worker.reset_sentence(text);
-    worker.tokenize();
-    let num_tokens = worker.num_tokens();
-    let tokens: Vec<TokenInfo> = (0..num_tokens)
-        .map(|i| {
-            let next_token = if i < num_tokens - 1 {
-                let next_token = worker.token(i + 1);
-                Some(next_token)
-            } else {
-                None
-            };
-            featurize(&worker.token(i), next_token.as_ref())
-        })
-        .collect();
+    tokenize_folded(text, tokenizer, &UNPROTECTED)
+}
 
+/// Tokenizes the `fold` view of `text` with every attribute.
+pub(crate) fn tokenize_folded(
+    text: &str,
+    tokenizer: &Tokenizer,
+    fold: &ViewFold,
+) -> Vec<TokenInfo> {
+    let mut worker = tokenizer.new_worker();
+    let mut tokens = Vec::new();
+    for_each_folded_token(
+        &mut worker,
+        text,
+        fold,
+        &[true; TokenAttributeIndex::COUNT],
+        |_, values| tokens.push(TokenInfo::from_values(values)),
+    );
     tokens
 }
 
-/// Tokenizes one sentence directly into the catalog's dense execution projection.
+/// Tokenizes one sentence directly into the catalog's dense execution
+/// projection, folding it with [`ViewFold::unprotected`].
 pub fn tokenize_bound(
     text: &str,
     tokenizer: &Tokenizer,
     projection: &BoundProjection,
 ) -> Result<BoundTokenSentence, BoundTokenError> {
     let mut worker = tokenizer.new_worker();
-    tokenize_worker_bound(&mut worker, text, projection).map(|(sentence, _)| sentence)
+    tokenize_worker_bound(&mut worker, text, &UNPROTECTED, projection).map(|(sentence, _)| sentence)
 }
 
-/// Tokenizes with lane-owned scratch state and returns exact admitted-byte ranges.
+/// Tokenizes the `fold` view of `source` with lane-owned scratch state and
+/// returns each token's byte range in `source`.
 pub(crate) fn tokenize_worker_bound(
     worker: &mut Worker,
-    text: &str,
+    source: &str,
+    fold: &ViewFold,
     projection: &BoundProjection,
 ) -> Result<(BoundTokenSentence, Vec<std::ops::Range<usize>>), BoundTokenError> {
-    worker.reset_sentence(text);
-    worker.tokenize();
-    let token_count = worker.num_tokens();
     let mut requested = [false; TokenAttributeIndex::COUNT];
     for attribute in projection.attributes() {
         requested[*attribute as usize] = true;
     }
-    let value_count = token_count
-        .checked_mul(projection.len())
-        .ok_or(BoundTokenError::ResourceAccounting)?;
-    let mut values = Vec::with_capacity(value_count);
-    let mut ranges = Vec::with_capacity(token_count);
-    for index in 0..token_count {
-        let next_token = (index + 1 < token_count).then(|| worker.token(index + 1));
-        ranges.push(worker.token(index).range_byte());
-        let mut token_values =
-            featurize_selected(&worker.token(index), next_token.as_ref(), &requested);
-        values.extend(
-            projection
-                .attributes()
-                .iter()
-                .map(|attribute| token_values[*attribute as usize].take()),
-        );
-    }
-    BoundTokenSentence::from_projected_values(projection, token_count, values)
+    let mut values = Vec::new();
+    let mut ranges = Vec::new();
+    for_each_folded_token(
+        worker,
+        source,
+        fold,
+        &requested,
+        |range, mut token_values| {
+            ranges.push(range);
+            values.extend(
+                projection
+                    .attributes()
+                    .iter()
+                    .map(|attribute| token_values[*attribute as usize].take()),
+            );
+        },
+    );
+    BoundTokenSentence::from_projected_values(projection, ranges.len(), values)
         .map(|sentence| (sentence, ranges))
+}
+
+/// Tokenizes the `fold` view of `source` and calls `visit` with each token's
+/// byte range in `source` and its `requested` attributes, in token order.
+///
+/// A token boundary inside an alignment group of the view moves to the end of
+/// the group, so the token that starts the group covers all of its source and
+/// the next token's source range is empty.
+fn for_each_folded_token(
+    worker: &mut Worker,
+    source: &str,
+    fold: &ViewFold,
+    requested: &[bool; TokenAttributeIndex::COUNT],
+    mut visit: impl FnMut(std::ops::Range<usize>, [Option<CompactString>; TokenAttributeIndex::COUNT]),
+) {
+    let view = fold.fold(source);
+    worker.reset_sentence(view.text());
+    worker.tokenize();
+    let token_count = worker.num_tokens();
+    let unchanged = view.text() == source;
+    let mut source_bytes = crate::analysis::CodePointCursor::new(source);
+    for index in 0..token_count {
+        let token = worker.token(index);
+        let range = if unchanged {
+            token.range_byte()
+        } else {
+            let to_source = |position: usize| {
+                let position = u32::try_from(position).expect("a view fits u32 code points");
+                view.map()
+                    .to_source(ViewSpan::new(position, position))
+                    .end()
+            };
+            let chars = token.range_char();
+            let start = source_bytes.byte_at(to_source(chars.start));
+            let end = source_bytes.byte_at(to_source(chars.end));
+            start..end
+        };
+        let next_token = (index + 1 < token_count).then(|| worker.token(index + 1));
+        let surface = source
+            .get(range.clone())
+            .expect("mapped token ranges lie on character boundaries");
+        let token_values = featurize_selected(&token, next_token.as_ref(), requested, surface);
+        visit(range, token_values);
+    }
 }
 
 #[cfg(test)]
@@ -840,7 +924,7 @@ mod tests {
             token.get(projection.ordinal(TokenAttributeIndex::Pos).unwrap()),
             Some("VERB")
         );
-        assert!(projection.ordinal(TokenAttributeIndex::Text).is_none());
+        assert!(projection.ordinal(TokenAttributeIndex::Surface).is_none());
     }
 
     #[test]
@@ -917,7 +1001,7 @@ mod tests {
         );
         assert_eq!(
             token
-                .get(TokenAttributeIndex::Text)
+                .get(TokenAttributeIndex::Surface)
                 .map(compact_str::CompactString::as_str),
             Some("表層")
         );
@@ -1182,7 +1266,7 @@ mod tests {
             TokenAttributeIndex::OrthBase,
             TokenAttributeIndex::Lemma,
             TokenAttributeIndex::Norm,
-            TokenAttributeIndex::Text,
+            TokenAttributeIndex::Surface,
         ] {
             assert_eq!(
                 token.get(attribute).map(compact_str::CompactString::as_str),

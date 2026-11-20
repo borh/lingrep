@@ -176,13 +176,17 @@ fn assert_realization(bound: &BoundCatalog, words: &BoundTokenSentence) {
 fn real_vibrato_and_sudachi_realize_the_same_portable_catalog() {
     let dictionary = std::env::var("LINGREP_DICTIONARY_PATH").unwrap();
     let tokenizer = lingrep_core::dictionary::create_tokenizer_from_path(&dictionary).unwrap();
-    assert_japanese_realization(&VibratoPlan::configured(
-        tokenizer,
-        [0; 32],
-        ExtractionProfile::Morphology,
-        SegmentationMode::Input,
-        NormalizationPolicy::None,
-    ));
+    assert_japanese_realization(
+        &VibratoPlan::configured(
+            tokenizer,
+            std::path::Path::new(&dictionary),
+            [0; 32],
+            ExtractionProfile::Morphology,
+            SegmentationMode::Input,
+            NormalizationPolicy::None,
+        )
+        .unwrap(),
+    );
 
     let sudachi_dictionary = PathBuf::from(std::env::var_os("LINGREP_SUDACHI_DICT_CORE").unwrap());
     let sudachi_resources = PathBuf::from(std::env::var_os("LINGREP_SUDACHI_RESOURCES").unwrap());

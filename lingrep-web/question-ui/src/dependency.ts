@@ -1,4 +1,4 @@
-import {attributeMembers,basicAttributeKeys} from './model.js';
+import {attributeMembers,basicAttributeKeys,surfaceOf} from './model.js';
 import type {Token,MatchRecord,Locale} from './model.js';
 
 /** A word the match binds: the span, every capture, and every word a `where` clause binds, as `ling matches --evidence` lists them. */
@@ -113,7 +113,7 @@ export function dependencyView(choice:DependencyView|null,bunsetsu:boolean,compa
 /** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
 export function headLabel(tokens:readonly Token[],index:number):string|null {
   const head=headIndex(tokens[index]);
-  return head===null||!tokens[head]?null:`${scalar(tokens[head],'text')??''}·${head+1}`;
+  return head===null||!tokens[head]?null:`${surfaceOf(tokens[head])}·${head+1}`;
 }
 
 /** Display names of token-attribute values, by label set, attribute and value, as the question configuration's `value_names` carries them. */
@@ -132,7 +132,7 @@ export interface DetailValue { readonly value:string; readonly gloss:string|null
 export interface DetailRow { readonly key:string; readonly name:string|null; readonly values:readonly DetailValue[]; }
 /** Whether a token lies in the match span, is bound by the pattern's condition outside it (with `roles`), or neither; its basic attributes; and all of them when there are more than the basics. */
 export interface TokenDetails { readonly place:'span'|'bound'|'outside'; readonly roles:readonly string[]; readonly basics:readonly DetailRow[]; readonly all:readonly DetailRow[]|null; }
-const KEY_NAMES:Readonly<Record<string,Readonly<Record<Locale,string>>>>={text:{ja:'表層形',en:'surface'},lemma:{ja:'辞書形',en:'dictionary form'},upos:{ja:'品詞',en:'part of speech'},'dep.head':{ja:'係り先',en:'attaches to'},'dep.rel':{ja:'関係',en:'relation'}};
+const KEY_NAMES:Readonly<Record<string,Readonly<Record<Locale,string>>>>={text:{ja:'照合形',en:'match form'},surface:{ja:'表層形',en:'surface'},lemma:{ja:'辞書形',en:'dictionary form'},upos:{ja:'品詞',en:'part of speech'},'dep.head':{ja:'係り先',en:'attaches to'},'dep.rel':{ja:'関係',en:'relation'}};
 /** Token `index`'s details as the evidence table words them: `dep.head` as the head's word and number (`root` at the root) and other values by their names in `names`. */
 export function tokenDetails(tokens:readonly Token[],index:number,row:Row,names:ValueNames|undefined,locale:Locale,root:string):TokenDetails {
   const attributes=tokens[index].attributes,word=evidenceWords(row,tokens.length).find(word=>word.index===index);

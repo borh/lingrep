@@ -149,7 +149,7 @@ test('token details gloss values as the evidence table does, say how a word outs
   assert.deepEqual([verb.place,verb.roles],['bound',['v']]);
   const {valueName}=await import('./dependency.js');
   assert.deepEqual(verb.basics.map(({key,name,values})=>[key,name,values.map(({value,gloss})=>[value,gloss])]),[
-    ['text','表層形',[['上る',null]]],['lemma','辞書形',[['上る',null]]],['upos','品詞',[['VERB','動詞']]],['dep.head','係り先',[['0','文の中心']]],['dep.rel','関係',[['root',valueName(names,'dep.rel','root','ja')]]],
+    ['text','照合形',[['上る',null]]],['lemma','辞書形',[['上る',null]]],['upos','品詞',[['VERB','動詞']]],['dep.head','係り先',[['0','文の中心']]],['dep.rel','関係',[['root',valueName(names,'dep.rel','root','ja')]]],
   ]);
   assert.deepEqual(verb.all.map(item=>item.key),['text','lemma','upos','dep.head','dep.rel','conllu.misc']);
   const noun=tokenDetails(tokens,0,row,names,'en','heads the sentence');
@@ -158,4 +158,6 @@ test('token details gloss values as the evidence table does, say how a word outs
   assert.deepEqual(noun.basics.find(item=>item.key==='dep.rel').values,[{value:'obj',gloss:'object'}]);
   assert.equal(noun.all,null);
   assert.equal(tokenDetails(tokens,2,{span:{start:0,end:2}},names,'ja','文の中心').place,'outside');
+  const variant=[token(0,'ガラス','NOUN',0,'root',{surface:'ｶﾞﾗｽ'})];
+  assert.deepEqual(tokenDetails(variant,0,row,names,'ja','文の中心').basics.slice(0,2).map(({key,name,values})=>[key,name,values.map(({value})=>value)]),[['surface','表層形',['ｶﾞﾗｽ']],['text','照合形',['ガラス']]]);
 });

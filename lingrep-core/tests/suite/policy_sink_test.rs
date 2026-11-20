@@ -315,7 +315,7 @@ derived := (?<noun> [upos=NOUN]) [upos=AUX]*.
 fn attributed(orth: &str, lemma: &str, pos: &str) -> TokenInfo {
     let mut token = TokenInfo::default();
     token.set(TokenAttributeIndex::Orth, orth.into());
-    token.set(TokenAttributeIndex::Text, orth.into());
+    token.set(TokenAttributeIndex::Surface, orth.into());
     token.set(TokenAttributeIndex::Lemma, lemma.into());
     token.set(TokenAttributeIndex::Pos, pos.into());
     token

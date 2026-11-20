@@ -69,7 +69,7 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
 
     assert_eq!(
         manifest["analyzer"]["normalization_unicode_version"],
-        serde_json::json!([18, 0, 0])
+        serde_json::Value::Null
     );
 
     // Identity — the bytes a later run compares against.
@@ -79,11 +79,11 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "beec8e75b6d5bf31cd4dd903fe339153aeb05464fb98209003ccba1d08085d3d"
+        "4f94ac192d7d8ce42fb4487463847d6d78bc2173466e598ddd428b7417a59dee"
     );
     assert_eq!(
         manifest["reader_identity"],
-        "30f0742514aec2cbb20346c5e19c70dbc343f39546b4d451a6dfab89696ffb57"
+        "6de13997319c4350999d2aa5c8aa944f463eb34d148eeeae28eafdcafd8d1754"
     );
     assert_eq!(
         manifest["admission_identity"],
@@ -95,7 +95,7 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     );
     assert_eq!(
         manifest["token_schema_identity"],
-        "0258eb71de9f5983c95b8a9fa9fc4bd23a883f0087a16cf26fd9a6f6b9eda7cc"
+        "8cbbff2a6d2c10c97ba0776f7045738ba5d6e180b1148669ba3e99010c170ba0"
     );
 
     // Inventory — observation order made into bytes.
@@ -122,7 +122,7 @@ fn the_prepared_artifact_identity_literals_are_pinned() {
     assert_eq!(components["locations.v1"]["length"], 376);
     assert_eq!(
         components["locations.v1"]["blake3"],
-        "35cb4de3ee8873b1c0dede29678dd3e503d756919a3a326ad61492ce93b85f47"
+        "5945c2c658f47fb20585c0ed25a92d125bf23680faddcf10e3898b3c7e4fbced"
     );
 }
 
@@ -169,21 +169,21 @@ fn the_prepared_tokens_decode_to_the_pinned_records() {
     let bytes = fs::read(artifact.join("tokens.v1.zst")).unwrap();
     assert_eq!(
         decompressed_tokens_digest(&bytes),
-        "83376e85cd537952d6a0d72613801dc17d31bbebfbe348553ed4b4b6ddeb467d"
+        "6be51297fc28b09916dfb8cac99d0b99cb63f149cf82dbe16e37c46faf7c72d1"
     );
 }
 
 const EXPECTED_TOKENS: &[&str] = &[
-    "0 a.md 0:0 0 lemma=猫 norm=猫 text=猫 unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ネコ unidic.orthbase=猫 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* unidic.pron=ネコ unidic.pronbase=ネコ upos=NOUN xpos=名詞-普通名詞-一般",
-    "0 a.md 0:0 1 lemma=が norm=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
-    "0 a.md 0:0 2 lemma=来る。 norm=来る。 text=来る。 unidic.cform=* unidic.ctype=* unidic.lextype=unknown unidic.orthbase=来る。 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
-    "1 a.md 0:1 0 lemma=猫 norm=猫 text=猫 unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ネコ unidic.orthbase=猫 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* unidic.pron=ネコ unidic.pronbase=ネコ upos=NOUN xpos=名詞-普通名詞-一般",
-    "1 a.md 0:1 1 lemma=が norm=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
-    "1 a.md 0:1 2 lemma=寝る。 norm=寝る。 text=寝る。 unidic.cform=* unidic.ctype=* unidic.lextype=unknown unidic.orthbase=寝る。 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
-    "2 b.md 1:0 0 lemma=犬 norm=犬 text=犬 unidic.cform=* unidic.ctype=* unidic.lextype=system unidic.lform=イヌ unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
-    "2 b.md 1:0 1 lemma=が norm=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
-    "2 b.md 1:0 2 lemma=走る norm=走る text=走る unidic.cform=終止形-一般 unidic.ctype=五段-ラ行 unidic.goshu=和 unidic.iform=基本形 unidic.itype=ハ濁 unidic.lextype=system unidic.lform=ハシル unidic.orthbase=走る unidic.pos1=動詞 unidic.pos2=一般 unidic.pos3=* unidic.pos4=* unidic.pron=ハシル unidic.pronbase=ハシル upos=VERB xpos=動詞-一般",
-    "2 b.md 1:0 3 lemma=。 norm=。 text=。 unidic.cform=* unidic.ctype=* unidic.goshu=記号 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=* unidic.orthbase=。 unidic.pos1=補助記号 unidic.pos2=句点 unidic.pos3=* unidic.pos4=* unidic.pron=* unidic.pronbase=* upos=PUNCT xpos=補助記号-句点",
+    "0 a.md 0:0 0 lemma=猫 norm=猫 surface=猫 text=猫 unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ネコ unidic.orthbase=猫 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* unidic.pron=ネコ unidic.pronbase=ネコ upos=NOUN xpos=名詞-普通名詞-一般",
+    "0 a.md 0:0 1 lemma=が norm=が surface=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
+    "0 a.md 0:0 2 lemma=来る。 norm=来る。 surface=来る。 text=来る。 unidic.cform=* unidic.ctype=* unidic.lextype=unknown unidic.orthbase=来る。 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
+    "1 a.md 0:1 0 lemma=猫 norm=猫 surface=猫 text=猫 unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ネコ unidic.orthbase=猫 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* unidic.pron=ネコ unidic.pronbase=ネコ upos=NOUN xpos=名詞-普通名詞-一般",
+    "1 a.md 0:1 1 lemma=が norm=が surface=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
+    "1 a.md 0:1 2 lemma=寝る。 norm=寝る。 surface=寝る。 text=寝る。 unidic.cform=* unidic.ctype=* unidic.lextype=unknown unidic.orthbase=寝る。 unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
+    "2 b.md 1:0 0 lemma=犬 norm=犬 surface=犬 text=犬 unidic.cform=* unidic.ctype=* unidic.lextype=system unidic.lform=イヌ unidic.pos1=名詞 unidic.pos2=普通名詞 unidic.pos3=一般 unidic.pos4=* upos=NOUN xpos=名詞-普通名詞-一般",
+    "2 b.md 1:0 1 lemma=が norm=が surface=が text=が unidic.cform=* unidic.ctype=* unidic.goshu=和 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=ガ unidic.orthbase=が unidic.pos1=助詞 unidic.pos2=格助詞 unidic.pos3=* unidic.pos4=* unidic.pron=ガ unidic.pronbase=ガ upos=ADP xpos=助詞-格助詞",
+    "2 b.md 1:0 2 lemma=走る norm=走る surface=走る text=走る unidic.cform=終止形-一般 unidic.ctype=五段-ラ行 unidic.goshu=和 unidic.iform=基本形 unidic.itype=ハ濁 unidic.lextype=system unidic.lform=ハシル unidic.orthbase=走る unidic.pos1=動詞 unidic.pos2=一般 unidic.pos3=* unidic.pos4=* unidic.pron=ハシル unidic.pronbase=ハシル upos=VERB xpos=動詞-一般",
+    "2 b.md 1:0 3 lemma=。 norm=。 surface=。 text=。 unidic.cform=* unidic.ctype=* unidic.goshu=記号 unidic.iform=* unidic.itype=* unidic.lextype=system unidic.lform=* unidic.orthbase=。 unidic.pos1=補助記号 unidic.pos2=句点 unidic.pos3=* unidic.pos4=* unidic.pron=* unidic.pronbase=* upos=PUNCT xpos=補助記号-句点",
 ];
 
 /// BLAKE3 over `tokens.v1.zst` with each block replaced by its decompressed
@@ -370,7 +370,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             0,
             "猫が来る。",
             &[(0, 3), (3, 6), (6, 15)],
-            "4624ce1fd59cd3c6e7ba9a8017a9701bdf00003c59fc318a013771219c01289d",
+            "af44c0874ed0971a06cbcd66a2ed2a4e16056dadb10b1342b01af59c2cb6efb0",
         ),
         (
             "a.md",
@@ -378,7 +378,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             1,
             "猫が寝る。",
             &[(0, 3), (3, 6), (6, 15)],
-            "43f7eb873d4a4f06a1fc927fdacda54b05794e3ec1dcdd150439287a7db9a01f",
+            "6b7059e5cbbf1bf19023cbe7074e80571185c21930aebd995e9a9b3936eb4a38",
         ),
         (
             "b.md",
@@ -386,7 +386,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
             0,
             "犬が走る。",
             &[(0, 3), (3, 6), (6, 12), (12, 15)],
-            "0dfabd8b75909b872e459af0c39a3ee3d0c742262056e76cf6da4cf88ede752a",
+            "4e33043c3963da9cfa67cf378a36e2a8c457c441462e84fdffa55f956f90bd0b",
         ),
     ];
     reader.block_on(async {
@@ -473,7 +473,7 @@ fn the_prepared_provenance_reads_back_the_pinned_rows() {
                         .collect(),
                     input_unit_id: Some(ordinal),
                     input_kind: Some(TextUnitKind::Sentence),
-                    normalization: Some(NormalizationPolicy::Nfc),
+                    normalization: Some(NormalizationPolicy::None),
                     input_identity: Some(*blake3::Hash::from_hex(input).unwrap().as_bytes()),
                     source_range: Some(0..15),
                 },
@@ -522,7 +522,7 @@ fn the_baseline_is_deterministic_across_builds() {
 }
 
 #[test]
-fn conllu_artifact_identity_includes_versioned_normalization() {
+fn conllu_artifact_identity_is_pinned() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("s.conllu");
     fs::copy(
@@ -551,10 +551,10 @@ fn conllu_artifact_identity_includes_versioned_normalization() {
     );
     assert_eq!(
         manifest["token_schema_identity"],
-        "61e60e9b20279b5e569551d399baf301721974b22ec6213d1403abebb37a6250"
+        "0e9730975b1419cbe452daf56b439edc9358cd1904083f17a55a848ed01c981e"
     );
     assert_eq!(
         manifest["analysis_identity"],
-        "1044950a50f581d79542858a347bd4e580e9c3dd73a2c455ae488d207021d966"
+        "714a77b8b89d6d34f9555946ddc39d3e892618e7670ac02574efcdd52de05249"
     );
 }

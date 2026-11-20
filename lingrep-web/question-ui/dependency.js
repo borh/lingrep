@@ -1,4 +1,4 @@
-import { attributeMembers, basicAttributeKeys } from './model.js';
+import { attributeMembers, basicAttributeKeys, surfaceOf } from './model.js';
 const scalar = (token, key) => { const value = token.attributes[key]; return typeof value === 'string' ? value : undefined; };
 /** The 0-based head index, or null at the root. */
 export function headIndex(token) {
@@ -124,7 +124,7 @@ export function dependencyView(choice, bunsetsu, compact) {
 /** The word a token attaches to and its 1-based number, as `抜かし·17`; null at the root. */
 export function headLabel(tokens, index) {
     const head = headIndex(tokens[index]);
-    return head === null || !tokens[head] ? null : `${scalar(tokens[head], 'text') ?? ''}·${head + 1}`;
+    return head === null || !tokens[head] ? null : `${surfaceOf(tokens[head])}·${head + 1}`;
 }
 const LABEL_SETS = ['ud-v2', 'spacy', 'clearnlp', 'penn'];
 /** `value` of `attribute` in plain words, from the first label set that names it, or its base relation's name for a `dep.rel` subtype; English where a name has no Japanese; null when no set names it. */
@@ -133,7 +133,7 @@ export function valueName(names, attribute, value, locale) {
     const found = entry(value) ?? (attribute === 'dep.rel' && value.includes(':') ? entry(value.slice(0, value.indexOf(':'))) : undefined);
     return found?.[locale] ?? found?.en ?? null;
 }
-const KEY_NAMES = { text: { ja: '表層形', en: 'surface' }, lemma: { ja: '辞書形', en: 'dictionary form' }, upos: { ja: '品詞', en: 'part of speech' }, 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
+const KEY_NAMES = { text: { ja: '照合形', en: 'match form' }, surface: { ja: '表層形', en: 'surface' }, lemma: { ja: '辞書形', en: 'dictionary form' }, upos: { ja: '品詞', en: 'part of speech' }, 'dep.head': { ja: '係り先', en: 'attaches to' }, 'dep.rel': { ja: '関係', en: 'relation' } };
 /** Token `index`'s details as the evidence table words them: `dep.head` as the head's word and number (`root` at the root) and other values by their names in `names`. */
 export function tokenDetails(tokens, index, row, names, locale, root) {
     const attributes = tokens[index].attributes, word = evidenceWords(row, tokens.length).find(word => word.index === index);

@@ -719,3 +719,139 @@ fn unsupported_analyzer_config_error_includes_path_version_and_recovery() {
         assert!(stderr.contains(detail), "{stderr}");
     }
 }
+
+/// A protocol adapter reads the folded view of each line; lingrep maps its
+/// token ranges back to the source, publishes each source slice as `surface`
+/// and its folded key as `text`, directly and in a prepared corpus.
+#[test]
+fn an_adapter_reads_the_folded_view_and_tokens_carry_the_exact_source_surface() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let adapter = include_str!("../../../lingrep-core/tests/fixtures/external_echo_adapter.py")
+        .replace(
+            "            for attribute in header[\"projection\"]:\n                values.append(text if attribute[\"key\"] == \"text\" else None)",
+            "            for surface in [text[:1], text[1:]]:\n                values.extend(surface if attribute['key'] == 'text' else None for attribute in header['projection'])",
+        )
+        .replace("\"word_count\": 1", "\"word_count\": 2")
+        .replace(
+            "\"surface_ranges\": [[0, len(text.encode(\"utf-8\"))]]",
+            "\"surface_ranges\": [[0, len(text[:1].encode('utf-8'))], [len(text[:1].encode('utf-8')), len(text.encode('utf-8'))]]",
+        );
+    std::fs::write(root.join("adapter.py"), adapter).unwrap();
+    let python = Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    let python = String::from_utf8(python.stdout).unwrap();
+    std::fs::write(root.join("analyzer.toml"), format!("version = 1\nkind = 'protocol'\npython = '{}'\nentrypoint = 'adapter.py'\nlanguage = 'ja'\nschema = [{{ key = 'text', kind = 'scalar' }}]\n", python.trim())).unwrap();
+    std::fs::write(root.join("input.txt"), "ｶﾞﾗｽ\n葛\u{E0100}城\nＮＨＫ\n").unwrap();
+    std::fs::write(
+        root.join("query.lx"),
+        "g := [text=ｶﾞ] [text=ﾗｽ].\nh := [text=Ｎ].\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let output = lingrep_std().current_dir(root).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("text_unfolded"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with('{'))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let rows: Vec<Vec<(String, String)>> = run(&[
+        "--json",
+        "tokenize",
+        "--analyzer-config",
+        "analyzer.toml",
+        "input.txt",
+    ])
+    .into_iter()
+    .filter(|event| event["type"] == "sentence")
+    .map(|event| {
+        event["data"]["tokens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|token| {
+                let attribute = |key: &str| token["attributes"][key].as_str().unwrap().to_owned();
+                (attribute("surface"), attribute("text"))
+            })
+            .collect()
+    })
+    .collect();
+    let expected = [
+        [("ｶﾞ", "ガ"), ("ﾗｽ", "ラス")],
+        [("葛\u{E0100}", "葛"), ("城", "城")],
+        [("Ｎ", "N"), ("ＨＫ", "HK")],
+    ]
+    .map(|row| {
+        row.map(|(surface, text)| (surface.to_owned(), text.to_owned()))
+            .to_vec()
+    });
+    assert_eq!(rows, expected);
+
+    let matches = |records: Vec<serde_json::Value>| {
+        records
+            .into_iter()
+            .filter(|event| event["type"] == "match")
+            .map(|event| event["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    let direct = matches(run(&[
+        "--json",
+        "matches",
+        "--analyzer-config",
+        "analyzer.toml",
+        "--patterns",
+        "query.lx",
+        "input.txt",
+    ]));
+    let published: Vec<_> = direct
+        .iter()
+        .map(|record| {
+            (
+                record["pattern"].as_str().unwrap().to_owned(),
+                record["surface"].as_str().unwrap().to_owned(),
+                record["char_span"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        published,
+        [
+            ("g", "ｶﾞﾗｽ", serde_json::json!({"start": 0, "end": 4})),
+            ("h", "Ｎ", serde_json::json!({"start": 0, "end": 1})),
+        ]
+        .map(|(pattern, surface, span)| (pattern.to_owned(), surface.to_owned(), span))
+    );
+    run(&[
+        "corpus",
+        "build",
+        "--analyzer-config",
+        "analyzer.toml",
+        "--output",
+        "artifact",
+        "input.txt",
+    ]);
+    std::fs::remove_file(root.join("adapter.py")).unwrap();
+    let prepared = matches(run(&[
+        "--json",
+        "matches",
+        "--corpus",
+        "artifact",
+        "--patterns",
+        "query.lx",
+    ]));
+    assert_eq!(prepared, direct);
+}

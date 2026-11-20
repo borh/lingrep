@@ -9,7 +9,7 @@
 //! Admission runs in strict order so the cheapest checks reject first: size
 //! caps (413) need no dictionary or worker slot; the semaphore (429) needs no
 //! dictionary. The blocking task retains the worker slot until analysis ends,
-//! including after request cancellation. `store.context.tokenizer()` is resolved
+//! including after request cancellation. `store.context.plan()` is resolved
 //! *inside* the blocking closure because its first-call dictionary load is
 //! synchronous I/O that must not run on the async executor; a load failure
 //! surfaces as 503.
@@ -121,8 +121,8 @@ pub async fn run_sample(
     // is the outer `Err` (500).
     let outcome = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let tokenizer = store.context.tokenizer()?;
-        Ok::<_, TokenizerUnavailable>(analyze_sample(&pattern, &sample, &tokenizer))
+        let plan = store.context.plan()?;
+        Ok::<_, TokenizerUnavailable>(analyze_sample(&pattern, &sample, &plan))
     })
     .await;
     match outcome {

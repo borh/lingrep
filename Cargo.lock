@@ -5201,7 +5201,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5734,7 +5734,7 @@ checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
 [[package]]
 name = "tree-sitter-lingrep"
 version = "0.1.0"
-source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=d067f3ef5be49a74647499e1a3691b4480f4c7f3#d067f3ef5be49a74647499e1a3691b4480f4c7f3"
+source = "git+https://github.com/borh/tree-sitter-lingrep.git?rev=eec994eaf9acee405c3e1d4530329e0a44830294#eec994eaf9acee405c3e1d4530329e0a44830294"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -5948,7 +5948,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vibrato-rkyv"
 version = "0.7.18"
-source = "git+https://github.com/o24s/vibrato-rkyv.git?rev=a6f40fb1830c399f7f6ad9c4cf0efde2611b3bbe#a6f40fb1830c399f7f6ad9c4cf0efde2611b3bbe"
+source = "git+https://github.com/borh/vibrato-rkyv.git?rev=7814244379dc492e8403abb15d62a939fe40aa47#7814244379dc492e8403abb15d62a939fe40aa47"
 dependencies = [
  "bumpalo",
  "crawdad-rkyv",

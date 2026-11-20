@@ -68,7 +68,7 @@ export function documentNames(lines) {
   return (l) => (l.source_name && documents.get(l.source_name).size === 1 ? l.source_name.replace(/\.(conllu|jsonl|txt|md|xml)$/i, "") : t("frequency.document", { id: l.document }));
 }
 
-const ATTRIBUTE_WORDS = { text: "frequency.attribute_text", lemma: "frequency.attribute_lemma", norm: "frequency.attribute_norm", upos: "frequency.attribute_upos", xpos: "frequency.attribute_xpos" };
+const ATTRIBUTE_WORDS = { text: "frequency.attribute_text", surface: "frequency.attribute_surface", lemma: "frequency.attribute_lemma", norm: "frequency.attribute_norm", upos: "frequency.attribute_upos", xpos: "frequency.attribute_xpos" };
 /** An exact-key field in plain words: `$n.lemma` as “n の lemma（辞書形）”, keeping the attribute's own name. */
 export function keyFieldLabel(field) {
   const [, capture, attribute] = /^\$([^.]+)\.(.+)$/.exec(field) ?? [null, null, field];

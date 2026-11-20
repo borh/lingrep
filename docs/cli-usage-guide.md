@@ -407,7 +407,9 @@ not be projected. Both are omitted when zero.
 
 JSONL match records and surviving captures carry `char_span`: half-open,
 sentence-relative Unicode code-point offsets into the exact analysis text.
-Analyzer paths address text after the declared normalization policy. CoNLL-U
+Analyzer paths address text after the declared normalization policy. Every
+analyzer reads the source unchanged by default, so its offsets address the
+source text; under `--normalization nfc` they address the NFC text. CoNLL-U
 uses the reconstructed surface text and omits offsets when `# text`
 does not match. Words sharing a multiword surface token each address its whole
 surface range; their internal character boundaries are not inferred. A run
@@ -954,7 +956,7 @@ attribute key that the schema carries under a conflicting value kind.
 
 `check --schema SCHEMA` reports the same findings without a corpus, against a
 named declared schema: `unidic-morphology`, `sudachi-morphology`, `tokenize`
-(surface-only), or `conllu`.
+(`text` and `surface`), or `conllu`.
 
 These name schemas, not analyzers. A morphology layout is determined by the
 dictionary that supplies the feature columns, so `unidic-morphology` is what
@@ -1087,7 +1089,7 @@ It also opens the link with the program named by the `BROWSER` environment
 variable, or with `xdg-open` (`open` on macOS) when that is unset. When no
 such program can be started, it reports that and keeps serving.
 For direct text input, `--serve` supports Vibrato morphology with input
-segmentation and NFC normalization. To use other analyzer settings, prepare
+segmentation and no normalization. To use other analyzer settings, prepare
 the input with `ling corpus build` and pass the artifact with `--corpus`.
 `--context` and `--limit` are not carried in either direction.
 
@@ -1386,7 +1388,9 @@ ling matches \
   UD_Japanese-GSD/
 ```
 
-The portable columns are `text` (FORM), `lemma`, `upos`, and `xpos`.
+The portable columns are `surface` (FORM as written), `text` (the folded key
+of FORM that `text` literals compare with), `lemma`, `upos`, and `xpos`. The
+reader does not normalize FORM, and `--normalization` does not apply to it.
 Dependencies are `dep.head`, `dep.rel`, and the string-set `dep.enhanced`.
 Known UD features are string-set `feat.*` attributes; all original FEATS and
 MISC entries are additionally retained in `conllu.feats` and `conllu.misc`.
@@ -1712,10 +1716,18 @@ The common analysis choices are:
 
 | Option | Values | Meaning |
 | --- | --- | --- |
-| `--normalization` | `nfc`, `none` | Normalize input before analysis; default `nfc` |
+| `--normalization` | `nfc`, `none` | Normalize input before analysis; default `none` |
 | `--analyzer` | `vibrato`, `sudachi`, `external` | Select the token producer; default `vibrato` |
 | `--profile` | `morphology`, `text` | Retain full morphology or token text only; default `morphology` |
 | `--segmentation` | `input`, `analyzer` | Preserve input sentence units or accept analyzer sentence boundaries; default `input` |
+
+Every analyzer reads a folded view of the source — variation selectors
+removed, half-width katakana widened, U+FF5E as U+301C, canonical
+composition — and its token boundaries are mapped back to the source. Each
+token publishes the exact source text it covers as `surface` and that
+surface's folded key as `text`. Vibrato keeps the compatibility ideographs its
+dictionary lists, such as 臭氣 with U+FA5C; Sudachi and external analyzers
+receive the unified ideograph, which NFC also produces.
 
 These choices are semantic. A prepared artifact records them, and changing one
 selects a different artifact rather than reinterpreting stored tokens. Prepared
@@ -1754,8 +1766,10 @@ Without further options, `ling` uses:
 - split mode `c`; `--sudachi-split a` or `b` gives shorter units;
 - the edition named by a `system_small.dic`, `system_core.dic` or
   `system_full.dic` file name; for a renamed file, pass `--sudachi-edition`;
-- the `char.def`, `unk.def`, `rewrite.def` and `sudachi.json` built into `ling`;
-  `--sudachi-resources DIRECTORY` replaces them.
+- the `char.def` built into `ling`; `--sudachi-resources DIRECTORY` replaces
+  it. `ling` loads Sudachi without its input-text plugins, so `rewrite.def`
+  and `sudachi.json` do not affect analysis; the folded view takes their
+  place for half-width katakana and decomposed kana.
 
 The split mode and edition are part of the analysis identity.
 
@@ -1873,6 +1887,21 @@ A GiNZA profile selection that runs GiNZA's `bunsetu_recognizer` adds the scalar
 the others, the label `ginza -f conllu` prints as `BunsetuBILabel`. Write
 `[spacy.ginza.bunsetu=B]` to match bunsetu-initial tokens.
 
+A whole bunsetu is a `B` token, the `I` tokens after it, and no further `I`
+token. These definitions match each bunsetu, each bunsetu that ends in `が`,
+and each bunsetu that starts with a verb, capturing the verb as `head`:
+
+```pattern
+fragment BUNSETU := [spacy.ginza.bunsetu=B] [spacy.ginza.bunsetu=I]* not_followed_by([spacy.ginza.bunsetu=I]).
+pattern bunsetu := @BUNSETU.
+pattern ga_bunsetu := [spacy.ginza.bunsetu=B] [spacy.ginza.bunsetu=I]* [text=が & spacy.ginza.bunsetu=I] not_followed_by([spacy.ginza.bunsetu=I]).
+pattern verb_bunsetu := (?<head> [spacy.ginza.bunsetu=B & upos=VERB]) [spacy.ginza.bunsetu=I]* not_followed_by([spacy.ginza.bunsetu=I]).
+```
+
+In `猫が庭で寝ている。`, which GiNZA divides into `猫が`, `庭で` and `寝ている。`,
+`bunsetu` matches all three, `ga_bunsetu` matches `猫が`, and `verb_bunsetu`
+matches `寝ている。` with `head` on `寝`.
+
 Setup records which pipeline components each profile selection runs: every
 component up to the last one that assigns lemma, UPOS, XPOS, morphological
 features or dependencies (`morphology/*`) or sentence boundaries
@@ -1944,8 +1973,10 @@ process group as well as the query.
 The English bundle uses Explosion's MIT-licensed `en_core_web_sm` 3.8.0, pinned
 by URL and SHA-256 in `flake.nix`, and does not change the Japanese defaults.
 The sealed profile declares text, lemma, norm, UPOS, XPOS, morphological features
-and dependencies. Normalization defaults to `nfc`; use `--normalization none`
-when source text must remain unchanged. Segmentation defaults to `input`,
+and dependencies. The adapter reads the folded view of each input, and `ling`
+maps its token offsets back to the source: `surface` is the exact source text
+and `text` its folded key. A word inside a multiword token, such as French
+`du` analysed as `de le`, takes the adapter's word text as `surface`. Segmentation defaults to `input`,
 retaining the caller's sentence boundaries; `--segmentation analyzer` uses the
 model's parser boundaries. Dependency labels use spaCy's model scheme (for
 example `dobj`), not a conversion to UD labels. The model is trained for
@@ -1956,7 +1987,10 @@ Custom adapters use `kind = "protocol"`, an explicit `language`, a `schema` arra
 of `{ key, kind }` entries, and optional command-line arguments in `arguments`.
 The optional `implementation` and `resources` arrays contain file paths.
 Adapters must implement the bounded
-`lingrep.external-morphology/v1` protocol. `entrypoint` is included in the
+`lingrep.external-morphology/v1` protocol. The adapter receives the folded
+view of each input and returns token ranges in it; when its schema has `text`,
+`ling` publishes `surface` and the folded `text` as it does for spaCy, so the
+schema must not declare `surface` itself. `entrypoint` is included in the
 implementation manifest; the other paths declare its additional file closure.
 The generic adapter supports input segmentation. Known spaCy/Stanza adapters
 obtain these declarations from their sealed projects and models instead.

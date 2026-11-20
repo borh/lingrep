@@ -3,8 +3,7 @@ use std::io::Write;
 
 use crate::catalog_input::load_and_compile_with_vectors;
 use crate::cli::{
-    AnalyzerArg, Cli, Command, NormalizationArg, ProfileArg, QueryInputArgs, ResourceArgs,
-    SegmentationArg,
+    AnalyzerArg, Cli, Command, ProfileArg, QueryInputArgs, ResourceArgs, SegmentationArg,
 };
 use crate::error::CliError;
 use crate::terminal::TerminalArbiter;
@@ -143,7 +142,7 @@ fn server_args(
         || resources.analyzer_config.is_some()
         || resources.profile != ProfileArg::Morphology
         || resources.segmentation != SegmentationArg::Input
-        || resources.normalization != NormalizationArg::Nfc
+        || resources.normalization() != lingrep_core::analysis::NormalizationPolicy::None
         || resources.sudachi_dict.is_some()
         || resources.sudachi_resources.is_some()
         || resources.sudachi_split.is_some()
@@ -152,7 +151,7 @@ fn server_args(
         || !resources.external_args.is_empty()
     {
         return Err(CliError::InvalidArgs(
-            "--serve supports only Vibrato morphology with input segmentation and NFC normalization; use ling corpus build with the desired analyzer settings, then --corpus ARTIFACT --serve".into(),
+            "--serve supports only Vibrato morphology with input segmentation and no normalization; use ling corpus build with the desired analyzer settings, then --corpus ARTIFACT --serve".into(),
         ));
     }
     let (host, port) = address

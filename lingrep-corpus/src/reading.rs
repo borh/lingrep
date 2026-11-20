@@ -12,7 +12,7 @@ use std::io::{self, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use lingrep_core::analysis::NormalizationPolicy;
+use lingrep_core::analysis::{AnalysisView, NormalizationPolicy, ViewSpan};
 use lingrep_core::corpus::markdown_dialect::read_markdown_sentence_lines;
 use lingrep_core::corpus::markdown_render::{
     MARKDOWN_RENDERER_REVISION, RenderedDocument, render_markdown,
@@ -277,75 +277,109 @@ fn rendered_characters(document: &RenderedDocument, line: usize) -> Vec<Rendered
     characters
 }
 
-fn align(stored: &str, rendered: &[RenderedCharacter]) -> Vec<Segment> {
+/// The rendered character each code point of `source` is drawn as, if any.
+///
+/// `source` is the admitted text of one sentence before normalization, so
+/// it is drawn verbatim unless the Markdown dialect removed markup the
+/// renderer keeps, such as a table's cell separators or a footnote
+/// reference. Only then are the two aligned by their longest common
+/// subsequence, over at most 4096 characters.
+fn rendered_positions(source: &str, rendered: &[RenderedCharacter]) -> Vec<Option<usize>> {
+    let source_length = source.chars().count();
     let rendered_text: String = rendered.iter().map(|r| r.character).collect();
-    let stored_length = stored.chars().count();
-    let pairs: Vec<(usize, usize)> = if stored.is_empty() {
-        return Vec::new();
-    } else if let Some(byte_start) = rendered_text.find(stored) {
+    if let Some(byte_start) = rendered_text.find(source) {
         let start = rendered_text
             .get(..byte_start)
             .expect("substring starts at a character boundary")
             .chars()
             .count();
-        (0..stored_length)
-            .map(|index| (index, start + index))
-            .collect()
-    } else {
-        const MAX_DIFF_CHARACTERS: usize = 4096;
-        if stored_length.saturating_add(rendered.len()) > MAX_DIFF_CHARACTERS {
-            return Vec::new();
+        return (start..start + source_length).map(Some).collect();
+    }
+    let mut positions = vec![None; source_length];
+    const MAX_DIFF_CHARACTERS: usize = 4096;
+    if source_length.saturating_add(rendered.len()) > MAX_DIFF_CHARACTERS {
+        return positions;
+    }
+    let source_characters: Vec<char> = source.chars().collect();
+    let rendered_characters: Vec<char> = rendered.iter().map(|r| r.character).collect();
+    for operation in similar::capture_diff_slices(
+        similar::Algorithm::Myers,
+        &source_characters,
+        &rendered_characters,
+    ) {
+        if let similar::DiffOp::Equal {
+            old_index,
+            new_index,
+            len,
+        } = operation
+        {
+            for offset in 0..len {
+                positions[old_index + offset] = Some(new_index + offset);
+            }
         }
-        let stored_characters: Vec<char> = stored.chars().collect();
-        let rendered_characters: Vec<char> = rendered.iter().map(|r| r.character).collect();
-        similar::capture_diff_slices(
-            similar::Algorithm::Myers,
-            &stored_characters,
-            &rendered_characters,
-        )
-        .into_iter()
-        .filter_map(|operation| match operation {
-            similar::DiffOp::Equal {
-                old_index,
-                new_index,
-                len,
-            } => Some((0..len).map(move |offset| (old_index + offset, new_index + offset))),
-            _ => None,
-        })
-        .flatten()
-        .collect()
-    };
+    }
+    positions
+}
+
+/// Maps the stored text of a sentence to the rendered characters of its
+/// source. `stored` is `source` after the normalization policy, aligned to it.
+///
+/// Each run of stored code points that the alignment maps to the same source
+/// code points is one unit: a code point NFC kept, or a composition such as
+/// か U+3099 → が. A unit whose source is drawn as consecutive characters of
+/// one element becomes a segment, or extends the previous one when both are
+/// one stored code point per UTF-16 unit; any other unit is left unmapped.
+fn align(source: &str, stored: &AnalysisView, rendered: &[RenderedCharacter]) -> Vec<Segment> {
+    let positions = rendered_positions(source, rendered);
+    let map = stored.map();
     let mut segments: Vec<Segment> = Vec::new();
-    let mut previous: Option<(usize, usize)> = None;
-    for (stored_index, rendered_index) in pairs {
-        let character = rendered[rendered_index];
-        let units = character.character.len_utf16() as u32;
-        let extends =
-            previous
-                .zip(segments.last())
-                .is_some_and(|((last_stored, last_rendered), segment)| {
-                    let last = rendered[last_rendered];
-                    stored_index == last_stored + 1
-                        && rendered_index == last_rendered + 1
-                        && character.container == segment.2
+    let mut view_start = 0;
+    while view_start < map.view_len() {
+        let source_span = map.to_source(ViewSpan::new(view_start, view_start + 1));
+        let mut view_end = view_start + 1;
+        while view_end < map.view_len()
+            && map.to_source(ViewSpan::new(view_end, view_end + 1)) == source_span
+        {
+            view_end += 1;
+        }
+        let drawn: Option<Vec<RenderedCharacter>> = (source_span.start()..source_span.end())
+            .map(|position| positions[position as usize].map(|index| rendered[index]))
+            .collect();
+        let unit = drawn.filter(|drawn| {
+            drawn.windows(2).all(|pair| {
+                pair[1].container == pair[0].container
+                    && pair[1].utf16 == pair[0].utf16 + pair[0].character.len_utf16() as u32
+            })
+        });
+        if let Some(first) = unit.as_ref().and_then(|drawn| drawn.first()) {
+            let units: u32 = unit
+                .iter()
+                .flatten()
+                .map(|drawn| drawn.character.len_utf16() as u32)
+                .sum();
+            let length = view_end - view_start;
+            match segments.last_mut() {
+                Some(segment)
+                    if length == 1
                         && units == 1
                         && segment.1 == segment.4
-                        && character.utf16 == last.utf16 + 1
-                });
-        match segments.last_mut() {
-            Some(segment) if extends => {
-                segment.1 += 1;
-                segment.4 += 1;
+                        && segment.0 + segment.1 == view_start
+                        && segment.2 == first.container
+                        && segment.3 + segment.4 == first.utf16 =>
+                {
+                    segment.1 += 1;
+                    segment.4 += 1;
+                }
+                _ => segments.push(Segment(
+                    view_start,
+                    length,
+                    first.container,
+                    first.utf16,
+                    units,
+                )),
             }
-            _ => segments.push(Segment(
-                stored_index as u32,
-                1,
-                character.container,
-                character.utf16,
-                units,
-            )),
         }
-        previous = Some((stored_index, rendered_index));
+        view_start = view_end;
     }
     segments
 }
@@ -632,13 +666,18 @@ impl<'a> ReadingSidecarWriter<'a> {
         }
         let mut sentences = Vec::with_capacity(stored.len());
         for (index, (line, text)) in lines.iter().zip(stored).enumerate() {
-            if !self.normalization.normalizes(&line.text, text) {
+            let admitted = self.normalization.apply_aligned(&line.text);
+            if admitted.text() != text {
                 return Err(replay(format!(
                     "sentence {index} on line {} differs from the stored text",
                     line.line
                 )));
             }
-            let segments = align(text, &rendered_characters(&rendered, line.line));
+            let segments = align(
+                &line.text,
+                &admitted,
+                &rendered_characters(&rendered, line.line),
+            );
             let block = segments.first().map_or_else(
                 || {
                     rendered
@@ -1672,7 +1711,7 @@ mod tests {
     fn nonexact_text_at_the_diff_limit_retains_matching_characters() {
         let stored = "a".repeat(2048);
         let rendered = characters(&format!("{}b", "a".repeat(2047)), 0);
-        let segments = align(&stored, &rendered);
+        let segments = align(&stored, &AnalysisView::unchanged(&stored), &rendered);
         assert_eq!(covered(&segments, &(0..2048)), 2047);
         assert_eq!(segments, [Segment(0, 2047, 0, 0, 2047)]);
     }
@@ -1681,7 +1720,7 @@ mod tests {
     fn wide_exact_text_preserves_scalar_and_utf16_offsets() {
         let stored = format!("{}𝑥", "あ".repeat(10000));
         let rendered = characters(&format!("前{stored}後"), 3);
-        let segments = align(&stored, &rendered);
+        let segments = align(&stored, &AnalysisView::unchanged(&stored), &rendered);
         assert_eq!(covered(&segments, &(0..10001)), 10001);
         assert_eq!(
             highlight(&segments, &(10000..10001)),
@@ -1699,7 +1738,11 @@ mod tests {
         let stored = "a | ".repeat(2000);
         let text = "a".repeat(2000);
         record.blocks[0].html = format!("<p data-c=\"0\">{text}</p>");
-        record.sentences[0].segments = align(&stored, &characters(&text, 0));
+        record.sentences[0].segments = align(
+            &stored,
+            &AnalysisView::unchanged(&stored),
+            &characters(&text, 0),
+        );
         let frame =
             zstd::bulk::compress(&serde_json::to_vec(&record).expect("JSON"), 1).expect("compress");
         let (_directory, sidecar) = record_fixture(&frame, 1);
@@ -1716,7 +1759,11 @@ mod tests {
     #[test]
     fn alignment_maps_each_stored_character_to_its_rendered_character() {
         let rendered = characters("前の𝑥と<sup>2</sup>後", 3);
-        let segments = align("前の𝑥と2後", &rendered);
+        let segments = align(
+            "前の𝑥と2後",
+            &AnalysisView::unchanged("前の𝑥と2後"),
+            &rendered,
+        );
         assert_eq!(
             segments,
             [

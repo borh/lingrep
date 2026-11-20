@@ -5,7 +5,58 @@ All notable changes to lingrep are recorded in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.2] - 2026-11-18
+## [Unreleased]
+
+### Added
+
+- Every token carries `surface`, the exact source text it covers: the source
+  slice for Vibrato, Sudachi and external analyzers, and FORM as written for
+  CoNLL-U words and empty nodes. `[surface=ｶﾞﾗｽ]` matches that spelling
+  only. `surface` literals are compared exactly, without NFC.
+- `literal_folded` warns when a `text` literal matches as a different folded
+  spelling, such as `[text=ＮＨＫ]` matching as `NHK`. `regex_not_folded`
+  warns when a regex on `text` contains a character that never occurs in the
+  folded key. `text_unfolded` warns when a corpus prepared before 0.9 is
+  queried with `text` literals, and names the definitions affected.
+
+### Changed
+
+- `text` is the token's match key: its `surface` with variation selectors
+  removed, half-width katakana widened, U+FF5E as U+301C, canonical
+  composition (NFC) and full-width ASCII as ASCII. In 0.8 `text` was
+  UniDic's orthography column for Vibrato and the analyzer's own text for
+  other analyzers. `text` literals, inline and named sets compared with
+  `text`, lexicon members read `by [text]` and `near` values compared with
+  `text` are folded the same way, so `[text=ガラス]` also finds ｶﾞﾗｽ. Regexes
+  on `text` are used as written. `lemma`, `norm` and provider attributes are
+  compared as written.
+- Every analyzer reads a folded view of the source, and its token boundaries
+  are mapped back to the source. An ideographic variation sequence such as
+  葛 U+E0100 is no longer split into a separate symbol token, and half-width
+  ｶﾞﾗｽ is analyzed as ガラス. Vibrato keeps a CJK compatibility ideograph
+  where the dictionary lists a word containing it, such as 臭氣 with U+FA5C.
+- `--normalization` defaults to `none` for every analyzer, so `surface` and
+  `char_span` address the source text exactly. `--normalization nfc` still
+  composes the source before analysis.
+- Reading-view highlights in `ling serve` and lingrep-web map each matched
+  token to its exact source characters, including variation selectors,
+  half-width katakana and decomposed kana.
+- lingrep-web shows each token's `surface` in KWIC lines, the inspector,
+  frequency lines and exports, and labels `text` 照合形 (match form) and
+  `surface` 表層形 (exact source text).
+- Sudachi is loaded without its input-text plugins, so `rewrite.def` and
+  `sudachi.json` do not affect analysis; the folded view widens half-width
+  katakana and composes decomposed kana instead. The 0.8 documentation said
+  `ling` used them.
+- Every prepared corpus and count table must be rebuilt. Analysis identities
+  include the fold, and the token-schema identity of a schema with `surface`
+  includes the revision of the `text` fold. A corpus built by 0.8.x still
+  opens, without `surface` and with `text_unfolded` warnings; a count table
+  written by 0.8.x fails with "built with a different matcher revision".
+  After `ling corpus build`, `ling corpus prune` lists the 0.8.x corpus of
+  the same source as superseded and deletes it, with the count tables bound
+  only to it.
+
 
 ### Added
 

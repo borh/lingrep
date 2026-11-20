@@ -184,6 +184,12 @@ impl QueryProjection<'_> {
             analyzer,
             config,
         )?;
+        crate::attribute_binding::write_unfolded_text_notice(
+            schema,
+            &compiled.analysis,
+            analyzer,
+            config,
+        )?;
         crate::attribute_binding::write_normalization_notices(compiled, config)?;
         Ok(bound)
     }
@@ -400,12 +406,8 @@ pub(crate) fn resolve_matching_query(
             .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
         scope.read_time_policy = Some(markdown_config.policy.clone());
         let reader_config = CorpusReadConfig::new(format, markdown_config);
-        let normalization = if format == lingrep_core::corpus::CorpusFormat::Conllu {
-            lingrep_core::analysis::NormalizationPolicy::None
-        } else {
-            config.normalization
-        };
-        let reader_identity = ReaderIdentity::derive(&reader_config, normalization);
+        let reader_identity =
+            ReaderIdentity::derive(&reader_config, config.reader_normalization(format));
         let analysis_inputs = AnalysisInputs::with_token_schema(
             reader_identity,
             admission_identity(),

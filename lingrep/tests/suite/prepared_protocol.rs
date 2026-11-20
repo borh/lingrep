@@ -273,7 +273,7 @@ fn a_prepared_run_matches_the_direct_run_attribute_for_attribute() {
     let direct = coverage_rows(&fixture.attributes_direct(&["--json"]));
     let prepared = coverage_rows(&fixture.attributes_prepared(&["--json"]));
 
-    assert_eq!(direct.len(), 31);
+    assert_eq!(direct.len(), 32);
     assert_eq!(prepared, direct);
 }
 
@@ -1043,7 +1043,7 @@ fn matches_and_summarize_recover_from_a_poisoned_artifact_the_same_way() {
     let directory = tempfile::tempdir().unwrap();
     let artifact = directory.path().join("poisoned.lingcorpus");
     let tokens: Vec<TokenInfo> = (0..64)
-        .map(|index| TokenInfo::default().with_text(format!("t{index}")))
+        .map(|index| TokenInfo::default().with_surface(format!("t{index}")))
         .collect();
     runtime.block_on(build_single_sentence_artifact(
         &artifact, "surface", &tokens,
@@ -1097,11 +1097,11 @@ fn matches_and_summarize_recover_from_a_poisoned_artifact_the_same_way() {
 }
 
 #[test]
-fn prepared_match_never_substitutes_text_for_missing_orth() {
+fn prepared_match_rejects_a_token_without_surface_or_text() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let artifact = directory.path().join("missing-orth.lingcorpus");
-    let missing = TokenInfo::default().with_text("surface");
+    let missing = TokenInfo::default().with_lemma("lemma");
     runtime.block_on(build_single_sentence_artifact(
         &artifact,
         "surface",
@@ -1136,7 +1136,7 @@ fn prepared_match_never_substitutes_text_for_missing_orth() {
         })
     );
 
-    let tokens = [TokenInfo::default().with_text("surface")];
+    let tokens = [TokenInfo::default().with_lemma("lemma")];
     let location = SentenceLocation {
         lookaround_divisions: None,
         source_metadata: None,
@@ -1199,7 +1199,7 @@ fn direct_and_v6_queries_keep_distinct_tag_norm_and_lextype_columns() {
         .with_orth("ORTH")
         .with_tag("TAG")
         .with_norm("NORM")
-        .with_text("TEXT")
+        .with_surface("TEXT")
         .with_lex_type("LEX");
     runtime.block_on(build_single_sentence_artifact(
         &artifact,
@@ -2175,8 +2175,8 @@ fn corpus_build_without_output_refuses_a_corrupt_canonical_artifact() {
 }
 
 /// Japanese corpora are routinely not in NFC — `か` followed by U+3099 is the
-/// ordinary decomposed spelling of `が` — and `--normalization nfc` is the
-/// default precisely so that such a corpus analyzes as the composed text.
+/// ordinary decomposed spelling of `が` — and `--normalization nfc` admits
+/// such a corpus as the composed text.
 ///
 /// The provenance writer's equality check compares the analyzer's text with
 /// the admitted text after normalization; comparing a pre-NFC string with a

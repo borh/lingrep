@@ -167,6 +167,21 @@ mod kwic_split_tests {
         );
     }
 
+    #[test]
+    fn kwic_orth_split_shows_the_surface_where_text_is_folded() {
+        let folded = |text: &str, surface: &str| tok(text).with_surface(surface);
+        let tokens = vec![tok("左"), folded("AB", "ＡＢ"), folded("U", "Ｕ")];
+        let inspection = crate::inspection::projector::InspectionProjector::project_window(
+            &tokens,
+            1..2,
+            WHOLE_SENTENCE_CONTEXT,
+        );
+        assert_eq!(
+            kwic_orth_split(&inspection),
+            ("左".into(), "ＡＢ".into(), "Ｕ".into())
+        );
+    }
+
     /// Characterization: the degenerate all-`None`-orth matched span. A
     /// A missing `orth` is transparent in projected display text.
     fn none_tok() -> TokenInfo {

@@ -573,7 +573,7 @@ fn selective_prepared_queries_preserve_records_and_report_skipped_matcher_work()
             "summary"
         };
         assert_eq!(data(&indexed, event), data(&scanned, event));
-        let narrow = query(command, "lemma=犬", &["--max-tokenized-bytes", "64"]);
+        let narrow = query(command, "lemma=犬", &["--max-tokenized-bytes", "96"]);
         assert_eq!(data(&narrow, event), data(&scanned, event));
         let actual = data(&indexed, "complete").pop().unwrap();
         let reference = data(&scanned, "complete").pop().unwrap();

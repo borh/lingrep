@@ -263,7 +263,7 @@ fn public_pattern_identity_constants_are_pinned() {
     // different records, so a change to one has to be a change someone wrote
     // down rather than a change someone noticed later.
     assert_eq!(POLICY_SEMANTICS_IDENTITY, "lingrep-core-policy/v1");
-    assert_eq!(MATCHER_SEMANTICS_IDENTITY, "lingrep-core-matcher/v1");
+    assert_eq!(MATCHER_SEMANTICS_IDENTITY, "lingrep-core-matcher/v2");
 }
 
 #[test]
@@ -1808,6 +1808,47 @@ fn enhanced_where_clause_preserves_named_parallel_edges_and_projects_graph_keys(
         2,
         "resolve keeps every graph assignment in the winning rank cohort",
     );
+}
+
+#[test]
+fn an_empty_node_matches_surface_exactly_and_text_as_the_folded_key() {
+    let source = "1\truns\trun\tVERB\t_\t_\t0\troot\t0:root\t_\n\
+                  1.1\t\u{ff76}\u{ff9e}\u{ff97}\u{ff7d}\t_\tNOUN\t_\t_\t_\t_\t1:obj\t_\n";
+    let compiled = compile_catalog(
+        PatternSource::named(
+            "empty-surface.lx",
+            "pattern surface := (?<v> [upos=VERB]) where \
+               $v -[enhanced obj]-> (?<n> [node.kind=empty & surface=\u{ff76}\u{ff9e}\u{ff97}\u{ff7d}]).\n\
+             pattern text := (?<v> [upos=VERB]) where \
+               $v -[enhanced obj]-> (?<n> [node.kind=empty & text=\u{30ac}\u{30e9}\u{30b9}]).\n\
+             pattern folded_surface := (?<v> [upos=VERB]) where \
+               $v -[enhanced obj]-> (?<n> [node.kind=empty & surface=\u{30ac}\u{30e9}\u{30b9}]).",
+        ),
+        CompileLimits::default(),
+    )
+    .expect("empty-node surface and text predicates compile")
+    .matcher;
+    let bound = compiled
+        .bind(&lingrep_core::corpus::conllu::token_schema())
+        .unwrap();
+    let mut reader = lingrep_core::corpus::conllu::Reader::new(
+        std::io::BufReader::new(source.as_bytes()),
+        "empty-surface",
+    );
+    let sentence = reader.next().unwrap().unwrap();
+    let input = BoundSentenceInput::new(
+        sentence.project(bound.projection()).unwrap(),
+        EnhancedGraphInput::Observation(sentence.enhanced_graph().clone()),
+    );
+
+    let mut patterns = bound
+        .find_matches_input(&input)
+        .unwrap()
+        .into_iter()
+        .map(|matched| matched.pattern.to_string())
+        .collect::<Vec<_>>();
+    patterns.sort();
+    assert_eq!(patterns, ["surface", "text"]);
 }
 
 #[test]

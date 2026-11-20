@@ -836,9 +836,9 @@ fn a_sudachi_artifact_is_queryable_and_agrees_with_the_direct_run() {
     prepared
         .args(["--json", "matches", "--patterns"])
         .arg(&catalog)
-        .args(["--limit", "all", "--corpus"])
+        .args(["--limit", "all", "--progress", "never", "--corpus"])
         .arg(&artifact);
-    let prepared = sudachi(prepared);
+    let prepared = prepared.output().unwrap();
 
     for (label, output) in [("direct", &direct), ("prepared", &prepared)] {
         assert!(
@@ -1945,9 +1945,9 @@ fn context_is_bounded_and_does_not_change_the_match() {
 }
 
 #[test]
-fn matched_surface_rejects_a_missing_orth_with_sentence_and_token_location() {
+fn matched_surface_rejects_a_token_without_surface_or_text_with_sentence_and_token_location() {
     let mut tokens = vec![token("有"), TokenInfo::default()];
-    tokens[1].set_text("fallback-must-not-be-used");
+    tokens[1].set_lemma("fallback-must-not-be-used");
     let location = SentenceLocation {
         lookaround_divisions: None,
         source_metadata: None,
@@ -3511,7 +3511,9 @@ fn structural_metadata_has_identical_owner_values_and_scope_counts_in_direct_and
 }
 
 #[test]
-fn normalized_analyzer_offsets_are_identical_when_prepared() {
+fn source_offsets_are_identical_when_prepared() {
+    // The default admits the source unchanged, so the decomposed は and U+3099
+    // are two code points of the five the span covers.
     let dictionary = MiniDictionary::new();
     let directory = TempDir::new().unwrap();
     let input = directory.path().join("offsets.jsonl");
@@ -3562,7 +3564,7 @@ fn normalized_analyzer_offsets_are_identical_when_prepared() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches, match_events(&prepared));
     let data = &matches[0]["data"];
-    assert_eq!(data["char_span"], serde_json::json!({"start":0,"end":4}));
+    assert_eq!(data["char_span"], serde_json::json!({"start":0,"end":5}));
     assert_eq!(data["captures"][0]["char_span"], data["char_span"]);
 }
 

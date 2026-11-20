@@ -15,8 +15,8 @@ use crate::inspection::{
 use crate::patterns::compile_web_pattern;
 use crate::patterns::format_pattern_compile_error;
 use crate::templates::{CaptureInspectionFragment, TokenInspectionFragment, TrustedFragmentHtml};
-use lingrep_core::token_match::{TokenInfo, tokenize};
-use vibrato_rkyv::Tokenizer;
+use lingrep_core::analysis::VibratoPlan;
+use lingrep_core::token_match::TokenInfo;
 
 #[derive(Debug, Clone)]
 pub struct TokenView {
@@ -32,7 +32,11 @@ impl TokenView {
     pub fn from_token_info(token: &TokenInfo, index: usize) -> Result<Self, askama::Error> {
         Ok(Self {
             index,
-            orth: token.orth().unwrap_or_default().to_owned(),
+            orth: token
+                .surface()
+                .or(token.orth())
+                .unwrap_or_default()
+                .to_owned(),
             lemma: token.lemma().unwrap_or_default().to_owned(),
             pos: token.pos().unwrap_or_default().to_owned(),
             cform: token.cform().unwrap_or_default().to_owned(),
@@ -218,7 +222,7 @@ fn build_line_analysis<'a>(
     {
         let matched_text: String = line[m.start..m.end]
             .iter()
-            .filter_map(|t| t.orth())
+            .filter_map(|t| t.surface().or(t.orth()))
             .collect();
         let tokens: Vec<TokenView> = line[m.start..m.end]
             .iter()
@@ -339,13 +343,13 @@ pub fn analyze_tokens(pattern_source: &str, lines: &[Vec<TokenInfo>]) -> SampleA
 pub fn analyze_sample(
     pattern_source: &str,
     sample_text: &str,
-    tokenizer: &Tokenizer,
+    plan: &VibratoPlan,
 ) -> SampleAnalysis {
     let lines: Vec<Vec<TokenInfo>> = sample_text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(|line| tokenize(line, tokenizer))
+        .map(|line| plan.tokenize(line))
         .collect();
     analyze_tokens(pattern_source, &lines)
 }

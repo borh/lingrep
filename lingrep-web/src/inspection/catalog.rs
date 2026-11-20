@@ -76,25 +76,25 @@ const fn meta(
 pub const fn field_meta(attribute: TokenAttributeIndex) -> TokenFieldMeta {
     use TokenFieldGroupKey::{Accent, Forms, Lexeme, Pos as PosGroup, Reading, Surface, Variation};
     match attribute {
-        Orth => meta(
+        TokenAttributeIndex::Surface => meta(
             attribute,
-            "orth",
-            "書字形",
-            "Orthography",
+            "surface",
+            "表層形",
+            "Surface",
             Surface,
             0,
             true,
-            "Realized written form",
+            "The token's exact source text",
         ),
-        Text => meta(
+        Orth => meta(
             attribute,
             "text",
-            "入力表層",
-            "Input text",
+            "照合形",
+            "Match form",
             Surface,
             1,
             true,
-            "Original token text",
+            "The surface with variant spellings folded, which text tests compare",
         ),
         Norm => meta(
             attribute,

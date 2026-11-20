@@ -356,3 +356,58 @@ fn drift_compares_near_tests_by_the_values_they_resolve_to() {
     let error = report_catalog_drift(&sources).expect_err("no table");
     assert_eq!(code_of(&error), DiagnosticCode::WordVectorUnavailable);
 }
+
+/// Answers every query with the vocabulary spellings `ＮＨＫ` and `ｶﾞﾗｽ`.
+struct WideVocabulary;
+
+impl WordVectors for WideVocabulary {
+    fn similar_values(
+        &self,
+        queries: &[NearQuery],
+    ) -> Result<Vec<Option<Arc<[CompactString]>>>, String> {
+        Ok(queries
+            .iter()
+            .map(|_| Some(Arc::from([CompactString::from("ＮＨＫ"), "ｶﾞﾗｽ".into()])))
+            .collect())
+    }
+}
+
+#[test]
+fn near_values_compare_with_text_as_their_folded_keys_and_with_lemma_as_written() {
+    let matched = |source: &str, attribute: TokenAttributeIndex| {
+        let matcher = compile_catalog_with_vectors(
+            PatternSource::named("near.lx", source),
+            CompileLimits::default(),
+            &WideVocabulary,
+        )
+        .unwrap()
+        .matcher;
+        let tokens: Vec<TokenInfo> = ["NHK", "ガラス", "ＮＨＫ"]
+            .into_iter()
+            .map(|value| {
+                let mut token = TokenInfo::default();
+                token.set(attribute, value.into());
+                token
+            })
+            .collect();
+        matcher
+            .find_matches(&tokens)
+            .iter()
+            .map(|found| found.start)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        matched(
+            "pattern p := [text near 放送 >= 0.5].\n",
+            TokenAttributeIndex::Orth
+        ),
+        [0, 1]
+    );
+    assert_eq!(
+        matched(
+            "pattern p := [lemma near 放送 >= 0.5].\n",
+            TokenAttributeIndex::Lemma
+        ),
+        [2]
+    );
+}

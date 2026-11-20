@@ -1476,17 +1476,14 @@ fn visit_matched_orths(
 ) -> Result<(), MissingRequiredAttribute> {
     let end = span.end.min(sentence.len());
     for index in span.start.min(end)..end {
-        let text = sentence
-            .get_key(
-                index,
-                &lingrep_core::token_match::AttributeKey::new("text")
-                    .expect("form is a canonical attribute key"),
-            )
-            .ok_or_else(|| MissingRequiredAttribute {
-                attribute: "text",
-                source_name: location.source_name.to_string(),
-                corpus_sentence_ordinal: location.corpus_sentence_ordinal,
-                token_index: index,
+        let text =
+            lingrep_core::token_match::display_surface(sentence, index).ok_or_else(|| {
+                MissingRequiredAttribute {
+                    attribute: "text",
+                    source_name: location.source_name.to_string(),
+                    corpus_sentence_ordinal: location.corpus_sentence_ordinal,
+                    token_index: index,
+                }
             })?;
         visit(text);
     }

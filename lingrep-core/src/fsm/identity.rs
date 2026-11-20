@@ -31,7 +31,7 @@ pub const POLICY_SEMANTICS_IDENTITY: &str = "lingrep-core-policy/v1";
 /// fingerprint, such as a count table, also records this value and is stale when it
 /// differs. Advance it when a change alters any count for an unchanged
 /// catalog fingerprint and analysis identity.
-pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v1";
+pub const MATCHER_SEMANTICS_IDENTITY: &str = "lingrep-core-matcher/v2";
 
 /// Fingerprints trimmed catalog source together with the grammar, compiler and
 /// policy semantic revisions; excludes [`MATCHER_SEMANTICS_IDENTITY`].

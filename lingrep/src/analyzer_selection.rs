@@ -190,16 +190,17 @@ pub(crate) fn resolve_native(
                 .ok_or_else(|| CliError::Dictionary("dictionary path is not UTF-8".into()))?;
             let (tokenizer, digest) = create_tokenizer_with_identity(path_text)
                 .map_err(|error| CliError::Dictionary(error.to_string()))?;
+            let plan = VibratoPlan::configured(
+                tokenizer,
+                path,
+                digest,
+                config.profile,
+                config.segmentation,
+                config.normalization,
+            )
+            .map_err(|error| CliError::Dictionary(format!("{error}: {}", error.source)))?;
             Ok(ResolvedNativeAnalyzer {
-                plan: CliAnalyzerPlan::Native(Box::new(NativeAnalyzerPlan::Vibrato(
-                    VibratoPlan::configured(
-                        tokenizer,
-                        digest,
-                        config.profile,
-                        config.segmentation,
-                        config.normalization,
-                    ),
-                ))),
+                plan: CliAnalyzerPlan::Native(Box::new(NativeAnalyzerPlan::Vibrato(plan))),
                 resource_identity: digest,
             })
         }

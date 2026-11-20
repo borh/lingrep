@@ -3,6 +3,8 @@ export type Behavior = 'keep' | 'live' | 'compare';
 export interface Question { readonly source: string; readonly dataset: string; readonly where: string; }
 export type AttributeValue = string | readonly string[];
 export interface Token { readonly index: number; readonly attributes: Readonly<Record<string, AttributeValue>> & {readonly text:string}; }
+/** The token's exact source text where the corpus carries `surface`, else its `text`. */
+export const surfaceOf = (token:Token):string => { const surface=token.attributes.surface; return typeof surface==='string'?surface:token.attributes.text; };
 export const attributeMembers = (value:AttributeValue|undefined):readonly string[] => value===undefined?[]:typeof value==='string'?[value]:value;
 export interface GraphNode { readonly node_kind: string; readonly token_index?: number; }
 export type GraphBinding = { readonly binding_kind: 'node'; readonly name: string; readonly node: GraphNode } | { readonly binding_kind: 'edge'; readonly name: string; readonly head: GraphNode; readonly dependent: GraphNode; readonly relation: string };
@@ -138,7 +140,7 @@ export function sourceSelection(source:string, span:{readonly start:number;reado
   try{return [decoder.decode(bytes.subarray(0,span.start)).length,decoder.decode(bytes.subarray(0,span.end)).length];}catch{return null;}
 }
 
-const BASIC_ATTRIBUTES=['text','lemma','norm','upos','xpos','dep.head','dep.rel','unidic.cform','unidic.ctype','unidic.kana','unidic.pron','unidic.orthbase','unidic.lform','unidic.goshu','unidic.pos1','unidic.pos2','unidic.pos3','unidic.pos4','unidic.pronbase','unidic.kanabase'];
+const BASIC_ATTRIBUTES=['surface','text','lemma','norm','upos','xpos','dep.head','dep.rel','unidic.cform','unidic.ctype','unidic.kana','unidic.pron','unidic.orthbase','unidic.lform','unidic.goshu','unidic.pos1','unidic.pos2','unidic.pos3','unidic.pos4','unidic.pronbase','unidic.kanabase'];
 /** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others except raw CoNLL-U fields. A narrow panel shows the first rows only. */
 export function basicAttributeKeys(attributes:Readonly<Record<string,unknown>>):string[] {
   return [...BASIC_ATTRIBUTES.filter(key=>key in attributes),...Object.keys(attributes).filter(key=>!BASIC_ATTRIBUTES.includes(key)&&!key.startsWith('conllu.'))].slice(0,18);

@@ -230,7 +230,14 @@ pub fn run(
     let table_fingerprint = catalog.fingerprint.clone();
     let mut compiled = catalog.output;
     compiled.matcher = compiled.matcher.with_overlaps(args.overlaps.into());
-    let projected_attributes = cached_run_attributes(&compiled.matcher);
+    let mut projected_attributes = cached_run_attributes(&compiled.matcher);
+    // Read by `--by surface`; a schema without it drops it.
+    projected_attributes.push(
+        lingrep_core::token_match::AttributeKey::new("surface")
+            .expect("surface is a canonical attribute"),
+    );
+    projected_attributes.sort_unstable();
+    projected_attributes.dedup();
     let catalog_policy = compiled.matcher.catalog_policy();
     let pattern_ordinals = catalog_policy
         .published_entries(

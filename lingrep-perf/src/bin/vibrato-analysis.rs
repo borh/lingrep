@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .to_str()
             .ok_or("dictionary path is not valid UTF-8")?,
     )?;
-    let plan = VibratoPlan::new(tokenizer);
+    let plan = VibratoPlan::new(tokenizer, &args.dict_path)?;
     let projection = plan.schema().bind_projection(attributes)?;
     let mut session = plan.create_session();
     let input = BufReader::new(File::open(&args.input)?);

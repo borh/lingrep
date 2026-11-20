@@ -44,7 +44,7 @@ fn sudachi_profile_schemas_are_canonical_and_closed() {
             .iter()
             .map(lingrep_core::token_match::AttributeKey::as_str)
             .collect::<Vec<_>>(),
-        ["text"]
+        ["text", "surface"]
     );
 
     let morphology = config(
@@ -74,6 +74,7 @@ fn sudachi_profile_schemas_are_canonical_and_closed() {
             "sudachi.pos3",
             "sudachi.pos4",
             "sudachi.reading",
+            "surface",
         ]
     );
     assert!(
@@ -104,7 +105,7 @@ fn sudachi_semantic_identity_is_pinned() {
         .collect();
     assert_eq!(
         hex,
-        "a6db886dac3ec4682b63883307324ea317c92de08a033698b9d74f80fa5dc514"
+        "3f2f63e3cd330eb6224b600d000c9de99995bd4135c973fc5f557683dce89f63"
     );
 }
 
@@ -257,7 +258,7 @@ fn load_plan_with(
 fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<String>> {
     let projection = plan
         .schema()
-        .bind_projection([lingrep_core::token_match::AttributeKey::new("text").unwrap()])
+        .bind_projection([lingrep_core::token_match::AttributeKey::new("surface").unwrap()])
         .unwrap();
     let input =
         TextUnit::admit(InputUnitId::new(100), kind, text, NormalizationPolicy::None).unwrap();
@@ -266,7 +267,7 @@ fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<
         .analyze_bounded_batch(vec![input], &projection)
         .unwrap();
     let analyzed = &batch.inputs()[0];
-    let text = projection.ordinal_key("text").unwrap();
+    let surface_ordinal = projection.ordinal_key("surface").unwrap();
     analyzed
         .sentences()
         .iter()
@@ -280,7 +281,12 @@ fn analyze_forms(plan: &SudachiPlan, kind: TextUnitKind, text: &str) -> Vec<Vec<
                 .map(|(index, surface)| {
                     assert_eq!(surface.word_range(), index as u32..index as u32 + 1);
                     let source = analyzed.input().slice(surface.source_range()).unwrap();
-                    let value = sentence.words().token(index).unwrap().get(text).unwrap();
+                    let value = sentence
+                        .words()
+                        .token(index)
+                        .unwrap()
+                        .get(surface_ordinal)
+                        .unwrap();
                     assert_eq!(source, value);
                     value.to_owned()
                 })
@@ -504,5 +510,111 @@ fn long_sudachi_input_keeps_one_sentence_and_complete_source_alignment() {
                     })
             );
         }
+    }
+}
+
+/// Sudachi reads the folded view of each sentence: an ideographic variation
+/// selector, half-width katakana, a decomposed kana and U+FF5E no longer split
+/// a word. Each token's `surface` is the exact source it covers and `text` is
+/// that surface's folded key.
+#[test]
+#[ignore = "requires LINGREP_SUDACHI_RESOURCES and LINGREP_SUDACHI_DICT_CORE"]
+fn sudachi_tokens_carry_the_exact_surface_and_its_folded_key() {
+    let plan = load_plan(
+        SudachiEdition::Core,
+        SudachiSplit::C,
+        ExtractionProfile::Morphology,
+        SegmentationMode::Input,
+    );
+    let keys = ["surface", "text", "lemma", "upos"];
+    let projection = plan
+        .schema()
+        .bind_projection(keys.map(|key| lingrep_core::token_match::AttributeKey::new(key).unwrap()))
+        .unwrap();
+    let ordinals = keys.map(|key| projection.ordinal_key(key).unwrap());
+    for (source, expected) in [
+        (
+            "葛\u{E0100}城市に行く",
+            vec![
+                ["葛\u{E0100}城市", "葛城市", "葛城市", "PROPN"],
+                ["に", "に", "に", "ADP"],
+                ["行く", "行く", "行く", "AUX"],
+            ],
+        ),
+        (
+            "ｶﾞﾗｽの靴",
+            vec![
+                ["ｶﾞﾗｽ", "ガラス", "ガラス", "NOUN"],
+                ["の", "の", "の", "ADP"],
+                ["靴", "靴", "靴", "NOUN"],
+            ],
+        ),
+        (
+            "カ\u{3099}ラスの靴",
+            vec![
+                ["カ\u{3099}ラス", "ガラス", "ガラス", "NOUN"],
+                ["の", "の", "の", "ADP"],
+                ["靴", "靴", "靴", "NOUN"],
+            ],
+        ),
+        (
+            "\u{FA5C}氣が満ちた",
+            vec![
+                ["\u{FA5C}", "臭", "臭い", "ADJ"],
+                ["氣", "氣", "氣", "NOUN"],
+                ["が", "が", "が", "ADP"],
+                ["満ち", "満ち", "満ちる", "VERB"],
+                ["た", "た", "た", "AUX"],
+            ],
+        ),
+        (
+            "東京\u{FF5E}大阪",
+            vec![
+                ["東京", "東京", "東京", "PROPN"],
+                ["\u{FF5E}", "\u{301C}", "\u{301C}", "SYM"],
+                ["大阪", "大阪", "大阪", "PROPN"],
+            ],
+        ),
+        (
+            "ＮＨＫの番組",
+            vec![
+                ["ＮＨＫ", "NHK", "ＮＨＫ", "NOUN"],
+                ["の", "の", "の", "ADP"],
+                ["番組", "番組", "番組", "NOUN"],
+            ],
+        ),
+    ] {
+        let input =
+            TextUnit::sentence(InputUnitId::new(7), source, NormalizationPolicy::None).unwrap();
+        let batch = plan
+            .create_session()
+            .analyze_bounded_batch(vec![input], &projection)
+            .unwrap();
+        let analyzed = &batch.inputs()[0];
+        let sentence = &analyzed.sentences()[0];
+        let rows: Vec<[String; 4]> = (0..sentence.words().len())
+            .map(|index| {
+                let token = sentence.words().token(index).unwrap();
+                ordinals.map(|ordinal| token.get(ordinal).unwrap().to_owned())
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            expected
+                .iter()
+                .map(|row| row.map(str::to_owned))
+                .collect::<Vec<_>>(),
+            "{source}"
+        );
+        let slices: Vec<&str> = sentence
+            .surface_tokens()
+            .iter()
+            .map(|token| analyzed.input().slice(token.source_range()).unwrap())
+            .collect();
+        assert_eq!(
+            slices,
+            expected.iter().map(|row| row[0]).collect::<Vec<_>>(),
+            "{source}"
+        );
     }
 }

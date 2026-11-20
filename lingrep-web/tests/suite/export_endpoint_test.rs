@@ -616,3 +616,58 @@ async fn export_about_labels_follow_the_requested_locale_and_default_to_english(
         axum::http::StatusCode::BAD_REQUEST
     );
 }
+
+/// A pattern sheet's KWIC cells hold each token's exact surface, not the
+/// folded `text` the pattern matched on.
+#[tokio::test]
+async fn export_rows_show_the_exact_surface_of_folded_tokens() {
+    let word = |surface: &str, text: &str, pos: &str| {
+        TokenInfo::default()
+            .with_orth(text)
+            .with_surface(surface)
+            .with_pos(pos)
+    };
+    let (store, _dir) = store_with_sentences(
+        vec![
+            vec![
+                word("葛\u{E0100}城", "葛城", "PROPN"),
+                word("の", "の", "ADP"),
+                word("ｶﾞﾗｽ", "ガラス", "NOUN"),
+                word("。", "。", "PUNCT"),
+            ],
+            vec![word("ガラス", "ガラス", "NOUN")],
+        ],
+        1_000,
+    )
+    .await;
+    let workbench = WorkbenchId::new("export-surface");
+    let revision = complete(&store, &workbench, "glass := [text=ガラス].").await;
+
+    let response = get(&store, &export_uri(&workbench, revision)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let mut workbook = open(body_bytes(response).await);
+    let text = |cell: &Data| match cell {
+        Data::String(value) => value.clone(),
+        Data::Empty => String::new(),
+        other => panic!("{other:?}"),
+    };
+    // Columns: sentence, left, key, right, sections.
+    let kwic: Vec<[String; 3]> = workbook
+        .worksheet_range("glass")
+        .unwrap()
+        .rows()
+        .skip(1)
+        .map(|row| [text(&row[1]), text(&row[2]), text(&row[3])])
+        .collect();
+    assert_eq!(
+        kwic,
+        [
+            [
+                "葛\u{E0100}城の".to_owned(),
+                "ｶﾞﾗｽ".to_owned(),
+                "。".to_owned()
+            ],
+            [String::new(), "ガラス".to_owned(), String::new()],
+        ]
+    );
+}

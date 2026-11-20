@@ -43,7 +43,7 @@ Examples:
 
 Japanese text is analyzed with the dictionary installed by
 `ling dictionary install`, or one specified by --dict-path or
-LINGREP_DICTIONARY_PATH; CoNLL-U input is already analyzed.
+LINGREP_DICTIONARY_PATH.
 Pattern syntax: ling check --help. Command details: ling <COMMAND> --help.
 
 ```

@@ -17,6 +17,7 @@ use super::model::{
 };
 use super::token_test::{ResolvedTest, to_dnf};
 use crate::fsm::{AttrValue, AttrValueType};
+use crate::token_match::AttributeKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DfsColor {
@@ -146,8 +147,7 @@ pub(super) fn bind(
         }
     }
 
-    let mut set_members: IndexMap<CompactString, Arc<[CompactString]>> =
-        IndexMap::with_capacity(sets.len());
+    let mut set_members: IndexMap<CompactString, SetMembers> = IndexMap::with_capacity(sets.len());
     let mut set_spans: IndexMap<CompactString, SourceSpan> = IndexMap::with_capacity(sets.len());
     for set in &sets {
         if let Some(id) = symbols.get(&set.name) {
@@ -162,9 +162,25 @@ pub(super) fn bind(
         match set_spans.entry(set.name.clone()) {
             Entry::Vacant(entry) => {
                 entry.insert(set.span);
-                let mut members = set.members.clone();
-                members.sort_unstable();
-                set_members.insert(set.name.clone(), Arc::from(members.into_boxed_slice()));
+                let sorted = |members: Vec<CompactString>| {
+                    let mut members = members;
+                    members.sort_unstable();
+                    members.dedup();
+                    Arc::from(members.into_boxed_slice())
+                };
+                set_members.insert(
+                    set.name.clone(),
+                    SetMembers {
+                        normalized: sorted(set.members.clone()),
+                        exact: sorted(set.exact_members.clone()),
+                        folded: sorted(
+                            set.members
+                                .iter()
+                                .map(|member| crate::analysis::text_key(member).into())
+                                .collect(),
+                        ),
+                    },
+                );
             }
             Entry::Occupied(entry) => {
                 diagnostics.push(duplicate_name(&sources, &set.name, *entry.get(), set.span));
@@ -371,7 +387,7 @@ struct InspectCtx<'a> {
     sources: &'a SourceRegistry,
     symbols: &'a IndexMap<CompactString, DefinitionId>,
     definitions: &'a [ParsedDefinition],
-    set_members: &'a IndexMap<CompactString, Arc<[CompactString]>>,
+    set_members: &'a IndexMap<CompactString, SetMembers>,
     /// The catalog's test names, read only to tell a `@t` in expression
     /// position from a typo. The bodies are not needed here — nothing in this
     /// walk resolves one — so this takes the same table `resolve_test` reads
@@ -624,7 +640,7 @@ fn bind_definition(
     relations: &[super::model::ParsedRelation],
     enhanced_relations: &[super::model::ParsedEnhancedRelation],
     symbols: &IndexMap<CompactString, DefinitionId>,
-    set_members: &IndexMap<CompactString, Arc<[CompactString]>>,
+    set_members: &IndexMap<CompactString, SetMembers>,
     near: &IndexMap<NearQuery, NearResolution>,
     test_bodies: &IndexMap<CompactString, ParsedTest>,
     test_spans: &IndexMap<CompactString, SourceSpan>,
@@ -773,7 +789,7 @@ fn collect_capture_declarations(
 /// than joining this struct.
 struct BindCtx<'a> {
     symbols: &'a IndexMap<CompactString, DefinitionId>,
-    set_members: &'a IndexMap<CompactString, Arc<[CompactString]>>,
+    set_members: &'a IndexMap<CompactString, SetMembers>,
     near: &'a IndexMap<NearQuery, NearResolution>,
     /// The catalog's `test` bodies, still unresolved: a test may reference
     /// another, so resolution is a walk rather than a lookup.
@@ -993,6 +1009,27 @@ fn resolve_test(
     }
 }
 
+/// A `set` declaration's members, as each attribute compares them.
+#[derive(Clone)]
+struct SetMembers {
+    /// In NFC.
+    normalized: Arc<[CompactString]>,
+    /// As written, for `surface`.
+    exact: Arc<[CompactString]>,
+    /// As `text` keys, for `text`.
+    folded: Arc<[CompactString]>,
+}
+
+impl SetMembers {
+    fn for_attribute(&self, attribute: &AttributeKey) -> Arc<[CompactString]> {
+        Arc::clone(match attribute.as_str() {
+            "surface" => &self.exact,
+            "text" => &self.folded,
+            _ => &self.normalized,
+        })
+    }
+}
+
 /// Resolves one parsed attribute test to its evaluable form.
 ///
 /// Lifted out of `bind_expr`'s token arm unchanged when a token became a tree:
@@ -1020,7 +1057,7 @@ fn resolve_attr(
             // nothing else.
             uses.sets.insert(name.clone());
             let members = if let Some(members) = ctx.set_members.get(name) {
-                members.clone()
+                members.for_attribute(&parsed.attr)
             } else {
                 // Name the visibility that is actually there. A `pattern` is no
                 // more legal after `in` than a `fragment` is, so saying
@@ -1067,6 +1104,16 @@ fn resolve_attr(
                 threshold: *threshold,
             };
             let members = match ctx.near.get(&query) {
+                Some(NearResolution::Values(members)) if parsed.attr.as_str() == "text" => {
+                    let mut folded: Vec<CompactString> = Vec::with_capacity(members.len());
+                    for member in members.iter() {
+                        let key = CompactString::from(crate::analysis::text_key(member));
+                        if !folded.contains(&key) {
+                            folded.push(key);
+                        }
+                    }
+                    Arc::from(folded)
+                }
                 Some(NearResolution::Values(members)) => Arc::clone(members),
                 unavailable => {
                     let (code, message) = match unavailable {
@@ -1111,7 +1158,7 @@ fn resolve_attr(
         } => {
             uses.sets.insert(name.clone());
             let members = if let Some(members) = ctx.set_members.get(name) {
-                members.clone()
+                members.for_attribute(&parsed.attr)
             } else {
                 diagnostics.push(pending_diagnostic(
                     ctx.sources,
@@ -1715,7 +1762,8 @@ fn bind_relation_labels(
             }
             ParsedLabelTerm::SetReference { name, span } => {
                 uses.sets.insert(name.clone());
-                let Some(members) = ctx.set_members.get(name) else {
+                let Some(members) = ctx.set_members.get(name).map(|members| &members.normalized)
+                else {
                     let message = match (ctx.symbols.get(name), test_spans.get(name)) {
                         (Some(id), _) => format!(
                             "`@{name}` is a {}; only a set can name `where` relation labels",
@@ -2385,6 +2433,7 @@ mod set_sharing_tests {
                 sets: vec![ParsedSet {
                     name: "S".into(),
                     members: vec!["a".into(), "b".into(), "c".into()],
+                    exact_members: vec!["a".into(), "b".into(), "c".into()],
                     span: span(0, 3),
                 }],
                 groups: Vec::new(),

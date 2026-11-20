@@ -110,7 +110,10 @@ impl fmt::Display for AttributeKeyError {
 impl std::error::Error for AttributeKeyError {}
 
 fn validate_canonical_key(value: &str) -> Result<(), AttributeKeyError> {
-    if matches!(value, "text" | "lemma" | "norm" | "upos" | "xpos") {
+    if matches!(
+        value,
+        "text" | "surface" | "lemma" | "norm" | "upos" | "xpos"
+    ) {
         return Ok(());
     }
     if let Some(feature) = value.strip_prefix("feat.") {

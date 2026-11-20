@@ -49,8 +49,8 @@ thiserror = "2"
 zstd = "0.14.3"
 
 # Git deps (shared across multiple crates — this is the big win)
-vibrato-rkyv = { git = "https://github.com/o24s/vibrato-rkyv.git", rev = "a6f40fb1830c399f7f6ad9c4cf0efde2611b3bbe", default-features = false, features = ["download"] }
-tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "d067f3ef5be49a74647499e1a3691b4480f4c7f3" }
+vibrato-rkyv = { git = "https://github.com/borh/vibrato-rkyv.git", rev = "7814244379dc492e8403abb15d62a939fe40aa47", default-features = false, features = ["download"] }
+tree-sitter-lingrep = { git = "https://github.com/borh/tree-sitter-lingrep.git", rev = "eec994eaf9acee405c3e1d4530329e0a44830294" }
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "5de0410b6edfd428fc510cc9763440772e9619d5" }
 
 # Multi-crate dev deps

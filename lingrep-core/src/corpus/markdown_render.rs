@@ -13,7 +13,7 @@ use super::markdown_dialect::{
 };
 
 /// Change this revision whenever rendered HTML, text runs, block boundaries or reading alignment change, including after dependency upgrades.
-pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/4";
+pub const MARKDOWN_RENDERER_REVISION: &str = "lingrep-core/markdown-render/5";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDocument {

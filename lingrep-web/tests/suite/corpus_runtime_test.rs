@@ -99,7 +99,7 @@ fn artifact_directories(parent: &Path) -> Vec<PathBuf> {
 /// here, invoking production functions ensures the comparison is representative.
 fn direct_analysis_inputs(config: &CorpusReadConfig, dictionary: &[u8]) -> AnalysisInputs {
     AnalysisInputs::new(
-        ReaderIdentity::derive(config, lingrep_core::analysis::NormalizationPolicy::Nfc),
+        ReaderIdentity::derive(config, lingrep_core::analysis::NormalizationPolicy::None),
         AdmissionIdentity::from_bytes(admission_identity_digest()),
         // The runtime derives its descriptor from the dictionary fingerprint
         // before loading anything; deriving it the same way here is what makes
@@ -108,7 +108,7 @@ fn direct_analysis_inputs(config: &CorpusReadConfig, dictionary: &[u8]) -> Analy
             *blake3::hash(dictionary).as_bytes(),
             lingrep_core::analysis::ExtractionProfile::Morphology,
             lingrep_core::analysis::SegmentationMode::Input,
-            lingrep_core::analysis::NormalizationPolicy::Nfc,
+            lingrep_core::analysis::NormalizationPolicy::None,
         ),
     )
 }

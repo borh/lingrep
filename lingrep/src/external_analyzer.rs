@@ -44,8 +44,12 @@ struct Attribute {
 
 #[derive(Clone)]
 pub(crate) struct ExternalPlan {
+    /// The identity of the published tokens.
     pub descriptor: AnalyzerDescriptor,
+    /// The published schema: the adapter's, plus `surface`.
     pub schema: TokenSchema,
+    adapter_descriptor: AnalyzerDescriptor,
+    adapter_schema: TokenSchema,
     command: ExternalAdapterCommand,
     manifest: VerifiedAdapterManifest,
     limits: lingrep_core::execution::ExecutionLimits,
@@ -426,7 +430,7 @@ impl ExternalPlan {
             let model = resolve(file.model.as_deref().expect("known adapters bind a model"))?;
             verify_recorded_implementation(&model, &manifest)?;
         }
-        let schema = TokenSchema::new(
+        let adapter_schema = TokenSchema::new(
             schema
                 .into_iter()
                 .map(|attribute| {
@@ -440,7 +444,7 @@ impl ExternalPlan {
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .map_err(invalid)?;
-        let descriptor = AnalyzerDescriptor::new(
+        let adapter_descriptor = AnalyzerDescriptor::new(
             family,
             config.profile,
             config.segmentation,
@@ -453,12 +457,15 @@ impl ExternalPlan {
             [0; 32],
             external_component_closure_digest(manifest.components()),
             output_digest,
-            schema.digest(),
+            adapter_schema.digest(),
         )
         .map_err(invalid)?;
+        let schema = lingrep_core::execution::published_schema(&adapter_schema).map_err(invalid)?;
         Ok(Self {
-            descriptor,
+            descriptor: lingrep_core::execution::published_descriptor(&adapter_descriptor, &schema),
             schema,
+            adapter_descriptor,
+            adapter_schema,
             command,
             manifest,
             limits: config.limits,
@@ -473,8 +480,8 @@ impl ExternalPlan {
         ExternalAnalyzerSession::new(
             self.command.clone(),
             self.manifest.clone(),
-            self.descriptor.clone(),
-            self.schema.clone(),
+            self.adapter_descriptor.clone(),
+            self.adapter_schema.clone(),
             self.limits,
             Arc::new(move |bytes| {
                 crate::commands::query_support::write_warning(
@@ -491,6 +498,7 @@ impl ExternalPlan {
             }),
             ExternalAdapterCancellation::from_flag(&self.cancellation),
         )
+        .expect("load published this adapter schema")
     }
 }
 

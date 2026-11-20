@@ -88,6 +88,6 @@ fn form_is_currently_a_unidic_field_not_the_surface() {
     );
     assert_ne!(
         TokenAttributeIndex::from_str("form"),
-        Ok(TokenAttributeIndex::Text)
+        Ok(TokenAttributeIndex::Surface)
     );
 }

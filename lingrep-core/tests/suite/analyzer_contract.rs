@@ -14,7 +14,11 @@ fn sentence(id: u64, text: &str) -> TextUnit {
 
 #[test]
 fn vibrato_session_returns_ordered_source_aligned_sentences() {
-    let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection([
@@ -68,7 +72,11 @@ fn vibrato_session_returns_ordered_source_aligned_sentences() {
 
 #[test]
 fn vibrato_result_is_invariant_to_bounded_batch_partitioning() {
-    let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection([TokenAttributeIndex::Orth, TokenAttributeIndex::Lemma])
@@ -97,7 +105,11 @@ fn vibrato_result_is_invariant_to_bounded_batch_partitioning() {
 
 #[test]
 fn vibrato_rejects_segment_input_and_non_native_scalar_projection() {
-    let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let native = plan
         .schema()
         .bind_projection([TokenAttributeIndex::Orth])
@@ -155,8 +167,10 @@ fn native_japanese_segmentation_returns_source_ranges_matching_legacy_slices() {
 fn vibrato_analyzer_mode_groups_multiple_sentences_under_one_segment() {
     let plan = VibratoPlan::with_mode(
         lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
         SegmentationMode::Analyzer,
-    );
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection([TokenAttributeIndex::Orth])

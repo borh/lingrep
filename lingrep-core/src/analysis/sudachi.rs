@@ -17,8 +17,9 @@ use crate::token_match::{BoundProjection, BoundTokenSentence, TokenSchema};
 use super::{
     AnalysisError, AnalyzedInput, AnalyzedSentence, AnalyzerDescriptor, AnalyzerFamily,
     AnalyzerPlan, AnalyzerSession, ExtractionProfile, JapaneseSegmentationPolicy,
-    NormalizationPolicy, SegmentationMode, SemanticAnalysisIdentity, SurfaceToken, TextUnit,
-    TextUnitKind, ValidatedAnalysisBatch, analyzer::sealed, declared_token_schema,
+    NormalizationPolicy, SegmentationMode, SemanticAnalysisIdentity, SourceBoundaries,
+    SurfaceToken, TEXT_KEY_REVISION, TextUnit, TextUnitKind, UNPROTECTED, ValidatedAnalysisBatch,
+    ViewFold, analyzer::sealed, declared_token_schema, text_key,
 };
 
 const SUDACHI_REVISION: &[u8] = b"5de0410b6edfd428fc510cc9763440772e9619d5";
@@ -71,12 +72,13 @@ fn dictionary_container(path: &Path) -> Option<DictionaryContainer> {
         .then_some(DictionaryContainer::HeaderVersioned)
 }
 
-const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v2";
+const ADAPTER_REVISION: &[u8] = b"lingrep.sudachi-adapter/v3";
 const MAPPING_REVISION: &[u8] = b"lingrep.sudachi-pos-mapping/v1";
-const ALIGNMENT_REVISION: &[u8] = b"lingrep.sudachi-byte-alignment/v1";
+const ALIGNMENT_REVISION: &[u8] = b"lingrep.sudachi-byte-alignment/v2";
 
-pub(super) const MORPHOLOGY_KEYS: [&str; 13] = [
+pub(super) const MORPHOLOGY_KEYS: [&str; 14] = [
     "text",
+    "surface",
     "lemma",
     "norm",
     "upos",
@@ -200,12 +202,19 @@ impl SudachiConfig {
         let schema = declared_token_schema(AnalyzerFamily::Sudachi, profile)
             .ok_or_else(|| SudachiLoadError::Schema("Sudachi declares no such profile".into()))?;
 
-        let implementation_digest = digest(b"implementation", [SUDACHI_REVISION, ADAPTER_REVISION]);
+        let implementation_digest = digest(
+            b"implementation",
+            [
+                SUDACHI_REVISION,
+                ADAPTER_REVISION,
+                &ViewFold::rules_identity(),
+            ],
+        );
         let resource_manifest_digest = digest(
             b"resources",
             [edition.identity(), &dictionary_digest, &resource_digest],
         );
-        let projection_policy_digest = digest(b"projection", [MAPPING_REVISION]);
+        let projection_policy_digest = digest(b"projection", [MAPPING_REVISION, TEXT_KEY_REVISION]);
         let alignment_policy_digest = digest(b"alignment", [ALIGNMENT_REVISION]);
         let split_identity = [split.identity_byte()];
         let output_config_digest = digest(b"output", [edition.identity(), &split_identity]);
@@ -434,19 +443,22 @@ impl AnalyzerSession for SudachiSession {
                 let sentence_text = input
                     .slice(sentence_range)
                     .map_err(|_| AnalysisError::InvalidSourceRange)?;
+                let view = UNPROTECTED.fold(sentence_text);
+                let mut boundaries = SourceBoundaries::new(sentence_text, &view);
+                let view_text = view.text();
                 let mut values = Vec::new();
                 let mut surfaces = Vec::new();
                 let mut chunk_start = 0;
-                while chunk_start < sentence_text.len() {
-                    let remaining = sentence_text
+                while chunk_start < view_text.len() {
+                    let remaining = view_text
                         .get(chunk_start..)
                         .ok_or(AnalysisError::InvalidSourceRange)?;
                     let length = chunk_end(remaining);
-                    let sentence_text = remaining
+                    let chunk = remaining
                         .get(..length)
                         .ok_or(AnalysisError::InvalidSourceRange)?;
                     self.tokenizer.set_mode(self.split.mode());
-                    self.tokenizer.reset().push_str(sentence_text);
+                    self.tokenizer.reset().push_str(chunk);
                     self.tokenizer
                         .do_tokenize()
                         .map_err(AnalysisError::provider)?;
@@ -462,21 +474,22 @@ impl AnalyzerSession for SudachiSession {
                             .ok_or(AnalysisError::ResourceAccounting)?,
                     );
                     let word_offset = surfaces.len();
-                    let sentence_start = sentence_range.start() as usize + chunk_start;
                     for (word_index, morpheme) in self.results.iter().enumerate() {
-                        let start = sentence_start
-                            .checked_add(morpheme.begin())
-                            .ok_or(AnalysisError::ResourceAccounting)?;
-                        let end = sentence_start
-                            .checked_add(morpheme.end())
-                            .ok_or(AnalysisError::ResourceAccounting)?;
-                        let source_range = input
-                            .source_range(start, end)
-                            .map_err(|_| AnalysisError::InvalidSourceRange)?;
-                        let surface = morpheme.surface();
-                        if input.slice(source_range).ok() != Some(surface.as_ref()) {
+                        let view_start = chunk_start + morpheme.begin();
+                        let view_end = chunk_start + morpheme.end();
+                        if view_text.get(view_start..view_end) != Some(morpheme.surface().as_ref())
+                        {
                             return Err(AnalysisError::InvalidAlignment);
                         }
+                        let start = boundaries.source_byte(view_start);
+                        let end = boundaries.source_byte(view_end);
+                        let surface = sentence_text
+                            .get(start..end)
+                            .ok_or(AnalysisError::InvalidAlignment)?;
+                        let sentence_start = sentence_range.start() as usize;
+                        let source_range = input
+                            .source_range(sentence_start + start, sentence_start + end)
+                            .map_err(|_| AnalysisError::InvalidSourceRange)?;
                         let word_start = u32::try_from(word_offset + word_index)
                             .map_err(|_| AnalysisError::ResourceAccounting)?;
                         surfaces.push(SurfaceToken::new(
@@ -488,7 +501,7 @@ impl AnalyzerSession for SudachiSession {
                         ));
                         let pos = needs_pos.then(|| morpheme.part_of_speech());
                         values.extend(fields.iter().map(|field| {
-                            Some(field.value(&morpheme, pos.unwrap_or(&[]), &surface))
+                            Some(field.value(&morpheme, pos.unwrap_or(&[]), surface))
                         }));
                     }
                     chunk_start += length;
@@ -512,7 +525,8 @@ impl AnalyzerSession for SudachiSession {
 
 #[derive(Clone, Copy)]
 enum Field {
-    Form,
+    Text,
+    Surface,
     Lemma,
     Norm,
     Upos,
@@ -549,7 +563,8 @@ impl Field {
         surface: &str,
     ) -> CompactString {
         match self {
-            Self::Form => surface.into(),
+            Self::Text => text_key(surface).into(),
+            Self::Surface => surface.into(),
             Self::Lemma => morpheme.dictionary_form().into(),
             Self::Norm => morpheme.normalized_form().into(),
             Self::Upos => sudachi_upos(pos).into(),
@@ -571,7 +586,8 @@ fn bind_fields(projection: &BoundProjection) -> Result<Vec<Field>, AnalysisError
         .keys()
         .iter()
         .map(|key| match key.as_str() {
-            "text" => Ok(Field::Form),
+            "text" => Ok(Field::Text),
+            "surface" => Ok(Field::Surface),
             "lemma" => Ok(Field::Lemma),
             "norm" => Ok(Field::Norm),
             "upos" => Ok(Field::Upos),

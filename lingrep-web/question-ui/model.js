@@ -1,3 +1,5 @@
+/** The token's exact source text where the corpus carries `surface`, else its `text`. */
+export const surfaceOf = (token) => { const surface = token.attributes.surface; return typeof surface === 'string' ? surface : token.attributes.text; };
 export const attributeMembers = (value) => value === undefined ? [] : typeof value === 'string' ? [value] : value;
 /** A run's failure text, translated when the server reports a known failure code. */
 export const runError = (run, t) => run.error_code === 'analysis_changed' ? t('analysisChanged') : run.error_code === 'result_limit' ? t('resultLimit') : run.error;
@@ -87,7 +89,7 @@ export function sourceSelection(source, span) {
         return null;
     }
 }
-const BASIC_ATTRIBUTES = ['text', 'lemma', 'norm', 'upos', 'xpos', 'dep.head', 'dep.rel', 'unidic.cform', 'unidic.ctype', 'unidic.kana', 'unidic.pron', 'unidic.orthbase', 'unidic.lform', 'unidic.goshu', 'unidic.pos1', 'unidic.pos2', 'unidic.pos3', 'unidic.pos4', 'unidic.pronbase', 'unidic.kanabase'];
+const BASIC_ATTRIBUTES = ['surface', 'text', 'lemma', 'norm', 'upos', 'xpos', 'dep.head', 'dep.rel', 'unidic.cform', 'unidic.ctype', 'unidic.kana', 'unidic.pron', 'unidic.orthbase', 'unidic.lform', 'unidic.goshu', 'unidic.pos1', 'unidic.pos2', 'unidic.pos3', 'unidic.pos4', 'unidic.pronbase', 'unidic.kanabase'];
 /** The token-detail rows' keys, at most 18, in reading order: the portable keys and the dependency, then UniDic's, then the token's others except raw CoNLL-U fields. A narrow panel shows the first rows only. */
 export function basicAttributeKeys(attributes) {
     return [...BASIC_ATTRIBUTES.filter(key => key in attributes), ...Object.keys(attributes).filter(key => !BASIC_ATTRIBUTES.includes(key) && !key.startsWith('conllu.'))].slice(0, 18);

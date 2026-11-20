@@ -1,4 +1,4 @@
-use crate::analysis::NormalizationPolicy;
+use crate::analysis::{NormalizationPolicy, text_key};
 use crate::fsm::{AttrValue, AttrValueType, KeyComponent, KeyProjection, PositionAssertion};
 use crate::token_match::{AttributeKey, TokenAttributeIndex};
 use compact_str::CompactString;
@@ -219,6 +219,34 @@ struct Lowerer<'a, 'src> {
     near: IndexMap<NearQuery, NearResolution>,
     /// The definition being lowered, named in normalization warnings.
     definition: CompactString,
+    /// The attribute the literal being lowered is compared with.
+    literal_key: LiteralKey,
+    /// Whether the last literal lowered was a `text` literal the fold changed.
+    literal_folded: bool,
+}
+
+/// What a literal is compared with, which decides how it is normalized.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiteralKey {
+    /// `text`: the folded key.
+    Text,
+    /// A lexicon member read `by [text]`: NFC, since the same member serves
+    /// `norm`; the lexicon compiler folds its `text` copy.
+    LexiconText,
+    /// `surface`: exactly as written.
+    Surface,
+    /// Every other attribute, and a `set` member: NFC.
+    Other,
+}
+
+impl LiteralKey {
+    fn of(attribute: &AttributeKey) -> Self {
+        match attribute.as_str() {
+            "text" => Self::Text,
+            "surface" => Self::Surface,
+            _ => Self::Other,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -411,6 +439,8 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             rewrite_skip: true,
             near: IndexMap::new(),
             definition: CompactString::default(),
+            literal_key: LiteralKey::Other,
+            literal_folded: false,
         }
     }
 
@@ -1438,6 +1468,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         // `commaSep1` makes an empty `{}` a parse error, so emptiness needs no
         // check of its own here.
         let mut members = Vec::new();
+        let mut exact_members = Vec::new();
         let mut seen = HashSet::new();
         let mut cursor = members_node.walk();
         for value_node in members_node.named_children(&mut cursor) {
@@ -1448,7 +1479,13 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     "unknown set member",
                 ));
             }
-            let literal = self.lower_literal_value(value_node, false)?;
+            // As `surface` reads it, then as every other attribute does.
+            self.literal_key = LiteralKey::Surface;
+            let exact = self.lower_literal_value(value_node, false);
+            self.literal_key = LiteralKey::Other;
+            let exact = exact?;
+            let literal = self.normalized_literal(value_node, exact.clone());
+            exact_members.push(exact);
             if !seen.insert(literal.clone()) {
                 return Err(self.error(
                     value_node,
@@ -1462,6 +1499,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(ParsedSet {
             name,
             members,
+            exact_members,
             span: self.span_of(node)?,
         })
     }
@@ -1644,7 +1682,11 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     }
                     "metadata_string" => {
                         let decoded: CompactString = self.metadata_string_text(child)?.into();
+                        if by.iter().any(|key: &AttributeKey| key.as_str() == "text") {
+                            self.literal_key = LiteralKey::LexiconText;
+                        }
                         let decoded = self.normalized_literal(child, decoded);
+                        self.literal_key = LiteralKey::Other;
                         if decoded.is_empty() {
                             return Err(self.error(
                                 child,
@@ -2648,7 +2690,24 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 .join(" ")
         };
 
-        let value = match operator.as_str() {
+        // A `near` word is looked up in a word-vector table, not compared
+        // with the attribute.
+        if !operator.ends_with("near") {
+            self.literal_key = LiteralKey::of(&attr);
+        }
+        let value = self.lower_attribute_value(node, operator_node, &operator, attr);
+        self.literal_key = LiteralKey::Other;
+        value
+    }
+
+    fn lower_attribute_value(
+        &mut self,
+        node: Node<'_>,
+        operator_node: Node<'_>,
+        operator: &str,
+        attr: AttributeKey,
+    ) -> Result<ParsedAttr, CompileError> {
+        let value = match operator {
             // Exact mode. Literals only: a regex operand here silently read as
             // an unanchored search, which is the defect `~` exists to fix.
             "=" | ":" => {
@@ -2797,6 +2856,7 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                 self.check_recovery_node(values_node)?;
                 let mut values = Vec::new();
                 let mut seen = HashSet::new();
+                let mut folded_members = HashSet::new();
                 let mut cursor = values_node.walk();
                 for value_node in values_node.named_children(&mut cursor) {
                     if value_node.kind() != "value" {
@@ -2807,13 +2867,23 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                         ));
                     }
                     let literal = self.lower_literal_value(value_node, operator == "not in")?;
-                    if !seen.insert(literal.clone()) {
+                    // Two spellings that fold to one `text` key, such as
+                    // ＮＨＫ and NHK, are one member.
+                    let folded = std::mem::take(&mut self.literal_folded);
+                    if seen.contains(&literal) {
+                        if folded || folded_members.contains(&literal) {
+                            continue;
+                        }
                         return Err(self.error(
                             value_node,
                             DiagnosticCode::Syntax,
                             "finite-set members must be unique",
                         ));
                     }
+                    if folded {
+                        folded_members.insert(literal.clone());
+                    }
+                    seen.insert(literal.clone());
                     values.push(literal);
                 }
                 if values.is_empty() {
@@ -3034,18 +3104,45 @@ impl<'a, 'src> Lowerer<'a, 'src> {
         Ok(self.normalized_literal(node, decoded.into()))
     }
 
+    /// The literal `value` as the attribute it is compared with reads it:
+    /// a `text` literal as its folded key, a `surface` literal as written,
+    /// and any other in NFC.
     fn normalized_literal(&mut self, node: Node<'_>, value: CompactString) -> CompactString {
-        if unicode_normalization::is_nfc(&value) {
+        self.literal_folded = false;
+        if self.literal_key == LiteralKey::Surface {
             return value;
         }
-        let normalized: CompactString = NormalizationPolicy::Nfc.apply(value.to_string()).into();
-        let message = format!(
-            "In {}, the literal `{value}` ({}) is normalized to `{normalized}` ({}) for matching",
-            self.definition_label(),
-            code_points(&value),
-            code_points(&normalized),
-        );
-        self.warn(node, DiagnosticCode::NormalizedLiteral, message);
+        let normalized = if unicode_normalization::is_nfc(&value) {
+            value
+        } else {
+            let normalized: CompactString =
+                NormalizationPolicy::Nfc.apply(value.to_string()).into();
+            let message = format!(
+                "In {}, the literal `{value}` ({}) is normalized to `{normalized}` ({}) for matching",
+                self.definition_label(),
+                code_points(&value),
+                code_points(&normalized),
+            );
+            self.warn(node, DiagnosticCode::NormalizedLiteral, message);
+            normalized
+        };
+        if matches!(self.literal_key, LiteralKey::Text | LiteralKey::LexiconText) {
+            let folded = text_key(&normalized);
+            if folded != normalized.as_str() {
+                let message = format!(
+                    "In {}, the `text` literal `{normalized}` ({}) matches as its folded key \
+                     `{folded}` ({}). Test `surface` to match the exact spelling",
+                    self.definition_label(),
+                    code_points(&normalized),
+                    code_points(&folded),
+                );
+                self.warn(node, DiagnosticCode::FoldedLiteral, message);
+                if self.literal_key == LiteralKey::Text {
+                    self.literal_folded = true;
+                    return folded.into();
+                }
+            }
+        }
         normalized
     }
 
@@ -3191,13 +3288,30 @@ impl<'a, 'src> Lowerer<'a, 'src> {
             );
             self.warn(node, DiagnosticCode::RegexNotNfc, message);
         }
+        if self.literal_key == LiteralKey::Text {
+            // NFC first: a character only NFC changes is `RegexNotNfc`'s.
+            let normalized = NormalizationPolicy::Nfc.apply(inner.to_owned());
+            let folded = text_key(&normalized);
+            if folded != normalized {
+                let message = format!(
+                    "In {}, the regex `/{inner}/` is used as written, but `text` is the folded \
+                     key, which never contains a character the fold changes. Check whether the folded spelling `/{folded}/` matches what you \
+                     intended, or test `surface` for the exact spelling",
+                    self.definition_label(),
+                );
+                self.warn(node, DiagnosticCode::RegexNotFolded, message);
+            }
+        }
         Regex::new(inner)
             .map(AttrValueType::Regex)
             .map_err(|_| self.error(node, DiagnosticCode::InvalidRegex, "invalid Rust regex"))
     }
 
     fn literal_test(&mut self, node: Node<'_>) -> Result<ParsedTest, CompileError> {
-        let value = self.normalized_literal(node, self.text(node)?.into());
+        let text: CompactString = self.text(node)?.into();
+        self.literal_key = LiteralKey::Text;
+        let value = self.normalized_literal(node, text);
+        self.literal_key = LiteralKey::Other;
         Ok(ParsedTest::Attr(resolved_attr(AttrValue {
             attr: TokenAttributeIndex::Orth,
             value: AttrValueType::Single(value),

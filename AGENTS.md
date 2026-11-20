@@ -82,9 +82,9 @@ Reusable corpus storage belongs to `lingrep-corpus` V1 artifacts alone.
 
 ## Token attributes
 
-The portable, unprefixed keys are `text`, `lemma`, `norm`, `upos`, `xpos` —
-CoNLL-U's `FORM/LEMMA/UPOS/XPOS` plus spaCy's `norm_`, with `text` for the
-surface. Everything else is provider-namespaced: `unidic.*`, `sudachi.*`,
+The portable, unprefixed keys are `text`, `surface`, `lemma`, `norm`, `upos`,
+`xpos` — CoNLL-U's `FORM/LEMMA/UPOS/XPOS` plus spaCy's `norm_`, with `text` for
+the token's match key and `surface` for its exact source text. Everything else is provider-namespaced: `unidic.*`, `sudachi.*`,
 `spacy.*`, or `feat.*`.
 
 The set is closed in two places — `validate_canonical_key` in
@@ -94,6 +94,13 @@ The set is closed in two places — `validate_canonical_key` in
 gives. An unprefixed key outside the set is a compile error, so `[orth=…]` and
 `[form=…]` are both refused: write `[text=…]`, or `[unidic.orthbase=…]` for
 書字形基本形. `unidic.form` is 語形出現形, not the surface.
+
+The compiler folds every `text` literal with `text_key`
+(`lingrep-core/src/analysis/view.rs`). A token schema that carries `surface`
+declares that its `text` is `text_key` of `surface`
+(`TokenSchema::text_is_folded_key`); `ling matches` warns `text_unfolded`
+over any other. Add `surface` to an analyzer's schema only together with that
+`text`.
 
 Attribute keys are hashed into the token-schema digest and from there into
 analysis identity, so renaming a key changes every prepared artifact's identity
@@ -138,8 +145,8 @@ CSV column order, so `TokenSchema::unidic_morphology()` describes the
 dictionary. `declared_token_schema(Vibrato, Morphology)` returns it because
 every packaged dictionary is UniDic 202512; admitting a non-UniDic `.dic`
 requires a change in that function, not only in the loader. Sudachi's
-morphology layout is fixed by the Sudachi library, and `*/Tokenize` is `text`
-alone.
+morphology layout is fixed by the Sudachi library. `*/Tokenize` is `text` and
+`surface`.
 
 `AnalyzerFamily::Vibrato`, `--analyzer vibrato`, `--dict-path`, `VibratoPlan`
 and the `lingrep.vibrato-*/v1` semantic tags name the engine; do not rename them

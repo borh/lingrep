@@ -10,10 +10,10 @@ import { initQuestion, questionSettings } from './document.js';
 import {boundOutside,dependencyView,evidenceWords,hasDependencies,bunsetsuStarts,dependencyUnits,focusLayout,verticalArcs,headLabel,valueName,tokenDetails as detailsOf} from './dependency.js';
 import type {Arc,DependencyView,EvidenceWord,DetailRow} from './dependency.js';
 
-import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
+import { element as $, definitionOffset, errorMessage, runError, runningSnapshot, parseUpdate, parseSnapshot, parseStoredSentence, surfaceOf, attributeMembers, sourceSelection, documentTitle, storedLocale, LOCALE_KEY, overflowingDefinitions, cliCommand, diagnosticText } from './model.js';
 import type { SearchLimit, Behavior, Locale, Configuration, CatalogDefinition, QuestionControls, RunSnapshot, CompletedSnapshot, SearchState, StoredSentence, MatchRecord, Token, DocumentPage, DocumentView, SavedQuestion, Question } from './model.js';
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]??c));
-const words = (tokens: readonly Token[] | undefined) => (tokens ?? []).map(token => token.attributes.text ?? '').join('');
+const words = (tokens: readonly Token[] | undefined) => (tokens ?? []).map(surfaceOf).join('');
 const count = (value: number | undefined) => Number(value ?? 0).toLocaleString(locale === 'ja' ? 'ja-JP' : 'en-US');
 let locale: Locale = storedLocale(globalThis.localStorage,navigator.language);
 const en = Object.fromEntries([...document.querySelectorAll<HTMLElement>('[data-t]')].map(element => [element.dataset.t, element.textContent]));
@@ -686,7 +686,7 @@ function setConcordanceText(element:HTMLElement,text:string){
 }
 function setContext(element:HTMLElement,tokens:readonly Token[],bound:ReadonlyMap<number,readonly string[]>){
   if(!tokens.some(token=>bound.has(token.index))){setConcordanceText(element,words(tokens));return;}
-  element.replaceChildren(...tokens.map(token=>{const roles=bound.get(token.index);if(!roles)return document.createTextNode(token.attributes.text);const mark=document.createElement('mark');mark.className='bound-word';mark.title=roles.join(', ');mark.textContent=token.attributes.text;return mark;}));
+  element.replaceChildren(...tokens.map(token=>{const roles=bound.get(token.index);if(!roles)return document.createTextNode(surfaceOf(token));const mark=document.createElement('mark');mark.className='bound-word';mark.title=roles.join(', ');mark.textContent=surfaceOf(token);return mark;}));
 }
 function renderLines(panel: HTMLElement,run: RunSnapshot | undefined,_force=false) {
   if (!run) return;
@@ -811,7 +811,7 @@ async function readEntryTexts(run:RunSnapshot){
     for(let at=0;at<keys.length;at+=6)await Promise.all(keys.slice(at,at+6).map(async key=>{
       const sentence=key.slice(key.lastIndexOf(':')+1);
       try{const data=tokenCache.get(key)??parseStoredSentence(await request<unknown>(`api/questions/data/${encodeURIComponent(run.dataset)}/tokens?sentence=${sentence}`));
-        entryTexts.set(key,entryLines&&data.analysis_identity!==entryLines.analysis?{error:t('occurrenceChanged')}:data.tokens.map(token=>token.attributes.text));}
+        entryTexts.set(key,entryLines&&data.analysis_identity!==entryLines.analysis?{error:t('occurrenceChanged')}:data.tokens.map(surfaceOf));}
       catch(error){entryTexts.set(key,{error:errorMessage(error)});}
     }));
   }finally{entryReading=false;}
@@ -899,7 +899,7 @@ async function inspect(run: RunSnapshot,row: MatchRecord,button: HTMLElement) {
     inspecting={run,row};tokenData=data;tokenIndex=row.span.start;
     focusedSentence.innerHTML=escape(words(data.tokens.slice(0,row.span.start)))+'<mark>'+escape(words(data.tokens.slice(row.span.start,row.span.end)))+'</mark>'+escape(words(data.tokens.slice(row.span.end)));
     const roles=new Map(evidenceWords(row,data.tokens.length).filter(word=>word.roles.length).map(word=>[word.index,word.roles.join(' ')]));
-    $('#token-ribbon').innerHTML=data.tokens.map(token=>{const bound=roles.get(token.index);return `<button type="button" data-token="${token.index}" class="${token.index>=row.span.start&&token.index<row.span.end?'is-hit':''}${bound?' bound':''}"${bound?` data-roles="${escape(bound)}"`:''}>${escape(token.attributes.text)}</button>`;}).join('');
+    $('#token-ribbon').innerHTML=data.tokens.map(token=>{const bound=roles.get(token.index);return `<button type="button" data-token="${token.index}" class="${token.index>=row.span.start&&token.index<row.span.end?'is-hit':''}${bound?' bound':''}"${bound?` data-roles="${escape(bound)}"`:''}>${escape(surfaceOf(token))}</button>`;}).join('');
     const keys=Object.keys(data.tokens[tokenIndex].attributes);
     attributeKey=keys.includes('lemma')?'lemma':keys[0]??'text';attributeMember=undefined;
     for(const token of $('#token-ribbon').querySelectorAll<HTMLButtonElement>('button'))token.addEventListener('click',()=>{selectToken(Number(token.dataset.token));$<HTMLDetailsElement>('#token-attributes>details').open=true;});
@@ -1016,7 +1016,7 @@ function renderDependencies(){
       const y1=(arc.from+.5)*TREE_ROW,y2=(arc.to+.5)*TREE_ROW,x=gutter-6-arc.column*TREE_COLUMN;
       svg.append(svgNode('path',{class:arc.bound?'dependency-arc bound':'dependency-arc',d:`M${gutter},${y1} H${x} V${y2} H${gutter-3} M${gutter-8},${y2-4} L${gutter-3},${y2} L${gutter-8},${y2+4}`}));
     }
-    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(token.attributes.text)}</span><span class="dependency-meta" title="${escape(named('dep.rel',value(index,'dep.rel'))??'')}">${index+1}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
+    diagram.innerHTML=`<div class="dependency-tree" style="--tree-row:${TREE_ROW}px;--tree-gutter:${gutter}px">${tokens.map((token,index)=>{const word=byIndex.get(index);return `<span class="dependency-word${word?.inSpan?' in-span':''}${word?.roles.length?' bound':''}">${roleTags(word?.roles??[])}${escape(surfaceOf(token))}</span><span class="dependency-meta" title="${escape(named('dep.rel',value(index,'dep.rel'))??'')}">${index+1}${value(index,'dep.head')==='0'?'':'→'+escape(value(index,'dep.head'))}${relationGloss(value(index,'dep.rel'))} ${escape(value(index,'upos'))} ${escape(value(index,'dep.rel'))}</span>`;}).join('')}</div>`;
     diagram.firstElementChild!.prepend(svg);
   }else{
     const units=dependencyUnits(tokens,view==='bunsetsu'?starts:null),{items,arcs}=focusLayout(units,words);
@@ -1025,13 +1025,13 @@ function renderDependencies(){
     chips.innerHTML=items.map((item,position)=>{
       if(item.kind==='gap')return `<span class="dependency-gap" data-item="${position}">${escape(gap(item.count))}</span>`;
       const unit=units[item.unit],held:EvidenceWord[]=[];let text='';
-      for(let index=unit.first;index<=unit.last;index++){text+=tokens[index].attributes.text;const word=byIndex.get(index);if(word)held.push(word);}
+      for(let index=unit.first;index<=unit.last;index++){text+=surfaceOf(tokens[index]);const word=byIndex.get(index);if(word)held.push(word);}
       const roles=held.flatMap(word=>word.roles);
       return `<span class="dependency-chip${held.some(word=>word.inSpan)?' in-span':''}${roles.length?' bound':''}" data-item="${position}"><span>${roleTags(roles)}${escape(text)}</span><small>${escape([...new Set(held.map(word=>value(word.index,'upos')))].join(' '))}</small></span>`;
     }).join('');
     diagram.replaceChildren(chips);arcLayouts.set(chips,arcs);arcObserver.observe(chips);
   }
-  $('#dependency-evidence').innerHTML=words.map(word=>`<tr${word.inSpan?' class="in-span"':''}><td>${word.index+1}</td><td>${escape(named('upos',value(word.index,'upos'))??value(word.index,'upos'))}${word.roles.length?` <small class="role-names">${escape(word.roles.join(', '))}</small>`:''}</td>${['text','lemma','upos'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}<td>${escape(headLabel(tokens,word.index)??t('root'))}</td><td>${relationCell(value(word.index,'dep.rel'))}</td></tr>`).join('');
+  $('#dependency-evidence').innerHTML=words.map(word=>`<tr${word.inSpan?' class="in-span"':''}><td>${word.index+1}</td><td>${escape(named('upos',value(word.index,'upos'))??value(word.index,'upos'))}${word.roles.length?` <small class="role-names">${escape(word.roles.join(', '))}</small>`:''}</td><td>${escape(surfaceOf(tokens[word.index]))}</td>${['lemma','upos'].map(key=>`<td>${escape(value(word.index,key))}</td>`).join('')}<td>${escape(headLabel(tokens,word.index)??t('root'))}</td><td>${relationCell(value(word.index,'dep.rel'))}</td></tr>`).join('');
   scrollCue();
 }
 compactLayout.addEventListener('change',()=>{if(!dependencyChoice)renderDependencies();});
@@ -1144,7 +1144,7 @@ testBuilder.innerHTML='<ol></ol><p><code id="pattern-preview"></code></p><div cl
 $('.attribute-actions').after(testBuilder);
 function renderComposer(){
   testBuilder.hidden=!conditions.length;if(!conditions.length)return;
-  $('ol',testBuilder).innerHTML=conditions.map((condition,index)=>`<li><span>${escape(tokenData?.tokens[condition.tokenIndex]?.attributes.text??'')} · <code>${escape(condition.key)}=${escape(condition.value)}</code></span> <button type="button" data-remove-condition="${index}" aria-label="${escape((locale==='ja'?'条件を削除: ':'Remove condition: ')+condition.key+'='+condition.value)}">${locale==='ja'?'削除':'Remove'}</button></li>`).join('');
+  $('ol',testBuilder).innerHTML=conditions.map((condition,index)=>`<li><span>${escape(tokenData?.tokens[condition.tokenIndex]?surfaceOf(tokenData.tokens[condition.tokenIndex]):'')} · <code>${escape(condition.key)}=${escape(condition.value)}</code></span> <button type="button" data-remove-condition="${index}" aria-label="${escape((locale==='ja'?'条件を削除: ':'Remove condition: ')+condition.key+'='+condition.value)}">${locale==='ja'?'削除':'Remove'}</button></li>`).join('');
   for(const button of testBuilder.querySelectorAll<HTMLButtonElement>('[data-remove-condition]'))button.addEventListener('click',()=>{conditions=conditions.filter((_,index)=>index!==Number(button.dataset.removeCondition));selectToken(tokenIndex);});
   $('#pattern-preview').textContent=patternSource(conditions);
   $('#use-pattern').textContent=locale==='ja'?'このパターンで検索':'Search this pattern';

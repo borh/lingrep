@@ -508,6 +508,11 @@ mod reader_identity_tests {
                 "30f0742514aec2cbb20346c5e19c70dbc343f39546b4d451a6dfab89696ffb57",
             ),
             (
+                &markdown,
+                NormalizationPolicy::None,
+                "6de13997319c4350999d2aa5c8aa944f463eb34d148eeeae28eafdcafd8d1754",
+            ),
+            (
                 &CorpusReadConfig::Bccwj,
                 NormalizationPolicy::Nfc,
                 "d1ee857e00bfa141eec574e1a247f9189d343a9f9b920ce35075b8fc4d7fc2d7",

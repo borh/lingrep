@@ -10,6 +10,6 @@ required-git-spec = "rev"
 allow-git = [
     "https://github.com/WorksApplications/sudachi.rs.git",
     "https://github.com/borh/tree-sitter-lingrep.git",
-    "https://github.com/o24s/vibrato-rkyv.git",
+    "https://github.com/borh/vibrato-rkyv.git",
     "https://github.com/tikv/jemallocator.git",
 ]

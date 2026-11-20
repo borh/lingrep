@@ -436,7 +436,7 @@ fn render_0_8_1(directory: &Path, corpus: &str, output: &Path) -> std::process::
 }
 
 #[test]
-fn render_writes_the_sidecar_0_8_1_wrote_for_an_artifact_0_8_1_built() {
+fn render_writes_the_records_0_8_1_wrote_for_an_artifact_0_8_1_built() {
     let directory = corpora_built_by_0_8_1();
     let manifest = fs::read_to_string(
         directory
@@ -450,10 +450,22 @@ fn render_writes_the_sidecar_0_8_1_wrote_for_an_artifact_0_8_1_built() {
     ));
     let output = directory.path().join("rendered");
     assert_success(&render_0_8_1(directory.path(), "plain", &output));
-    assert_eq!(
-        files(&output),
-        files(&directory.path().join("plain/papers.reading"))
-    );
+    // The records are the ones 0.8.1 wrote; only the renderer revision in the
+    // key has moved since.
+    let expected: Vec<(String, Vec<u8>)> = files(&directory.path().join("plain/papers.reading"))
+        .into_iter()
+        .map(|(name, bytes)| {
+            if name != "header.json" {
+                return (name, bytes);
+            }
+            let header = String::from_utf8(bytes).unwrap().replace(
+                "lingrep-core/markdown-render/4",
+                lingrep_core::corpus::markdown_render::MARKDOWN_RENDERER_REVISION,
+            );
+            (name, header.into_bytes())
+        })
+        .collect();
+    assert_eq!(files(&output), expected);
 }
 
 #[test]
@@ -471,4 +483,118 @@ fn render_rejects_0_8_1_artifacts_when_a_source_starts_with_a_byte_order_mark() 
         ),
         "{stderr}"
     );
+}
+
+/// The text of `range` in the page's `data-c` element, which holds one plain
+/// paragraph.
+fn highlighted(html: &str, range: &lingrep_corpus::HighlightRange) -> String {
+    let marker = format!("data-c=\"{}\"", range.container);
+    let (_, content) = html.split_once(&marker).unwrap();
+    let (_, content) = content.split_once('>').unwrap();
+    let (content, _) = content.split_once('<').unwrap();
+    let units: Vec<u16> = content.encode_utf16().collect();
+    String::from_utf16(&units[range.utf16_start as usize..range.utf16_end as usize]).unwrap()
+}
+
+/// Each paragraph's first word is a variant spelling: an ideographic
+/// variation sequence, half-width katakana, decomposed が, 臭氣 with U+FA5C,
+/// and U+FF5E between kana.
+const VARIANT_PARAGRAPHS: [&str; 5] = [
+    "葛\u{E0100}城市に住む。",
+    "ｶﾞﾗｽの靴。",
+    "か\u{3099}まんする。",
+    "\u{FA5C}氣がする。",
+    "長～い道。",
+];
+
+/// The reader highlights exactly the source text of a word and of a whole
+/// sentence, whether the corpus stores the source (the default) or its NFC
+/// form, whose first word of 臭氣 is U+81ED alone.
+#[test]
+fn a_variant_spelling_highlights_its_exact_source_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("variants");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("a.md"), VARIANT_PARAGRAPHS.join("\n\n") + "\n").unwrap();
+    let source_words = [
+        "葛\u{E0100}城",
+        "ｶﾞﾗｽ",
+        "か\u{3099}まん",
+        "\u{FA5C}氣",
+        "長～い",
+    ];
+    let mut nfc_words = source_words;
+    nfc_words[3] = "\u{FA5C}";
+
+    for (normalization, words) in [
+        (&[][..], source_words),
+        (&["--normalization", "nfc"][..], nfc_words),
+    ] {
+        let name = normalization.concat();
+        let artifact = directory.path().join(format!("{name}.lingcorpus"));
+        assert_success(
+            &lingrep()
+                .args(["corpus", "build"])
+                .args(normalization)
+                .arg("--output")
+                .arg(&artifact)
+                .arg(&root)
+                .output()
+                .unwrap(),
+        );
+        let sidecar_path = directory.path().join(format!("{name}.reading"));
+        assert_success(
+            &lingrep()
+                .args(["corpus", "render"])
+                .arg(&artifact)
+                .arg("--source-root")
+                .arg(&root)
+                .arg("--output")
+                .arg(&sidecar_path)
+                .output()
+                .unwrap(),
+        );
+        let artifact = CorpusArtifact::open(&artifact).unwrap();
+        let sidecar =
+            ReadingSidecar::open(&sidecar_path, &ReadingSidecarKey::for_artifact(&artifact))
+                .unwrap();
+        let analyses = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let view = artifact.provenance_view().await.unwrap();
+            let mut analyses = Vec::new();
+            for sentence in 0..artifact.sentence_count() {
+                analyses.push(
+                    view.sentence_analysis(SentenceId::new(sentence))
+                        .await
+                        .unwrap(),
+                );
+            }
+            analyses
+        });
+        assert_eq!(analyses.len(), VARIANT_PARAGRAPHS.len());
+        for (sentence, (analysis, (paragraph, word))) in analyses
+            .iter()
+            .zip(VARIANT_PARAGRAPHS.iter().zip(words))
+            .enumerate()
+        {
+            let chars = |bytes: std::ops::Range<u32>| {
+                let count =
+                    |end: u32| analysis.text.get(..end as usize).unwrap().chars().count() as u32;
+                count(bytes.start)..count(bytes.end)
+            };
+            let first = chars(analysis.surfaces[0].source_range.clone());
+            let whole = 0..analysis.text.chars().count() as u32;
+            for (range, expected) in [(first, word), (whole, *paragraph)] {
+                let (page, anchor) = sidecar
+                    .page_at(SentenceId::new(sentence as u64), range.clone(), 1 << 20)
+                    .unwrap();
+                assert!(anchor.exact, "{name} {expected}");
+                let shown: String = anchor
+                    .ranges
+                    .iter()
+                    .map(|range| highlighted(&page.html, range))
+                    .collect();
+                assert_eq!(shown, expected, "{name} sentence {sentence} {range:?}");
+            }
+        }
+    }
 }

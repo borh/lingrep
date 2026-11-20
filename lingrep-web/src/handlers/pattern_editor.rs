@@ -459,6 +459,16 @@ fn diagnostic_message(code: DiagnosticCode) -> (&'static str, &'static str, &'st
             "This regular expression is used as written and may miss NFC-normalized text.",
             "editor.diag_regex_not_nfc",
         ),
+        DiagnosticCode::FoldedLiteral => (
+            "lint",
+            "This `text` literal matches as its folded form. Use `surface` for the exact spelling.",
+            "editor.diag_folded_literal",
+        ),
+        DiagnosticCode::RegexNotFolded => (
+            "lint",
+            "This regular expression is used as written, but a folded `text` never contains some of its characters. Use `surface` for the exact spelling.",
+            "editor.diag_regex_not_folded",
+        ),
         DiagnosticCode::PipeInBareValue => (
             "syntax",
             "An unquoted value contains `|`, which does not \
@@ -652,6 +662,38 @@ mod tests {
                 },
             }])
         );
+    }
+
+    #[tokio::test]
+    async fn a_text_literal_or_regex_the_key_fold_changes_is_a_lint() {
+        for (source, code, message_key, end) in [
+            (
+                "g := [text=ＮＨＫ].",
+                "FoldedLiteral",
+                "editor.diag_folded_literal",
+                20,
+            ),
+            (
+                "g := [text~/～/].",
+                "RegexNotFolded",
+                "editor.diag_regex_not_folded",
+                16,
+            ),
+        ] {
+            let body = check_body(source).await;
+            assert_eq!(body["status"], "valid", "{body}");
+            let diagnostics = body["diagnostics"].as_array().unwrap();
+            assert_eq!(diagnostics.len(), 1, "{body}");
+            let diagnostic = &diagnostics[0];
+            assert_eq!(diagnostic["code"], code);
+            assert_eq!(diagnostic["category"], "lint");
+            assert_eq!(diagnostic["severity"], "warning");
+            assert_eq!(diagnostic["message_key"], message_key);
+            assert_eq!(
+                diagnostic["location"]["byte_range"],
+                serde_json::json!({"start": 11, "end": end})
+            );
+        }
     }
 
     #[test]

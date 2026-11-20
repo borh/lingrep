@@ -243,10 +243,23 @@ Here, SET means either `{value, ...}` or a named set such as `@name`.
 
 ATTRIBUTES AND VALUES
 
-Portable attributes are `text`, `lemma`, `norm`, `upos`, and `xpos`. UD
-features use `feat.Name` or `feat.Name[layer]`; analyzer-specific attributes
-use a lowercase dotted name such as `unidic.pos1`. Run `ling coverage`
-to see which attributes are present in a corpus.
+Portable attributes are `text`, `surface`, `lemma`, `norm`, `upos`, and
+`xpos`. UD features use `feat.Name` or `feat.Name[layer]`; analyzer-specific
+attributes use a lowercase dotted name such as `unidic.pos1`. Run `ling
+coverage` to see which attributes are present in a corpus.
+
+`surface` is the exact source text of a token and `text` is its match key: the surface without variation selectors, with half-width katakana
+widened, U+FF5E as U+301C, canonical composition (NFC), and full-width ASCII
+as ASCII. Over the source 葛 U+E0100 城, `[text=葛城]` matches and
+`[surface=葛城]` does not.
+
+`text` literals and set and lexicon members compared with `text` are folded
+the same way, so `[text=ＮＨＫ]` finds NHK; `check` reports each as
+`FoldedLiteral`. A corpus prepared before 0.9 has no `surface` and carries
+`text` unfolded, and `matches` reports `warning[text_unfolded]` for it. `surface` literals are compared exactly,
+without the fold or NFC; `lemma`, `norm` and other attributes as written. A regex on `text` is used as written; one containing a character
+the fold changes is reported as `RegexNotFolded`, because the folded `text`
+never contains that character.
 
 Token-test values are unquoted. Use `/.../` for a regular expression and
 `\uXXXX` for punctuation or whitespace that cannot appear bare. `=`, `!=`,

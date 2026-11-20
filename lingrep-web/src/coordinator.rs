@@ -534,8 +534,20 @@ fn run_scan_blocking_with_options(
     sink.set_metadata_conflicts(crate::pattern_catalog::pattern_metadata_conflicts(
         &output.matcher,
     ));
-    let attributes: Arc<[AttributeKey]> =
-        lingrep_core::execution::cached_run_attributes(&output.matcher).into();
+    // Held rather than borrowed inline: it binds the catalog *and* tells the
+    // executor which schema the artifact's stored tokens are in, which is the
+    // one question a prepared run cannot answer from an analyzer session.
+    let schema = ready.artifact.token_schema().map_err(|error| {
+        tracing::warn!(%error, "artifact schema admission failed");
+        integrity_failure()
+    })?;
+    let mut attributes = lingrep_core::execution::cached_run_attributes(&output.matcher);
+    attributes.extend(lingrep_core::token_match::display_surface_attributes(
+        &schema,
+    ));
+    attributes.sort_unstable();
+    attributes.dedup();
+    let attributes: Arc<[AttributeKey]> = attributes.into();
     if index_results {
         sink.enable_result_index(attributes.clone())
             .map_err(|error| AttemptFailure {
@@ -547,13 +559,6 @@ fn run_scan_blocking_with_options(
     sink.admission = resolved.admission;
     sink.cli_arguments = cli_arguments(ready, resolved.clause.as_deref(), overlaps);
     sink.overlaps = overlaps;
-    // Held rather than borrowed inline: it binds the catalog *and* tells the
-    // executor which schema the artifact's stored tokens are in, which is the
-    // one question a prepared run cannot answer from an analyzer session.
-    let schema = ready.artifact.token_schema().map_err(|error| {
-        tracing::warn!(%error, "artifact schema admission failed");
-        integrity_failure()
-    })?;
     let bound = output
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())
@@ -1561,7 +1566,7 @@ mod tests {
                     .iter()
                     .map(AttributeKey::as_str)
                     .collect::<Vec<_>>(),
-                ["text"]
+                ["surface", "text"]
             );
             assert_eq!(
                 indexed

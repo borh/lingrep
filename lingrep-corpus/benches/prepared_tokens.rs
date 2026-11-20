@@ -117,7 +117,11 @@ async fn build_corpus(path: &Path, text: &str, sentences: usize) {
         )))
         .await
         .unwrap();
-    let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let projection = plan
         .schema()
         .bind_projection(plan.schema().keys().iter().cloned())

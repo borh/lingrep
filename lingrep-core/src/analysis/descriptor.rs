@@ -54,10 +54,9 @@ pub enum SegmentationMode {
 /// # The Vibrato-morphology arm carries a precondition
 ///
 /// A schema is a function of `(family, profile)` for every arm here except
-/// one. `Tokenize` is `text` alone whatever the resource says, and Sudachi's
-/// morphology layout is fixed by the Sudachi library. But Vibrato is a
-/// tokenizer, not a tagset: it reads whatever feature columns its `.dic`
-/// carries, and `(Vibrato, Morphology)` answers with
+/// one. `Tokenize` is `text` and `surface` whatever the resource says, and
+/// Sudachi's morphology layout is fixed by the Sudachi library. But Vibrato is a tokenizer, not a tagset: it reads whatever
+/// feature columns its `.dic` carries, and `(Vibrato, Morphology)` answers with
 /// [`TokenSchema::unidic_morphology`] — a **UniDic** layout, read positionally.
 /// The arm is correct because every dictionary this workspace packages is
 /// UniDic 202512, not because the analyzer determines it. A non-UniDic `.dic`
@@ -69,9 +68,10 @@ pub fn declared_token_schema(
     profile: ExtractionProfile,
 ) -> Option<TokenSchema> {
     match (family, profile) {
-        (AnalyzerFamily::Vibrato | AnalyzerFamily::Sudachi, ExtractionProfile::Tokenize) => {
-            Some(TokenSchema::from_keys(["text"]).expect("the portable surface schema is valid"))
-        }
+        (AnalyzerFamily::Vibrato | AnalyzerFamily::Sudachi, ExtractionProfile::Tokenize) => Some(
+            TokenSchema::from_keys(["text", "surface"])
+                .expect("the portable surface schema is valid"),
+        ),
         (AnalyzerFamily::Vibrato, ExtractionProfile::Morphology) => {
             Some(TokenSchema::unidic_morphology())
         }

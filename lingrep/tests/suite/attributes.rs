@@ -83,7 +83,7 @@ fn coverage_reports_every_attribute() {
             .lines()
             .filter(|line| line.contains(r#""type":"coverage""#))
             .count(),
-        31
+        32
     );
 }
 
@@ -281,12 +281,12 @@ fn explain_reports_the_catalog_when_one_is_given() {
 #[test]
 fn the_tsv_and_human_projections_report_every_attribute_too() {
     let tsv = run_on_text(&["--tsv"], OUT_OF_VOCABULARY);
-    assert_eq!(tsv.lines().count(), 31, "{tsv}");
+    assert_eq!(tsv.lines().count(), 32, "{tsv}");
 
     let human = run_on_text(&[], OUT_OF_VOCABULARY);
     assert_eq!(
         human.lines().filter(|line| line.starts_with("  ")).count(),
-        31,
+        32,
         "{human}"
     );
 }

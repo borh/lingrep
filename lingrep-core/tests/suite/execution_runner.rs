@@ -213,7 +213,11 @@ fn run_protocol_fixture<S: SentenceBatchSource + Send>(
 #[test]
 fn canonical_vibrato_session_preserves_bounded_matcher_batches() {
     let compiled = matcher("plain := [text=猫].");
-    let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+    let plan = VibratoPlan::new(
+        lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+    )
+    .expect("the test dictionary lexicon enumerates");
     let bound = compiled.bind(plan.schema()).unwrap();
     let source = RecordingSource::new(
         Arc::new(AtomicUsize::new(0)),
@@ -2635,8 +2639,10 @@ fn source_metadata_follows_every_analyzer_created_sentence() {
     use lingrep_core::execution::NativeAnalysisSource;
     let plan = VibratoPlan::with_mode(
         lingrep_core::testing::test_tokenizer().clone(),
+        std::path::Path::new(&lingrep_core::testing::dictionary_path()),
         SegmentationMode::Analyzer,
-    );
+    )
+    .expect("the test dictionary lexicon enumerates");
     let bound = matcher("p := [].").bind(plan.schema()).unwrap();
     let metadata = Arc::new(
         serde_json::json!({"video_id":"clip", "start_ms":0})
@@ -2796,7 +2802,11 @@ mod document_lookarounds {
     #[test]
     fn excluded_analyzed_sentences_interrupt_explicit_window_links() {
         let compiled = matcher("pattern p := [] not_followed_by([], within=document).");
-        let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+        let plan = VibratoPlan::new(
+            lingrep_core::testing::test_tokenizer().clone(),
+            std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+        )
+        .expect("the test dictionary lexicon enumerates");
         let bound = compiled.bind(plan.schema()).unwrap();
         for batch_size in [1, 3] {
             let mut units: Vec<_> = (0..3)
@@ -2852,7 +2862,11 @@ mod document_lookarounds {
     fn an_analyzed_text_unit_after_a_gap_starts_a_new_window() {
         let compiled =
             matcher("pattern after_dog := preceded_by([text=犬], within=document) [text=猫].");
-        let plan = VibratoPlan::new(lingrep_core::testing::test_tokenizer().clone());
+        let plan = VibratoPlan::new(
+            lingrep_core::testing::test_tokenizer().clone(),
+            std::path::Path::new(&lingrep_core::testing::dictionary_path()),
+        )
+        .expect("the test dictionary lexicon enumerates");
         let bound = compiled.bind(plan.schema()).unwrap();
         for (ordinals, expected) in [([0, 1, 2], [0, 0, 1]), ([0, 1, 3], [0, 0, 0])] {
             let units = ordinals

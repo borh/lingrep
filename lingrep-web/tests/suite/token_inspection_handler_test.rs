@@ -177,7 +177,7 @@ async fn selected_token_returns_grouped_fields_not_a_full_sentence_table() {
         "{}",
         response.html
     );
-    assert!(response.html.contains("data-field-key=\"orth\""));
+    assert!(response.html.contains("data-field-key=\"text\""));
     assert!(response.html.contains("class=\"token-field-group\""));
     assert!(response.html.contains("class=\"token-field-grid\""));
     assert!(response.html.contains("class=\"token-field\""));
@@ -198,7 +198,7 @@ async fn selected_token_returns_grouped_fields_not_a_full_sentence_table() {
             .html
             .contains("class=\"copy-status\" role=\"status\"")
     );
-    assert!(response.html.contains(">Orthography</span>"));
+    assert!(response.html.contains(">Match form</span>"));
     assert!(!response.html.contains("<script>fixture</script>"));
     assert!(
         response

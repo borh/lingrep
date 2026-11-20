@@ -140,10 +140,13 @@ fn run_export_scan_with_compounds(
         derive_compounds,
     );
     let mut sink = export;
-    let attributes = export_run_attributes(&output.matcher);
     let schema = artifact
         .token_schema()
         .map_err(|_| ExportScanError::CacheCorruption)?;
+    let mut attributes = export_run_attributes(&output.matcher);
+    attributes.extend(lingrep_core::token_match::display_surface_attributes(
+        &schema,
+    ));
     let bound = output
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())

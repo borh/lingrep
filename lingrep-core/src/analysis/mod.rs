@@ -12,6 +12,7 @@ mod segmentation;
 mod sudachi;
 mod text;
 mod vibrato;
+mod view;
 
 pub use analyzer::{AnalysisError, AnalyzerPlan, AnalyzerSession};
 pub use annotations::{AnnotatedAnalysisSession, AnnotatedText, TextAnnotation};
@@ -37,4 +38,8 @@ pub use text::{
     InputUnitId, NormalizationPolicy, SourceRange, TextUnit, TextUnitError, TextUnitIdentity,
     TextUnitKind,
 };
-pub use vibrato::{VibratoPlan, VibratoSession};
+pub use vibrato::{LexiconEnumerationError, VibratoPlan, VibratoSession};
+pub use view::{AnalysisView, OffsetMap, SourceSpan, ViewFold, ViewSpan};
+pub(crate) use view::{
+    CodePointCursor, SourceBoundaries, TEXT_KEY_REVISION, UNPROTECTED, text_key,
+};

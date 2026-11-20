@@ -13,7 +13,7 @@
 use lingrep_core::fsm::{
     BoundCatalog, CatalogAnalysis, CompileOutput, DiagnosticCode, SchemaBindError,
 };
-use lingrep_core::token_match::AttributeKey;
+use lingrep_core::token_match::{AttributeKey, TokenSchema};
 
 use crate::cli::ExecutionCliConfig;
 use crate::error::CliError;
@@ -106,9 +106,9 @@ pub(crate) fn write_unavailable_attribute_notices(
 }
 
 /// Writes the compiler's Unicode normalization warnings to stderr,
-/// unconditionally: a literal compiled as its NFC form, or a regex compiled
-/// as written although it is not NFC, means the run matches something other
-/// than the bytes in the catalog.
+/// unconditionally: a literal compiled as its NFC form or its folded `text`
+/// key, or a regex compiled as written although NFC or the fold would change
+/// it, means the run matches something other than the bytes in the catalog.
 pub(crate) fn write_normalization_notices(
     compiled: &CompileOutput,
     config: &ExecutionCliConfig,
@@ -117,6 +117,8 @@ pub(crate) fn write_normalization_notices(
         let code = match diagnostic.code() {
             DiagnosticCode::NormalizedLiteral => "literal_normalized",
             DiagnosticCode::RegexNotNfc => "regex_not_nfc",
+            DiagnosticCode::FoldedLiteral => "literal_folded",
+            DiagnosticCode::RegexNotFolded => "regex_not_folded",
             _ => continue,
         };
         let location = diagnostic.location();
@@ -138,6 +140,71 @@ pub(crate) fn write_normalization_notices(
         .map_err(CliError::Io)?;
     }
     Ok(())
+}
+
+/// The `text_unfolded` message when the catalog compares `text` and the
+/// corpus's `text` is not the folded key its literals are compiled to.
+pub(crate) fn unfolded_text_message(
+    schema: &TokenSchema,
+    analysis: &CatalogAnalysis,
+    schema_name: &str,
+) -> Option<String> {
+    let text = AttributeKey::new("text").expect("text is canonical");
+    if schema.text_is_folded_key() || !schema.keys().contains(&text) {
+        return None;
+    }
+    let referrers: Vec<String> = analysis
+        .references_to(&text)
+        .map(|site| format!("`{}`", site.definition))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if referrers.is_empty() {
+        return None;
+    }
+    let referenced_by = if referrers.len() > NAMED_REFERRERS {
+        format!(
+            "{}, and {} more",
+            referrers[..NAMED_REFERRERS].join(", "),
+            referrers.len() - NAMED_REFERRERS
+        )
+    } else {
+        referrers.join(", ")
+    };
+    let verb = if referrers.len() == 1 {
+        "compares"
+    } else {
+        "compare"
+    };
+    Some(format!(
+        "{referenced_by} {verb} `text` as the folded match key, but this corpus's token \
+         schema ({schema_name}) carries `text` unfolded, so a token spelled ＮＨＫ or ｶﾞﾗｽ \
+         matches neither `[text=ＮＨＫ]` nor `[text=NHK]`. This corpus was prepared before \
+         0.9: rebuild it with this ling (`ling corpus build`)"
+    ))
+}
+
+/// Writes [`unfolded_text_message`] to stderr, unconditionally, as
+/// `write_unavailable_attribute_notices` does.
+pub(crate) fn write_unfolded_text_notice(
+    schema: &TokenSchema,
+    analysis: &CatalogAnalysis,
+    schema_name: &str,
+    config: &ExecutionCliConfig,
+) -> Result<(), CliError> {
+    let Some(message) = unfolded_text_message(schema, analysis, schema_name) else {
+        return Ok(());
+    };
+    crate::commands::query_support::write_warning(
+        &config.stderr,
+        config.diagnostic_format,
+        DiagnosticStage::Catalog,
+        "text_unfolded",
+        message,
+        None,
+        Vec::new(),
+    )
+    .map_err(CliError::Io)
 }
 
 pub(crate) fn write_unobserved_division_notices(
@@ -346,5 +413,30 @@ mod tests {
              morphology): dependency `where` clauses require dep.head, dep.rel, which the \
              token schema does not carry"
         );
+    }
+
+    /// A schema without `surface` is one prepared before 0.9; every analyzer
+    /// this ling runs publishes `surface` with a folded `text`.
+    #[test]
+    fn only_a_schema_carrying_text_without_surface_is_named_unfolded() {
+        let output = compiled("g := [text=ＮＨＫ].\nh := [lemma=猫].");
+        let message = |keys: &[&str]| {
+            unfolded_text_message(
+                &TokenSchema::from_keys(keys.iter().copied()).unwrap(),
+                &output.analysis,
+                "vibrato morphology",
+            )
+        };
+        assert_eq!(
+            message(&["text", "lemma"]).as_deref(),
+            Some(
+                "`g` compares `text` as the folded match key, but this corpus's token schema \
+                 (vibrato morphology) carries `text` unfolded, so a token spelled ＮＨＫ or ｶﾞﾗｽ \
+                 matches neither `[text=ＮＨＫ]` nor `[text=NHK]`. This corpus was prepared \
+                 before 0.9: rebuild it with this ling (`ling corpus build`)"
+            )
+        );
+        assert_eq!(message(&["text", "surface", "lemma"]), None);
+        assert_eq!(message(&["lemma"]), None);
     }
 }

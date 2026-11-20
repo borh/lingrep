@@ -30,6 +30,7 @@ mod schema;
 mod sentence_filter;
 mod skip;
 pub(crate) mod source_text;
+mod text_key;
 mod token_test;
 
 pub(crate) use sentence_filter::derive_sentence_filter;
@@ -451,9 +452,10 @@ fn compile_program(
     mut program: ParsedProgram,
     limits: &CompileLimits,
     stats: &mut CompilerStats,
-    lowering_warnings: Vec<Diagnostic>,
+    mut lowering_warnings: Vec<Diagnostic>,
     vectors: Option<&dyn WordVectors>,
 ) -> Result<CompileOutput, CompileError> {
+    lowering_warnings.extend(text_key::folded_set_warnings(&program));
     resolve_near(&mut program, vectors);
     let near_tests: Vec<model::NearTest> = program
         .near

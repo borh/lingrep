@@ -75,6 +75,14 @@ pub enum DiagnosticCode {
     /// A regex whose source is not in Unicode NFC. Reported and compiled as
     /// written, because normalizing a regex can change what it means.
     RegexNotNfc,
+    /// A `text` literal that the `text` key fold changes. It matches as its
+    /// folded form on a corpus whose `text` is that key, and as written on
+    /// any other.
+    FoldedLiteral,
+    /// A regex on `text` containing a character that the `text` key fold
+    /// changes. Reported and compiled as written, for the reason
+    /// `RegexNotNfc` is.
+    RegexNotFolded,
     /// A `set` no reachable definition references.
     ///
     /// Its own code rather than `UnusedFragment` because the message names a
@@ -355,6 +363,8 @@ impl DiagnosticCode {
             Self::UnusedFragment => "UnusedFragment",
             Self::NormalizedLiteral => "NormalizedLiteral",
             Self::RegexNotNfc => "RegexNotNfc",
+            Self::FoldedLiteral => "FoldedLiteral",
+            Self::RegexNotFolded => "RegexNotFolded",
             Self::UnusedSet => "UnusedSet",
             Self::UnusedTest => "UnusedTest",
             Self::TokenTestTooComplex => "TokenTestTooComplex",

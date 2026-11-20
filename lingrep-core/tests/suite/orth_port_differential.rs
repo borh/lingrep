@@ -47,7 +47,7 @@ fn text_orth_divergence_is_censused_with_bounded_memory() {
         for token in tokenize(&sentence, &tokenizer) {
             total += 1;
             let text = token
-                .get(TokenAttributeIndex::Text)
+                .get(TokenAttributeIndex::Surface)
                 .expect("text is total")
                 .to_string();
             let orth = token

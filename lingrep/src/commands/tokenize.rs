@@ -194,7 +194,8 @@ pub fn run(
         .map_err(CliError::InvalidArgs)?
         .with_max_frontmatter_bytes(config.limits.max_stage_input_bytes);
     let reader_config = CorpusReadConfig::new(format, markdown_config);
-    let reader_identity = ReaderIdentity::derive(&reader_config, config.normalization);
+    let reader_identity =
+        ReaderIdentity::derive(&reader_config, config.reader_normalization(format));
     let analysis_inputs = AnalysisInputs::with_token_schema(
         reader_identity,
         admission_identity(),
@@ -497,7 +498,8 @@ fn publish_projection<W: Write>(
                 write!(writer, "sentence {}:", sentence.corpus_sentence_ordinal)
                     .map_err(execution_output_io)?;
                 for token in &sentence.tokens {
-                    // The portable surface key, not `orth`. `orth` is UniDic's
+                    // `surface` where the schema carries it, otherwise the
+                    // portable `text` key; never `orth`. `orth` is UniDic's
                     // name for this field and is in no published namespace, so
                     // the lookup missed on every token of every run and the
                     // fallback rendered whole corpora as `?`. Nothing caught
@@ -507,7 +509,11 @@ fn publish_projection<W: Write>(
                     // context surface, and it is lossy for the same reason:
                     // corpus text can contain that string. JSONL stays
                     // authoritative.
-                    let surface = token.attributes.get("text").unwrap_or("⟨missing⟩");
+                    let surface = token
+                        .attributes
+                        .get("surface")
+                        .or_else(|| token.attributes.get("text"))
+                        .unwrap_or("⟨missing⟩");
                     write!(writer, " {}", crate::output::sanitize_terminal(surface))
                         .map_err(execution_output_io)?;
                 }

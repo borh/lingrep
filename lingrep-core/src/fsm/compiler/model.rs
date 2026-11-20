@@ -182,7 +182,10 @@ pub(crate) struct ParsedTestDecl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParsedSet {
     pub(crate) name: CompactString,
+    /// The members in NFC, as every attribute except `surface` compares them.
     pub(crate) members: Vec<CompactString>,
+    /// The members as written, as `surface` compares them.
+    pub(crate) exact_members: Vec<CompactString>,
     pub(crate) span: SourceSpan,
 }
 

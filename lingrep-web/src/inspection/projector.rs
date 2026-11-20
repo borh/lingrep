@@ -26,8 +26,6 @@ pub struct TokenSummary {
     pub cform: Option<CompactString>,
 }
 
-static FORM: LazyLock<AttributeKey> =
-    LazyLock::new(|| AttributeKey::new("text").expect("form is canonical"));
 static LEMMA: LazyLock<AttributeKey> =
     LazyLock::new(|| AttributeKey::new("lemma").expect("lemma is canonical"));
 static UPOS: LazyLock<AttributeKey> =
@@ -38,7 +36,7 @@ static CFORM: LazyLock<AttributeKey> =
 impl From<&TokenInfo> for TokenSummary {
     fn from(token: &TokenInfo) -> Self {
         Self {
-            orth: token.orth().map(CompactString::from),
+            orth: token.surface().or(token.orth()).map(CompactString::from),
             lemma: token.lemma().map(CompactString::from),
             pos: token.pos().map(CompactString::from),
             cform: token.cform().map(CompactString::from),
@@ -49,7 +47,7 @@ impl From<&TokenInfo> for TokenSummary {
 impl TokenSummary {
     fn from_sequence<S: TokenSequence + ?Sized>(tokens: &S, index: usize) -> Self {
         Self {
-            orth: tokens.scalar_key(index, &FORM).map(CompactString::new),
+            orth: lingrep_core::token_match::display_surface(tokens, index).map(CompactString::new),
             lemma: tokens.scalar_key(index, &LEMMA).map(CompactString::new),
             pos: tokens.scalar_key(index, &UPOS).map(CompactString::new),
             cform: tokens.scalar_key(index, &CFORM).map(CompactString::new),
@@ -275,7 +273,7 @@ impl InspectionProjector {
                 text: capture
                     .span
                     .clone()
-                    .filter_map(|index| tokens.scalar_key(index, &FORM))
+                    .filter_map(|index| lingrep_core::token_match::display_surface(tokens, index))
                     .collect(),
             })
             .collect::<Vec<_>>()

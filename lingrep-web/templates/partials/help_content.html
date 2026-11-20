@@ -16,6 +16,8 @@
   <h2><span data-i18n="help.h_predicates">Token predicates</span></h2>
   <p data-i18n="help.p2">Use <code>=</code>, <code>!=</code>, <code>in</code>, <code>not in</code>, and <code>/regular expressions/</code>. Combine constraints inside a token with <code>&amp;</code>.</p>
 
+  <p data-i18n="help.p_text"><code>text</code> compares the match form (照合形): the surface with variation selectors removed, half-width katakana widened and full-width ASCII characters as ASCII, so <code>[text=ガラス]</code> also finds ｶﾞﾗｽ. <code>surface</code> compares the exact source text (表層形).</p>
+
   <p data-i18n="help.p_near"><code>ATTR near WORD &gt;= 0.6</code> matches tokens whose ATTR value has a cosine similarity to WORD of at least 0.6. <code>not near</code> matches other values. Neither matches tokens without <code>ATTR</code>. A word-vector file is required. Check matching values on the Similar Words page.</p>
 
   <h2><span data-i18n="help.h_composition">Composition</span></h2>

@@ -267,7 +267,7 @@ impl DerivingFixture {
         let token = |orth: &str, lemma: &str, pos: &str| {
             let mut token = TokenInfo::default();
             token.set(TokenAttributeIndex::Orth, orth.into());
-            token.set(TokenAttributeIndex::Text, orth.into());
+            token.set(TokenAttributeIndex::Surface, orth.into());
             token.set(TokenAttributeIndex::Lemma, lemma.into());
             token.set(TokenAttributeIndex::Pos, pos.into());
             token

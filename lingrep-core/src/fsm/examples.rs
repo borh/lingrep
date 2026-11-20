@@ -273,7 +273,7 @@ fn bracket_depth<T: TokenInfoTrait>(tokens: &[T]) -> u32 {
 /// first token and `tokens.len()` is the sentence end, so an offset equal to
 /// the whole sentence's length is the final boundary rather than out of range.
 ///
-/// Reads [`TokenAttributeIndex::Text`], the surface text, because that is what
+/// Reads [`TokenAttributeIndex::Surface`], the surface text, because that is what
 /// the offsets in the entry are offsets into. `Orth` is the normalized
 /// orthography and agrees with the surface only by accident.
 ///
@@ -288,7 +288,7 @@ fn token_index_at_char<T: TokenInfoTrait>(tokens: &[T], offset: usize) -> Option
             return Some(index);
         }
         seen += token
-            .get(TokenAttributeIndex::Text)
+            .get(TokenAttributeIndex::Surface)
             .map_or(0, |text| text.chars().count());
     }
     (seen == offset).then_some(tokens.len())
@@ -453,7 +453,7 @@ mod tests {
     fn token_index_at_char_measures_the_surface_not_the_orthography() {
         let token = |text: &str, orth: &str| {
             let mut token = TokenInfo::default();
-            token.set(TokenAttributeIndex::Text, text.into());
+            token.set(TokenAttributeIndex::Surface, text.into());
             token.set(TokenAttributeIndex::Orth, orth.into());
             token
         };

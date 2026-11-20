@@ -36,7 +36,7 @@ fn observed_tokens(dictionary: &std::path::Path, text: &str) -> Vec<[Option<Stri
                 TokenAttributeIndex::Orth,
                 TokenAttributeIndex::Tag,
                 TokenAttributeIndex::Norm,
-                TokenAttributeIndex::Text,
+                TokenAttributeIndex::Surface,
                 TokenAttributeIndex::LexType,
             ]
             .map(|attribute| token.get(attribute).map(ToString::to_string))
@@ -181,7 +181,7 @@ fn mini_dictionary_matches_the_protocol_domain() {
         TokenAttributeIndex::OrthBase,
         TokenAttributeIndex::Pron,
         TokenAttributeIndex::LexType,
-        TokenAttributeIndex::Text,
+        TokenAttributeIndex::Surface,
     ];
     assert_eq!(
         observed_projection(mini.path(), "😀", &unknown_attributes),

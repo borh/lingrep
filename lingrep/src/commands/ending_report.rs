@@ -79,7 +79,6 @@ impl EndingReport {
             self.last_document = Some(location.document_ordinal);
         }
         let upos = AttributeKey::new("upos").expect("canonical key");
-        let text = AttributeKey::new("text").expect("canonical key");
         let mut end = sentence.len();
         while end > 0 && sentence.scalar_key(end - 1, &upos) == Some("PUNCT") {
             end -= 1;
@@ -95,8 +94,7 @@ impl EndingReport {
             .unwrap_or(0);
         let tokens = (0..sentence.len())
             .map(|index| {
-                sentence
-                    .scalar_key(index, &text)
+                lingrep_core::token_match::display_surface(sentence, index)
                     .map(str::to_owned)
                     .ok_or_else(|| {
                         ExecutionError::Sink("ending report requires text on every token".into())
