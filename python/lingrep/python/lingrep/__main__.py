@@ -13,6 +13,8 @@ def main() -> int:
     tokenize.add_argument("-d", "--dict-path", help="Path to a Vibrato dictionary.")
     tokenize.add_argument("--workers", type=int, default=1, help="Number of tokenizer workers.")
     args = parser.parse_args()
+    if not 1 <= args.workers <= sys.maxsize:
+        tokenize.error(f"--workers must be between 1 and {sys.maxsize}")
     try:
         tokenizer = Tokenizer(dict_path=args.dict_path, workers=args.workers)
         sentences = (line.removesuffix("\n") for line in sys.stdin) if args.text is None else [args.text]

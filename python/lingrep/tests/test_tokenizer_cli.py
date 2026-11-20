@@ -10,6 +10,17 @@ from lingrep import Tokenizer
 
 
 class TokenizerCliTest(unittest.TestCase):
+    def test_invalid_worker_counts_report_a_usage_error(self):
+        for workers in ("-1", "0", str(2**100)):
+            with self.subTest(workers=workers):
+                result = subprocess.run(
+                    [sys.executable, "-m", "lingrep", "tokenize", "--workers", workers, "猫"],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--workers", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_stdin_preserves_sentence_order_and_empty_lines(self):
         result = subprocess.run(
             [sys.executable, "-m", "lingrep", "tokenize", "--workers", "2"],
