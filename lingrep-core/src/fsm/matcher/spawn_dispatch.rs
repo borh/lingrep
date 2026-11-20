@@ -268,6 +268,7 @@ mod index_tests {
             // dense machine has no spawn groups and builds no index.
             ("patterns/reduplication.lx", None),
             ("patterns/sentence-final.lx", Some((3, 32, 1, 1))),
+            ("patterns/psycholinguistics.lx", Some((1, 1, 1, 7))),
             ("patterns/test-simple.lx", None),
             // 54 -> 55 with the `form` -> `text` rename. `scheme_a` is
             // `finite_atoms.first()` after sorting by attribute, so renaming

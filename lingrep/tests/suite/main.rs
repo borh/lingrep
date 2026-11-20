@@ -36,6 +36,7 @@ mod prepared_protocol;
 mod protocol;
 mod protocol_discovery;
 mod prune_protocol;
+mod psycholinguistics;
 mod sample_protocol;
 #[cfg(unix)]
 mod scale_bounds;

@@ -88,7 +88,6 @@ async fn hit_detail(
         std::sync::Arc::clone(&snapshot),
         key,
         &refs,
-        sentences,
     )
     .await
     {
@@ -303,7 +302,6 @@ async fn pattern_detail(
         std::sync::Arc::clone(&snapshot),
         key,
         &refs,
-        sentences,
     )
     .await
     {

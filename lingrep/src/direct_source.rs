@@ -856,6 +856,68 @@ mod tests {
         );
     }
 
+    /// Without character offsets, display text guesses a space from the
+    /// script, an exported surface concatenates, and a count key is an error
+    /// naming the token after the boundary. With offsets the joins are equal.
+    #[test]
+    fn joins_differ_only_at_a_boundary_without_offsets() {
+        use lingrep_core::execution::{ExecutionError, surface_group};
+        use lingrep_core::token_match::{TokenInfo, display_text};
+        let location = SentenceLocation {
+            lookaround_divisions: None,
+            source_metadata: None,
+            corpus_sentence_ordinal: 7,
+            document_id: lingrep_core::corpus::DocumentId::new(0),
+            document_ordinal: 0,
+            document_sentence_ordinal: 7,
+            source_name: Arc::from("doc.conllu"),
+        };
+        let unplaced = |words: &[&str]| -> Vec<TokenInfo> {
+            words
+                .iter()
+                .map(|word| TokenInfo::default().with_orth(*word))
+                .collect()
+        };
+        for (words, displayed, exported) in [
+            (&["NHK", "news"][..], "NHK news", "NHKnews"),
+            (&["N", "H", "K"][..], "N H K", "NHK"),
+            (&["猫", "が", "走る"][..], "猫が走る", "猫が走る"),
+        ] {
+            let sentence = unplaced(words);
+            let span = 0..sentence.len();
+            assert_eq!(
+                displayed_text(&sentence, span.clone(), &location).unwrap(),
+                displayed
+            );
+            assert_eq!(display_text(&sentence, span.clone()), displayed);
+            assert_eq!(
+                matched_surface(&sentence, span.clone(), &location).unwrap(),
+                exported
+            );
+            assert!(matches!(
+                surface_group(&sentence, span, &location),
+                Err(ExecutionError::MissingSurfaceOffsets {
+                    source_name,
+                    corpus_sentence_ordinal: 7,
+                    token_index: 1,
+                }) if source_name == "doc.conllu"
+            ));
+            assert_eq!(surface_group(&sentence, 1..2, &location).unwrap(), words[1]);
+        }
+        let placed = lingrep_core::testing::helpers::placed_tokens(
+            "I saw  NHK\tnews",
+            &["I", "saw", "NHK", "news"],
+        );
+        for joined in [
+            displayed_text(&placed, 1..4, &location).unwrap(),
+            display_text(&placed, 1..4),
+            matched_surface(&placed, 1..4, &location).unwrap(),
+            surface_group(&placed, 1..4, &location).unwrap(),
+        ] {
+            assert_eq!(joined, "saw NHK news");
+        }
+    }
+
     #[test]
     fn traversal_limit_errors_include_the_corresponding_cli_option() {
         for (field, flag) in [
@@ -1483,35 +1545,45 @@ impl From<MissingRequiredAttribute> for ExecutionError {
     }
 }
 
+/// The exported `surface` of `span`: its tokens joined with one space
+/// wherever their character offsets show a gap, and with nothing across a
+/// boundary without offsets.
+///
+/// [`lingrep_core::execution::surface_group`] is the count key, which fails
+/// at such a boundary, and [`displayed_text`] is the text a reader sees.
 pub fn matched_surface(
     sentence: &dyn lingrep_core::token_match::TokenSequence,
     span: Range<usize>,
     location: &SentenceLocation,
 ) -> Result<String, MissingRequiredAttribute> {
-    let mut surface = String::new();
-    let first = span.start;
-    visit_matched_orths(sentence, span, location, |index, orth| {
-        if index > first
-            && lingrep_core::token_match::source_space_before(sentence, index) == Some(true)
-        {
-            surface.push(' ');
-        }
-        surface.push_str(orth);
-    })?;
-    Ok(surface)
+    joined_orths(sentence, span, location, |index| {
+        lingrep_core::token_match::source_space_before(sentence, index) == Some(true)
+    })
 }
 
-/// Display text for interactive previews, including inferred spacing when
-/// character offsets are unavailable.
+/// Display text for interactive previews:
+/// [`lingrep_core::token_match::display_text`], with an error for a token
+/// that has no text.
 pub fn displayed_text(
     sentence: &dyn lingrep_core::token_match::TokenSequence,
     span: Range<usize>,
     location: &SentenceLocation,
 ) -> Result<String, MissingRequiredAttribute> {
+    joined_orths(sentence, span, location, |index| {
+        lingrep_core::token_match::display_space_before(sentence, index)
+    })
+}
+
+fn joined_orths(
+    sentence: &dyn lingrep_core::token_match::TokenSequence,
+    span: Range<usize>,
+    location: &SentenceLocation,
+    space_before: impl Fn(usize) -> bool,
+) -> Result<String, MissingRequiredAttribute> {
     let mut text = String::new();
     let first = span.start;
     visit_matched_orths(sentence, span, location, |index, orth| {
-        if index > first && lingrep_core::token_match::display_space_before(sentence, index) {
+        if index > first && space_before(index) {
             text.push(' ');
         }
         text.push_str(orth);

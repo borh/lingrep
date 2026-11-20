@@ -2753,6 +2753,7 @@ mod tests {
             program_stats: lingrep_core::fsm::ProgramStats::default(),
             trace: None,
             out_of_set_labels: Vec::new(),
+            span_kinds_observed: Vec::new(),
             sentences_admitted: sentences,
             sentences_matched: sentences,
             tokens_scanned: sentences,

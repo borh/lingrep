@@ -226,6 +226,9 @@ fn expected_projection(catalog: &str) -> Option<Projection> {
             vec![field("layer", 12), field("status", 12)],
         ),
         // Single pattern each: one definition can never reach `populated >= 2`.
+        "patterns/psycholinguistics.lx" => {
+            grouped(vec![field("category", 12), field("status", 12)])
+        }
         "patterns/test-simple.lx" => (None, vec![]),
         // 5 emitting where-clause patterns; `layer` and `status` come from
         // one annotation run and the file defaults respectively.

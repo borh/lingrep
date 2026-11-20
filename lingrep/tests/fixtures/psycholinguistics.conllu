@@ -1,0 +1,50 @@
+# sent_id = two-dependents
+# text = 新聞を子どもが読む
+1	新聞	新聞	NOUN	_	_	5	obj	_	BunsetuBILabel=B|SpaceAfter=No
+2	を	を	ADP	_	_	1	case	_	BunsetuBILabel=I|SpaceAfter=No
+3	子ども	子供	NOUN	_	_	5	nsubj	_	BunsetuBILabel=B|SpaceAfter=No
+4	が	が	ADP	_	_	3	case	_	BunsetuBILabel=I|SpaceAfter=No
+5	読む	読む	VERB	_	_	0	root	_	BunsetuBILabel=B
+
+# sent_id = subject-gap-candidate
+# text = 男性を見た女性
+1	男性	男性	NOUN	_	_	3	obj	_	BunsetuBILabel=B|SpaceAfter=No
+2	を	を	ADP	_	_	1	case	_	BunsetuBILabel=I|SpaceAfter=No
+3	見	見る	VERB	_	_	5	acl	_	BunsetuBILabel=B|SpaceAfter=No
+4	た	た	AUX	_	_	3	aux	_	BunsetuBILabel=I|SpaceAfter=No
+5	女性	女性	NOUN	_	_	0	root	_	BunsetuBILabel=B
+
+# sent_id = object-gap-candidate
+# text = 男性が見た女性
+1	男性	男性	NOUN	_	_	3	nsubj	_	BunsetuBILabel=B|SpaceAfter=No
+2	が	が	ADP	_	_	1	case	_	BunsetuBILabel=I|SpaceAfter=No
+3	見	見る	VERB	_	_	5	acl	_	BunsetuBILabel=B|SpaceAfter=No
+4	た	た	AUX	_	_	3	aux	_	BunsetuBILabel=I|SpaceAfter=No
+5	女性	女性	NOUN	_	_	0	root	_	BunsetuBILabel=B
+
+# sent_id = same-script-boundary
+# text = すしを食べる
+1	すし	すし	NOUN	_	_	3	obj	_	BunsetuBILabel=B|SpaceAfter=No
+2	を	を	ADP	_	_	1	case	_	BunsetuBILabel=I|SpaceAfter=No
+3	食べる	食べる	VERB	_	_	0	root	_	BunsetuBILabel=B
+
+# sent_id = vocabulary-without-bunsetsu
+# text = 学校 学生 高校 校長 学生 子供 こども カレー
+1	学校	学校	NOUN	_	_	0	root	_	_
+2	学生	学生	NOUN	_	_	1	conj	_	_
+3	高校	高校	NOUN	_	_	1	conj	_	_
+4	校長	校長	NOUN	_	_	1	conj	_	_
+5	学生	学生	NOUN	_	_	1	conj	_	_
+6	子供	子供	NOUN	_	_	1	conj	_	_
+7	こども	子供	NOUN	_	_	1	conj	_	_
+8	カレー	カレー	NOUN	_	_	1	conj	_	_
+
+# sent_id = both-arguments-overt
+# text = 男性が新聞を読んだ日
+1	男性	男性	NOUN	_	_	5	nsubj	_	BunsetuBILabel=B|SpaceAfter=No
+2	が	が	ADP	_	_	1	case	_	BunsetuBILabel=I|SpaceAfter=No
+3	新聞	新聞	NOUN	_	_	5	obj	_	BunsetuBILabel=B|SpaceAfter=No
+4	を	を	ADP	_	_	3	case	_	BunsetuBILabel=I|SpaceAfter=No
+5	読ん	読む	VERB	_	_	7	acl	_	BunsetuBILabel=B|SpaceAfter=No
+6	だ	た	AUX	_	_	5	aux	_	BunsetuBILabel=I|SpaceAfter=No
+7	日	日	NOUN	_	_	0	root	_	BunsetuBILabel=B

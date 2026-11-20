@@ -1,6 +1,5 @@
 ---
 source: lingrep-core/src/fsm/compiler/published_baseline.rs
-assertion_line: 117
 expression: baseline
 ---
 {
@@ -1176,6 +1175,33 @@ expression: baseline
         ],
         "fixture synthetic:2": [
             "lexical_predicate (lexical_predicate) 0..1 raw 0..1 captures=[]",
+        ],
+    },
+    "patterns/psycholinguistics.lx": {
+        "fixture r7_aspect:0": [],
+        "fixture r7_aspect:1": [],
+        "fixture r7_natsume:0": [],
+        "fixture r7_natsume:1": [],
+        "fixture r7_natsume:10": [],
+        "fixture r7_natsume:11": [],
+        "fixture r7_natsume:2": [],
+        "fixture r7_natsume:3": [],
+        "fixture r7_natsume:4": [],
+        "fixture r7_natsume:5": [],
+        "fixture r7_natsume:6": [],
+        "fixture r7_natsume:7": [],
+        "fixture r7_natsume:8": [],
+        "fixture r7_natsume:9": [],
+        "fixture synthetic:0": [
+            "kanji_token (kanji_token) 0..1 raw 0..1 captures=[]",
+            "noun_spelling (noun_spelling) 0..1 raw 0..1 captures=[]",
+        ],
+        "fixture synthetic:1": [
+            "kanji_token (kanji_token) 0..1 raw 0..1 captures=[]",
+            "noun_spelling (noun_spelling) 0..1 raw 0..1 captures=[]",
+        ],
+        "fixture synthetic:2": [
+            "kanji_initial (kanji_initial) 0..1 raw 0..1 captures=[]",
         ],
     },
     "patterns/reduplication.lx": {

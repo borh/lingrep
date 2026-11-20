@@ -616,6 +616,7 @@ tail := [unidic.pos1=VERB] $.
             ("patterns/sf-experimental.lx", (0x1, 43, 42)),
             ("patterns/sfe.lx", (0x0, 23, 23)),
             ("patterns/sketch-grammar.lx", (0x0, 7, 7)),
+            ("patterns/psycholinguistics.lx", (0x0, 8, 8)),
             ("patterns/test-simple.lx", (0x0, 1, 1)),
             // Every pattern carries a `where` clause, so the whole catalog is
             // recognized by the tree evaluator — the reduplication precedent
@@ -669,6 +670,7 @@ tail := [unidic.pos1=VERB] $.
             // sorts `unidic.cform, unidic.pos1` by key, so that group's
             // discriminating atom moved to `unidic.cform`.
             ("patterns/sketch-grammar.lx", (7, 0, 5, 2, 2, 3)),
+            ("patterns/psycholinguistics.lx", (8, 7, 1, 0, 1, 1)),
             ("patterns/test-simple.lx", (1, 0, 1, 0, 1, 1)),
             // Counted candidate work for the mixed catalog: only the nine
             // relation-free definitions reach the spawn table at all.

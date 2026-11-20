@@ -360,6 +360,11 @@ still use the sentence context. Token-level `where` constraints can be
 combined with both annotations. A reference to a definition expands its token
 expression. Its emission constraints apply when that definition emits.
 
+A `defaults` block may supply `within_span` or `span_dependency`, which then
+applies to every pattern and to no fragment or lexicon; `within_span: none`
+removes it from one pattern. Either annotation written on a fragment or a
+lexicon is a compile error (`InvalidPolicyValue`).
+
 ### Paths between annotated spans
 
 Use `where span(layer, path)` to constrain a capture or connect several
@@ -391,7 +396,9 @@ choose independently: in `span(chunk, $a -> $b), span(chunk, $a -> $c)`,
 two different overlapping chunks containing `$a` can witness the two edges.
 A span-only clause works with the span layer alone, including on a corpus
 without token dependency attributes. A sentence missing the requested layer
-yields no matches for that definition and produces no missing-layer warning.
+yields no matches for that definition and produces no warning of its own. When
+no sentence of a `ling matches` or `ling summarize` run carries the layer, the
+run ends with `warning[span_kind_unavailable]`, which names the definitions.
 Other definitions can still match. If the catalog also contains token dependency
 clauses, those require a corpus schema with `dep.head` and `dep.rel` before
 matching starts.
@@ -399,7 +406,10 @@ matching starts.
 The `within_span` shorthand and the `span_dependency` map, quoted path and
 list annotations remain available. For example,
 `span_dependency: "bunsetsu: $v.head -> $n.head"` has the same matching
-behavior as `where span(bunsetsu, $v.head -> $n.head)`.
+behavior as `where span(bunsetsu, $v.head -> $n.head)`. A quoted path ignores
+whitespace around the layer, `$`, `.`, `@` and `->`, as the native form does.
+Its label is the text after `@` without surrounding whitespace; write a label
+that begins or ends with a space as a quoted label in the native form.
 
 ## Dependency constraints
 

@@ -534,6 +534,15 @@ pub fn run(
             )?;
         }
         let limited = limit.is_some_and(|limit| sink.emitted == limit);
+        if !limited {
+            crate::attribute_binding::write_unobserved_span_kind_notices(
+                &compiled.matcher,
+                &report,
+                None,
+                config,
+                &run_id,
+            )?;
+        }
         if !limited && let Some(observed) = source_stats.observed_division_kinds() {
             crate::attribute_binding::write_unobserved_division_notices(
                 &compiled.matcher.lookaround_division_kinds(),

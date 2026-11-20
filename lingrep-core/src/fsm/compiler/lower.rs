@@ -416,6 +416,25 @@ impl DocumentDraft {
         })
     }
 
+    /// Removes the `within_span` and `span_dependency` entries a fragment or
+    /// lexicon took from `defaults`. An entry written on the definition stays,
+    /// and materialization rejects it.
+    fn drop_inherited_span_constraints(&self, metadata: &mut Metadata) {
+        for key in ["within_span", "span_dependency"] {
+            let Some(LoweredEntry::MetadataSet(default)) =
+                self.defaults.as_ref().and_then(|entries| entries.get(key))
+            else {
+                continue;
+            };
+            if metadata
+                .get(key)
+                .is_some_and(|entry| entry.span == default.span)
+            {
+                Arc::make_mut(metadata).remove(key);
+            }
+        }
+    }
+
     fn materialize_metadata(&mut self) -> (Metadata, Option<ParsedKey>, Option<ParsedSkip>) {
         let mut effective = self.defaults.clone().unwrap_or_default();
         if let Some(LoweredEntry::KeySet(key)) = effective.get_mut("key") {
@@ -736,6 +755,9 @@ impl<'a, 'src> Lowerer<'a, 'src> {
                     draft.saw_definition = true;
                     let (metadata, key, skip) = draft.materialize_metadata();
                     let mut definition = self.lower_definition_node(child, metadata, key, skip)?;
+                    if !definition.is_ordinary_pattern() {
+                        draft.drop_inherited_span_constraints(&mut definition.metadata);
+                    }
                     if let Some(recipe) = draft.interpretation.take() {
                         if !definition.is_ordinary_pattern() {
                             return Err(self.error(

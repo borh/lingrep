@@ -17,8 +17,10 @@
 //! compare by `as_str()`, the `AttrValueType` manual-`Eq` precedent. Capture
 //! *names* participate; hygienic paths do not, because a path encodes
 //! reference-occurrence numbering, which is derived rather than authored.
-//! Descriptive metadata is excluded. Analytical role assignments and the
-//! whole-match classification participate because they change emitted matches.
+//! Descriptive metadata is excluded. Analytical role assignments, the
+//! whole-match classification, and the `within_span` and `span_dependency`
+//! annotations of an emitting pattern participate because they change emitted
+//! matches.
 //!
 //! ## Alternation branch order is preserved
 //!
@@ -165,11 +167,28 @@ pub fn report_catalog_drift_with_vectors(
                                 path.kind.clone(),
                                 path.operands
                                     .iter()
-                                    .map(|n| (n.capture.clone(), n.position, n.label.clone()))
+                                    .map(|n| (Some(n.capture.clone()), n.position, n.label.clone()))
                                     .collect::<Vec<_>>(),
                             )
                         })
                         .collect::<Vec<_>>();
+                    if *visibility == DefinitionVisibility::Pattern {
+                        let annotated =
+                            super::materialize::annotated_span_paths(&definition.metadata)
+                                .map_err(|(span, message)| {
+                                    CompileError::from_diagnostics(vec![
+                                        super::policy::diagnostic_at(
+                                            &program.sources,
+                                            span,
+                                            DiagnosticCode::InvalidPolicyValue,
+                                            message,
+                                            super::DiagnosticSeverity::Error,
+                                        ),
+                                    ])
+                                })?;
+                        canonical_paths
+                            .extend(annotated.into_iter().map(|path| (path.kind, path.operands)));
+                    }
                     canonical_paths.sort();
                     canonical_paths.dedup();
                     let mut canonical_orders =
@@ -388,10 +407,9 @@ enum CanonicalExpr {
     },
 }
 
-type CanonicalSpanPath = (
-    String,
-    Vec<(CompactString, super::model::SpanPosition, Option<String>)>,
-);
+/// A layer and its operands, governor first. Native `where span(...)` clauses
+/// and the `within_span` and `span_dependency` annotations share this form.
+type CanonicalSpanPath = (String, Vec<super::materialize::AnnotatedSpanOperand>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CanonicalDefinitionBody {
@@ -849,6 +867,70 @@ mod tests {
     }
 
     #[test]
+    fn span_annotations_drift_exactly_when_their_constraints_differ() {
+        let body = "p := (?<a> []) (?<b> []).";
+        let annotated = |annotation: &str| format!("{annotation}\n{body}");
+        let native = |clause: &str| format!("p := (?<a> []) (?<b> []) where {clause}.");
+        for (annotation, clause) in [
+            (
+                r#"span_dependency: "c: $a.head@X -> $b""#,
+                "span(c, $a.head@X -> $b)",
+            ),
+            (
+                r#"span_dependency: {kind: "c", governor: "a", dependent: "b"}"#,
+                "span(c, $a -> $b)",
+            ),
+            (
+                r#"span_dependency: ["c: $a -> $b", "luw: $b.whole"]"#,
+                "span(luw, $b.whole), span(c, $a -> $b)",
+            ),
+            (
+                r#"within_span: {kind: "c", capture: "a", position: "head", label: "X"}"#,
+                "span(c, $a.head@X)",
+            ),
+        ] {
+            let report = drift(&[("a.lx", &annotated(annotation)), ("b.lx", &native(clause))]);
+            assert!(report.entries.is_empty(), "{annotation}: {report:?}");
+            assert_eq!(
+                names(&drift(&[("a.lx", &annotated(annotation)), ("b.lx", body)])),
+                ["p"],
+                "{annotation}"
+            );
+        }
+        for (left, right) in [
+            (r#"within_span: "c""#, r#"within_span: "d""#),
+            (
+                r#"within_span: "c""#,
+                r#"within_span: {kind: "c", label: "X"}"#,
+            ),
+            (
+                r#"within_span: "c""#,
+                r#"within_span: {kind: "c", capture: "a"}"#,
+            ),
+            (
+                r#"span_dependency: "c: $a -> $b""#,
+                r#"span_dependency: "c: $b -> $a""#,
+            ),
+        ] {
+            assert_eq!(
+                names(&drift(&[
+                    ("a.lx", &annotated(left)),
+                    ("b.lx", &annotated(right))
+                ])),
+                ["p"],
+                "{left} / {right}"
+            );
+        }
+        let shorthand = annotated(r#"within_span: "c""#);
+        let map = annotated(r#"within_span: {kind: "c", position: "inside"}"#);
+        assert!(
+            drift(&[("a.lx", &shorthand), ("b.lx", &map)])
+                .entries
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn enhanced_constraint_order_does_not_drift() {
         let left = "pattern p := (?<v> []) where \
                     $v -[enhanced obj as $edge_a]-> (?<a> []), \
@@ -906,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_never_participates_in_body_identity() {
+    fn descriptive_metadata_does_not_participate_in_body_identity() {
         let report = drift(&[
             ("a.lx", "note: \"one\"\np := [upos=X]."),
             ("b.lx", "note: \"two\"\np := [upos=X]."),

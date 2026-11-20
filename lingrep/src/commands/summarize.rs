@@ -599,6 +599,7 @@ pub fn run(
         };
         let mut sink = SummarySink {
             span_kind: args.by_span.as_deref(),
+            span_kind_observed: false,
             grouping_coverage,
             windows,
             aggregation: Some(aggregation),
@@ -681,6 +682,13 @@ pub fn run(
         crate::attribute_binding::write_out_of_set_label_notices(
             compiled.matcher.label_declarations(),
             &report.out_of_set_labels,
+            config,
+            &run_id,
+        )?;
+        crate::attribute_binding::write_unobserved_span_kind_notices(
+            &compiled.matcher,
+            &report,
+            sink.span_kind.map(|kind| (kind, sink.span_kind_observed)),
             config,
             &run_id,
         )?;
@@ -997,6 +1005,8 @@ pub fn run(
 
 struct SummarySink<'a> {
     span_kind: Option<&'a str>,
+    /// Whether any admitted sentence carried a span of `span_kind`.
+    span_kind_observed: bool,
     grouping_coverage: Option<GroupingTally>,
     windows: Option<WindowTally>,
     aggregation: Option<SummaryAggregator>,
@@ -1356,12 +1366,19 @@ impl SummarySink<'_> {
         }
     }
 
-    /// Counts one admitted sentence toward its document under `--by-document`.
+    /// Records one admitted sentence: whether it carries a `--by-span` span,
+    /// and its document tally under `--by-document`.
     fn observe_sentence(
         &mut self,
         location: &lingrep_core::execution::SentenceLocation,
-        tokens: usize,
+        sentence: &dyn lingrep_core::token_match::TokenSequence,
     ) -> Result<(), ExecutionError> {
+        if let Some(kind) = self.span_kind
+            && !self.span_kind_observed
+        {
+            self.span_kind_observed = sentence.spans().iter().any(|span| span.kind == kind);
+        }
+        let tokens = sentence.len();
         let Some(documents) = self.documents.as_mut() else {
             return Ok(());
         };
@@ -1587,7 +1604,7 @@ impl SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: impl Iterator<Item = RecordView<'r>>,
     ) -> Result<SinkControl, ExecutionError> {
-        self.observe_sentence(location, sentence.len())?;
+        self.observe_sentence(location, sentence)?;
         let mut records_emitted = 0usize;
         let mut matched = Vec::new();
         for record in records {
@@ -1682,7 +1699,7 @@ impl MatchSink for SummarySink<'_> {
         sentence: &dyn lingrep_core::token_match::TokenSequence,
         records: Vec<PublishedRecord>,
     ) -> Result<SinkControl, ExecutionError> {
-        self.observe_sentence(location, sentence.len())?;
+        self.observe_sentence(location, sentence)?;
         let groups = self.group_owned_records(location, sentence, records)?;
         self.observe_slots(location, sentence.len(), &groups)?;
         let records_emitted = self.add_owned_groups(groups)?;
@@ -1730,7 +1747,7 @@ impl MatchSink for SummarySink<'_> {
             if cancel.is_cancelled() {
                 return Ok((controls, true));
             }
-            self.observe_sentence(location, sentence.len())?;
+            self.observe_sentence(location, sentence)?;
             let groups = groups?;
             self.observe_slots(location, sentence.len(), &groups)?;
             let records_emitted = self.add_owned_groups(groups)?;

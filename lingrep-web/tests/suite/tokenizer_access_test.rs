@@ -32,3 +32,31 @@ fn plan_access_memoizes_a_real_dictionary() {
         "the plan is memoized, not rebuilt"
     );
 }
+
+#[test]
+fn concurrent_first_callers_share_one_plan() {
+    const CALLERS: usize = 8;
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let context = lingrep_web::server_context::ServerContext::new(dictionary.path()).unwrap();
+    let start = std::sync::Barrier::new(CALLERS);
+    let plans = std::thread::scope(|scope| {
+        let callers = (0..CALLERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    context.plan().expect("the mini dictionary builds")
+                })
+            })
+            .collect::<Vec<_>>();
+        callers
+            .into_iter()
+            .map(|caller| caller.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        plans
+            .iter()
+            .all(|plan| std::sync::Arc::ptr_eq(plan, &plans[0])),
+        "each caller received the plan the first build produced"
+    );
+}

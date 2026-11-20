@@ -166,6 +166,7 @@ pub struct CompiledCatalog {
     vectors: Box<[crate::fsm::CatalogVectors]>,
     near_tests: Box<[crate::fsm::NearTest]>,
     label_declarations: Box<[crate::fsm::LabelDeclaration]>,
+    span_constraint_kinds: BTreeMap<String, Vec<CompactString>>,
 }
 
 /// One definition of a catalog [`CompiledCatalog::token_windows`] describes.
@@ -377,6 +378,7 @@ impl CompiledCatalog {
             vectors: Box::default(),
             near_tests: Box::default(),
             label_declarations: Box::default(),
+            span_constraint_kinds: BTreeMap::new(),
         }
     }
 
@@ -460,6 +462,14 @@ impl CompiledCatalog {
         declarations: Vec<crate::fsm::LabelDeclaration>,
     ) {
         self.label_declarations = declarations.into_boxed_slice();
+    }
+
+    /// The sentence-span kinds that `where span(…)`, `within_span` and
+    /// `span_dependency` constraints name, each with the definitions that
+    /// carry such a constraint, in catalog order. A definition matches nothing
+    /// in a sentence without a span of a kind it names.
+    pub fn span_constraint_kinds(&self) -> &BTreeMap<String, Vec<CompactString>> {
+        &self.span_constraint_kinds
     }
 
     /// The catalog's `labels:` fields, in source order.
@@ -781,6 +791,18 @@ impl CompiledCatalog {
             .iter()
             .map(|definition| Some((definition.name.clone(), window_captures(definition)?)))
             .collect();
+        self.span_constraint_kinds = BTreeMap::new();
+        for definition in &definitions {
+            for constraint in &definition.span_constraints {
+                let names = self
+                    .span_constraint_kinds
+                    .entry(constraint.kind.clone())
+                    .or_default();
+                if names.last() != Some(&definition.name) {
+                    names.push(definition.name.clone());
+                }
+            }
+        }
         let mut captures = IndexMap::new();
         let mut evaluated = Vec::new();
         for definition in definitions {

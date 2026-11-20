@@ -87,49 +87,152 @@ pub(crate) fn materialize_program(
     Ok(output.into_boxed_slice())
 }
 
-fn parse_span_path(
-    path: &str,
-    resolve: &impl Fn(&str) -> Result<CaptureId, CompileError>,
-    invalid: &impl Fn(&str) -> CompileError,
-) -> Result<SpanConstraint, CompileError> {
+/// A capture name, or `None` for the whole match, with the span position and
+/// label it must satisfy.
+pub(super) type AnnotatedSpanOperand = (Option<CompactString>, SpanPosition, Option<String>);
+
+/// One `within_span` or `span_dependency` constraint before capture resolution.
+pub(super) struct AnnotatedSpanPath {
+    pub(super) kind: String,
+    /// Governor first, the operand order of
+    /// [`ParsedSpanPath`](super::model::ParsedSpanPath).
+    pub(super) operands: Vec<AnnotatedSpanOperand>,
+    /// The annotation entry that declared the constraint.
+    pub(super) span: SourceSpan,
+}
+
+/// Reads the span constraints a definition's `within_span` and
+/// `span_dependency` annotations declare.
+///
+/// # Errors
+///
+/// Returns the entry's span and a message for a value that is not one of the
+/// documented forms.
+pub(super) fn annotated_span_paths(
+    metadata: &super::model::Metadata,
+) -> Result<Vec<AnnotatedSpanPath>, (SourceSpan, String)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Within {
+        kind: String,
+        label: Option<String>,
+        capture: Option<CompactString>,
+        #[serde(default)]
+        position: SpanPosition,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Dependency {
+        kind: String,
+        governor: CompactString,
+        dependent: CompactString,
+    }
+
+    let mut constraints = Vec::new();
+    for key in ["within_span", "span_dependency"] {
+        let Some(entry) = metadata.get(key) else {
+            continue;
+        };
+        let span = entry.span;
+        let invalid = |message: &str| (span, format!("invalid `{key}`: {message}"));
+        if key == "span_dependency" && !entry.value.is_object() {
+            let paths = match entry.value.as_array() {
+                Some(paths) if paths.is_empty() => {
+                    return Err(invalid("expected at least one path"));
+                }
+                Some(paths) => paths.as_slice(),
+                None => std::slice::from_ref(&entry.value),
+            };
+            for path in paths {
+                let path = path
+                    .as_str()
+                    .ok_or_else(|| invalid("expected a quoted span path"))?;
+                let (kind, operands) = parse_span_path(path).map_err(invalid)?;
+                constraints.push(AnnotatedSpanPath {
+                    kind,
+                    operands,
+                    span,
+                });
+            }
+            continue;
+        }
+        let (kind, operands) = if key == "within_span" {
+            let within = if let Some(kind) = entry.value.as_str() {
+                Within {
+                    kind: kind.into(),
+                    label: None,
+                    capture: None,
+                    position: SpanPosition::default(),
+                }
+            } else {
+                serde_json::from_value(entry.value.clone()).map_err(|e| invalid(&e.to_string()))?
+            };
+            if within.kind.is_empty() {
+                return Err(invalid("kind must be nonempty"));
+            }
+            (
+                within.kind,
+                vec![(within.capture, within.position, within.label)],
+            )
+        } else {
+            let edge: Dependency =
+                serde_json::from_value(entry.value.clone()).map_err(|e| invalid(&e.to_string()))?;
+            if edge.kind.is_empty() || edge.governor == edge.dependent {
+                return Err(invalid(
+                    "a dependency needs a kind and two distinct captures",
+                ));
+            }
+            (
+                edge.kind,
+                vec![
+                    (Some(edge.governor), SpanPosition::Inside, None),
+                    (Some(edge.dependent), SpanPosition::Inside, None),
+                ],
+            )
+        };
+        constraints.push(AnnotatedSpanPath {
+            kind,
+            operands,
+            span,
+        });
+    }
+    Ok(constraints)
+}
+
+fn parse_span_path(path: &str) -> Result<(String, Vec<AnnotatedSpanOperand>), &'static str> {
     let (kind, chain) = path
         .split_once(':')
-        .ok_or_else(|| invalid("expected 'kind: $capture -> $capture'"))?;
+        .ok_or("expected 'kind: $capture -> $capture'")?;
     let kind = kind.trim();
     if kind.is_empty() {
-        return Err(invalid("kind must be nonempty"));
+        return Err("kind must be nonempty");
     }
-    let mut nodes = Vec::new();
+    let mut operands = Vec::new();
     for operand in chain.split("->") {
-        let operand = operand.trim();
         let (selector, label) = match operand.split_once('@') {
-            Some((_, "")) => return Err(invalid("expected a label after @")),
-            Some((selector, label)) => (selector, Some(label.to_owned())),
+            Some((selector, label)) => (selector, Some(label.trim())),
             None => (operand, None),
         };
+        if label == Some("") {
+            return Err("expected a label after @");
+        }
+        let label = label.map(str::to_owned);
         let (name, position) = selector.split_once('.').unwrap_or((selector, "inside"));
-        let position = match position {
+        let position = match position.trim() {
             "inside" => SpanPosition::Inside,
             "whole" => SpanPosition::Whole,
             "head" => SpanPosition::Head,
-            _ => return Err(invalid("expected .inside, .whole or .head")),
+            _ => return Err("expected .inside, .whole or .head"),
         };
         let name = name
+            .trim()
             .strip_prefix('$')
+            .map(str::trim)
             .filter(|name| !name.is_empty())
-            .ok_or_else(|| invalid("each path operand must name a $capture"))?;
-        nodes.push(SpanOperand {
-            source: None,
-            capture: Some(resolve(name)?),
-            position,
-            label,
-        });
+            .ok_or("each path operand must name a $capture")?;
+        operands.push((Some(name.into()), position, label));
     }
-    nodes.reverse();
-    Ok(SpanConstraint {
-        kind: kind.to_owned(),
-        nodes: nodes.into_boxed_slice(),
-    })
+    Ok((kind.to_owned(), operands))
 }
 
 struct Materializer<'a> {
@@ -371,128 +474,55 @@ impl Materializer<'_> {
         paths: &[super::model::ParsedSpanPath],
         expr: &ExecutionExpr,
     ) -> Result<Box<[super::model::SpanConstraint]>, CompileError> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Within {
-            kind: String,
-            label: Option<String>,
-            capture: Option<String>,
-            #[serde(default)]
-            position: SpanPosition,
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Dependency {
-            kind: String,
-            governor: String,
-            dependent: String,
-        }
-
+        let mut captures = BTreeMap::new();
+        collect_capture_names(expr, &mut captures);
         let mut constraints = Vec::new();
-        for key in ["within_span", "span_dependency"] {
-            let Some(entry) = metadata.get(key) else {
-                continue;
-            };
-            let invalid = |message: &str| {
-                self.at(
-                    entry.span,
-                    DiagnosticCode::InvalidPolicyValue,
-                    &format!("invalid `{key}`: {message}"),
-                )
-            };
-            let mut captures = BTreeMap::new();
-            collect_capture_names(expr, &mut captures);
-            let resolve = |name: &str| self.resolve_relation_operand(&captures, name, entry.span);
-            if key == "span_dependency" && !entry.value.is_object() {
-                let paths = match entry.value.as_array() {
-                    Some(paths) if paths.is_empty() => {
-                        return Err(invalid("expected at least one path"));
-                    }
-                    Some(paths) => paths.as_slice(),
-                    None => std::slice::from_ref(&entry.value),
-                };
-                for path in paths {
-                    let path = path
-                        .as_str()
-                        .ok_or_else(|| invalid("expected a quoted span path"))?;
-                    constraints.push(parse_span_path(path, &resolve, &invalid)?);
-                }
-                continue;
-            }
-            let constraint = if key == "within_span" {
-                let within = if let Some(kind) = entry.value.as_str() {
-                    Within {
-                        kind: kind.into(),
-                        label: None,
-                        capture: None,
-                        position: Default::default(),
-                    }
-                } else {
-                    serde_json::from_value(entry.value.clone())
-                        .map_err(|e| invalid(&e.to_string()))?
-                };
-                if within.kind.is_empty() {
-                    return Err(invalid("kind must be nonempty"));
-                }
-                SpanConstraint {
-                    kind: within.kind,
-                    nodes: Box::new([SpanOperand {
+        let annotated = annotated_span_paths(metadata).map_err(|(span, message)| {
+            self.at(span, DiagnosticCode::InvalidPolicyValue, &message)
+        })?;
+        for path in annotated {
+            let nodes = path
+                .operands
+                .into_iter()
+                .rev()
+                .map(|(capture, position, label)| {
+                    Ok(SpanOperand {
                         source: None,
-                        label: within.label,
-                        position: within.position,
-                        capture: within.capture.as_deref().map(resolve).transpose()?,
-                    }]),
-                }
-            } else {
-                let edge: Dependency = serde_json::from_value(entry.value.clone())
-                    .map_err(|e| invalid(&e.to_string()))?;
-                if edge.kind.is_empty() || edge.governor == edge.dependent {
-                    return Err(invalid(
-                        "a dependency needs a kind and two distinct captures",
-                    ));
-                }
-                SpanConstraint {
-                    kind: edge.kind,
-                    nodes: Box::new([
-                        SpanOperand {
-                            capture: Some(resolve(&edge.dependent)?),
-                            ..Default::default()
-                        },
-                        SpanOperand {
-                            capture: Some(resolve(&edge.governor)?),
-                            ..Default::default()
-                        },
-                    ]),
-                }
-            };
-            constraints.push(constraint);
-        }
-        if !paths.is_empty() {
-            let mut captures = BTreeMap::new();
-            collect_capture_names(expr, &mut captures);
-            for path in paths {
-                let nodes = path
-                    .operands
-                    .iter()
-                    .rev()
-                    .map(|operand| {
-                        Ok(SpanOperand {
-                            capture: Some(self.resolve_relation_operand(
-                                &captures,
-                                &operand.capture,
-                                operand.source,
-                            )?),
-                            position: operand.position,
-                            label: operand.label.clone(),
-                            source: Some(operand.source),
-                        })
+                        capture: capture
+                            .map(|name| self.resolve_relation_operand(&captures, &name, path.span))
+                            .transpose()?,
+                        position,
+                        label,
                     })
-                    .collect::<Result<Box<[_]>, CompileError>>()?;
-                constraints.push(SpanConstraint {
-                    kind: path.kind.clone(),
-                    nodes,
-                });
-            }
+                })
+                .collect::<Result<Box<[_]>, CompileError>>()?;
+            constraints.push(SpanConstraint {
+                kind: path.kind,
+                nodes,
+            });
+        }
+        for path in paths {
+            let nodes = path
+                .operands
+                .iter()
+                .rev()
+                .map(|operand| {
+                    Ok(SpanOperand {
+                        capture: Some(self.resolve_relation_operand(
+                            &captures,
+                            &operand.capture,
+                            operand.source,
+                        )?),
+                        position: operand.position,
+                        label: operand.label.clone(),
+                        source: Some(operand.source),
+                    })
+                })
+                .collect::<Result<Box<[_]>, CompileError>>()?;
+            constraints.push(SpanConstraint {
+                kind: path.kind.clone(),
+                nodes,
+            });
         }
         Ok(constraints.into_boxed_slice())
     }

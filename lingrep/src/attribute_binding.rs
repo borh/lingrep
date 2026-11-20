@@ -231,6 +231,65 @@ pub(crate) fn write_unobserved_division_notices(
     Ok(())
 }
 
+/// Writes one `span_kind_unavailable` warning per span kind that no admitted
+/// sentence carried: each kind the catalog's span constraints name, by
+/// `report.span_kinds_observed`, and the `--by-span` kind when the flag paired
+/// with it is false. Writes nothing for a run that admitted no sentence.
+pub(crate) fn write_unobserved_span_kind_notices(
+    catalog: &lingrep_core::fsm::CompiledCatalog,
+    report: &lingrep_core::execution::ExecutionReport,
+    by_span: Option<(&str, bool)>,
+    config: &ExecutionCliConfig,
+    run_id: &str,
+) -> Result<(), CliError> {
+    if report.sentences_admitted == 0 {
+        return Ok(());
+    }
+    let constrained = catalog
+        .span_constraint_kinds()
+        .iter()
+        .zip(&report.span_kinds_observed)
+        .filter(|(_, observed)| !**observed)
+        .map(|((kind, definitions), _)| {
+            let definitions: Vec<String> = definitions
+                .iter()
+                .map(|definition| format!("`{definition}`"))
+                .collect();
+            let named = if definitions.len() > NAMED_REFERRERS {
+                format!(
+                    "{}, and {} more",
+                    definitions[..NAMED_REFERRERS].join(", "),
+                    definitions.len() - NAMED_REFERRERS
+                )
+            } else {
+                definitions.join(", ")
+            };
+            format!(
+                "no sentence of this run carries a `{kind}` span, so nothing matches the span \
+                 constraints of {named}"
+            )
+        });
+    let grouped = by_span.filter(|(_, observed)| !observed).map(|(kind, _)| {
+        format!(
+            "`--by-span {kind}`: no sentence of this run carries a `{kind}` span, so every \
+                 record is unkeyed"
+        )
+    });
+    for message in constrained.chain(grouped) {
+        crate::commands::query_support::write_warning(
+            &config.stderr,
+            config.diagnostic_format,
+            DiagnosticStage::Matching,
+            "span_kind_unavailable",
+            message,
+            Some(run_id),
+            Vec::new(),
+        )
+        .map_err(CliError::Io)?;
+    }
+    Ok(())
+}
+
 /// The schema name a notice carries, from the artifact's recorded analyzer
 /// family and extraction profile.
 ///

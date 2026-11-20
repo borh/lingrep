@@ -2457,6 +2457,222 @@ expression: repository_catalog_fingerprints()
         },
     },
     CatalogFingerprint {
+        source: "patterns/psycholinguistics.lx",
+        definitions: 12,
+        catalog: [
+            (
+                "noun_spelling",
+                [
+                    (
+                        "category",
+                        "Spelling variation\n",
+                    ),
+                    (
+                        "key",
+                        "lemma,surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "two_kanji_type",
+                [
+                    (
+                        "category",
+                        "Orthographic neighborhood\n",
+                    ),
+                    (
+                        "key",
+                        "surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "school_neighbor",
+                [
+                    (
+                        "category",
+                        "Orthographic neighborhood\n",
+                    ),
+                    (
+                        "key",
+                        "surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "kanji_initial",
+                [
+                    (
+                        "category",
+                        "Fixation target\n",
+                    ),
+                    (
+                        "key",
+                        "surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "hiragana_only",
+                [
+                    (
+                        "category",
+                        "Fixation target\n",
+                    ),
+                    (
+                        "key",
+                        "surface",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "kanji_token",
+                [
+                    (
+                        "category",
+                        "Character class\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "hiragana_token",
+                [
+                    (
+                        "category",
+                        "Character class\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "katakana_token",
+                [
+                    (
+                        "category",
+                        "Character class\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "reading_bunsetsu",
+                [
+                    (
+                        "category",
+                        "Bunsetsu\n",
+                    ),
+                    (
+                        "publish",
+                        "- surface\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                    (
+                        "within_span",
+                        "kind: bunsetsu\nposition: whole\n",
+                    ),
+                ],
+            ),
+            (
+                "earlier_dependent",
+                [
+                    (
+                        "category",
+                        "Bunsetsu\n",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "subject_gap_candidate",
+                [
+                    (
+                        "category",
+                        "Relative clause\n",
+                    ),
+                    (
+                        "key",
+                        "$verb.lemma,$head.lemma",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+            (
+                "object_gap_candidate",
+                [
+                    (
+                        "category",
+                        "Relative clause\n",
+                    ),
+                    (
+                        "key",
+                        "$verb.lemma,$head.lemma",
+                    ),
+                    (
+                        "status",
+                        "experimental\n",
+                    ),
+                ],
+            ),
+        ],
+        policy: [],
+        required_attributes: [
+            "AttributeKey(\"dep.head\")",
+            "AttributeKey(\"dep.rel\")",
+            "AttributeKey(\"surface\")",
+            "AttributeKey(\"upos\")",
+        ],
+        predicates: PredicateDigest(
+            "321b22a174252362a3c289670206de9cdf98e11f0b8252b80985b621ae2e4283",
+        ),
+        compiler_stats: CompilerStatsFingerprint {
+            definitions: 12,
+            expression_nodes: 21,
+            max_depth: 3,
+            reference_edges: 0,
+            nfa_states: 16,
+            transitions: 16,
+        },
+    },
+    CatalogFingerprint {
         source: "patterns/reduplication.lx",
         definitions: 2,
         catalog: [

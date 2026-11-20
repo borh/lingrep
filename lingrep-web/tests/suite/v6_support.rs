@@ -62,6 +62,16 @@ pub fn build_artifact_with_metadata(
     sections: Vec<Vec<String>>,
     metadata: Vec<lingrep_core::corpus::Metadata>,
 ) -> ArtifactFixture {
+    build_artifact_with_spans(documents, sections, metadata, Vec::new())
+}
+
+/// `spans` holds each sentence's span layer, indexed by corpus sentence ordinal.
+pub fn build_artifact_with_spans(
+    documents: Vec<(&str, u64, bool, Vec<Vec<TokenInfo>>)>,
+    sections: Vec<Vec<String>>,
+    metadata: Vec<lingrep_core::corpus::Metadata>,
+    spans: Vec<Vec<lingrep_core::token_match::SentenceSpan>>,
+) -> ArtifactFixture {
     let documents = documents
         .into_iter()
         .map(|(name, group, external, sentences)| (name.to_owned(), group, external, sentences))
@@ -159,10 +169,30 @@ pub fn build_artifact_with_metadata(
                             .await
                             .unwrap()
                             .unwrap();
-                        builder
-                            .push_tokenized_sentence(&location, tokens)
-                            .await
-                            .unwrap();
+                        match spans.get(sentence_ordinal as usize) {
+                            Some(spans) if !spans.is_empty() => {
+                                let schema =
+                                    lingrep_core::token_match::TokenSchema::unidic_morphology();
+                                let projection = schema
+                                    .bind_projection(schema.keys().iter().cloned())
+                                    .unwrap();
+                                let words = lingrep_core::token_match::BoundTokenSentence::project(
+                                    &projection,
+                                    tokens,
+                                )
+                                .unwrap()
+                                .with_spans(spans.clone())
+                                .unwrap();
+                                builder
+                                    .push_bound_sentence(&location, words, &projection)
+                                    .await
+                                    .unwrap();
+                            }
+                            _ => builder
+                                .push_tokenized_sentence(&location, tokens)
+                                .await
+                                .unwrap(),
+                        }
                         sentence_ordinal += 1;
                     }
                     builder
@@ -194,7 +224,20 @@ pub fn ready_fixture(
     identity: &str,
     sentences: Vec<Vec<TokenInfo>>,
 ) -> (ArtifactFixture, ReadyCorpus) {
-    let fixture = build_artifact(vec![("fixture.md", 0, false, sentences)]);
+    ready_fixture_with_spans(identity, sentences, Vec::new())
+}
+
+fn ready_fixture_with_spans(
+    identity: &str,
+    sentences: Vec<Vec<TokenInfo>>,
+    spans: Vec<Vec<lingrep_core::token_match::SentenceSpan>>,
+) -> (ArtifactFixture, ReadyCorpus) {
+    let fixture = build_artifact_with_spans(
+        vec![("fixture.md", 0, false, sentences)],
+        Vec::new(),
+        Vec::new(),
+        spans,
+    );
     let ready = ReadyCorpus::from_artifact(
         CorpusIdentity::new(identity),
         open_artifact(&fixture),
@@ -213,7 +256,15 @@ pub fn runtime_fixture(
     identity: &str,
     sentences: Vec<Vec<TokenInfo>>,
 ) -> (ArtifactFixture, Arc<CorpusRuntime>) {
-    let (fixture, ready) = ready_fixture(identity, sentences);
+    runtime_fixture_with_spans(identity, sentences, Vec::new())
+}
+
+pub fn runtime_fixture_with_spans(
+    identity: &str,
+    sentences: Vec<Vec<TokenInfo>>,
+    spans: Vec<Vec<lingrep_core::token_match::SentenceSpan>>,
+) -> (ArtifactFixture, Arc<CorpusRuntime>) {
+    let (fixture, ready) = ready_fixture_with_spans(identity, sentences, spans);
     let context = Arc::new(lingrep_web::server_context::ServerContext::new("/tmp/dict").unwrap());
     let runtime = Arc::new(CorpusRuntime::from_ready(
         ready.identity,

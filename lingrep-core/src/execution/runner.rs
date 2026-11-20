@@ -84,6 +84,10 @@ pub struct ExecutionReport {
     /// Indexed like [`CompiledCatalog::label_declarations`](crate::fsm::CompiledCatalog::label_declarations),
     /// or empty when no sentence was observed.
     pub out_of_set_labels: Vec<crate::fsm::OutOfSetValues>,
+    /// Whether any admitted sentence carried a span of each kind, indexed like
+    /// [`CompiledCatalog::span_constraint_kinds`](crate::fsm::CompiledCatalog::span_constraint_kinds),
+    /// or empty when no sentence was observed.
+    pub span_kinds_observed: Vec<bool>,
 }
 
 impl ExecutionReport {
@@ -567,6 +571,11 @@ where
         observer,
         scope,
         fsm.compiled.label_declarations(),
+        fsm.compiled
+            .span_constraint_kinds()
+            .keys()
+            .cloned()
+            .collect(),
         fsm.compiled.lookaround_reach(),
         window_widths.as_deref(),
         |sentences, links, targets| {
@@ -709,6 +718,7 @@ fn execute_bound_with_matcher<S, A, K, P, O, M>(
     observer: &mut O,
     scope: &SentenceAdmission,
     labels: &[crate::fsm::LabelDeclaration],
+    span_kinds: Box<[String]>,
     reach: BTreeMap<LookaroundScope, LookaroundReach>,
     window_widths: Option<&[usize]>,
     mut match_batch: M,
@@ -734,7 +744,7 @@ where
     }
 
     std::thread::scope(|threads| {
-        let mut state = PublicationState::new(labels);
+        let mut state = PublicationState::new(labels, span_kinds);
         let mut partitioner = Partitioner::new(reach);
         macro_rules! run_with {
             () => {
@@ -966,6 +976,7 @@ struct PublicationState {
     current: ExecutionReport,
     logical_pending: usize,
     labels: Box<[crate::fsm::LabelDeclaration]>,
+    span_kinds: Box<[String]>,
 }
 
 impl PublicationState {
@@ -973,9 +984,10 @@ impl PublicationState {
         self.current.admit(sentence_count)
     }
 
-    fn new(labels: &[crate::fsm::LabelDeclaration]) -> Self {
+    fn new(labels: &[crate::fsm::LabelDeclaration], span_kinds: Box<[String]>) -> Self {
         Self {
             labels: labels.into(),
+            span_kinds,
             ..Self::default()
         }
     }
@@ -990,6 +1002,13 @@ impl PublicationState {
             sentence,
             &mut self.current.out_of_set_labels,
         );
+        if !self.span_kinds.is_empty() {
+            let observed = &mut self.current.span_kinds_observed;
+            observed.resize(self.span_kinds.len(), false);
+            for (kind, observed) in self.span_kinds.iter().zip(observed) {
+                *observed = *observed || sentence.spans().iter().any(|span| span.kind == *kind);
+            }
+        }
         self.current.observe_match(sentence, matches)
     }
 
@@ -1829,7 +1848,7 @@ mod tests {
         ] {
             let mut partitioner =
                 Partitioner::new(BTreeMap::from([(LookaroundScope::Document, reach)]));
-            let mut state = PublicationState::new(&[]);
+            let mut state = PublicationState::new(&[], Box::default());
             let mut rejected = false;
             for ordinal in 0..100 {
                 let sentence = ExecutionSentence {
@@ -1877,7 +1896,7 @@ mod tests {
                 after: 2,
             },
         )]));
-        let mut state = PublicationState::new(&[]);
+        let mut state = PublicationState::new(&[], Box::default());
         for ordinal in 0..2 {
             let result = partitioner.push_batch(
                 vec![ExecutionSentence {
@@ -1918,7 +1937,7 @@ mod tests {
                 after: 0,
             },
         )]));
-        let mut state = PublicationState::new(&[]);
+        let mut state = PublicationState::new(&[], Box::default());
         for ordinal in 0..10 {
             let mut location = SentenceLocation::run_local(ordinal);
             location.document_id = DocumentId::new(ordinal);
@@ -2128,6 +2147,7 @@ mod tests {
             observer,
             scope,
             labels,
+            Box::default(),
             BTreeMap::new(),
             None,
             |sentences, _, targets| Ok(matcher(&sentences[targets])),

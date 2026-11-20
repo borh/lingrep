@@ -162,6 +162,7 @@ fn cancellation_is_observed_before_the_next_capture_push() {
             program_stats: lingrep_core::fsm::ProgramStats::default(),
             trace: None,
             out_of_set_labels: Vec::new(),
+            span_kinds_observed: Vec::new(),
             sentences_admitted: 2,
             sentences_matched: 2,
             tokens_scanned: 2,

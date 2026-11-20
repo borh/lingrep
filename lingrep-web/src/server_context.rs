@@ -3,7 +3,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use lingrep_core::analysis::VibratoPlan;
 use rayon::ThreadPool;
@@ -21,7 +21,7 @@ pub struct ServerContext {
     fingerprint: Mutex<Option<[u8; 32]>>,
     build_permit: Arc<tokio::sync::Semaphore>,
     builds_stopping: AtomicBool,
-    plan: OnceLock<Arc<VibratoPlan>>,
+    plan: Mutex<Option<Arc<VibratoPlan>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,7 +52,7 @@ impl ServerContext {
             fingerprint: Mutex::new(None),
             build_permit: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BUILDS)),
             builds_stopping: AtomicBool::new(false),
-            plan: OnceLock::new(),
+            plan: Mutex::new(None),
         })
     }
 
@@ -118,27 +118,43 @@ impl ServerContext {
     /// derives its plan from it, so the dictionary is loaded and its
     /// protected-surface table built once per process.
     ///
+    /// Callers that arrive during the build block until it ends. A failure is
+    /// not kept: the next call builds again.
+    ///
     /// The tokenizer is built with [`create_tokenizer_from_path`], which
     /// memory-maps a globally-cached decompressed copy rather than parsing a
     /// second one into anonymous heap.
     pub fn plan(&self) -> Result<Arc<VibratoPlan>, TokenizerUnavailable> {
-        if let Some(existing) = self.plan.get() {
-            return Ok(Arc::clone(existing));
-        }
-        let path = self
-            .dict_path
-            .as_ref()
-            .ok_or(TokenizerUnavailable::NoDictionary)?;
-        let tokenizer = create_tokenizer_from_path(&path.to_string_lossy())
-            .map_err(|_| TokenizerUnavailable::LoadFailed)?;
-        let built = Arc::new(VibratoPlan::new(tokenizer, path).map_err(|error| {
-            tracing::warn!(%error, cause = %error.source, "Vibrato plan construction failed");
-            TokenizerUnavailable::LoadFailed
-        })?);
-        // First writer wins; a lost race discards an equivalent plan.
-        let _ = self.plan.set(Arc::clone(&built));
-        Ok(built)
+        build_once(&self.plan, || {
+            let path = self
+                .dict_path
+                .as_ref()
+                .ok_or(TokenizerUnavailable::NoDictionary)?;
+            let tokenizer = create_tokenizer_from_path(&path.to_string_lossy())
+                .map_err(|_| TokenizerUnavailable::LoadFailed)?;
+            let plan = VibratoPlan::new(tokenizer, path).map_err(|error| {
+                tracing::warn!(%error, cause = %error.source, "Vibrato plan construction failed");
+                TokenizerUnavailable::LoadFailed
+            })?;
+            Ok(Arc::new(plan))
+        })
     }
+}
+
+/// The value in `slot`, from `build` when the slot is empty. The slot stays
+/// locked while `build` runs and stays empty when `build` fails.
+fn build_once<T: Clone, E>(
+    slot: &Mutex<Option<T>>,
+    build: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    // A panic in `build` leaves the slot empty, so a poisoned lock is usable.
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(existing) = &*slot {
+        return Ok(existing.clone());
+    }
+    let built = build()?;
+    *slot = Some(built.clone());
+    Ok(built)
 }
 
 fn fixed_pool() -> io::Result<Arc<ThreadPool>> {
@@ -151,7 +167,7 @@ fn fixed_pool() -> io::Result<Arc<ThreadPool>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{POOL_THREADS, ServerContext};
+    use super::{POOL_THREADS, ServerContext, build_once};
 
     #[test]
     fn one_context_builds_one_pool_of_the_documented_size() {
@@ -194,5 +210,35 @@ mod tests {
     fn a_missing_dictionary_makes_the_tokenizer_unavailable() {
         let context = ServerContext::new("/lingrep-web/no/such/dict.zst").unwrap();
         assert!(context.plan().is_err());
+    }
+
+    #[test]
+    fn concurrent_callers_of_an_empty_slot_run_one_build() {
+        const CALLERS: usize = 8;
+        let slot = std::sync::Mutex::new(None);
+        let builds = std::sync::atomic::AtomicUsize::new(0);
+        let start = std::sync::Barrier::new(CALLERS);
+        std::thread::scope(|scope| {
+            for _ in 0..CALLERS {
+                scope.spawn(|| {
+                    start.wait();
+                    let value = build_once(&slot, || {
+                        let build = builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        Ok::<_, ()>(build)
+                    });
+                    assert_eq!(value, Ok(0));
+                });
+            }
+        });
+        assert_eq!(builds.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_failed_build_leaves_the_slot_empty_for_the_next_caller() {
+        let slot = std::sync::Mutex::new(None);
+        assert_eq!(build_once(&slot, || Err::<u8, _>("failed")), Err("failed"));
+        assert_eq!(build_once(&slot, || Ok::<_, &str>(1)), Ok(1));
+        assert_eq!(build_once(&slot, || Err("not run")), Ok(1));
     }
 }

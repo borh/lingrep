@@ -1,0 +1,84 @@
+# Japanese reading predictors. Run on Japanese UD CoNLL-U; complete
+# BunsetuBILabel annotations add the bunsetsu observations. Use matches
+# --evidence for occurrence-level measures (examples/psycholinguistics.sql).
+# Samples are corpus predictors. Reading times and fixation positions come
+# from the aligned experimental data.
+
+defaults
+  status: "experimental"
+end
+
+# Exact displayed spelling, including inflected forms under the lemma.
+# Count (lemma, surface) within one analyzer and part of speech.
+category: "Spelling variation"
+key: [lemma, surface]
+pattern noun_spelling := [upos=NOUN].
+
+# Mizuno & Matsui (2014), doi:10.4992/jjpsy.85.13324. The inventory gives
+# each observed two-kanji spelling a frequency. The fixed probe is a check
+# on the all-target computation: 学生 and 高校 qualify, 学校 and 校長 do not.
+category: "Orthographic neighborhood"
+key: [surface]
+pattern two_kanji_type := [surface ~ /\A\p{Han}\p{Han}\z/].
+
+category: "Orthographic neighborhood"
+key: [surface]
+pattern school_neighbor := [surface != 学校 & surface ~ /\A(?:学\p{Han}|\p{Han}校)\z/].
+
+# Kajii, Nazir & Osaka (2001), doi:10.1016/S0042-6989(01)00132-8.
+# Keep spelling and length recoverable for stratification. 食べる goes in
+# the kanji-initial condition; the all-hiragana comparison includes ひとり.
+category: "Fixation target"
+key: [surface]
+pattern kanji_initial := [surface ~ /\A\p{Han}[\p{Han}\p{Hiragana}]{1,2}\z/].
+
+category: "Fixation target"
+key: [surface]
+pattern hiragana_only := [surface ~ /\A\p{Hiragana}{2,3}\z/].
+
+# Pure-script token counts can be summarized with --by-span bunsetsu.
+# Count ー with katakana; punctuation and mixed spellings break a pure run.
+category: "Character class"
+pattern kanji_token := [surface ~ /\A\p{Han}+\z/].
+category: "Character class"
+pattern hiragana_token := [surface ~ /\A\p{Hiragana}+\z/].
+category: "Character class"
+pattern katakana_token := [surface ~ /\A[\p{Katakana}ー]+\z/].
+
+# The denominator includes bunsetsu with zero earlier dependents. Preserve
+# token surfaces so a run crossing a token boundary can be reconstructed.
+category: "Bunsetsu"
+within_span: {kind: "bunsetsu", position: "whole"}
+publish: ["surface"]
+pattern reading_bunsetsu := []+.
+
+# Asahara (2022), aclanthology.org/2022.lrec-1.555/. Each earlier dependent
+# has one governor. Head captures locate the two units even across a gap.
+category: "Bunsetsu"
+pattern earlier_dependent :=
+  (?<dependent> []) []* (?<governor> [])
+  where span(bunsetsu, $governor.head -> $dependent.head).
+
+# Miyamoto & Nakamura, escholarship.org/uc/item/1pp1w93k. The overt case
+# belongs to the embedded argument. These are candidates for review:
+# unexpressed arguments and gapless adnominal clauses occur in Japanese.
+test nominal := upos in {NOUN, PROPN, PRON}.
+category: "Relative clause"
+key: [$verb.lemma, $head.lemma]
+pattern subject_gap_candidate :=
+  (?<verb> [upos=VERB])
+  where (?<head> [@nominal]) -[acl|acl:relcl]-> $verb,
+        $verb -[obj]-> (?<argument> [@nominal]),
+        $argument -[case]-> (?<marker> [surface=を]),
+        not $verb -[nsubj|nsubj:*]-> _,
+        $argument < $marker < $verb < $head.
+
+category: "Relative clause"
+key: [$verb.lemma, $head.lemma]
+pattern object_gap_candidate :=
+  (?<verb> [upos=VERB])
+  where (?<head> [@nominal]) -[acl|acl:relcl]-> $verb,
+        $verb -[nsubj|nsubj:*]-> (?<argument> [@nominal]),
+        $argument -[case]-> (?<marker> [surface=が]),
+        not $verb -[obj]-> _,
+        $argument < $marker < $verb < $head.

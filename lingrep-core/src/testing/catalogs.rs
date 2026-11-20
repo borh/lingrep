@@ -309,6 +309,12 @@ pub fn catalog_campaign_descriptors() -> Vec<CatalogDescriptor> {
             "portable UPOS predicates and attribute-keyed publication",
         ),
         (
+            "patterns/psycholinguistics.lx",
+            Substantive,
+            &[Relations, Capture, CaptureKeyedPublication, AttributeKeyedPublication, RegexPredicate, BoundedRepeat][..],
+            "orthographic predictors, bunsetsu spans and ordered case-marked adnominal clause candidates",
+        ),
+        (
             "patterns/reduplication.lx",
             Substantive,
             &[SameAs, Capture][..],

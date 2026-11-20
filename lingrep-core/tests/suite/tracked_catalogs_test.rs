@@ -365,6 +365,10 @@ fn tracked_pattern_execution_attributes_are_pinned() {
                 "upos",
             ][..],
         ),
+        (
+            "patterns/psycholinguistics.lx",
+            &["dep.head", "dep.rel", "lemma", "surface", "upos"][..],
+        ),
         ("patterns/test-simple.lx", &["text"][..]),
         (
             "patterns/ud-dependency.lx",
@@ -423,7 +427,7 @@ fn tracked_pattern_execution_attributes_are_pinned() {
 
     assert_eq!(
         observed.len(),
-        28,
+        expected.len(),
         "every pattern catalog needs a pinned projection"
     );
     for (name, attributes) in &observed {

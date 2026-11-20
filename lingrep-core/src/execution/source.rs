@@ -108,6 +108,10 @@ impl SentenceLocation {
 /// The surface count key for a token span. Each observed source gap contributes
 /// one space. A multi-token key requires offsets on both sides of each boundary.
 ///
+/// The gap is [`source_space_before`](crate::token_match::source_space_before),
+/// the decision [`display_text`](crate::token_match::display_text) shows, so a
+/// key equals the displayed text of its span wherever a key exists.
+///
 /// # Errors
 ///
 /// Returns the sentence location when token text or a required offset is missing.

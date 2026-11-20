@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warns when a regex on `text` contains a character that never occurs in the
   folded key. `text_unfolded` warns when a corpus prepared before 0.9 is
   queried with `text` literals, and names the definitions affected.
+- `warning[span_kind_unavailable]` ends a `ling matches` or `ling summarize`
+  run in which no sentence carries a span kind that `--by-span` or a
+  `where span(…)`, `within_span` or `span_dependency` constraint names, such
+  as `bunsetsu` over Vibrato. Such a run printed `0 records` without a
+  diagnostic.
 
 ### Changed
 
@@ -55,9 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   KWIC line's left context ends, and its right context begins, with the space
   that separates it from the hit, in exported XLSX cells too. Token rows of
   the question API carry `space_before: true` on a token the source separates
-  from the one before it. `surface` in JSONL and TSV output and the
-  `summarize` surface key are unchanged: the tokens' surfaces with nothing
-  between them.
+  from the one before it.
+- `surface` in JSONL and TSV output, the `summarize` surface and `--by-span`
+  keys and the surface keys of count tables join tokens with one space
+  wherever their character offsets show a gap, so `NHK news` and `NHKnews`
+  are different keys. Count tables are version 4.
+- `ling summarize` fails with `error[missing_surface_offsets]` when it groups
+  a multi-token surface in a sentence without character offsets, such as a
+  CoNLL-U sentence whose `# text` comment differs from its rows; 0.8.x counted
+  such a match under its tokens joined with nothing. The error names the
+  file, sentence and token. Correct or delete the `# text` line, or give the
+  pattern a `key:`. `ling matches` exports the same match with its tokens
+  concatenated.
 - Sudachi is loaded without its input-text plugins, so `rewrite.def` and
   `sudachi.json` do not affect analysis; the folded view widens half-width
   katakana and composes decomposed kana instead. The 0.8 documentation said

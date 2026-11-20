@@ -171,6 +171,51 @@ async fn hit_inspector_explains_a_hit_with_its_scan_lookaround_windows() {
 }
 
 #[tokio::test]
+async fn hit_inspector_explains_span_constrained_candidates_with_the_stored_span_layer() {
+    for constrained in [
+        "within_span: \"bunsetsu\"\nb := [text=食べる].",
+        "b := (?<v> [text=食べる]) where span(bunsetsu, $v.whole@VP).",
+        "span_dependency: {kind: \"bunsetsu\", dependent: \"d\", governor: \"g\"}\n\
+         b := (?<d> [text=飯]) [text=を] (?<g> [text=食べる]).",
+    ] {
+        let chunk = |start, end, label: &str, governor| lingrep_core::token_match::SentenceSpan {
+            kind: "bunsetsu".into(),
+            start,
+            end,
+            head: Some(start),
+            label: Some(label.into()),
+            governor,
+        };
+        let (_fixture, runtime) = crate::v6_support::runtime_fixture_with_spans(
+            "capture-handler",
+            vec![vec![
+                TokenInfo::default().with_orth("飯"),
+                TokenInfo::default().with_orth("を"),
+                TokenInfo::default().with_orth("食べる"),
+            ]],
+            vec![vec![chunk(0, 2, "NP", Some(1)), chunk(2, 3, "VP", None)]],
+        );
+        let source = format!("a := [text=食べる]. {constrained}");
+        let scanned = detail_html_in(
+            runtime.clone(),
+            &source,
+            "/pattern-detail/capture-handler/1/1",
+        )
+        .await;
+        assert!(
+            scanned.contains("1 of 1 shown hits"),
+            "{constrained}: {scanned}"
+        );
+        let html = detail_html_in(runtime, &source, "/hit-detail/capture-handler/1/0/0").await;
+        assert!(
+            html.contains("data-overlap-warning"),
+            "{constrained}: {html}"
+        );
+        assert!(html.contains("<code>b</code>"), "{constrained}: {html}");
+    }
+}
+
+#[tokio::test]
 async fn repeated_sentence_hits_keep_their_own_overlap_spans() {
     let source = "a := [text=食べる]. b := [text=食べる].";
     let tokens = vec![TokenInfo::default().with_orth("食べる"); 2];

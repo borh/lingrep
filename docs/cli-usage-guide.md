@@ -390,8 +390,18 @@ character offsets show a gap. JSONL, TSV and surface count keys distinguish
 the same key as a single space. Use `char_span` for the original spacing.
 When offsets are unavailable, match exports concatenate the unplaced tokens.
 Grouping by a multi-token surface requires offsets for every internal boundary.
-The `missing_surface_offsets` diagnostic identifies the first unplaced boundary.
 A single-token surface and an explicit attribute key need no spacing evidence.
+
+A CoNLL-U sentence has no offsets when its `# text` comment differs from the
+text its rows spell. `ling summarize` stops at the first multi-token surface
+or `--by-span` key in such a sentence with `error[missing_surface_offsets]`,
+exit code 1, and writes no summary and no count table, because the key would
+otherwise depend on a guess about the missing spaces. The error names the
+file, the sentence and the token after the unplaced boundary. To count the
+corpus, correct or delete that sentence's `# text` line, since a sentence
+without one takes its spacing from `SpaceAfter=No`; or declare a `key:` for
+the pattern, which groups by attributes and reads no spacing. `ling matches`
+reads the same sentence without an error.
 
 A tag source is a literal (`{aspect: perfective}`), a capture-presence mapping
 (`{aspect: {perf: perfective, prog: progressive}}`, where the named capture that
@@ -544,11 +554,64 @@ the requested kind contributes one to `counters.records_unkeyed`. This option
 overrides the pattern's grouping key. If several spans of that kind contain
 the complete match, the shortest wins, with ties resolved by sentence span ID.
 
+Span kinds are not part of a token schema: each sentence carries the spans its
+analyzer or its CoNLL-U rows supply. When no sentence of a run carries a span
+of the requested kind, such as `bunsetsu` over Vibrato or `sudachi.c` under
+split mode C, every record is unkeyed and the run ends with
+`warning[span_kind_unavailable]`. `ling matches` and `ling summarize` report
+the same warning for a kind that a `where span(…)`, `within_span` or
+`span_dependency` constraint names, with the definitions that then match
+nothing; `ling matches` omits it after a run that `--limit` stopped. A run that
+reads no sentence reports nothing, and `ling check --schema`, the browser and
+`ling explore` do not report it.
+
 JSONL `match` records carry `span_ids` when annotations contain the complete
 published match. These zero-based IDs are local to `corpus_sentence_ordinal`.
 With `--evidence`, each ID indexes the sentence annotation in `evidence.spans`.
 In the web token inspector, select a word and open **Details** to see its
 enclosing units, their IDs, and any recorded heads, labels and governors.
+
+### Japanese reading predictors
+
+The [psycholinguistics catalog](../patterns/psycholinguistics.lx) extracts
+written word forms, two- and three-character fixation targets, bunsetsu and
+case-marked relative-clause candidates. Use Japanese UD CoNLL-U or an
+equivalent prepared corpus with basic dependencies. Bunsetsu analyses also
+require annotated bunsetsu. Sentences without them still contribute lexical
+and UD matches. The case-marked candidates provide the overt coargument,
+particle and modified noun for review. The gap role is an inference.
+
+Run the worked example from the repository root. The DuckDB step computes
+the predictors that need several matches or character positions.
+
+```bash
+ling --json matches --evidence --input-format conllu \
+  --patterns patterns/psycholinguistics.lx \
+  lingrep/tests/fixtures/psycholinguistics.conllu > reading.jsonl
+duckdb -batch -bail -cmd "SET VARIABLE matches = 'reading.jsonl'" \
+  < examples/psycholinguistics.sql
+```
+
+* **Vocabulary.** Each observed two-kanji spelling is a target. 学校 has two
+  distinct one-position neighbors, 学生 and 高校. The second occurrence of
+  学生 increases its frequency. A separate table gives each noun spelling's
+  share among occurrences with the same analyzer lemma.
+* **Characters and tokens.** Each annotated bunsetsu has its own row with
+  pure-script token counts, character counts, and maximal character runs.
+  読む contributes one kanji and one hiragana character inside one mixed
+  token. すしを has two hiragana tokens and one character run. Another table
+  reports maximal runs of consecutive pure-script tokens. The example
+  counts ー with katakana and counts Unicode code points in the displayed
+  surface, including original spaces as run separators.
+* **Syntactic load.** Earlier dependents count observed bunsetsu attachments.
+  In 新聞を子どもが読む the three units have loads of 0, 0 and 2. Sentence
+  ordinal and span ID keep repeated spellings separate. An absent annotation
+  supplies no unit. In partially annotated data a zero measures observed links.
+* **Experimental alignment.** The fixation-target table preserves sentence,
+  token position, spelling, length and whether the target begins a bunsetsu.
+  The clause query identifies 男性を見た女性 and 男性が見た女性 by their
+  different overt arguments. Testing effects on readers requires aligning
+  these observations to independent fixation or reading-time measurements.
 
 ### Counting per document
 
@@ -953,7 +1016,11 @@ ling check --patterns patterns/sentence-final.lx \
 - **Reference-closed.** Bodies are compared after resolving references, so a
   definition whose own text is byte-identical across two catalogs still drifts
   when a fragment it references differs.
-- **Metadata-insensitive.** Metadata never participates in body identity.
+- **Insensitive to descriptive metadata.** Descriptive metadata and
+  publication policy do not participate in body identity. `within_span` and
+  `span_dependency` on an emitting pattern do, because they filter its
+  matches. They compare as the `where span(...)` clause with the same
+  operands, so the two spellings of one constraint do not drift.
 - **Order-insensitive where order has no effect.** Attribute order and
   set-member order are normalized away. Alternation branch order is not,
   because it determines capture selection.

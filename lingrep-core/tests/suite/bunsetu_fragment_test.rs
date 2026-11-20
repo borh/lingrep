@@ -223,6 +223,62 @@ fn span_annotations_filter_candidates_before_longest_selection() {
     assert_eq!(run(variable, spans.clone()), run(head_edge, spans.clone()));
     let reversed = vec![span(0, 2, None, "NP"), span(2, 3, Some(0), "VP")];
     assert!(run(edges, reversed).is_empty());
+    for spaced in [
+        r#"span_dependency: "bunsetsu: $g.head@ VP -> $d.whole@ NP"
+            edge := ^ (?<d> []+) (?<g> []) $."#,
+        r#"span_dependency: "bunsetsu: $g.head @VP -> $d.whole @NP"
+            edge := ^ (?<d> []+) (?<g> []) $."#,
+        r#"span_dependency: " bunsetsu :$ g . head @ VP->$d . whole @ NP "
+            edge := ^ (?<d> []+) (?<g> []) $."#,
+        r#"edge := ^ (?<d> []+) (?<g> []) $
+            where span( bunsetsu ,$ g . head @ VP->$d . whole @ NP )."#,
+    ] {
+        assert_eq!(
+            run(spaced, spans.clone()),
+            run(edges, spans.clone()),
+            "{spaced}"
+        );
+    }
+    let inherited = r#"defaults
+            within_span: {kind: "bunsetsu", label: "NP"}
+        end
+        fragment any := [].
+        lexicon words by [text] := {"x"}.
+        phrase := ^ @any+."#;
+    let unconstrained: Vec<_> = run(inherited, spans.clone())
+        .into_iter()
+        .map(|found| (found.pattern.to_string(), found.start, found.end))
+        .collect();
+    assert_eq!(
+        unconstrained,
+        [
+            ("words".to_owned(), 0, 1),
+            ("phrase".to_owned(), 0, 2),
+            ("words".to_owned(), 1, 2),
+            ("words".to_owned(), 2, 3),
+        ]
+    );
+}
+
+#[test]
+fn a_span_constraint_written_on_a_fragment_is_reported_at_that_annotation() {
+    let source = r#"defaults
+            within_span: "bunsetsu"
+        end
+        span_dependency: "chunk: $a"
+        fragment f := (?<a> []).
+        p := @f."#;
+    let error = compile_catalog(
+        PatternSource::named("span", source),
+        CompileLimits::default(),
+    )
+    .err()
+    .expect("a fragment cannot carry a span constraint");
+    let reported = source.get(error.diagnostics[0].location().byte_range());
+    assert!(
+        reported.is_some_and(|text| text.starts_with("span_dependency")),
+        "{reported:?}"
+    );
 }
 
 #[test]
@@ -237,6 +293,9 @@ fn malformed_span_constraints_fail_during_compilation() {
         r#"within_span: {kind: "bunsetsu", capture: "missing"} p := []."#,
         r#"within_span: {kind: "bunsetsu", position: "elsewhere"} p := []."#,
         r#"within_span: "" p := []."#,
+        r#"span_dependency: "bunsetsu: $x@ " p := (?<x> [])."#,
+        r#"span_dependency: "bunsetsu: $x. " p := (?<x> [])."#,
+        r#"span_dependency: "bunsetsu: $x@ -> $x" p := (?<x> [])."#,
         r#"within_span: "bunsetsu" fragment f := []."#,
         r#"span_dependency: {kind: "bunsetsu", dependent: "a", governor: "a"} p := (?<a> [])."#,
     ] {

@@ -746,6 +746,58 @@ expression: baseline
             "description": "\"Portable lexical predicates\"",
         },
     },
+    "patterns/psycholinguistics.lx": {
+        "pattern earlier_dependent": {
+            "category": "\"Bunsetsu\"",
+            "status": "\"experimental\"",
+        },
+        "pattern hiragana_only": {
+            "category": "\"Fixation target\"",
+            "status": "\"experimental\"",
+        },
+        "pattern hiragana_token": {
+            "category": "\"Character class\"",
+            "status": "\"experimental\"",
+        },
+        "pattern kanji_initial": {
+            "category": "\"Fixation target\"",
+            "status": "\"experimental\"",
+        },
+        "pattern kanji_token": {
+            "category": "\"Character class\"",
+            "status": "\"experimental\"",
+        },
+        "pattern katakana_token": {
+            "category": "\"Character class\"",
+            "status": "\"experimental\"",
+        },
+        "pattern noun_spelling": {
+            "category": "\"Spelling variation\"",
+            "status": "\"experimental\"",
+        },
+        "pattern object_gap_candidate": {
+            "category": "\"Relative clause\"",
+            "status": "\"experimental\"",
+        },
+        "pattern reading_bunsetsu": {
+            "category": "\"Bunsetsu\"",
+            "publish": "[\"surface\"]",
+            "status": "\"experimental\"",
+            "within_span": "{\"kind\":\"bunsetsu\",\"position\":\"whole\"}",
+        },
+        "pattern school_neighbor": {
+            "category": "\"Orthographic neighborhood\"",
+            "status": "\"experimental\"",
+        },
+        "pattern subject_gap_candidate": {
+            "category": "\"Relative clause\"",
+            "status": "\"experimental\"",
+        },
+        "pattern two_kanji_type": {
+            "category": "\"Orthographic neighborhood\"",
+            "status": "\"experimental\"",
+        },
+    },
     "patterns/reduplication.lx": {
         "pattern adv_reduplication": {
             "category": "\"重複・強調\"",

@@ -1125,6 +1125,7 @@ const PINNED_DEFINITION_COUNTS: &[(&str, usize)] = &[
     ("patterns/sf-experimental.lx", 104),
     ("patterns/sfe.lx", 27),
     ("patterns/sketch-grammar.lx", 22),
+    ("patterns/psycholinguistics.lx", 12),
     ("patterns/test-simple.lx", 1),
     // Five emitting where-clause patterns; constraints add no definitions, and
     // the one `set` is a value, not a definition, whether a relation bracket

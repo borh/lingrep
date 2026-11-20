@@ -4187,3 +4187,99 @@ fn bunsetsu_ids_and_summary_surfaces_survive_preparation() {
         assert_eq!(rows[1]["data"]["group"]["value"], "寝る");
     }
 }
+
+#[test]
+fn a_span_kind_no_sentence_carries_is_reported_on_both_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("spans.conllu");
+    let corpus = directory.path().join("corpus");
+    fs::write(&input, "1\t猫\t猫\tNOUN\t_\t_\t3\tnsubj\t_\tBunsetuBILabel=B\n2\tが\tが\tADP\t_\t_\t1\tcase\t_\tBunsetuBILabel=I\n3\t寝る\t寝る\tVERB\t_\t_\t0\troot\t_\tBunsetuBILabel=B\n\n").unwrap();
+    assert_success(
+        &lingrep_without_dictionary()
+            .args(["corpus", "build", "--input-format", "conllu", "--output"])
+            .arg(&corpus)
+            .arg(&input)
+            .output()
+            .unwrap(),
+    );
+    let whole = |kind: &str| format!("pattern noun := (?<n> [upos=NOUN]) where span({kind}, $n).");
+    for prepared in [false, true] {
+        let run = |args: &[&str]| {
+            let mut command = lingrep_without_dictionary();
+            command.arg("--json").args(args);
+            if prepared {
+                command.arg("--corpus").arg(&corpus);
+            } else {
+                command.args(["--input-format", "conllu"]).arg(&input);
+            }
+            let output = command.output().unwrap();
+            assert_success(&output);
+            let warnings = parse_jsonl(&output.stderr)
+                .into_iter()
+                .map(|record| {
+                    assert_eq!(record["data"]["severity"], "warning");
+                    (
+                        record["data"]["code"].as_str().unwrap().to_owned(),
+                        record["data"]["message"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (parse_jsonl(&output.stdout), warnings)
+        };
+        let unavailable =
+            |message: &str| vec![("span_kind_unavailable".to_owned(), message.to_owned())];
+
+        let (events, warnings) = run(&[
+            "summarize",
+            "--by-span",
+            "nosuch",
+            "--pattern",
+            "pattern word := [].",
+        ]);
+        assert!(summary_events(&events).is_empty());
+        assert_eq!(
+            event(&events, "complete")["data"]["counters"]["records_unkeyed"],
+            3
+        );
+        assert_eq!(
+            warnings,
+            unavailable(
+                "`--by-span nosuch`: no sentence of this run carries a `nosuch` span, so every \
+                 record is unkeyed"
+            )
+        );
+        let (events, warnings) = run(&[
+            "summarize",
+            "--by-span",
+            "bunsetsu",
+            "--pattern",
+            "pattern word := [].",
+        ]);
+        assert_eq!(summary_events(&events).len(), 2);
+        assert_eq!(warnings, []);
+
+        for command in ["matches", "summarize"] {
+            let (events, warnings) = run(&[command, "--pattern", &whole("nosuch")]);
+            assert!(
+                events
+                    .iter()
+                    .all(|record| record["type"] != "match" && record["type"] != "summary")
+            );
+            assert_eq!(
+                warnings,
+                unavailable(
+                    "no sentence of this run carries a `nosuch` span, so nothing matches the \
+                     span constraints of `noun`"
+                ),
+                "{command}"
+            );
+            let (events, warnings) = run(&[command, "--pattern", &whole("bunsetsu")]);
+            assert!(
+                events
+                    .iter()
+                    .any(|record| record["type"] == "match" || record["type"] == "summary")
+            );
+            assert_eq!(warnings, [], "{command}");
+        }
+    }
+}
