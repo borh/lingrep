@@ -336,7 +336,13 @@ impl ProvenanceHandle {
             }
             Err(_) => {
                 drop(commands);
-                Err(join_failure(thread.join()))
+                match thread.join() {
+                    Ok(Err(error)) => Err(error),
+                    Ok(Ok(())) => Err(CorpusError::Io(std::io::Error::other(
+                        "provenance recorder stopped before opening",
+                    ))),
+                    Err(_) => Err(recorder_panicked()),
+                }
             }
         }
     }
@@ -376,7 +382,7 @@ impl ProvenanceHandle {
         match self.thread.take() {
             Some(thread) => match thread.join() {
                 Ok(result) => result,
-                other => Err(join_failure(other)),
+                Err(_) => Err(recorder_panicked()),
             },
             None => Err(invalid("provenance recorder was already finished")),
         }
@@ -440,7 +446,7 @@ impl ProvenanceHandle {
             Some(thread) => match thread.join() {
                 Ok(Err(error)) => error,
                 Ok(Ok(())) => invalid("provenance recorder stopped before the build did"),
-                other => join_failure(other),
+                Err(_) => recorder_panicked(),
             },
             None => invalid("provenance recorder is not running"),
         })
@@ -501,8 +507,8 @@ fn record_provenance(
     })
 }
 
-fn join_failure<T>(_: std::thread::Result<T>) -> CorpusError {
-    invalid("provenance recorder thread panicked")
+fn recorder_panicked() -> CorpusError {
+    CorpusError::Io(std::io::Error::other("provenance recorder thread panicked"))
 }
 
 /// Streaming writer for the immutable rich-provenance sidecar.

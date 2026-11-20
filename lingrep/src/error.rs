@@ -427,6 +427,10 @@ impl CliError {
             Self::Artifact(CorpusError::TokenSchemaIdentityStale { .. } | CorpusError::NormalizationTablesStale { .. }) => vec![
                 "Rebuild from source with ling corpus build ROOT --output NEW_ARTIFACT, then use the new artifact.".into()
             ],
+            #[cfg(unix)]
+            Self::Artifact(CorpusError::Io(error)) if error.raw_os_error() == Some(libc::EMFILE) => vec![
+                "Raise the process open-file limit and retry the command.".into()
+            ],
             Self::Aggregation(error) | Self::Io(error) | Self::Artifact(CorpusError::Io(error)) if error.kind() == std::io::ErrorKind::StorageFull => vec![
                 "Check free space on the filesystem used by the failing operation. If the configured temporary-storage budget was exceeded, raise --max-temp-bytes and rerun the command.".into()
             ],

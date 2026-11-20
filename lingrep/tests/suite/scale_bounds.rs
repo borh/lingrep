@@ -385,3 +385,38 @@ fn corpus_build_fits_a_fixed_open_file_limit_and_postings_runs_keep_the_artifact
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn corpus_build_reports_descriptor_exhaustion() {
+    let dictionary = MiniDictionary::new();
+    let directory = tempfile::tempdir().unwrap();
+    let input = write_corpus_input(directory.path(), 1);
+    let artifact = directory.path().join("limit.lingcorpus");
+    let run = ling(
+        directory.path(),
+        &[
+            "corpus".as_ref(),
+            "build".as_ref(),
+            "--dict-path".as_ref(),
+            dictionary.path().as_os_str(),
+            "--output".as_ref(),
+            artifact.as_os_str(),
+            input.as_os_str(),
+        ],
+        &[],
+        24,
+    );
+    let stderr = String::from_utf8_lossy(&run.output.stderr);
+    assert!(!run.output.status.success());
+    assert!(
+        stderr.contains("error[io]") && stderr.contains("Too many open files"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("open-file limit"), "{stderr}");
+    assert!(
+        !stderr.contains("panicked") && !stderr.contains("invalid provenance"),
+        "{stderr}"
+    );
+    assert!(!artifact.exists());
+}
