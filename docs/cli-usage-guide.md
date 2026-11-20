@@ -2043,9 +2043,9 @@ checked during installation. Keep that directory at its original path. Deleting
 download caches does not break the analyzer. Use an absolute `--analyzer-config` path when
 querying from another directory.
 
-A Stanza analyzer specifies `tokenize` alone, or `tokenize`, `pos`, and `lemma`.
-Add `mwt` when Stanza lists a multi-word token model for the language, as it
-does for French; preparation fails and reports the missing package otherwise.
+A tokenizer-only Stanza bundle uses `--package tokenize=gsd --package mwt=gsd`
+for French GSD. Add `pos` and `lemma` together to enable morphology.
+Preparation reports a missing `mwt` package if the selected tokenizer loads one.
 For a language without one, such as Japanese, omit it:
 
 ```bash

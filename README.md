@@ -144,8 +144,9 @@ split modes and the other Sudachi options.
 
 ### Python
 
-The Python package includes the Vibrato tokenizer. With the tokenizer command
-installed, pass a sentence as an argument, or pipe one sentence per line:
+The Python package includes the Vibrato tokenizer. The `uvx` command requires
+a release newer than 0.9.0. Pass a sentence as an argument, or pipe one sentence
+per line:
 
 ```bash
 uvx lingrep tokenize '猫が眠る。'
