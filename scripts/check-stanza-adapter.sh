@@ -72,6 +72,8 @@ case "$mode" in
 
     adapter_python=$(uv run --project "$project" --frozen --extra cpu \
         python -c 'import sys; print(sys.executable)')
+    LINGREP_STANZA_MODEL_ROOT=$model_stage/fr "$adapter_python" -m unittest discover \
+        -s "$project/tests" -p test_adapter.py -k test_french_gsd_output_matches_the_semantics_revision
     LINGREP_STANZA_ADAPTER_PYTHON=$adapter_python \
       LINGREP_STANZA_MODEL_ROOT=$model_stage/fr \
       LINGREP_STANZA_JA_MODEL_ROOT=$model_stage/ja \

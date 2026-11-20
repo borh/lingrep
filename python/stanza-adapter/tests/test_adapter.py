@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import types
 import unittest
 from pathlib import Path
 
 from lingrep_stanza_adapter.adapter import (
+    ADAPTER_SEMANTICS_REVISION,
     ProjectionAttribute,
     analyze_text,
     iter_analyzed_sentences,
+    load_stanza_pipeline,
 )
 
 
@@ -74,6 +77,29 @@ def mwt_document() -> object:
 
 
 class AdapterMappingTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("LINGREP_STANZA_MODEL_ROOT"), "requires the French GSD model"
+    )
+    def test_french_gsd_output_matches_the_semantics_revision(self) -> None:
+        golden = json.loads(
+            (Path(__file__).parent / "fixtures" / "fr-gsd-output.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(ADAPTER_SEMANTICS_REVISION, golden["revision"])
+        loaded = load_stanza_pipeline(
+            os.environ["LINGREP_STANZA_MODEL_ROOT"], "fr", "cpu", "morphology", "input"
+        )
+        self.assertEqual(
+            [attribute.key for attribute in loaded.schema], golden["attributes"]
+        )
+        self.assertEqual(
+            analyze_text(
+                loaded.pipeline, golden["text"], loaded.schema, "morphology", "input"
+            ),
+            golden["sentences"],
+        )
+
     def test_identity_tokens_preserve_astral_utf8_source_ranges(self) -> None:
         text = "🐈 chat"
         doc = document(text, [[token("🐈", 0, 1), token("chat", 2, 6)]])
