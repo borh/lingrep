@@ -129,6 +129,25 @@ pub fn workbench_link(
     Ok(link)
 }
 
+/// Adds the table assertion to a query-only link when the query resolved a neighborhood.
+///
+/// # Errors
+///
+/// [`PermalinkError::TooLarge`] when the complete request target exceeds the link limit.
+pub fn pin_vectors(
+    mut query: String,
+    digest: Option<blake3::Hash>,
+) -> Result<String, PermalinkError> {
+    if let Some(digest) = digest {
+        query.push_str("&w=");
+        query.push_str(digest.to_hex().as_str());
+    }
+    if query.len().saturating_add(1) > MAX_REQUEST_TARGET_LEN {
+        return Err(PermalinkError::TooLarge);
+    }
+    Ok(query)
+}
+
 pub fn decode(query: &str) -> Result<String, PermalinkError> {
     if query.len() > MAX_REQUEST_TARGET_LEN {
         return Err(PermalinkError::Malformed);

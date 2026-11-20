@@ -99,6 +99,9 @@ pub fn run(cli: &Cli, terminal: &TerminalArbiter) -> Result<CommandOutcome, CliE
         request.clause,
         request.overlaps.into(),
     )
+    .and_then(|query| {
+        lingrep_web::permalink::pin_vectors(query, catalog.vectors.as_ref().map(|v| v.blake3))
+    })
     .map_err(|error| {
         CliError::InvalidArgs(match error {
             lingrep_web::permalink::PermalinkError::TooLarge => {

@@ -33,10 +33,8 @@ Options:
           
           [default: /]
 
-      --vectors <FILE>
-          Word-vector file used to resolve the `near` tests of every catalog the server compiles.
-          
-          word2vec text: one value and its numbers per line.
+      --vectors <PATH>
+          Word2vec text file or word-vector bundle directory for server-side `near` tests
           
           [env: LINGREP_VECTORS_PATH=]
 

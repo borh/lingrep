@@ -41,9 +41,9 @@ pub use compiler::{
     ExpandedDefinitionKind, FormatError, FormatOutcome, FullWidthCharacter, LexiconProjectionSite,
     NearQuery, NearTest, PatternDiagram, PatternSource, RelatedDiagnosticLocation, SentenceFilter,
     SentenceFilterTerm, SimilarityThreshold, WordVectors, compile_catalog, compile_catalog_pattern,
-    compile_catalog_with_vectors, expand_pattern_definition, format_pattern_source,
-    render_definition_diagram, render_diagnostics, render_pattern_error, report_catalog_drift,
-    report_catalog_drift_with_vectors,
+    compile_catalog_selection, compile_catalog_with_vectors, expand_pattern_definition,
+    format_pattern_source, render_definition_diagram, render_diagnostics, render_pattern_error,
+    report_catalog_drift, report_catalog_drift_with_vectors,
 };
 pub use examples::{
     ClaimFailure, ClaimFailureKind, ClaimReport, ExampleFailure, ExampleFailureKind, ExampleReport,

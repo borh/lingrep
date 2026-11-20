@@ -66,6 +66,7 @@ pub enum ErrorCategory {
     Binding,
     /// The question names an analysis identity the served corpus does not have.
     AnalysisChanged,
+    VectorsChanged,
     Scope,
     Cache,
     Execution,

@@ -14,6 +14,7 @@ use compact_str::CompactString;
 use lingrep_core::fsm::{CatalogVectors, NearQuery, WordVectors};
 use memmap2::Mmap;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// A cosine similarity in millionths, from -1,000,000 to 1,000,000.
 ///
@@ -89,6 +90,76 @@ impl AnswerCache {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VectorProvenance {
+    pub resource: String,
+    pub attribute: String,
+    pub vocabulary_sources: Vec<String>,
+    pub selection: String,
+    pub encoding: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundleManifest {
+    schema: String,
+    blake3: String,
+    provenance: VectorProvenance,
+}
+
+impl BundleManifest {
+    fn read(directory: &Path) -> Result<Self, VectorTableError> {
+        let path = directory.join("manifest.json");
+        let file = File::open(&path).map_err(|source| VectorTableError::io(&path, source))?;
+        let invalid = |detail: String| VectorTableError::InvalidBundle {
+            path: path.clone(),
+            detail,
+        };
+        let manifest: Self = serde_json::from_reader(io::BufReader::new(file))
+            .map_err(|error| invalid(error.to_string()))?;
+        if manifest.schema != "lingrep.word-vectors/v1" {
+            return Err(invalid(format!("unsupported schema {:?}", manifest.schema)));
+        }
+        if manifest.blake3.len() != 64
+            || !manifest
+                .blake3
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        {
+            return Err(invalid(
+                "blake3 must be 64 lowercase hexadecimal digits".into(),
+            ));
+        }
+        let provenance = &manifest.provenance;
+        if !provenance
+            .resource
+            .starts_with(|c: char| c.is_ascii_lowercase())
+            || !provenance
+                .resource
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_')
+        {
+            return Err(invalid("resource must match [a-z][a-z0-9_-]*".into()));
+        }
+        lingrep_core::token_match::AttributeKey::new(&provenance.attribute)
+            .map_err(|error| invalid(format!("attribute: {error}")))?;
+        if provenance.vocabulary_sources.is_empty()
+            || provenance
+                .vocabulary_sources
+                .iter()
+                .any(|source| source.trim().is_empty())
+            || provenance.selection.trim().is_empty()
+            || provenance.encoding.trim().is_empty()
+        {
+            return Err(invalid(
+                "provenance requires vocabulary sources, selection and encoding".into(),
+            ));
+        }
+        Ok(manifest)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum VectorTableError {
     #[error("invalid vector query: {0}")]
@@ -97,12 +168,27 @@ pub enum VectorTableError {
     NotFound(PathBuf),
     #[error("cannot read word-vector file {}: {source}", .path.display())]
     Io { path: PathBuf, source: io::Error },
+    #[error("invalid word-vector bundle {}: {detail}", .path.display())]
+    InvalidBundle { path: PathBuf, detail: String },
     #[error("word-vector file {}: line {line}: {detail}", .path.display())]
     Malformed {
         path: PathBuf,
         line: u64,
         detail: String,
     },
+}
+
+impl VectorTableError {
+    fn io(path: &Path, source: io::Error) -> Self {
+        if source.kind() == io::ErrorKind::NotFound {
+            Self::NotFound(path.to_owned())
+        } else {
+            Self::Io {
+                path: path.to_owned(),
+                source,
+            }
+        }
+    }
 }
 
 pub struct Scan {
@@ -120,6 +206,7 @@ pub struct Scan {
 pub struct VectorTable {
     path: PathBuf,
     map: Mmap,
+    provenance: Option<VectorProvenance>,
     digest: OnceLock<blake3::Hash>,
     answered: Mutex<AnswerCache>,
 }
@@ -136,29 +223,50 @@ struct Chunk {
 }
 
 impl VectorTable {
+    /// Opens a word2vec text file or a bundle directory containing `manifest.json`
+    /// and `vectors.vec`. A bundle's table digest is verified before returning.
+    ///
     /// # Errors
     ///
-    /// [`VectorTableError::NotFound`] or [`VectorTableError::Io`].
+    /// An unreadable file, invalid manifest, or digest mismatch.
     pub fn open(path: &Path) -> Result<Self, VectorTableError> {
-        let io_error = |source: io::Error| {
-            if source.kind() == io::ErrorKind::NotFound {
-                VectorTableError::NotFound(path.to_owned())
-            } else {
-                VectorTableError::Io {
-                    path: path.to_owned(),
-                    source,
-                }
-            }
+        let manifest = path
+            .is_dir()
+            .then(|| BundleManifest::read(path))
+            .transpose()?;
+        let file_path = if manifest.is_some() {
+            path.join("vectors.vec")
+        } else {
+            path.to_owned()
         };
-        let file = File::open(path).map_err(io_error)?;
+        let file =
+            File::open(&file_path).map_err(|source| VectorTableError::io(&file_path, source))?;
         // SAFETY: callers must keep the mapped file unchanged, as required by VectorTable.
-        let map = unsafe { Mmap::map(&file) }.map_err(io_error)?;
-        Ok(Self {
+        let map = unsafe { Mmap::map(&file) }
+            .map_err(|source| VectorTableError::io(&file_path, source))?;
+        let mut table = Self {
             path: path.to_owned(),
             map,
+            provenance: None,
             digest: OnceLock::new(),
             answered: Mutex::new(AnswerCache::new()),
-        })
+        };
+        if let Some(manifest) = manifest {
+            let actual = table.digest().to_hex();
+            if actual.as_str() != manifest.blake3 {
+                return Err(VectorTableError::InvalidBundle {
+                    path: file_path,
+                    detail: format!("expected BLAKE3 {}, found {actual}", manifest.blake3),
+                });
+            }
+            table.provenance = Some(manifest.provenance);
+        }
+        Ok(table)
+    }
+
+    #[must_use]
+    pub fn provenance(&self) -> Option<&VectorProvenance> {
+        self.provenance.as_ref()
     }
 
     #[must_use]
@@ -361,7 +469,11 @@ impl VectorTable {
             .count() as u64
             + 1;
         VectorTableError::Malformed {
-            path: self.path.clone(),
+            path: if self.provenance.is_some() {
+                self.path.join("vectors.vec")
+            } else {
+                self.path.clone()
+            },
             line,
             detail: error.detail,
         }
@@ -499,7 +611,12 @@ pub enum VectorsBinding {
 /// Compares `declared` with the file at `path` whose BLAKE3 digest is
 /// `blake3` in lowercase hex.
 #[must_use]
-pub fn vectors_binding(declared: &[CatalogVectors], path: &Path, blake3: &str) -> VectorsBinding {
+pub fn vectors_binding(
+    declared: &[CatalogVectors],
+    path: &Path,
+    blake3: &str,
+    provenance: Option<&VectorProvenance>,
+) -> VectorsBinding {
     if declared.iter().any(|vectors| vectors.blake3 == blake3) {
         return VectorsBinding::Declared;
     }
@@ -522,7 +639,10 @@ pub fn vectors_binding(declared: &[CatalogVectors], path: &Path, blake3: &str) -
         return VectorsBinding::Undeclared {
             declaration: format!(
                 "vectors: {{resource: \"{}\", blake3: \"{blake3}\"}}",
-                if label.is_empty() { "vectors" } else { label },
+                provenance.map_or_else(
+                    || if label.is_empty() { "vectors" } else { label },
+                    |meta| meta.resource.as_str()
+                ),
             ),
         };
     }

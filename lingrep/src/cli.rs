@@ -324,10 +324,8 @@ pub struct NeighborsArgs {
     #[arg(value_name = "WORD")]
     pub word: String,
 
-    /// Word vectors as text, one `value x1 ... xn` line per value, with or
-    /// without a leading `count dimensions` line (the word2vec text format,
-    /// which fastText `.vec` and chiVe files use).
-    #[arg(long, value_name = "FILE", help_heading = "Input")]
+    /// Word2vec text file or word-vector bundle directory.
+    #[arg(long, value_name = "PATH", help_heading = "Input")]
     pub vectors: PathBuf,
 
     #[command(flatten)]
@@ -531,13 +529,12 @@ pub struct CheckArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
 
-    /// Word-vector file used to resolve the catalog's `near` tests.
+    /// Word2vec text file or word-vector bundle directory for the catalog's `near` tests.
     ///
-    /// word2vec text: one value and its numbers per line. Overrides
-    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    /// Overrides LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
     #[arg(
         long,
-        value_name = "FILE",
+        value_name = "PATH",
         env = "LINGREP_VECTORS_PATH",
         help_heading = "Catalog"
     )]
@@ -588,13 +585,12 @@ pub enum CheckSchemaArg {
 pub struct MatchesArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
-    /// Word-vector file used to resolve the catalog's `near` tests.
+    /// Word2vec text file or word-vector bundle directory for the catalog's `near` tests.
     ///
-    /// word2vec text: one value and its numbers per line. Overrides
-    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    /// Overrides LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
     #[arg(
         long,
-        value_name = "FILE",
+        value_name = "PATH",
         env = "LINGREP_VECTORS_PATH",
         help_heading = "Catalog"
     )]
@@ -787,13 +783,12 @@ pub struct MatchesArgs {
 pub struct SummarizeArgs {
     #[command(flatten)]
     pub catalog: CatalogArgs,
-    /// Word-vector file used to resolve the catalog's `near` tests.
+    /// Word2vec text file or word-vector bundle directory for the catalog's `near` tests.
     ///
-    /// word2vec text: one value and its numbers per line. Overrides
-    /// LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
+    /// Overrides LINGREP_VECTORS_PATH. See `ling neighbors` to inspect a threshold.
     #[arg(
         long,
-        value_name = "FILE",
+        value_name = "PATH",
         env = "LINGREP_VECTORS_PATH",
         help_heading = "Catalog"
     )]

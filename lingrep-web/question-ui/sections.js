@@ -1,3 +1,4 @@
+import { validVectorDigest } from './model.js';
 import { parseView } from './location.js';
 export function parseSections(text) {
     if (!text)
@@ -27,7 +28,9 @@ export function parseSections(text) {
             const item = value.recipe;
             if (!item || typeof item !== 'object' || !('source' in item) || typeof item.source !== 'string' || !('dataset' in item) || typeof item.dataset !== 'string' || !('where' in item) || typeof item.where !== 'string' || !('analysis' in item) || (item.analysis !== null && typeof item.analysis !== 'string'))
                 throw new Error('A linked search contains an invalid saved query.');
-            recipe = { source: item.source, dataset: item.dataset, where: item.where, analysis: item.analysis };
+            if ('vectors_blake3' in item && !validVectorDigest(item.vectors_blake3))
+                throw new Error('A linked search contains an invalid word-vector digest.');
+            recipe = { ...('vectors_blake3' in item ? { vectors_blake3: item.vectors_blake3 } : {}), source: item.source, dataset: item.dataset, where: item.where, analysis: item.analysis };
         }
         ids.add(value.id);
         return { id: value.id, origin, ...(recipe ? { recipe } : {}) };

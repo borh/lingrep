@@ -56,6 +56,7 @@ pub enum Outcome {
 pub struct File {
     pub name: String,
     pub declaration: String,
+    pub vocabulary_attribute: Option<String>,
 }
 
 #[derive(Template)]
@@ -115,8 +116,13 @@ pub fn view(
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            declaration: match vectors_binding(&[], table.path(), table.digest().to_hex().as_str())
-            {
+            vocabulary_attribute: table.provenance().map(|p| p.attribute.clone()),
+            declaration: match vectors_binding(
+                &[],
+                table.path(),
+                table.digest().to_hex().as_str(),
+                table.provenance(),
+            ) {
                 VectorsBinding::Undeclared { declaration } => declaration,
                 VectorsBinding::Declared | VectorsBinding::Mismatch { .. } => String::new(),
             },
@@ -252,7 +258,7 @@ mod tests {
             Outcome::Unreadable(message) if message.contains("line 2")
         ));
         let unconfigured = view(None, "walk", Some("0.6"), false).render().unwrap();
-        assert!(unconfigured.contains("--vectors FILE"), "{unconfigured}");
+        assert!(unconfigured.contains("--vectors PATH"), "{unconfigured}");
         assert!(!unconfigured.contains("neighbors-form"), "{unconfigured}");
     }
 

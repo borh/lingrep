@@ -749,7 +749,8 @@ impl From<lingrep_corpus::word_vectors::VectorTableError> for CliError {
             VectorTableError::InvalidQuery(message) => Self::InvalidArgs(message),
             VectorTableError::NotFound(path) => Self::FileNotFound(path),
             VectorTableError::Io { path, source } => Self::InputIo { path, source },
-            malformed @ VectorTableError::Malformed { .. } => Self::Parse(malformed.to_string()),
+            malformed @ (VectorTableError::Malformed { .. }
+            | VectorTableError::InvalidBundle { .. }) => Self::Parse(malformed.to_string()),
         }
     }
 }

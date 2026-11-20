@@ -128,6 +128,17 @@ test('the seeded definition belongs to the seeded source, so a saved search drop
   assert.equal(seedParams(seed,'#pattern=pos').get('pattern'),'pos');
 });
 
+test('a vector pin follows its saved query through file and address restoration',async()=>{
+  const {seedParams}=await import('./location.js');
+  const doc={format:'lingrep.question/v1',question:'',source:'p := [text near 猫 >= 0.9].',corpus:'sample',analysis:'',where:'',vectors_blake3:'a'.repeat(64)};
+  assert.deepEqual(savedQuestion(doc),doc);
+  assert.equal(seedParams(doc,'#corpus=other').get('vectors_blake3'),doc.vectors_blake3);
+  assert.equal(seedParams(doc,'#source=edited').get('vectors_blake3'),null);
+  assert.equal(seedParams(doc,'#evidence=r1').get('vectors_blake3'),null);
+  assert.throws(()=>savedQuestion({...doc,vectors_blake3:12}),/digest/);
+  assert.throws(()=>seedParams(null,'#vectors_blake3=incomplete'),/digest/);
+});
+
 test('a stored run supplies the expected analysis only for its own corpus',async()=>{
   const {expectedAnalysis}=await import('./location.js');
   const run={dataset:'natsume',contract_run:{analysis_identity:'natsume-analysis'}};

@@ -107,6 +107,7 @@ pub async fn search(
                 pattern: None,
                 index_results: false,
                 expected_analysis_identity: None,
+                expected_vectors_blake3: None,
                 retained: form.retained,
                 derive_compounds: form.derive_compounds.unwrap_or(false),
                 compound_category,

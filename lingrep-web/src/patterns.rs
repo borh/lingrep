@@ -3,10 +3,9 @@ use std::sync::OnceLock;
 
 use lingrep_core::fsm::{
     CompileError, CompileLimits, CompileOutput, DefinitionExpansion, ExpandError, FormatError,
-    FormatOutcome, PatternSource, catalog_fingerprint, catalog_fingerprint_with_vectors,
-    compile_catalog, compile_catalog_pattern, compile_catalog_with_vectors,
-    expand_pattern_definition, format_pattern_source, render_definition_diagram,
-    render_pattern_error,
+    FormatOutcome, PatternSource, WordVectors, catalog_fingerprint,
+    catalog_fingerprint_with_vectors, compile_catalog_selection, expand_pattern_definition,
+    format_pattern_source, render_definition_diagram, render_pattern_error,
 };
 use lingrep_corpus::word_vectors::{VectorTable, VectorsBinding, vectors_binding};
 
@@ -31,6 +30,10 @@ pub fn open_word_vectors(path: Option<&Path>) -> Result<(), String> {
         })
         .transpose()
         .map_err(|error| format!("--vectors: {error}"))?;
+    // Link landings compare this digest on the HTTP thread.
+    if let Some(table) = &table {
+        let _ = table.digest();
+    }
     WORD_VECTORS.get_or_init(|| table);
     Ok(())
 }
@@ -93,26 +96,37 @@ pub fn default_question_definition(source: &str) -> Option<String> {
         .map(|definition| definition.name)
 }
 
-/// Compiles `source` publishing only the definitions named `pattern`, as
-/// [`compile_catalog_pattern`] selects them; the word-vector table is not
-/// consulted, so a catalog with `near` tests does not compile.
+/// Compiles the named published pattern against the server's vector table.
 pub fn compile_web_catalog_pattern(
     source: &str,
     pattern: &str,
 ) -> Result<CompileOutput, CompileError> {
-    compile_catalog_pattern(
+    compile_named_selection(
         PatternSource::named(WEB_PATTERN_SOURCE_NAME, source),
+        Some(pattern),
+        word_vectors(),
+    )
+}
+
+pub(crate) fn compile_named_selection(
+    source: PatternSource<'_>,
+    pattern: Option<&str>,
+    table: Option<&VectorTable>,
+) -> Result<CompileOutput, CompileError> {
+    compile_catalog_selection(
+        source,
         CompileLimits::default(),
         pattern,
+        table.map(|t| t as &dyn WordVectors),
     )
 }
 
 fn compile_with(source: &str, table: Option<&VectorTable>) -> Result<CompileOutput, CompileError> {
-    let source = PatternSource::named(WEB_PATTERN_SOURCE_NAME, source);
-    match table {
-        Some(table) => compile_catalog_with_vectors(source, CompileLimits::default(), table),
-        None => compile_catalog(source, CompileLimits::default()),
-    }
+    compile_named_selection(
+        PatternSource::named(WEB_PATTERN_SOURCE_NAME, source),
+        None,
+        table,
+    )
 }
 
 /// The fingerprint `ling` gives `source`, which for a catalog with `near`
@@ -123,30 +137,82 @@ pub fn web_catalog_fingerprint(source: &str) -> String {
 }
 
 fn fingerprint_with(source: &str, table: Option<&VectorTable>) -> String {
-    match table {
-        Some(table)
-            if compile_with(source, Some(table))
-                .is_ok_and(|compiled| !compiled.matcher.near_tests().is_empty()) =>
-        {
-            catalog_fingerprint_with_vectors(source, &table.digest())
-        }
-        _ => catalog_fingerprint(source),
+    match resolved_vectors(source, table) {
+        Some(digest) => catalog_fingerprint_with_vectors(source, &digest),
+        None => catalog_fingerprint(source),
     }
 }
 
-/// How `matcher`'s `vectors:` entries relate to the server's word-vector
-/// file, when the catalog has `near` tests and no entry carries the file's
-/// digest.
-pub(crate) fn unmatched_vectors_binding(
+pub(crate) fn resolved_vectors(source: &str, table: Option<&VectorTable>) -> Option<blake3::Hash> {
+    let table = table?;
+    let compiled = compile_with(source, Some(table)).ok()?;
+    question_vectors_digest(&compiled.matcher, Some(table))
+}
+
+pub(crate) fn question_vectors_digest(
     matcher: &lingrep_core::fsm::CompiledCatalog,
-) -> Option<VectorsBinding> {
-    let table = word_vectors().filter(|_| !matcher.near_tests().is_empty())?;
-    Some(vectors_binding(
-        matcher.vectors(),
-        table.path(),
-        table.digest().to_hex().as_str(),
-    ))
-    .filter(|binding| *binding != VectorsBinding::Declared)
+    table: Option<&VectorTable>,
+) -> Option<blake3::Hash> {
+    table
+        .filter(|_| !matcher.near_tests().is_empty())
+        .map(VectorTable::digest)
+}
+
+pub(crate) fn check_question_vectors(
+    compiled: &Result<CompileOutput, CompileError>,
+    table: Option<&VectorTable>,
+    expected: Option<blake3::Hash>,
+) -> Result<(), String> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let actual = table.map(VectorTable::digest);
+    if actual == Some(expected) {
+        return Ok(());
+    }
+    let requires_vectors = match compiled {
+        Ok(output) => !output.matcher.near_tests().is_empty(),
+        Err(error) => error.diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic.code(),
+                lingrep_core::fsm::DiagnosticCode::WordVectorUnavailable
+                    | lingrep_core::fsm::DiagnosticCode::WordVectorTableUnreadable
+            )
+        }),
+    };
+    if requires_vectors {
+        let available = actual.map_or_else(
+            || "The server has no word-vector table.".to_owned(),
+            |digest| format!("The server has {digest}."),
+        );
+        return Err(format!(
+            "This question requires word vectors {expected}. {available}"
+        ));
+    }
+    Ok(())
+}
+
+/// The table used to resolve a catalog's `near` tests and whether its header declares that table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundWordVectors {
+    pub digest: blake3::Hash,
+    pub declaration: VectorsBinding,
+}
+
+pub(crate) fn bound_word_vectors(
+    matcher: &lingrep_core::fsm::CompiledCatalog,
+) -> Option<BoundWordVectors> {
+    let table = word_vectors()?;
+    let digest = question_vectors_digest(matcher, Some(table))?;
+    Some(BoundWordVectors {
+        digest,
+        declaration: vectors_binding(
+            matcher.vectors(),
+            table.path(),
+            digest.to_hex().as_str(),
+            table.provenance(),
+        ),
+    })
 }
 
 /// The `near` tests of one self-contained definition, each with the values
@@ -307,6 +373,15 @@ mod tests {
             .map(AsRef::as_ref)
             .collect();
         assert_eq!(values, ["walk", "stroll"]);
+        let two = format!("{near}\nother := [lemma=cook].");
+        let selected = compile_named_selection(
+            PatternSource::named("selected.lx", &two),
+            Some("p"),
+            Some(&table),
+        )
+        .unwrap();
+        assert_eq!(selected.matcher.patterns().len(), 1);
+        assert_eq!(selected.matcher.near_tests(), compiled.matcher.near_tests());
         assert!(compile_with(near, None).is_err());
 
         assert_eq!(
@@ -320,8 +395,39 @@ mod tests {
         assert_eq!(fingerprint_with(near, None), catalog_fingerprint(near));
     }
 
+    #[test]
+    fn saved_questions_require_the_table_used_by_near() {
+        let directory = tempfile::tempdir().unwrap();
+        let open = |name: &str, rows: &str| {
+            let path = directory.path().join(name);
+            std::fs::write(&path, rows).unwrap();
+            VectorTable::open(&path).unwrap()
+        };
+        let first = open("first.vec", "walk 1 0\nstroll 1 0\n");
+        let second = open("second.vec", "walk 1 0\nstroll 0 1\n");
+        let missing_anchor = open("other.vec", "stroll 1 0\n");
+        let saved = first.digest();
+        let near = "p := [lemma near walk >= 0.8].";
+        for (source, table, accepts) in [
+            (near, Some(&first), true),
+            (near, Some(&second), false),
+            (near, Some(&missing_anchor), false),
+            (near, None, false),
+            ("p := [lemma=walk].", Some(&second), true),
+            ("p := [lemma=walk].", None, true),
+        ] {
+            let compiled = compile_with(source, table);
+            let checked = check_question_vectors(&compiled, table, Some(saved));
+            if let Err(message) = &checked {
+                assert!(message.contains(&saved.to_string()));
+            }
+            let result = checked.is_ok();
+            assert_eq!(result, accepts);
+        }
+    }
+
     fn formatted_compile_error(source_name: &str, source: &str) -> String {
-        let error = compile_catalog(
+        let error = lingrep_core::fsm::compile_catalog(
             PatternSource::named(source_name, source),
             CompileLimits::default(),
         )

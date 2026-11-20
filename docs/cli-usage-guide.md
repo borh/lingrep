@@ -886,6 +886,36 @@ leading `count dimensions` line. This is the word2vec text format, which
 fastText `.vec` and chiVe files use. `ling` reads vectors and does not compute
 them.
 
+To distribute a pinned table, copy `vectors.vec` and `manifest.json` together
+into a versioned directory. Pass that directory to `--vectors`. Use the BLAKE3
+of the exact `vectors.vec` bytes (for example, from `b3sum vectors.vec`).
+Replace the placeholders below with the identities and recipe for your table.
+
+```json
+{
+  "schema": "lingrep.word-vectors/v1",
+  "blake3": "<64 lowercase hex digits>",
+  "provenance": {
+    "resource": "my-english-lemmas",
+    "attribute": "lemma",
+    "vocabulary_sources": ["<lexicon or corpus name, immutable release or digest>"],
+    "selection": "<which values were included, with any frequency cutoff>",
+    "encoding": "<model, exact revision and vector transformations>"
+  }
+}
+```
+
+The resource label follows the catalog spelling `[a-z][a-z0-9_-]*`.
+Use a separate entry in `vocabulary_sources` for each supplemental source.
+The CLI and server verify the table against the manifest before using it.
+Choose a trusted manifest when installing a bundle. The digest identifies the
+table bytes, and the publisher supplies the vocabulary and encoding history.
+The attribute records how the values were spelled. An explicit test on another
+attribute still compares that attribute's values to the same set of strings.
+Keep a bundle immutable while it is in use and install revisions in new
+directories. The `neighbors --json` run record includes the table digest and
+any bundle provenance.
+
 `--min-similarity` keeps the values at or above a cosine, `--top` keeps a
 number of the most similar, and at least one is required. `--name` names the
 set. `--json` reports each value with its similarity (`lingrep.neighbors/v1`).

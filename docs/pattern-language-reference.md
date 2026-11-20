@@ -60,7 +60,7 @@ Matching is therefore exact and repeatable for one file, and nothing about
 vectors is stored in a prepared corpus. Three consequences follow:
 
 - A catalog with a `near` test compiles only with a word-vector file.
-  `ling matches`, `ling summarize` and `ling check` take `--vectors FILE`; every
+  `ling matches`, `ling summarize` and `ling check` take `--vectors PATH`; every
   command that compiles a catalog reads `LINGREP_VECTORS_PATH` otherwise. Without a file, or when the
   file has no vector for the word, the test is `WordVectorUnavailable`.
 - Spell the file's values exactly as they appear in the tested attribute.
@@ -73,7 +73,7 @@ vectors is stored in a prepared corpus. Three consequences follow:
   test and no `vectors:` line as `warning[vectors_undeclared]`, which prints
   the line to add. The run continues in both cases.
 
-`ling serve` and `lingrep-web` take the same `--vectors FILE`, read
+`ling serve` and `lingrep-web` take the same `--vectors PATH`, read
 `LINGREP_VECTORS_PATH` otherwise, pass the file to the `ling` processes they
 start, and stop at startup when it cannot be opened. `--vectors` on `ling
 matches` or `ling summarize` also applies to the server that `--serve` starts
@@ -81,6 +81,12 @@ and to the catalog that `--link` checks. With a file, the Workbench reports the
 two `vectors:` warnings in its status line, its Definition tab lists the values
 each `near` test selects, and the Similar Words page ranks the values near one
 word.
+
+A CLI or Workbench share link for a compiled `near` query records the full
+digest of the table it used. Opening the link on a server with different
+table bytes, or with no table, restores the source and leaves execution paused.
+An identical table at another path satisfies the link.
+
 A file that cannot be read or parsed is `WordVectorTableUnreadable`, reported
 at each `near` test with the file's line number.
 
@@ -100,7 +106,7 @@ its rows reaches the threshold.
 
 A run's `run` record carries `word_vectors` when the catalog has a `near`
 test: the file's path and digest, and for each distinct test its word,
-threshold and the number of values it selected.
+threshold and the number of values it selected. A [word-vector bundle](cli-usage-guide.md#sets-of-similar-words-ling-neighbors) also supplies the vocabulary attribute, sources, selection and encoding in the run's `word_vectors.provenance`.
 
 ## Token tests
 

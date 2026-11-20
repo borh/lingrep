@@ -1,4 +1,4 @@
-import { textOf } from './model.js';
+import { textOf, validVectorDigest } from './model.js';
 export const defaultView = () => ({ kind: 'concordance', scopeDocument: null, returnAfter: -1, pattern: '', document: null, after: -1, filter: '' });
 const record = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const ordinal = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -36,6 +36,8 @@ export function savedQuestion(value) {
         throw new Error('Choose a saved lingrep question document.');
     if (!Object.values(value).every(field => typeof field === 'string' || typeof field === 'number' && Number.isFinite(field)))
         throw new Error('The question document contains invalid settings.');
+    if (value.vectors_blake3 !== undefined && !validVectorDigest(value.vectors_blake3))
+        throw new Error('The saved word-vector digest is invalid.');
     parseView(typeof value.view === 'string' ? value.view : null);
     return value;
 }
@@ -44,7 +46,7 @@ export function seedParams(seed, hash) {
     if (seed != null) {
         if (!record(seed))
             throw new Error('The initial question could not be read.');
-        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run', 'notice', 'lines', 'context', 'pattern'])
+        for (const key of ['source', 'corpus', 'analysis', 'vectors_blake3', 'raw', 'run', 'notice', 'lines', 'context', 'pattern'])
             if (seed[key] != null) {
                 if (typeof seed[key] !== 'string' || key === 'run' && !['0', '1'].includes(seed[key]))
                     throw new Error('The initial question contains invalid settings.');
@@ -52,15 +54,19 @@ export function seedParams(seed, hash) {
             }
     }
     const overrides = new URLSearchParams(hash.replace(/^#/, ''));
+    if (overrides.has('catalog') || overrides.has('source') && overrides.get('source') !== params.get('source'))
+        params.delete('vectors_blake3');
     if (overrides.has('catalog'))
         params.delete('source');
     if (overrides.has('evidence') || overrides.has('attempt'))
-        for (const key of ['source', 'corpus', 'analysis', 'raw', 'run', 'pattern'])
+        for (const key of ['source', 'corpus', 'analysis', 'vectors_blake3', 'raw', 'run', 'pattern'])
             params.delete(key);
     if (overrides.has('corpus') && !overrides.has('analysis') && overrides.get('corpus') !== params.get('corpus'))
         params.delete('analysis');
     for (const [key, value] of overrides)
         params.set(key, value);
+    if (params.has('vectors_blake3') && !validVectorDigest(params.get('vectors_blake3')))
+        throw new Error('The word-vector digest in this address is invalid.');
     return params;
 }
 /** Replaces `source` with `catalog` only when the source matches the served catalog and its fingerprint is available. */

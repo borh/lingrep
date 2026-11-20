@@ -55,6 +55,8 @@ pub fn run(args: &NeighborsArgs, mode: OutputMode) -> Result<CommandOutcome, Cli
         emit(NeighborsEvent::Run(NeighborsRun {
             word: args.word.clone(),
             vectors: args.vectors.display().to_string(),
+            blake3: table.digest().to_hex().to_string(),
+            provenance: table.provenance().cloned(),
             dimensions: query.len() as u64,
             min_similarity: args.cut.min_similarity,
             top: args.cut.top.map(|top| top as u64),

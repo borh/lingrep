@@ -238,7 +238,8 @@ pub(crate) fn word_vectors_report(
     let loaded = catalog.vectors.as_ref()?;
     Some(crate::protocol::query::WordVectorsReport {
         path: loaded.path.display().to_string(),
-        blake3: loaded.blake3.clone(),
+        blake3: loaded.blake3.to_string(),
+        provenance: loaded.provenance.clone(),
         near: catalog
             .output
             .matcher

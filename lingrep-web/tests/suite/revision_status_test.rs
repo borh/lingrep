@@ -274,7 +274,11 @@ fn a_completed_run_reports_a_vector_file_the_catalog_does_not_declare() {
             Default::default()
         ));
         let mut snapshot = Arc::unwrap_or_clone(snapshot(RevisionId(1)));
-        snapshot.vectors_binding = binding;
+        snapshot.vectors_binding =
+            binding.map(|declaration| lingrep_web::patterns::BoundWordVectors {
+                digest: blake3::hash(b"vectors"),
+                declaration,
+            });
         assert!(state.apply_terminal(CoordinatorEvent::Completed {
             workbench: WorkbenchId::new("status"),
             revision: RevisionId(1),

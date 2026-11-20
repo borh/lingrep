@@ -6,6 +6,7 @@ use axum::{
     routing::get,
 };
 use lingrep_core::fsm::policy_program::Overlaps;
+use lingrep_corpus::word_vectors::VectorTable;
 
 use crate::{
     corpus_context::{CorpusContextView, UNNAMED_CORPUS, slot_context_view},
@@ -20,6 +21,10 @@ use crate::{
 const NOTICE_UNREADABLE: LinkNotice = LinkNotice {
     text: "This shared link could not be read, so the default pattern is shown.",
     key: "notice.unreadable",
+};
+const NOTICE_VECTOR_TABLE_CHANGED: LinkNotice = LinkNotice {
+    text: "This query requires a different word-vector table. Its source is available to edit.",
+    key: "notice.vector_table_changed",
 };
 const NOTICE_CORPUS_LOADING: LinkNotice = LinkNotice {
     text: "The corpus is still loading, so the pattern was seeded but not run automatically.",
@@ -62,6 +67,7 @@ pub struct WireParams<'a> {
     pub corpus_key: &'a str,
     /// Optional content identity assertion.
     pub corpus: Option<&'a str>,
+    pub vectors: Option<blake3::Hash>,
     /// The per-pattern retention the sender was reading, mapped onto this
     /// server's offers at landing.
     pub retained: Option<usize>,
@@ -81,6 +87,7 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
     let mut query = None;
     let mut corpus_key = None;
     let mut corpus = None;
+    let mut vectors = None;
     let mut retained = None;
     let mut search_scope = None;
     let mut derive_compounds = None;
@@ -94,6 +101,7 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
             "q" => &mut query,
             "k" => &mut corpus_key,
             "c" => &mut corpus,
+            "w" => &mut vectors,
             "r" => &mut retained,
             "s" => &mut search_scope,
             "d" => &mut derive_compounds,
@@ -155,6 +163,10 @@ fn parse_wire(raw: &str) -> Option<WireParams<'_>> {
     };
     let params = WireParams {
         search_scope,
+        vectors: match vectors {
+            Some(hex) => Some(blake3::Hash::from_hex(hex).ok()?),
+            None => None,
+        },
         version: version?,
         query: query?,
         corpus_key: corpus_key?,
@@ -291,6 +303,15 @@ fn interpret(target: &Target<'_>, default_pattern: &str, readiness: &Readiness<'
         retained: params.retained,
         run_options: params.run_options,
     };
+    if let Some(pin) = params.vectors
+        && crate::patterns::word_vectors().map(VectorTable::digest) != Some(pin)
+    {
+        return Landing {
+            auto_run: false,
+            link_notice: Some(NOTICE_VECTOR_TABLE_CHANGED),
+            ..run
+        };
+    }
     match (readiness, params.corpus) {
         // Ready, and the link asserts nothing about which content it saw.
         (Readiness::Ready(_), None) => run,
@@ -371,6 +392,11 @@ async fn question_page(
         "raw":landing.search_scope.as_ref().and_then(|scope|scope.clause.as_deref()).unwrap_or(""),
         "run":if landing.auto_run||landing.run_when_ready{"1"}else{"0"},
     });
+    if let Target::Link(params) = &target
+        && let Some(pin) = params.vectors
+    {
+        seed["vectors_blake3"] = pin.to_string().into();
+    }
     if let Some(ready) = ready {
         seed["analysis"] = ready.identity.as_str().into();
     }
@@ -587,6 +613,26 @@ mod tests {
         let seed = question_seed(&bare);
         assert_eq!(seed["source"], "default := [].");
         assert_eq!(seed["run"], "0");
+    }
+
+    #[tokio::test]
+    async fn a_link_pinned_to_an_unavailable_table_keeps_the_source_without_running() {
+        let (_directory, store, _) = ready_question_store().await;
+        let source = "p := [lemma near walk >= 0.8].";
+        let pin = blake3::hash(b"original table").to_hex();
+        let target = permalink::encode(source, "default", None, None).unwrap();
+        let raw = format!("{}&w={pin}", target.strip_prefix("/?").unwrap());
+        let html = question_page(State(store.clone()), RawQuery(Some(raw.clone())))
+            .await
+            .unwrap()
+            .0;
+        let seed = question_seed(&html);
+        assert_eq!(seed["source"], source);
+        assert_eq!(seed["run"], "0");
+        assert_eq!(seed["vectors_blake3"], pin.as_str());
+        let workbench = index_page(State(store), RawQuery(Some(raw))).await.0;
+        assert!(workbench.contains("notice.vector_table_changed"));
+        assert!(workbench.contains("p := [lemma near walk"));
     }
 
     #[tokio::test]

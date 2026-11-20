@@ -114,10 +114,23 @@ async fn create_permalink(
                 crate::templates::overlaps_of_form(form.overlaps.as_deref()),
                 form.search_scope.is_some().then_some(&scope),
             );
-            if path.len().saturating_add(1) > crate::permalink::MAX_REQUEST_TARGET_LEN {
-                return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large");
+            let table = crate::patterns::word_vectors();
+            let vectors = if table.is_some() {
+                match store
+                    .coordinators
+                    .pattern_task(move || crate::patterns::resolved_vectors(&form.pattern, table))
+                    .await
+                {
+                    Ok(vectors) => vectors,
+                    Err(error) => return super::pattern_task_error(error),
+                }
+            } else {
+                None
+            };
+            match permalink::pin_vectors(path, vectors) {
+                Ok(path) => (StatusCode::OK, Json(PathResponse { path })).into_response(),
+                Err(_) => error(StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             }
-            (StatusCode::OK, Json(PathResponse { path })).into_response()
         }
         Err(PermalinkError::TooLarge) => error(StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
         Err(error @ PermalinkError::Malformed) => super::server_error(error),

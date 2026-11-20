@@ -1,4 +1,4 @@
-import { textOf } from './model.js';
+import { textOf, validVectorDigest } from './model.js';
 import type { SavedQuestion, Token } from './model.js';
 export interface ConcordanceLocation { readonly kind: 'concordance'; readonly scopeDocument?: number|null; readonly returnAfter?:number; readonly pattern: string; readonly document: number | null; readonly after: number; readonly filter: string; }
 interface HitCoordinates { readonly pattern:string; readonly document:number; readonly sequence:number|null; }
@@ -37,6 +37,7 @@ export function locationURL(base: string, params: Record<string,string|number>, 
 export function savedQuestion(value: unknown): SavedQuestion {
   if(!record(value)||!['lingrep.question/v1','lingrep.question-probe/v1'].includes(String(value.format))||!['question','source','corpus','analysis','where'].every(key=>typeof value[key]==='string'))throw new Error('Choose a saved lingrep question document.');
   if(!Object.values(value).every(field=>typeof field==='string'||typeof field==='number'&&Number.isFinite(field)))throw new Error('The question document contains invalid settings.');
+  if(value.vectors_blake3!==undefined&&!validVectorDigest(value.vectors_blake3))throw new Error('The saved word-vector digest is invalid.');
   parseView(typeof value.view==='string'?value.view:null);
   return value as unknown as SavedQuestion;
 }
@@ -45,16 +46,18 @@ export function seedParams(seed:unknown,hash:string):URLSearchParams {
   const params=new URLSearchParams();
   if(seed!=null){
     if(!record(seed))throw new Error('The initial question could not be read.');
-    for(const key of ['source','corpus','analysis','raw','run','notice','lines','context','pattern'])if(seed[key]!=null){
+    for(const key of ['source','corpus','analysis','vectors_blake3','raw','run','notice','lines','context','pattern'])if(seed[key]!=null){
       if(typeof seed[key]!=='string'||key==='run'&&!['0','1'].includes(seed[key] as string))throw new Error('The initial question contains invalid settings.');
       params.set(key,seed[key] as string);
     }
   }
   const overrides=new URLSearchParams(hash.replace(/^#/,''));
+  if(overrides.has('catalog')||overrides.has('source')&&overrides.get('source')!==params.get('source'))params.delete('vectors_blake3');
   if(overrides.has('catalog'))params.delete('source');
-  if(overrides.has('evidence')||overrides.has('attempt'))for(const key of ['source','corpus','analysis','raw','run','pattern'])params.delete(key);
+  if(overrides.has('evidence')||overrides.has('attempt'))for(const key of ['source','corpus','analysis','vectors_blake3','raw','run','pattern'])params.delete(key);
   if(overrides.has('corpus')&&!overrides.has('analysis')&&overrides.get('corpus')!==params.get('corpus'))params.delete('analysis');
   for(const [key,value] of overrides)params.set(key,value);
+  if(params.has('vectors_blake3')&&!validVectorDigest(params.get('vectors_blake3')))throw new Error('The word-vector digest in this address is invalid.');
   return params;
 }
 

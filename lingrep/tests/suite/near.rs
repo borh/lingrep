@@ -69,6 +69,145 @@ fn matched_lemmas(output: &Output) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "web")]
+#[test]
+fn a_shared_query_pins_the_table_only_when_it_resolves_a_neighborhood() {
+    let fixture = fixture();
+    let link = |pattern: &str| {
+        let output = lingrep_without_dictionary()
+            .args([
+                "matches",
+                "--link",
+                "test=http://localhost/",
+                "--pattern",
+                pattern,
+                "--vectors",
+            ])
+            .arg(&fixture.vectors)
+            .arg(&fixture.corpus)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let digest = blake3::hash(VECTORS.as_bytes());
+    assert!(link("[lemma near walk >= 0.8]").contains(&format!("&w={digest}")));
+    assert!(!link("[lemma=walk]").contains("&w="));
+}
+
+#[cfg(feature = "web")]
+#[test]
+fn serve_and_matches_resolve_the_same_near_catalog() {
+    use crate::support::serve;
+
+    let directory = tempfile::tempdir().unwrap();
+    let corpus = directory.path().join("animals.txt");
+    let vectors = directory.path().join("animals.vec");
+    let catalog = directory.path().join("animals.lx");
+    let table = "猫 1 0\n鳥 0.8 0.6\n見る 0 1\n";
+    let source = "animal := (?<animal> [text near 猫 >= 0.7]).\n";
+    fs::write(&corpus, "猫が鳥を見る。\n").unwrap();
+    fs::write(&vectors, table).unwrap();
+    fs::write(&catalog, source).unwrap();
+    let dictionary = lingrep_core::testing::MiniDictionary::new();
+    let cli = lingrep_without_dictionary()
+        .args(["--json", "matches", "--context", "24", "--patterns"])
+        .arg(&catalog)
+        .arg("--vectors")
+        .arg(&vectors)
+        .arg("--dict-path")
+        .arg(dictionary.path())
+        .args(["--publish-attribute", "surface"])
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    let selected = matched_lemmas(&cli);
+    assert_eq!(selected, ["猫", "鳥"]);
+    let digest = blake3::hash(table.as_bytes()).to_hex();
+    let stderr = String::from_utf8(cli.stderr).unwrap();
+    assert!(
+        stderr.contains("vectors_undeclared") && stderr.contains(digest.as_str()),
+        "{stderr}"
+    );
+    let events = parse_jsonl(&cli.stdout);
+    let run = events.iter().find(|e| e["type"] == "run").unwrap();
+    let cli_fingerprint = run["data"]["catalog_fingerprint"].as_str().unwrap();
+
+    let server = serve(
+        directory.path(),
+        dictionary.path(),
+        &[
+            "--input".into(),
+            corpus.into(),
+            "--vectors".into(),
+            vectors.into(),
+            "--patterns".into(),
+            catalog.into(),
+        ],
+    )
+    .unwrap_or_else(|(code, stderr)| panic!("ling serve exited {code:?}: {stderr}"));
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let api = format!("http://{}/api", server.address);
+    let json = |request: reqwest::blocking::RequestBuilder| -> serde_json::Value {
+        let response = request.send().unwrap().error_for_status().unwrap();
+        serde_json::from_reader(response).unwrap()
+    };
+    let config = json(client.get(format!("{api}/questions/config")));
+    assert_eq!(config["catalog_fingerprint"], cli_fingerprint);
+    let submit = serde_json::json!({"source": source, "dataset": "default", "pattern": "animal"});
+    let accepted = json(
+        client
+            .post(format!("{api}/questions/runs"))
+            .header("Content-Type", "application/json")
+            .body(submit.to_string()),
+    );
+    let id = accepted["id"].as_str().unwrap();
+    let stream = client
+        .get(format!("{api}/stream/{id}"))
+        .send()
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .text()
+        .unwrap();
+    assert!(stream.contains("event: result"), "{stream}");
+    assert!(
+        stream.contains("status.vectors_undeclared") && stream.contains(digest.as_str()),
+        "{stream}"
+    );
+    let snapshot = json(client.get(format!("{api}/questions/runs/{id}")));
+    let cli_matches: Vec<_> = events
+        .iter()
+        .filter(|record| record["type"] == "match")
+        .map(|record| &record["data"])
+        .collect();
+    assert_eq!(snapshot["rows"]["animal"], serde_json::json!(cli_matches));
+
+    let endpoint = format!("{api}/permalink");
+    let form = reqwest::Url::parse_with_params(&endpoint, [("pattern", source)]).unwrap();
+    let permalink = json(
+        client
+            .post(endpoint)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form.query().unwrap().to_owned()),
+    );
+    let target = form.join(permalink["path"].as_str().unwrap()).unwrap();
+    assert!(
+        target
+            .query_pairs()
+            .any(|(key, value)| key == "w" && value == digest.as_str()),
+        "{target}"
+    );
+}
+
 #[test]
 fn a_near_test_matches_the_values_the_vector_file_puts_at_or_above_the_threshold() {
     let fixture = fixture();
@@ -457,4 +596,67 @@ fn an_enhanced_graph_node_test_holds_for_exactly_the_listed_values_of_a_long_lis
     };
     assert_eq!(dependents("in"), ["d0", "d2"]);
     assert_eq!(dependents("not in"), ["d1", "d3"]);
+}
+
+#[test]
+fn bundle_provenance_is_reported_when_using_another_attribute() {
+    let fixture = fixture();
+    let bundle = fixture.vectors.with_file_name("installation");
+    fs::create_dir(&bundle).unwrap();
+    let payload = bundle.join("vectors.vec");
+    fs::copy(&fixture.vectors, &payload).unwrap();
+    let digest = blake3::hash(VECTORS.as_bytes()).to_hex().to_string();
+    let provenance = serde_json::json!({
+        "resource": "walking-lemmas",
+        "attribute": "lemma",
+        "vocabulary_sources": ["Test corpus v1"],
+        "selection": "Every lemma",
+        "encoding": "Fixture vectors v1",
+    });
+    fs::write(
+        bundle.join("manifest.json"),
+        serde_json::json!({
+            "schema": "lingrep.word-vectors/v1",
+            "blake3": digest,
+            "provenance": provenance,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let catalog = bundle.join("query.lx");
+    fs::write(&catalog, "walking := [text near walk >= 0.7].").unwrap();
+    let run = |vectors: &Path| {
+        let out = lingrep_without_dictionary()
+            .args([
+                "--json",
+                "matches",
+                "--input-format",
+                "conllu",
+                "--patterns",
+            ])
+            .arg(&catalog)
+            .arg("--vectors")
+            .arg(vectors)
+            .arg(&fixture.corpus)
+            .output()
+            .unwrap();
+        assert_eq!(matched_lemmas(&out), ["walk", "stroll"]);
+        let events = parse_jsonl(&out.stdout);
+        let run = events.iter().find(|event| event["type"] == "run").unwrap()["data"].clone();
+        let matches = events
+            .into_iter()
+            .filter(|event| event["type"] == "match")
+            .collect::<Vec<_>>();
+        (run, matches, String::from_utf8(out.stderr).unwrap())
+    };
+    let (bundled, bundled_matches, notice) = run(&bundle);
+    let (bare, bare_matches, _) = run(&payload);
+    assert_eq!(bundled_matches, bare_matches);
+    assert_eq!(bundled["catalog_fingerprint"], bare["catalog_fingerprint"]);
+    assert_eq!(bundled["word_vectors"]["provenance"], provenance);
+    assert!(bare["word_vectors"].get("provenance").is_none());
+    assert!(
+        notice.contains("walking-lemmas") && notice.contains(&digest),
+        "{notice}"
+    );
 }

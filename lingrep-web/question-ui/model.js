@@ -48,6 +48,7 @@ function matchValue(value) {
         return false;
     return ['tokens', 'left_context', 'right_context'].every(key => value[key] === undefined && key !== 'tokens' || Array.isArray(value[key]) && value[key].every(tokenValue));
 }
+export const validVectorDigest = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 export function parseUpdate(text) {
     const value = JSON.parse(text);
     if (!objectValue(value) || typeof value.id !== 'string' || typeof value.reset !== 'boolean' || !objectValue(value.patch) || !objectValue(value.append))
@@ -60,9 +61,9 @@ export function parseUpdate(text) {
         elapsed: finiteNumber, received: finiteNumber, version: finiteNumber, started: finiteNumber,
         diagnostics: v => Array.isArray(v) && v.every(diagnosticValue),
         notices: v => Array.isArray(v) && v.every(value => typeof value === 'string'),
-        error: v => v === null || typeof v === 'string', search_complete: v => typeof v === 'boolean', exportable: v => typeof v === 'boolean', error_code: v => v === null || v === 'analysis_changed' || v === 'result_limit', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
+        error: v => v === null || typeof v === 'string', search_complete: v => typeof v === 'boolean', exportable: v => typeof v === 'boolean', error_code: v => v === null || v === 'analysis_changed' || v === 'vectors_changed' || v === 'result_limit', definitions: v => Array.isArray(v) && v.every(x => typeof x === 'string'),
         bodies: stringMap, counts: v => objectValue(v) && Object.values(v).every(finiteNumber),
-        contract_run: v => v === null || objectValue(v) && typeof v.analysis_identity === 'string',
+        contract_run: v => v === null || objectValue(v) && typeof v.analysis_identity === 'string' && (v.vectors_blake3 === undefined || validVectorDigest(v.vectors_blake3)),
         counters: v => v === null || objectValue(v) && objectValue(v.counters) && finiteNumber(v.counters.documents_admitted),
     };
     for (const [key, field] of Object.entries(value.patch))

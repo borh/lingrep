@@ -120,11 +120,7 @@ pub fn compile_catalog(
     source: PatternSource<'_>,
     limits: CompileLimits,
 ) -> Result<CompileOutput, CompileError> {
-    let lowered = lower_document_with_stats(&source, &limits)?;
-    let source_bytes = lowered.source_bytes;
-    let program = lowered.program;
-    let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
-    compile_program(program, &limits, &mut stats, lowered.warnings, None)
+    compile_catalog_selection(source, limits, None, None)
 }
 
 /// A word-vector table used to resolve `near` tests.
@@ -158,17 +154,7 @@ pub fn compile_catalog_with_vectors(
     limits: CompileLimits,
     vectors: &dyn WordVectors,
 ) -> Result<CompileOutput, CompileError> {
-    let lowered = lower_document_with_stats(&source, &limits)?;
-    let source_bytes = lowered.source_bytes;
-    let program = lowered.program;
-    let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
-    compile_program(
-        program,
-        &limits,
-        &mut stats,
-        lowered.warnings,
-        Some(vectors),
-    )
+    compile_catalog_selection(source, limits, None, Some(vectors))
 }
 
 /// Compiles `source` publishing the definitions whose published name, their
@@ -186,10 +172,25 @@ pub fn compile_catalog_pattern(
     limits: CompileLimits,
     pattern: &str,
 ) -> Result<CompileOutput, CompileError> {
+    compile_catalog_selection(source, limits, Some(pattern), None)
+}
+
+/// Compiles a catalog with an optional published-name selection and vector table.
+/// Selection follows [`compile_catalog_pattern`]. All `near` tests use the supplied table.
+///
+/// # Errors
+///
+/// The diagnostics of [`compile_catalog_pattern`] and [`compile_catalog_with_vectors`].
+pub fn compile_catalog_selection(
+    source: PatternSource<'_>,
+    limits: CompileLimits,
+    pattern: Option<&str>,
+    vectors: Option<&dyn WordVectors>,
+) -> Result<CompileOutput, CompileError> {
     let lowered = lower_document_with_stats(&source, &limits)?;
     let source_bytes = lowered.source_bytes;
     let mut program = lowered.program;
-    if program.policy.is_none() {
+    if let Some(pattern) = pattern.filter(|_| program.policy.is_none()) {
         let mut found = false;
         for definition in &mut program.definitions {
             let publishes = definition
@@ -221,7 +222,7 @@ pub fn compile_catalog_pattern(
         }
     }
     let mut stats = measure_program(&program, source_bytes, lowered.metadata_bytes)?;
-    compile_program(program, &limits, &mut stats, lowered.warnings, None)
+    compile_program(program, &limits, &mut stats, lowered.warnings, vectors)
 }
 
 /// Parsed typed definitions accumulated by [`crate::fsm::FsmBuilder`].

@@ -42,13 +42,13 @@ export interface SnapshotFields extends Question {
   readonly version: number;
   readonly started: number;
   readonly error: string | null;
-  readonly error_code?: 'analysis_changed' | 'result_limit' | null;
+  readonly error_code?: 'analysis_changed' | 'vectors_changed' | 'result_limit' | null;
   /** Set on a failed run whose search completed although its results could not be displayed. */
   readonly search_complete?: boolean;
   /** Present with `search_complete`: whether the run's export holds every match. */
   readonly exportable?: boolean;
   readonly counters: { readonly counters: { readonly documents_admitted: number } } | null;
-  readonly contract_run: { readonly analysis_identity: string } | null;
+  readonly contract_run: { readonly analysis_identity: string; readonly vectors_blake3?:string } | null;
 }
 export type RunningSnapshot = SnapshotFields & { readonly phase: 'running' };
 export type CompletedSnapshot = SnapshotFields & { readonly phase: 'complete' };
@@ -60,7 +60,7 @@ export interface SearchState {
 }
 export interface Dataset { label:string; documents:number|null; sentences:number|null; analysis_identity:string|null; readiness:'ready'|'checking'|'building'|'failed'; }
 export interface CatalogDefinition { readonly name: string; readonly count_only: boolean; }
-export interface Configuration { datasets: Record<string, Dataset>; source: string; /** The fingerprint of `source`, from servers that publish it. */ catalog_fingerprint?: string; definitions?: readonly CatalogDefinition[]; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
+export interface Configuration { vectors_blake3?:string; datasets: Record<string, Dataset>; source: string; /** The fingerprint of `source`, from servers that publish it. */ catalog_fingerprint?: string; definitions?: readonly CatalogDefinition[]; question: string; labels: Record<string, { labels?: Partial<Record<Locale, string>>; values?: Record<string, { labels: Partial<Record<Locale, string>> }> }>; value_names?: Readonly<Record<string,Readonly<Record<string,Readonly<Record<string,Readonly<Partial<Record<Locale,string>>>>>>>>>; }
 export type MetadataValue = string | number | boolean;
 export type MetadataCondition = { numeric: true; min: string; max: string } | { numeric?: false; list: boolean; exclude: boolean; values: MetadataValue[]; labels?: Record<string, string> };
 export interface QuestionSettings { metadata: Record<string, MetadataCondition>; raw: string; context: number; lines: number; }
@@ -112,6 +112,8 @@ function matchValue(value: unknown): boolean {
   if (!finiteNumber(value.span.start) || !finiteNumber(value.span.end) || value.span.end < value.span.start) return false;
   return ['tokens','left_context','right_context'].every(key => value[key] === undefined && key !== 'tokens' || Array.isArray(value[key]) && value[key].every(tokenValue));
 }
+export const validVectorDigest = (value:unknown): value is string => typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
+
 export function parseUpdate(text: string): SearchUpdate {
   const value: unknown = JSON.parse(text);
   if (!objectValue(value) || typeof value.id !== 'string' || typeof value.reset !== 'boolean' || !objectValue(value.patch) || !objectValue(value.append)) throw new Error('Invalid search update envelope.');
@@ -122,9 +124,9 @@ export function parseUpdate(text: string): SearchUpdate {
     elapsed:finiteNumber,received:finiteNumber,version:finiteNumber,started:finiteNumber,
     diagnostics:v=>Array.isArray(v)&&v.every(diagnosticValue),
     notices:v=>Array.isArray(v)&&v.every(value=>typeof value==='string'),
-    error:v=>v===null||typeof v==='string',search_complete:v=>typeof v==='boolean',exportable:v=>typeof v==='boolean',error_code:v=>v===null||v==='analysis_changed'||v==='result_limit',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
+    error:v=>v===null||typeof v==='string',search_complete:v=>typeof v==='boolean',exportable:v=>typeof v==='boolean',error_code:v=>v===null||v==='analysis_changed'||v==='vectors_changed'||v==='result_limit',definitions:v=>Array.isArray(v)&&v.every(x=>typeof x==='string'),
     bodies:stringMap, counts:v=>objectValue(v)&&Object.values(v).every(finiteNumber),
-    contract_run:v=>v===null||objectValue(v)&&typeof v.analysis_identity==='string',
+    contract_run:v=>v===null||objectValue(v)&&typeof v.analysis_identity==='string'&&(v.vectors_blake3===undefined||validVectorDigest(v.vectors_blake3)),
     counters:v=>v===null||objectValue(v)&&objectValue(v.counters)&&finiteNumber(v.counters.documents_admitted),
   };
   for(const [key,field] of Object.entries(value.patch))if(checks[key]&&!checks[key](field))throw new Error(`Invalid search update field: ${key}.`);

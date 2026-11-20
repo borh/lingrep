@@ -112,11 +112,8 @@ pub struct Args {
     #[arg(long = "base-path", default_value = "/")]
     pub base_path: BasePath,
 
-    /// Word-vector file used to resolve the `near` tests of every catalog the
-    /// server compiles.
-    ///
-    /// word2vec text: one value and its numbers per line.
-    #[arg(long, value_name = "FILE", env = "LINGREP_VECTORS_PATH")]
+    /// Word2vec text file or word-vector bundle directory for server-side `near` tests.
+    #[arg(long, value_name = "PATH", env = "LINGREP_VECTORS_PATH")]
     pub vectors: Option<std::path::PathBuf>,
 
     /// Maximum KWIC lines retained for each pattern

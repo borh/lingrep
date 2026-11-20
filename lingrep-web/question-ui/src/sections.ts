@@ -1,7 +1,8 @@
+import {validVectorDigest} from './model.js';
 import {parseView} from './location.js';
 import type {ViewLocation} from './location.js';
 export interface SectionOrigin { readonly parent:string; readonly view:ViewLocation; readonly label:string; }
-export interface QueryRecipe {readonly source:string;readonly dataset:string;readonly where:string;readonly analysis:string|null;}
+export interface QueryRecipe {readonly source:string;readonly dataset:string;readonly where:string;readonly analysis:string|null;readonly vectors_blake3?:string;}
 export interface SectionLink { readonly id:string; readonly origin:SectionOrigin|null; readonly recipe?:QueryRecipe; }
 export function parseSections(text:string|null):readonly SectionLink[]{
   if(!text)return [];
@@ -21,7 +22,8 @@ export function parseSections(text:string|null):readonly SectionLink[]{
     if('recipe' in value){
       const item=value.recipe;
       if(!item||typeof item!=='object'||!('source' in item)||typeof item.source!=='string'||!('dataset' in item)||typeof item.dataset!=='string'||!('where' in item)||typeof item.where!=='string'||!('analysis' in item)||(item.analysis!==null&&typeof item.analysis!=='string'))throw new Error('A linked search contains an invalid saved query.');
-      recipe={source:item.source,dataset:item.dataset,where:item.where,analysis:item.analysis};
+      if('vectors_blake3' in item&&!validVectorDigest(item.vectors_blake3))throw new Error('A linked search contains an invalid word-vector digest.');
+      recipe={...('vectors_blake3' in item?{vectors_blake3:item.vectors_blake3 as string}:{}),source:item.source,dataset:item.dataset,where:item.where,analysis:item.analysis};
     }
     ids.add(value.id);return {id:value.id,origin,...(recipe?{recipe}:{})};
   });

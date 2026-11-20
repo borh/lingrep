@@ -10,8 +10,8 @@ use lingrep_core::execution::{
     RunOutcome, SentenceAdmission, SentenceLocation, SinkControl, execute_analyzed,
 };
 use lingrep_core::fsm::{
-    BoundCatalog, CatalogPolicy, CompileLimits, GroupBy, LexicalProjectedKeyValue, Match,
-    PatternSource, PublishedRecord, RecordView, compile_catalog_pattern,
+    BoundCatalog, CatalogPolicy, GroupBy, LexicalProjectedKeyValue, Match, PatternSource,
+    PublishedRecord, RecordView,
 };
 use lingrep_core::token_match::{AttributeKey, TokenSequence};
 use lingrep_corpus::{DocumentMask, FieldValue, Group, ValueCount};
@@ -67,10 +67,10 @@ impl EntryMatcher {
             .map_err(|error| error.to_string())?;
         let text = AttributeKey::new("text").expect("text is a canonical attribute key");
         let patterns = compile_each(patterns, |pattern| {
-            let output = compile_catalog_pattern(
+            let output = crate::patterns::compile_named_selection(
                 PatternSource::named(name, source),
-                CompileLimits::default(),
-                pattern,
+                Some(pattern),
+                crate::patterns::word_vectors(),
             )
             .map_err(|error| error.to_string())?;
             let bound = output

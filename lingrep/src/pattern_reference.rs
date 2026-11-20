@@ -244,7 +244,7 @@ TOKEN TESTS
 over a set they are existential over its entries, so `[conllu.misc ~ Inf=]`
 holds when some entry starts that way.
 
-`near` needs a word-vector file (`--vectors FILE` or LINGREP_VECTORS_PATH) and
+`near` needs a word-vector file or bundle (`--vectors PATH` or LINGREP_VECTORS_PATH) and
 compiles to the set of the file's values whose cosine similarity to `value` is
 at least the number, which lies between 0 and 1. White space must separate the
 value from `>=`. A value with no vector in the file is an error.

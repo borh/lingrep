@@ -8,8 +8,9 @@ use lingrep_corpus::word_vectors::{VectorsBinding, vectors_binding};
 /// The word-vector file used to resolve a catalog's `near` tests.
 pub(crate) struct LoadedVectors {
     pub(crate) path: PathBuf,
-    /// The BLAKE3 digest of the file, as lowercase hex.
-    pub(crate) blake3: String,
+    pub(crate) provenance: Option<lingrep_corpus::word_vectors::VectorProvenance>,
+    /// The BLAKE3 digest of the file.
+    pub(crate) blake3: blake3::Hash,
 }
 
 /// Returns a notice unless a `vectors:` entry declares the loaded file's digest.
@@ -21,7 +22,7 @@ pub(crate) fn binding_notice(
     loaded: &LoadedVectors,
     authored_file: bool,
 ) -> Option<(&'static str, String)> {
-    match vectors_binding(matcher.vectors(), &loaded.path, &loaded.blake3) {
+    match vectors_binding(matcher.vectors(), &loaded.path, loaded.blake3.to_hex().as_str(), loaded.provenance.as_ref()) {
         VectorsBinding::Declared => None,
         VectorsBinding::Undeclared { declaration } => authored_file.then(|| {
             (

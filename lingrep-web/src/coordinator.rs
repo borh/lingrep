@@ -39,6 +39,7 @@ pub struct RevisionRequest {
     pub pattern: Option<String>,
     pub index_results: bool,
     pub expected_analysis_identity: Option<String>,
+    pub expected_vectors_blake3: Option<blake3::Hash>,
     /// None uses the configured ceiling; supplied values are clamped to 1..=ceiling.
     pub retained: Option<usize>,
     pub derive_compounds: bool,
@@ -55,6 +56,7 @@ impl Default for RevisionRequest {
             pattern: None,
             index_results: false,
             expected_analysis_identity: None,
+            expected_vectors_blake3: None,
             retained: None,
             derive_compounds: false,
             compound_category: CompoundCategory::Compound,
@@ -70,6 +72,7 @@ pub(crate) struct ScanOptions {
     pub(crate) pattern: Option<String>,
     pub(crate) index_results: bool,
     pub(crate) expected_analysis_identity: Option<String>,
+    pub(crate) expected_vectors_blake3: Option<blake3::Hash>,
     pub(crate) search_scope: crate::search_scope::SearchScope,
     pub(crate) retained: usize,
     pub(crate) derive_compounds: bool,
@@ -375,6 +378,7 @@ async fn prepare_scan(
     ready: &ReadyCorpus,
     source: &str,
     pattern: Option<&str>,
+    expected_vectors: Option<blake3::Hash>,
     scope: &crate::search_scope::SearchScope,
 ) -> Prepared {
     let source = source.to_owned();
@@ -398,6 +402,16 @@ async fn prepare_scan(
             });
         }
     };
+    if let Err(message) = crate::patterns::check_question_vectors(
+        &compiled,
+        crate::patterns::word_vectors(),
+        expected_vectors,
+    ) {
+        return Prepared::Failed(AttemptFailure {
+            category: ErrorCategory::VectorsChanged,
+            message,
+        });
+    }
     let compiled = match compiled {
         Ok(output) => output,
         Err(error) => {
@@ -565,7 +579,7 @@ fn run_scan_blocking_with_options(
         .matcher
         .bind_with_projection(&schema, attributes.iter().cloned())
         .map_err(|error| binding_failure(&error, ready.artifact.analyzer()))?;
-    sink.vectors_binding = crate::patterns::unmatched_vectors_binding(&output.matcher);
+    sink.vectors_binding = crate::patterns::bound_word_vectors(&output.matcher);
     if !bound.unavailable_attributes().is_empty() {
         let analyzer = ready.artifact.analyzer();
         sink.unavailable_attributes = Some(crate::snapshot::UnavailableAttributes {
@@ -879,6 +893,7 @@ impl CoordinatorRegistry {
             pattern,
             index_results,
             expected_analysis_identity,
+            expected_vectors_blake3,
             retained,
             derive_compounds,
             compound_category,
@@ -890,6 +905,7 @@ impl CoordinatorRegistry {
             pattern,
             index_results,
             expected_analysis_identity,
+            expected_vectors_blake3,
             search_scope,
             retained: retained.map_or(self.inner.max_refs, |asked| {
                 asked.clamp(1, self.inner.max_refs)
@@ -1212,6 +1228,7 @@ impl CoordinatorRegistry {
                 &ready,
                 &scan_source,
                 options.pattern.as_deref(),
+                options.expected_vectors_blake3,
                 &options.search_scope,
             )
             .await;
@@ -2655,6 +2672,7 @@ mod tests {
             &ready,
             "broken := [text~/x/.",
             None,
+            None,
             &Default::default(),
         )
         .await
@@ -2678,6 +2696,7 @@ mod tests {
             permit,
             &ready,
             "p := [].",
+            None,
             None,
             &Default::default(),
         )

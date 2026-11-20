@@ -66,7 +66,7 @@ pub(crate) struct SnapshotSink {
     pub(crate) derive_compounds: bool,
     pub(crate) overlaps: lingrep_core::fsm::policy_program::Overlaps,
     pub(crate) unavailable_attributes: Option<crate::snapshot::UnavailableAttributes>,
-    pub(crate) vectors_binding: Option<lingrep_corpus::word_vectors::VectorsBinding>,
+    pub(crate) vectors_binding: Option<crate::patterns::BoundWordVectors>,
     pub(crate) compound_category: CompoundCategory,
     pub(crate) patterns: Vec<PatternDescriptor>,
     /// Per pattern, the positions in `refs` this pattern's reservoir occupies.

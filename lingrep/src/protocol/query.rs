@@ -294,6 +294,8 @@ pub struct WordVectorsReport {
     pub path: String,
     /// The BLAKE3 digest of the file, as lowercase hex.
     pub blake3: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<lingrep_corpus::word_vectors::VectorProvenance>,
     /// The catalog's distinct `near` tests, in first-appearance order.
     pub near: Vec<NearReport>,
 }

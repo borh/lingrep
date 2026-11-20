@@ -244,6 +244,7 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                             Some("status.failed_analysis_changed"),
                             None,
                         ),
+                        ErrorCategory::VectorsChanged => (failure.message.clone(), None, None),
                         ErrorCategory::Execution
                         | ErrorCategory::ResultLimit
                         | ErrorCategory::Integrity => {
@@ -284,7 +285,10 @@ pub fn project_revision_status(view: Option<&CoordinatorView>) -> RevisionStatus
                 .unavailable_attributes
                 .as_ref()
                 .map(unavailable_notice);
-            let vectors = snapshot.vectors_binding.as_ref().and_then(vectors_notice);
+            let vectors = snapshot
+                .vectors_binding
+                .as_ref()
+                .and_then(|vectors| vectors_notice(&vectors.declaration));
             omitted
                 .into_iter()
                 .chain(unavailable)

@@ -61,6 +61,7 @@ let tokenIndex = 0;
 let attributeKey = 'lemma';
 let attributeMember;
 let analysisExpectation = null;
+let vectorsExpectation;
 let configRefresh;
 const tokenCache = new Map();
 let state = { current: null, completed: null, previous: null };
@@ -84,7 +85,17 @@ let restoreController = null;
 const expectedAnalyses = new Map();
 const unavailableSearches = new Map();
 let loadingSaved = false;
-function recipeFor(run) { return { source: run.source, dataset: run.dataset, where: run.where, analysis: run.contract_run?.analysis_identity ?? savedManifest.find(link => link.id === run.id)?.recipe?.analysis ?? expectedAnalyses.get(run.id) ?? config.datasets[run.dataset]?.analysis_identity ?? null }; }
+const submittedVectors = new Map();
+function runVectors(run) {
+    return run.phase === 'complete' || run.search_complete ? run.contract_run?.vectors_blake3 : submittedVectors.get(run.id) ?? savedManifest.find(link => link.id === run.id)?.recipe?.vectors_blake3;
+}
+function draftVectors(source) {
+    const completed = state.current?.source === source && state.current.phase === 'complete' ? state.current : null;
+    if (completed && !completed.contract_run?.vectors_blake3)
+        return undefined;
+    return vectorsExpectation ?? completed?.contract_run?.vectors_blake3 ?? config.vectors_blake3;
+}
+function recipeFor(run) { const digest = runVectors(run); return { ...(digest ? { vectors_blake3: digest } : {}), source: run.source, dataset: run.dataset, where: run.where, analysis: run.contract_run?.analysis_identity ?? savedManifest.find(link => link.id === run.id)?.recipe?.analysis ?? expectedAnalyses.get(run.id) ?? config.datasets[run.dataset]?.analysis_identity ?? null }; }
 function sectionLinks() {
     const links = savedManifest.map(link => { const live = documentSections.get(link.id); return live ? { ...link, recipe: recipeFor(live.run), origin: live.origin } : link; });
     for (const [id, section] of documentSections)
@@ -156,11 +167,14 @@ async function executeSavedSection(link, signal) {
     setSource(recipe.source);
     $('#corpus').value = recipe.dataset;
     analysisExpectation = recipe.analysis;
+    vectorsExpectation = recipe.vectors_blake3;
     controls.restore(new URLSearchParams({ ...controls.entries(), metadata: '{}', raw: recipe.where }));
     updateCorpus();
-    const body = { source: recipe.source, dataset: recipe.dataset, where: recipe.where, ...(recipe.analysis ? { expected_analysis_identity: recipe.analysis } : {}) };
+    const body = { source: recipe.source, dataset: recipe.dataset, where: recipe.where, ...(recipe.vectors_blake3 ? { expected_vectors_blake3: recipe.vectors_blake3 } : {}), ...(recipe.analysis ? { expected_analysis_identity: recipe.analysis } : {}) };
     const { id } = await post('api/questions/runs', body, signal);
     expectedAnalyses.set(id, recipe.analysis);
+    if (recipe.vectors_blake3)
+        submittedVectors.set(id, recipe.vectors_blake3);
     if (signal.aborted) {
         await post(`api/questions/runs/${id}/cancel`);
         throw new Error('Saved-search restore stopped. Run saved searches to continue.');
@@ -332,7 +346,15 @@ currentCorpus.type = 'button';
 currentCorpus.id = 'search-current-corpus';
 currentCorpus.hidden = true;
 limitChoices.after(currentCorpus);
-currentCorpus.addEventListener('click', () => { analysisExpectation = null; void search(); });
+currentCorpus.addEventListener('click', async () => {
+    if (state.current?.error_code === 'vectors_changed') {
+        await refreshConfiguration();
+        vectorsExpectation = config.vectors_blake3;
+    }
+    else
+        analysisExpectation = null;
+    void search();
+});
 const overflowed = (run) => run?.phase === 'failed' && run.error_code === 'result_limit';
 function renderLimitChoices(run) {
     const names = overflowed(run) && run.definitions.length > 1 ? run.definitions : [], full = new Set(overflowingDefinitions(run?.counts ?? {}));
@@ -576,7 +598,8 @@ async function search(event, derivedFrom, occurrence) {
     if (where && searchLimit?.document != null)
         searchLimit = { ...searchLimit, document: null };
     const limit = activeLimit();
-    const body = { source, dataset: $('#corpus').value, where, ...(analysisExpectation ? { expected_analysis_identity: analysisExpectation } : {}), ...(limit?.pattern ? { pattern: limit.pattern } : {}), ...(limit?.document != null ? { document: limit.document } : {}) };
+    const digest = draftVectors(source);
+    const body = { source, ...(digest ? { expected_vectors_blake3: digest } : {}), dataset: $('#corpus').value, where, ...(analysisExpectation ? { expected_analysis_identity: analysisExpectation } : {}), ...(limit?.pattern ? { pattern: limit.pattern } : {}), ...(limit?.document != null ? { document: limit.document } : {}) };
     ++replayEpoch;
     isReplay = false;
     $('#replay-note').hidden = true;
@@ -596,6 +619,8 @@ async function search(event, derivedFrom, occurrence) {
             await post(`api/questions/runs/${result.id}/cancel`);
             return;
         }
+        if (digest)
+            submittedVectors.set(result.id, digest);
         activeId = result.id;
         if (occurrence)
             entryRuns.add(result.id);
@@ -699,8 +724,8 @@ function render(force = false) {
     const located = current?.phase === 'failed' ? (current.diagnostics ?? []).filter(d => d.data.stage === 'catalog' && d.data.severity === 'error') : [];
     $('#error').textContent = located.length ? located.map(d => diagnosticText(d, locale)).join('\n') : current ? overflowText(current) ?? runError(current, t) ?? '' : '';
     renderLimitChoices(current);
-    currentCorpus.hidden = !(current?.phase === 'failed' && current.error_code === 'analysis_changed');
-    currentCorpus.textContent = t('searchCurrentCorpus');
+    currentCorpus.hidden = !(current?.phase === 'failed' && (current.error_code === 'analysis_changed' || current.error_code === 'vectors_changed' && config?.vectors_blake3));
+    currentCorpus.textContent = current?.error_code === 'vectors_changed' ? (locale === 'ja' ? '現在の単語ベクトルで検索' : 'Search with the current word vectors') : t('searchCurrentCorpus');
     editError.hidden = !diagnostic;
     editError.textContent = line ? (locale === 'ja' ? `${line} 行目のパターンを修正` : `Edit pattern at line ${line}`) : (locale === 'ja' ? 'パターンを修正' : 'Edit pattern');
     if (diagnostic && current && revealedFailure !== current.id) {
@@ -1779,7 +1804,9 @@ async function replay() {
     render();
 }
 function questionDocument(overrides = {}) {
-    return { format: 'lingrep.question/v1', evidence: displayedEvidence()?.id ?? '', view: JSON.stringify(viewLocation), question: '', sections: JSON.stringify(sectionLinks()), ...(documentSections.size && state.current ? { attempt: state.current.id } : {}), source: $('#source').value, ...limitFields(), corpus: $('#corpus').value, analysis: analysisExpectation ?? config.datasets[$('#corpus').value].analysis_identity ?? '', where: controls.where(), ...controls.entries(), ...overrides };
+    const source = $('#source').value;
+    const digest = draftVectors(source);
+    return { format: 'lingrep.question/v1', ...(digest ? { vectors_blake3: digest } : {}), evidence: displayedEvidence()?.id ?? '', view: JSON.stringify(viewLocation), question: '', sections: JSON.stringify(sectionLinks()), ...(documentSections.size && state.current ? { attempt: state.current.id } : {}), source, ...limitFields(), corpus: $('#corpus').value, analysis: analysisExpectation ?? config.datasets[$('#corpus').value].analysis_identity ?? '', where: controls.where(), ...controls.entries(), ...overrides };
 }
 function limitFields() { const limit = activeLimit(); return { ...(limit?.pattern ? { pattern: limit.pattern } : {}), ...(limit?.document != null ? { document: limit.document } : {}) }; }
 function openQuestion(doc) {
@@ -1837,6 +1864,7 @@ $('#use-pattern').addEventListener('click', () => {
     if (!inspecting || !conditions.length)
         return;
     const run = inspecting.run;
+    vectorsExpectation = runVectors(run);
     analysisExpectation = run.contract_run?.analysis_identity ?? null;
     const origin = { parent: run.id, view: hitLocation(run, inspecting.row, 'example'), label: `${documentTitle(inspecting.row)} · ${inspecting.row.surface}` };
     setSource(patternSource(conditions));
@@ -2185,6 +2213,7 @@ async function navigateView(href, preserveDraft = false, historyMode = 'push') {
         if (!preserveDraft) {
             analysisExpectation = run.contract_run?.analysis_identity ?? null;
             const question = questionParams(url, run);
+            vectorsExpectation = question.get('vectors_blake3') ?? runVectors(run);
             setSource(question.get('source') ?? run.source);
             $('#corpus').value = question.get('corpus') ?? run.dataset;
             restoreLimit(question);
@@ -2243,9 +2272,9 @@ async function init() {
     savedManifest = parseSections(params.get('sections') ?? (params.get('fresh') === '1' || seededQuestion ? null : sessionStorage.getItem('ling-questions-sections')));
     const recipe = savedManifest.find(link => link.id === params.get('evidence'))?.recipe;
     if (params.has('source'))
-        savedManifest = savedManifest.map(link => link.id === (params.get('attempt') ?? params.get('evidence')) && !link.recipe ? { ...link, recipe: { source: params.get('source'), dataset: params.get('corpus') ?? Object.keys(config.datasets)[0], where: params.get('where') ?? params.get('raw') ?? '', analysis: params.get('analysis') || null } } : link);
+        savedManifest = savedManifest.map(link => link.id === (params.get('attempt') ?? params.get('evidence')) && !link.recipe ? { ...link, recipe: { source: params.get('source'), dataset: params.get('corpus') ?? Object.keys(config.datasets)[0], where: params.get('where') ?? params.get('raw') ?? '', analysis: params.get('analysis') || null, ...(params.get('vectors_blake3') ? { vectors_blake3: params.get('vectors_blake3') } : {}) } } : link);
     if (recipe) {
-        for (const [key, value] of Object.entries({ source: recipe.source, corpus: recipe.dataset, raw: recipe.where, analysis: recipe.analysis ?? '' }))
+        for (const [key, value] of Object.entries({ source: recipe.source, corpus: recipe.dataset, raw: recipe.where, analysis: recipe.analysis ?? '', ...(recipe.vectors_blake3 ? { vectors_blake3: recipe.vectors_blake3 } : {}) }))
             if (!params.has(key) && (key !== 'raw' || !params.has('metadata')))
                 params.set(key, value);
     }
@@ -2254,6 +2283,7 @@ async function init() {
         throw new Error('The corpus for this question is not registered.');
     $('#corpus').value = corpus;
     analysisExpectation = params.get('analysis') || null;
+    vectorsExpectation = params.get('vectors_blake3') ?? undefined;
     setSource(params.get('source') ?? config.source);
     controls = initQuestion(config, { changed: updateDraft, viewChanged: () => render(true), search: () => search(), getLocale: () => locale }, params);
     if (['keep', 'live', 'compare'].includes(params.get('behavior') ?? ''))
@@ -2271,7 +2301,7 @@ async function init() {
             expired ||= expiry;
             unavailableSearches.set(id, { expired: expiry, message: errorMessage(error) });
             if (!savedManifest.some(link => link.id === id))
-                savedManifest = [...savedManifest, { id, origin: null, ...(params.has('source') ? { recipe: { source: params.get('source'), dataset: corpus, where: controls.where(), analysis: analysisExpectation } } : {}) }];
+                savedManifest = [...savedManifest, { id, origin: null, ...(params.has('source') ? { recipe: { source: params.get('source'), dataset: corpus, where: controls.where(), analysis: analysisExpectation, ...(vectorsExpectation ? { vectors_blake3: vectorsExpectation } : {}) } } : {}) }];
         }
     }
     let evidence = explicit ? loaded.get(explicit) ?? null : null;
@@ -2284,6 +2314,7 @@ async function init() {
             if (!params.has(key) && (key !== 'raw' || !params.has('metadata')))
                 params.set(key, value);
         analysisExpectation = expectedAnalysis(params, current);
+        vectorsExpectation = params.get('vectors_blake3') ?? runVectors(current);
         $('#corpus').value = params.get('corpus');
         setSource(params.get('source'));
         controls.restore(params);

@@ -160,9 +160,8 @@ pub struct CompletedSnapshot {
     /// Attributes the catalog references that the corpus's token schema does
     /// not carry, when any. Positive tests over them matched nothing.
     pub unavailable_attributes: Option<UnavailableAttributes>,
-    /// Present when the catalog has `near` tests and no `vectors:` entry of
-    /// it carries the digest of the server's word-vector file.
-    pub vectors_binding: Option<lingrep_corpus::word_vectors::VectorsBinding>,
+    /// The vector table used to resolve the catalog's `near` tests.
+    pub vectors_binding: Option<crate::patterns::BoundWordVectors>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

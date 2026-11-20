@@ -78,6 +78,7 @@ struct Submission {
     condition: String,
     #[serde(default)]
     expected_analysis_identity: Option<String>,
+    expected_vectors_blake3: Option<String>,
     /// Publishes only this pattern of `source`.
     #[serde(default)]
     pattern: Option<String>,
@@ -97,6 +98,12 @@ async fn submit(
             "The pattern is too large. Remove unused definitions and search again.",
         ));
     }
+    let expected_vectors_blake3 = body
+        .expected_vectors_blake3
+        .as_deref()
+        .map(blake3::Hash::from_hex)
+        .transpose()
+        .map_err(|_| invalid("The saved word-vector digest must contain 64 hexadecimal digits."))?;
     let slot = store.corpora.resolve(Some(&body.dataset)).ok_or_else(|| {
         invalid("This corpus is not available on this server. Choose another corpus.")
     })?;
@@ -119,6 +126,7 @@ async fn submit(
                 document_reach: true,
                 search_scope: scope,
                 index_results: true,
+                expected_vectors_blake3,
                 expected_analysis_identity: body
                     .expected_analysis_identity
                     .filter(|s| !s.is_empty()),
@@ -366,9 +374,15 @@ async fn project_run(
         }
     }
     if let Some(ready) = &current_ready {
-        contract_run = Some(
-            json!({"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes())}),
-        );
+        let mut data = json!({"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes())});
+        if let Some(digest) = snapshot
+            .filter(|s| s.revision == attempt.revision)
+            .and_then(|s| s.vectors_binding.as_ref())
+            .map(|v| v.digest)
+        {
+            data["vectors_blake3"] = json!(digest.to_hex().as_str());
+        }
+        contract_run = Some(data);
     }
     let diagnostics = if attempt
         .failure
@@ -425,6 +439,7 @@ async fn project_run(
         version,
         error,
         error_code: attempt.failure.as_ref().and_then(|e| match e.category {
+            ErrorCategory::VectorsChanged => Some("vectors_changed"),
             ErrorCategory::AnalysisChanged => Some("analysis_changed"),
             ErrorCategory::ResultLimit => Some("result_limit"),
             _ => None,
@@ -1093,9 +1108,11 @@ async fn export(State(store): State<RequestStore>, Path(id): Path<String>) -> Re
         .iter()
         .map(|p| p.name.clone())
         .collect::<Vec<_>>();
-    let prefix = vec![
-        json!({"schema":"lingrep.question-results/v1","type":"run","data":{"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),"source":snapshot.source}}),
-    ];
+    let mut data = json!({"analysis_identity":lingrep_corpus::format_identity(ready.artifact.analysis_identity().as_bytes()),"source":snapshot.source});
+    if let Some(vectors) = &snapshot.vectors_binding {
+        data["vectors_blake3"] = json!(vectors.digest.to_hex().as_str());
+    }
+    let prefix = vec![json!({"schema":"lingrep.question-results/v1","type":"run","data":data})];
     let stream=futures::stream::try_unfold((snapshot,ready,index,patterns,-1_i64,Some(prefix),permit),|(snapshot,ready,index,patterns,cursor,prefix,permit)|async move{
         if cursor==i64::MAX{return Ok(None);}
         let (rows,next,finished)=if let Some(prefix)=prefix{(prefix,cursor,false)}else{

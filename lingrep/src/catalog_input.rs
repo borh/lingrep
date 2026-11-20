@@ -102,7 +102,8 @@ pub(crate) fn compile(
             catalog_fingerprint_with_vectors(&source.text, &table.digest()),
             Some(LoadedVectors {
                 path: table.path().to_owned(),
-                blake3: table.digest().to_hex().to_string(),
+                provenance: table.provenance().cloned(),
+                blake3: table.digest(),
             }),
         ),
         _ => (catalog_fingerprint(&source.text), None),

@@ -111,6 +111,13 @@ session and can expire when the server reclaims old sessions or restarts. Reopen
 then offers to rerun its queries; it does not run them automatically. A corpus
 identity mismatch stops the rerun rather than silently searching different data.
 
+A saved question with a `near` test records the BLAKE3 digest of its word-vector
+table. Replaying it on a server with different vectors stops before scanning.
+Choose “Search with the current word vectors” to run it with the replacement
+table. A server without vectors reports the digest the saved query requires. Each linked
+search retains its own table identity. A completed search that uses vectors also
+includes `vectors_blake3` in the run record of its JSON Lines export.
+
 Complete question results use a temporary index capped at 128 MiB per search.
 If a search exceeds that limit, narrow its pattern or document conditions and
 run it again. Result previews are capped at 4 MiB; search fewer patterns when a
@@ -476,5 +483,8 @@ and the `ling` processes it starts:
 services.lingrep-web.environment.LINGREP_VECTORS_PATH = "/var/lib/lingrep/vectors.vec";
 ```
 
-The server stops at startup when the file cannot be opened. With a file, the
-navigation gains a Similar Words page.
+For a pinned installation, set the same variable to the absolute directory of a
+[word-vector bundle](cli-usage-guide.md#sets-of-similar-words-ling-neighbors).
+Install each revision at a new path and restart the service to select it. The
+server checks the manifest and table digest at startup. With vectors
+configured, the navigation includes a Similar Words page.

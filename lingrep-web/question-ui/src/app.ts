@@ -49,6 +49,7 @@ let tokenIndex=0;
 let attributeKey='lemma';
 let attributeMember:string|undefined;
 let analysisExpectation:string|null=null;
+let vectorsExpectation:string|undefined;
 let configRefresh:ReturnType<typeof setTimeout>|undefined;
 const tokenCache=new Map<string,StoredSentence>();
 let state: SearchState = { current:null, completed:null, previous:null };
@@ -72,7 +73,16 @@ let restoreController:AbortController|null=null;
 const expectedAnalyses=new Map<string,string|null>();
 const unavailableSearches=new Map<string,{expired:boolean;message:string}>();
 let loadingSaved=false;
-function recipeFor(run:RunSnapshot):QueryRecipe{return {source:run.source,dataset:run.dataset,where:run.where,analysis:run.contract_run?.analysis_identity??savedManifest.find(link=>link.id===run.id)?.recipe?.analysis??expectedAnalyses.get(run.id)??config.datasets[run.dataset]?.analysis_identity??null};}
+const submittedVectors=new Map<string,string>();
+function runVectors(run:RunSnapshot):string|undefined{
+  return run.phase==='complete'||run.search_complete?run.contract_run?.vectors_blake3:submittedVectors.get(run.id)??savedManifest.find(link=>link.id===run.id)?.recipe?.vectors_blake3;
+}
+function draftVectors(source:string):string|undefined{
+  const completed=state.current?.source===source&&state.current.phase==='complete'?state.current:null;
+  if(completed&&!completed.contract_run?.vectors_blake3)return undefined;
+  return vectorsExpectation??completed?.contract_run?.vectors_blake3??config.vectors_blake3;
+}
+function recipeFor(run:RunSnapshot):QueryRecipe{const digest=runVectors(run);return {...(digest?{vectors_blake3:digest}:{}),source:run.source,dataset:run.dataset,where:run.where,analysis:run.contract_run?.analysis_identity??savedManifest.find(link=>link.id===run.id)?.recipe?.analysis??expectedAnalyses.get(run.id)??config.datasets[run.dataset]?.analysis_identity??null};}
 function sectionLinks():readonly SectionLink[]{
   const links=savedManifest.map(link=>{const live=documentSections.get(link.id);return live?{...link,recipe:recipeFor(live.run),origin:live.origin}:link;});
   for(const [id,section] of documentSections)if(!links.some(link=>link.id===id))links.push({id,origin:section.origin,recipe:recipeFor(section.run)});
@@ -108,9 +118,9 @@ async function executeSavedSection(link:SectionLink&{recipe:QueryRecipe},signal:
   const recipe=link.recipe;
   if(!Object.hasOwn(config.datasets,recipe.dataset))throw new Error(`The corpus for this saved query is unavailable: ${recipe.dataset}.`);
   setSource(recipe.source);$<HTMLSelectElement>('#corpus').value=recipe.dataset;
-  analysisExpectation=recipe.analysis;controls.restore(new URLSearchParams({...controls.entries(),metadata:'{}',raw:recipe.where}));updateCorpus();
-  const body={source:recipe.source,dataset:recipe.dataset,where:recipe.where,...(recipe.analysis?{expected_analysis_identity:recipe.analysis}:{})};
-  const {id}=await post('api/questions/runs',body,signal);expectedAnalyses.set(id,recipe.analysis);
+  analysisExpectation=recipe.analysis;vectorsExpectation=recipe.vectors_blake3;controls.restore(new URLSearchParams({...controls.entries(),metadata:'{}',raw:recipe.where}));updateCorpus();
+  const body={source:recipe.source,dataset:recipe.dataset,where:recipe.where,...(recipe.vectors_blake3?{expected_vectors_blake3:recipe.vectors_blake3}:{}),...(recipe.analysis?{expected_analysis_identity:recipe.analysis}:{})};
+  const {id}=await post('api/questions/runs',body,signal);expectedAnalyses.set(id,recipe.analysis);if(recipe.vectors_blake3)submittedVectors.set(id,recipe.vectors_blake3);
   if(signal.aborted){await post(`api/questions/runs/${id}/cancel`);throw new Error('Saved-search restore stopped. Run saved searches to continue.');}
   state=begin(state,runningSnapshot(id,body));viewEvidence=null;activeId=id;render();
   return new Promise<string>((resolve,reject)=>{
@@ -197,7 +207,14 @@ function editFailedPattern(focus=true){
 editError.addEventListener('click',()=>editFailedPattern());
 const limitChoices=document.createElement('p');limitChoices.id='limit-choices';limitChoices.className='limit-choices';limitChoices.hidden=true;editError.after(limitChoices);
 const currentCorpus=document.createElement('button');currentCorpus.type='button';currentCorpus.id='search-current-corpus';currentCorpus.hidden=true;limitChoices.after(currentCorpus);
-currentCorpus.addEventListener('click',()=>{analysisExpectation=null;void search();});
+currentCorpus.addEventListener('click',async()=>{
+  if(state.current?.error_code==='vectors_changed'){
+    await refreshConfiguration();
+    vectorsExpectation=config.vectors_blake3;
+  }
+  else analysisExpectation=null;
+  void search();
+});
 const overflowed=(run:RunSnapshot|null)=>run?.phase==='failed'&&run.error_code==='result_limit';
 function renderLimitChoices(run:RunSnapshot|null){
   const names=overflowed(run)&&run!.definitions.length>1?run!.definitions:[],full=new Set(overflowingDefinitions(run?.counts??{}));
@@ -362,7 +379,8 @@ async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:Occur
   const where=controls?.where()??$<HTMLInputElement>('#where').value;
   if(where&&searchLimit?.document!=null)searchLimit={...searchLimit,document:null};
   const limit=activeLimit();
-  const body={source,dataset:$<HTMLSelectElement>('#corpus').value,where,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{}),...(limit?.pattern?{pattern:limit.pattern}:{}),...(limit?.document!=null?{document:limit.document}:{})};
+  const digest=draftVectors(source);
+  const body={source,...(digest?{expected_vectors_blake3:digest}:{}),dataset:$<HTMLSelectElement>('#corpus').value,where,...(analysisExpectation?{expected_analysis_identity:analysisExpectation}:{}),...(limit?.pattern?{pattern:limit.pattern}:{}),...(limit?.document!=null?{document:limit.document}:{})};
   ++replayEpoch;
   isReplay = false;
   $('#replay-note').hidden = true;
@@ -377,6 +395,7 @@ async function search(event?: Event,derivedFrom?:SectionOrigin,occurrence?:Occur
       await post(`api/questions/runs/${result.id}/cancel`);
       return;
     }
+    if(digest)submittedVectors.set(result.id,digest);
     activeId = result.id;if(occurrence)entryRuns.add(result.id);expectedAnalyses.set(result.id,analysisExpectation);runLimits.set(result.id,{pattern:limit?.pattern??null,document:limit?.document??null});
     state = begin(state,runningSnapshot(result.id,body));
     if(origin&&parent){documentSections.set(result.id,{run:state.current!,origin});saveSections();}
@@ -449,7 +468,7 @@ function render(force=false) {
   const located=current?.phase==='failed'?(current.diagnostics??[]).filter(d=>d.data.stage==='catalog'&&d.data.severity==='error'):[];
   $('#error').textContent=located.length?located.map(d=>diagnosticText(d,locale)).join('\n'):current?overflowText(current)??runError(current,t)??'':'';
   renderLimitChoices(current);
-  currentCorpus.hidden=!(current?.phase==='failed'&&current.error_code==='analysis_changed');currentCorpus.textContent=t('searchCurrentCorpus');
+  currentCorpus.hidden=!(current?.phase==='failed'&&(current.error_code==='analysis_changed'||current.error_code==='vectors_changed'&&config?.vectors_blake3));currentCorpus.textContent=current?.error_code==='vectors_changed'?(locale==='ja'?'現在の単語ベクトルで検索':'Search with the current word vectors'):t('searchCurrentCorpus');
   editError.hidden=!diagnostic;
   editError.textContent=line?(locale==='ja'?`${line} 行目のパターンを修正`:`Edit pattern at line ${line}`):(locale==='ja'?'パターンを修正':'Edit pattern');
   if(diagnostic&&current&&revealedFailure!==current.id){revealedFailure=current.id;editFailedPattern($<HTMLTextAreaElement>('#source').value===current.source);}
@@ -1134,7 +1153,9 @@ async function replay() {
 }
 
 function questionDocument(overrides: Partial<SavedQuestion>={}): SavedQuestion {
-  return {format:'lingrep.question/v1',evidence:displayedEvidence()?.id??'',view:JSON.stringify(viewLocation),question:'',sections:JSON.stringify(sectionLinks()),...(documentSections.size&&state.current?{attempt:state.current.id}:{}),source:$<HTMLTextAreaElement>('#source').value,...limitFields(),corpus:$<HTMLSelectElement>('#corpus').value,analysis:analysisExpectation??config.datasets[$<HTMLSelectElement>('#corpus').value].analysis_identity??'',where:controls.where(),...controls.entries(),...overrides};
+  const source=$<HTMLTextAreaElement>('#source').value;
+  const digest=draftVectors(source);
+  return {format:'lingrep.question/v1',...(digest?{vectors_blake3:digest}:{}),evidence:displayedEvidence()?.id??'',view:JSON.stringify(viewLocation),question:'',sections:JSON.stringify(sectionLinks()),...(documentSections.size&&state.current?{attempt:state.current.id}:{}),source,...limitFields(),corpus:$<HTMLSelectElement>('#corpus').value,analysis:analysisExpectation??config.datasets[$<HTMLSelectElement>('#corpus').value].analysis_identity??'',where:controls.where(),...controls.entries(),...overrides};
 }
 function limitFields():{pattern?:string;document?:number}{const limit=activeLimit();return {...(limit?.pattern?{pattern:limit.pattern}:{}),...(limit?.document!=null?{document:limit.document}:{})};}
 function openQuestion(doc: SavedQuestion) {
@@ -1168,7 +1189,7 @@ $<HTMLButtonElement>('#attribute-remix').addEventListener('click',()=>{
 $('#clear-pattern').addEventListener('click',()=>{conditions=[];selectToken(tokenIndex);});
 $('#use-pattern').addEventListener('click',()=>{
   if(!inspecting||!conditions.length)return;
-  const run=inspecting.run;analysisExpectation=run.contract_run?.analysis_identity??null;
+  const run=inspecting.run;vectorsExpectation=runVectors(run);analysisExpectation=run.contract_run?.analysis_identity??null;
   const origin:SectionOrigin={parent:run.id,view:hitLocation(run,inspecting.row,'example'),label:`${documentTitle(inspecting.row)} · ${inspecting.row.surface}`};
   setSource(patternSource(conditions));$<HTMLSelectElement>('#corpus').value=run.dataset;
   controls.restore(new URLSearchParams({...controls.entries(),metadata:'{}',raw:run.where}));updateCorpus();updateDraft();
@@ -1354,7 +1375,7 @@ async function navigateView(href:string,preserveDraft=false,historyMode:'push'|'
     const target=parseView(params.get('view'));
     const run=[viewEvidence,state.current,state.previous,state.completed,inspecting?.run,documentSections.get(identifier)?.run].find(run=>run?.id===identifier)??await readRun(identifier);
     if(epoch!==navigationEpoch)return;
-    if(!preserveDraft){analysisExpectation=run.contract_run?.analysis_identity??null;const question=questionParams(url,run);setSource(question.get('source')??run.source);$<HTMLSelectElement>('#corpus').value=question.get('corpus')??run.dataset;restoreLimit(question);controls.restore(question);updateCorpus();}
+    if(!preserveDraft){analysisExpectation=run.contract_run?.analysis_identity??null;const question=questionParams(url,run);vectorsExpectation=question.get('vectors_blake3')??runVectors(run);setSource(question.get('source')??run.source);$<HTMLSelectElement>('#corpus').value=question.get('corpus')??run.dataset;restoreLimit(question);controls.restore(question);updateCorpus();}
     if(historyMode!=='none')window.history[historyMode==='push'?'pushState':'replaceState'](null,'',url.href);
     await applyView(run,target,true,epoch);
   }catch(error){if(epoch!==navigationEpoch)return;$('#error').hidden=false;$('#error').textContent=errorMessage(error);}
@@ -1384,11 +1405,11 @@ async function init() {
   $('#corpus').innerHTML=Object.entries(config.datasets).map(([key,dataset])=>`<option value="${escape(key)}">${escape(dataset.label)}</option>`).join('');
   savedManifest=parseSections(params.get('sections')??(params.get('fresh')==='1'||seededQuestion?null:sessionStorage.getItem('ling-questions-sections')));
   const recipe=savedManifest.find(link=>link.id===params.get('evidence'))?.recipe;
-  if(params.has('source'))savedManifest=savedManifest.map(link=>link.id===(params.get('attempt')??params.get('evidence'))&&!link.recipe?{...link,recipe:{source:params.get('source')!,dataset:params.get('corpus')??Object.keys(config.datasets)[0],where:params.get('where')??params.get('raw')??'',analysis:params.get('analysis')||null}}:link);
-  if(recipe){for(const [key,value] of Object.entries({source:recipe.source,corpus:recipe.dataset,raw:recipe.where,analysis:recipe.analysis??''}))if(!params.has(key)&&(key!=='raw'||!params.has('metadata')))params.set(key,value);}
+  if(params.has('source'))savedManifest=savedManifest.map(link=>link.id===(params.get('attempt')??params.get('evidence'))&&!link.recipe?{...link,recipe:{source:params.get('source')!,dataset:params.get('corpus')??Object.keys(config.datasets)[0],where:params.get('where')??params.get('raw')??'',analysis:params.get('analysis')||null,...(params.get('vectors_blake3')?{vectors_blake3:params.get('vectors_blake3')!}:{})}}:link);
+  if(recipe){for(const [key,value] of Object.entries({source:recipe.source,corpus:recipe.dataset,raw:recipe.where,analysis:recipe.analysis??'',...(recipe.vectors_blake3?{vectors_blake3:recipe.vectors_blake3}:{})}))if(!params.has(key)&&(key!=='raw'||!params.has('metadata')))params.set(key,value);}
   const corpus=params.get('corpus')??Object.keys(config.datasets)[0];
   if(!corpus||!Object.hasOwn(config.datasets,corpus))throw new Error('The corpus for this question is not registered.');
-  $<HTMLSelectElement>('#corpus').value=corpus;analysisExpectation=params.get('analysis')||null;
+  $<HTMLSelectElement>('#corpus').value=corpus;analysisExpectation=params.get('analysis')||null;vectorsExpectation=params.get('vectors_blake3')??undefined;
   setSource(params.get('source')??config.source);
   controls=initQuestion(config,{changed:updateDraft,viewChanged:()=>render(true),search:()=>search(),getLocale:()=>locale},params);
   if(['keep','live','compare'].includes(params.get('behavior')??''))$<HTMLSelectElement>('#behavior').value=params.get('behavior')!;
@@ -1398,7 +1419,7 @@ async function init() {
   const loaded=new Map<string,RunSnapshot>();
   for(const id of ids){try{loaded.set(id,await readRun(id));}catch(error){
     const expiry=expiredSearch(error);expired ||= expiry;unavailableSearches.set(id,{expired:expiry,message:errorMessage(error)});
-    if(!savedManifest.some(link=>link.id===id))savedManifest=[...savedManifest,{id,origin:null,...(params.has('source')?{recipe:{source:params.get('source')!,dataset:corpus,where:controls.where(),analysis:analysisExpectation}}:{})}];
+    if(!savedManifest.some(link=>link.id===id))savedManifest=[...savedManifest,{id,origin:null,...(params.has('source')?{recipe:{source:params.get('source')!,dataset:corpus,where:controls.where(),analysis:analysisExpectation,...(vectorsExpectation?{vectors_blake3:vectorsExpectation}:{})}}:{})}];
   }}
   let evidence=explicit?loaded.get(explicit)??null:null;
   const previous=completedId?loaded.get(completedId)??null:null;
@@ -1407,6 +1428,7 @@ async function init() {
   if(current){
     for(const [key,value] of new URLSearchParams({source:current.source,corpus:current.dataset,raw:current.where}))if(!params.has(key)&&(key!=='raw'||!params.has('metadata')))params.set(key,value);
     analysisExpectation=expectedAnalysis(params,current);
+    vectorsExpectation=params.get('vectors_blake3')??runVectors(current);
     $<HTMLSelectElement>('#corpus').value=params.get('corpus')!;setSource(params.get('source')!);controls.restore(params);
   }
   state={current:null,previous:null,completed:previous?.phase==='complete'?previous:evidence?.phase==='complete'?evidence:null};

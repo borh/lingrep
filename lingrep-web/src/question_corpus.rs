@@ -49,6 +49,8 @@ struct Configuration {
     /// The published definitions of `source`, for the question page's definition menu.
     definitions: Vec<crate::patterns::QuestionDefinition>,
     catalog_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vectors_blake3: Option<String>,
     labels: Value,
     value_names: &'static Value,
 }
@@ -131,6 +133,7 @@ async fn config(State(store): State<RequestStore>) -> Response {
         source: store.default_pattern.to_string(),
         definitions,
         catalog_fingerprint,
+        vectors_blake3: crate::patterns::word_vectors().map(|table| table.digest().to_string()),
         labels,
         value_names: crate::metadata_labels::value_names(),
     })

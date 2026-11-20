@@ -193,3 +193,48 @@ fn unusable_tables_words_and_names_are_reported_without_output() {
         assert!(output.stdout.is_empty(), "{extra:?}");
     }
 }
+
+#[test]
+fn bundled_vectors_verify_the_table_and_report_its_vocabulary() {
+    let directory = tempfile::tempdir().unwrap();
+    let table = write(directory.path(), "vectors.vec", ROWS);
+    let digest = blake3::hash(ROWS.as_bytes()).to_hex().to_string();
+    let provenance = serde_json::json!({
+        "resource": "example-en",
+        "attribute": "lemma",
+        "vocabulary_sources": ["Example lexicon v1"],
+        "selection": "Every distinct lemma",
+        "encoding": "Example encoder v2, centered on this vocabulary",
+    });
+    let manifest = serde_json::json!({
+        "schema": "lingrep.word-vectors/v1",
+        "blake3": digest,
+        "provenance": provenance,
+    });
+    let manifest_path = write(directory.path(), "manifest.json", &manifest.to_string());
+    let events = neighbors(directory.path(), "a", &["--top", "3"]);
+    assert_eq!(
+        ranked(&events),
+        ranked(&neighbors(&table, "a", &["--top", "3"]))
+    );
+    assert_eq!(events[0]["data"]["blake3"], digest);
+    assert_eq!(events[0]["data"]["provenance"], provenance);
+
+    let rejection = |bad_manifest: Value, expected: &str| {
+        fs::write(&manifest_path, bad_manifest.to_string()).unwrap();
+        let output = lingrep_without_dictionary()
+            .args(["neighbors", "--vectors"])
+            .arg(directory.path())
+            .args(["--top", "3", "a"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+    };
+    let mut bad_attribute = manifest.clone();
+    bad_attribute["provenance"]["attribute"] = "lemmma".into();
+    rejection(bad_attribute, "attribute");
+    fs::write(table, format!("{ROWS}x 1 0\n")).unwrap();
+    rejection(manifest, &digest);
+}

@@ -56,11 +56,14 @@
 
   <footer class="neighbors-file">
     <p><span class="muted" data-i18n="neighbors.file">Word-vector file:</span> <code>{{ file.name }}</code></p>
+    {% if let Some(attribute) = file.vocabulary_attribute %}
+    <p><span class="muted" data-i18n="neighbors.vocabulary_attribute">Vocabulary attribute:</span> <code>{{ attribute }}</code></p>
+    {% endif %}
     <p><span class="muted" data-i18n="neighbors.declare">Add this line to the catalog to declare this file:</span></p>
     <pre class="definition-source"><code>{{ file.declaration }}</code></pre>
   </footer>
   {% when None %}
-  <p class="muted" data-i18n="neighbors.unconfigured">No word-vector file configured. Start the server with <code>--vectors FILE</code> or set <code>LINGREP_VECTORS_PATH</code>.</p>
+  <p class="muted" data-i18n="neighbors.unconfigured">No word-vector file configured. Start the server with <code>--vectors PATH</code> or set <code>LINGREP_VECTORS_PATH</code>.</p>
   {% endmatch %}
 </section>
 {% endblock %}

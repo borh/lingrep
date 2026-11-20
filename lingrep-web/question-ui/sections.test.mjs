@@ -22,11 +22,12 @@ test('linked search documents reject duplicate identities, missing parents, cycl
 
 test('saved linked recipes survive expiry and sequential replay remaps parent identities',async()=>{
   const {restoreSections}=await import('./sections.js');
-  const recipe={source:'p := 猫.',dataset:'custom',where:'year > 1900',analysis:'expected'};
+  const recipe={source:'p := [lemma near 猫 >= 0.8].',dataset:'custom',where:'year > 1900',analysis:'expected',vectors_blake3:'a'.repeat(64)};
   const links=parseSections(JSON.stringify([{id:'old-root',origin:null,recipe},{id:'old-child',origin:{parent:'old-root',label:'猫',view:defaultView()},recipe:{...recipe,source:'q := 犬.'}}]));
   let active=0;const seen=[],progress=[];
   const result=await restoreSections(links,new Set(),async link=>{assert.equal(++active,1);seen.push(link);await Promise.resolve();--active;return 'new-'+link.id;},manifest=>progress.push(manifest));
-  assert.deepEqual(seen.map(link=>link.recipe.source),['p := 猫.','q := 犬.']);
+  assert.deepEqual(seen[0].recipe,recipe);
+  assert.equal(seen[1].recipe.source,'q := 犬.');
   assert.equal(seen[1].origin.parent,'new-old-root');
   assert.equal(result[1].origin.parent,'new-old-root');
   assert.deepEqual(progress[0][1].recipe,links[1].recipe);

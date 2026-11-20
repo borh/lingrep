@@ -74,6 +74,9 @@ pub enum NeighborsEvent {
 pub struct NeighborsRun {
     pub word: String,
     pub vectors: String,
+    pub blake3: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<lingrep_corpus::word_vectors::VectorProvenance>,
     pub dimensions: u64,
     pub min_similarity: Option<f32>,
     pub top: Option<u64>,
